@@ -11,6 +11,9 @@ const Env = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
+  // M4 auto email workflows — 'log' records delivery in the service log
+  // (outbox rows track status either way); 'off' only queues.
+  EMAIL_MODE: z.enum(['log', 'off']).default('log'),
 });
 
 export type Config = z.infer<typeof Env>;

@@ -79,3 +79,26 @@ export async function api<T>(
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
+/** Fetches a file with auth and triggers a browser download (M4 exports). */
+export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set('authorization', `Bearer ${token}`);
+  const res = await fetch(`/api/v1${path}`, { headers });
+  if (!res.ok) {
+    const problem: Problem = await res.json().catch(() => ({ status: res.status }));
+    throw new ApiError(res.status, problem);
+  }
+  const disposition = res.headers.get('content-disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallbackName;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

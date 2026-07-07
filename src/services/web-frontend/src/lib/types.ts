@@ -90,3 +90,101 @@ export interface AuthProviders {
   password: boolean;
   google: boolean;
 }
+
+// ── M4 — Polish ───────────────────────────────────────────────────────────────
+
+export interface ReportTemplate {
+  id: string;
+  name: string;
+  version: number;
+  label: string;
+  kind: ValuationKind;
+  status: 'draft' | 'active' | 'archived';
+  body: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppNotification {
+  id: string;
+  valuation_id: string | null;
+  type: string;
+  title: string;
+  body: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface FundingRound {
+  id: string;
+  name: string;
+  security_type: string | null;
+  closed_on: string | null;
+  amount_raised_cents: string | null;
+  pre_money_cents: string | null;
+  post_money_cents: string | null;
+  shares_issued: string | null;
+  notes: string | null;
+}
+
+export const TRANSACTION_KINDS = [
+  'issuance',
+  'secondary_sale',
+  'repurchase',
+  'conversion',
+  'transfer',
+  'other',
+] as const;
+export type TransactionKind = (typeof TRANSACTION_KINDS)[number];
+
+export interface ValuationTransaction {
+  id: string;
+  kind: TransactionKind;
+  occurred_on: string;
+  shares: string | null;
+  price_per_share_cents: string | null;
+  counterparty: string | null;
+  notes: string | null;
+}
+
+export interface SearchResults {
+  valuations: Array<{
+    id: string;
+    number: string;
+    kind: ValuationKind;
+    state: ValuationState;
+    company_name: string;
+    service_name: string | null;
+    created_at: string;
+  }>;
+  users: Array<{
+    id: string;
+    email: string;
+    first_name: string | null;
+    last_name: string | null;
+    partner_id: string | null;
+  }>;
+}
+
+export interface SensitivityCell {
+  volatility: number;
+  termYears: number;
+  fmvPerShareCents: number;
+  deltaFromBase: number;
+}
+
+export interface SensitivityResult {
+  base: { volatility: number; termYears: number; fmvPerShareCents: number };
+  volatilities: number[];
+  terms: number[];
+  rows: SensitivityCell[][];
+  dlom: number;
+  currency: string | null;
+}
+
+export interface BulkResult {
+  results: Array<{ id: string; ok: boolean; error?: string; state?: ValuationState }>;
+  succeeded: number;
+  failed: number;
+}

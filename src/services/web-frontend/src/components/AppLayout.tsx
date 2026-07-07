@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, initials } from '../lib/format';
@@ -11,11 +12,13 @@ function NavItem({
   label,
   icon,
   onNavigate,
+  badge,
 }: {
   to: string;
   label: string;
   icon: ReactNode;
   onNavigate: () => void;
+  badge?: number;
 }) {
   return (
     <NavLink
@@ -32,8 +35,36 @@ function NavItem({
     >
       <span className="text-ink-400 group-hover:text-brass-300">{icon}</span>
       {label}
+      {badge !== undefined && badge > 0 && (
+        <span className="tnum ml-auto rounded-full bg-brass-400 px-1.5 py-0.5 text-[0.65rem] font-bold text-ink-900">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </NavLink>
   );
+}
+
+/** Polls the unread notification count (M4) — on route change and every 60s. */
+function useUnreadCount(): number {
+  const [count, setCount] = useState(0);
+  const location = useLocation();
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      api<{ unread_count: number }>('/notifications/unread-count')
+        .then((d) => {
+          if (!cancelled) setCount(d.unread_count);
+        })
+        .catch(() => {});
+    };
+    poll();
+    const timer = setInterval(poll, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [location.pathname]);
+  return count;
 }
 
 const icons = {
@@ -62,6 +93,25 @@ const icons = {
       <path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1" strokeLinecap="round" />
     </svg>
   ),
+  search: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M15.8 15.8L20.5 20.5" strokeLinecap="round" />
+    </svg>
+  ),
+  notifications: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M6 9.5a6 6 0 0 1 12 0c0 4 1.5 5.5 2 6.5H4c.5-1 2-2.5 2-6.5Z" strokeLinejoin="round" />
+      <path d="M10 19.5a2 2 0 0 0 4 0" strokeLinecap="round" />
+    </svg>
+  ),
+  templates: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M7 3.5h7.5L19 8v12.5H7z" strokeLinejoin="round" />
+      <path d="M14 3.5V8h4.5M9.8 12h4.4M9.8 15.5h4.4" strokeLinecap="round" />
+      <path d="M5 6.5v14h9.5" strokeLinecap="round" />
+    </svg>
+  ),
 };
 
 export function AppLayout() {
@@ -69,6 +119,7 @@ export function AppLayout() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const close = () => setMenuOpen(false);
+  const unread = useUnreadCount();
 
   const roleTag = isOps(user) ? 'Operations' : isPartner(user) ? 'Partner' : 'Client';
 
@@ -83,6 +134,20 @@ export function AppLayout() {
         onNavigate={close}
       />
       <NavItem to="/valuations/new" label="New valuation" icon={icons.newValuation} onNavigate={close} />
+      <NavItem to="/search" label="Search" icon={icons.search} onNavigate={close} />
+      <NavItem
+        to="/notifications"
+        label="Notifications"
+        icon={icons.notifications}
+        onNavigate={close}
+        badge={unread}
+      />
+      {isOps(user) && (
+        <>
+          <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Operations</div>
+          <NavItem to="/templates" label="Report templates" icon={icons.templates} onNavigate={close} />
+        </>
+      )}
       <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Account</div>
       <NavItem to="/settings" label="Settings" icon={icons.settings} onNavigate={close} />
     </nav>

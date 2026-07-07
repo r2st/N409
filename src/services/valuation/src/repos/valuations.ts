@@ -88,9 +88,48 @@ export async function findValuationById(pool: pg.Pool, id: string): Promise<Valu
   return rows[0] ?? null;
 }
 
+/** Rich sort (M4): whitelisted columns only — never interpolate user input. */
+export const SORTABLE_COLUMNS = [
+  'number',
+  'company_name',
+  'kind',
+  'state',
+  'paid_status',
+  'created_at',
+  'due_date',
+  'published_at',
+] as const;
+export type SortableColumn = (typeof SORTABLE_COLUMNS)[number];
+
+export interface SortSpec {
+  column: SortableColumn;
+  dir: 'asc' | 'desc';
+}
+
+/** Parses "company_name:asc,created_at:desc"; returns null on any bad part. */
+export function parseSort(raw: string | undefined): SortSpec[] | null {
+  if (!raw) return [];
+  const specs: SortSpec[] = [];
+  for (const part of raw.split(',')) {
+    const [column, dir = 'asc'] = part.trim().split(':');
+    if (!(SORTABLE_COLUMNS as readonly string[]).includes(column ?? '')) return null;
+    if (dir !== 'asc' && dir !== 'desc') return null;
+    specs.push({ column: column as SortableColumn, dir });
+  }
+  return specs;
+}
+
+function orderBySql(sort: SortSpec[] | undefined): string {
+  if (!sort || sort.length === 0) return 'ORDER BY created_at DESC';
+  const parts = sort.map((s) => `${s.column} ${s.dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST`);
+  parts.push('id ASC'); // deterministic tiebreaker for stable pagination
+  return `ORDER BY ${parts.join(', ')}`;
+}
+
 export interface ListFilters {
   state?: ValuationState;
   kind?: ValuationKind;
+  sort?: SortSpec[];
   page: number;
   perPage: number;
 }
@@ -124,7 +163,7 @@ export async function listValuations(
   params.push(filters.perPage, (filters.page - 1) * filters.perPage);
   const { rows } = await pool.query<ValuationRow>(
     `SELECT * FROM valuations ${whereSql}
-     ORDER BY created_at DESC
+     ${orderBySql(filters.sort)}
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );
