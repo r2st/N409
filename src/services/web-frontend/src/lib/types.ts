@@ -150,6 +150,19 @@ export interface Partner {
   created_at: string;
 }
 
+export interface Invitation {
+  id: string;
+  email: string;
+  roles: string[];
+  partner_id: string | null;
+  partner_name: string | null;
+  invited_by_email: string | null;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
 export interface UserOption {
   id: string;
   email: string;

@@ -5,7 +5,7 @@ import { api, apiDownload, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { canManageUsers } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
-import type { AdminUser, Partner } from '../lib/types';
+import type { AdminUser, Invitation, Partner } from '../lib/types';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 
 const PER_PAGE = 25;
@@ -39,7 +39,7 @@ interface UserList {
 }
 
 interface EditorState {
-  mode: 'create' | 'edit';
+  mode: 'invite' | 'create' | 'edit';
   id?: string;
   email: string;
   password: string;
@@ -49,8 +49,8 @@ interface EditorState {
   roles: Set<string>;
 }
 
-const emptyEditor = (): EditorState => ({
-  mode: 'create',
+const emptyEditor = (mode: 'invite' | 'create'): EditorState => ({
+  mode,
   email: '',
   password: '',
   first_name: '',
@@ -59,12 +59,22 @@ const emptyEditor = (): EditorState => ({
   roles: new Set(['valuation_user']),
 });
 
+/** Pending / accepted / revoked / expired, in display terms. */
+function invitationStatus(i: Invitation): { label: string; tone: string } {
+  if (i.accepted_at) return { label: 'Accepted', tone: 'bg-bond-50 text-bond-700 ring-bond-200' };
+  if (i.revoked_at) return { label: 'Revoked', tone: 'bg-paper-200 text-ink-400 ring-ink-200' };
+  if (new Date(i.expires_at).getTime() < Date.now())
+    return { label: 'Expired', tone: 'bg-amber-50 text-amber-800 ring-amber-200' };
+  return { label: 'Pending', tone: 'bg-sky-50 text-sky-800 ring-sky-200' };
+}
+
 /** M3 feature 13 — user/role admin console. */
 export function AdminUsersPage() {
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<UserList | null>(null);
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
@@ -94,6 +104,16 @@ export function AdminUsersPage() {
       .then((res) => setPartners(res.partners))
       .catch(() => {});
   }, []);
+
+  const loadInvitations = useCallback(() => {
+    api<{ invitations: Invitation[] }>('/users/invitations')
+      .then((res) => setInvitations(res.invitations))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadInvitations();
+  }, [loadInvitations]);
 
   // The API enforces this too — the redirect just keeps the nav honest.
   if (!canManageUsers(user)) return <Navigate to="/dashboard" replace />;
@@ -126,7 +146,17 @@ export function AdminUsersPage() {
     setBusy(true);
     setEditorError(null);
     try {
-      if (editor.mode === 'create') {
+      if (editor.mode === 'invite') {
+        await api('/users/invite', {
+          method: 'POST',
+          body: {
+            email: editor.email.trim(),
+            partner_id: editor.partner_id || null,
+            roles: [...editor.roles],
+          },
+        });
+        loadInvitations();
+      } else if (editor.mode === 'create') {
         await api('/users', {
           method: 'POST',
           body: {
@@ -169,6 +199,26 @@ export function AdminUsersPage() {
     }
   };
 
+  const resendInvite = async (i: Invitation) => {
+    try {
+      await api(`/users/invitations/${i.id}/resend`, { method: 'POST' });
+      loadInvitations();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not resend the invitation.');
+    }
+  };
+
+  const revokeInvite = async (i: Invitation) => {
+    if (!window.confirm(`Revoke the invitation for ${i.email}? The emailed link will stop working.`))
+      return;
+    try {
+      await api(`/users/invitations/${i.id}`, { method: 'DELETE' });
+      loadInvitations();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not revoke the invitation.');
+    }
+  };
+
   const toggleRole = (key: string) => {
     setEditor((ed) => {
       if (!ed) return ed;
@@ -203,12 +253,21 @@ export function AdminUsersPage() {
             ↓ Export CSV
           </Button>
           <Button
+            variant="secondary"
             onClick={() => {
               setEditorError(null);
-              setEditor(emptyEditor());
+              setEditor(emptyEditor('create'));
             }}
           >
-            + New user
+            New user with password
+          </Button>
+          <Button
+            onClick={() => {
+              setEditorError(null);
+              setEditor(emptyEditor('invite'));
+            }}
+          >
+            + Invite user
           </Button>
         </div>
       </div>
@@ -249,8 +308,17 @@ export function AdminUsersPage() {
       {editor && (
         <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
           <h2 className="overline mb-5 text-ink-400">
-            {editor.mode === 'create' ? 'New user' : `Edit ${editor.email}`}
+            {editor.mode === 'invite'
+              ? 'Invite user'
+              : editor.mode === 'create'
+                ? 'New user'
+                : `Edit ${editor.email}`}
           </h2>
+          {editor.mode === 'invite' && (
+            <p className="-mt-3 mb-5 text-sm text-ink-400">
+              We'll email a link that lets them set their own password. It expires after 7 days.
+            </p>
+          )}
           <form onSubmit={save} className="space-y-5">
             {editorError && <ErrorNote>{editorError}</ErrorNote>}
             <div className="grid gap-5 sm:grid-cols-2">
@@ -273,18 +341,22 @@ export function AdminUsersPage() {
                   />
                 </Field>
               )}
-              <Field label="First name">
-                <TextInput
-                  value={editor.first_name}
-                  onChange={(e) => setEditor({ ...editor, first_name: e.target.value })}
-                />
-              </Field>
-              <Field label="Last name">
-                <TextInput
-                  value={editor.last_name}
-                  onChange={(e) => setEditor({ ...editor, last_name: e.target.value })}
-                />
-              </Field>
+              {editor.mode !== 'invite' && (
+                <>
+                  <Field label="First name">
+                    <TextInput
+                      value={editor.first_name}
+                      onChange={(e) => setEditor({ ...editor, first_name: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Last name">
+                    <TextInput
+                      value={editor.last_name}
+                      onChange={(e) => setEditor({ ...editor, last_name: e.target.value })}
+                    />
+                  </Field>
+                </>
+              )}
               <Field label="Partner" hint="Scopes partner/member roles to this organisation.">
                 <Select
                   value={editor.partner_id}
@@ -317,13 +389,76 @@ export function AdminUsersPage() {
             </fieldset>
             <div className="flex gap-2">
               <Button type="submit" disabled={busy || editor.roles.size === 0}>
-                {busy ? 'Saving…' : editor.mode === 'create' ? 'Create user' : 'Save changes'}
+                {busy
+                  ? 'Saving…'
+                  : editor.mode === 'invite'
+                    ? 'Send invitation'
+                    : editor.mode === 'create'
+                      ? 'Create user'
+                      : 'Save changes'}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setEditor(null)}>
                 Cancel
               </Button>
             </div>
           </form>
+        </section>
+      )}
+
+      {/* Invitations (feature #9) */}
+      {invitations.length > 0 && (
+        <section className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+          <h2 className="overline border-b border-paper-300 px-5 py-3 text-ink-400">Invitations</h2>
+          <table className="w-full min-w-[640px] text-sm" aria-label="Invitations">
+            <tbody>
+              {invitations.map((i) => {
+                const status = invitationStatus(i);
+                const pending = status.label === 'Pending';
+                return (
+                  <tr key={i.id} className="border-b border-paper-200 last:border-0">
+                    <td className="px-5 py-3">
+                      <div className="font-semibold text-ink-900">{i.email}</div>
+                      <div className="text-xs text-ink-400">
+                        {i.roles.join(', ')}
+                        {i.partner_name ? ` · ${i.partner_name}` : ''}
+                        {i.invited_by_email ? ` · invited by ${i.invited_by_email}` : ''}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${status.tone}`}
+                      >
+                        {status.label}
+                      </span>
+                    </td>
+                    <td className="tnum px-5 py-3 text-xs text-ink-400">
+                      expires {formatDate(i.expires_at)}
+                    </td>
+                    <td className="px-5 py-3">
+                      <div className="flex justify-end gap-3 text-xs font-semibold">
+                        {(pending || status.label === 'Expired') && !i.accepted_at && !i.revoked_at && (
+                          <button
+                            onClick={() => resendInvite(i)}
+                            className="cursor-pointer text-bond-600 hover:text-bond-700"
+                          >
+                            Resend
+                          </button>
+                        )}
+                        {pending && (
+                          <button
+                            onClick={() => revokeInvite(i)}
+                            className="cursor-pointer text-red-600 hover:text-red-700"
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </section>
       )}
 

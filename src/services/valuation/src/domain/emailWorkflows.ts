@@ -158,3 +158,35 @@ export function notificationsForTransition(v: ValuationSnapshot, to: ValuationSt
     body: r.body(v),
   }));
 }
+
+// ── Transactional templates (P0 #3 password reset, feature #9 invitations) ───
+// Account emails, not workflow emails — rendered directly by the auth/admin
+// routes and always delivered regardless of notification settings.
+
+export interface TransactionalEmail {
+  templateKey: string;
+  subject: string;
+  body: string;
+}
+
+export function passwordResetEmail(link: string): TransactionalEmail {
+  return {
+    templateKey: 'password_reset',
+    subject: 'Reset your N409 password',
+    body:
+      `We received a request to reset the password for your N409 account.\n\n` +
+      `Use this link within the next hour to choose a new password:\n\n${link}\n\n` +
+      `If you didn't request this, you can safely ignore this email — your password is unchanged.`,
+  };
+}
+
+export function invitationEmail(link: string, invitedByEmail: string): TransactionalEmail {
+  return {
+    templateKey: 'user_invite',
+    subject: "You've been invited to N409",
+    body:
+      `${invitedByEmail} invited you to the N409 valuations workspace.\n\n` +
+      `Use this link within the next 7 days to set your password and sign in:\n\n${link}\n\n` +
+      `If you weren't expecting this invitation, you can ignore this email.`,
+  };
+}

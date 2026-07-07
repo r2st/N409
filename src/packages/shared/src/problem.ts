@@ -62,6 +62,13 @@ export const problems = {
       detail,
       extensions,
     }),
+  tooManyRequests: (detail = 'Too many requests — try again later') =>
+    new ApiProblem({
+      status: 429,
+      title: 'Too Many Requests',
+      type: 'urn:n409:problem:rate-limited',
+      detail,
+    }),
 };
 
 /**

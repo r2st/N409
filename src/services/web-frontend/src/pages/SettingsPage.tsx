@@ -1,9 +1,95 @@
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { tokenExpiry } from '../lib/api';
+import { api, ApiError, tokenExpiry } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
-import { Button } from '../components/ui';
+import { Button, ErrorNote, Field, TextInput } from '../components/ui';
+
+/** P0 #3 — change password for signed-in accounts (hidden for Google SSO). */
+function ChangePasswordCard() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+    if (next.length < 10) {
+      setError('New password must be at least 10 characters.');
+      return;
+    }
+    if (next !== confirm) {
+      setError("New passwords don't match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api('/auth/change-password', {
+        method: 'POST',
+        body: { current_password: current, new_password: next },
+      });
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not change the password.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <h2 className="overline mb-4 text-ink-400">Change password</h2>
+      <form onSubmit={submit} className="max-w-sm space-y-4" noValidate>
+        <ErrorNote>{error}</ErrorNote>
+        {saved && (
+          <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
+            Password updated.
+          </div>
+        )}
+        <Field label="Current password">
+          <TextInput
+            type="password"
+            autoComplete="current-password"
+            required
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+          />
+        </Field>
+        <Field label="New password" hint="At least 10 characters.">
+          <TextInput
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={10}
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+          />
+        </Field>
+        <Field label="Confirm new password">
+          <TextInput
+            type="password"
+            autoComplete="new-password"
+            required
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+          />
+        </Field>
+        <Button type="submit" disabled={busy || !current || !next || !confirm}>
+          {busy ? 'Updating…' : 'Update password'}
+        </Button>
+      </form>
+    </section>
+  );
+}
 
 export function SettingsPage() {
   const { user, logout } = useAuth();
@@ -79,6 +165,8 @@ export function SettingsPage() {
           </p>
         )}
       </section>
+
+      {user.sso_provider !== 'google' && <ChangePasswordCard />}
 
       <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
         <h2 className="overline mb-2 text-ink-400">Session</h2>

@@ -93,7 +93,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
 
   void app.register(multipart, { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
   registerAuth(app, { pool, jwt });
-  registerAuthRoutes(app, { pool, jwt, google });
+  registerAuthRoutes(app, { pool, jwt, google, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerValuationRoutes(app, { pool, transport });
   // M1 — core pipeline
   registerTaskRoutes(app, { pool });
@@ -107,7 +107,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerReportRoutes(app, { pool });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool });
-  registerAdminUserRoutes(app, { pool });
+  registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerApiTokenRoutes(app, { pool });
   registerOperationsRoutes(app, { pool });
   // M4 — operations polish

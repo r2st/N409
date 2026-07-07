@@ -83,6 +83,14 @@ export function LoginPage() {
             placeholder="••••••••••"
           />
         </Field>
+        <div className="-mt-2 text-right">
+          <Link
+            to="/forgot-password"
+            className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+          >
+            Forgot password?
+          </Link>
+        </div>
         <Button type="submit" disabled={busy || !email || !password} className="w-full">
           {busy ? 'Signing in…' : 'Sign in'}
         </Button>

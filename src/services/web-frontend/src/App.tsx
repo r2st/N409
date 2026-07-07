@@ -3,6 +3,9 @@ import { RequireAuth } from './components/RequireAuth';
 import { AppLayout } from './components/AppLayout';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { GoogleCompletePage } from './pages/GoogleCompletePage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ValuationsPage } from './pages/ValuationsPage';
@@ -40,6 +43,9 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/accept-invite" element={<AcceptInvitePage />} />
       <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
       <Route
         element={

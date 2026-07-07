@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -16,6 +16,18 @@ import {
   softDeleteUser,
   type AdminUserRow,
 } from '../repos/adminUsers.js';
+import {
+  createInvitation,
+  hasPendingInvitation,
+  listInvitations,
+  refreshInvitation,
+  revokeInvitation,
+  type InvitationListRow,
+  type InvitationRow,
+} from '../repos/invitations.js';
+import { invitationEmail } from '../domain/emailWorkflows.js';
+import { sendTransactionalEmail } from '../email/transactional.js';
+import type { EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 const ListQuery = z.object({
@@ -67,13 +79,119 @@ function toAdminUser(u: AdminUserRow) {
   };
 }
 
+const InviteBody = z.object({
+  email: z.string().email(),
+  roles: z.array(z.enum(ROLE_KEYS)).min(1),
+  partner_id: z.string().nullable().optional(),
+});
+
+function toInvitation(i: InvitationRow | InvitationListRow) {
+  const listRow = i as InvitationListRow;
+  return {
+    id: i.id,
+    email: i.email,
+    roles: i.roles,
+    partner_id: i.partner_id,
+    partner_name: listRow.partner_name ?? null,
+    invited_by_email: listRow.invited_by_email ?? null,
+    expires_at: i.expires_at,
+    accepted_at: i.accepted_at,
+    revoked_at: i.revoked_at,
+    created_at: i.created_at,
+  };
+}
+
 /** M3 feature 13 — user/role admin console (+ feature 16: users CSV export). */
-export function registerAdminUserRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+export function registerAdminUserRoutes(
+  app: FastifyInstance,
+  deps: { pool: pg.Pool; transport?: EmailTransport; publicBaseUrl?: string },
+): void {
+  const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
   const requireUserAdmin = (req: Parameters<typeof requirePrincipal>[0]) => {
     const principal = requirePrincipal(req);
     if (!canManageUsers(principal)) throw problems.forbidden();
     return principal;
   };
+
+  const sendInviteEmail = async (
+    req: FastifyRequest,
+    invitation: InvitationRow,
+    secret: string,
+    invitedByEmail: string,
+  ) => {
+    // Fragment, not query string — the token never reaches server logs.
+    const template = invitationEmail(`${baseUrl}/accept-invite#token=${secret}`, invitedByEmail);
+    await sendTransactionalEmail(
+      { pool: deps.pool, transport: deps.transport, log: req.log },
+      { toEmail: invitation.email, ...template },
+    );
+  };
+
+  // ── Invitations (feature #9 — admin side) ──────────────────────────────────
+
+  app.post('/api/v1/users/invite', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requireUserAdmin(req);
+    const parsed = InviteBody.safeParse(req.body);
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
+    const { email, roles, partner_id } = parsed.data;
+
+    const existing = await findUserByEmail(deps.pool, email);
+    if (existing && !existing.deleted_at)
+      throw problems.conflict('An account with this email already exists');
+    if (await hasPendingInvitation(deps.pool, email))
+      throw problems.conflict('An invitation for this email is already pending');
+
+    const inviter = await findUserById(deps.pool, principal.id);
+    const { invitation, secret } = await createInvitation(deps.pool, {
+      email,
+      roles,
+      partnerId: partner_id ?? null,
+      invitedBy: principal.id,
+    });
+    await sendInviteEmail(req, invitation, secret, inviter?.email ?? 'An administrator');
+    return reply.status(201).send({ invitation: toInvitation(invitation) });
+  });
+
+  app.get('/api/v1/users/invitations', { preHandler: app.authenticate }, async (req) => {
+    requireUserAdmin(req);
+    return { invitations: (await listInvitations(deps.pool)).map(toInvitation) };
+  });
+
+  app.post(
+    '/api/v1/users/invitations/:id/resend',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requireUserAdmin(req);
+      const { id } = req.params as { id: string };
+      if (!isUlid(id)) throw problems.notFound();
+
+      const refreshed = await refreshInvitation(deps.pool, id);
+      if (!refreshed)
+        throw problems.conflict('This invitation was already accepted or revoked');
+      const inviter = await findUserById(deps.pool, principal.id);
+      await sendInviteEmail(
+        req,
+        refreshed.invitation,
+        refreshed.secret,
+        inviter?.email ?? 'An administrator',
+      );
+      return { invitation: toInvitation(refreshed.invitation) };
+    },
+  );
+
+  app.delete(
+    '/api/v1/users/invitations/:id',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      requireUserAdmin(req);
+      const { id } = req.params as { id: string };
+      if (!isUlid(id)) throw problems.notFound();
+      const revoked = await revokeInvitation(deps.pool, id);
+      if (!revoked) throw problems.notFound('No pending invitation to revoke');
+      return reply.status(204).send();
+    },
+  );
 
   app.get('/api/v1/users', { preHandler: app.authenticate }, async (req) => {
     requireUserAdmin(req);
