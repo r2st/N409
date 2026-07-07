@@ -30,6 +30,7 @@ import type { AutoPipelineDeps } from './pipeline/autoPipeline.js';
 import { registerParamsRoutes } from './routes/params.js';
 import { registerAiRoutes } from './routes/ai.js';
 import { registerCalculationRoutes } from './routes/calculations.js';
+import { registerScenarioRoutes } from './routes/scenarios.js';
 import { registerOverwriteRoutes } from './routes/overwrites.js';
 import { registerWorkbookRoutes } from './routes/workbook.js';
 import { registerReportRoutes } from './routes/reports.js';
@@ -121,6 +122,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerParamsRoutes(app, { pool });
   registerAiRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  // Improvement 3 — client-facing what-if scenario sandbox (read-only)
+  registerScenarioRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // M2 — output & delivery
   registerOverwriteRoutes(app, { pool });
   registerWorkbookRoutes(app, { pool });

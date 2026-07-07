@@ -112,6 +112,7 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/ai`} label="AI" />}
         {ops && <Tab to={`${base}/tasks`} label="Tasks" />}
         {ops && <Tab to={`${base}/calculations`} label="Calculations" />}
+        <Tab to={`${base}/scenarios`} label="What-If Scenarios" />
         {ops && <Tab to={`${base}/sensitivity`} label="Sensitivity" />}
         {showReportTab && <Tab to={`${base}/report`} label="Report" />}
         {ops && <Tab to={`${base}/package`} label="Package" />}
