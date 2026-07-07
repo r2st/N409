@@ -11,6 +11,23 @@ import type { ValuationState } from './valuation.js';
 
 export type Recipient = 'owner' | 'reviewer';
 
+/**
+ * The frozen event-type taxonomy for notification preferences (P2 #11).
+ * Every RULES entry's templateKey / notify type MUST be one of these — the
+ * preference matrix keys on them. Transactional account emails (password
+ * reset, invitations) are intentionally NOT here: they always deliver.
+ */
+export const NOTIFICATION_EVENT_TYPES = [
+  'valuation_started',
+  'review_needed',
+  'draft_ready',
+  'changes_requested',
+  'valuation_completed',
+  'valuation_cancelled',
+] as const;
+
+export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
+
 export interface ValuationSnapshot {
   id: string;
   kind: string;

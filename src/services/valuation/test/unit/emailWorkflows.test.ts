@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { emailsForTransition, notificationsForTransition } from '../../src/domain/emailWorkflows.js';
+import {
+  emailsForTransition,
+  NOTIFICATION_EVENT_TYPES,
+  notificationsForTransition,
+} from '../../src/domain/emailWorkflows.js';
 import type { ValuationSnapshot } from '../../src/domain/emailWorkflows.js';
+import { VALUATION_STATES } from '../../src/domain/valuation.js';
 
 const valuation: ValuationSnapshot = {
   id: '01JZragTESTVALUATION0000000',
@@ -41,5 +46,19 @@ describe('auto email workflows (M4 #21)', () => {
   it('stays silent on transitions without rules', () => {
     expect(emailsForTransition(valuation, 'onboarding_completed')).toEqual([]);
     expect(notificationsForTransition(valuation, 'timeout')).toEqual([]);
+  });
+
+  // P2 #11 — the preference matrix keys on templateKey / notify type, so every
+  // rule must use an event type from the frozen taxonomy.
+  it('keeps every workflow event type inside NOTIFICATION_EVENT_TYPES', () => {
+    const known = new Set<string>(NOTIFICATION_EVENT_TYPES);
+    for (const state of VALUATION_STATES) {
+      for (const email of emailsForTransition(valuation, state)) {
+        expect(known.has(email.templateKey), `email templateKey for ${state}`).toBe(true);
+      }
+      for (const notify of notificationsForTransition(valuation, state)) {
+        expect(known.has(notify.type), `notify type for ${state}`).toBe(true);
+      }
+    }
   });
 });

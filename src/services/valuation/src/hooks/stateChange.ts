@@ -9,6 +9,7 @@ import {
   type ValuationSnapshot,
 } from '../domain/emailWorkflows.js';
 import { createNotification } from '../repos/notifications.js';
+import { channelsFor, preferenceOverrides } from '../repos/notificationPreferences.js';
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../repos/emailOutbox.js';
 
 /**
@@ -65,11 +66,17 @@ export async function onStateChanged(
     recipients.set(r, await resolveRecipient(deps.pool, valuation, r));
   }
 
+  // Per-user channel preferences (P2 #11): the workflow templateKey / notify
+  // type doubles as the preference event type. Absent rows mean channel on.
+  const recipientIds = [...recipients.values()].filter((u) => u !== null).map((u) => u.id);
+  const prefs = await preferenceOverrides(deps.pool, recipientIds);
+
   const queued = await withTransaction(deps.pool, async (client) => {
     const out: EmailOutboxRow[] = [];
     for (const spec of emailSpecs) {
       const user = recipients.get(spec.recipient);
       if (!user) continue;
+      if (!channelsFor(prefs, user.id, spec.templateKey).email) continue;
       out.push(
         await enqueueEmail(client, {
           valuationId: valuation.id,
@@ -84,6 +91,7 @@ export async function onStateChanged(
     for (const spec of notifySpecs) {
       const user = recipients.get(spec.recipient);
       if (!user) continue;
+      if (!channelsFor(prefs, user.id, spec.type).in_app) continue;
       await createNotification(client, {
         userId: user.id,
         valuationId: valuation.id,

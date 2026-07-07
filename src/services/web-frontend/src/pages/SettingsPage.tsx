@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError, tokenExpiry } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
-import { Button, ErrorNote, Field, TextInput } from '../components/ui';
+import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
 
 /** P0 #3 — change password for signed-in accounts (hidden for Google SSO). */
 function ChangePasswordCard() {
@@ -91,6 +91,99 @@ function ChangePasswordCard() {
   );
 }
 
+interface NotificationPreference {
+  event_type: string;
+  in_app: boolean;
+  email: boolean;
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  valuation_started: 'Work started on a valuation',
+  review_needed: 'A valuation needs your review',
+  draft_ready: 'Draft report ready',
+  changes_requested: 'Client requested changes',
+  valuation_completed: 'Valuation published',
+  valuation_cancelled: 'Valuation cancelled',
+};
+
+/** P2 #11 — per-event-type channel toggles, saved on change. Transactional
+ * emails (password reset, invitations) always deliver and aren't listed. */
+function NotificationPreferencesCard() {
+  const [prefs, setPrefs] = useState<NotificationPreference[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api<{ preferences: NotificationPreference[] }>('/me/notification-preferences')
+      .then((d) => setPrefs(d.preferences))
+      .catch(() => setError('Could not load your notification preferences.'));
+  }, []);
+
+  const toggle = async (eventType: string, channel: 'in_app' | 'email') => {
+    if (!prefs) return;
+    const next = prefs.map((p) =>
+      p.event_type === eventType ? { ...p, [channel]: !p[channel] } : p,
+    );
+    setPrefs(next);
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = next.find((p) => p.event_type === eventType)!;
+      await api('/me/notification-preferences', {
+        method: 'PUT',
+        body: { preferences: [updated] },
+      });
+    } catch (err) {
+      setPrefs(prefs); // roll the optimistic flip back
+      setError(err instanceof ApiError ? err.message : 'Could not save the preference.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <h2 className="overline mb-1 text-ink-400">Notifications</h2>
+      <p className="mb-4 text-sm text-ink-400">
+        Choose how you hear about each event. Account emails (password reset, invitations) are
+        always delivered.
+      </p>
+      {error && <div className="mb-3"><ErrorNote>{error}</ErrorNote></div>}
+      {!prefs && !error && <Spinner />}
+      {prefs && (
+        <table className="w-full text-sm" aria-label="Notification preferences">
+          <thead>
+            <tr className="border-b border-paper-300 text-left">
+              <th className="overline py-2 font-semibold text-ink-400">Event</th>
+              <th className="overline w-20 py-2 text-center font-semibold text-ink-400">In-app</th>
+              <th className="overline w-20 py-2 text-center font-semibold text-ink-400">Email</th>
+            </tr>
+          </thead>
+          <tbody>
+            {prefs.map((p) => (
+              <tr key={p.event_type} className="border-b border-paper-200 last:border-0">
+                <td className="py-2.5 text-ink-700">{EVENT_LABELS[p.event_type] ?? p.event_type}</td>
+                {(['in_app', 'email'] as const).map((channel) => (
+                  <td key={channel} className="py-2.5 text-center">
+                    <input
+                      type="checkbox"
+                      aria-label={`${channel === 'in_app' ? 'In-app' : 'Email'} — ${EVENT_LABELS[p.event_type] ?? p.event_type}`}
+                      checked={p[channel]}
+                      disabled={saving}
+                      onChange={() => void toggle(p.event_type, channel)}
+                      className="accent-bond-600"
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 export function SettingsPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -165,6 +258,8 @@ export function SettingsPage() {
           </p>
         )}
       </section>
+
+      <NotificationPreferencesCard />
 
       {user.sso_provider !== 'google' && <ChangePasswordCard />}
 

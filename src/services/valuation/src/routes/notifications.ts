@@ -3,7 +3,9 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
+import { NOTIFICATION_EVENT_TYPES } from '../domain/emailWorkflows.js';
 import { listNotifications, markAllRead, markRead, unreadCount } from '../repos/notifications.js';
+import { getPreferenceMatrix, upsertPreference } from '../repos/notificationPreferences.js';
 import { listOutbox } from '../repos/emailOutbox.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -16,6 +18,19 @@ import { requirePrincipal } from '../plugins/auth.js';
 const ListQuery = z.object({
   unread: z.coerce.boolean().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+const PreferencesBody = z.object({
+  preferences: z
+    .array(
+      z.object({
+        event_type: z.enum(NOTIFICATION_EVENT_TYPES),
+        in_app: z.boolean(),
+        email: z.boolean(),
+      }),
+    )
+    .min(1)
+    .max(NOTIFICATION_EVENT_TYPES.length),
 });
 
 const OutboxQuery = z.object({
@@ -57,6 +72,35 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
     const principal = requirePrincipal(req);
     return { marked: await markAllRead(deps.pool, principal.id) };
   });
+
+  // ── Notification preferences (P2 #11) — strictly self-scoped ──────────────
+
+  app.get(
+    '/api/v1/me/notification-preferences',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
+    },
+  );
+
+  app.put(
+    '/api/v1/me/notification-preferences',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      const parsed = PreferencesBody.safeParse(req.body);
+      if (!parsed.success)
+        throw problems.unprocessable('Invalid preferences', { errors: parsed.error.issues });
+      for (const pref of parsed.data.preferences) {
+        await upsertPreference(deps.pool, principal.id, pref.event_type, {
+          in_app: pref.in_app,
+          email: pref.email,
+        });
+      }
+      return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
+    },
+  );
 
   // Ops window into the auto-email outbox (P1 #21 observability).
   app.get('/api/v1/admin/email-outbox', { preHandler: app.authenticate }, async (req) => {
