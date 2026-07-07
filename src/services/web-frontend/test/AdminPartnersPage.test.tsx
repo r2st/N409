@@ -14,6 +14,9 @@ const partners: Partner[] = [
     name: 'Vestd',
     key: 'vestd',
     created_at: '2026-01-15T00:00:00Z',
+    archived_at: null,
+    brand_color: null,
+    logo_url: null,
     user_count: 3,
     valuation_count: 12,
   },
@@ -22,18 +25,24 @@ const partners: Partner[] = [
     name: 'Carta',
     key: 'carta',
     created_at: '2026-02-20T00:00:00Z',
+    archived_at: null,
+    brand_color: null,
+    logo_url: null,
     user_count: 0,
     valuation_count: 0,
   },
 ];
 
-function mockApi(overrides: Record<string, (init?: RequestInit) => Response> = {}) {
+function mockApi(
+  overrides: Record<string, (init?: RequestInit) => Response> = {},
+  list: Partner[] = partners,
+) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
     for (const [needle, handler] of Object.entries(overrides)) {
       if (path.includes(needle) && (init?.method ?? 'GET') !== 'GET') return handler(init);
     }
-    if (path.endsWith('/partners')) return jsonResponse({ partners });
+    if (path.includes('/partners')) return jsonResponse({ partners: list });
     throw new Error(`unexpected fetch ${path}`);
   });
 }
@@ -51,14 +60,21 @@ describe('AdminPartnersPage', () => {
     vi.restoreAllMocks();
   });
 
-  it('lists partners with rollup counts and a worklist drill-through', async () => {
-    mockApi();
+  it('lists partners with rollup counts and drill-throughs', async () => {
+    const fetchSpy = mockApi();
     renderPage();
 
     expect(await screen.findByText('Vestd')).toBeInTheDocument();
     expect(screen.getByText('vestd')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
+    // The console asks for archived partners too.
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain('include_archived=true');
 
+    // Partner names link into the detail page.
+    expect(screen.getByRole('link', { name: 'Vestd' })).toHaveAttribute(
+      'href',
+      '/admin/partners/01N409PARTNER00000000000AA',
+    );
     // Non-zero valuation counts link into the filtered worklist.
     const link = screen.getByRole('link', { name: '12' });
     expect(link).toHaveAttribute('href', '/valuations?partner_id=01N409PARTNER00000000000AA');
@@ -112,6 +128,46 @@ describe('AdminPartnersPage', () => {
       expect(patchCall).toBeTruthy();
       expect(String(patchCall![0])).toContain('/partners/01N409PARTNER00000000000AA');
       expect(JSON.parse(String((patchCall![1] as RequestInit).body))).toEqual({ name: 'Vestd Ltd' });
+    });
+  });
+
+  it('archives a partner via PATCH {archived: true}', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const fetchSpy = mockApi({
+      '/partners/01N409PARTNER00000000000AA': () =>
+        jsonResponse({ partner: { ...partners[0], archived_at: '2026-07-07T00:00:00Z' } }),
+    });
+    renderPage();
+
+    await screen.findByText('Vestd');
+    await user.click(screen.getAllByRole('button', { name: 'Archive' })[0]!);
+
+    await waitFor(() => {
+      const patchCall = fetchSpy.mock.calls.find(([, init]) => init?.method === 'PATCH');
+      expect(patchCall).toBeTruthy();
+      expect(JSON.parse(String((patchCall![1] as RequestInit).body))).toEqual({ archived: true });
+    });
+  });
+
+  it('hides archived partners until the toggle is on, then offers Restore', async () => {
+    const user = userEvent.setup();
+    const archived: Partner = { ...partners[1]!, archived_at: '2026-06-01T00:00:00Z' };
+    const fetchSpy = mockApi({}, [partners[0]!, archived]);
+    renderPage();
+
+    await screen.findByText('Vestd');
+    expect(screen.queryByText('Carta')).not.toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/Show archived/));
+    expect(await screen.findByText('Carta')).toBeInTheDocument();
+    expect(screen.getByText('Archived')).toBeInTheDocument();
+
+    fetchSpy.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Restore' }));
+    await waitFor(() => {
+      const patchCall = fetchSpy.mock.calls.find(([, init]) => init?.method === 'PATCH');
+      expect(JSON.parse(String((patchCall![1] as RequestInit).body))).toEqual({ archived: false });
     });
   });
 

@@ -5,7 +5,7 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { computeStats } from '../lib/stats';
 import { formatDate, formatDateTime } from '../lib/format';
-import type { ApiToken, Valuation, ValuationList } from '../lib/types';
+import type { ApiToken, PartnerBranding, Valuation, ValuationList } from '../lib/types';
 import { Button, EmptyState, ErrorNote, KindBadge, Spinner, StatCard, StateBadge, TextInput } from '../components/ui';
 
 /**
@@ -23,6 +23,7 @@ export function PartnerPortalPage() {
   const [minted, setMinted] = useState<{ name: string; secret: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [org, setOrg] = useState<PartnerBranding | null>(null);
   const partnerId = user?.partner_id ?? null;
   const canMint = Boolean(user?.roles.includes('partner')); // org admins, not members
 
@@ -30,6 +31,13 @@ export function PartnerPortalPage() {
     api<ValuationList>('/valuations?per_page=100')
       .then((res) => setValuations(res.valuations))
       .catch(() => setError('Could not load your portfolio.'));
+  }, []);
+
+  // P1 #7 — the organisation's name/branding, set by the platform admins.
+  useEffect(() => {
+    api<{ partner: PartnerBranding }>('/partners/mine')
+      .then((res) => setOrg(res.partner))
+      .catch(() => {});
   }, []);
 
   const loadTokens = useCallback(() => {
@@ -79,7 +87,19 @@ export function PartnerPortalPage() {
   return (
     <div>
       <div className="overline text-ink-400">Partner portal</div>
-      <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Your portfolio</h1>
+      <h1 className="mt-1 flex items-center gap-3 font-display text-3xl font-semibold text-ink-900">
+        {org?.logo_url && (
+          <img src={org.logo_url} alt={`${org.name} logo`} className="h-9 w-9 rounded object-contain" />
+        )}
+        {org ? org.name : 'Your portfolio'}
+      </h1>
+      {org?.brand_color && (
+        <div
+          aria-hidden
+          className="mt-2 h-1 w-24 rounded-full"
+          style={{ backgroundColor: org.brand_color }}
+        />
+      )}
       <p className="mt-1 text-sm text-ink-400">
         Valuations across your organisation — scoped to your partnership.
       </p>

@@ -148,8 +148,34 @@ export interface Partner {
   name: string;
   key: string;
   created_at: string;
+  archived_at: string | null;
+  brand_color: string | null;
+  logo_url: string | null;
   user_count: number;
   valuation_count: number;
+}
+
+// ── P1 #7 — Partner management ───────────────────────────────────────────────
+
+export interface PartnerDetail extends Partner {
+  valuations_by_group: Record<string, number>;
+  last_activity_at: string | null;
+  users: Array<{
+    id: string;
+    email: string;
+    first_name: string | null;
+    last_name: string | null;
+    roles: string[];
+  }>;
+}
+
+/** The slice of their own organisation a partner user can see (branding). */
+export interface PartnerBranding {
+  id: string;
+  name: string;
+  key: string;
+  brand_color: string | null;
+  logo_url: string | null;
 }
 
 export interface Invitation {

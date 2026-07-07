@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { stateGroupOf } from '../domain/operations.js';
 import { assignRoles, type UserWithRoles } from './users.js';
 import type { RoleKey } from '../domain/roles.js';
 
@@ -126,13 +127,16 @@ export async function restoreUser(pool: pg.Pool, id: string): Promise<boolean> {
   return (rowCount ?? 0) > 0;
 }
 
-// ── Partners (pickers + admin creation) ──────────────────────────────────────
+// ── Partners (pickers + admin management, P1 #7) ─────────────────────────────
 
 export interface PartnerRow {
   id: string;
   name: string;
   key: string;
   created_at: Date;
+  archived_at: Date | null;
+  brand_color: string | null;
+  logo_url: string | null;
   user_count: number;
   valuation_count: number;
 }
@@ -142,12 +146,28 @@ const PARTNER_COUNTS_SQL = `
   (SELECT count(*)::int FROM users u WHERE u.partner_id = p.id AND u.deleted_at IS NULL) AS user_count,
   (SELECT count(*)::int FROM valuations v WHERE v.partner_id = p.id) AS valuation_count`;
 
-export async function listPartners(pool: pg.Pool): Promise<PartnerRow[]> {
+const PARTNER_COLUMNS_SQL = `p.id, p.name, p.key, p.created_at, p.archived_at, p.brand_color, p.logo_url`;
+
+/** Archived partners are hidden by default so pickers only offer live channels. */
+export async function listPartners(
+  pool: pg.Pool,
+  opts: { includeArchived?: boolean } = {},
+): Promise<PartnerRow[]> {
   const { rows } = await pool.query<PartnerRow>(
-    `SELECT p.id, p.name, p.key, p.created_at, ${PARTNER_COUNTS_SQL}
-     FROM partners p ORDER BY p.name ASC`,
+    `SELECT ${PARTNER_COLUMNS_SQL}, ${PARTNER_COUNTS_SQL}
+     FROM partners p
+     ${opts.includeArchived ? '' : 'WHERE p.archived_at IS NULL'}
+     ORDER BY p.name ASC`,
   );
   return rows;
+}
+
+export async function findPartnerById(pool: pg.Pool, id: string): Promise<PartnerRow | null> {
+  const { rows } = await pool.query<PartnerRow>(
+    `SELECT ${PARTNER_COLUMNS_SQL}, ${PARTNER_COUNTS_SQL} FROM partners p WHERE p.id = $1`,
+    [id],
+  );
+  return rows[0] ?? null;
 }
 
 export async function createPartner(
@@ -156,23 +176,105 @@ export async function createPartner(
 ): Promise<PartnerRow> {
   const { rows } = await pool.query<PartnerRow>(
     `INSERT INTO partners (id, name, key) VALUES ($1, $2, $3)
-     RETURNING id, name, key, created_at, 0 AS user_count, 0 AS valuation_count`,
+     RETURNING id, name, key, created_at, archived_at, brand_color, logo_url,
+               0 AS user_count, 0 AS valuation_count`,
     [newUlid(), args.name, args.key],
   );
   return rows[0]!;
 }
 
-export async function renamePartner(
+export interface PartnerPatch {
+  name?: string;
+  brand_color?: string | null;
+  logo_url?: string | null;
+  /** true → stamp archived_at (idempotent); false → clear it. */
+  archived?: boolean;
+}
+
+export async function updatePartner(
   pool: pg.Pool,
   id: string,
-  name: string,
+  patch: PartnerPatch,
 ): Promise<PartnerRow | null> {
+  const sets: string[] = [];
+  const params: unknown[] = [id];
+  const add = (sql: string, value?: unknown) => {
+    if (value === undefined) {
+      sets.push(sql);
+    } else {
+      params.push(value);
+      sets.push(sql.replace('?', `$${params.length}`));
+    }
+  };
+  if (patch.name !== undefined) add('name = ?', patch.name);
+  if (patch.brand_color !== undefined) add('brand_color = ?', patch.brand_color);
+  if (patch.logo_url !== undefined) add('logo_url = ?', patch.logo_url);
+  if (patch.archived === true) add('archived_at = coalesce(archived_at, now())');
+  if (patch.archived === false) add('archived_at = NULL');
+  if (sets.length === 0) return findPartnerById(pool, id);
+
   const { rows } = await pool.query<PartnerRow>(
-    `UPDATE partners p SET name = $2 WHERE p.id = $1
-     RETURNING p.id, p.name, p.key, p.created_at, ${PARTNER_COUNTS_SQL}`,
-    [id, name],
+    `UPDATE partners p SET ${sets.join(', ')} WHERE p.id = $1
+     RETURNING ${PARTNER_COLUMNS_SQL}, ${PARTNER_COUNTS_SQL}`,
+    params,
   );
   return rows[0] ?? null;
+}
+
+export interface PartnerDetail extends PartnerRow {
+  valuations_by_group: Record<string, number>;
+  last_activity_at: Date | null;
+  users: Array<{
+    id: string;
+    email: string;
+    first_name: string | null;
+    last_name: string | null;
+    roles: string[];
+  }>;
+}
+
+/** Detail rollups for the admin partner page: states, users, last activity. */
+export async function getPartnerDetail(pool: pg.Pool, id: string): Promise<PartnerDetail | null> {
+  const partner = await findPartnerById(pool, id);
+  if (!partner) return null;
+
+  const [{ rows: groups }, { rows: users }, { rows: activity }] = await Promise.all([
+    pool.query<{ state: string; count: number }>(
+      `SELECT state::text, count(*)::int AS count FROM valuations
+       WHERE partner_id = $1 GROUP BY state`,
+      [id],
+    ),
+    pool.query(
+      `SELECT u.id, u.email, u.first_name, u.last_name,
+              coalesce(array_agg(r.key ORDER BY r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
+       FROM users u
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id
+       WHERE u.partner_id = $1 AND u.deleted_at IS NULL
+       GROUP BY u.id
+       ORDER BY u.email ASC`,
+      [id],
+    ),
+    pool.query<{ last_activity_at: Date | null }>(
+      `SELECT max(e.occurred_at) AS last_activity_at
+       FROM valuation_events e
+       JOIN valuations v ON v.id = e.valuation_id
+       WHERE v.partner_id = $1`,
+      [id],
+    ),
+  ]);
+
+  const byGroup: Record<string, number> = {};
+  for (const row of groups) {
+    const group = stateGroupOf(row.state as Parameters<typeof stateGroupOf>[0]);
+    byGroup[group] = (byGroup[group] ?? 0) + row.count;
+  }
+  return {
+    ...partner,
+    valuations_by_group: byGroup,
+    last_activity_at: activity[0]?.last_activity_at ?? null,
+    users: users as PartnerDetail['users'],
+  };
 }
 
 /** Lightweight id+label list for filter dropdowns (reviewer picker etc.). */

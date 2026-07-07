@@ -83,6 +83,7 @@ export function AdminUsersPage() {
 
   const q = params.get('q') ?? '';
   const role = params.get('role') ?? '';
+  const partner = params.get('partner') ?? '';
   const showDeleted = params.get('deleted') === '1';
   const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
 
@@ -91,11 +92,12 @@ export function AdminUsersPage() {
     const query = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
     if (q) query.set('q', q);
     if (role) query.set('role', role);
+    if (partner) query.set('partner_id', partner);
     if (showDeleted) query.set('include_deleted', 'true');
     api<UserList>(`/users?${query}`)
       .then(setData)
       .catch(() => setError('Could not load users.'));
-  }, [q, role, showDeleted, page]);
+  }, [q, role, partner, showDeleted, page]);
 
   useEffect(() => {
     load();
@@ -145,6 +147,11 @@ export function AdminUsersPage() {
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!editor) return;
+    // Mirrors the API rule: partner/member roles are scoped to an organisation.
+    if (!editor.partner_id && ['partner', 'member'].some((r) => editor.roles.has(r))) {
+      setEditorError('Partner and member roles require a partner organisation — pick one below.');
+      return;
+    }
     setBusy(true);
     setEditorError(null);
     try {
@@ -269,6 +276,7 @@ export function AdminUsersPage() {
               const query = new URLSearchParams();
               if (q) query.set('q', q);
               if (role) query.set('role', role);
+              if (partner) query.set('partner_id', partner);
               void apiDownload(`/users/export?${query}`, 'users.csv').catch(() =>
                 setError('Could not export CSV.'),
               );
@@ -280,7 +288,8 @@ export function AdminUsersPage() {
             variant="secondary"
             onClick={() => {
               setEditorError(null);
-              setEditor(emptyEditor('create'));
+              // A partner filter pre-selects that org for the new account.
+              setEditor({ ...emptyEditor('create'), partner_id: partner });
             }}
           >
             New user with password
@@ -288,7 +297,7 @@ export function AdminUsersPage() {
           <Button
             onClick={() => {
               setEditorError(null);
-              setEditor(emptyEditor('invite'));
+              setEditor({ ...emptyEditor('invite'), partner_id: partner });
             }}
           >
             + Invite user
@@ -322,6 +331,19 @@ export function AdminUsersPage() {
           {ROLE_KEYS.map((r) => (
             <option key={r} value={r}>
               {r}
+            </option>
+          ))}
+        </Select>
+        <Select
+          aria-label="Filter by partner"
+          value={partner}
+          onChange={(e) => setFilter('partner', e.target.value)}
+          className="!w-auto min-w-36"
+        >
+          <option value="">All partners</option>
+          {partners.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
             </option>
           ))}
         </Select>

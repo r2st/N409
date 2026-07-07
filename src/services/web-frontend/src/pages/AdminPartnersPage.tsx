@@ -5,9 +5,10 @@ import { formatDate } from '../lib/format';
 import type { Partner } from '../lib/types';
 import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
 
-/** Admin console for partner organisations (P0 #1; full management is P1 #7). */
+/** Admin console for partner organisations (P0 #1 + full management P1 #7). */
 export function AdminPartnersPage() {
   const [partners, setPartners] = useState<Partner[] | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -19,7 +20,9 @@ export function AdminPartnersPage() {
 
   const load = useCallback(async () => {
     try {
-      const { partners: items } = await api<{ partners: Partner[] }>('/partners');
+      const { partners: items } = await api<{ partners: Partner[] }>(
+        '/partners?include_archived=true',
+      );
       setPartners(items);
     } catch (err) {
       setError(
@@ -50,22 +53,35 @@ export function AdminPartnersPage() {
     }
   };
 
-  const rename = async (id: string) => {
+  const patch = async (id: string, body: Record<string, unknown>, failure: string) => {
     setBusy(true);
     setFormError(null);
     try {
-      await api(`/partners/${id}`, { method: 'PATCH', body: { name: renameDraft.trim() } });
+      await api(`/partners/${id}`, { method: 'PATCH', body });
       setRenamingId(null);
       await load();
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'Could not rename the partner.');
+      setFormError(err instanceof ApiError ? err.message : failure);
     } finally {
       setBusy(false);
     }
   };
 
+  const archive = async (p: Partner) => {
+    if (
+      !window.confirm(
+        `Archive ${p.name}? It disappears from pickers and filters; existing users and valuations keep working.`,
+      )
+    )
+      return;
+    await patch(p.id, { archived: true }, 'Could not archive the partner.');
+  };
+
   if (error && !partners) return <ErrorNote>{error}</ErrorNote>;
   if (!partners) return <Spinner />;
+
+  const visible = showArchived ? partners : partners.filter((p) => !p.archived_at);
+  const archivedCount = partners.filter((p) => p.archived_at).length;
 
   return (
     <div>
@@ -120,7 +136,19 @@ export function AdminPartnersPage() {
         </div>
       )}
 
-      {partners.length === 0 ? (
+      {archivedCount > 0 && (
+        <label className="mt-4 flex w-fit cursor-pointer items-center gap-2 text-sm text-ink-600">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+            className="accent-bond-600"
+          />
+          Show archived ({archivedCount})
+        </label>
+      )}
+
+      {visible.length === 0 ? (
         <div className="mt-6">
           <EmptyState title="No partners yet">
             Create a partner organisation to start channelling valuations through it.
@@ -140,15 +168,22 @@ export function AdminPartnersPage() {
               </tr>
             </thead>
             <tbody>
-              {partners.map((p) => (
-                <tr key={p.id} className="border-b border-paper-200 last:border-0">
+              {visible.map((p) => (
+                <tr
+                  key={p.id}
+                  className={`border-b border-paper-200 last:border-0 ${p.archived_at ? 'opacity-60' : ''}`}
+                >
                   <td className="px-5 py-3.5">
                     {renamingId === p.id ? (
                       <form
                         className="flex items-center gap-2"
                         onSubmit={(e) => {
                           e.preventDefault();
-                          void rename(p.id);
+                          void patch(
+                            p.id,
+                            { name: renameDraft.trim() },
+                            'Could not rename the partner.',
+                          );
                         }}
                       >
                         <TextInput
@@ -166,7 +201,19 @@ export function AdminPartnersPage() {
                         </Button>
                       </form>
                     ) : (
-                      <span className="font-semibold text-ink-900">{p.name}</span>
+                      <span className="flex items-center gap-2">
+                        <Link
+                          to={`/admin/partners/${p.id}`}
+                          className="font-semibold text-ink-900 hover:text-bond-700"
+                        >
+                          {p.name}
+                        </Link>
+                        {p.archived_at && (
+                          <span className="rounded-full bg-paper-200 px-2 py-0.5 text-xs font-semibold text-ink-400 ring-1 ring-inset ring-ink-200">
+                            Archived
+                          </span>
+                        )}
+                      </span>
                     )}
                   </td>
                   <td className="px-4 py-3.5 font-mono text-xs text-ink-500">{p.key}</td>
@@ -186,15 +233,32 @@ export function AdminPartnersPage() {
                   <td className="tnum px-4 py-3.5 text-ink-600">{formatDate(p.created_at)}</td>
                   <td className="px-4 py-3.5 text-right">
                     {renamingId !== p.id && (
-                      <Button
-                        variant="ghost"
-                        onClick={() => {
-                          setRenamingId(p.id);
-                          setRenameDraft(p.name);
-                        }}
-                      >
-                        Rename
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            setRenamingId(p.id);
+                            setRenameDraft(p.name);
+                          }}
+                        >
+                          Rename
+                        </Button>
+                        {p.archived_at ? (
+                          <Button
+                            variant="ghost"
+                            disabled={busy}
+                            onClick={() =>
+                              void patch(p.id, { archived: false }, 'Could not restore the partner.')
+                            }
+                          >
+                            Restore
+                          </Button>
+                        ) : (
+                          <Button variant="ghost" disabled={busy} onClick={() => void archive(p)}>
+                            Archive
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </td>
                 </tr>
