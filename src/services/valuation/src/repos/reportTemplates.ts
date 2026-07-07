@@ -23,6 +23,25 @@ export function templateLabel(t: Pick<ReportTemplateRow, 'name' | 'version'>): s
   return `${t.name}.v${t.version}`;
 }
 
+/**
+ * The active managed template for a kind, if any (gap 6 — template bodies
+ * merge into newly created reports). Newest activation wins when several
+ * template names target the same kind.
+ */
+export async function findActiveTemplateForKind(
+  pool: pg.Pool,
+  kind: ValuationKind,
+): Promise<ReportTemplateRow | null> {
+  const { rows } = await pool.query<ReportTemplateRow>(
+    `SELECT * FROM report_templates
+     WHERE kind = $1 AND status = 'active' AND btrim(body) <> ''
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [kind],
+  );
+  return rows[0] ?? null;
+}
+
 export async function listTemplates(
   pool: pg.Pool,
   filters: { name?: string; kind?: ValuationKind; status?: ReportTemplateStatus } = {},

@@ -192,15 +192,48 @@ export function templateForKind(kind: ValuationKind): ReportTemplate {
   return kind === '409a' ? TEMPLATE_409A : TEMPLATE_GENERIC;
 }
 
+/** {{placeholder}} substitution; unknown placeholders survive verbatim. */
+export function fillTemplateVars(text: string, vars: ReportTemplateVars): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => {
+    const v = (vars as unknown as Record<string, unknown>)[key];
+    return v === undefined || v === null ? m : String(v);
+  });
+}
+
 /** Instantiates a template into editable content with placeholders resolved. */
 export function instantiateTemplate(template: ReportTemplate, vars: ReportTemplateVars): ReportContent {
-  const fill = (text: string) =>
-    text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => {
-      const v = (vars as unknown as Record<string, unknown>)[key];
-      return v === undefined || v === null ? m : String(v);
-    });
+  const fill = (text: string) => fillTemplateVars(text, vars);
   return {
     title: `${template.name} — ${vars.company_name}`,
     sections: template.sections.map((s) => ({ key: s.key, heading: fill(s.heading), html: fill(s.html) })),
   };
+}
+
+/**
+ * Managed-template merge (gap 6): a DB template's body becomes the report
+ * content. Top-level <h1>Heading</h1> markers split the body into sections;
+ * a body without any <h1> becomes a single "Report" section. Placeholders
+ * resolve with the same vars as the built-in skeletons; everything is
+ * sanitized to the editor whitelist.
+ */
+export function contentFromManagedTemplate(
+  template: { name: string; body: string },
+  vars: ReportTemplateVars,
+): ReportContent {
+  const filled = fillTemplateVars(template.body, vars);
+  const parts = filled.split(/<h1[^>]*>([\s\S]*?)<\/h1\s*>/gi);
+  const sections: ReportSection[] = [];
+  // parts = [before-first-h1, heading1, body1, heading2, body2, …]
+  const preamble = parts.length > 1 ? parts[0]?.trim() : '';
+  if (preamble) sections.push({ key: 'section-0', heading: 'Introduction', html: sanitizeHtml(preamble) });
+  for (let i = 1; i < parts.length; i += 2) {
+    const heading = sanitizeHtml(parts[i] ?? '').replace(/<[^>]+>/g, '').trim() || `Section ${sections.length + 1}`;
+    sections.push({
+      key: `section-${sections.length}`,
+      heading,
+      html: sanitizeHtml((parts[i + 1] ?? '').trim()),
+    });
+  }
+  if (sections.length === 0) sections.push({ key: 'body', heading: 'Report', html: sanitizeHtml(filled) });
+  return { title: `${template.name} — ${vars.company_name}`, sections };
 }

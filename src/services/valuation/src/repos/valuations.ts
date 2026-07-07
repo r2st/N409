@@ -131,6 +131,11 @@ export interface ValuationFilters {
   q?: string;
   /** Explicit id list — powers bulk export of a checkbox selection. */
   ids?: string[];
+  /**
+   * Unread scope (gap 4): keep only valuations whose conversation moved since
+   * the given side last opened them (last_comment_at vs *_read_at).
+   */
+  unreadFor?: 'admin' | 'user';
   reviewerId?: string;
   partnerId?: string;
   userId?: string;
@@ -185,6 +190,8 @@ export interface ListFilters extends ValuationFilters {
   sort?: SortSpec[];
   page: number;
   perPage: number;
+  /** Which read marker the computed per-row `unread` flag compares against. */
+  readerSide?: 'admin' | 'user';
 }
 
 /**
@@ -217,6 +224,12 @@ export function buildValuationWhere(
   if (filters.paidStatus) add('paid_status = ?', filters.paidStatus);
   if (filters.waitingOnClient !== undefined) add('waiting_on_client = ?', filters.waitingOnClient);
   // *_to bounds are inclusive calendar dates: created_to=2026-07-01 keeps the whole day.
+  if (filters.unreadFor) {
+    const readCol = filters.unreadFor === 'admin' ? 'admin_read_at' : 'user_read_at';
+    where.push(
+      `${alias}last_comment_at IS NOT NULL AND (${alias}${readCol} IS NULL OR ${alias}last_comment_at > ${alias}${readCol})`,
+    );
+  }
   if (filters.createdFrom) add('created_at >= ?', filters.createdFrom);
   if (filters.createdTo) add(`created_at < ?::timestamptz + interval '1 day'`, filters.createdTo);
   if (filters.dueFrom) add('due_date >= ?', filters.dueFrom);
@@ -230,9 +243,19 @@ export function buildValuationWhere(
     } else if (/^#?\d{1,12}$/.test(q)) {
       add('number = ?', Number(q.replace('#', '')));
     } else {
+      // Company-name substring, exact workflow id, or requester name/email
+      // (gap 7 — 409.ai also matches the requesting user).
+      const ownerRef = `${alias || 'valuations.'}user_id`;
       params.push(`%${q}%`, q);
+      const like = `$${params.length - 1}`;
       where.push(
-        `(${alias}company_name ILIKE $${params.length - 1} OR ${alias}workflow_id = $${params.length})`,
+        `(${alias}company_name ILIKE ${like} OR ${alias}workflow_id = $${params.length}
+          OR EXISTS (
+            SELECT 1 FROM users su
+            WHERE su.id = ${ownerRef}
+              AND (su.email ILIKE ${like}
+                   OR concat_ws(' ', su.first_name, su.last_name) ILIKE ${like})
+          ))`,
       );
     }
   }
@@ -254,14 +277,30 @@ export async function listValuations(
     params,
   );
 
+  // Per-row unread flag (gap 4) for the caller's side of the conversation.
+  const readCol = filters.readerSide === 'admin' ? 'admin_read_at' : 'user_read_at';
+  const unreadSql = filters.readerSide
+    ? `, (last_comment_at IS NOT NULL AND (${readCol} IS NULL OR last_comment_at > ${readCol})) AS unread`
+    : '';
+
   const paged = [...params, filters.perPage, (filters.page - 1) * filters.perPage];
   const { rows } = await pool.query<ValuationRow>(
-    `SELECT * FROM valuations ${whereSql}
+    `SELECT *${unreadSql} FROM valuations ${whereSql}
      ${orderBySql(filters.sort)}
      LIMIT $${paged.length - 1} OFFSET $${paged.length}`,
     paged,
   );
   return { items: rows, total: Number(countRows[0]!.count) };
+}
+
+/** Stamp the side's read marker; called when a valuation is opened (gap 4). */
+export async function markValuationRead(
+  pool: pg.Pool,
+  id: string,
+  side: 'admin' | 'user',
+): Promise<void> {
+  const column = side === 'admin' ? 'admin_read_at' : 'user_read_at';
+  await pool.query(`UPDATE valuations SET ${column} = now() WHERE id = $1`, [id]);
 }
 
 /** Live counts per tab (state group), honouring scope + every non-tab filter. */
@@ -403,6 +442,45 @@ export async function cloneValuation(
        FROM valuation_params WHERE valuation_id = $1`,
       [source.id, id, opts.rollForward],
     );
+    // Deeper clone (gap 5): carry documents, funding rounds, and workbook
+    // cells so a roll-forward starts from last year's data, not a blank
+    // engagement. Document rows are duplicated but point at the same
+    // content-addressed blob (sha-prefixed storage path), so no file copying.
+    const { rows: sourceDocs } = await client.query<{ id: string }>(
+      `SELECT id FROM documents WHERE valuation_id = $1 AND deleted_at IS NULL`,
+      [source.id],
+    );
+    for (const doc of sourceDocs) {
+      await client.query(
+        `INSERT INTO documents
+           (id, valuation_id, kind, filename, content_type, size_bytes, sha256, storage_path, uploaded_by)
+         SELECT $1, $2, kind, filename, content_type, size_bytes, sha256, storage_path, uploaded_by
+         FROM documents WHERE id = $3`,
+        [newUlid(), id, doc.id],
+      );
+    }
+    const { rows: sourceRounds } = await client.query<{ id: string }>(
+      `SELECT id FROM funding_rounds WHERE valuation_id = $1`,
+      [source.id],
+    );
+    for (const round of sourceRounds) {
+      await client.query(
+        `INSERT INTO funding_rounds
+           (id, valuation_id, name, security_type, closed_on, amount_raised_cents,
+            pre_money_cents, post_money_cents, shares_issued, notes, created_by)
+         SELECT $1, $2, name, security_type, closed_on, amount_raised_cents,
+                pre_money_cents, post_money_cents, shares_issued, notes, created_by
+         FROM funding_rounds WHERE id = $3`,
+        [newUlid(), id, round.id],
+      );
+    }
+    const { rowCount: cellCount } = await client.query(
+      `INSERT INTO workbook_cells (valuation_id, sheet, row_key, column_key, value, updated_by)
+       SELECT $2, sheet, row_key, column_key, value, updated_by
+       FROM workbook_cells WHERE valuation_id = $1`,
+      [source.id, id],
+    );
+
     await recordEvent(client, {
       valuationId: id,
       type: EVENT_TYPES.created,
@@ -413,7 +491,16 @@ export async function cloneValuation(
       valuationId: id,
       type: OPERATIONS_EVENT_TYPES.cloned,
       actor,
-      payload: { from: source.id, from_number: source.number, roll_forward: opts.rollForward },
+      payload: {
+        from: source.id,
+        from_number: source.number,
+        roll_forward: opts.rollForward,
+        copied: {
+          documents: sourceDocs.length,
+          funding_rounds: sourceRounds.length,
+          workbook_cells: cellCount ?? 0,
+        },
+      },
     });
     return rows[0]!;
   });

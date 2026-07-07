@@ -67,6 +67,8 @@ export interface Valuation {
   qsbs_attestation: boolean | null;
   created_at: string;
   updated_at: string;
+  /** Computed per-viewer on the list (gap 4): conversation moved since last opened. */
+  unread?: boolean;
 }
 
 export interface ValuationEvent {

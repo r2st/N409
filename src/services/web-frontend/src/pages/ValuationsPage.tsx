@@ -25,6 +25,7 @@ const FILTER_KEYS = [
   'created_to',
   'due_from',
   'due_to',
+  'unread',
 ] as const;
 
 /** Clickable column header with the M4 multi-sort indicator (↑/↓ + priority). */
@@ -399,6 +400,15 @@ export function ValuationsPage() {
             />
           </div>
         </label>
+        <label className="flex items-center gap-1.5 pb-2 text-xs font-semibold text-ink-600">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-bond-600"
+            checked={params.get('unread') === 'true'}
+            onChange={(e) => setFilter('unread', e.target.checked ? 'true' : '')}
+          />
+          Unread only
+        </label>
         {hasFilters && (
           <Button variant="ghost" type="button" onClick={clearFilters}>
             Clear filters
@@ -507,6 +517,12 @@ export function ValuationsPage() {
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
+                      {v.unread && (
+                        <span
+                          aria-label="Unread activity"
+                          className="h-2 w-2 shrink-0 self-center rounded-full bg-bond-600"
+                        />
+                      )}
                       <span className="truncate font-display text-[1.05rem] font-semibold text-ink-900">
                         {v.company_name}
                       </span>
@@ -586,7 +602,16 @@ export function ValuationsPage() {
                   )}
                   <td className="tnum px-5 py-3.5 text-ink-400">{v.number ?? '—'}</td>
                   <td className="px-5 py-3.5">
-                    <div className="font-semibold text-ink-900">{v.company_name}</div>
+                    <div className="flex items-center gap-2 font-semibold text-ink-900">
+                      {v.unread && (
+                        <span
+                          aria-label="Unread activity"
+                          title="New activity since you last opened this valuation"
+                          className="h-2 w-2 shrink-0 rounded-full bg-bond-600"
+                        />
+                      )}
+                      {v.company_name}
+                    </div>
                     {v.waiting_on_client && (
                       <div className="mt-0.5 text-xs font-medium text-amber-700">Waiting on client</div>
                     )}

@@ -39,11 +39,14 @@ function AxisTableView({
   table,
   currency,
   baseFmvCents,
+  priceOnly = false,
 }: {
   title: string;
   table: AxisTable;
   currency: string | null;
   baseFmvCents: number;
+  /** Gap 8 — clean price-only view without the delta-vs-base row. */
+  priceOnly?: boolean;
 }) {
   const rowMeta = AXIS_META[table.rowAxis];
   const colMeta = AXIS_META[table.colAxis];
@@ -78,10 +81,12 @@ function AxisTableView({
                       className={`tnum px-4 py-2.5 text-right ${isBase ? 'bg-bond-50 font-semibold' : ''}`}
                     >
                       <div className="text-ink-900">{formatMoney(cell.fmvPerShareCents, currency)}</div>
-                      <div className={`text-xs ${deltaClass(cell.deltaFromBase)}`}>
-                        {cell.deltaFromBase > 0 ? '+' : ''}
-                        {(cell.deltaFromBase * 100).toFixed(1)}%
-                      </div>
+                      {!priceOnly && (
+                        <div className={`text-xs ${deltaClass(cell.deltaFromBase)}`}>
+                          {cell.deltaFromBase > 0 ? '+' : ''}
+                          {(cell.deltaFromBase * 100).toFixed(1)}%
+                        </div>
+                      )}
                     </td>
                   );
                 })}
@@ -100,6 +105,7 @@ export function SensitivityPage() {
   const [result, setResult] = useState<SensitivityResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [priceOnly, setPriceOnly] = useState(false);
 
   const set = (key: keyof typeof defaultAssumptions) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -192,6 +198,15 @@ export function SensitivityPage() {
                 ` · r ${(result.base.riskFreeRate * 100).toFixed(1)}%`}{' '}
               · DLOM {(result.dlom * 100).toFixed(0)}%
             </div>
+            <label className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-ink-600">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-bond-600"
+                checked={priceOnly}
+                onChange={(e) => setPriceOnly(e.target.checked)}
+              />
+              Prices only
+            </label>
           </div>
 
           {result.tables ? (
@@ -201,18 +216,21 @@ export function SensitivityPage() {
                 table={result.tables.term_vol}
                 currency={result.currency}
                 baseFmvCents={result.base.fmvPerShareCents}
+                priceOnly={priceOnly}
               />
               <AxisTableView
                 title="Risk-free rate × Volatility"
                 table={result.tables.rfr_vol}
                 currency={result.currency}
                 baseFmvCents={result.base.fmvPerShareCents}
+                priceOnly={priceOnly}
               />
               <AxisTableView
                 title="Risk-free rate × Term"
                 table={result.tables.rfr_term}
                 currency={result.currency}
                 baseFmvCents={result.base.fmvPerShareCents}
+                priceOnly={priceOnly}
               />
             </>
           ) : (
@@ -229,6 +247,7 @@ export function SensitivityPage() {
               }}
               currency={result.currency}
               baseFmvCents={result.base.fmvPerShareCents}
+              priceOnly={priceOnly}
             />
           )}
           <p className="text-xs text-ink-400">

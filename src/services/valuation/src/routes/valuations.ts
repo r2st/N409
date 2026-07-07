@@ -16,6 +16,7 @@ import {
   createValuation,
   findValuationById,
   listValuations,
+  markValuationRead,
   parseSort,
   patchValuation,
   type ValuationFilters,
@@ -90,14 +91,23 @@ export const ValuationFilterQuery = z.object({
     .enum(['true', 'false'])
     .transform((v) => v === 'true')
     .optional(),
+  // Unread scope (gap 4) — resolved to the caller's side in the route.
+  unread: z
+    .enum(['true', 'false'])
+    .transform((v) => v === 'true')
+    .optional(),
   created_from: DateOnly.optional(),
   created_to: DateOnly.optional(),
   due_from: DateOnly.optional(),
   due_to: DateOnly.optional(),
 });
 
-export function toRepoFilters(f: z.infer<typeof ValuationFilterQuery>): ValuationFilters {
+export function toRepoFilters(
+  f: z.infer<typeof ValuationFilterQuery>,
+  readerSide?: 'admin' | 'user',
+): ValuationFilters {
   return {
+    unreadFor: f.unread && readerSide ? readerSide : undefined,
     state: f.state,
     kind: f.kind,
     group: f.group,
@@ -183,11 +193,13 @@ export function registerValuationRoutes(
     const sort = parseSort(parsed.data.sort);
     if (sort === null) throw problems.badRequest('Invalid sort');
 
+    const readerSide = isOps(principal) ? 'admin' : 'user';
     const { items, total } = await listValuations(deps.pool, valuationScope(principal), {
-      ...toRepoFilters(parsed.data),
+      ...toRepoFilters(parsed.data, readerSide),
       sort,
       page,
       perPage: per_page,
+      readerSide,
     });
     return { valuations: items, page, per_page, total };
   });
@@ -195,7 +207,12 @@ export function registerValuationRoutes(
   app.get('/api/v1/valuations/:id', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
-    return { valuation: await loadAuthorized(deps.pool, principal, id) };
+    const valuation = await loadAuthorized(deps.pool, principal, id);
+    // Opening a valuation clears its unread marker for the viewer's side
+    // (gap 4). Ops read the admin marker; the owner reads the user marker.
+    if (isOps(principal)) await markValuationRead(deps.pool, valuation.id, 'admin');
+    else if (principal.id === valuation.user_id) await markValuationRead(deps.pool, valuation.id, 'user');
+    return { valuation };
   });
 
   app.patch('/api/v1/valuations/:id', { preHandler: app.authenticate }, async (req) => {

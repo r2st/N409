@@ -45,6 +45,45 @@ function NavItem({
   );
 }
 
+/**
+ * Collapsible nav section (final-status §3.3 #1): the ops/admin blocks fold
+ * away so the sidebar stays scannable. Open state persists per section.
+ */
+function NavGroup({ label, children }: { label: string; children: ReactNode }) {
+  const storageKey = `n409.nav.${label.toLowerCase()}`;
+  const [open, setOpen] = useState(() => localStorage.getItem(storageKey) !== 'closed');
+  const toggle = () => {
+    setOpen((v) => {
+      localStorage.setItem(storageKey, v ? 'closed' : 'open');
+      return !v;
+    });
+  };
+  return (
+    <>
+      <button
+        onClick={toggle}
+        aria-expanded={open}
+        className="overline mt-6 mb-2 flex w-full cursor-pointer items-center justify-between px-3 text-left text-ink-400/80 hover:text-ink-300"
+      >
+        {label}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          className={`transition-transform ${open ? 'rotate-90' : ''}`}
+          aria-hidden
+        >
+          <path d="M9 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && children}
+    </>
+  );
+}
+
 /** Polls the unread notification count (M4) — on route change and every 60s. */
 function useUnreadCount(): number {
   const [count, setCount] = useState(0);
@@ -211,8 +250,7 @@ export function AppLayout() {
         <NavItem to="/partner" label="Partner portal" icon={icons.partner} onNavigate={close} />
       )}
       {isOps(user) && (
-        <>
-          <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Operations</div>
+        <NavGroup label="Operations">
           <NavItem to="/tasks" label="Review tasks" icon={icons.tasks} onNavigate={close} />
           <NavItem to="/templates" label="Report templates" icon={icons.templates} onNavigate={close} />
           <NavItem to="/admin/prompts" label="Bot prompts" icon={icons.prompts} onNavigate={close} />
@@ -221,14 +259,13 @@ export function AppLayout() {
           <NavItem to="/admin/activity" label="Activity log" icon={icons.activity} onNavigate={close} />
           <NavItem to="/admin/help" label="Help articles" icon={icons.help} onNavigate={close} />
           <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />
-        </>
+        </NavGroup>
       )}
       {canManageUsers(user) && (
-        <>
-          <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Administration</div>
+        <NavGroup label="Administration">
           <NavItem to="/admin/users" label="Users & roles" icon={icons.users} onNavigate={close} />
           <NavItem to="/admin/partners" label="Partners" icon={icons.partner} onNavigate={close} />
-        </>
+        </NavGroup>
       )}
       <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Account</div>
       <NavItem to="/billing" label="Billing" icon={icons.billing} onNavigate={close} />

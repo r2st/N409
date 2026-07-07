@@ -4,7 +4,14 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { renderReportPdf } from '@n409/report/pdf';
 import { canEditWorkingData, canReadReport, canReadValuation } from '../auth/rbac.js';
-import { instantiateTemplate, sanitizeContent, templateForKind, type ReportContent } from '../domain/report.js';
+import {
+  contentFromManagedTemplate,
+  instantiateTemplate,
+  sanitizeContent,
+  templateForKind,
+  type ReportContent,
+} from '../domain/report.js';
+import { findActiveTemplateForKind, templateLabel } from '../repos/reportTemplates.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import {
   createReport,
@@ -82,11 +89,21 @@ async function loadOrCreateReport(
   const existing = await findReportByValuation(pool, valuation.id);
   if (existing) return existing;
   if (!canEditWorkingData(principal)) throw problems.notFound('No report yet');
-  const template = templateForKind(valuation.kind);
-  const content = instantiateTemplate(template, templateVars(valuation));
+
+  // Gap 6 — an ACTIVE managed template for this kind supplies the body of a
+  // new report; the built-in skeleton is only the fallback.
+  const managed = await findActiveTemplateForKind(pool, valuation.kind);
+  const vars = templateVars(valuation);
+  const { templateVersion, content } = managed
+    ? { templateVersion: templateLabel(managed), content: contentFromManagedTemplate(managed, vars) }
+    : (() => {
+        const builtin = templateForKind(valuation.kind);
+        return { templateVersion: builtin.version, content: instantiateTemplate(builtin, vars) };
+      })();
+
   const created = await createReport(pool, {
     valuationId: valuation.id,
-    templateVersion: template.version,
+    templateVersion,
     content,
     actor: actorFor(principal),
   });

@@ -246,14 +246,23 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
       expect(res.statusCode).toBe(201);
     });
 
-    it('rejects unmatchable email with 422 and non-ops with 403', async () => {
+    it('routes unmatchable email to a support ticket (gap 3) and rejects non-ops with 403', async () => {
       const unmatched = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/inbox/email',
         headers: authHeader(ops.token),
         payload: { from: 'stranger@nowhere.io', subject: 'hi', body: 'no ref' },
       });
-      expect(unmatched.statusCode).toBe(422);
+      expect(unmatched.statusCode).toBe(202);
+      expect(unmatched.json().matched).toBe(false);
+      const ticketId = unmatched.json().support_message_id as string;
+      const { rows } = await ctx.pool.query(
+        'SELECT subject, body, status FROM support_messages WHERE id = $1',
+        [ticketId],
+      );
+      expect(rows[0].subject).toBe('Unmatched inbound email: hi');
+      expect(rows[0].body).toContain('From: stranger@nowhere.io');
+      expect(rows[0].status).toBe('open');
 
       const forbidden = await ctx.app.inject({
         method: 'POST',
