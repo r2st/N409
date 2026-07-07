@@ -158,7 +158,7 @@ def test_comparables_normalizes_multiples(monkeypatch, client):
 
 # ── error surface ─────────────────────────────────────────────────────────────
 def test_unknown_pipeline_404(client):
-    resp = client.post("/ai/v1/pipelines/summarize", json={})
+    resp = client.post("/ai/v1/pipelines/does_not_exist", json={})
     assert resp.status_code == 404
 
 

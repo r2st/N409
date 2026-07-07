@@ -24,7 +24,7 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
                 (?:\+\d{1,3}[\s.-]?)?    # optional country code
                 (?:\(\d{3}\)[\s.-]?|\d{3}[\s.-])  # area code needs () or separator
                 \d{3}[\s.-]\d{4}
-                (?![\d.,-])""",
+                (?!\d)(?![.,]\d)  # no trailing digits; "." ok unless a decimal follows""",
             re.VERBOSE,
         ),
     ),

@@ -28,6 +28,8 @@ class PipelineRequest(BaseModel):
     documents: list[dict] = Field(default_factory=list)
     # Prompt-registry override: {"system": str|None, "model": str|None}
     prompt: dict | None = None
+    # Run options, e.g. {"anonymize": false} to skip the PII redaction step.
+    options: dict = Field(default_factory=dict)
 
 
 class PipelineResponse(BaseModel):

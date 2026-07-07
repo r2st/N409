@@ -269,6 +269,61 @@ Return JSON:
         "comparables": comparables,
         "sector": parsed.get("sector", "") if isinstance(parsed, dict) else "",
         "caveats": parsed.get("caveats", "") if isinstance(parsed, dict) else "",
+        "anonymization": anonymization,
+    }
+    return llm.model, result
+
+
+def run_summarize(payload: dict) -> tuple[str, dict]:
+    """Summarize Attachments (remaining-gaps §2 "AI actions & pipelines")."""
+    valuation = payload.get("valuation") or {}
+    docs, anonymization = _load_docs(payload)
+
+    system, model = _prompt_overrides(
+        payload,
+        "You are a 409A valuation analyst assistant. Summarize each uploaded "
+        "attachment for the analyst working the engagement: what the document "
+        "is, what it says, and the figures that matter for a valuation. "
+        "Never invent numbers. Respond ONLY with JSON.",
+    )
+    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation)
+Documents:
+{render_corpus(docs)[:45000]}
+
+Return JSON:
+{{
+  "summaries": [{{"filename": "<document filename>", "summary": "<2-4 sentences>", "key_figures": ["<figure with label>", ...]}}],
+  "overall": "<one-paragraph synthesis across all documents>"
+}}
+One entry per document, in the order given. key_figures only for values
+actually present in that document (share counts, preferences, cash, revenue)."""
+
+    llm = chat(system, user, model=model)
+    parsed = _safe_result(llm)
+    by_filename = {d.filename: d for d in docs}
+    summaries = []
+    if isinstance(parsed, dict) and isinstance(parsed.get("summaries"), list):
+        for entry in parsed["summaries"][:20]:
+            if not isinstance(entry, dict) or not entry.get("filename"):
+                continue
+            filename = str(entry.get("filename"))
+            doc = by_filename.get(filename)
+            key_figures = entry.get("key_figures")
+            summaries.append(
+                {
+                    "filename": filename,
+                    "kind": doc.kind if doc else "other",
+                    "summary": str(entry.get("summary") or ""),
+                    "key_figures": [str(f) for f in key_figures[:10]]
+                    if isinstance(key_figures, list)
+                    else [],
+                }
+            )
+    result = {
+        "summaries": summaries,
+        "overall": parsed.get("overall", "") if isinstance(parsed, dict) else "",
+        "documents_reviewed": [d.filename for d in docs],
+        "anonymization": anonymization,
     }
     return llm.model, result
 
@@ -284,4 +339,5 @@ PIPELINES = {
     "missing_data": run_missing_data,
     "extract": run_extract,
     "comparables": run_comparables,
+    "summarize": run_summarize,
 }
