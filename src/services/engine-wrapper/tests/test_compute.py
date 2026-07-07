@@ -133,3 +133,84 @@ def test_engine_health_contract():
     body = r.json()
     assert body["contract"] == "engine/v1"
     assert body["engine_version"] == "py-1.0.0"
+
+
+# ── Per-subsystem recalculation (remaining-gaps §3 #5) ────────────────────────
+def test_recompute_single_approach_reuses_prior():
+    full = compute(PARAMS, INPUTS)["results"]
+    prior = full["approaches"]
+
+    # Recompute only the market approach with a different multiple set; the
+    # other approaches must be carried over from the prior run untouched.
+    new_inputs = {**INPUTS, "market": {"metric": 4_000_000, "multiples": [8.0]}}
+    partial = compute(PARAMS, new_inputs, recompute=["market"], prior_approaches=prior)["results"]
+
+    a = partial["approaches"]
+    assert partial["recomputed"] == ["market"]
+    assert a["market"]["equity_value"] != prior["market"]["equity_value"]
+    assert "reused" not in a["market"]
+    for name in ("opm_backsolve", "income"):
+        assert a[name]["equity_value"] == prior[name]["equity_value"]
+        assert a[name]["reused"] is True
+        # current params re-weight the merged set
+        assert a[name]["weight"] == PARAMS[f"weight_{'opm' if name == 'opm_backsolve' else name}"]
+
+    # Weighted equity and downstream FMV re-run over the merged approaches.
+    expected_equity = (
+        0.6 * a["opm_backsolve"]["equity_value"]
+        + 0.15 * a["income"]["equity_value"]
+        + 0.25 * a["market"]["equity_value"]
+    )
+    assert partial["equity_value"] == pytest.approx(expected_equity, abs=0.01)
+
+
+def test_recompute_matches_full_run_when_inputs_unchanged():
+    full = compute(PARAMS, INPUTS)["results"]
+    partial = compute(
+        PARAMS, INPUTS, recompute=["income"], prior_approaches=full["approaches"]
+    )["results"]
+    assert partial["fmv_per_share"] == full["fmv_per_share"]
+
+
+def test_recompute_missing_prior_computes_fresh():
+    # A weighted approach absent from the prior run is computed fresh rather
+    # than failing — e.g. its weight was 0 in the baseline.
+    full = compute(PARAMS, INPUTS)["results"]
+    prior = {k: v for k, v in full["approaches"].items() if k != "income"}
+    partial = compute(PARAMS, INPUTS, recompute=["market"], prior_approaches=prior)["results"]
+    assert partial["approaches"]["income"]["equity_value"] == pytest.approx(
+        full["approaches"]["income"]["equity_value"], abs=0.01
+    )
+    assert "reused" not in partial["approaches"]["income"]
+
+
+def test_recompute_validation_errors():
+    full = compute(PARAMS, INPUTS)["results"]
+    with pytest.raises(Exception) as exc:
+        compute(PARAMS, INPUTS, recompute=["dcf"], prior_approaches=full["approaches"])
+    assert "unknown recompute" in str(exc.value)
+    with pytest.raises(Exception) as exc:
+        compute(PARAMS, INPUTS, recompute=[], prior_approaches=full["approaches"])
+    assert "at least one" in str(exc.value)
+    with pytest.raises(Exception) as exc:
+        compute(
+            PARAMS, INPUTS, recompute=["market"], prior_approaches={"income": {"note": "no equity"}}
+        )
+    assert "equity_value" in str(exc.value)
+
+
+def test_recompute_via_api():
+    full = client.post("/engine/v1/compute", json={"params": PARAMS, "inputs": INPUTS}).json()
+    r = client.post(
+        "/engine/v1/compute",
+        json={
+            "params": PARAMS,
+            "inputs": INPUTS,
+            "recompute": ["opm_backsolve"],
+            "prior_approaches": full["results"]["approaches"],
+        },
+    )
+    assert r.status_code == 200
+    res = r.json()["results"]
+    assert res["recomputed"] == ["opm_backsolve"]
+    assert res["approaches"]["income"]["reused"] is True

@@ -16,12 +16,14 @@ from datetime import date
 from .approaches import EngineInputError, asset_value, income_dcf, market_multiples, opm_backsolve
 from .bs import bs_call
 from .dlom import chaffee_dlom, finnerty_dlom
+from .waterfall import allocate_waterfall
 
 ENGINE_VERSION = "py-1.0.0"
 DEFAULT_RISK_FREE_RATE = 0.04
 DEFAULT_TIME_TO_EXIT_YEARS = 3.0
 
 WEIGHT_KEYS = ("weight_asset", "weight_opm", "weight_income", "weight_market")
+APPROACH_KEYS = ("asset", "opm_backsolve", "income", "market")
 
 
 def _num(value, name: str, *, positive: bool = False) -> float | None:
@@ -69,7 +71,44 @@ def _weights(params: dict) -> dict[str, float]:
     return weights
 
 
-def compute(params: dict, inputs: dict) -> dict:
+def _reused_prior(prior_approaches: dict, name: str) -> dict:
+    entry = prior_approaches.get(name)
+    if not isinstance(entry, dict):
+        raise EngineInputError(f"prior_approaches.{name} is required to reuse the {name} approach")
+    equity = _num(entry.get("equity_value"), f"prior_approaches.{name}.equity_value")
+    if equity is None:
+        raise EngineInputError(f"prior_approaches.{name}.equity_value is required")
+    # Strip the stale weight; the current params re-weight the merged set.
+    reused = {k: v for k, v in entry.items() if k != "weight"}
+    reused["reused"] = True
+    return reused
+
+
+def compute(
+    params: dict,
+    inputs: dict,
+    recompute: list[str] | None = None,
+    prior_approaches: dict | None = None,
+) -> dict:
+    """Full 409A computation, or — with `recompute` — a per-subsystem rerun.
+
+    When `recompute` names a subset of APPROACH_KEYS, only those approaches are
+    computed fresh; the rest reuse `prior_approaches` (a previous run's
+    results.approaches). Weighting, allocation and discounts always re-run.
+    """
+    if recompute is not None:
+        unknown = set(recompute) - set(APPROACH_KEYS)
+        if unknown:
+            raise EngineInputError(f"unknown recompute approaches: {sorted(unknown)}")
+        if not recompute:
+            raise EngineInputError("recompute must name at least one approach")
+    prior = prior_approaches or {}
+
+    def _fresh(name: str) -> bool:
+        """Full runs compute everything; partial runs compute the selected
+        approaches and anything the prior run can't supply."""
+        return recompute is None or name in recompute or name not in prior
+
     weights = _weights(params)
     t = _time_to_exit(params, inputs)
     r = _num(inputs.get("risk_free_rate"), "risk_free_rate") or DEFAULT_RISK_FREE_RATE
@@ -79,42 +118,77 @@ def compute(params: dict, inputs: dict) -> dict:
     approaches: dict[str, dict] = {}
 
     if weights["weight_asset"] > 0:
-        asset_in = inputs.get("asset") or {}
-        approaches["asset"] = asset_value(
-            total_assets=_num(asset_in.get("total_assets"), "asset.total_assets"),
-            total_liabilities=_num(asset_in.get("total_liabilities"), "asset.total_liabilities"),
-            cost_to_replicate=_num(asset_in.get("cost_to_replicate"), "asset.cost_to_replicate"),
-            method=params.get("asset_method"),
-        )
+        if _fresh("asset"):
+            asset_in = inputs.get("asset") or {}
+            approaches["asset"] = asset_value(
+                total_assets=_num(asset_in.get("total_assets"), "asset.total_assets"),
+                total_liabilities=_num(asset_in.get("total_liabilities"), "asset.total_liabilities"),
+                cost_to_replicate=_num(asset_in.get("cost_to_replicate"), "asset.cost_to_replicate"),
+                method=params.get("asset_method"),
+            )
+        else:
+            approaches["asset"] = _reused_prior(prior, "asset")
 
     if weights["weight_opm"] > 0:
-        post_money = _req(inputs.get("last_round_post_money"), "last_round_post_money", positive=True)
-        approaches["opm_backsolve"] = opm_backsolve(post_money)
+        if _fresh("opm_backsolve"):
+            pps = _num(inputs.get("last_round_price_per_share"), "last_round_price_per_share")
+            vol_early = _num(inputs.get("volatility"), "volatility")
+            raw_classes = inputs.get("share_classes")
+            if pps is not None and pps > 0 and vol_early is not None and vol_early > 0:
+                # True backsolve (remaining-gaps §2): root-find the equity
+                # value that reprices the last round's preferred to its PPS.
+                approaches["opm_backsolve"] = opm_backsolve(
+                    _num(inputs.get("last_round_post_money"), "last_round_post_money"),
+                    last_round_pps=pps,
+                    share_classes=raw_classes if isinstance(raw_classes, list) and raw_classes else None,
+                    last_round_class=inputs.get("last_round_class"),
+                    preferred_shares=_num(
+                        inputs.get("shares_outstanding_preferred"), "shares_outstanding_preferred"
+                    ),
+                    liquidation_preference=_num(
+                        inputs.get("liquidation_preference"), "liquidation_preference"
+                    ),
+                    common_shares=_num(inputs.get("shares_outstanding_common"), "shares_outstanding_common"),
+                    t=t,
+                    r=r,
+                    sigma=vol_early,
+                )
+            else:
+                post_money = _req(inputs.get("last_round_post_money"), "last_round_post_money", positive=True)
+                approaches["opm_backsolve"] = opm_backsolve(post_money)
+        else:
+            approaches["opm_backsolve"] = _reused_prior(prior, "opm_backsolve")
 
     if weights["weight_income"] > 0:
-        income_in = inputs.get("income") or {}
-        fcf = income_in.get("free_cash_flows")
-        if not isinstance(fcf, list):
-            raise EngineInputError("income.free_cash_flows (list of yearly FCF) is required")
-        approaches["income"] = income_dcf(
-            [_req(v, "income.free_cash_flows[]") for v in fcf],
-            _req(income_in.get("discount_rate"), "income.discount_rate", positive=True),
-            _num(income_in.get("terminal_growth"), "income.terminal_growth") or 0.0,
-            cash=cash,
-            debt=debt,
-        )
+        if _fresh("income"):
+            income_in = inputs.get("income") or {}
+            fcf = income_in.get("free_cash_flows")
+            if not isinstance(fcf, list):
+                raise EngineInputError("income.free_cash_flows (list of yearly FCF) is required")
+            approaches["income"] = income_dcf(
+                [_req(v, "income.free_cash_flows[]") for v in fcf],
+                _req(income_in.get("discount_rate"), "income.discount_rate", positive=True),
+                _num(income_in.get("terminal_growth"), "income.terminal_growth") or 0.0,
+                cash=cash,
+                debt=debt,
+            )
+        else:
+            approaches["income"] = _reused_prior(prior, "income")
 
     if weights["weight_market"] > 0:
-        market_in = inputs.get("market") or {}
-        multiples = market_in.get("multiples")
-        if multiples is None and market_in.get("multiple") is not None:
-            multiples = [market_in["multiple"]]
-        if not isinstance(multiples, list):
-            raise EngineInputError("market.multiples (from comparables) is required")
-        metric = _req(market_in.get("metric"), "market.metric", positive=True)
-        approaches["market"] = market_multiples(
-            metric, [float(m) for m in multiples], cash=cash, debt=debt
-        )
+        if _fresh("market"):
+            market_in = inputs.get("market") or {}
+            multiples = market_in.get("multiples")
+            if multiples is None and market_in.get("multiple") is not None:
+                multiples = [market_in["multiple"]]
+            if not isinstance(multiples, list):
+                raise EngineInputError("market.multiples (from comparables) is required")
+            metric = _req(market_in.get("metric"), "market.metric", positive=True)
+            approaches["market"] = market_multiples(
+                metric, [float(m) for m in multiples], cash=cash, debt=debt
+            )
+        else:
+            approaches["market"] = _reused_prior(prior, "market")
 
     weight_by_approach = {
         "asset": weights["weight_asset"],
@@ -135,12 +209,25 @@ def compute(params: dict, inputs: dict) -> dict:
     liquidation_preference = _num(inputs.get("liquidation_preference"), "liquidation_preference") or 0.0
     fully_diluted_common = common_shares + options
 
+    share_classes = inputs.get("share_classes")
+    has_waterfall = isinstance(share_classes, list) and len(share_classes) > 0
+
     volatility = _num(inputs.get("volatility"), "volatility")
-    needs_vol = liquidation_preference > 0 or (params.get("dlom_method") in ("chaffee", "finnerty"))
+    needs_vol = (
+        liquidation_preference > 0
+        or has_waterfall
+        or (params.get("dlom_method") in ("chaffee", "finnerty"))
+    )
     if needs_vol and volatility is None:
         raise EngineInputError("volatility is required (OPM allocation / model DLOM)")
 
-    if preferred_shares > 0 and liquidation_preference > 0:
+    waterfall_per_share: float | None = None
+    if has_waterfall:
+        # Full cap-table waterfall (remaining-gaps §2 — multi-breakpoint).
+        allocation = allocate_waterfall(equity_value, share_classes, t, r, volatility or 0.0)
+        common_equity = allocation["common_value"]
+        waterfall_per_share = allocation["common_per_share"]
+    elif preferred_shares > 0 and liquidation_preference > 0:
         upside = bs_call(equity_value, liquidation_preference, t, r, volatility or 0.0)
         common_fraction = fully_diluted_common / (fully_diluted_common + preferred_shares)
         common_equity = upside * common_fraction
@@ -174,24 +261,28 @@ def compute(params: dict, inputs: dict) -> dict:
     if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
         raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
 
-    fmv_per_share = common_equity * (1.0 - dloc) * (1.0 - dlom) / fully_diluted_common
+    if waterfall_per_share is not None:
+        # Waterfall already spread value over the cap table's common shares.
+        fmv_per_share = waterfall_per_share * (1.0 - dloc) * (1.0 - dlom)
+    else:
+        fmv_per_share = common_equity * (1.0 - dloc) * (1.0 - dlom) / fully_diluted_common
 
-    return {
-        "engine_version": ENGINE_VERSION,
-        "results": {
-            "equity_value": round(equity_value, 2),
-            "approaches": {
-                name: {**data, "weight": weight_by_approach[name]} for name, data in approaches.items()
-            },
-            "allocation": allocation,
-            "common_equity_value": round(common_equity, 2),
-            "assumptions": {
-                "time_to_exit_years": round(t, 4),
-                "risk_free_rate": r,
-                "volatility": volatility,
-            },
-            "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
-            "fully_diluted_common": fully_diluted_common,
-            "fmv_per_share": round(fmv_per_share, 4),
+    results: dict = {
+        "equity_value": round(equity_value, 2),
+        "approaches": {
+            name: {**data, "weight": weight_by_approach[name]} for name, data in approaches.items()
         },
+        "allocation": allocation,
+        "common_equity_value": round(common_equity, 2),
+        "assumptions": {
+            "time_to_exit_years": round(t, 4),
+            "risk_free_rate": r,
+            "volatility": volatility,
+        },
+        "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
+        "fully_diluted_common": fully_diluted_common,
+        "fmv_per_share": round(fmv_per_share, 4),
     }
+    if recompute is not None:
+        results["recomputed"] = sorted(recompute)
+    return {"engine_version": ENGINE_VERSION, "results": results}

@@ -22,6 +22,10 @@ app = FastAPI(title="n409-engine-wrapper", version=ENGINE_VERSION)
 class ComputeRequest(BaseModel):
     params: dict = Field(default_factory=dict)
     inputs: dict = Field(default_factory=dict)
+    # Per-subsystem recalculation: approaches to compute fresh + the previous
+    # run's results.approaches to reuse for everything else.
+    recompute: list[str] | None = None
+    prior_approaches: dict | None = None
 
 
 @app.get("/")
@@ -58,6 +62,11 @@ def engine_health() -> dict:
 @app.post("/engine/v1/compute")
 def engine_compute(request: ComputeRequest) -> dict:
     try:
-        return compute(request.params, request.inputs)
+        return compute(
+            request.params,
+            request.inputs,
+            recompute=request.recompute,
+            prior_approaches=request.prior_approaches,
+        )
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
