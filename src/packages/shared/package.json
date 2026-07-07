@@ -1,0 +1,37 @@
+{
+  "name": "@n409/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",
+    "@opentelemetry/instrumentation-http": "^0.57.0",
+    "@opentelemetry/instrumentation-pg": "^0.51.0",
+    "@opentelemetry/resources": "^1.30.0",
+    "@opentelemetry/sdk-node": "^0.57.0",
+    "@opentelemetry/semantic-conventions": "^1.30.0",
+    "pino": "^9.6.0",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "fastify": "^5.2.0",
+    "vitest": "^3.0.0"
+  },
+  "peerDependencies": {
+    "fastify": "^5.0.0"
+  }
+}

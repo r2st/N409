@@ -16,14 +16,21 @@ new services beside the existing Rails+R app, cut over surface-by-surface, retir
 
 ---
 
-## Milestone 0 — Foundations (repo, CI, skeleton) · ~1–2 wks
+## Milestone 0 — Foundations (repo, CI, skeleton) · ~1–2 wks ✅ (2026-07-06)
 Goal: a deployable skeleton with the aggregate root and audit spine.
-- [ ] **#1** Monorepo + service scaffolding (web, valuation, ai, engine-wrapper, report); lint/format/test/CI (GitHub Actions); Docker; Terraform baseline (VPC, RDS Postgres, S3, Redis).
-- [ ] **#2** Core schema migrations: `valuations`, `valuation_params`, `users/roles`, `valuation_events` (append-only). Seed enums/roles.
-- [ ] **#3** AuthN/Z: email+password, **Google OIDC SSO**, session/JWT, RBAC policy layer (15 roles) + partner scoping.
-- [ ] **#4** Observability baseline: OpenTelemetry, structured logging (PII-redacted), health checks.
+- [x] **#1** Monorepo + service scaffolding (web, valuation, ai, engine-wrapper, report); lint/format/test/CI (GitHub Actions); Docker; Terraform baseline (VPC, RDS Postgres, S3, Redis).
+- [x] **#2** Core schema migrations: `valuations`, `valuation_params`, `users/roles`, `valuation_events` (append-only). Seed enums/roles.
+- [x] **#3** AuthN/Z: email+password, **Google OIDC SSO**, session/JWT, RBAC policy layer (17 role keys) + partner scoping.
+- [x] **#4** Observability baseline: OpenTelemetry, structured logging (PII-redacted), health checks.
 
-**Exit:** create a valuation via API; every change writes a `valuation_event`; traces visible.
+**Exit:** ✅ create a valuation via API; every change writes a `valuation_event`; traces exported when
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set. Verified by the integration suite
+(`src/services/valuation/test/integration/`) and a live smoke test.
+
+> M0 notes: the observed role set is 17 keys (not 15 as first estimated). LLM calls will go through
+> **OpenRouter** (free-tier models) rather than direct provider SDKs — reflected in the AI service
+> config; the M2 gateway keeps the same provider-abstraction design. Google SSO needs
+> `GOOGLE_CLIENT_ID/SECRET` env values (kept in `keys/`, never committed) to activate.
 
 ## Milestone 1 — Valuation core & workflow · ~2–3 wks
 - [ ] **#5** Valuation state machine + guarded `/transition`; `waiting_on_client`; reassign; clone/roll-forward.

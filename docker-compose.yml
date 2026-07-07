@@ -1,0 +1,84 @@
+name: n409
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: n409
+      POSTGRES_PASSWORD: n409_dev
+      POSTGRES_DB: n409_dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U n409 -d n409_dev']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valuation:
+    build:
+      context: .
+      dockerfile: src/services/valuation/Dockerfile
+    environment:
+      DATABASE_URL: postgres://n409:n409_dev@postgres:5432/n409_dev
+      JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
+      PORT: '3001'
+      LOG_LEVEL: info
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: src/services/web/Dockerfile
+    environment:
+      PORT: '3000'
+      VALUATION_SERVICE_URL: http://valuation:3001
+    ports:
+      - '3000:3000'
+    depends_on:
+      - valuation
+
+  ai:
+    build:
+      context: src/services/ai
+    environment:
+      PORT: '3002'
+    ports:
+      - '3002:3002'
+
+  engine-wrapper:
+    build:
+      context: .
+      dockerfile: src/services/engine-wrapper/Dockerfile
+    environment:
+      PORT: '3003'
+    ports:
+      - '3003:3003'
+
+  report:
+    build:
+      context: .
+      dockerfile: src/services/report/Dockerfile
+    environment:
+      PORT: '3004'
+    ports:
+      - '3004:3004'
+
+volumes:
+  pgdata:

@@ -1,0 +1,34 @@
+{
+  "name": "n409",
+  "private": true,
+  "version": "0.1.0",
+  "description": "409.ai platform rebuild — monorepo (web, valuation, ai, engine-wrapper, report)",
+  "type": "module",
+  "workspaces": [
+    "src/packages/*",
+    "src/services/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc -b --dry || tsc -b",
+    "test": "npm run build && npm run test --workspaces --if-present",
+    "test:unit": "npm run build && npm run test:unit --workspaces --if-present",
+    "migrate": "npm run migrate -w @n409/valuation",
+    "dev:db": "docker compose up -d postgres redis"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "eslint": "^9.30.0",
+    "eslint-config-prettier": "^10.1.0",
+    "prettier": "^3.6.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.35.0"
+  }
+}

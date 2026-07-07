@@ -37,3 +37,11 @@ coverage/
 # Scratch
 scratchpad/
 tmp/
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+
+# TypeScript incremental build
+*.tsbuildinfo

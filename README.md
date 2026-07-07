@@ -6,7 +6,19 @@ Reverse-documentation and production rebuild of the **409.ai** AI-assisted valua
 ## Status
 - **Phase 0 (Discovery):** ✅ complete — read-only crawl of the live admin app (`onboard.app.409.ai`, v0.10.1).
 - **Phase 1 (Documentation):** ✅ complete — all 9 design docs in [`/docs`](./docs).
-- **Phase 2 (Implementation):** ⏳ not started — see [`docs/implementation-plan.md`](./docs/implementation-plan.md).
+- **Phase 2 (Implementation):** 🚧 in progress — **M0 (foundations) complete**; see [`docs/implementation-plan.md`](./docs/implementation-plan.md).
+
+### Quick start (dev)
+```bash
+npm install
+npm run dev:db          # Postgres + Redis via docker compose
+npm run migrate         # apply SQL migrations (also runs on service boot)
+npm test                # build + all workspace tests (integration tests need the DB)
+npm run dev -w @n409/valuation   # valuation API on :3001 (needs JWT_SECRET, see .env.example)
+```
+Monorepo layout: `src/packages/shared` (logger/OTel/problem+json/health/ULIDs),
+`src/services/{valuation,web,ai,engine-wrapper,report}`, `infra/terraform`, CI in
+`.github/workflows/ci.yml`.
 
 ## Documentation
 | Doc | Contents |
