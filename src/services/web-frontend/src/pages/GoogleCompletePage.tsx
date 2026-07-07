@@ -21,7 +21,7 @@ export function GoogleCompletePage() {
     // Drop the token from the URL before anything else can observe it.
     window.history.replaceState(null, '', '/auth/google/complete');
     adoptToken(token)
-      .then(() => navigate('/dashboard', { replace: true }))
+      .then(() => navigate('/', { replace: true }))
       .catch(() => setFailed(true));
   }, [adoptToken, navigate]);
 

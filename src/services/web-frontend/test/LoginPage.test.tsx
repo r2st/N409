@@ -14,7 +14,7 @@ function renderLogin() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/dashboard" element={<div>DASHBOARD</div>} />
+          <Route path="/" element={<div>ROLE_LANDING</div>} />
         </Routes>
       </AuthProvider>
     </MemoryRouter>,
@@ -60,7 +60,7 @@ describe('LoginPage', () => {
     expect(await screen.findByText('Continue with Google')).toBeInTheDocument();
   });
 
-  it('logs in and redirects to the dashboard', async () => {
+  it('logs in and redirects to the role-aware landing', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
       const u = String(url);
       if (u.endsWith('/auth/providers')) return jsonResponse({ password: true, google: false });
@@ -75,7 +75,7 @@ describe('LoginPage', () => {
     await userEvent.type(screen.getByLabelText('Email'), 'ada@acme.com');
     await userEvent.type(screen.getByLabelText('Password'), 'hunter2hunter2');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+    expect(await screen.findByText('ROLE_LANDING')).toBeInTheDocument();
     expect(localStorage.getItem('n409.token')).toBe('jwt-token');
   });
 

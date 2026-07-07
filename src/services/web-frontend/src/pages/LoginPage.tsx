@@ -42,7 +42,8 @@ export function LoginPage() {
 
   if (status === 'authenticated') {
     const from = (location.state as { from?: string } | null)?.from;
-    return <Navigate to={from ?? '/dashboard'} replace />;
+    // "/" is the role-aware landing (partners → /partner, others → /dashboard).
+    return <Navigate to={from ?? '/'} replace />;
   }
 
   const submit = async (e: FormEvent) => {
@@ -51,7 +52,7 @@ export function LoginPage() {
     setBusy(true);
     try {
       await login(email, password);
-      navigate((location.state as { from?: string } | null)?.from ?? '/dashboard', { replace: true });
+      navigate((location.state as { from?: string } | null)?.from ?? '/', { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to sign in — please try again.');
     } finally {

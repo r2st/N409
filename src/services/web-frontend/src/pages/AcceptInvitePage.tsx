@@ -70,7 +70,7 @@ export function AcceptInvitePage() {
         },
       });
       await adoptToken(res.token);
-      navigate('/dashboard', { replace: true });
+      navigate('/', { replace: true });
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : 'Something went wrong — please try again.',

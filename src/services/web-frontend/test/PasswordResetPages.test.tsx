@@ -16,7 +16,7 @@ function renderAt(path: string, element: React.ReactElement) {
       <AuthProvider>
         <Routes>
           <Route path={path} element={element} />
-          <Route path="/dashboard" element={<div>DASHBOARD</div>} />
+          <Route path="/" element={<div>ROLE_LANDING</div>} />
         </Routes>
       </AuthProvider>
     </MemoryRouter>,
@@ -155,7 +155,7 @@ describe('AcceptInvitePage', () => {
     await userEvent.type(screen.getByLabelText(/^Password/), 'invitee-password-1');
     await userEvent.type(screen.getByLabelText('Confirm password'), 'invitee-password-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create account & sign in' }));
-    expect(await screen.findByText('DASHBOARD')).toBeInTheDocument();
+    expect(await screen.findByText('ROLE_LANDING')).toBeInTheDocument();
     expect(localStorage.getItem('n409.token')).toBe('session-jwt');
   });
 });

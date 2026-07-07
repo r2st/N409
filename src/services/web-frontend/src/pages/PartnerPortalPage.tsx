@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isPartner } from '../lib/rbac';
 import { computeStats } from '../lib/stats';
 import { formatDate, formatDateTime } from '../lib/format';
 import type { ApiToken, Valuation, ValuationList } from '../lib/types';
@@ -43,8 +42,6 @@ export function PartnerPortalPage() {
   useEffect(() => {
     loadTokens();
   }, [loadTokens]);
-
-  if (!isPartner(user)) return <Navigate to="/dashboard" replace />;
 
   const mint = async (e: FormEvent) => {
     e.preventDefault();

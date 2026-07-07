@@ -1,6 +1,9 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from './components/RequireAuth';
+import { RequireRole } from './components/RequireRole';
 import { AppLayout } from './components/AppLayout';
+import { useAuth } from './lib/auth';
+import { canManageUsers, isOps, isPartner } from './lib/rbac';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
@@ -40,6 +43,12 @@ import { PackageTab } from './pages/valuation/PackageTab';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { PaymentCancelPage, PaymentSuccessPage } from './pages/PaymentRedirectPages';
 
+/** Role-aware landing: partners live in their portal, everyone else on /dashboard. */
+function RoleLanding() {
+  const { user } = useAuth();
+  return <Navigate to={isPartner(user) ? '/partner' : '/dashboard'} replace />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -56,7 +65,7 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<RoleLanding />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/valuations" element={<ValuationsPage />} />
         <Route path="/valuations/new" element={<NewValuationPage />} />
@@ -76,21 +85,30 @@ export default function App() {
           <Route path="report" element={<ReportTab />} />
           <Route path="package" element={<PackageTab />} />
         </Route>
-        <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
-        <Route path="/partner" element={<PartnerPortalPage />} />
-        <Route path="/admin/users" element={<AdminUsersPage />} />
-        <Route path="/admin/partners" element={<AdminPartnersPage />} />
-        <Route path="/admin/prompts" element={<BotPromptsPage />} />
-        <Route path="/admin/support" element={<SupportInboxPage />} />
-        <Route path="/admin/outbox" element={<EmailOutboxPage />} />
-        <Route path="/tasks" element={<TasksPage />} />
+        {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
+        <Route element={<RequireRole allow={isOps} />}>
+          <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
+          <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/templates" element={<TemplatesPage />} />
+          <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />
+          <Route path="/admin/prompts" element={<BotPromptsPage />} />
+          <Route path="/admin/support" element={<SupportInboxPage />} />
+          <Route path="/admin/outbox" element={<EmailOutboxPage />} />
+        </Route>
+        {/* User-admin surfaces */}
+        <Route element={<RequireRole allow={canManageUsers} />}>
+          <Route path="/admin/users" element={<AdminUsersPage />} />
+          <Route path="/admin/partners" element={<AdminPartnersPage />} />
+        </Route>
+        {/* Partner portal */}
+        <Route element={<RequireRole allow={isPartner} />}>
+          <Route path="/partner" element={<PartnerPortalPage />} />
+        </Route>
         <Route path="/search" element={<SearchPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
-        <Route path="/templates" element={<TemplatesPage />} />
-        <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
