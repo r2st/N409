@@ -4,12 +4,10 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canCreateValuation, canReadValuation, isOps, valuationScope } from '../auth/rbac.js';
 import { stateGroupOf, STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
-import { toCsv } from '../domain/csv.js';
 import {
   cloneValuation,
   countValuationsByGroup,
   dashboardStats,
-  exportValuations,
   findValuationById,
 } from '../repos/valuations.js';
 import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
@@ -35,40 +33,8 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
     return { counts };
   });
 
-  app.get('/api/v1/valuations/export', { preHandler: app.authenticate }, async (req, reply) => {
-    const principal = requirePrincipal(req);
-    const parsed = ValuationFilterQuery.safeParse(req.query);
-    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
-
-    const rows = await exportValuations(
-      deps.pool,
-      valuationScope(principal),
-      toRepoFilters(parsed.data),
-    );
-    const columns = [
-      'id',
-      'number',
-      'workflow_id',
-      'kind',
-      'state',
-      'company_name',
-      'service_name',
-      'owner_email',
-      'partner_name',
-      'source',
-      'currency',
-      'paid_status',
-      'waiting_on_client',
-      'reviewer_email',
-      'created_at',
-      'due_date',
-      'published_at',
-    ];
-    return reply
-      .header('content-type', 'text/csv; charset=utf-8')
-      .header('content-disposition', 'attachment; filename="valuations.csv"')
-      .send(toCsv(columns, rows));
-  });
+  // NOTE: GET /api/v1/valuations/export lives in routes/exports.ts (merged
+  // with M4's CSV/PDF exporter); it uses exportValuations from the repo.
 
   /**
    * Dashboard analytics: per-kind pivot over state groups + pie breakdowns,

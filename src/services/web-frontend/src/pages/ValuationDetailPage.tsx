@@ -9,6 +9,8 @@ import { VALUATION_STATES } from '../lib/types';
 import type { Valuation, ValuationEvent } from '../lib/types';
 import { Button, ErrorNote, Field, KindBadge, Select, Spinner, StateBadge, TextInput } from '../components/ui';
 import { CommentsSection } from '../components/CommentThread';
+import { WorkflowActions } from '../components/WorkflowActions';
+import { FundingHistory } from '../components/FundingHistory';
 
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -26,6 +28,12 @@ const EVENT_LABELS: Record<string, string> = {
   comment_added: 'Comment added',
   email_received: 'Email received',
   valuation_cloned: 'Cloned from another valuation',
+  funding_round_added: 'Funding round added',
+  funding_round_updated: 'Funding round updated',
+  funding_round_deleted: 'Funding round removed',
+  transaction_added: 'Transaction added',
+  transaction_updated: 'Transaction updated',
+  transaction_deleted: 'Transaction removed',
 };
 
 export function ValuationDetailPage() {
@@ -149,10 +157,20 @@ export function ValuationDetailPage() {
           </Button>
         </span>
       </div>
-      <p className="tnum mt-1.5 text-xs text-ink-400">
-        Ref {valuation.id}
-        {valuation.number != null && <> · #{valuation.number}</>}
-      </p>
+      <div className="mt-1.5 flex items-center gap-4">
+        <p className="tnum text-xs text-ink-400">
+          Ref {valuation.id}
+          {valuation.number != null && <> · #{valuation.number}</>}
+        </p>
+        {ops && (
+          <Link
+            to={`/valuations/${valuation.id}/sensitivity`}
+            className="text-xs font-semibold text-bond-600 hover:text-bond-700"
+          >
+            Sensitivity dashboard →
+          </Link>
+        )}
+      </div>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_20rem]">
         <div className="space-y-8">
@@ -243,7 +261,17 @@ export function ValuationDetailPage() {
             </section>
           )}
 
-          {/* Client chat + sticky notes + threaded email (M3) */}
+          {/* M4: workflow engine controls (ops) */}
+          {ops && <WorkflowActions valuation={valuation} onChanged={load} />}
+
+          {/* M4: transaction & funding-round history */}
+          <FundingHistory
+            valuationId={valuation.id}
+            currency={valuation.currency}
+            canEdit={ops || valuation.user_id === user?.id}
+          />
+
+          {/* M3: client chat + sticky notes + threaded email */}
           <CommentsSection valuationId={valuation.id} />
         </div>
 

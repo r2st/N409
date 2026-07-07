@@ -16,10 +16,12 @@ import {
   createValuation,
   findValuationById,
   listValuations,
+  parseSort,
   patchValuation,
   type ValuationFilters,
   type ValuationRow,
 } from '../repos/valuations.js';
+import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
@@ -100,6 +102,8 @@ export function toRepoFilters(f: z.infer<typeof ValuationFilterQuery>): Valuatio
 }
 
 const ListQuery = ValuationFilterQuery.extend({
+  // M4 rich sort: "company_name:asc,created_at:desc" (whitelisted columns)
+  sort: z.string().max(200).optional(),
   page: z.coerce.number().int().min(1).default(1),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -120,7 +124,10 @@ async function loadAuthorized(pool: pg.Pool, principal: Principal, id: string): 
   return valuation;
 }
 
-export function registerValuationRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+export function registerValuationRoutes(
+  app: FastifyInstance,
+  deps: { pool: pg.Pool; transport?: EmailTransport },
+): void {
   app.post('/api/v1/valuations', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     if (!canCreateValuation(principal)) throw problems.forbidden();
@@ -158,8 +165,12 @@ export function registerValuationRoutes(app: FastifyInstance, deps: { pool: pg.P
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
     const { page, per_page } = parsed.data;
 
+    const sort = parseSort(parsed.data.sort);
+    if (sort === null) throw problems.badRequest('Invalid sort');
+
     const { items, total } = await listValuations(deps.pool, valuationScope(principal), {
       ...toRepoFilters(parsed.data),
+      sort,
       page,
       perPage: per_page,
     });
@@ -194,6 +205,10 @@ export function registerValuationRoutes(app: FastifyInstance, deps: { pool: pg.P
       parsed.data as Record<string, unknown>,
       actorFor(principal),
     );
+    // M4: state changes fire the auto email workflows + in-app notifications.
+    if (parsed.data.state && parsed.data.state !== valuation.state) {
+      await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, updated.state);
+    }
     return { valuation: updated };
   });
 

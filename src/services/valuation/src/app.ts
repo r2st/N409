@@ -10,6 +10,14 @@ import { registerCommentRoutes } from './routes/comments.js';
 import { registerAdminUserRoutes } from './routes/adminUsers.js';
 import { registerApiTokenRoutes } from './routes/apiTokens.js';
 import { registerOperationsRoutes } from './routes/operations.js';
+import { registerWorkflowRoutes } from './routes/workflow.js';
+import { registerTemplateRoutes } from './routes/templates.js';
+import { registerNotificationRoutes } from './routes/notifications.js';
+import { registerTransactionRoutes } from './routes/transactions.js';
+import { registerSearchRoutes } from './routes/search.js';
+import { registerExportRoutes } from './routes/exports.js';
+import { registerSensitivityRoutes } from './routes/sensitivity.js';
+import { logTransport, type EmailTransport } from './hooks/stateChange.js';
 
 export interface AppDeps {
   config: Config;
@@ -45,14 +53,26 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       },
     },
   });
+  // M4: auto-email transport; delivery status is tracked in email_outbox.
+  const transport: EmailTransport | undefined =
+    config.EMAIL_MODE === 'log' ? logTransport(app.log) : undefined;
+
   registerAuth(app, { pool, jwt });
   registerAuthRoutes(app, { pool, jwt, google });
-  registerValuationRoutes(app, { pool });
+  registerValuationRoutes(app, { pool, transport });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool });
   registerAdminUserRoutes(app, { pool });
   registerApiTokenRoutes(app, { pool });
   registerOperationsRoutes(app, { pool });
+  // M4 — polish (workflow engine, templates, notifications, rounds, search, exports)
+  registerWorkflowRoutes(app, { pool, transport });
+  registerTemplateRoutes(app, { pool });
+  registerNotificationRoutes(app, { pool });
+  registerTransactionRoutes(app, { pool });
+  registerSearchRoutes(app, { pool });
+  registerExportRoutes(app, { pool });
+  registerSensitivityRoutes(app, { pool });
 
   return app;
 }

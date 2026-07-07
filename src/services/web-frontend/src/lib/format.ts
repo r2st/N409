@@ -99,6 +99,27 @@ export function formatDateTime(iso: string | null | undefined): string {
   });
 }
 
+/** Renders integer cents as money, e.g. 250050 → "$2,500.50" (M4). */
+export function formatMoney(
+  cents: string | number | null | undefined,
+  currency: string | null = 'USD',
+): string {
+  if (cents === null || cents === undefined || cents === '') return '—';
+  const n = Number(cents);
+  if (!Number.isFinite(n)) return '—';
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currency || 'USD',
+    minimumFractionDigits: 2,
+  }).format(n / 100);
+}
+
+export function formatNumber(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  return Number.isFinite(n) ? new Intl.NumberFormat().format(n) : '—';
+}
+
 export function displayName(u: { first_name: string | null; last_name: string | null; email: string }): string {
   const name = [u.first_name, u.last_name].filter(Boolean).join(' ');
   return name || u.email;

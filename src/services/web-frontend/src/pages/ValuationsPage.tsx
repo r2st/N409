@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, apiDownload } from '../lib/api';
+import { api, apiDownload, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDate, GROUP_LABELS, KIND_LABELS, SOURCE_LABELS, STATE_LABELS } from '../lib/format';
+import { parseSortParam, serializeSort, sortIndicator, toggleSort } from '../lib/sort';
+import type { SortableColumn } from '../lib/sort';
 import { STATE_GROUPS, VALUATION_KINDS, VALUATION_STATES } from '../lib/types';
-import type { Partner, UserOption, ValuationCounts, ValuationList } from '../lib/types';
+import type { BulkResult, Partner, UserOption, ValuationCounts, ValuationList } from '../lib/types';
 import { Button, EmptyState, ErrorNote, KindBadge, Select, Spinner, StateBadge, TextInput } from '../components/ui';
 
 const PER_PAGE = 25;
 
-/** Query params that drive the list — kept in the URL so views are shareable. */
+/** Query params that drive the list (M3) — kept in the URL so views are shareable. */
 const FILTER_KEYS = [
   'q',
   'state',
@@ -25,6 +27,38 @@ const FILTER_KEYS = [
   'due_to',
 ] as const;
 
+/** Clickable column header with the M4 multi-sort indicator (↑/↓ + priority). */
+function SortableTh({
+  column,
+  label,
+  sortParam,
+  onSort,
+}: {
+  column: SortableColumn;
+  label: string;
+  sortParam: string;
+  onSort: (column: SortableColumn) => void;
+}) {
+  const indicator = sortIndicator(parseSortParam(sortParam), column);
+  return (
+    <th className="overline px-5 py-3 font-semibold text-ink-400">
+      <button
+        onClick={() => onSort(column)}
+        className="inline-flex cursor-pointer items-center gap-1 uppercase hover:text-ink-700"
+        aria-label={`Sort by ${label}`}
+      >
+        {label}
+        {indicator && (
+          <span className="tnum text-bond-600">
+            {indicator.dir === 'asc' ? '↑' : '↓'}
+            {parseSortParam(sortParam).length > 1 ? indicator.position : ''}
+          </span>
+        )}
+      </button>
+    </th>
+  );
+}
+
 export function ValuationsPage() {
   const { user } = useAuth();
   const ops = isOps(user);
@@ -35,13 +69,22 @@ export function ValuationsPage() {
   const [reviewers, setReviewers] = useState<UserOption[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [qDraft, setQDraft] = useState(params.get('q') ?? '');
 
+  // M4 — bulk actions (ops)
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState('set_state');
+  const [bulkState, setBulkState] = useState('started');
+  const [bulkReviewer, setBulkReviewer] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkNote, setBulkNote] = useState<string | null>(null);
+
   const group = params.get('group') ?? '';
+  const sortParam = params.get('sort') ?? '';
   const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
 
-  // Everything except pagination + tab, encoded once and reused by list/counts/export.
+  // Everything except pagination/tab/sort, encoded once and reused by list/counts/export.
   const filterQuery = useMemo(() => {
     const q = new URLSearchParams();
     for (const key of FILTER_KEYS) {
@@ -51,24 +94,29 @@ export function ValuationsPage() {
     return q;
   }, [params]);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     setData(null);
     setError(null);
     const q = new URLSearchParams(filterQuery);
     if (group) q.set('group', group);
+    if (sortParam) q.set('sort', sortParam);
     q.set('page', String(page));
     q.set('per_page', String(PER_PAGE));
     api<ValuationList>(`/valuations?${q}`)
       .then(setData)
       .catch(() => setError('Could not load valuations.'));
-  }, [filterQuery, group, page]);
+  }, [filterQuery, group, sortParam, page]);
 
-  // Live tab counts — refetched when any non-tab filter changes.
-  useEffect(() => {
+  useEffect(reload, [reload]);
+
+  // Live tab counts (M3) — refetched when any non-tab filter changes.
+  const loadCounts = useCallback(() => {
     api<{ counts: ValuationCounts }>(`/valuations/counts?${filterQuery}`)
       .then((res) => setCounts(res.counts))
       .catch(() => setCounts(null));
   }, [filterQuery]);
+
+  useEffect(loadCounts, [loadCounts]);
 
   useEffect(() => {
     if (!ops) return;
@@ -91,25 +139,70 @@ export function ValuationsPage() {
   const clearFilters = () => {
     const next = new URLSearchParams();
     if (group) next.set('group', group);
+    if (sortParam) next.set('sort', sortParam);
     setQDraft('');
     setParams(next, { replace: true });
   };
 
   const hasFilters = FILTER_KEYS.some((k) => params.get(k));
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / PER_PAGE)) : 1;
 
-  const exportCsv = async () => {
-    setExporting(true);
+  const onSort = (column: SortableColumn) => {
+    const specs = toggleSort(parseSortParam(sortParam), column);
+    const next = new URLSearchParams(params);
+    if (specs.length) next.set('sort', serializeSort(specs));
+    else next.delete('sort');
+    next.delete('page');
+    setParams(next, { replace: true });
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const applyBulk = async () => {
+    setBulkBusy(true);
+    setBulkNote(null);
+    try {
+      const body: Record<string, unknown> = { ids: [...selected], action: bulkAction };
+      if (bulkAction === 'set_state') body.state = bulkState;
+      if (bulkAction === 'assign_reviewer') body.reviewer_id = bulkReviewer.trim() || null;
+      const result = await api<BulkResult>('/valuations/bulk', { method: 'POST', body });
+      setBulkNote(
+        result.failed === 0
+          ? `Applied to ${result.succeeded} valuation${result.succeeded === 1 ? '' : 's'}.`
+          : `${result.succeeded} succeeded, ${result.failed} failed (${result.results.find((r) => !r.ok)?.error ?? 'see log'}).`,
+      );
+      setSelected(new Set());
+      reload();
+      loadCounts();
+    } catch (err) {
+      setBulkNote(err instanceof ApiError ? err.message : 'Bulk action failed.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const exportAs = async (format: 'csv' | 'pdf') => {
+    setExportError(null);
     try {
       const q = new URLSearchParams(filterQuery);
       if (group) q.set('group', group);
-      await apiDownload(`/valuations/export?${q}`, 'valuations.csv');
+      if (sortParam) q.set('sort', sortParam);
+      q.set('format', format);
+      await apiDownload(`/valuations/export?${q}`, `valuations.${format}`);
     } catch {
-      setError('Could not export CSV.');
-    } finally {
-      setExporting(false);
+      setExportError('Export failed.');
     }
   };
+
+  const totalPages = data ? Math.max(1, Math.ceil(data.total / PER_PAGE)) : 1;
+  const allOnPageSelected =
+    Boolean(data?.valuations.length) && data!.valuations.every((v) => selected.has(v.id));
 
   const tabs: Array<{ key: string; label: string }> = [
     { key: '', label: GROUP_LABELS.all! },
@@ -125,9 +218,12 @@ export function ValuationsPage() {
             {ops ? 'All valuations' : 'Valuations'}
           </h1>
         </div>
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={exportCsv} disabled={exporting}>
-            {exporting ? 'Exporting…' : '↓ Export CSV'}
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => void exportAs('csv')}>
+            Export CSV
+          </Button>
+          <Button variant="secondary" onClick={() => void exportAs('pdf')}>
+            Export PDF
           </Button>
           <Button onClick={() => navigate('/valuations/new')}>+ New valuation</Button>
         </div>
@@ -165,7 +261,7 @@ export function ValuationsPage() {
         })}
       </div>
 
-      {/* Filter bar */}
+      {/* Filter bar (M3 feature 15) */}
       <form
         className="mt-4 flex flex-wrap items-end gap-3"
         onSubmit={(e) => {
@@ -299,8 +395,52 @@ export function ValuationsPage() {
         <button type="submit" hidden />
       </form>
 
+      {exportError && <div className="mt-4"><ErrorNote>{exportError}</ErrorNote></div>}
       {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
       {!data && !error && <Spinner />}
+
+      {/* M4 — bulk action bar (ops) */}
+      {ops && selected.size > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-bond-200 bg-bond-50 px-4 py-3">
+          <span className="tnum text-sm font-semibold text-ink-800">{selected.size} selected</span>
+          <Select value={bulkAction} onChange={(e) => setBulkAction(e.target.value)} className="!w-auto">
+            <option value="set_state">Set state</option>
+            <option value="assign_reviewer">Assign reviewer</option>
+            <option value="advance">Auto-advance</option>
+            <option value="restart">Restart</option>
+          </Select>
+          {bulkAction === 'set_state' && (
+            <Select value={bulkState} onChange={(e) => setBulkState(e.target.value)} className="!w-auto">
+              {VALUATION_STATES.map((s) => (
+                <option key={s} value={s}>
+                  {STATE_LABELS[s]}
+                </option>
+              ))}
+            </Select>
+          )}
+          {bulkAction === 'assign_reviewer' && (
+            <Select
+              value={bulkReviewer}
+              onChange={(e) => setBulkReviewer(e.target.value)}
+              className="!w-auto min-w-52"
+            >
+              <option value="">Unassign</option>
+              {reviewers.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {displayName(r)}
+                </option>
+              ))}
+            </Select>
+          )}
+          <Button disabled={bulkBusy} onClick={() => void applyBulk()}>
+            {bulkBusy ? 'Applying…' : 'Apply'}
+          </Button>
+          <Button variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
+      {bulkNote && <div className="mt-3 text-sm text-ink-600">{bulkNote}</div>}
 
       {data && data.valuations.length === 0 && (
         <div className="mt-6">
@@ -318,16 +458,33 @@ export function ValuationsPage() {
 
       {data && data.valuations.length > 0 && (
         <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-paper-300 text-left">
-                <th className="overline px-5 py-3 font-semibold text-ink-400">#</th>
-                <th className="overline px-5 py-3 font-semibold text-ink-400">Company</th>
-                <th className="overline px-5 py-3 font-semibold text-ink-400">Kind</th>
-                <th className="overline px-5 py-3 font-semibold text-ink-400">State</th>
-                <th className="overline px-5 py-3 font-semibold text-ink-400">Created</th>
-                <th className="overline px-5 py-3 font-semibold text-ink-400">Due</th>
-                {ops && <th className="overline px-5 py-3 font-semibold text-ink-400">Paid</th>}
+                {ops && (
+                  <th className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all on page"
+                      checked={allOnPageSelected}
+                      onChange={() =>
+                        setSelected((prev) => {
+                          const next = new Set(prev);
+                          if (allOnPageSelected) data.valuations.forEach((v) => next.delete(v.id));
+                          else data.valuations.forEach((v) => next.add(v.id));
+                          return next;
+                        })
+                      }
+                    />
+                  </th>
+                )}
+                <SortableTh column="number" label="#" sortParam={sortParam} onSort={onSort} />
+                <SortableTh column="company_name" label="Company" sortParam={sortParam} onSort={onSort} />
+                <SortableTh column="kind" label="Kind" sortParam={sortParam} onSort={onSort} />
+                <SortableTh column="state" label="State" sortParam={sortParam} onSort={onSort} />
+                <SortableTh column="created_at" label="Created" sortParam={sortParam} onSort={onSort} />
+                <SortableTh column="due_date" label="Due" sortParam={sortParam} onSort={onSort} />
+                {ops && <SortableTh column="paid_status" label="Paid" sortParam={sortParam} onSort={onSort} />}
               </tr>
             </thead>
             <tbody>
@@ -337,6 +494,16 @@ export function ValuationsPage() {
                   onClick={() => navigate(`/valuations/${v.id}`)}
                   className="cursor-pointer border-b border-paper-200 last:border-0 hover:bg-paper-50"
                 >
+                  {ops && (
+                    <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${v.company_name}`}
+                        checked={selected.has(v.id)}
+                        onChange={() => toggleSelected(v.id)}
+                      />
+                    </td>
+                  )}
                   <td className="tnum px-5 py-3.5 text-ink-400">{v.number ?? '—'}</td>
                   <td className="px-5 py-3.5">
                     <div className="font-semibold text-ink-900">{v.company_name}</div>

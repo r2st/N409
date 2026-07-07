@@ -11,6 +11,10 @@ import { ValuationDetailPage } from './pages/ValuationDetailPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { PartnerPortalPage } from './pages/PartnerPortalPage';
+import { SearchPage } from './pages/SearchPage';
+import { NotificationsPage } from './pages/NotificationsPage';
+import { TemplatesPage } from './pages/TemplatesPage';
+import { SensitivityPage } from './pages/SensitivityPage';
 
 export default function App() {
   return (
@@ -30,8 +34,12 @@ export default function App() {
         <Route path="/valuations" element={<ValuationsPage />} />
         <Route path="/valuations/new" element={<NewValuationPage />} />
         <Route path="/valuations/:id" element={<ValuationDetailPage />} />
+        <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
         <Route path="/partner" element={<PartnerPortalPage />} />
         <Route path="/admin/users" element={<AdminUsersPage />} />
+        <Route path="/search" element={<SearchPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/templates" element={<TemplatesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
