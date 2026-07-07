@@ -79,3 +79,23 @@ export async function api<T>(
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
+/** Fetch an authenticated file (CSV export) and trigger a browser download. */
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set('authorization', `Bearer ${token}`);
+  const res = await fetch(`/api/v1${path}`, { headers });
+  if (!res.ok) {
+    const problem: Problem = await res.json().catch(() => ({ status: res.status }));
+    throw new ApiError(res.status, problem);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

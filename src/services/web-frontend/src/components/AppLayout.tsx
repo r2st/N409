@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { isOps, isPartner, scopeLabel } from '../lib/rbac';
+import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, initials } from '../lib/format';
 import { Wordmark } from './Logo';
 
@@ -62,6 +62,21 @@ const icons = {
       <path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1" strokeLinecap="round" />
     </svg>
   ),
+  partner: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M8 21v-6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v6" strokeLinecap="round" />
+      <path d="M3.5 9.5 12 3l8.5 6.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5.5 8v13h13V8" strokeLinecap="round" />
+    </svg>
+  ),
+  users: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 20c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" strokeLinecap="round" />
+      <circle cx="17" cy="9.5" r="2.4" />
+      <path d="M15.7 14.6c2.4.2 4.2 1.7 4.8 4.4" strokeLinecap="round" />
+    </svg>
+  ),
 };
 
 export function AppLayout() {
@@ -83,6 +98,15 @@ export function AppLayout() {
         onNavigate={close}
       />
       <NavItem to="/valuations/new" label="New valuation" icon={icons.newValuation} onNavigate={close} />
+      {isPartner(user) && (
+        <NavItem to="/partner" label="Partner portal" icon={icons.partner} onNavigate={close} />
+      )}
+      {canManageUsers(user) && (
+        <>
+          <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Administration</div>
+          <NavItem to="/admin/users" label="Users & roles" icon={icons.users} onNavigate={close} />
+        </>
+      )}
       <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Account</div>
       <NavItem to="/settings" label="Settings" icon={icons.settings} onNavigate={close} />
     </nav>

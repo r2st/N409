@@ -6,6 +6,10 @@ import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerValuationRoutes } from './routes/valuations.js';
+import { registerCommentRoutes } from './routes/comments.js';
+import { registerAdminUserRoutes } from './routes/adminUsers.js';
+import { registerApiTokenRoutes } from './routes/apiTokens.js';
+import { registerOperationsRoutes } from './routes/operations.js';
 
 export interface AppDeps {
   config: Config;
@@ -44,6 +48,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAuth(app, { pool, jwt });
   registerAuthRoutes(app, { pool, jwt, google });
   registerValuationRoutes(app, { pool });
+  // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
+  registerCommentRoutes(app, { pool });
+  registerAdminUserRoutes(app, { pool });
+  registerApiTokenRoutes(app, { pool });
+  registerOperationsRoutes(app, { pool });
 
   return app;
 }

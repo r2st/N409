@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { editableFields, isOps } from '../lib/rbac';
@@ -8,6 +8,7 @@ import { formatDate, formatDateTime, STATE_LABELS } from '../lib/format';
 import { VALUATION_STATES } from '../lib/types';
 import type { Valuation, ValuationEvent } from '../lib/types';
 import { Button, ErrorNote, Field, KindBadge, Select, Spinner, StateBadge, TextInput } from '../components/ui';
+import { CommentsSection } from '../components/CommentThread';
 
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -22,17 +23,22 @@ const EVENT_LABELS: Record<string, string> = {
   valuation_created: 'Valuation created',
   valuation_updated: 'Details updated',
   state_changed: 'State changed',
+  comment_added: 'Comment added',
+  email_received: 'Email received',
+  valuation_cloned: 'Cloned from another valuation',
 };
 
 export function ValuationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [events, setEvents] = useState<ValuationEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const [form, setForm] = useState({ company_name: '', service_name: '', state: '' });
 
   const load = useCallback(async () => {
@@ -98,6 +104,22 @@ export function ValuationDetailPage() {
     }
   };
 
+  const clone = async (rollForward: boolean) => {
+    setCloning(true);
+    setSaveError(null);
+    try {
+      const res = await api<{ valuation: Valuation }>(`/valuations/${valuation.id}/clone`, {
+        method: 'POST',
+        body: { roll_forward: rollForward },
+      });
+      navigate(`/valuations/${res.valuation.id}`);
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : 'Could not clone the valuation.');
+    } finally {
+      setCloning(false);
+    }
+  };
+
   return (
     <div>
       <Link to="/valuations" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
@@ -113,8 +135,24 @@ export function ValuationDetailPage() {
             Waiting on client
           </span>
         )}
+        <span className="ml-auto flex gap-2">
+          <Button variant="secondary" disabled={cloning} onClick={() => clone(false)}>
+            {cloning ? 'Cloning…' : 'Clone'}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={cloning}
+            onClick={() => clone(true)}
+            title="Duplicate this engagement for the next valuation date"
+          >
+            Roll forward →
+          </Button>
+        </span>
       </div>
-      <p className="tnum mt-1.5 text-xs text-ink-400">Ref {valuation.id}</p>
+      <p className="tnum mt-1.5 text-xs text-ink-400">
+        Ref {valuation.id}
+        {valuation.number != null && <> · #{valuation.number}</>}
+      </p>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_20rem]">
         <div className="space-y-8">
@@ -204,6 +242,9 @@ export function ValuationDetailPage() {
               </form>
             </section>
           )}
+
+          {/* Client chat + sticky notes + threaded email (M3) */}
+          <CommentsSection valuationId={valuation.id} />
         </div>
 
         {/* Audit timeline */}

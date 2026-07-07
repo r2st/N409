@@ -14,6 +14,8 @@ export interface UserRow {
   password_digest: string | null;
   partner_id: string | null;
   created_at: Date;
+  /** Soft delete (M3 admin console): set = cannot authenticate. */
+  deleted_at: Date | null;
 }
 
 export interface UserWithRoles extends UserRow {

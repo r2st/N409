@@ -66,8 +66,13 @@ export function registerAuthRoutes(
     const { email, password } = parsed.data;
 
     const user = await findUserByEmail(deps.pool, email);
-    // Same error for unknown email and bad password — no account enumeration.
-    if (!user?.password_digest || !(await verifyPassword(password, user.password_digest))) {
+    // Same error for unknown email, bad password, and deleted account —
+    // no account enumeration.
+    if (
+      !user?.password_digest ||
+      user.deleted_at ||
+      !(await verifyPassword(password, user.password_digest))
+    ) {
       throw problems.unauthorized('Invalid email or password');
     }
     return { user: toPublicUser(user), token: await issueToken(user) };

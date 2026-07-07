@@ -62,6 +62,23 @@ export function stateGroup(state: ValuationState): 'open' | 'in_review' | 'draft
   return 'closed';
 }
 
+export const GROUP_LABELS: Record<string, string> = {
+  all: 'All',
+  open: 'Open',
+  in_review: 'In review',
+  drafted: 'Drafted',
+  published: 'Published',
+  closed: 'Closed',
+};
+
+export const SOURCE_LABELS: Record<string, string> = {
+  partner: 'Partner',
+  referral: 'Referral',
+  ads: 'Ads',
+  repeat: 'Repeat',
+  direct: 'Direct',
+};
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);

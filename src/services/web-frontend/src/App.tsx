@@ -9,6 +9,8 @@ import { ValuationsPage } from './pages/ValuationsPage';
 import { NewValuationPage } from './pages/NewValuationPage';
 import { ValuationDetailPage } from './pages/ValuationDetailPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AdminUsersPage } from './pages/AdminUsersPage';
+import { PartnerPortalPage } from './pages/PartnerPortalPage';
 
 export default function App() {
   return (
@@ -28,6 +30,8 @@ export default function App() {
         <Route path="/valuations" element={<ValuationsPage />} />
         <Route path="/valuations/new" element={<NewValuationPage />} />
         <Route path="/valuations/:id" element={<ValuationDetailPage />} />
+        <Route path="/partner" element={<PartnerPortalPage />} />
+        <Route path="/admin/users" element={<AdminUsersPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

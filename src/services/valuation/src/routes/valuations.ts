@@ -10,12 +10,14 @@ import {
   valuationScope,
 } from '../auth/rbac.js';
 import { VALUATION_KINDS, VALUATION_SOURCES, VALUATION_STATES } from '../domain/valuation.js';
+import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { listEvents } from '../events/record.js';
 import {
   createValuation,
   findValuationById,
   listValuations,
   patchValuation,
+  type ValuationFilters,
   type ValuationRow,
 } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -52,9 +54,52 @@ const PatchBody = z
   .partial()
   .strict();
 
-const ListQuery = z.object({
+const DateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+
+/**
+ * M3 feature 15 — advanced filters, shared by the list, the tab counts, and
+ * the CSV export (routes/operations.ts).
+ */
+export const ValuationFilterQuery = z.object({
   state: z.enum(VALUATION_STATES).optional(),
   kind: z.enum(VALUATION_KINDS).optional(),
+  group: z.enum(STATE_GROUP_KEYS as [StateGroup, ...StateGroup[]]).optional(),
+  q: z.string().max(300).optional(),
+  reviewer_id: z.string().optional(),
+  partner_id: z.string().optional(),
+  user_id: z.string().optional(),
+  source: z.enum(VALUATION_SOURCES).optional(),
+  paid_status: z.enum(['unpaid', 'paid', 'paid_by_partner']).optional(),
+  waiting_on_client: z
+    .enum(['true', 'false'])
+    .transform((v) => v === 'true')
+    .optional(),
+  created_from: DateOnly.optional(),
+  created_to: DateOnly.optional(),
+  due_from: DateOnly.optional(),
+  due_to: DateOnly.optional(),
+});
+
+export function toRepoFilters(f: z.infer<typeof ValuationFilterQuery>): ValuationFilters {
+  return {
+    state: f.state,
+    kind: f.kind,
+    group: f.group,
+    q: f.q || undefined,
+    reviewerId: f.reviewer_id,
+    partnerId: f.partner_id,
+    userId: f.user_id,
+    source: f.source,
+    paidStatus: f.paid_status,
+    waitingOnClient: f.waiting_on_client,
+    createdFrom: f.created_from,
+    createdTo: f.created_to,
+    dueFrom: f.due_from,
+    dueTo: f.due_to,
+  };
+}
+
+const ListQuery = ValuationFilterQuery.extend({
   page: z.coerce.number().int().min(1).default(1),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -111,11 +156,10 @@ export function registerValuationRoutes(app: FastifyInstance, deps: { pool: pg.P
     const principal = requirePrincipal(req);
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
-    const { page, per_page, state, kind } = parsed.data;
+    const { page, per_page } = parsed.data;
 
     const { items, total } = await listValuations(deps.pool, valuationScope(principal), {
-      state,
-      kind,
+      ...toRepoFilters(parsed.data),
       page,
       perPage: per_page,
     });

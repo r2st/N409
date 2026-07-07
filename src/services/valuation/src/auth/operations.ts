@@ -1,0 +1,37 @@
+/**
+ * M3 policy layer (comments, tokens, admin console) — pure functions, same
+ * contract as auth/rbac.ts. Separate file so parallel milestones don't collide
+ * editing rbac.ts.
+ */
+import { canReadValuation, isOps, type Principal, type ValuationRef } from './rbac.js';
+import type { CommentKind } from '../domain/operations.js';
+
+/** Chat is client-facing; notes and threaded email are internal ops tooling. */
+export function visibleCommentKinds(p: Principal): ReadonlySet<CommentKind> {
+  return isOps(p) ? new Set(['chat', 'note', 'email'] as const) : new Set(['chat'] as const);
+}
+
+export function canPostComment(p: Principal, v: ValuationRef, kind: CommentKind): boolean {
+  if (kind === 'email') return false; // email arrives via the inbox endpoint only
+  if (kind === 'note') return isOps(p);
+  return canReadValuation(p, v);
+}
+
+/** Author may edit/delete their own comment; ops can moderate everything. */
+export function canEditComment(p: Principal, comment: { author_id: string | null }): boolean {
+  return isOps(p) || (comment.author_id !== null && comment.author_id === p.id);
+}
+
+/** Only ops ingest email into comment threads (relay runs as an 'auto' user). */
+export function canIngestEmail(p: Principal): boolean {
+  return isOps(p);
+}
+
+/**
+ * API tokens act for a partner. Ops manage any partner's tokens; a 'partner'
+ * (org admin) manages their own org's. 'member' users cannot mint tokens.
+ */
+export function canManageTokens(p: Principal, partnerId: string): boolean {
+  if (isOps(p)) return true;
+  return p.roles.includes('partner') && p.partnerId === partnerId;
+}

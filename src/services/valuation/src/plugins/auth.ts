@@ -4,6 +4,7 @@ import { problems } from '@n409/shared';
 import { verifySession, type JwtConfig } from '../auth/jwt.js';
 import type { Principal } from '../auth/rbac.js';
 import { findUserById } from '../repos/users.js';
+import { resolveApiToken, TOKEN_SCHEME } from '../repos/apiTokens.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -15,9 +16,10 @@ declare module 'fastify' {
 }
 
 /**
- * Bearer-JWT authentication. Roles/partner are re-read from the DB on every
- * request so a role change or removal takes effect immediately, not at token
- * expiry.
+ * Bearer authentication: session JWTs, or partner API tokens (`n409_pat_…`,
+ * M3) which act as the user that created them. Roles/partner are re-read from
+ * the DB on every request so a role change or removal takes effect
+ * immediately, not at token expiry.
  */
 export function registerAuth(app: FastifyInstance, deps: { pool: pg.Pool; jwt: JwtConfig }): void {
   app.decorateRequest('principal', null);
@@ -25,16 +27,23 @@ export function registerAuth(app: FastifyInstance, deps: { pool: pg.Pool; jwt: J
   app.decorate('authenticate', async (req: FastifyRequest, _reply: FastifyReply) => {
     const header = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) throw problems.unauthorized();
+    const bearer = header.slice('Bearer '.length);
 
     let sub: string;
-    try {
-      ({ sub } = await verifySession(header.slice('Bearer '.length), deps.jwt));
-    } catch {
-      throw problems.unauthorized('Invalid or expired token');
+    if (bearer.startsWith(TOKEN_SCHEME)) {
+      const resolved = await resolveApiToken(deps.pool, bearer);
+      if (!resolved) throw problems.unauthorized('Invalid or revoked API token');
+      sub = resolved.userId;
+    } else {
+      try {
+        ({ sub } = await verifySession(bearer, deps.jwt));
+      } catch {
+        throw problems.unauthorized('Invalid or expired token');
+      }
     }
 
     const user = await findUserById(deps.pool, sub);
-    if (!user) throw problems.unauthorized('Unknown user');
+    if (!user || user.deleted_at) throw problems.unauthorized('Unknown user');
 
     req.principal = { id: user.id, roles: user.roles, partnerId: user.partner_id };
   });
