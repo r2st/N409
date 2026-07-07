@@ -104,6 +104,7 @@ export interface GridOptions {
 
 const DEFAULT_VOL_STEPS = [-0.2, -0.1, 0, 0.1, 0.2];
 const DEFAULT_TERM_STEPS = [-1, -0.5, 0, 0.5, 1];
+const DEFAULT_RFR_STEPS = [-0.02, -0.01, 0, 0.01, 0.02];
 
 /** Builds the volatility × term stress table around the base case. */
 export function sensitivityGrid(inputs: OpmInputs, opts: GridOptions = {}): SensitivityGrid {
@@ -140,4 +141,94 @@ export function sensitivityGrid(inputs: OpmInputs, opts: GridOptions = {}): Sens
 
 function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
+}
+
+/* ── Three-table dashboard (remaining-gaps §2 "Sensitivity dashboard") ──────
+ * 409.ai stresses three axis pairs: Term×Vol, RFR×Vol, RFR×Term. Each cell
+ * carries the price and its delta vs. the base case; the base row/column set
+ * comes from the same steps as the classic grid, plus additive RFR steps. */
+
+export type SensitivityAxis = 'volatility' | 'termYears' | 'riskFreeRate';
+
+export interface AxisCell {
+  /** rows[i][j]: row-axis value i × column-axis value j. */
+  fmvPerShareCents: number;
+  deltaFromBase: number;
+}
+
+export interface AxisTable {
+  rowAxis: SensitivityAxis;
+  colAxis: SensitivityAxis;
+  rowValues: number[];
+  colValues: number[];
+  rows: AxisCell[][];
+}
+
+export interface SensitivityTables {
+  base: {
+    volatility: number;
+    termYears: number;
+    riskFreeRate: number;
+    fmvPerShareCents: number;
+  };
+  tables: { term_vol: AxisTable; rfr_vol: AxisTable; rfr_term: AxisTable };
+}
+
+export interface TablesOptions extends GridOptions {
+  /** Additive stress steps applied to the risk-free rate, e.g. [-0.01, 0, 0.01]. */
+  rfrSteps?: number[];
+}
+
+function axisValues(inputs: OpmInputs, axis: SensitivityAxis, steps: number[]): number[] {
+  switch (axis) {
+    case 'volatility':
+      // Multiplicative, like the classic grid.
+      return steps.map((s) => round4(inputs.volatility * (1 + s)));
+    case 'termYears':
+      return steps.map((s) => round4(Math.max(0.1, inputs.termYears + s)));
+    case 'riskFreeRate':
+      return steps.map((s) => round4(Math.max(0, inputs.riskFreeRate + s)));
+  }
+}
+
+function buildTable(
+  inputs: OpmInputs,
+  baseFmv: number,
+  rowAxis: SensitivityAxis,
+  colAxis: SensitivityAxis,
+  rowValues: number[],
+  colValues: number[],
+): AxisTable {
+  const rows = rowValues.map((rowValue) =>
+    colValues.map((colValue) => {
+      const fmv = opmFmvPerShareCents({ ...inputs, [rowAxis]: rowValue, [colAxis]: colValue });
+      return {
+        fmvPerShareCents: Math.round(fmv),
+        deltaFromBase: baseFmv > 0 ? round4(fmv / baseFmv - 1) : 0,
+      };
+    }),
+  );
+  return { rowAxis, colAxis, rowValues, colValues, rows };
+}
+
+/** All three stress tables around the base case. */
+export function sensitivityTables(inputs: OpmInputs, opts: TablesOptions = {}): SensitivityTables {
+  const vols = axisValues(inputs, 'volatility', opts.volatilitySteps ?? DEFAULT_VOL_STEPS);
+  const terms = axisValues(inputs, 'termYears', opts.termSteps ?? DEFAULT_TERM_STEPS);
+  const rfrs = axisValues(inputs, 'riskFreeRate', opts.rfrSteps ?? DEFAULT_RFR_STEPS);
+  const baseFmv = opmFmvPerShareCents(inputs);
+
+  return {
+    base: {
+      volatility: inputs.volatility,
+      termYears: inputs.termYears,
+      riskFreeRate: inputs.riskFreeRate,
+      fmvPerShareCents: Math.round(baseFmv),
+    },
+    tables: {
+      term_vol: buildTable(inputs, baseFmv, 'termYears', 'volatility', terms, vols),
+      rfr_vol: buildTable(inputs, baseFmv, 'riskFreeRate', 'volatility', rfrs, vols),
+      rfr_term: buildTable(inputs, baseFmv, 'riskFreeRate', 'termYears', rfrs, terms),
+    },
+  };
 }

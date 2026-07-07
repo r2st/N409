@@ -515,7 +515,7 @@ describe.skipIf(!dbUp)('M1 core pipeline API', () => {
 
       const unknown = await app.inject({
         method: 'POST',
-        url: `/api/v1/valuations/${valuationId}/ai/summarize`,
+        url: `/api/v1/valuations/${valuationId}/ai/does_not_exist`,
         headers: authHeader(ops.token),
       });
       expect(unknown.statusCode).toBe(404);

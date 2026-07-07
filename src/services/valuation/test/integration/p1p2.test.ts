@@ -119,6 +119,7 @@ describe.skipIf(!dbUp)('P1/P2 features API', () => {
         'comparables',
         'extract',
         'missing_data',
+        'summarize',
       ]);
       const extract = prompts.find((p: { pipeline: string }) => p.pipeline === 'extract');
       expect(extract.system_prompt).toContain('Never invent numbers');

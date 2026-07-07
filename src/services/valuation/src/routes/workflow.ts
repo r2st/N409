@@ -8,6 +8,7 @@ import { BULK_ACTIONS, canRestart, canTransition, nextState, RESTART_STATE } fro
 import { findValuationById, patchValuation, type ValuationRow } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
+import { assertPublishGate } from '../domain/publishGate.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -53,6 +54,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     principal: Principal,
     source: string,
   ): Promise<ValuationRow> => {
+    await assertPublishGate(deps.pool, valuation.id, to);
     const updated = await patchValuation(deps.pool, valuation, { state: to }, actorFor(principal, source));
     await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, to);
     return updated;

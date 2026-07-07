@@ -3,14 +3,20 @@ import type { FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatMoney } from '../lib/format';
-import type { SensitivityResult } from '../lib/types';
+import type { AxisTable, SensitivityAxis, SensitivityResult } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
 
 /**
- * Sensitivity dashboard (M4) — OPM volatility × term stress table showing how
- * the per-share FMV moves under different assumptions. Ops only (the API
- * enforces it; this page just renders the 403 nicely).
+ * Sensitivity dashboard — three OPM stress tables (Term×Vol, RFR×Vol,
+ * RFR×Term) showing how the per-share FMV moves under different assumptions.
+ * Ops only (the API enforces it; this page just renders the 403 nicely).
  */
+
+const AXIS_META: Record<SensitivityAxis, { label: string; format: (v: number) => string }> = {
+  volatility: { label: 'Volatility', format: (v) => `${(v * 100).toFixed(0)}%` },
+  termYears: { label: 'Term', format: (v) => `${v}y` },
+  riskFreeRate: { label: 'Risk-free', format: (v) => `${(v * 100).toFixed(1)}%` },
+};
 
 const defaultAssumptions = {
   equity_value: '50000000',
@@ -26,6 +32,66 @@ function deltaClass(delta: number): string {
   if (delta > 0.001) return 'text-bond-700';
   if (delta < -0.001) return 'text-red-700';
   return 'text-ink-500';
+}
+
+function AxisTableView({
+  title,
+  table,
+  currency,
+  baseFmvCents,
+}: {
+  title: string;
+  table: AxisTable;
+  currency: string | null;
+  baseFmvCents: number;
+}) {
+  const rowMeta = AXIS_META[table.rowAxis];
+  const colMeta = AXIS_META[table.colAxis];
+  return (
+    <div>
+      <h2 className="mb-2 font-display text-lg font-semibold text-ink-900">{title}</h2>
+      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <table className="w-full min-w-[560px] text-sm">
+          <thead>
+            <tr className="border-b border-paper-300">
+              <th className="overline px-4 py-3 text-left font-semibold text-ink-400">
+                {rowMeta.label} \ {colMeta.label}
+              </th>
+              {table.colValues.map((v) => (
+                <th key={v} className="tnum px-4 py-3 text-right font-semibold text-ink-700">
+                  {colMeta.format(v)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, i) => (
+              <tr key={table.rowValues[i]} className="border-b border-paper-200 last:border-0">
+                <td className="tnum px-4 py-2.5 font-semibold text-ink-700">
+                  {rowMeta.format(table.rowValues[i]!)}
+                </td>
+                {row.map((cell, j) => {
+                  const isBase = cell.deltaFromBase === 0 && cell.fmvPerShareCents === baseFmvCents;
+                  return (
+                    <td
+                      key={j}
+                      className={`tnum px-4 py-2.5 text-right ${isBase ? 'bg-bond-50 font-semibold' : ''}`}
+                    >
+                      <div className="text-ink-900">{formatMoney(cell.fmvPerShareCents, currency)}</div>
+                      <div className={`text-xs ${deltaClass(cell.deltaFromBase)}`}>
+                        {cell.deltaFromBase > 0 ? '+' : ''}
+                        {(cell.deltaFromBase * 100).toFixed(1)}%
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export function SensitivityPage() {
@@ -115,59 +181,60 @@ export function SensitivityPage() {
       </form>
 
       {result && (
-        <div className="mt-8">
+        <div className="mt-8 space-y-8">
           <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1">
             <div className="font-display text-xl font-semibold text-ink-900">
               Base FMV: {formatMoney(result.base.fmvPerShareCents, result.currency)} / share
             </div>
             <div className="text-sm text-ink-500">
-              σ {(result.base.volatility * 100).toFixed(0)}% · {result.base.termYears}y · DLOM{' '}
-              {(result.dlom * 100).toFixed(0)}%
+              σ {(result.base.volatility * 100).toFixed(0)}% · {result.base.termYears}y
+              {result.base.riskFreeRate !== undefined &&
+                ` · r ${(result.base.riskFreeRate * 100).toFixed(1)}%`}{' '}
+              · DLOM {(result.dlom * 100).toFixed(0)}%
             </div>
           </div>
 
-          <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
-            <table className="w-full min-w-[560px] text-sm">
-              <thead>
-                <tr className="border-b border-paper-300">
-                  <th className="overline px-4 py-3 text-left font-semibold text-ink-400">σ \ Term</th>
-                  {result.terms.map((t) => (
-                    <th key={t} className="tnum px-4 py-3 text-right font-semibold text-ink-700">
-                      {t}y
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row, i) => (
-                  <tr key={result.volatilities[i]} className="border-b border-paper-200 last:border-0">
-                    <td className="tnum px-4 py-2.5 font-semibold text-ink-700">
-                      {(result.volatilities[i]! * 100).toFixed(0)}%
-                    </td>
-                    {row.map((cell) => {
-                      const isBase =
-                        cell.volatility === result.base.volatility && cell.termYears === result.base.termYears;
-                      return (
-                        <td
-                          key={`${cell.volatility}-${cell.termYears}`}
-                          className={`tnum px-4 py-2.5 text-right ${isBase ? 'bg-bond-50 font-semibold' : ''}`}
-                        >
-                          <div className="text-ink-900">{formatMoney(cell.fmvPerShareCents, result.currency)}</div>
-                          <div className={`text-xs ${deltaClass(cell.deltaFromBase)}`}>
-                            {cell.deltaFromBase > 0 ? '+' : ''}
-                            {(cell.deltaFromBase * 100).toFixed(1)}%
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-3 text-xs text-ink-400">
+          {result.tables ? (
+            <>
+              <AxisTableView
+                title="Term × Volatility"
+                table={result.tables.term_vol}
+                currency={result.currency}
+                baseFmvCents={result.base.fmvPerShareCents}
+              />
+              <AxisTableView
+                title="Risk-free rate × Volatility"
+                table={result.tables.rfr_vol}
+                currency={result.currency}
+                baseFmvCents={result.base.fmvPerShareCents}
+              />
+              <AxisTableView
+                title="Risk-free rate × Term"
+                table={result.tables.rfr_term}
+                currency={result.currency}
+                baseFmvCents={result.base.fmvPerShareCents}
+              />
+            </>
+          ) : (
+            <AxisTableView
+              title="Volatility × Term"
+              table={{
+                rowAxis: 'volatility',
+                colAxis: 'termYears',
+                rowValues: result.volatilities,
+                colValues: result.terms,
+                rows: result.rows.map((row) =>
+                  row.map((c) => ({ fmvPerShareCents: c.fmvPerShareCents, deltaFromBase: c.deltaFromBase })),
+                ),
+              }}
+              currency={result.currency}
+              baseFmvCents={result.base.fmvPerShareCents}
+            />
+          )}
+          <p className="text-xs text-ink-400">
             Common stock valued as a Black-Scholes call on equity struck at the preference stack, spread
-            across fully diluted common, less DLOM. Stress grid: volatility ±20%, term ±1 year.
+            across fully diluted common, less DLOM. Stress steps: volatility ±20%, term ±1 year,
+            risk-free rate ±2%.
           </p>
         </div>
       )}

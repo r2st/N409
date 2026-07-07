@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { sensitivityGrid } from '../domain/sensitivity.js';
+import { sensitivityGrid, sensitivityTables } from '../domain/sensitivity.js';
 import { findValuationById } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -23,6 +23,7 @@ const Body = z.object({
   dlom: z.number().min(0).max(0.95).optional(),
   volatility_steps: z.array(z.number().min(-0.9).max(2)).min(1).max(9).optional(),
   term_steps: z.array(z.number().min(-20).max(20)).min(1).max(9).optional(),
+  rfr_steps: z.array(z.number().min(-0.25).max(0.25)).min(1).max(9).optional(),
 });
 
 function requireOps(principal: Principal): void {
@@ -51,18 +52,28 @@ export function registerSensitivityRoutes(app: FastifyInstance, deps: { pool: pg
       dlom = rows[0]?.dlom != null ? Number(rows[0].dlom) : 0;
     }
 
-    const grid = sensitivityGrid(
-      {
-        equityValueCents: b.equity_value_cents,
-        strikeCents: b.strike_cents,
-        volatility: b.volatility,
-        termYears: b.term_years,
-        riskFreeRate: b.risk_free_rate,
-        commonShares: b.common_shares,
-        dlom,
-      },
-      { volatilitySteps: b.volatility_steps, termSteps: b.term_steps },
-    );
-    return { sensitivity: { ...grid, dlom, currency: valuation.currency } };
+    const inputs = {
+      equityValueCents: b.equity_value_cents,
+      strikeCents: b.strike_cents,
+      volatility: b.volatility,
+      termYears: b.term_years,
+      riskFreeRate: b.risk_free_rate,
+      commonShares: b.common_shares,
+      dlom,
+    };
+    const grid = sensitivityGrid(inputs, {
+      volatilitySteps: b.volatility_steps,
+      termSteps: b.term_steps,
+    });
+    // The three-table dashboard (Term×Vol, RFR×Vol, RFR×Term) rides along
+    // with the classic grid so existing consumers keep working.
+    const { tables, base } = sensitivityTables(inputs, {
+      volatilitySteps: b.volatility_steps,
+      termSteps: b.term_steps,
+      rfrSteps: b.rfr_steps,
+    });
+    return {
+      sensitivity: { ...grid, base, tables, dlom, currency: valuation.currency },
+    };
   });
 }

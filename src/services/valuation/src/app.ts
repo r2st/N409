@@ -19,6 +19,9 @@ import { registerSearchRoutes } from './routes/search.js';
 import { registerExportRoutes } from './routes/exports.js';
 import { registerSensitivityRoutes } from './routes/sensitivity.js';
 import { logTransport, type EmailTransport } from './hooks/stateChange.js';
+import { smtpTransport } from './email/smtp.js';
+import { registerPaymentRoutes } from './routes/payments.js';
+import { registerSignatureRoutes } from './routes/signatures.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
 import { registerParamsRoutes } from './routes/params.js';
@@ -66,9 +69,27 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       },
     },
   });
-  // M4: auto-email transport; delivery status is tracked in email_outbox.
-  const transport: EmailTransport | undefined =
-    config.EMAIL_MODE === 'log' ? logTransport(app.log) : undefined;
+  // Auto-email transport; delivery status is tracked in email_outbox.
+  // 'smtp' needs SMTP_HOST — otherwise fall back to 'log' so a misconfigured
+  // box degrades to logging instead of silently dropping mail.
+  let transport: EmailTransport | undefined;
+  if (config.EMAIL_MODE === 'smtp' && config.SMTP_HOST) {
+    transport = smtpTransport(
+      {
+        host: config.SMTP_HOST,
+        port: config.SMTP_PORT,
+        user: config.SMTP_USER,
+        pass: config.SMTP_PASS,
+        from: config.SMTP_FROM,
+      },
+      app.log,
+    );
+  } else if (config.EMAIL_MODE !== 'off') {
+    if (config.EMAIL_MODE === 'smtp') {
+      app.log.warn('EMAIL_MODE=smtp but SMTP_HOST is unset — falling back to log transport');
+    }
+    transport = logTransport(app.log);
+  }
 
   void app.register(multipart, { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
   registerAuth(app, { pool, jwt });
@@ -103,6 +124,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerCompanyProfileRoutes(app, { pool });
   registerPackageRoutes(app, { pool });
   registerSupportRoutes(app, { pool });
+  // P0 — outside-world integrations (remaining-gaps §6): Stripe + signatures
+  registerPaymentRoutes(app, {
+    pool,
+    stripeSecretKey: config.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: config.STRIPE_WEBHOOK_SECRET,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+  });
+  registerSignatureRoutes(app, { pool });
 
   return app;
 }

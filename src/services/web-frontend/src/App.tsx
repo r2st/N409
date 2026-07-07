@@ -32,6 +32,7 @@ import { BotPromptsPage } from './pages/BotPromptsPage';
 import { SupportInboxPage } from './pages/SupportInboxPage';
 import { CompanyTab } from './pages/valuation/CompanyTab';
 import { PackageTab } from './pages/valuation/PackageTab';
+import { OnboardingPage } from './pages/OnboardingPage';
 
 export default function App() {
   return (
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/valuations" element={<ValuationsPage />} />
         <Route path="/valuations/new" element={<NewValuationPage />} />
+        <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/valuations/:id" element={<ValuationWorkspace />}>
           <Route index element={<ValuationDetailPage />} />
           <Route path="company" element={<CompanyTab />} />

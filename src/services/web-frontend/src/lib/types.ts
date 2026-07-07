@@ -257,11 +257,28 @@ export interface SensitivityCell {
   deltaFromBase: number;
 }
 
+export type SensitivityAxis = 'volatility' | 'termYears' | 'riskFreeRate';
+
+export interface AxisCell {
+  fmvPerShareCents: number;
+  deltaFromBase: number;
+}
+
+export interface AxisTable {
+  rowAxis: SensitivityAxis;
+  colAxis: SensitivityAxis;
+  rowValues: number[];
+  colValues: number[];
+  rows: AxisCell[][];
+}
+
 export interface SensitivityResult {
-  base: { volatility: number; termYears: number; fmvPerShareCents: number };
+  base: { volatility: number; termYears: number; riskFreeRate?: number; fmvPerShareCents: number };
   volatilities: number[];
   terms: number[];
   rows: SensitivityCell[][];
+  /** Three-table dashboard: Term×Vol, RFR×Vol, RFR×Term. */
+  tables?: { term_vol: AxisTable; rfr_vol: AxisTable; rfr_term: AxisTable };
   dlom: number;
   currency: string | null;
 }

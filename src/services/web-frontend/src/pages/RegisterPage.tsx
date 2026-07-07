@@ -43,7 +43,8 @@ export function RegisterPage() {
         first_name: form.first_name || undefined,
         last_name: form.last_name || undefined,
       });
-      navigate('/dashboard', { replace: true });
+      // New clients land in the guided onboarding funnel, not the worklist.
+      navigate('/onboarding', { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to register — please try again.');
     } finally {

@@ -22,6 +22,7 @@ import {
   type ValuationRow,
 } from '../repos/valuations.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
+import { assertPublishGate } from '../domain/publishGate.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
@@ -199,6 +200,9 @@ export function registerValuationRoutes(
     }
     if (requested.length === 0) return { valuation };
 
+    if (parsed.data.state && parsed.data.state !== valuation.state) {
+      await assertPublishGate(deps.pool, valuation.id, parsed.data.state);
+    }
     const updated = await patchValuation(
       deps.pool,
       valuation,

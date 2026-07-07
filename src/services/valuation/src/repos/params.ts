@@ -65,6 +65,36 @@ export async function findParams(pool: pg.Pool, valuationId: string): Promise<Va
   return rows[0] ?? null;
 }
 
+/**
+ * Extraction auto-apply (remaining-gaps §2 "Set Valuation Parameters"):
+ * merge AI-extracted engine inputs into valuation_params.engine_inputs, with
+ * the params_updated audit event. Existing keys are overwritten — the newest
+ * applied extraction wins.
+ */
+export async function applyEngineInputs(
+  pool: pg.Pool,
+  valuationId: string,
+  inputs: Record<string, unknown>,
+  actor: EventActor,
+): Promise<ValuationParamsRow> {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<ValuationParamsRow>(
+      `UPDATE valuation_params
+       SET engine_inputs = engine_inputs || $2::jsonb, updated_at = now()
+       WHERE valuation_id = $1
+       RETURNING *`,
+      [valuationId, JSON.stringify(inputs)],
+    );
+    await recordEvent(client, {
+      valuationId,
+      type: PIPELINE_EVENT_TYPES.paramsUpdated,
+      actor,
+      payload: { engine_inputs_applied: inputs },
+    });
+    return rows[0]!;
+  });
+}
+
 /** Field-level patch + params_updated audit event, atomically. */
 export async function patchParams(
   pool: pg.Pool,

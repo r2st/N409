@@ -534,7 +534,15 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
       published = await createValuation(filterClient.token, { company_name: 'Zebra Systems' });
       await createValuation(filterClient.token, { kind: 'esop', company_name: 'Yak Industries' });
 
-      // move one to published + assign reviewer (ops-only patch)
+      // move one to published + assign reviewer (ops-only patch); the publish
+      // gate requires the main signature first
+      const signed = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${published.id}/signatures`,
+        headers: authHeader(ops.token),
+        payload: { role: 'main', signer_name: 'Ops Reviewer', signature_text: '/s/ Ops Reviewer' },
+      });
+      expect(signed.statusCode).toBe(201);
       const patch = await ctx.app.inject({
         method: 'PATCH',
         url: `/api/v1/valuations/${published.id}`,

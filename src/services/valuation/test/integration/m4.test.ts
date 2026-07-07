@@ -201,6 +201,25 @@ describe.skipIf(!dbUp)('M4 — Polish', () => {
       await patchState(vid, 'reviewed');
       await patchState(vid, 'drafted');
       await patchState(vid, 'draft_accepted');
+
+      // Signature gate: publish is blocked until the main signature is on file.
+      const blocked = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${vid}`,
+        headers: authHeader(ops.token),
+        payload: { state: 'published' },
+      });
+      expect(blocked.statusCode).toBe(409);
+      expect(blocked.json().detail).toMatch(/main signature/i);
+
+      const signed = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${vid}/signatures`,
+        headers: authHeader(ops.token),
+        payload: { role: 'main', signer_name: 'Ada Analyst', signature_text: '/s/ Ada Analyst' },
+      });
+      expect(signed.statusCode).toBe(201);
+
       await patchState(vid, 'published');
 
       const notifications = await ctx.app.inject({

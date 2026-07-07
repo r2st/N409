@@ -448,8 +448,8 @@ export function ValuationsPage() {
             {hasFilters || group ? (
               'Try clearing a filter.'
             ) : (
-              <Link to="/valuations/new" className="font-semibold text-bond-600 hover:text-bond-700">
-                Start your first valuation
+              <Link to="/onboarding" className="font-semibold text-bond-600 hover:text-bond-700">
+                Start your first valuation — we'll guide you through it
               </Link>
             )}
           </EmptyState>

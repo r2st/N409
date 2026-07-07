@@ -50,6 +50,33 @@ function JobResult({ job }: { job: AiJob }) {
     );
   }
 
+  if (job.pipeline === 'summarize') {
+    const summaries =
+      (result.summaries as Array<{ filename: string; summary: string; key_figures?: string[] }> | undefined) ??
+      [];
+    const overall = result.overall as string | undefined;
+    if (summaries.length === 0 && !overall)
+      return <p className="mt-2 text-sm text-ink-600">Nothing to summarize yet.</p>;
+    return (
+      <div className="mt-2 space-y-3 text-sm">
+        {overall && <p className="text-ink-800">{overall}</p>}
+        {summaries.map((s, i) => (
+          <div key={i} className="rounded-md border border-paper-300 bg-paper-50 p-3">
+            <div className="font-mono text-xs font-semibold text-ink-700">{s.filename}</div>
+            <p className="mt-1 text-ink-800">{s.summary}</p>
+            {Array.isArray(s.key_figures) && s.key_figures.length > 0 && (
+              <ul className="tnum mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-ink-600">
+                {s.key_figures.map((f, j) => (
+                  <li key={j}>· {f}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   // comparables
   const comps =
     (result.comparables as Array<{
@@ -93,11 +120,13 @@ function JobResult({ job }: { job: AiJob }) {
   );
 }
 
-/** AI actions: run the three pipelines and browse past runs with provenance. */
+/** AI actions: run the pipelines and browse past runs with provenance. */
 export function AiPanel({ valuationId }: { valuationId: string }) {
   const [jobs, setJobs] = useState<AiJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<AiPipeline | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [appliedAt, setAppliedAt] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -126,13 +155,28 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
     }
   };
 
+  const applyExtraction = async () => {
+    setError(null);
+    setApplying(true);
+    try {
+      await api(`/valuations/${valuationId}/ai/extract/apply`, { method: 'POST' });
+      setAppliedAt(new Date().toISOString());
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not apply the extraction.');
+    } finally {
+      setApplying(false);
+    }
+  };
+
   if (!jobs && !error) return <Spinner />;
+
+  const latestExtract = jobs?.find((j) => j.pipeline === 'extract' && j.status === 'succeeded');
 
   return (
     <div className="space-y-6">
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {AI_PIPELINES.map((pipeline) => (
           <div key={pipeline} className="flex flex-col rounded-lg border border-paper-300 bg-white p-5 shadow-card">
             <h3 className="text-sm font-semibold text-ink-900">{AI_PIPELINE_META[pipeline].label}</h3>
@@ -153,6 +197,24 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
           Running {AI_PIPELINE_META[running].label.toLowerCase()} — free-tier models can take up to a
           minute…
         </p>
+      )}
+
+      {latestExtract && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-bond-200 bg-bond-50 px-4 py-3">
+          <p className="text-sm text-bond-800">
+            Apply the latest extraction to the valuation params so every calculation uses it
+            (Set Valuation Parameters).
+          </p>
+          <Button
+            variant="secondary"
+            className="ml-auto"
+            disabled={applying}
+            onClick={() => void applyExtraction()}
+          >
+            {applying ? 'Applying…' : appliedAt ? 'Re-apply to params' : 'Apply to params'}
+          </Button>
+          {appliedAt && <span className="text-xs font-semibold text-bond-700">Applied ✓</span>}
+        </div>
       )}
 
       {jobs && jobs.length === 0 && (
@@ -180,6 +242,20 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
                 >
                   {job.status}
                 </span>
+                {(() => {
+                  const anon = job.result?.anonymization as
+                    | { applied?: boolean; redacted?: Record<string, number> }
+                    | undefined;
+                  const redactedCount = Object.values(anon?.redacted ?? {}).reduce((a, b) => a + b, 0);
+                  return anon?.applied ? (
+                    <span
+                      className="inline-flex items-center rounded-full bg-paper-200 px-2.5 py-0.5 text-xs font-semibold text-ink-600"
+                      title="PII (emails, phones, SSN/EIN) was redacted before documents reached the model"
+                    >
+                      anonymized{redactedCount > 0 ? ` · ${redactedCount}` : ''}
+                    </span>
+                  ) : null;
+                })()}
                 <span className="tnum ml-auto text-xs text-ink-400">
                   {formatDateTime(job.created_at)}
                   {job.model && ` · ${job.model}`}

@@ -96,7 +96,7 @@ export interface ValuationDocument {
   created_at: string;
 }
 
-export const AI_PIPELINES = ['missing_data', 'extract', 'comparables'] as const;
+export const AI_PIPELINES = ['missing_data', 'extract', 'comparables', 'summarize'] as const;
 export type AiPipeline = (typeof AI_PIPELINES)[number];
 
 export const AI_PIPELINE_META: Record<AiPipeline, { label: string; description: string }> = {
@@ -112,7 +112,17 @@ export const AI_PIPELINE_META: Record<AiPipeline, { label: string; description: 
     label: 'Public comparables',
     description: 'Suggests guideline public companies with revenue/EBITDA multiples for the market approach.',
   },
+  summarize: {
+    label: 'Summarize attachments',
+    description: 'Per-document summaries plus an overall synthesis for the analyst.',
+  },
 };
+
+/** PII redaction metadata each pipeline run reports back. */
+export interface AnonymizationMeta {
+  applied: boolean;
+  redacted: Record<string, number>;
+}
 
 export interface AiJob {
   id: string;

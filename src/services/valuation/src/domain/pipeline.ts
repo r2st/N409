@@ -39,7 +39,7 @@ export const DOCUMENT_KINDS = [
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
-export const AI_PIPELINES = ['missing_data', 'extract', 'comparables'] as const;
+export const AI_PIPELINES = ['missing_data', 'extract', 'comparables', 'summarize'] as const;
 export type AiPipeline = (typeof AI_PIPELINES)[number];
 
 export const PIPELINE_EVENT_TYPES = {

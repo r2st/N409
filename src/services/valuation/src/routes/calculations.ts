@@ -114,13 +114,18 @@ export function registerCalculationRoutes(
     const parsed = ComputeBody.safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid inputs', { errors: parsed.error.issues });
 
-    // Inputs = AI-extracted engine inputs, then AI comparables multiples,
-    // then the analyst's explicit overrides from the request body.
+    // Inputs = AI-extracted engine inputs, then analyst-applied inputs
+    // (extraction auto-apply), then AI comparables multiples, then the
+    // analyst's explicit overrides from the request body.
     let inputs: Record<string, unknown> = {};
     const extractJob = await latestSucceededJob(deps.pool, id, 'extract');
     const extracted = extractJob?.result?.engine_inputs;
     if (extracted && typeof extracted === 'object') {
       inputs = deepMerge(inputs, extracted as Record<string, unknown>);
+    }
+    const applied = paramsRow.engine_inputs;
+    if (applied && typeof applied === 'object' && !Array.isArray(applied)) {
+      inputs = deepMerge(inputs, applied as Record<string, unknown>);
     }
     const compsJob = await latestSucceededJob(deps.pool, id, 'comparables');
     const comps = compsJob?.result?.comparables;
