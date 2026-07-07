@@ -35,6 +35,7 @@ import { registerPromptRoutes } from './routes/prompts.js';
 import { registerCompanyProfileRoutes } from './routes/companyProfile.js';
 import { registerPackageRoutes } from './routes/packageView.js';
 import { registerSupportRoutes } from './routes/support.js';
+import { registerAdminEventRoutes } from './routes/adminEvents.js';
 
 export interface AppDeps {
   config: Config;
@@ -127,6 +128,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerCompanyProfileRoutes(app, { pool });
   registerPackageRoutes(app, { pool });
   registerSupportRoutes(app, { pool });
+  // P2 #12 — global activity audit viewer
+  registerAdminEventRoutes(app, { pool });
   // P0 — outside-world integrations (remaining-gaps §6): Stripe + signatures
   registerPaymentRoutes(app, {
     pool,

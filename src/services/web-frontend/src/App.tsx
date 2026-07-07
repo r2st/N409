@@ -29,6 +29,7 @@ import { OverwritesSchemaPage } from './pages/OverwritesSchemaPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminPartnersPage } from './pages/AdminPartnersPage';
+import { PartnerDetailPage } from './pages/PartnerDetailPage';
 import { EmailOutboxPage } from './pages/EmailOutboxPage';
 import { PartnerPortalPage } from './pages/PartnerPortalPage';
 import { SearchPage } from './pages/SearchPage';
@@ -37,6 +38,7 @@ import { TemplatesPage } from './pages/TemplatesPage';
 import { SensitivityPage } from './pages/SensitivityPage';
 import { TasksPage } from './pages/TasksPage';
 import { BotPromptsPage } from './pages/BotPromptsPage';
+import { ActivityLogPage } from './pages/ActivityLogPage';
 import { SupportInboxPage } from './pages/SupportInboxPage';
 import { CompanyTab } from './pages/valuation/CompanyTab';
 import { PackageTab } from './pages/valuation/PackageTab';
@@ -94,11 +96,13 @@ export default function App() {
           <Route path="/admin/prompts" element={<BotPromptsPage />} />
           <Route path="/admin/support" element={<SupportInboxPage />} />
           <Route path="/admin/outbox" element={<EmailOutboxPage />} />
+          <Route path="/admin/activity" element={<ActivityLogPage />} />
         </Route>
         {/* User-admin surfaces */}
         <Route element={<RequireRole allow={canManageUsers} />}>
           <Route path="/admin/users" element={<AdminUsersPage />} />
           <Route path="/admin/partners" element={<AdminPartnersPage />} />
+          <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
         </Route>
         {/* Partner portal */}
         <Route element={<RequireRole allow={isPartner} />}>

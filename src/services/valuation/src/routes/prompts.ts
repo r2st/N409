@@ -12,6 +12,7 @@ import {
   type AiPromptRow,
 } from '../repos/aiPrompts.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -99,6 +100,14 @@ export function registerPromptRoutes(
     if (!parsed.success) throw problems.unprocessable('Invalid prompt', { errors: parsed.error.issues });
     const updated = await updatePrompt(deps.pool, id, parsed.data, principal.id);
     if (!updated) throw problems.notFound();
+    await recordAdminEvent(deps.pool, {
+      type: 'prompt_updated',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'prompt',
+      subjectId: updated.id,
+      subjectLabel: `${updated.label} (${updated.pipeline})`,
+      payload: { fields: Object.keys(parsed.data) },
+    });
     return { prompt: updated };
   });
 
@@ -126,6 +135,14 @@ export function registerPromptRoutes(
     if (!parsed.success) throw problems.unprocessable('Invalid revert', { errors: parsed.error.issues });
     const prompt = await revertPrompt(deps.pool, id, parsed.data.version, principal.id);
     if (!prompt) throw problems.notFound(`No version ${parsed.data.version} for this prompt`);
+    await recordAdminEvent(deps.pool, {
+      type: 'prompt_reverted',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'prompt',
+      subjectId: prompt.id,
+      subjectLabel: `${prompt.label} (${prompt.pipeline})`,
+      payload: { restored_version: parsed.data.version },
+    });
     return { prompt };
   });
 

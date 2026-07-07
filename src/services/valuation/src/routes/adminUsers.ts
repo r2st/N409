@@ -3,19 +3,21 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
-import { ROLE_KEYS, USER_ADMIN_ROLES } from '../domain/roles.js';
+import { PARTNER_ROLES, ROLE_KEYS, USER_ADMIN_ROLES, type RoleKey } from '../domain/roles.js';
 import { toCsv } from '../domain/csv.js';
 import { hashPassword } from '../auth/password.js';
 import { createUser, findUserByEmail, findUserById } from '../repos/users.js';
 import {
   adminPatchUser,
   createPartner,
+  findPartnerById,
+  getPartnerDetail,
   listPartners,
   listUserOptions,
   listUsers,
-  renamePartner,
   restoreUser,
   softDeleteUser,
+  updatePartner,
   type AdminUserRow,
 } from '../repos/adminUsers.js';
 import {
@@ -29,6 +31,7 @@ import {
 } from '../repos/invitations.js';
 import { invitationEmail } from '../domain/emailWorkflows.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -115,6 +118,47 @@ export function registerAdminUserRoutes(
     return principal;
   };
 
+  /**
+   * P1 #7 — partner/member roles are meaningless without an organisation
+   * (the user would be scoped to nothing), so reject that combination.
+   */
+  const assertPartnerScopeConsistent = (roles: readonly string[], partnerId: string | null) => {
+    if (!partnerId && roles.some((r) => PARTNER_ROLES.has(r as RoleKey))) {
+      throw problems.unprocessable('Partner and member roles require a partner organisation', {
+        errors: [{ path: ['partner_id'] }],
+      });
+    }
+  };
+
+  /** New partner assignments must reference a live (non-archived) partner. */
+  const assertAssignablePartner = async (partnerId: string) => {
+    const partner = isUlid(partnerId) ? await findPartnerById(deps.pool, partnerId) : null;
+    if (!partner)
+      throw problems.unprocessable('Unknown partner', { errors: [{ path: ['partner_id'] }] });
+    if (partner.archived_at)
+      throw problems.unprocessable('This partner is archived', { errors: [{ path: ['partner_id'] }] });
+  };
+
+  // P2 #12 — every admin console mutation lands in the audit log with the
+  // acting admin as the human actor.
+  const audit = async (
+    actorId: string,
+    type: string,
+    subjectType: 'user' | 'invitation' | 'partner',
+    subjectId: string | null,
+    subjectLabel: string | null,
+    payload: Record<string, unknown> = {},
+  ) => {
+    await recordAdminEvent(deps.pool, {
+      type,
+      actor: { actorType: 'human', actorId },
+      subjectType,
+      subjectId,
+      subjectLabel,
+      payload,
+    });
+  };
+
   const sendInviteEmail = async (
     req: FastifyRequest,
     invitation: InvitationRow,
@@ -137,6 +181,8 @@ export function registerAdminUserRoutes(
     if (!parsed.success)
       throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
     const { email, roles, partner_id } = parsed.data;
+    assertPartnerScopeConsistent(roles, partner_id ?? null);
+    if (partner_id) await assertAssignablePartner(partner_id);
 
     const existing = await findUserByEmail(deps.pool, email);
     if (existing && !existing.deleted_at)
@@ -152,6 +198,7 @@ export function registerAdminUserRoutes(
       invitedBy: principal.id,
     });
     await sendInviteEmail(req, invitation, secret, inviter?.email ?? 'An administrator');
+    await audit(principal.id, 'user_invited', 'invitation', invitation.id, email, { roles });
     return reply.status(201).send({ invitation: toInvitation(invitation) });
   });
 
@@ -178,6 +225,7 @@ export function registerAdminUserRoutes(
         refreshed.secret,
         inviter?.email ?? 'An administrator',
       );
+      await audit(principal.id, 'invitation_resent', 'invitation', id, refreshed.invitation.email);
       return { invitation: toInvitation(refreshed.invitation) };
     },
   );
@@ -186,11 +234,12 @@ export function registerAdminUserRoutes(
     '/api/v1/users/invitations/:id',
     { preHandler: app.authenticate },
     async (req, reply) => {
-      requireUserAdmin(req);
+      const principal = requireUserAdmin(req);
       const { id } = req.params as { id: string };
       if (!isUlid(id)) throw problems.notFound();
       const revoked = await revokeInvitation(deps.pool, id);
       if (!revoked) throw problems.notFound('No pending invitation to revoke');
+      await audit(principal.id, 'invitation_revoked', 'invitation', id, null);
       return reply.status(204).send();
     },
   );
@@ -259,10 +308,12 @@ export function registerAdminUserRoutes(
   });
 
   app.post('/api/v1/users', { preHandler: app.authenticate }, async (req, reply) => {
-    requireUserAdmin(req);
+    const principal = requireUserAdmin(req);
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid user', { errors: parsed.error.issues });
     const body = parsed.data;
+    assertPartnerScopeConsistent(body.roles, body.partner_id ?? null);
+    if (body.partner_id) await assertAssignablePartner(body.partner_id);
 
     if (await findUserByEmail(deps.pool, body.email))
       throw problems.conflict('An account with this email already exists');
@@ -276,6 +327,7 @@ export function registerAdminUserRoutes(
       verified: body.verified ?? true,
       roles: body.roles,
     });
+    await audit(principal.id, 'user_created', 'user', user.id, user.email, { roles: body.roles });
     return reply.status(201).send({ user: { ...user, password_digest: undefined } });
   });
 
@@ -293,6 +345,14 @@ export function registerAdminUserRoutes(
     if (id === principal.id && parsed.data.roles && !parsed.data.roles.some((r) => USER_ADMIN_ROLES.has(r)))
       throw problems.unprocessable('You cannot remove your own admin access');
 
+    // Validate the state the patch would leave behind, not just the patch.
+    const nextRoles = parsed.data.roles ?? existing.roles;
+    const nextPartnerId =
+      parsed.data.partner_id !== undefined ? parsed.data.partner_id : existing.partner_id;
+    assertPartnerScopeConsistent(nextRoles, nextPartnerId);
+    if (parsed.data.partner_id && parsed.data.partner_id !== existing.partner_id)
+      await assertAssignablePartner(parsed.data.partner_id);
+
     if (parsed.data.email && parsed.data.email.toLowerCase() !== existing.email.toLowerCase()) {
       if (await findUserByEmail(deps.pool, parsed.data.email))
         throw problems.conflict('An account with this email already exists');
@@ -300,6 +360,10 @@ export function registerAdminUserRoutes(
 
     await adminPatchUser(deps.pool, id, parsed.data);
     const updated = await findUserById(deps.pool, id);
+    await audit(principal.id, 'user_updated', 'user', id, existing.email, {
+      fields: Object.keys(parsed.data),
+      ...(parsed.data.roles ? { roles: parsed.data.roles } : {}),
+    });
     return { user: { ...updated, password_digest: undefined } };
   });
 
@@ -308,38 +372,72 @@ export function registerAdminUserRoutes(
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
     if (id === principal.id) throw problems.unprocessable('You cannot delete your own account');
+    const target = await findUserById(deps.pool, id);
     const deleted = await softDeleteUser(deps.pool, id);
     if (!deleted) throw problems.notFound();
+    await audit(principal.id, 'user_deactivated', 'user', id, target?.email ?? null);
     return reply.status(204).send();
   });
 
   // Reactivate a deactivated account (feature #9). Roles were dropped on
   // deactivation, so the admin re-assigns them via PATCH afterwards.
   app.post('/api/v1/users/:id/restore', { preHandler: app.authenticate }, async (req) => {
-    requireUserAdmin(req);
+    const principal = requireUserAdmin(req);
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
     const restored = await restoreUser(deps.pool, id);
     if (!restored) throw problems.notFound('No deactivated user with this id');
     const user = await findUserById(deps.pool, id);
+    await audit(principal.id, 'user_restored', 'user', id, user?.email ?? null);
     return { user: { ...user, password_digest: undefined } };
   });
 
-  // ── Partners (pickers + creation for the admin console) ───────────────────
+  // ── Partners (pickers + management console, P1 #7) ─────────────────────────
   app.get('/api/v1/partners', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden();
-    return { partners: await listPartners(deps.pool) };
+    const parsed = z
+      .object({ include_archived: z.coerce.boolean().default(false) })
+      .safeParse(req.query);
+    if (!parsed.success) throw problems.badRequest('Invalid query');
+    return { partners: await listPartners(deps.pool, { includeArchived: parsed.data.include_archived }) };
+  });
+
+  /** A partner user's own organisation — name + branding for the portal. */
+  app.get('/api/v1/partners/mine', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!principal.partnerId) throw problems.notFound();
+    const partner = await findPartnerById(deps.pool, principal.partnerId);
+    if (!partner) throw problems.notFound();
+    return {
+      partner: {
+        id: partner.id,
+        name: partner.name,
+        key: partner.key,
+        brand_color: partner.brand_color,
+        logo_url: partner.logo_url,
+      },
+    };
+  });
+
+  app.get('/api/v1/partners/:id', { preHandler: app.authenticate }, async (req) => {
+    requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const partner = await getPartnerDetail(deps.pool, id);
+    if (!partner) throw problems.notFound();
+    return { partner };
   });
 
   app.post('/api/v1/partners', { preHandler: app.authenticate }, async (req, reply) => {
-    requireUserAdmin(req);
+    const principal = requireUserAdmin(req);
     const parsed = z
       .object({ name: z.string().min(1).max(200), key: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/) })
       .safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid partner', { errors: parsed.error.issues });
     try {
       const partner = await createPartner(deps.pool, parsed.data);
+      await audit(principal.id, 'partner_created', 'partner', partner.id, partner.name);
       return reply.status(201).send({ partner });
     } catch (err) {
       if ((err as { code?: string }).code === '23505')
@@ -349,16 +447,28 @@ export function registerAdminUserRoutes(
   });
 
   app.patch('/api/v1/partners/:id', { preHandler: app.authenticate }, async (req) => {
-    requireUserAdmin(req);
+    const principal = requireUserAdmin(req);
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
     const parsed = z
-      .object({ name: z.string().min(1).max(200) })
+      .object({
+        name: z.string().min(1).max(200),
+        archived: z.boolean(),
+        brand_color: z
+          .string()
+          .regex(/^#[0-9a-fA-F]{6}$/, 'expected a #rrggbb colour')
+          .nullable(),
+        logo_url: z.string().url().max(2000).nullable(),
+      })
+      .partial()
       .strict()
       .safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid partner', { errors: parsed.error.issues });
-    const partner = await renamePartner(deps.pool, id, parsed.data.name);
+    const partner = await updatePartner(deps.pool, id, parsed.data);
     if (!partner) throw problems.notFound();
+    await audit(principal.id, 'partner_updated', 'partner', partner.id, partner.name, {
+      fields: Object.keys(parsed.data),
+    });
     return { partner };
   });
 }

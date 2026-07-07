@@ -14,6 +14,7 @@ import {
   updateDraftTemplate,
   type ReportTemplateRow,
 } from '../repos/reportTemplates.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -64,6 +65,23 @@ async function loadTemplate(pool: pg.Pool, id: string): Promise<ReportTemplateRo
 }
 
 export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+  // P2 #12 — template changes land in the admin audit log.
+  const audit = async (
+    type: string,
+    actorId: string,
+    template: ReportTemplateRow,
+    payload: Record<string, unknown> = {},
+  ) => {
+    await recordAdminEvent(deps.pool, {
+      type,
+      actor: { actorType: 'human', actorId },
+      subjectType: 'template',
+      subjectId: template.id,
+      subjectLabel: templateLabel(template),
+      payload,
+    });
+  };
+
   app.get('/api/v1/report-templates', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     const parsed = ListQuery.safeParse(req.query);
@@ -81,6 +99,7 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
       ...parsed.data,
       createdBy: principal.id,
     });
+    await audit('template_created', principal.id, template);
     return reply.status(201).send({ template: serialize(template) });
   });
 
@@ -91,7 +110,8 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
   });
 
   app.patch('/api/v1/report-templates/:id', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
     const template = await loadTemplate(deps.pool, id);
 
@@ -102,25 +122,30 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     }
     const updated = await updateDraftTemplate(deps.pool, id, parsed.data);
     if (!updated) throw problems.conflict('Template is no longer a draft');
+    await audit('template_updated', principal.id, updated, { fields: Object.keys(parsed.data) });
     return { template: serialize(updated) };
   });
 
   app.post('/api/v1/report-templates/:id/activate', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
     const template = await loadTemplate(deps.pool, id);
     if (template.status === 'archived') {
       throw problems.conflict('Archived versions cannot be re-activated — create a new version');
     }
     const activated = await activateTemplate(deps.pool, id);
+    await audit('template_activated', principal.id, activated ?? template);
     return { template: serialize(activated ?? template) };
   });
 
   app.post('/api/v1/report-templates/:id/archive', { preHandler: app.authenticate }, async (req) => {
-    requireOps(requirePrincipal(req));
+    const principal = requirePrincipal(req);
+    requireOps(principal);
     const { id } = req.params as { id: string };
     await loadTemplate(deps.pool, id);
     const archived = await archiveTemplate(deps.pool, id);
+    await audit('template_archived', principal.id, archived!);
     return { template: serialize(archived!) };
   });
 }
