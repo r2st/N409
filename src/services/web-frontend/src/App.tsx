@@ -25,6 +25,8 @@ import { ReportTab } from './pages/valuation/ReportTab';
 import { OverwritesSchemaPage } from './pages/OverwritesSchemaPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminPartnersPage } from './pages/AdminPartnersPage';
+import { EmailOutboxPage } from './pages/EmailOutboxPage';
 import { PartnerPortalPage } from './pages/PartnerPortalPage';
 import { SearchPage } from './pages/SearchPage';
 import { NotificationsPage } from './pages/NotificationsPage';
@@ -77,8 +79,10 @@ export default function App() {
         <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
         <Route path="/partner" element={<PartnerPortalPage />} />
         <Route path="/admin/users" element={<AdminUsersPage />} />
+        <Route path="/admin/partners" element={<AdminPartnersPage />} />
         <Route path="/admin/prompts" element={<BotPromptsPage />} />
         <Route path="/admin/support" element={<SupportInboxPage />} />
+        <Route path="/admin/outbox" element={<EmailOutboxPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />

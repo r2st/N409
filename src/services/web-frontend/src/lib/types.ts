@@ -148,6 +148,8 @@ export interface Partner {
   name: string;
   key: string;
   created_at: string;
+  user_count: number;
+  valuation_count: number;
 }
 
 export interface Invitation {
@@ -161,6 +163,23 @@ export interface Invitation {
   accepted_at: string | null;
   revoked_at: string | null;
   created_at: string;
+}
+
+export type OutboxStatus = 'queued' | 'sent' | 'failed' | 'skipped';
+
+export interface OutboxEmail {
+  id: string;
+  valuation_id: string | null;
+  to_user_id: string | null;
+  to_email: string;
+  template_key: string;
+  subject: string;
+  body: string;
+  status: OutboxStatus;
+  error: string | null;
+  attempts: number;
+  created_at: string;
+  sent_at: string | null;
 }
 
 export interface UserOption {

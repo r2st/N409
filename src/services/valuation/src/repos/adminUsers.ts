@@ -120,11 +120,19 @@ export interface PartnerRow {
   name: string;
   key: string;
   created_at: Date;
+  user_count: number;
+  valuation_count: number;
 }
+
+/** Per-partner rollups keep the admin Partners page a single request. */
+const PARTNER_COUNTS_SQL = `
+  (SELECT count(*)::int FROM users u WHERE u.partner_id = p.id AND u.deleted_at IS NULL) AS user_count,
+  (SELECT count(*)::int FROM valuations v WHERE v.partner_id = p.id) AS valuation_count`;
 
 export async function listPartners(pool: pg.Pool): Promise<PartnerRow[]> {
   const { rows } = await pool.query<PartnerRow>(
-    'SELECT id, name, key, created_at FROM partners ORDER BY name ASC',
+    `SELECT p.id, p.name, p.key, p.created_at, ${PARTNER_COUNTS_SQL}
+     FROM partners p ORDER BY p.name ASC`,
   );
   return rows;
 }
@@ -134,10 +142,24 @@ export async function createPartner(
   args: { name: string; key: string },
 ): Promise<PartnerRow> {
   const { rows } = await pool.query<PartnerRow>(
-    'INSERT INTO partners (id, name, key) VALUES ($1, $2, $3) RETURNING id, name, key, created_at',
+    `INSERT INTO partners (id, name, key) VALUES ($1, $2, $3)
+     RETURNING id, name, key, created_at, 0 AS user_count, 0 AS valuation_count`,
     [newUlid(), args.name, args.key],
   );
   return rows[0]!;
+}
+
+export async function renamePartner(
+  pool: pg.Pool,
+  id: string,
+  name: string,
+): Promise<PartnerRow | null> {
+  const { rows } = await pool.query<PartnerRow>(
+    `UPDATE partners p SET name = $2 WHERE p.id = $1
+     RETURNING p.id, p.name, p.key, p.created_at, ${PARTNER_COUNTS_SQL}`,
+    [id, name],
+  );
+  return rows[0] ?? null;
 }
 
 /** Lightweight id+label list for filter dropdowns (reviewer picker etc.). */

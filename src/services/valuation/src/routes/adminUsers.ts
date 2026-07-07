@@ -13,6 +13,7 @@ import {
   listPartners,
   listUserOptions,
   listUsers,
+  renamePartner,
   softDeleteUser,
   type AdminUserRow,
 } from '../repos/adminUsers.js';
@@ -332,5 +333,19 @@ export function registerAdminUserRoutes(
         throw problems.conflict('A partner with this key already exists');
       throw err;
     }
+  });
+
+  app.patch('/api/v1/partners/:id', { preHandler: app.authenticate }, async (req) => {
+    requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const parsed = z
+      .object({ name: z.string().min(1).max(200) })
+      .strict()
+      .safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid partner', { errors: parsed.error.issues });
+    const partner = await renamePartner(deps.pool, id, parsed.data.name);
+    if (!partner) throw problems.notFound();
+    return { partner };
   });
 }

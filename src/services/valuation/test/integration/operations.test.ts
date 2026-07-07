@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { newUlid } from '@n409/shared';
 import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -521,6 +522,98 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         headers: authHeader(ops.token),
       });
       expect(partners.json().partners.map((p: { key: string }) => p.key)).toContain('seedlegals');
+    });
+
+    // ── P0 #1: partner admin page — rollup counts + rename ──────────────────
+    it('lists partners with rollup counts and renames a partner', async () => {
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/partners',
+        headers: authHeader(ops.token),
+        payload: { name: 'Ledgy', key: 'ledgy' },
+      });
+      expect(created.statusCode).toBe(201);
+      const pid = created.json().partner.id as string;
+      expect(created.json().partner.user_count).toBe(0);
+      expect(created.json().partner.valuation_count).toBe(0);
+
+      await seedUser(ctx, { roles: ['partner'], partnerId: pid });
+
+      const partners = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/partners',
+        headers: authHeader(ops.token),
+      });
+      const row = partners
+        .json()
+        .partners.find((p: { id: string }) => p.id === pid) as {
+        user_count: number;
+        valuation_count: number;
+      };
+      expect(row.user_count).toBe(1);
+      expect(row.valuation_count).toBe(0);
+
+      const renamed = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/partners/${pid}`,
+        headers: authHeader(ops.token),
+        payload: { name: 'Ledgy Ltd' },
+      });
+      expect(renamed.statusCode).toBe(200);
+      expect(renamed.json().partner.name).toBe('Ledgy Ltd');
+      expect(renamed.json().partner.key).toBe('ledgy'); // keys are immutable
+      expect(renamed.json().partner.user_count).toBe(1);
+    });
+
+    it('guards partner management behind the right roles', async () => {
+      // A reviewer is ops (can read the picker list) but not a user admin.
+      const list = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/partners',
+        headers: authHeader(reviewer.token),
+      });
+      expect(list.statusCode).toBe(200);
+
+      const create = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/partners',
+        headers: authHeader(reviewer.token),
+        payload: { name: 'Nope', key: 'nope' },
+      });
+      expect(create.statusCode).toBe(403);
+
+      const rename = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/partners/${partnerId}`,
+        headers: authHeader(reviewer.token),
+        payload: { name: 'Nope' },
+      });
+      expect(rename.statusCode).toBe(403);
+
+      // Clients see nothing at all.
+      const clientList = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/partners',
+        headers: authHeader(client.token),
+      });
+      expect(clientList.statusCode).toBe(403);
+
+      // Unknown/invalid ids and empty names are rejected.
+      const missing = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/partners/${newUlid()}`,
+        headers: authHeader(ops.token),
+        payload: { name: 'Ghost' },
+      });
+      expect(missing.statusCode).toBe(404);
+
+      const invalid = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/partners/${partnerId}`,
+        headers: authHeader(ops.token),
+        payload: { name: '' },
+      });
+      expect(invalid.statusCode).toBe(422);
     });
   });
 

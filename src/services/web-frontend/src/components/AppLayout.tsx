@@ -153,6 +153,12 @@ const icons = {
       <path d="M6 6l3.5 3.5M18 6l-3.5 3.5M18 18l-3.5-3.5M6 18l3.5-3.5" strokeLinecap="round" />
     </svg>
   ),
+  outbox: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3.5 6.5h17v11h-17z" strokeLinejoin="round" />
+      <path d="m3.5 7 8.5 6 8.5-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
 };
 
 export function AppLayout() {
@@ -193,6 +199,7 @@ export function AppLayout() {
           <NavItem to="/templates" label="Report templates" icon={icons.templates} onNavigate={close} />
           <NavItem to="/admin/prompts" label="Bot prompts" icon={icons.prompts} onNavigate={close} />
           <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
+          <NavItem to="/admin/outbox" label="Email outbox" icon={icons.outbox} onNavigate={close} />
           <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />
         </>
       )}
@@ -200,6 +207,7 @@ export function AppLayout() {
         <>
           <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Administration</div>
           <NavItem to="/admin/users" label="Users & roles" icon={icons.users} onNavigate={close} />
+          <NavItem to="/admin/partners" label="Partners" icon={icons.partner} onNavigate={close} />
         </>
       )}
       <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Account</div>
