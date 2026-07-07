@@ -39,6 +39,8 @@ import { SensitivityPage } from './pages/SensitivityPage';
 import { TasksPage } from './pages/TasksPage';
 import { BotPromptsPage } from './pages/BotPromptsPage';
 import { ActivityLogPage } from './pages/ActivityLogPage';
+import { HelpPage } from './pages/HelpPage';
+import { AdminHelpPage } from './pages/AdminHelpPage';
 import { SupportInboxPage } from './pages/SupportInboxPage';
 import { CompanyTab } from './pages/valuation/CompanyTab';
 import { PackageTab } from './pages/valuation/PackageTab';
@@ -97,6 +99,7 @@ export default function App() {
           <Route path="/admin/support" element={<SupportInboxPage />} />
           <Route path="/admin/outbox" element={<EmailOutboxPage />} />
           <Route path="/admin/activity" element={<ActivityLogPage />} />
+          <Route path="/admin/help" element={<AdminHelpPage />} />
         </Route>
         {/* User-admin surfaces */}
         <Route element={<RequireRole allow={canManageUsers} />}>
@@ -110,6 +113,8 @@ export default function App() {
         </Route>
         <Route path="/search" element={<SearchPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/help" element={<HelpPage />} />
+        <Route path="/help/:slug" element={<HelpPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

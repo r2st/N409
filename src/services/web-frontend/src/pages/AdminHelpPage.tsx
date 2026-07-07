@@ -1,0 +1,292 @@
+import { useCallback, useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
+import { Link } from 'react-router-dom';
+import { api, ApiError } from '../lib/api';
+import { formatDate } from '../lib/format';
+import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import { RichTextEditor } from '../components/RichTextEditor';
+import type { HelpArticle } from './HelpPage';
+
+interface EditorState {
+  id?: string;
+  slug: string;
+  title: string;
+  category: string;
+  keywords: string;
+  body_html: string;
+  sort_order: number;
+  published: boolean;
+}
+
+const emptyEditor = (): EditorState => ({
+  slug: '',
+  title: '',
+  category: 'General',
+  keywords: '',
+  body_html: '',
+  sort_order: 0,
+  published: true,
+});
+
+/** P2 #10 — ops CRUD over the knowledge base: articles appear in the help
+ * widget and /help immediately, no deploy needed. */
+export function AdminHelpPage() {
+  const [articles, setArticles] = useState<HelpArticle[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [editorError, setEditorError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api<{ articles: HelpArticle[] }>('/help/articles')
+      .then((d) => setArticles(d.articles))
+      .catch((err) =>
+        setError(
+          err instanceof ApiError && err.status === 403
+            ? 'Help articles are operations-only.'
+            : 'Could not load the help articles.',
+        ),
+      );
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const openEdit = (a: HelpArticle) =>
+    setEditor({
+      id: a.id,
+      slug: a.slug,
+      title: a.title,
+      category: a.category,
+      keywords: a.keywords,
+      body_html: a.body_html,
+      sort_order: a.sort_order,
+      published: a.published,
+    });
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!editor) return;
+    setBusy(true);
+    setEditorError(null);
+    const body = {
+      slug: editor.slug.trim(),
+      title: editor.title.trim(),
+      category: editor.category.trim() || 'General',
+      keywords: editor.keywords.trim(),
+      body_html: editor.body_html,
+      sort_order: editor.sort_order,
+      published: editor.published,
+    };
+    try {
+      if (editor.id) {
+        await api(`/admin/help/articles/${editor.id}`, { method: 'PATCH', body });
+      } else {
+        await api('/admin/help/articles', { method: 'POST', body });
+      }
+      setEditor(null);
+      load();
+    } catch (err) {
+      setEditorError(err instanceof ApiError ? err.message : 'Could not save the article.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const togglePublished = async (a: HelpArticle) => {
+    try {
+      await api(`/admin/help/articles/${a.id}`, {
+        method: 'PATCH',
+        body: { published: !a.published },
+      });
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not update the article.');
+    }
+  };
+
+  const remove = async (a: HelpArticle) => {
+    if (!window.confirm(`Delete "${a.title}"? Unpublishing is usually enough.`)) return;
+    try {
+      await api(`/admin/help/articles/${a.id}`, { method: 'DELETE' });
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not delete the article.');
+    }
+  };
+
+  if (error) return <ErrorNote>{error}</ErrorNote>;
+  if (!articles) return <Spinner />;
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="overline text-ink-400">Operations</div>
+          <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Help articles</h1>
+          <p className="mt-2 max-w-2xl text-sm text-ink-500">
+            The knowledge base behind the help widget and{' '}
+            <Link to="/help" className="font-semibold text-bond-600 hover:text-bond-700">
+              /help
+            </Link>
+            . Changes go live immediately.
+          </p>
+        </div>
+        <Button
+          onClick={() => {
+            setEditorError(null);
+            setEditor(emptyEditor());
+          }}
+        >
+          + New article
+        </Button>
+      </div>
+
+      {editor && (
+        <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <h2 className="overline mb-5 text-ink-400">
+            {editor.id ? `Edit "${editor.title}"` : 'New article'}
+          </h2>
+          <form onSubmit={(e) => void save(e)} className="space-y-5">
+            {editorError && <ErrorNote>{editorError}</ErrorNote>}
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field label="Title">
+                <TextInput
+                  required
+                  maxLength={200}
+                  value={editor.title}
+                  onChange={(e) => setEditor({ ...editor, title: e.target.value })}
+                />
+              </Field>
+              <Field label="Slug" hint="Lowercase letters, digits and dashes; part of the URL.">
+                <TextInput
+                  required
+                  maxLength={100}
+                  pattern="[a-z0-9-]+"
+                  value={editor.slug}
+                  onChange={(e) => setEditor({ ...editor, slug: e.target.value })}
+                />
+              </Field>
+              <Field label="Category">
+                <TextInput
+                  maxLength={100}
+                  value={editor.category}
+                  onChange={(e) => setEditor({ ...editor, category: e.target.value })}
+                />
+              </Field>
+              <Field label="Keywords" hint="Space-separated search terms for the widget.">
+                <TextInput
+                  maxLength={500}
+                  value={editor.keywords}
+                  onChange={(e) => setEditor({ ...editor, keywords: e.target.value })}
+                />
+              </Field>
+              <Field label="Sort order" hint="Lower numbers list first within the category.">
+                <TextInput
+                  type="number"
+                  min={0}
+                  max={10000}
+                  value={editor.sort_order}
+                  onChange={(e) => setEditor({ ...editor, sort_order: Number(e.target.value) || 0 })}
+                />
+              </Field>
+              <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm text-ink-700">
+                <input
+                  type="checkbox"
+                  checked={editor.published}
+                  onChange={(e) => setEditor({ ...editor, published: e.target.checked })}
+                  className="accent-bond-600"
+                />
+                Published
+              </label>
+            </div>
+            <Field label="Body">
+              <RichTextEditor
+                value={editor.body_html}
+                onChange={(html) => setEditor((ed) => (ed ? { ...ed, body_html: html } : ed))}
+              />
+            </Field>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={busy || !editor.title.trim() || !editor.slug.trim()}>
+                {busy ? 'Saving…' : editor.id ? 'Save changes' : 'Create article'}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setEditor(null)}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {articles.length === 0 && (
+        <div className="mt-6">
+          <EmptyState title="No articles yet">
+            Run the database migrations to seed the starter topics, or create one above.
+          </EmptyState>
+        </div>
+      )}
+
+      {articles.length > 0 && (
+        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+          <table className="w-full min-w-[720px] text-sm" aria-label="Help articles">
+            <thead>
+              <tr className="border-b border-paper-300 text-left">
+                <th className="overline px-5 py-3 font-semibold text-ink-400">Article</th>
+                <th className="overline px-5 py-3 font-semibold text-ink-400">Category</th>
+                <th className="overline px-5 py-3 font-semibold text-ink-400">Status</th>
+                <th className="overline px-5 py-3 font-semibold text-ink-400">Updated</th>
+                <th className="overline px-5 py-3 font-semibold text-ink-400">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {articles.map((a) => (
+                <tr key={a.id} className="border-b border-paper-200 last:border-0">
+                  <td className="px-5 py-3.5">
+                    <div className="font-semibold text-ink-900">{a.title}</div>
+                    <div className="font-mono text-xs text-ink-400">/{a.slug}</div>
+                  </td>
+                  <td className="px-5 py-3.5 text-ink-600">{a.category}</td>
+                  <td className="px-5 py-3.5">
+                    <span
+                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${
+                        a.published
+                          ? 'bg-bond-50 text-bond-700 ring-bond-200'
+                          : 'bg-paper-200 text-ink-500 ring-ink-200'
+                      }`}
+                    >
+                      {a.published ? 'Published' : 'Draft'}
+                    </span>
+                  </td>
+                  <td className="tnum px-5 py-3.5 text-ink-600">{formatDate(a.updated_at)}</td>
+                  <td className="px-5 py-3.5">
+                    <div className="flex gap-3 text-xs font-semibold">
+                      <button
+                        onClick={() => openEdit(a)}
+                        className="cursor-pointer text-bond-600 hover:text-bond-700"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => void togglePublished(a)}
+                        className="cursor-pointer text-ink-500 hover:text-ink-700"
+                      >
+                        {a.published ? 'Unpublish' : 'Publish'}
+                      </button>
+                      <button
+                        onClick={() => void remove(a)}
+                        className="cursor-pointer text-red-600 hover:text-red-700"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -164,6 +164,13 @@ const icons = {
       <path d="M3.5 12h4l2.5-7 4 14 2.5-7h4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
+  help: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M9.2 9a2.9 2.9 0 0 1 5.6 1c0 1.8-2.3 2.2-2.8 3.5" strokeLinecap="round" />
+      <circle cx="12" cy="17.3" r="0.4" fill="currentColor" />
+      <circle cx="12" cy="12" r="9.2" />
+    </svg>
+  ),
 };
 
 export function AppLayout() {
@@ -206,6 +213,7 @@ export function AppLayout() {
           <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
           <NavItem to="/admin/outbox" label="Email outbox" icon={icons.outbox} onNavigate={close} />
           <NavItem to="/admin/activity" label="Activity log" icon={icons.activity} onNavigate={close} />
+          <NavItem to="/admin/help" label="Help articles" icon={icons.help} onNavigate={close} />
           <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />
         </>
       )}

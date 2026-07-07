@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { Button, ErrorNote, Field, TextInput, inputClass } from './ui';
 
@@ -9,6 +9,8 @@ interface HelpTopic {
   title: string;
   keywords: string;
   body: string;
+  /** Set for API-backed topics; links "Read more" into /help/:slug. */
+  slug?: string;
 }
 
 export const HELP_TOPICS: HelpTopic[] = [
@@ -55,6 +57,49 @@ export const HELP_TOPICS: HelpTopic[] = [
     body: 'Clients see their own valuations; partners see their channel; operations see everything. Working tabs (Workbook, Overwrites, AI, Calculations) are operations-only. Reports become client-visible from the draft stage onward.',
   },
 ];
+
+/** Crude tag-strip for widget previews — article HTML is already sanitized
+ * server-side; the widget only shows a plain-text digest. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** P2 #10 — topics come from the knowledge base API; the hard-coded list
+ * above survives as the fetch-failure fallback. */
+export function useHelpTopics(): HelpTopic[] {
+  const [topics, setTopics] = useState<HelpTopic[]>(HELP_TOPICS);
+  useEffect(() => {
+    api<{ articles: Array<{ id: string; slug: string; title: string; keywords: string; body_html: string; published: boolean }> }>(
+      '/help/articles',
+    )
+      .then((d) => {
+        const published = d.articles.filter((a) => a.published);
+        if (published.length > 0) {
+          setTopics(
+            published.map((a) => ({
+              id: a.id,
+              slug: a.slug,
+              title: a.title,
+              keywords: a.keywords.toLowerCase(),
+              body: htmlToText(a.body_html),
+            })),
+          );
+        }
+      })
+      .catch(() => {
+        /* keep the built-in fallback topics */
+      });
+  }, []);
+  return topics;
+}
 
 export function filterTopics(topics: HelpTopic[], query: string): HelpTopic[] {
   const q = query.trim().toLowerCase();
@@ -126,7 +171,8 @@ export function HelpWidget() {
   const [query, setQuery] = useState('');
   const [openTopic, setOpenTopic] = useState<string | null>(null);
 
-  const topics = useMemo(() => filterTopics(HELP_TOPICS, query), [query]);
+  const allTopics = useHelpTopics();
+  const topics = useMemo(() => filterTopics(allTopics, query), [allTopics, query]);
 
   return (
     <>
@@ -189,7 +235,18 @@ export function HelpWidget() {
                       </svg>
                     </button>
                     {openTopic === t.id && (
-                      <p className="px-3 pt-1 pb-3 text-sm leading-relaxed text-ink-600">{t.body}</p>
+                      <div className="px-3 pt-1 pb-3">
+                        <p className="text-sm leading-relaxed text-ink-600">{t.body}</p>
+                        {t.slug && (
+                          <Link
+                            to={`/help/${t.slug}`}
+                            onClick={() => setOpen(false)}
+                            className="mt-1.5 inline-block text-xs font-semibold text-bond-600 hover:text-bond-700"
+                          >
+                            Read the full article →
+                          </Link>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))}
@@ -209,9 +266,18 @@ export function HelpWidget() {
 
           <div className="border-t border-paper-200 p-3">
             {view === 'topics' ? (
-              <Button variant="secondary" className="w-full" onClick={() => setView('contact')}>
-                Contact support
-              </Button>
+              <div className="space-y-2">
+                <Link
+                  to="/help"
+                  onClick={() => setOpen(false)}
+                  className="block text-center text-xs font-semibold text-bond-600 hover:text-bond-700"
+                >
+                  View all articles →
+                </Link>
+                <Button variant="secondary" className="w-full" onClick={() => setView('contact')}>
+                  Contact support
+                </Button>
+              </div>
             ) : (
               <Button
                 variant="ghost"
