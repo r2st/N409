@@ -12,6 +12,13 @@ export function registerHealth(
 ): void {
   const startedAt = Date.now();
 
+  app.get('/', async () => ({
+    service: opts.service,
+    version: opts.version ?? '0.1.0',
+    status: 'ok',
+    endpoints: ['/health', '/ready'],
+  }));
+
   app.get('/health', async () => ({
     status: 'ok',
     service: opts.service,

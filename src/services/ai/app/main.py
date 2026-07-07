@@ -17,6 +17,16 @@ _started = time.monotonic()
 app = FastAPI(title="n409-ai", version=VERSION)
 
 
+@app.get("/")
+def root() -> dict:
+    return {
+        "service": SERVICE,
+        "version": VERSION,
+        "status": "ok",
+        "endpoints": ["/health", "/ready", "/docs"],
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {
