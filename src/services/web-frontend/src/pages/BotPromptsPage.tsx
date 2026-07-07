@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
+import { diffLines } from '../lib/diff';
 import { formatDateTime } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput, inputClass } from '../components/ui';
 
@@ -11,6 +12,145 @@ export interface BotPrompt {
   system_prompt: string;
   model: string | null;
   updated_at: string;
+}
+
+export interface PromptVersion {
+  id: string;
+  prompt_id: string;
+  version: number;
+  system_prompt: string;
+  model: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
+/** Unified line diff of a version's system prompt against the live content. */
+function VersionDiff({ from, to }: { from: string; to: string }) {
+  const lines = diffLines(from, to);
+  if (lines.every((l) => l.kind === 'same')) {
+    return <p className="px-3 py-2 text-xs text-ink-400">Identical to the current content.</p>;
+  }
+  return (
+    <pre className="max-h-64 overflow-auto rounded-md border border-paper-300 bg-paper-50 p-3 text-xs leading-relaxed">
+      {lines.map((l, idx) => (
+        <div
+          key={idx}
+          className={
+            l.kind === 'added'
+              ? 'bg-bond-50 text-bond-700'
+              : l.kind === 'removed'
+                ? 'bg-red-50 text-red-700 line-through decoration-red-300'
+                : 'text-ink-600'
+          }
+        >
+          {l.kind === 'added' ? '+ ' : l.kind === 'removed' ? '− ' : '  '}
+          {l.text}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+/** Version history (P1 #8): who changed what, diff vs current, revert. */
+function VersionHistory({
+  prompt,
+  onReverted,
+}: {
+  prompt: BotPrompt;
+  onReverted: (reverted: BotPrompt) => Promise<void> | void;
+}) {
+  const [versions, setVersions] = useState<PromptVersion[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [openVersion, setOpenVersion] = useState<number | null>(null);
+  const [reverting, setReverting] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const { versions: items } = await api<{ versions: PromptVersion[] }>(
+        `/admin/prompts/${prompt.id}/versions`,
+      );
+      setVersions(items);
+    } catch {
+      setError('Could not load the version history.');
+    }
+  }, [prompt.id]);
+
+  const revert = async (v: PromptVersion) => {
+    if (!window.confirm(`Restore version ${v.version}? This is recorded as a new version.`)) return;
+    setReverting(true);
+    setError(null);
+    try {
+      const { prompt: reverted } = await api<{ prompt: BotPrompt }>(
+        `/admin/prompts/${prompt.id}/revert`,
+        { method: 'POST', body: { version: v.version } },
+      );
+      await onReverted(reverted);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not revert the prompt.');
+    } finally {
+      setReverting(false);
+    }
+  };
+
+  return (
+    <details
+      className="mt-6 border-t border-paper-300 pt-4"
+      onToggle={(e) => {
+        if ((e.target as HTMLDetailsElement).open && versions === null) void load();
+      }}
+    >
+      <summary className="cursor-pointer text-sm font-semibold text-ink-700 select-none">
+        Version history
+      </summary>
+      <div className="mt-3 space-y-2">
+        {error && <ErrorNote>{error}</ErrorNote>}
+        {!versions && !error && <Spinner />}
+        {versions?.map((v, idx) => {
+          const isCurrent = idx === 0;
+          return (
+            <div key={v.id} className="rounded-md border border-paper-200">
+              <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                <span className="font-mono text-xs font-semibold text-ink-700">v{v.version}</span>
+                {isCurrent && (
+                  <span className="rounded-full bg-bond-50 px-2 py-0.5 text-[0.65rem] font-semibold text-bond-700 ring-1 ring-bond-200 ring-inset">
+                    current
+                  </span>
+                )}
+                {v.model && <span className="font-mono text-xs text-ink-400">{v.model}</span>}
+                <span className="tnum ml-auto text-xs text-ink-400">
+                  {v.created_by_email ?? 'system'} · {formatDateTime(v.created_at)}
+                </span>
+                <button
+                  onClick={() => setOpenVersion(openVersion === v.version ? null : v.version)}
+                  className="cursor-pointer text-xs font-semibold text-bond-600 hover:text-bond-700"
+                >
+                  {openVersion === v.version ? 'Hide diff' : 'Diff'}
+                </button>
+                {!isCurrent && (
+                  <button
+                    onClick={() => void revert(v)}
+                    disabled={reverting}
+                    className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700 disabled:text-ink-300"
+                  >
+                    Revert
+                  </button>
+                )}
+              </div>
+              {openVersion === v.version && (
+                <div className="border-t border-paper-200 p-2">
+                  <VersionDiff from={v.system_prompt} to={prompt.system_prompt} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {versions?.length === 0 && (
+          <p className="text-sm text-ink-400">No versions yet — save a change to start the history.</p>
+        )}
+      </div>
+    </details>
+  );
 }
 
 function PromptCard({
@@ -172,6 +312,16 @@ function PromptCard({
           )}
         </div>
       </details>
+
+      <VersionHistory
+        key={prompt.updated_at}
+        prompt={prompt}
+        onReverted={async (reverted) => {
+          setSystemPrompt(reverted.system_prompt);
+          setModel(reverted.model ?? '');
+          await onSaved();
+        }}
+      />
     </section>
   );
 }

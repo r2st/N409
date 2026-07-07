@@ -10,7 +10,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { listDocuments, type DocumentRow } from '../repos/documents.js';
 import { completeAiJob, createAiJob, latestSucceededJob, listAiJobs } from '../repos/aiJobs.js';
-import { findPromptByPipeline } from '../repos/aiPrompts.js';
+import { findPromptByPipeline, latestPromptVersion } from '../repos/aiPrompts.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
@@ -106,6 +106,7 @@ export function registerAiRoutes(
     // Registry-managed prompt: the stored system prompt + model binding ride
     // along so admins can tune pipelines without a deploy (Bot Prompts view).
     const promptRow = await findPromptByPipeline(deps.pool, pipeline as AiPipeline);
+    const promptVersion = promptRow ? await latestPromptVersion(deps.pool, promptRow.id) : null;
     const payload = {
       valuation: {
         id: valuation.id,
@@ -129,6 +130,7 @@ export function registerAiRoutes(
         company_name: valuation.company_name,
       },
       createdBy: principal.id,
+      promptVersion,
     });
 
     const startedAt = Date.now();

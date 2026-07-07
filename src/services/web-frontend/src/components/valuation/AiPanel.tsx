@@ -259,6 +259,7 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
                 <span className="tnum ml-auto text-xs text-ink-400">
                   {formatDateTime(job.created_at)}
                   {job.model && ` · ${job.model}`}
+                  {job.prompt_version !== null && ` · prompt v${job.prompt_version}`}
                   {job.latency_ms !== null && ` · ${(job.latency_ms / 1000).toFixed(1)}s`}
                 </span>
               </div>

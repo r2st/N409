@@ -133,6 +133,7 @@ export interface AiJob {
   result: Record<string, unknown> | null;
   error: string | null;
   latency_ms: number | null;
+  prompt_version: number | null;
   created_at: string;
   completed_at: string | null;
 }

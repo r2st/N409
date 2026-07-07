@@ -7,6 +7,16 @@
       "runtimeArgs": ["src/services/web/dist/index.js"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "n409-valuation",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "JWT_SECRET=dev-only-secret-change-me-0123456789abcdef",
+        "node",
+        "src/services/valuation/dist/index.js"
+      ],
+      "port": 3001
     }
   ]
 }

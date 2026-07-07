@@ -3,7 +3,14 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { findPromptById, listPrompts, updatePrompt, type AiPromptRow } from '../repos/aiPrompts.js';
+import {
+  findPromptById,
+  listPrompts,
+  listPromptVersions,
+  revertPrompt,
+  updatePrompt,
+  type AiPromptRow,
+} from '../repos/aiPrompts.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -26,6 +33,10 @@ const PatchBody = z
 
 const TestBody = z.object({
   input: z.string().min(1).max(20_000),
+});
+
+const RevertBody = z.object({
+  version: z.number().int().min(1),
 });
 
 export interface AiTestResponse {
@@ -89,6 +100,33 @@ export function registerPromptRoutes(
     const updated = await updatePrompt(deps.pool, id, parsed.data, principal.id);
     if (!updated) throw problems.notFound();
     return { prompt: updated };
+  });
+
+  // Version history (P1 #8): every content edit appends a numbered version.
+  app.get(
+    '/api/v1/admin/prompts/:id/versions',
+    { preHandler: app.authenticate },
+    async (req) => {
+      requireOps(requirePrincipal(req));
+      const { id } = req.params as { id: string };
+      await loadPrompt(deps.pool, id);
+      return { versions: await listPromptVersions(deps.pool, id) };
+    },
+  );
+
+  // Revert = re-apply an old version's content as a NEW version, so history
+  // stays append-only and the AI service picks the content up on the next run.
+  app.post('/api/v1/admin/prompts/:id/revert', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    requireOps(principal);
+    const { id } = req.params as { id: string };
+    await loadPrompt(deps.pool, id);
+
+    const parsed = RevertBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid revert', { errors: parsed.error.issues });
+    const prompt = await revertPrompt(deps.pool, id, parsed.data.version, principal.id);
+    if (!prompt) throw problems.notFound(`No version ${parsed.data.version} for this prompt`);
+    return { prompt };
   });
 
   // Dry-run: send the stored system prompt + a sample user message straight to

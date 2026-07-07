@@ -12,6 +12,7 @@ import { registerAdminUserRoutes } from './routes/adminUsers.js';
 import { registerApiTokenRoutes } from './routes/apiTokens.js';
 import { registerOperationsRoutes } from './routes/operations.js';
 import { registerWorkflowRoutes } from './routes/workflow.js';
+import { registerReviewRoutes } from './routes/reviews.js';
 import { registerTemplateRoutes } from './routes/templates.js';
 import { registerNotificationRoutes } from './routes/notifications.js';
 import { registerTransactionRoutes } from './routes/transactions.js';
@@ -112,6 +113,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerOperationsRoutes(app, { pool });
   // M4 — operations polish
   registerWorkflowRoutes(app, { pool, transport });
+  // P1 #6 — review queue + approve/request-changes decisions
+  registerReviewRoutes(app, { pool, transport });
   registerTemplateRoutes(app, { pool });
   registerNotificationRoutes(app, { pool });
   registerTransactionRoutes(app, { pool });

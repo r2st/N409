@@ -14,6 +14,9 @@ export interface AiJobRow {
   result: Record<string, unknown> | null;
   error: string | null;
   latency_ms: number | null;
+  /** Registry prompt version the run used (P1 #8 provenance); null when the
+   * pipeline has no registry row or the run predates versioning. */
+  prompt_version: number | null;
   created_by: string | null;
   created_at: Date;
   completed_at: Date | null;
@@ -21,12 +24,25 @@ export interface AiJobRow {
 
 export async function createAiJob(
   pool: pg.Pool,
-  args: { valuationId: string; pipeline: AiPipeline; input: Record<string, unknown>; createdBy: string },
+  args: {
+    valuationId: string;
+    pipeline: AiPipeline;
+    input: Record<string, unknown>;
+    createdBy: string;
+    promptVersion?: number | null;
+  },
 ): Promise<AiJobRow> {
   const { rows } = await pool.query<AiJobRow>(
-    `INSERT INTO ai_jobs (id, valuation_id, pipeline, input, created_by)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [newUlid(), args.valuationId, args.pipeline, JSON.stringify(args.input), args.createdBy],
+    `INSERT INTO ai_jobs (id, valuation_id, pipeline, input, created_by, prompt_version)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [
+      newUlid(),
+      args.valuationId,
+      args.pipeline,
+      JSON.stringify(args.input),
+      args.createdBy,
+      args.promptVersion ?? null,
+    ],
   );
   return rows[0]!;
 }
