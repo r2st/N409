@@ -15,6 +15,9 @@ const Env = z.object({
   AI_URL: z.string().url().default('http://127.0.0.1:3002'),
   ENGINE_URL: z.string().url().default('http://127.0.0.1:3003'),
   DOCUMENTS_DIR: z.string().min(1).default('./data/documents'),
+  // Auto-pipeline on upload (extraction → param fill → draft calculation).
+  // 'off' disables it globally; per-valuation opt-out is valuations.auto_pipeline.
+  AUTO_PIPELINE: z.enum(['on', 'off']).default('on'),
   // Auto email workflows — 'smtp' delivers through SMTP_HOST; 'log' records
   // delivery in the service log (outbox rows track status either way); 'off'
   // only queues. 'smtp' without SMTP_HOST falls back to 'log'.

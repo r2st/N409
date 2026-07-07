@@ -18,6 +18,7 @@ import {
 } from '../repos/documents.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { maybeStartAutoPipeline, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
@@ -87,7 +88,7 @@ export async function storeDocument(
 
 export function registerDocumentRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; documentsDir: string },
+  deps: { pool: pg.Pool; documentsDir: string; autoPipeline?: AutoPipelineDeps },
 ): void {
   app.post('/api/v1/valuations/:id/documents', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
@@ -122,7 +123,18 @@ export function registerDocumentRoutes(
       actorFor(principal),
       principal.id,
     );
-    return reply.status(201).send({ document });
+
+    // Improvement 2 — auto-pipeline: an extractable upload kicks off
+    // extraction → param fill → draft calculation without blocking the
+    // response; the run row (if any) lets the client poll immediately.
+    const pipelineRun = deps.autoPipeline
+      ? await maybeStartAutoPipeline(deps.autoPipeline, {
+          valuation,
+          document,
+          triggeredBy: principal.id,
+        })
+      : null;
+    return reply.status(201).send({ document, pipeline_run: pipelineRun });
   });
 
   app.get('/api/v1/valuations/:id/documents', { preHandler: app.authenticate }, async (req) => {

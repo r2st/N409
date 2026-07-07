@@ -9,14 +9,14 @@ import { AI_PIPELINES, type AiPipeline } from '../domain/pipeline.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { listDocuments, type DocumentRow } from '../repos/documents.js';
-import { completeAiJob, createAiJob, latestSucceededJob, listAiJobs } from '../repos/aiJobs.js';
+import { completeAiJob, createAiJob, latestSucceededJob, listAiJobs, type AiJobRow } from '../repos/aiJobs.js';
 import { findPromptByPipeline, latestPromptVersion } from '../repos/aiPrompts.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
 /** Only text-extractable formats are shipped to the AI service. */
-const EXTRACTABLE_EXTENSIONS = new Set([
+export const EXTRACTABLE_EXTENSIONS = new Set([
   '.pdf',
   '.txt',
   '.csv',
@@ -73,10 +73,107 @@ async function encodeDocuments(
   return encoded;
 }
 
-export function registerAiRoutes(
-  app: FastifyInstance,
-  deps: { pool: pg.Pool; aiUrl: string; documentsDir: string },
-): void {
+export interface AiPipelineDeps {
+  pool: pg.Pool;
+  aiUrl: string;
+  documentsDir: string;
+}
+
+/**
+ * Runs one AI pipeline end-to-end: prompt-registry lookup, document encoding,
+ * the AI-service call, job persistence, and (extract only) auto-applying the
+ * engine inputs to params. Shared by the interactive route below and the
+ * auto-pipeline orchestrator. On an upstream failure the job is completed as
+ * 'failed' and the InternalServiceError is re-thrown for the caller to map.
+ */
+export async function runAiPipeline(
+  deps: AiPipelineDeps,
+  args: {
+    valuation: ValuationRow;
+    pipeline: AiPipeline;
+    anonymize: boolean;
+    autoApply: boolean;
+    createdBy: string;
+    actor: EventActor;
+  },
+): Promise<{ job: AiJobRow; appliedInputs: Record<string, unknown> | null }> {
+  const { valuation, pipeline } = args;
+  const params = await findParams(deps.pool, valuation.id);
+  const documents = await listDocuments(deps.pool, valuation.id);
+
+  // Registry-managed prompt: the stored system prompt + model binding ride
+  // along so admins can tune pipelines without a deploy (Bot Prompts view).
+  const promptRow = await findPromptByPipeline(deps.pool, pipeline);
+  const promptVersion = promptRow ? await latestPromptVersion(deps.pool, promptRow.id) : null;
+  const payload = {
+    valuation: {
+      id: valuation.id,
+      kind: valuation.kind,
+      company_name: valuation.company_name,
+      currency: valuation.currency,
+      service_countries: valuation.service_countries,
+    },
+    params,
+    documents: await encodeDocuments(deps.documentsDir, documents),
+    prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
+    options: { anonymize: args.anonymize },
+  };
+
+  const job = await createAiJob(deps.pool, {
+    valuationId: valuation.id,
+    pipeline,
+    // Persist provenance, not payloads: which docs went in, not their bytes.
+    input: {
+      document_ids: documents.map((d) => d.id),
+      company_name: valuation.company_name,
+    },
+    createdBy: args.createdBy,
+    promptVersion,
+  });
+
+  const startedAt = Date.now();
+  try {
+    const response = await postJson<AiPipelineResponse>(
+      'ai-service',
+      `${deps.aiUrl}/ai/v1/pipelines/${pipeline}`,
+      payload,
+    );
+    const completed = await completeAiJob(
+      deps.pool,
+      job,
+      {
+        status: 'succeeded',
+        model: response.model,
+        result: response.result,
+        latencyMs: Date.now() - startedAt,
+      },
+      args.actor,
+    );
+    // Auto-apply (409.ai "Set Valuation Parameters"): extracted engine
+    // inputs land in params without a second manual step.
+    let appliedInputs: Record<string, unknown> | null = null;
+    if (pipeline === 'extract' && args.autoApply) {
+      const extracted = response.result?.engine_inputs;
+      if (extracted && typeof extracted === 'object' && Object.keys(extracted).length > 0) {
+        appliedInputs = extracted as Record<string, unknown>;
+        await applyEngineInputs(deps.pool, valuation.id, appliedInputs, args.actor);
+      }
+    }
+    return { job: completed, appliedInputs };
+  } catch (err) {
+    if (err instanceof InternalServiceError) {
+      await completeAiJob(
+        deps.pool,
+        job,
+        { status: 'failed', error: err.message, latencyMs: Date.now() - startedAt },
+        args.actor,
+      );
+    }
+    throw err;
+  }
+}
+
+export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): void {
   const loadValuation = async (id: string): Promise<ValuationRow> => {
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
@@ -93,7 +190,6 @@ export function registerAiRoutes(
       throw problems.notFound(`Unknown pipeline "${pipeline}"`);
     }
     const valuation = await loadValuation(id);
-    const params = await findParams(deps.pool, id);
     const documents = await listDocuments(deps.pool, id);
 
     if (pipeline === 'extract' && documents.length === 0) {
@@ -103,75 +199,18 @@ export function registerAiRoutes(
     const body = RunBody.safeParse(req.body ?? {});
     if (!body.success) throw problems.unprocessable('Invalid options', { errors: body.error.issues });
 
-    // Registry-managed prompt: the stored system prompt + model binding ride
-    // along so admins can tune pipelines without a deploy (Bot Prompts view).
-    const promptRow = await findPromptByPipeline(deps.pool, pipeline as AiPipeline);
-    const promptVersion = promptRow ? await latestPromptVersion(deps.pool, promptRow.id) : null;
-    const payload = {
-      valuation: {
-        id: valuation.id,
-        kind: valuation.kind,
-        company_name: valuation.company_name,
-        currency: valuation.currency,
-        service_countries: valuation.service_countries,
-      },
-      params,
-      documents: await encodeDocuments(deps.documentsDir, documents),
-      prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
-      options: { anonymize: body.data.anonymize },
-    };
-
-    const job = await createAiJob(deps.pool, {
-      valuationId: id,
-      pipeline: pipeline as AiPipeline,
-      // Persist provenance, not payloads: which docs went in, not their bytes.
-      input: {
-        document_ids: documents.map((d) => d.id),
-        company_name: valuation.company_name,
-      },
-      createdBy: principal.id,
-      promptVersion,
-    });
-
-    const startedAt = Date.now();
     try {
-      const response = await postJson<AiPipelineResponse>(
-        'ai-service',
-        `${deps.aiUrl}/ai/v1/pipelines/${pipeline}`,
-        payload,
-      );
-      const completed = await completeAiJob(
-        deps.pool,
-        job,
-        {
-          status: 'succeeded',
-          model: response.model,
-          result: response.result,
-          latencyMs: Date.now() - startedAt,
-        },
-        actorFor(principal),
-      );
-      // Auto-apply (409.ai "Set Valuation Parameters"): extracted engine
-      // inputs land in params without a second manual step.
-      let appliedInputs: Record<string, unknown> | null = null;
-      if (pipeline === 'extract' && body.data.auto_apply) {
-        const extracted = response.result?.engine_inputs;
-        if (extracted && typeof extracted === 'object' && Object.keys(extracted).length > 0) {
-          appliedInputs = extracted as Record<string, unknown>;
-          await applyEngineInputs(deps.pool, id, appliedInputs, actorFor(principal));
-        }
-      }
-      return reply.status(201).send({ job: completed, applied_inputs: appliedInputs });
+      const { job, appliedInputs } = await runAiPipeline(deps, {
+        valuation,
+        pipeline: pipeline as AiPipeline,
+        anonymize: body.data.anonymize,
+        autoApply: body.data.auto_apply,
+        createdBy: principal.id,
+        actor: actorFor(principal),
+      });
+      return reply.status(201).send({ job, applied_inputs: appliedInputs });
     } catch (err) {
-      if (err instanceof InternalServiceError) {
-        await completeAiJob(
-          deps.pool,
-          job,
-          { status: 'failed', error: err.message, latencyMs: Date.now() - startedAt },
-          actorFor(principal),
-        );
-        throw toProblem(err);
-      }
+      if (err instanceof InternalServiceError) throw toProblem(err);
       throw err;
     }
   });

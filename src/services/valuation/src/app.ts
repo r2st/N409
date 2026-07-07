@@ -25,6 +25,8 @@ import { registerPaymentRoutes } from './routes/payments.js';
 import { registerSignatureRoutes } from './routes/signatures.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
+import { registerPipelineRoutes } from './routes/pipeline.js';
+import type { AutoPipelineDeps } from './pipeline/autoPipeline.js';
 import { registerParamsRoutes } from './routes/params.js';
 import { registerAiRoutes } from './routes/ai.js';
 import { registerCalculationRoutes } from './routes/calculations.js';
@@ -105,7 +107,17 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerValuationRoutes(app, { pool, transport });
   // M1 — core pipeline
   registerTaskRoutes(app, { pool });
-  registerDocumentRoutes(app, { pool, documentsDir: config.DOCUMENTS_DIR });
+  // Improvement 2 — auto-pipeline on upload (extract → param fill → draft calc)
+  const autoPipeline: AutoPipelineDeps = {
+    pool,
+    aiUrl: config.AI_URL,
+    engineUrl: config.ENGINE_URL,
+    documentsDir: config.DOCUMENTS_DIR,
+    enabled: config.AUTO_PIPELINE === 'on',
+    log: app.log,
+  };
+  registerDocumentRoutes(app, { pool, documentsDir: config.DOCUMENTS_DIR, autoPipeline });
+  registerPipelineRoutes(app, { pool, autoPipeline });
   registerParamsRoutes(app, { pool });
   registerAiRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });

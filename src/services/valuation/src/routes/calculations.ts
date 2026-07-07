@@ -3,13 +3,14 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { findValuationById } from '../repos/valuations.js';
+import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findParams, type ValuationParamsRow } from '../repos/params.js';
 import { latestSucceededJob } from '../repos/aiJobs.js';
 import {
   createCalculation,
   latestSucceededCalculation,
   listCalculations,
+  type CalculationRow,
 } from '../repos/calculations.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -92,6 +93,107 @@ function actorFor(principal: Principal): EventActor {
   return { actorType: 'engine', actorId: principal.id, source: 'engine-wrapper' };
 }
 
+/**
+ * Assembles the engine input document for a valuation: AI-extracted engine
+ * inputs, then analyst-applied inputs (extraction auto-apply), then AI
+ * comparables multiples, then the caller's explicit overrides. Shared by the
+ * calculation route, the auto-pipeline orchestrator, and the scenario sandbox.
+ */
+export async function buildCalculationInputs(
+  pool: pg.Pool,
+  valuationId: string,
+  paramsRow: ValuationParamsRow,
+  explicit: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  let inputs: Record<string, unknown> = {};
+  const extractJob = await latestSucceededJob(pool, valuationId, 'extract');
+  const extracted = extractJob?.result?.engine_inputs;
+  if (extracted && typeof extracted === 'object') {
+    inputs = deepMerge(inputs, extracted as Record<string, unknown>);
+  }
+  const applied = paramsRow.engine_inputs;
+  if (applied && typeof applied === 'object' && !Array.isArray(applied)) {
+    inputs = deepMerge(inputs, applied as Record<string, unknown>);
+  }
+  const compsJob = await latestSucceededJob(pool, valuationId, 'comparables');
+  const comps = compsJob?.result?.comparables;
+  if (Array.isArray(comps)) {
+    const key = paramsRow.market_method === 'ebitda' ? 'ebitda_multiple' : 'revenue_multiple';
+    const multiples = comps
+      .map((c) => (c && typeof c === 'object' ? Number((c as Record<string, unknown>)[key]) : NaN))
+      .filter((m) => Number.isFinite(m) && m > 0);
+    if (multiples.length > 0) inputs = deepMerge(inputs, { market: { multiples } });
+  }
+  return deepMerge(inputs, explicit);
+}
+
+export interface CalculationDeps {
+  pool: pg.Pool;
+  engineUrl: string;
+}
+
+/**
+ * Calls the engine and persists the run (succeeded or failed) with its full
+ * input payload. On an engine rejection the failed calculation is recorded
+ * and the InternalServiceError re-thrown for the caller to map.
+ */
+export async function runCalculation(
+  deps: CalculationDeps,
+  args: {
+    valuation: ValuationRow;
+    paramsRow: ValuationParamsRow;
+    inputs: Record<string, unknown>;
+    recompute?: string[];
+    priorApproaches?: Record<string, unknown>;
+    createdBy: string;
+    actor: EventActor;
+  },
+): Promise<CalculationRow> {
+  const payload = {
+    params: engineParams(args.paramsRow),
+    inputs: args.inputs,
+    ...(args.recompute ? { recompute: args.recompute, prior_approaches: args.priorApproaches } : {}),
+  };
+  try {
+    const response = await postJson<EngineComputeResponse>(
+      'engine',
+      `${deps.engineUrl}/engine/v1/compute`,
+      payload,
+      { timeoutMs: 30_000 },
+    );
+    return await createCalculation(
+      deps.pool,
+      {
+        valuationId: args.valuation.id,
+        engineVersion: response.engine_version,
+        status: 'succeeded',
+        inputs: payload,
+        results: response.results,
+        equityValue: response.results.equity_value,
+        fmvPerShare: response.results.fmv_per_share,
+        createdBy: args.createdBy,
+      },
+      args.actor,
+    );
+  } catch (err) {
+    if (err instanceof InternalServiceError) {
+      await createCalculation(
+        deps.pool,
+        {
+          valuationId: args.valuation.id,
+          engineVersion: 'unknown',
+          status: 'failed',
+          inputs: payload,
+          error: err.message,
+          createdBy: args.createdBy,
+        },
+        args.actor,
+      );
+    }
+    throw err;
+  }
+}
+
 export function registerCalculationRoutes(
   app: FastifyInstance,
   deps: { pool: pg.Pool; engineUrl: string },
@@ -117,26 +219,7 @@ export function registerCalculationRoutes(
     // Inputs = AI-extracted engine inputs, then analyst-applied inputs
     // (extraction auto-apply), then AI comparables multiples, then the
     // analyst's explicit overrides from the request body.
-    let inputs: Record<string, unknown> = {};
-    const extractJob = await latestSucceededJob(deps.pool, id, 'extract');
-    const extracted = extractJob?.result?.engine_inputs;
-    if (extracted && typeof extracted === 'object') {
-      inputs = deepMerge(inputs, extracted as Record<string, unknown>);
-    }
-    const applied = paramsRow.engine_inputs;
-    if (applied && typeof applied === 'object' && !Array.isArray(applied)) {
-      inputs = deepMerge(inputs, applied as Record<string, unknown>);
-    }
-    const compsJob = await latestSucceededJob(deps.pool, id, 'comparables');
-    const comps = compsJob?.result?.comparables;
-    if (Array.isArray(comps)) {
-      const key = paramsRow.market_method === 'ebitda' ? 'ebitda_multiple' : 'revenue_multiple';
-      const multiples = comps
-        .map((c) => (c && typeof c === 'object' ? Number((c as Record<string, unknown>)[key]) : NaN))
-        .filter((m) => Number.isFinite(m) && m > 0);
-      if (multiples.length > 0) inputs = deepMerge(inputs, { market: { multiples } });
-    }
-    inputs = deepMerge(inputs, parsed.data.inputs);
+    const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs);
 
     // Per-approach recalc: reuse the other approaches from the latest
     // successful run so the engine only recomputes the selected subsystem.
@@ -159,49 +242,20 @@ export function registerCalculationRoutes(
       priorApproaches = prior as Record<string, unknown>;
     }
 
-    const payload = {
-      params: engineParams(paramsRow),
-      inputs,
-      ...(recompute ? { recompute, prior_approaches: priorApproaches } : {}),
-    };
-    const startedAt = Date.now();
     try {
-      const response = await postJson<EngineComputeResponse>(
-        'engine',
-        `${deps.engineUrl}/engine/v1/compute`,
-        payload,
-        { timeoutMs: 30_000 },
-      );
-      const calculation = await createCalculation(
-        deps.pool,
-        {
-          valuationId: valuation.id,
-          engineVersion: response.engine_version,
-          status: 'succeeded',
-          inputs: payload,
-          results: response.results,
-          equityValue: response.results.equity_value,
-          fmvPerShare: response.results.fmv_per_share,
-          createdBy: principal.id,
-        },
-        actorFor(principal),
-      );
+      const calculation = await runCalculation(deps, {
+        valuation,
+        paramsRow,
+        inputs,
+        recompute,
+        priorApproaches,
+        createdBy: principal.id,
+        actor: actorFor(principal),
+      });
       return reply.status(201).send({ calculation });
     } catch (err) {
       if (err instanceof InternalServiceError) {
-        await createCalculation(
-          deps.pool,
-          {
-            valuationId: valuation.id,
-            engineVersion: 'unknown',
-            status: 'failed',
-            inputs: payload,
-            error: err.message,
-            createdBy: principal.id,
-          },
-          actorFor(principal),
-        );
-        req.log.warn({ err, latencyMs: Date.now() - startedAt }, 'engine compute failed');
+        req.log.warn({ err }, 'engine compute failed');
         throw toProblem(err);
       }
       throw err;

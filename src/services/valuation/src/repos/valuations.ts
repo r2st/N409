@@ -34,6 +34,8 @@ export interface ValuationRow {
   qsbs_attestation: boolean | null;
   delivery_days: number | null;
   assigned_reviewer_id: string | null;
+  /** Per-valuation auto-pipeline opt-out (migration 0049). */
+  auto_pipeline: boolean;
   created_at: Date;
   due_date: Date | null;
   published_at: Date | null;

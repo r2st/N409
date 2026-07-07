@@ -104,6 +104,9 @@ describe.skipIf(!dbUp)('M1 core pipeline API', () => {
       AI_URL: aiStub.url,
       ENGINE_URL: engineStub.url,
       DOCUMENTS_DIR: docsDir,
+      // This suite exercises the interactive routes; background auto-pipeline
+      // runs (own suite: autoPipeline.test.ts) would race its assertions.
+      AUTO_PIPELINE: 'off',
     });
     app = buildApp({ config, pool });
     await app.ready();
