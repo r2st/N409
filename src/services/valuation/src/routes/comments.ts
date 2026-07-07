@@ -27,6 +27,7 @@ import {
 import { createSupportMessage } from '../repos/support.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import type { ValuationHub } from '../realtime/hub.js';
 
 const PostBody = z.object({
   kind: z.enum(['chat', 'note']),
@@ -88,7 +89,10 @@ function toPublicComment(c: CommentRow) {
  * M3 features 10 + 11: per-valuation client chat, internal sticky notes, and
  * inbound-email threading.
  */
-export function registerCommentRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+export function registerCommentRoutes(
+  app: FastifyInstance,
+  deps: { pool: pg.Pool; hub?: ValuationHub },
+): void {
   app.get('/api/v1/valuations/:id/comments', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
@@ -126,6 +130,10 @@ export function registerCommentRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       { valuationId: id, kind, authorId: principal.id, body, pinned },
       actorFor(principal),
     );
+    // Improvement 4 — live thread updates on open detail pages. Only the id
+    // and kind ride on the wire; each viewer re-fetches through its own
+    // RBAC'd comment list, so nothing invisible leaks.
+    deps.hub?.broadcast(id, 'comment', { comment_id: comment.id, kind: comment.kind });
     return reply.status(201).send({ comment: toPublicComment(comment) });
   });
 
@@ -220,6 +228,7 @@ export function registerCommentRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       },
       { actorType: 'system', actorId: principal.id, source: 'inbox' },
     );
+    if (created) deps.hub?.broadcast(valuation.id, 'comment', { comment_id: comment.id, kind: comment.kind });
     return reply.status(created ? 201 : 200).send({
       comment: toPublicComment(comment),
       valuation_id: valuation.id,
