@@ -20,6 +20,14 @@ export interface ReportPdfInput {
   /** cover-page facts, e.g. Valuation date / Reference / Template / Version */
   meta: Array<{ label: string; value: string }>;
   sections: ReportPdfSection[];
+  /** White-label branding (improvement 8): partner logo + accent on the cover. */
+  branding?: {
+    partner_name: string;
+    /** #rrggbb accent for the cover rule; falls back to the neutral grey. */
+    brand_color?: string | null;
+    /** PNG or JPEG bytes; anything unrenderable is skipped silently. */
+    logo?: Buffer | null;
+  };
 }
 
 export interface RenderOptions {
@@ -288,17 +296,43 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
   // Cover
-  doc.moveDown(6);
+  const brandColor = /^#[0-9a-fA-F]{6}$/.test(input.branding?.brand_color ?? '')
+    ? input.branding!.brand_color!
+    : '#999999';
+  if (input.branding?.logo) {
+    try {
+      // Centered partner logo above the title, capped to a 140×56pt box.
+      doc.image(input.branding.logo, doc.page.width / 2 - 70, doc.y + 24, {
+        fit: [140, 56],
+        align: 'center',
+        valign: 'center',
+      });
+      doc.y += 96;
+    } catch {
+      // Undecodable image bytes — render the cover without the logo.
+      doc.moveDown(6);
+    }
+  } else {
+    doc.moveDown(6);
+  }
   doc.font(FONTS.bold).fontSize(24).fillColor('#111111').text(input.title, { align: 'center' });
   doc.moveDown(0.5);
   doc.font(FONTS.regular).fontSize(14).fillColor('#444444').text(input.company_name, { align: 'center' });
+  if (input.branding) {
+    doc.moveDown(0.4);
+    doc
+      .font(FONTS.italic)
+      .fontSize(10.5)
+      .fillColor('#666666')
+      .text(`Prepared in partnership with ${input.branding.partner_name}`, { align: 'center' });
+  }
   doc.moveDown(2);
   const ruleY = doc.y;
   doc
     .moveTo(doc.page.margins.left + usable / 4, ruleY)
     .lineTo(doc.page.margins.left + (3 * usable) / 4, ruleY)
-    .lineWidth(0.5)
-    .strokeColor('#999999')
+    .lineWidth(input.branding ? 1.2 : 0.5)
+    .strokeColor(brandColor)
     .stroke();
   doc.moveDown(2);
   for (const item of input.meta) {

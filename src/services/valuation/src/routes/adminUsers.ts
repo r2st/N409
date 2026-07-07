@@ -10,6 +10,7 @@ import { createUser, findUserByEmail, findUserById } from '../repos/users.js';
 import {
   adminPatchUser,
   createPartner,
+  findPartnerBrandingByKey,
   findPartnerById,
   getPartnerDetail,
   listPartners,
@@ -29,7 +30,7 @@ import {
   type InvitationListRow,
   type InvitationRow,
 } from '../repos/invitations.js';
-import { invitationEmail } from '../domain/emailWorkflows.js';
+import { invitationEmail, PARTNER_EMAIL_TEMPLATE_KEYS } from '../domain/emailWorkflows.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
@@ -393,6 +394,20 @@ export function registerAdminUserRoutes(
   });
 
   // ── Partners (pickers + management console, P1 #7) ─────────────────────────
+
+  /**
+   * White-label login branding (improvement 8) — public by design: the login
+   * page needs it before any session exists. Exposes nothing beyond what the
+   * partner already shows on their own login page.
+   */
+  app.get('/api/v1/public/partners/:key/branding', async (req) => {
+    const { key } = req.params as { key: string };
+    if (!/^[a-z0-9-]{1,100}$/.test(key)) throw problems.notFound();
+    const branding = await findPartnerBrandingByKey(deps.pool, key);
+    if (!branding) throw problems.notFound();
+    return { partner: branding };
+  });
+
   app.get('/api/v1/partners', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden();
@@ -459,6 +474,12 @@ export function registerAdminUserRoutes(
           .regex(/^#[0-9a-fA-F]{6}$/, 'expected a #rrggbb colour')
           .nullable(),
         logo_url: z.string().url().max(2000).nullable(),
+        // White-label email overrides (improvement 8): only known workflow
+        // template keys; empty subject/body pairs are rejected.
+        email_templates: z.record(
+          z.enum(PARTNER_EMAIL_TEMPLATE_KEYS),
+          z.object({ subject: z.string().min(1).max(300), body: z.string().min(1).max(5000) }),
+        ),
       })
       .partial()
       .strict()

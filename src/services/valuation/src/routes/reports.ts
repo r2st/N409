@@ -15,6 +15,8 @@ import {
   storeRenderedPdf,
   type ReportRow,
 } from '../repos/reports.js';
+import { findPartnerById } from '../repos/adminUsers.js';
+import { fetchPartnerLogo } from '../clients/partnerLogo.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
@@ -91,6 +93,21 @@ async function loadOrCreateReport(
   return created.report;
 }
 
+/** White-label branding for partner engagements (improvement 8). */
+async function brandingFor(
+  pool: pg.Pool,
+  valuation: ValuationRow,
+): Promise<{ partner_name: string; brand_color: string | null; logo: Buffer | null } | undefined> {
+  if (!valuation.partner_id) return undefined;
+  const partner = await findPartnerById(pool, valuation.partner_id);
+  if (!partner || partner.archived_at) return undefined;
+  return {
+    partner_name: partner.name,
+    brand_color: partner.brand_color,
+    logo: await fetchPartnerLogo(partner.logo_url),
+  };
+}
+
 async function renderVersionPdf(
   pool: pg.Pool,
   valuation: ValuationRow,
@@ -111,6 +128,7 @@ async function renderVersionPdf(
       { label: 'Rendered', value: new Date().toISOString().slice(0, 10) },
     ],
     sections: content.sections.map((s) => ({ heading: s.heading, html: s.html })),
+    branding: await brandingFor(pool, valuation),
   });
   await storeRenderedPdf(pool, { report, version, pdf, actor });
   return pdf;

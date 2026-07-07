@@ -34,6 +34,8 @@ export interface ValuationSnapshot {
   company_name: string;
   user_id: string;
   assigned_reviewer_id: string | null;
+  /** Present on full rows — enables white-label email overrides (improvement 8). */
+  partner_id?: string | null;
 }
 
 export interface EmailSpec {
@@ -165,6 +167,56 @@ export function emailsForTransition(v: ValuationSnapshot, to: ValuationState): E
     subject: r.subject(v),
     body: r.body(v),
   }));
+}
+
+// ── White-label overrides (improvement 8) ─────────────────────────────────────
+
+/** The workflow emails a partner may re-template (RULES entries with email). */
+export const PARTNER_EMAIL_TEMPLATE_KEYS = [
+  'valuation_started',
+  'review_needed',
+  'draft_ready',
+  'valuation_completed',
+  'valuation_cancelled',
+] as const;
+
+export type PartnerEmailTemplates = Partial<
+  Record<(typeof PARTNER_EMAIL_TEMPLATE_KEYS)[number], { subject: string; body: string }>
+>;
+
+export interface EmailTemplateVars {
+  company_name: string;
+  kind: string;
+  partner_name: string;
+}
+
+/** {{placeholder}} substitution; unknown placeholders survive verbatim. */
+export function renderEmailTemplate(text: string, vars: EmailTemplateVars): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => {
+    const v = (vars as unknown as Record<string, unknown>)[key];
+    return v === undefined || v === null ? m : String(v);
+  });
+}
+
+/**
+ * Applies a partner's template overrides to the default workflow emails.
+ * Untemplated keys keep the platform default; subject and body are only
+ * replaced together, from the same override.
+ */
+export function applyPartnerEmailTemplates(
+  specs: EmailSpec[],
+  templates: PartnerEmailTemplates,
+  vars: EmailTemplateVars,
+): EmailSpec[] {
+  return specs.map((spec) => {
+    const override = templates[spec.templateKey as (typeof PARTNER_EMAIL_TEMPLATE_KEYS)[number]];
+    if (!override?.subject || !override.body) return spec;
+    return {
+      ...spec,
+      subject: renderEmailTemplate(override.subject, vars),
+      body: renderEmailTemplate(override.body, vars),
+    };
+  });
 }
 
 export function notificationsForTransition(v: ValuationSnapshot, to: ValuationState): NotificationSpec[] {

@@ -137,6 +137,8 @@ export interface PartnerRow {
   archived_at: Date | null;
   brand_color: string | null;
   logo_url: string | null;
+  /** White-label workflow email overrides: template key → { subject, body }. */
+  email_templates: Record<string, { subject: string; body: string }>;
   user_count: number;
   valuation_count: number;
 }
@@ -146,7 +148,7 @@ const PARTNER_COUNTS_SQL = `
   (SELECT count(*)::int FROM users u WHERE u.partner_id = p.id AND u.deleted_at IS NULL) AS user_count,
   (SELECT count(*)::int FROM valuations v WHERE v.partner_id = p.id) AS valuation_count`;
 
-const PARTNER_COLUMNS_SQL = `p.id, p.name, p.key, p.created_at, p.archived_at, p.brand_color, p.logo_url`;
+const PARTNER_COLUMNS_SQL = `p.id, p.name, p.key, p.created_at, p.archived_at, p.brand_color, p.logo_url, p.email_templates`;
 
 /** Archived partners are hidden by default so pickers only offer live channels. */
 export async function listPartners(
@@ -176,17 +178,36 @@ export async function createPartner(
 ): Promise<PartnerRow> {
   const { rows } = await pool.query<PartnerRow>(
     `INSERT INTO partners (id, name, key) VALUES ($1, $2, $3)
-     RETURNING id, name, key, created_at, archived_at, brand_color, logo_url,
+     RETURNING id, name, key, created_at, archived_at, brand_color, logo_url, email_templates,
                0 AS user_count, 0 AS valuation_count`,
     [newUlid(), args.name, args.key],
   );
   return rows[0]!;
 }
 
+/** Public branding lookup for the white-label login page (improvement 8). */
+export async function findPartnerBrandingByKey(
+  pool: pg.Pool,
+  key: string,
+): Promise<{ name: string; key: string; brand_color: string | null; logo_url: string | null } | null> {
+  const { rows } = await pool.query<{
+    name: string;
+    key: string;
+    brand_color: string | null;
+    logo_url: string | null;
+  }>(
+    `SELECT name, key, brand_color, logo_url FROM partners
+     WHERE key = $1 AND archived_at IS NULL`,
+    [key],
+  );
+  return rows[0] ?? null;
+}
+
 export interface PartnerPatch {
   name?: string;
   brand_color?: string | null;
   logo_url?: string | null;
+  email_templates?: Record<string, { subject: string; body: string }>;
   /** true → stamp archived_at (idempotent); false → clear it. */
   archived?: boolean;
 }
@@ -209,6 +230,8 @@ export async function updatePartner(
   if (patch.name !== undefined) add('name = ?', patch.name);
   if (patch.brand_color !== undefined) add('brand_color = ?', patch.brand_color);
   if (patch.logo_url !== undefined) add('logo_url = ?', patch.logo_url);
+  if (patch.email_templates !== undefined)
+    add('email_templates = ?', JSON.stringify(patch.email_templates));
   if (patch.archived === true) add('archived_at = coalesce(archived_at, now())');
   if (patch.archived === false) add('archived_at = NULL');
   if (sets.length === 0) return findPartnerById(pool, id);

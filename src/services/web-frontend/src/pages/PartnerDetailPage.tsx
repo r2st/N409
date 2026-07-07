@@ -3,10 +3,60 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { displayName, formatDate, formatDateTime, GROUP_LABELS } from '../lib/format';
+import { PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
 import type { PartnerDetail } from '../lib/types';
 import { Button, ErrorNote, Field, Spinner, StatCard, TextInput } from '../components/ui';
 
 const GROUP_ORDER = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
+
+const TEMPLATE_LABELS: Record<string, string> = {
+  valuation_started: 'Valuation started',
+  review_needed: 'Review needed (reviewer)',
+  draft_ready: 'Draft ready',
+  valuation_completed: 'Valuation completed',
+  valuation_cancelled: 'Valuation cancelled',
+};
+
+/**
+ * Live white-label preview (improvement 8): a miniature of the branded login
+ * card at /partner/:key/login, driven by the UNSAVED form values so admins
+ * see the effect before committing.
+ */
+function BrandingPreview({
+  name,
+  brandColor,
+  logoUrl,
+}: {
+  name: string;
+  brandColor: string;
+  logoUrl: string;
+}) {
+  const accent = /^#[0-9a-fA-F]{6}$/.test(brandColor) ? brandColor : '#1d4ed8';
+  return (
+    <div data-testid="branding-preview" className="w-full max-w-xs">
+      <div className="rounded-lg border border-paper-300 bg-paper-50 p-4 shadow-card">
+        <div aria-hidden className="-mx-4 -mt-4 mb-4 h-1 rounded-t-lg" style={{ backgroundColor: accent }} />
+        <div className="flex flex-col items-center text-center">
+          {logoUrl && (
+            <img src={logoUrl} alt={`${name} logo preview`} className="mb-2 max-h-8 max-w-[120px] object-contain" />
+          )}
+          <div className="font-display text-sm font-semibold text-ink-900">{name}</div>
+          <div className="mt-0.5 text-[0.65rem] text-ink-400">Sign in to the {name} valuations portal.</div>
+          <div className="mt-3 w-full space-y-1.5">
+            <div className="h-6 rounded border border-paper-300 bg-white" />
+            <div className="h-6 rounded border border-paper-300 bg-white" />
+            <div
+              className="flex h-6 items-center justify-center rounded text-[0.65rem] font-semibold text-white"
+              style={{ backgroundColor: accent }}
+            >
+              Sign in
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** P1 #7 — one partner organisation: rollups, users, branding, archive. */
 export function PartnerDetailPage() {
@@ -18,6 +68,7 @@ export function PartnerDetailPage() {
   const [busy, setBusy] = useState(false);
   const [brandColor, setBrandColor] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
+  const [templates, setTemplates] = useState<Record<string, { subject: string; body: string }>>({});
 
   const load = useCallback(async () => {
     try {
@@ -25,6 +76,7 @@ export function PartnerDetailPage() {
       setPartner(p);
       setBrandColor(p.brand_color ?? '');
       setLogoUrl(p.logo_url ?? '');
+      setTemplates(p.email_templates ?? {});
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 404
@@ -227,35 +279,111 @@ export function PartnerDetailPage() {
         )}
       </section>
 
-      {/* Branding shown in the partner's portal */}
+      {/* White-label branding: portal, login page, and report PDFs (improvement 8) */}
       <section className="mt-10 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-        <h2 className="overline mb-1 text-ink-400">Branding</h2>
+        <h2 className="overline mb-1 text-ink-400">White-label branding</h2>
         <p className="text-sm text-ink-400">
-          Shown to this partner&rsquo;s users in their portal.
+          Used on this partner&rsquo;s portal, their branded login page, and the cover of their
+          report PDFs.
         </p>
-        <form onSubmit={saveBranding} className="mt-4 flex flex-wrap items-end gap-3">
-          <Field label="Brand colour" hint="Hex, e.g. #1f6f54.">
-            <TextInput
-              aria-label="Brand colour"
-              value={brandColor}
-              onChange={(e) => setBrandColor(e.target.value)}
-              placeholder="#1f6f54"
-              pattern="#[0-9a-fA-F]{6}"
-              className="!w-32"
-            />
-          </Field>
-          <Field label="Logo URL">
-            <TextInput
-              aria-label="Logo URL"
-              type="url"
-              value={logoUrl}
-              onChange={(e) => setLogoUrl(e.target.value)}
-              placeholder="https://…/logo.png"
-              className="!w-80"
-            />
-          </Field>
+        <p className="mt-2 text-sm text-ink-600">
+          Branded login page:{' '}
+          <Link to={`/partner/${partner.key}/login`} className="font-mono text-xs font-semibold text-bond-600 hover:text-bond-700">
+            /partner/{partner.key}/login
+          </Link>
+        </p>
+        <div className="mt-4 flex flex-wrap items-start gap-8">
+          <form onSubmit={saveBranding} className="flex flex-wrap items-end gap-3">
+            <Field label="Brand colour" hint="Hex, e.g. #1f6f54.">
+              <TextInput
+                aria-label="Brand colour"
+                value={brandColor}
+                onChange={(e) => setBrandColor(e.target.value)}
+                placeholder="#1f6f54"
+                pattern="#[0-9a-fA-F]{6}"
+                className="!w-32"
+              />
+            </Field>
+            <Field label="Logo URL">
+              <TextInput
+                aria-label="Logo URL"
+                type="url"
+                value={logoUrl}
+                onChange={(e) => setLogoUrl(e.target.value)}
+                placeholder="https://…/logo.png"
+                className="!w-80"
+              />
+            </Field>
+            <Button type="submit" disabled={busy}>
+              Save branding
+            </Button>
+          </form>
+          <BrandingPreview name={partner.name} brandColor={brandColor} logoUrl={logoUrl} />
+        </div>
+      </section>
+
+      {/* Per-partner workflow email templates (improvement 8) */}
+      <section className="mt-10 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <h2 className="overline mb-1 text-ink-400">Email templates</h2>
+        <p className="text-sm text-ink-400">
+          Override the workflow emails sent for this partner&rsquo;s engagements. Leave a template
+          blank to use the platform default. Placeholders:{' '}
+          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
+            {'{{company_name}}'}
+          </code>{' '}
+          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{kind}}'}</code>{' '}
+          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
+            {'{{partner_name}}'}
+          </code>
+        </p>
+        <form
+          className="mt-5 space-y-6"
+          onSubmit={(e) => {
+            e.preventDefault();
+            // Only complete overrides are sent; half-filled rows are dropped.
+            const filled = Object.fromEntries(
+              Object.entries(templates).filter(
+                ([, t]) => t.subject.trim() !== '' && t.body.trim() !== '',
+              ),
+            );
+            void patch({ email_templates: filled }, 'Could not save the email templates.');
+          }}
+        >
+          {PARTNER_EMAIL_TEMPLATE_KEYS.map((key) => {
+            const t = templates[key] ?? { subject: '', body: '' };
+            const set = (field: 'subject' | 'body', value: string) =>
+              setTemplates((prev) => ({ ...prev, [key]: { ...t, [field]: value } }));
+            return (
+              <div key={key} className="border-b border-paper-200 pb-5 last:border-0 last:pb-0">
+                <div className="mb-2 text-sm font-semibold text-ink-800">
+                  {TEMPLATE_LABELS[key] ?? key}
+                  {t.subject && t.body && (
+                    <span className="ml-2 rounded-full bg-bond-50 px-2 py-0.5 text-xs font-semibold text-bond-700">
+                      Customized
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <TextInput
+                    aria-label={`${TEMPLATE_LABELS[key] ?? key} subject`}
+                    placeholder="Subject (platform default)"
+                    value={t.subject}
+                    onChange={(e) => set('subject', e.target.value)}
+                  />
+                  <textarea
+                    aria-label={`${TEMPLATE_LABELS[key] ?? key} body`}
+                    placeholder="Body (platform default)"
+                    value={t.body}
+                    onChange={(e) => set('body', e.target.value)}
+                    rows={3}
+                    className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+            );
+          })}
           <Button type="submit" disabled={busy}>
-            Save branding
+            Save email templates
           </Button>
         </form>
       </section>

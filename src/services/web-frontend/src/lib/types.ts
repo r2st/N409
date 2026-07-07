@@ -151,9 +151,20 @@ export interface Partner {
   archived_at: string | null;
   brand_color: string | null;
   logo_url: string | null;
+  /** White-label workflow email overrides (improvement 8). */
+  email_templates?: Record<string, { subject: string; body: string }>;
   user_count: number;
   valuation_count: number;
 }
+
+/** Workflow emails a partner may re-template — mirrors the server list. */
+export const PARTNER_EMAIL_TEMPLATE_KEYS = [
+  'valuation_started',
+  'review_needed',
+  'draft_ready',
+  'valuation_completed',
+  'valuation_cancelled',
+] as const;
 
 // ── P1 #7 — Partner management ───────────────────────────────────────────────
 

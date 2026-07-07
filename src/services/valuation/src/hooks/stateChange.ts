@@ -3,8 +3,10 @@ import type { FastifyBaseLogger } from 'fastify';
 import { withTransaction } from '../db/pool.js';
 import type { ValuationState } from '../domain/valuation.js';
 import {
+  applyPartnerEmailTemplates,
   emailsForTransition,
   notificationsForTransition,
+  type PartnerEmailTemplates,
   type Recipient,
   type ValuationSnapshot,
 } from '../domain/emailWorkflows.js';
@@ -54,9 +56,26 @@ export async function onStateChanged(
   valuation: ValuationSnapshot,
   to: ValuationState,
 ): Promise<void> {
-  const emailSpecs = emailsForTransition(valuation, to);
+  let emailSpecs = emailsForTransition(valuation, to);
   const notifySpecs = notificationsForTransition(valuation, to);
   if (emailSpecs.length === 0 && notifySpecs.length === 0) return;
+
+  // White-label (improvement 8): partner engagements use the partner's own
+  // email templates where defined; missing keys fall back to the defaults.
+  if (valuation.partner_id && emailSpecs.length > 0) {
+    const { rows } = await deps.pool.query<{
+      name: string;
+      email_templates: PartnerEmailTemplates;
+    }>('SELECT name, email_templates FROM partners WHERE id = $1', [valuation.partner_id]);
+    const partner = rows[0];
+    if (partner && Object.keys(partner.email_templates ?? {}).length > 0) {
+      emailSpecs = applyPartnerEmailTemplates(emailSpecs, partner.email_templates, {
+        company_name: valuation.company_name,
+        kind: valuation.kind,
+        partner_name: partner.name,
+      });
+    }
+  }
 
   const recipients = new Map<Recipient, { id: string; email: string } | null>();
   for (const r of new Set<Recipient>([

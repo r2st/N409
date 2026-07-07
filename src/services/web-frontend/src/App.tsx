@@ -33,6 +33,7 @@ import { PartnerDetailPage } from './pages/PartnerDetailPage';
 import { EmailOutboxPage } from './pages/EmailOutboxPage';
 import { PartnerPortalPage } from './pages/PartnerPortalPage';
 import { ApiDocsPage } from './pages/ApiDocsPage';
+import { PartnerLoginPage } from './pages/PartnerLoginPage';
 import { SearchPage } from './pages/SearchPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
@@ -64,6 +65,8 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/accept-invite" element={<AcceptInvitePage />} />
       <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
+      {/* White-label partner login (improvement 8) — public, branded per slug */}
+      <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
       <Route
         element={
           <RequireAuth>
