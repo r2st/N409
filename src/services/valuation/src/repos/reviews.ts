@@ -23,7 +23,7 @@ export async function listReviewQueue(
   pool: pg.Pool,
   filters: ReviewQueueFilters,
 ): Promise<{ items: ReviewQueueRow[]; total: number }> {
-  const where: string[] = ['v.state = ANY($1)'];
+  const where: string[] = ['v.state = ANY($1::valuation_state[])'];
   const params: unknown[] = [[...STATE_GROUPS.in_review]];
   if (filters.reviewerId) {
     params.push(filters.reviewerId);
@@ -45,7 +45,7 @@ export async function listReviewQueue(
                     WHERE s.valuation_id = v.id AND s.role = 'second') AS signed_second
      FROM valuations v
      ${whereSql}
-     ORDER BY v.updated_at ASC
+     ORDER BY v.created_at ASC
      LIMIT $${paged.length - 1} OFFSET $${paged.length}`,
     paged,
   );
