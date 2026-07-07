@@ -33,11 +33,16 @@ class LlmResult:
     content: str
 
 
-def configured_models() -> list[str]:
+def configured_models(preferred: str | None = None) -> list[str]:
+    """Candidate models in fallback order; `preferred` (a per-prompt registry
+    binding) outranks the env override, which outranks the defaults."""
+    models = list(DEFAULT_MODELS)
     override = os.environ.get("OPENROUTER_MODEL")
     if override:
-        return [override, *[m for m in DEFAULT_MODELS if m != override]]
-    return list(DEFAULT_MODELS)
+        models = [override, *[m for m in models if m != override]]
+    if preferred:
+        models = [preferred, *[m for m in models if m != preferred]]
+    return models
 
 
 def _headers() -> dict[str, str]:
@@ -53,23 +58,26 @@ def _headers() -> dict[str, str]:
     }
 
 
-def chat(system: str, user: str, *, client: httpx.Client | None = None) -> LlmResult:
+def chat(
+    system: str, user: str, *, model: str | None = None, client: httpx.Client | None = None
+) -> LlmResult:
     """Runs the prompt against the first model that answers.
 
     Free-tier models rate-limit aggressively; falling through the list keeps
-    the pipelines usable without paid keys.
+    the pipelines usable without paid keys. `model` pins a preferred model
+    (from the prompt registry) at the head of the fallback chain.
     """
     owns_client = client is None
     http = client or httpx.Client(timeout=TIMEOUT_S)
     errors: list[str] = []
     try:
-        for model in configured_models():
+        for candidate in configured_models(preferred=model):
             try:
                 resp = http.post(
                     OPENROUTER_URL,
                     headers=_headers(),
                     json={
-                        "model": model,
+                        "model": candidate,
                         "messages": [
                             {"role": "system", "content": system},
                             {"role": "user", "content": user},
@@ -78,18 +86,18 @@ def chat(system: str, user: str, *, client: httpx.Client | None = None) -> LlmRe
                     },
                 )
             except httpx.HTTPError as exc:
-                errors.append(f"{model}: {exc}")
+                errors.append(f"{candidate}: {exc}")
                 continue
             if resp.status_code != 200:
-                errors.append(f"{model}: HTTP {resp.status_code} {resp.text[:200]}")
+                errors.append(f"{candidate}: HTTP {resp.status_code} {resp.text[:200]}")
                 continue
             data = resp.json()
             choices = data.get("choices") or []
             content = (choices[0].get("message") or {}).get("content") if choices else None
             if not content:
-                errors.append(f"{model}: empty completion")
+                errors.append(f"{candidate}: empty completion")
                 continue
-            return LlmResult(model=data.get("model", model), content=content)
+            return LlmResult(model=data.get("model", candidate), content=content)
         raise OpenRouterError("All models failed: " + " | ".join(errors))
     finally:
         if owns_client:

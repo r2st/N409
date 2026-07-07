@@ -16,12 +16,12 @@ def client():
     return TestClient(app)
 
 
-def fake_chat(response: dict | str, model: str = "test/fake-model"):
+def fake_chat(response: dict | str, default_model: str = "test/fake-model"):
     content = response if isinstance(response, str) else json.dumps(response)
 
-    def _chat(system: str, user: str, *, client=None) -> LlmResult:
-        _chat.calls.append({"system": system, "user": user})
-        return LlmResult(model=model, content=content)
+    def _chat(system: str, user: str, *, model=None, client=None) -> LlmResult:
+        _chat.calls.append({"system": system, "user": user, "model": model})
+        return LlmResult(model=model or default_model, content=content)
 
     _chat.calls = []
     return _chat
@@ -163,7 +163,7 @@ def test_unknown_pipeline_404(client):
 
 
 def test_openrouter_down_is_503(monkeypatch, client):
-    def boom(system, user, *, client=None):
+    def boom(system, user, *, model=None, client=None):
         raise OpenRouterError("All models failed")
 
     monkeypatch.setattr(pipelines, "chat", boom)
@@ -199,3 +199,94 @@ def test_pdf_and_text_extraction():
     assert len(docs) == 3
     assert docs[1].text == "hello world"
     assert "could not extract" in docs[2].text or docs[2].text == ""
+
+
+# ── prompt registry overrides (Bot Prompts management) ────────────────────────
+def test_prompt_override_replaces_system_and_pins_model(monkeypatch, client):
+    chat = fake_chat({"gaps": [], "notes": "ok"})
+    monkeypatch.setattr(pipelines, "chat", chat)
+
+    resp = client.post(
+        "/ai/v1/pipelines/missing_data",
+        json={
+            "valuation": {"company_name": "Acme"},
+            "prompt": {"system": "You are a terse analyst. JSON only.", "model": "meta-llama/llama-3.3-70b-instruct:free"},
+        },
+    )
+    assert resp.status_code == 200
+    assert chat.calls[0]["system"] == "You are a terse analyst. JSON only."
+    assert chat.calls[0]["model"] == "meta-llama/llama-3.3-70b-instruct:free"
+    assert resp.json()["model"] == "meta-llama/llama-3.3-70b-instruct:free"
+
+
+def test_prompt_override_blank_values_fall_back_to_builtin(monkeypatch, client):
+    chat = fake_chat({"engine_inputs": {}, "extractions": []})
+    monkeypatch.setattr(pipelines, "chat", chat)
+
+    resp = client.post(
+        "/ai/v1/pipelines/extract",
+        json={
+            "valuation": {"company_name": "Acme"},
+            "documents": [doc("bs.csv", "balance_sheet", "cash,1")],
+            "prompt": {"system": "   ", "model": None},
+        },
+    )
+    assert resp.status_code == 200
+    assert "Never invent numbers" in chat.calls[0]["system"]
+    assert chat.calls[0]["model"] is None
+
+
+def test_prompt_override_absent_keeps_builtin(monkeypatch, client):
+    chat = fake_chat({"comparables": [], "sector": "", "caveats": ""})
+    monkeypatch.setattr(pipelines, "chat", chat)
+    resp = client.post("/ai/v1/pipelines/comparables", json={"valuation": {"company_name": "Acme"}})
+    assert resp.status_code == 200
+    assert "guideline public companies" in chat.calls[0]["system"]
+
+
+def test_configured_models_preferred_ordering(monkeypatch):
+    from app.openrouter import DEFAULT_MODELS, configured_models
+
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+    assert configured_models() == list(DEFAULT_MODELS)
+    # A preferred model moves to the head without duplication.
+    preferred = DEFAULT_MODELS[1]
+    ordered = configured_models(preferred=preferred)
+    assert ordered[0] == preferred
+    assert ordered.count(preferred) == 1
+    # An unknown preferred model is simply prepended.
+    ordered = configured_models(preferred="anthropic/claude-fable-5")
+    assert ordered[0] == "anthropic/claude-fable-5"
+    assert ordered[1:] == list(DEFAULT_MODELS)
+
+
+# ── /ai/v1/test + /ai/v1/models (prompt dry runs) ─────────────────────────────
+def test_models_endpoint(client):
+    resp = client.get("/ai/v1/models")
+    assert resp.status_code == 200
+    assert len(resp.json()["models"]) >= 3
+
+
+def test_test_endpoint_runs_prompt(monkeypatch, client):
+    from app import main
+
+    chat = fake_chat('{"answer": 42}')
+    monkeypatch.setattr(main, "chat", chat)
+    resp = client.post(
+        "/ai/v1/test",
+        json={"system": "JSON only.", "user": "What is the answer?", "model": "stub/model-x"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"model": "stub/model-x", "content": '{"answer": 42}'}
+    assert chat.calls[0] == {"system": "JSON only.", "user": "What is the answer?", "model": "stub/model-x"}
+
+
+def test_test_endpoint_openrouter_down_is_503(monkeypatch, client):
+    from app import main
+
+    def boom(system, user, *, model=None, client=None):
+        raise OpenRouterError("All models failed")
+
+    monkeypatch.setattr(main, "chat", boom)
+    resp = client.post("/ai/v1/test", json={"system": "s", "user": "u"})
+    assert resp.status_code == 503

@@ -9,6 +9,7 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { listDocuments, type DocumentRow } from '../repos/documents.js';
 import { completeAiJob, createAiJob, listAiJobs } from '../repos/aiJobs.js';
+import { findPromptByPipeline } from '../repos/aiPrompts.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
@@ -80,6 +81,9 @@ export function registerAiRoutes(
       throw problems.unprocessable('Upload at least one document before running data extraction');
     }
 
+    // Registry-managed prompt: the stored system prompt + model binding ride
+    // along so admins can tune pipelines without a deploy (Bot Prompts view).
+    const promptRow = await findPromptByPipeline(deps.pool, pipeline as AiPipeline);
     const payload = {
       valuation: {
         id: valuation.id,
@@ -90,6 +94,7 @@ export function registerAiRoutes(
       },
       params,
       documents: await encodeDocuments(deps.documentsDir, documents),
+      prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
     };
 
     const job = await createAiJob(deps.pool, {

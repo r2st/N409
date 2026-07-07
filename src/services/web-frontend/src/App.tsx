@@ -28,6 +28,10 @@ import { NotificationsPage } from './pages/NotificationsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { SensitivityPage } from './pages/SensitivityPage';
 import { TasksPage } from './pages/TasksPage';
+import { BotPromptsPage } from './pages/BotPromptsPage';
+import { SupportInboxPage } from './pages/SupportInboxPage';
+import { CompanyTab } from './pages/valuation/CompanyTab';
+import { PackageTab } from './pages/valuation/PackageTab';
 
 export default function App() {
   return (
@@ -48,6 +52,7 @@ export default function App() {
         <Route path="/valuations/new" element={<NewValuationPage />} />
         <Route path="/valuations/:id" element={<ValuationWorkspace />}>
           <Route index element={<ValuationDetailPage />} />
+          <Route path="company" element={<CompanyTab />} />
           <Route path="documents" element={<DocumentsTab />} />
           <Route path="params" element={<ParamsTab />} />
           <Route path="ai" element={<AiTab />} />
@@ -56,10 +61,13 @@ export default function App() {
           <Route path="workbook" element={<WorkbookTab />} />
           <Route path="overwrites" element={<OverwritesTab />} />
           <Route path="report" element={<ReportTab />} />
+          <Route path="package" element={<PackageTab />} />
         </Route>
         <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
         <Route path="/partner" element={<PartnerPortalPage />} />
         <Route path="/admin/users" element={<AdminUsersPage />} />
+        <Route path="/admin/prompts" element={<BotPromptsPage />} />
+        <Route path="/admin/support" element={<SupportInboxPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />

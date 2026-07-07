@@ -5,15 +5,26 @@ import { formatMoney, type Calculation } from '../../lib/pipeline';
 import { Button, EmptyState, ErrorNote, Spinner, StatCard } from '../ui';
 
 interface ApproachRow {
+  key: string;
   name: string;
   weight: number;
   equity_value: number;
+  reused: boolean;
 }
+
+/** UI recalc names ↔ engine approach keys (mirrors routes/calculations.ts). */
+export const RECALC_OPTIONS = [
+  { approach: 'asset', engineKey: 'asset', label: 'Asset' },
+  { approach: 'opm', engineKey: 'opm_backsolve', label: 'OPM' },
+  { approach: 'income', engineKey: 'income', label: 'DCF' },
+  { approach: 'market', engineKey: 'market', label: 'Market' },
+] as const;
+export type RecalcApproach = (typeof RECALC_OPTIONS)[number]['approach'];
 
 function approachRows(calc: Calculation): ApproachRow[] {
   const approaches = (calc.results?.approaches ?? {}) as Record<
     string,
-    { weight?: number; equity_value?: number }
+    { weight?: number; equity_value?: number; reused?: boolean }
   >;
   const labels: Record<string, string> = {
     asset: 'Asset approach',
@@ -22,9 +33,11 @@ function approachRows(calc: Calculation): ApproachRow[] {
     market: 'Market (comps)',
   };
   return Object.entries(approaches).map(([key, a]) => ({
+    key,
     name: labels[key] ?? key,
     weight: a.weight ?? 0,
     equity_value: a.equity_value ?? 0,
+    reused: a.reused === true,
   }));
 }
 
@@ -32,7 +45,7 @@ function approachRows(calc: Calculation): ApproachRow[] {
 export function CalculationPanel({ valuationId, currency }: { valuationId: string; currency: string }) {
   const [calculations, setCalculations] = useState<Calculation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'full' | RecalcApproach | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -49,17 +62,20 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
     void load();
   }, [load]);
 
-  const run = async () => {
+  const run = async (approach?: RecalcApproach) => {
     setError(null);
-    setBusy(true);
+    setBusy(approach ?? 'full');
     try {
-      await api(`/valuations/${valuationId}/calculations`, { method: 'POST', body: { inputs: {} } });
+      await api(`/valuations/${valuationId}/calculations`, {
+        method: 'POST',
+        body: { inputs: {}, ...(approach ? { approach } : {}) },
+      });
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Computation failed.');
       await load();
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -75,14 +91,40 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
     <div className="space-y-6">
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <div className="flex items-center gap-4">
-        <Button onClick={() => void run()} disabled={busy}>
-          {busy ? 'Computing…' : 'Run calculation'}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <Button onClick={() => void run()} disabled={busy !== null}>
+          {busy === 'full' ? 'Computing…' : 'Run calculation'}
         </Button>
         <p className="text-sm text-ink-500">
           Uses saved params + the latest AI extraction and comparables.
         </p>
       </div>
+
+      {latest && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-ink-500">Recalculate one approach:</span>
+          {RECALC_OPTIONS.map(({ approach, engineKey, label }) => {
+            const inLatest = Boolean(
+              (latest.results?.approaches as Record<string, unknown> | undefined)?.[engineKey],
+            );
+            return (
+              <button
+                key={approach}
+                disabled={busy !== null || !inLatest}
+                title={
+                  inLatest
+                    ? `Recompute only the ${label} approach; the others reuse the latest run`
+                    : `The ${label} approach has no weight in the latest run`
+                }
+                onClick={() => void run(approach)}
+                className="cursor-pointer rounded-full border border-ink-200 bg-white px-3 py-1 text-xs font-semibold text-ink-700 transition-colors hover:border-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {busy === approach ? 'Recomputing…' : `↻ ${label}`}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {latest && (
         <>
@@ -95,7 +137,7 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
             />
           </div>
 
-          <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <section className="overflow-x-auto rounded-lg border border-paper-300 bg-white p-6 shadow-card">
             <h3 className="overline mb-4 text-ink-400">Approach breakdown</h3>
             <table className="w-full text-sm">
               <thead>
@@ -107,8 +149,18 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
               </thead>
               <tbody>
                 {approachRows(latest).map((row) => (
-                  <tr key={row.name} className="border-t border-paper-300">
-                    <td className="py-1.5 pr-4 font-semibold text-ink-900">{row.name}</td>
+                  <tr key={row.key} className="border-t border-paper-300">
+                    <td className="py-1.5 pr-4 font-semibold text-ink-900">
+                      {row.name}
+                      {row.reused && (
+                        <span
+                          className="ml-2 rounded-full bg-paper-200 px-2 py-0.5 text-[0.65rem] font-bold text-ink-500 uppercase"
+                          title="Carried over from the previous run during a per-approach recalculation"
+                        >
+                          reused
+                        </span>
+                      )}
+                    </td>
                     <td className="tnum py-1.5 pr-4">{(row.weight * 100).toFixed(0)}%</td>
                     <td className="tnum py-1.5">{formatMoney(row.equity_value, currency)}</td>
                   </tr>
@@ -148,6 +200,11 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
                 <span className="tnum font-semibold text-ink-900">
                   {calc.status === 'succeeded' ? formatMoney(calc.fmv_per_share, currency) : (calc.error ?? 'failed')}
                 </span>
+                {Array.isArray(calc.results?.recomputed) && (
+                  <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[0.65rem] font-bold text-sky-800 uppercase">
+                    recalc: {(calc.results.recomputed as string[]).join(', ')}
+                  </span>
+                )}
                 <span className="tnum ml-auto text-xs text-ink-400">
                   {formatDateTime(calc.created_at)} · {calc.engine_version}
                 </span>

@@ -6,6 +6,7 @@ import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, initials } from '../lib/format';
 import { Wordmark } from './Logo';
+import { HelpWidget } from './HelpWidget';
 
 function NavItem({
   to,
@@ -139,6 +140,19 @@ const icons = {
       <path d="M8 12.5l2.5 2.5L16 9.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
+  prompts: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-4 3.5V6Z" strokeLinejoin="round" />
+      <path d="M8.5 8.5h7M8.5 12h4.5" strokeLinecap="round" />
+    </svg>
+  ),
+  support: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M6 6l3.5 3.5M18 6l-3.5 3.5M18 18l-3.5-3.5M6 18l3.5-3.5" strokeLinecap="round" />
+    </svg>
+  ),
 };
 
 export function AppLayout() {
@@ -177,6 +191,8 @@ export function AppLayout() {
           <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Operations</div>
           <NavItem to="/tasks" label="Review tasks" icon={icons.tasks} onNavigate={close} />
           <NavItem to="/templates" label="Report templates" icon={icons.templates} onNavigate={close} />
+          <NavItem to="/admin/prompts" label="Bot prompts" icon={icons.prompts} onNavigate={close} />
+          <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
           <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />
         </>
       )}
@@ -256,6 +272,8 @@ export function AppLayout() {
           <Outlet />
         </div>
       </main>
+
+      <HelpWidget />
     </div>
   );
 }

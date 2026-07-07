@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .documents import extract_texts, render_corpus
+from .anonymize import redact
+from .documents import DocText, extract_texts, render_corpus
 from .openrouter import LlmResult, chat, extract_json
 
 # Fields the extraction pipeline may emit — everything else is dropped so a
@@ -74,6 +75,35 @@ def _params_summary(params: dict | None) -> str:
     return json.dumps(keep, default=str) if keep else "(no params set)"
 
 
+def _prompt_overrides(payload: dict, default_system: str) -> tuple[str, str | None]:
+    """(system_prompt, model) — the valuation service ships the registry row
+    (Bot Prompts view) as payload["prompt"]; fall back to the built-in."""
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, dict):
+        return default_system, None
+    system = prompt.get("system")
+    model = prompt.get("model")
+    return (
+        system if isinstance(system, str) and system.strip() else default_system,
+        model if isinstance(model, str) and model.strip() else None,
+    )
+
+
+def _load_docs(payload: dict) -> tuple[list[DocText], dict]:
+    """Extract document texts, redacting PII first (remaining-gaps §2 — the
+    cap-table anonymization step) unless options.anonymize is switched off."""
+    docs = extract_texts(payload.get("documents") or [])
+    options = payload.get("options") or {}
+    if not options.get("anonymize", True):
+        return docs, {"applied": False, "redacted": {}}
+    totals: dict[str, int] = {}
+    for doc in docs:
+        doc.text, counts = redact(doc.text)
+        for category, n in counts.items():
+            totals[category] = totals.get(category, 0) + n
+    return docs, {"applied": True, "redacted": totals}
+
+
 def _to_number(value: Any) -> float | None:
     if isinstance(value, bool):
         return None
@@ -90,7 +120,7 @@ def _to_number(value: Any) -> float | None:
 
 def run_missing_data(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
-    docs = extract_texts(payload.get("documents") or [])
+    docs, anonymization = _load_docs(payload)
     uploaded_kinds = {d.kind for d in docs}
     params = payload.get("params") or {}
 
@@ -106,10 +136,11 @@ def run_missing_data(payload: dict) -> tuple[str, dict]:
         if params.get(field) is None
     ]
 
-    system = (
+    system, model = _prompt_overrides(
+        payload,
         "You are a 409A valuation analyst assistant. You review what a client has "
         "uploaded and identify what is still missing to complete a defensible "
-        "valuation. Respond ONLY with JSON."
+        "valuation. Respond ONLY with JSON.",
     )
     user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation)
 Params already set: {_params_summary(params)}
@@ -124,7 +155,7 @@ Review the uploaded material. Return JSON:
 Only list gaps you can justify from the documents (e.g. a cap table with no
 preference amounts, projections without expenses). Maximum 10 gaps."""
 
-    llm = chat(system, user)
+    llm = chat(system, user, model=model)
     parsed = _safe_result(llm)
     gaps = parsed.get("gaps") if isinstance(parsed, dict) else None
     result = {
@@ -133,18 +164,20 @@ preference amounts, projections without expenses). Maximum 10 gaps."""
         "gaps": gaps if isinstance(gaps, list) else [],
         "notes": parsed.get("notes", "") if isinstance(parsed, dict) else "",
         "documents_reviewed": [d.filename for d in docs],
+        "anonymization": anonymization,
     }
     return llm.model, result
 
 
 def run_extract(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
-    docs = extract_texts(payload.get("documents") or [])
+    docs, anonymization = _load_docs(payload)
 
-    system = (
+    system, model = _prompt_overrides(
+        payload,
         "You are a financial data extraction engine for 409A valuations. Extract "
         "ONLY values explicitly present in the documents. Never invent numbers. "
-        "All monetary amounts in plain units (dollars, not thousands). Respond ONLY with JSON."
+        "All monetary amounts in plain units (dollars, not thousands). Respond ONLY with JSON.",
     )
     user = f"""Company: {valuation.get("company_name")} (currency {valuation.get("currency", "USD")})
 Documents:
@@ -169,7 +202,7 @@ Extract what is present. Return JSON:
 }}
 Use null for anything not found. ebitda may be negative."""
 
-    llm = chat(system, user)
+    llm = chat(system, user, model=model)
     parsed = _safe_result(llm)
     raw_inputs = parsed.get("engine_inputs") if isinstance(parsed, dict) else None
     engine_inputs: dict[str, float] = {}
@@ -183,6 +216,7 @@ Use null for anything not found. ebitda may be negative."""
         "engine_inputs": engine_inputs,
         "extractions": extractions if isinstance(extractions, list) else [],
         "documents_reviewed": [d.filename for d in docs],
+        "anonymization": anonymization,
     }
     return llm.model, result
 
@@ -190,14 +224,15 @@ Use null for anything not found. ebitda may be negative."""
 def run_comparables(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     params = payload.get("params") or {}
-    docs = extract_texts(payload.get("documents") or [])
+    docs, anonymization = _load_docs(payload)
 
-    system = (
+    system, model = _prompt_overrides(
+        payload,
         "You are a valuation analyst finding guideline public companies "
         "(market approach / GPC method). Suggest liquid, well-known public "
         "companies in the same or adjacent business. Multiples are EV/Revenue "
         "and EV/EBITDA estimates typical for the sector — mark them as "
-        "estimates. Respond ONLY with JSON."
+        "estimates. Respond ONLY with JSON.",
     )
     overview = params.get("business_overview") or ""
     user = f"""Company: {valuation.get("company_name")}
@@ -214,7 +249,7 @@ Return JSON:
 }}
 5 to 8 comparables, ordered by relevance."""
 
-    llm = chat(system, user)
+    llm = chat(system, user, model=model)
     parsed = _safe_result(llm)
     comparables = []
     if isinstance(parsed, dict) and isinstance(parsed.get("comparables"), list):

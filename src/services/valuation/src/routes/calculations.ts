@@ -6,12 +6,33 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams, type ValuationParamsRow } from '../repos/params.js';
 import { latestSucceededJob } from '../repos/aiJobs.js';
-import { createCalculation, listCalculations } from '../repos/calculations.js';
+import {
+  createCalculation,
+  latestSucceededCalculation,
+  listCalculations,
+} from '../repos/calculations.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
-const ComputeBody = z.object({ inputs: z.record(z.unknown()).default({}) }).default({ inputs: {} });
+/** UI approach names → engine approach keys (per-subsystem recalculate). */
+export const RECALC_APPROACHES = {
+  asset: { engineKey: 'asset', weightKey: 'weight_asset' },
+  opm: { engineKey: 'opm_backsolve', weightKey: 'weight_opm' },
+  income: { engineKey: 'income', weightKey: 'weight_income' },
+  market: { engineKey: 'market', weightKey: 'weight_market' },
+} as const;
+export type RecalcApproach = keyof typeof RECALC_APPROACHES;
+
+const ComputeBody = z
+  .object({
+    inputs: z.record(z.unknown()).default({}),
+    // When set, only this approach is recomputed; the other approaches reuse
+    // the latest successful calculation and the weighting/allocation/discount
+    // chain re-runs on top (409.ai's per-subsystem recompute triggers).
+    approach: z.enum(['asset', 'opm', 'income', 'market']).optional(),
+  })
+  .default({ inputs: {} });
 
 export interface EngineComputeResponse {
   engine_version: string;
@@ -112,7 +133,32 @@ export function registerCalculationRoutes(
     }
     inputs = deepMerge(inputs, parsed.data.inputs);
 
-    const payload = { params: engineParams(paramsRow), inputs };
+    // Per-approach recalc: reuse the other approaches from the latest
+    // successful run so the engine only recomputes the selected subsystem.
+    let recompute: string[] | undefined;
+    let priorApproaches: Record<string, unknown> | undefined;
+    if (parsed.data.approach) {
+      const { engineKey, weightKey } = RECALC_APPROACHES[parsed.data.approach];
+      const weight = num(paramsRow[weightKey]);
+      if (!weight || weight <= 0) {
+        throw problems.unprocessable(
+          `The ${parsed.data.approach} approach has zero weight — give it a weight in params first`,
+        );
+      }
+      const baseline = await latestSucceededCalculation(deps.pool, id);
+      const prior = baseline?.results?.approaches;
+      if (!prior || typeof prior !== 'object') {
+        throw problems.unprocessable('Run a full calculation before recalculating a single approach');
+      }
+      recompute = [engineKey];
+      priorApproaches = prior as Record<string, unknown>;
+    }
+
+    const payload = {
+      params: engineParams(paramsRow),
+      inputs,
+      ...(recompute ? { recompute, prior_approaches: priorApproaches } : {}),
+    };
     const startedAt = Date.now();
     try {
       const response = await postJson<EngineComputeResponse>(

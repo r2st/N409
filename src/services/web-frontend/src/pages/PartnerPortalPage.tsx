@@ -186,7 +186,8 @@ export function PartnerPortalPage() {
           </form>
 
           {tokens && tokens.length > 0 && (
-            <table className="mt-5 w-full text-sm">
+            <div className="mt-5 overflow-x-auto">
+              <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-paper-300 text-left">
                   <th className="overline py-2 pr-4 font-semibold text-ink-400">Name</th>
@@ -220,7 +221,8 @@ export function PartnerPortalPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           )}
           {tokens && tokens.length === 0 && (
             <p className="mt-5 text-sm text-ink-400">No tokens yet.</p>

@@ -27,6 +27,10 @@ import { registerCalculationRoutes } from './routes/calculations.js';
 import { registerOverwriteRoutes } from './routes/overwrites.js';
 import { registerWorkbookRoutes } from './routes/workbook.js';
 import { registerReportRoutes } from './routes/reports.js';
+import { registerPromptRoutes } from './routes/prompts.js';
+import { registerCompanyProfileRoutes } from './routes/companyProfile.js';
+import { registerPackageRoutes } from './routes/packageView.js';
+import { registerSupportRoutes } from './routes/support.js';
 
 export interface AppDeps {
   config: Config;
@@ -93,6 +97,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSearchRoutes(app, { pool });
   registerExportRoutes(app, { pool });
   registerSensitivityRoutes(app, { pool });
+  // P1/P2 remaining features — prompt registry, company profile, package
+  // explorer, in-app support (docs/remaining-gaps.md)
+  registerPromptRoutes(app, { pool, aiUrl: config.AI_URL });
+  registerCompanyProfileRoutes(app, { pool });
+  registerPackageRoutes(app, { pool });
+  registerSupportRoutes(app, { pool });
 
   return app;
 }

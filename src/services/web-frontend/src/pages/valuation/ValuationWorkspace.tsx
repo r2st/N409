@@ -104,6 +104,7 @@ export function ValuationWorkspace() {
         aria-label="Valuation workspace"
       >
         <Tab to={base} label="Overview" end />
+        {(ops || owner) && <Tab to={`${base}/company`} label="Company" />}
         <Tab to={`${base}/documents`} label="Documents" />
         {(ops || owner) && <Tab to={`${base}/params`} label="Params" />}
         {ops && <Tab to={`${base}/workbook`} label="Workbook" />}
@@ -113,6 +114,7 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/calculations`} label="Calculations" />}
         {ops && <Tab to={`${base}/sensitivity`} label="Sensitivity" />}
         {showReportTab && <Tab to={`${base}/report`} label="Report" />}
+        {ops && <Tab to={`${base}/package`} label="Package" />}
       </nav>
 
       <div className="mt-8">

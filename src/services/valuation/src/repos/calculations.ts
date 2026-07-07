@@ -67,6 +67,20 @@ export async function createCalculation(
   });
 }
 
+/** Baseline for per-approach recalculation: the newest full successful run. */
+export async function latestSucceededCalculation(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<CalculationRow | null> {
+  const { rows } = await pool.query<CalculationRow>(
+    `SELECT * FROM calculations
+     WHERE valuation_id = $1 AND status = 'succeeded'
+     ORDER BY created_at DESC LIMIT 1`,
+    [valuationId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function listCalculations(pool: pg.Pool, valuationId: string): Promise<CalculationRow[]> {
   const { rows } = await pool.query<CalculationRow>(
     'SELECT * FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT 20',

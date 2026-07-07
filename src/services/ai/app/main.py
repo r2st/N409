@@ -12,7 +12,7 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .openrouter import OpenRouterError, configured_models
+from .openrouter import OpenRouterError, chat, configured_models
 from .pipelines import PIPELINES
 
 SERVICE = "ai"
@@ -26,11 +26,24 @@ class PipelineRequest(BaseModel):
     valuation: dict = Field(default_factory=dict)
     params: dict | None = None
     documents: list[dict] = Field(default_factory=list)
+    # Prompt-registry override: {"system": str|None, "model": str|None}
+    prompt: dict | None = None
 
 
 class PipelineResponse(BaseModel):
     model: str
     result: dict
+
+
+class TestRequest(BaseModel):
+    system: str
+    user: str
+    model: str | None = None
+
+
+class TestResponse(BaseModel):
+    model: str
+    content: str
 
 
 @app.get("/")
@@ -40,7 +53,14 @@ def root() -> dict:
         "version": VERSION,
         "status": "ok",
         "pipelines": sorted(PIPELINES),
-        "endpoints": ["/health", "/ready", "/docs", "/ai/v1/pipelines/{pipeline}"],
+        "endpoints": [
+            "/health",
+            "/ready",
+            "/docs",
+            "/ai/v1/pipelines/{pipeline}",
+            "/ai/v1/test",
+            "/ai/v1/models",
+        ],
     }
 
 
@@ -61,6 +81,22 @@ def ready() -> dict:
         "models": configured_models(),
     }
     return {"status": "ready", "checks": checks}
+
+
+@app.get("/ai/v1/models")
+def models() -> dict:
+    """Model candidates for the Bot Prompts model picker (default chain first)."""
+    return {"models": configured_models()}
+
+
+@app.post("/ai/v1/test", response_model=TestResponse)
+def test_prompt(request: TestRequest) -> TestResponse:
+    """Dry-run a prompt (Bot Prompts 'test' button) — no persistence, no documents."""
+    try:
+        llm = chat(request.system, request.user, model=request.model)
+    except OpenRouterError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return TestResponse(model=llm.model, content=llm.content)
 
 
 @app.post("/ai/v1/pipelines/{pipeline}", response_model=PipelineResponse)
