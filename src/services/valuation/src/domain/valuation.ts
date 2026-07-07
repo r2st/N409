@@ -37,9 +37,16 @@ export type ValuationState = (typeof VALUATION_STATES)[number];
 export const VALUATION_SOURCES = ['partner', 'referral', 'ads', 'repeat'] as const;
 export type ValuationSource = (typeof VALUATION_SOURCES)[number];
 
-/** Event types written to the append-only audit spine in M0. */
+/** Event types written to the append-only audit spine (M0 + M2). */
 export const EVENT_TYPES = {
   created: 'valuation_created',
   updated: 'valuation_updated',
   stateChanged: 'state_changed',
+  // M2 — output & delivery
+  overwriteApplied: 'overwrite_applied',
+  overwriteReverted: 'overwrite_reverted',
+  workbookUpdated: 'workbook_updated',
+  reportSaved: 'report_saved',
+  reportReverted: 'report_reverted',
+  reportRendered: 'report_rendered',
 } as const;

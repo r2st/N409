@@ -45,3 +45,9 @@ __pycache__/
 
 # TypeScript incremental build
 *.tsbuildinfo
+
+# Claude Code session artifacts
+.claude/
+
+# Local document storage (valuation uploads)
+data/

@@ -102,3 +102,21 @@ export async function apiDownload(path: string, fallbackName: string): Promise<v
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+/** Multipart upload (documents) — same auth/problem handling as api(). */
+export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
+  const headers = new Headers({ accept: 'application/json' });
+  const token = getToken();
+  if (token) headers.set('authorization', `Bearer ${token}`);
+
+  const res = await fetch(`/api/v1${path}`, { method: 'POST', headers, body: form });
+  if (res.status === 401 && token) {
+    clearToken();
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
+  if (!res.ok) {
+    const problem: Problem = await res.json().catch(() => ({ status: res.status }));
+    throw new ApiError(res.status, problem);
+  }
+  return (await res.json()) as T;
+}

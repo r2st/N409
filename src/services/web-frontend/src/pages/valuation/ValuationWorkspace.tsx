@@ -1,0 +1,123 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Link, NavLink, Outlet, useOutletContext, useParams } from 'react-router-dom';
+import { api, ApiError } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
+import { isOps } from '../../lib/rbac';
+import { REPORT_VISIBLE_STATES } from '../../lib/m2';
+import type { Valuation } from '../../lib/types';
+import { ErrorNote, KindBadge, Spinner, StateBadge } from '../../components/ui';
+
+export interface WorkspaceContext {
+  valuation: Valuation;
+  reload: () => Promise<void>;
+}
+
+export function useWorkspace(): WorkspaceContext {
+  return useOutletContext<WorkspaceContext>();
+}
+
+function Tab({ to, label, end = false }: { to: string; label: string; end?: boolean }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        `-mb-px border-b-2 px-1 pb-2.5 text-sm font-semibold whitespace-nowrap transition-colors ${
+          isActive
+            ? 'border-bond-600 text-bond-700'
+            : 'border-transparent text-ink-400 hover:border-ink-200 hover:text-ink-700'
+        }`
+      }
+    >
+      {label}
+    </NavLink>
+  );
+}
+
+/**
+ * Per-valuation workspace shell (features.md "analyst nav"): loads the
+ * aggregate, renders the header + tab bar, and hands the valuation to the
+ * active tab via outlet context. Tab visibility mirrors the API's RBAC —
+ * working data (M1/M2 analyst tooling) is ops-only.
+ */
+export function ValuationWorkspace() {
+  const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
+  const [valuation, setValuation] = useState<Valuation | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!id) return;
+    try {
+      const { valuation: v } = await api<{ valuation: Valuation }>(`/valuations/${id}`);
+      setValuation(v);
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 404
+          ? 'This valuation does not exist or you do not have access to it.'
+          : 'Could not load the valuation.',
+      );
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  if (error) {
+    return (
+      <div className="max-w-xl">
+        <ErrorNote>{error}</ErrorNote>
+        <Link to="/valuations" className="mt-4 inline-block text-sm font-semibold text-bond-600 hover:text-bond-700">
+          ← Back to valuations
+        </Link>
+      </div>
+    );
+  }
+  if (!valuation) return <Spinner />;
+
+  const ops = isOps(user);
+  const owner = valuation.user_id === user?.id;
+  const showReportTab = ops || REPORT_VISIBLE_STATES.has(valuation.state);
+  const base = `/valuations/${valuation.id}`;
+
+  return (
+    <div>
+      <Link to="/valuations" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
+        ← Valuations
+      </Link>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <h1 className="font-display text-3xl font-semibold text-ink-900">{valuation.company_name}</h1>
+        <KindBadge kind={valuation.kind} />
+        <StateBadge state={valuation.state} />
+        {valuation.waiting_on_client && (
+          <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset">
+            Waiting on client
+          </span>
+        )}
+      </div>
+      <p className="tnum mt-1.5 text-xs text-ink-400">Ref {valuation.id}</p>
+
+      <nav
+        className="mt-6 flex gap-6 overflow-x-auto border-b border-paper-300"
+        aria-label="Valuation workspace"
+      >
+        <Tab to={base} label="Overview" end />
+        <Tab to={`${base}/documents`} label="Documents" />
+        {(ops || owner) && <Tab to={`${base}/params`} label="Params" />}
+        {ops && <Tab to={`${base}/workbook`} label="Workbook" />}
+        {ops && <Tab to={`${base}/overwrites`} label="Overwrites" />}
+        {ops && <Tab to={`${base}/ai`} label="AI" />}
+        {ops && <Tab to={`${base}/tasks`} label="Tasks" />}
+        {ops && <Tab to={`${base}/calculations`} label="Calculations" />}
+        {ops && <Tab to={`${base}/sensitivity`} label="Sensitivity" />}
+        {showReportTab && <Tab to={`${base}/report`} label="Report" />}
+      </nav>
+
+      <div className="mt-8">
+        <Outlet context={{ valuation, reload } satisfies WorkspaceContext} />
+      </div>
+    </div>
+  );
+}

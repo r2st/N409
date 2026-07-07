@@ -87,6 +87,12 @@ const icons = {
       <path d="M12 8.5v7M8.5 12h7" strokeLinecap="round" />
     </svg>
   ),
+  schema: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 19.5V6a2 2 0 0 1 2-2h13.5v13.5H6a2 2 0 0 0-2 2Zm0 0A2 2 0 0 0 6 21.5h13.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.5 8.5h7M8.5 12h5" strokeLinecap="round" />
+    </svg>
+  ),
   settings: (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <circle cx="12" cy="12" r="3.2" />
@@ -127,6 +133,12 @@ const icons = {
       <path d="M5 6.5v14h9.5" strokeLinecap="round" />
     </svg>
   ),
+  tasks: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="2" />
+      <path d="M8 12.5l2.5 2.5L16 9.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
 };
 
 export function AppLayout() {
@@ -163,7 +175,9 @@ export function AppLayout() {
       {isOps(user) && (
         <>
           <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Operations</div>
+          <NavItem to="/tasks" label="Review tasks" icon={icons.tasks} onNavigate={close} />
           <NavItem to="/templates" label="Report templates" icon={icons.templates} onNavigate={close} />
+          <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />
         </>
       )}
       {canManageUsers(user) && (

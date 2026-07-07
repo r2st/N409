@@ -1,0 +1,157 @@
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import type { FastifyInstance } from 'fastify';
+import type pg from 'pg';
+import { z } from 'zod';
+import { isUlid, problems } from '@n409/shared';
+import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
+import { DOCUMENT_KINDS, type DocumentKind } from '../domain/pipeline.js';
+import { findValuationById, type ValuationRow } from '../repos/valuations.js';
+import {
+  createDocument,
+  deleteDocument,
+  findDocumentById,
+  listDocuments,
+  type DocumentRow,
+} from '../repos/documents.js';
+import { requirePrincipal } from '../plugins/auth.js';
+import type { EventActor } from '../events/record.js';
+
+export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+
+const KindField = z.enum(DOCUMENT_KINDS);
+
+function actorFor(principal: Principal): EventActor {
+  return { actorType: 'human', actorId: principal.id, source: 'api' };
+}
+
+async function loadAuthorizedValuation(
+  pool: pg.Pool,
+  principal: Principal,
+  id: string,
+): Promise<ValuationRow> {
+  if (!isUlid(id)) throw problems.notFound();
+  const valuation = await findValuationById(pool, id);
+  if (!valuation || !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })) {
+    throw problems.notFound();
+  }
+  return valuation;
+}
+
+/** Strip directories and control characters; keep the name recognizable. */
+export function safeFilename(name: string): string {
+  // eslint-disable-next-line no-control-regex -- stripping control chars is the point
+  const base = path.basename(name).replace(/[\\/:\u0000-\u001f"]+/g, '_').trim();
+  return (base || 'upload').slice(0, 200);
+}
+
+export function registerDocumentRoutes(
+  app: FastifyInstance,
+  deps: { pool: pg.Pool; documentsDir: string },
+): void {
+  app.post('/api/v1/valuations/:id/documents', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+
+    const file = await req.file({ limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
+    if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
+
+    const kindRaw = (file.fields.kind as { value?: string } | undefined)?.value ?? 'other';
+    const kindParsed = KindField.safeParse(kindRaw);
+    if (!kindParsed.success) {
+      throw problems.unprocessable(`Unknown document kind "${kindRaw}"`, {
+        allowed: DOCUMENT_KINDS,
+      });
+    }
+    const kind: DocumentKind = kindParsed.data;
+
+    let buffer: Buffer;
+    try {
+      buffer = await file.toBuffer();
+    } catch {
+      throw problems.unprocessable(`File exceeds the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`);
+    }
+    if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
+
+    const filename = safeFilename(file.filename);
+    const sha256 = createHash('sha256').update(buffer).digest('hex');
+    const dir = path.join(deps.documentsDir, valuation.id);
+    await mkdir(dir, { recursive: true });
+
+    // Storage path is <valuationId>/<sha-prefix>__<filename>; identical content
+    // re-uploaded under the same name simply overwrites the same blob.
+    const storageRel = path.join(valuation.id, `${sha256.slice(0, 16)}__${filename}`);
+    await writeFile(path.join(deps.documentsDir, storageRel), buffer);
+
+    const document = await createDocument(
+      deps.pool,
+      {
+        valuationId: valuation.id,
+        kind,
+        filename,
+        contentType: file.mimetype || 'application/octet-stream',
+        sizeBytes: buffer.length,
+        sha256,
+        storagePath: storageRel,
+        uploadedBy: principal.id,
+      },
+      actorFor(principal),
+    );
+    return reply.status(201).send({ document });
+  });
+
+  app.get('/api/v1/valuations/:id/documents', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+    return { documents: await listDocuments(deps.pool, valuation.id) };
+  });
+
+  app.get(
+    '/api/v1/valuations/:id/documents/:documentId/download',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id, documentId } = req.params as { id: string; documentId: string };
+      const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+      const doc = await loadDocument(deps.pool, valuation.id, documentId);
+
+      const abs = path.join(deps.documentsDir, doc.storage_path);
+      try {
+        await stat(abs);
+      } catch {
+        throw problems.notFound('Stored file is missing');
+      }
+      return reply
+        .header('content-type', doc.content_type)
+        .header('content-disposition', `attachment; filename="${doc.filename.replace(/"/g, '')}"`)
+        .send(createReadStream(abs));
+    },
+  );
+
+  app.delete(
+    '/api/v1/valuations/:id/documents/:documentId',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id, documentId } = req.params as { id: string; documentId: string };
+      const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+      const doc = await loadDocument(deps.pool, valuation.id, documentId);
+
+      // Ops can prune anything; everyone else only what they uploaded.
+      if (!isOps(principal) && doc.uploaded_by !== principal.id) throw problems.forbidden();
+      await deleteDocument(deps.pool, doc, actorFor(principal));
+      return reply.status(204).send();
+    },
+  );
+
+  async function loadDocument(pool: pg.Pool, valuationId: string, documentId: string): Promise<DocumentRow> {
+    if (!isUlid(documentId)) throw problems.notFound();
+    const doc = await findDocumentById(pool, documentId);
+    if (!doc || doc.valuation_id !== valuationId) throw problems.notFound();
+    return doc;
+  }
+}
