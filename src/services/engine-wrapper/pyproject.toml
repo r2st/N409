@@ -1,0 +1,18 @@
+[project]
+name = "n409-engine-wrapper"
+version = "1.0.0"
+description = "409.ai rebuild — calculation engine (Python reimplementation of the R engine): OPM/Black-Scholes, DCF, market multiples, asset approach, Chaffee/Finnerty DLOM."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.28",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import multipart from '@fastify/multipart';
 import type pg from 'pg';
 import { createLogger, registerHealth, registerProblemHandler } from '@n409/shared';
 import type { Config } from './config.js';
@@ -14,6 +15,14 @@ import { registerSearchRoutes } from './routes/search.js';
 import { registerExportRoutes } from './routes/exports.js';
 import { registerSensitivityRoutes } from './routes/sensitivity.js';
 import { logTransport, type EmailTransport } from './hooks/stateChange.js';
+import { registerTaskRoutes } from './routes/tasks.js';
+import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
+import { registerParamsRoutes } from './routes/params.js';
+import { registerAiRoutes } from './routes/ai.js';
+import { registerCalculationRoutes } from './routes/calculations.js';
+import { registerOverwriteRoutes } from './routes/overwrites.js';
+import { registerWorkbookRoutes } from './routes/workbook.js';
+import { registerReportRoutes } from './routes/reports.js';
 
 export interface AppDeps {
   config: Config;
@@ -53,9 +62,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const transport: EmailTransport | undefined =
     config.EMAIL_MODE === 'log' ? logTransport(app.log) : undefined;
 
+  void app.register(multipart, { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
   registerAuth(app, { pool, jwt });
   registerAuthRoutes(app, { pool, jwt, google });
   registerValuationRoutes(app, { pool, transport });
+  // M1 — core pipeline
+  registerTaskRoutes(app, { pool });
+  registerDocumentRoutes(app, { pool, documentsDir: config.DOCUMENTS_DIR });
+  registerParamsRoutes(app, { pool });
+  registerAiRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
+  registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  // M2 — output & delivery
+  registerOverwriteRoutes(app, { pool });
+  registerWorkbookRoutes(app, { pool });
+  registerReportRoutes(app, { pool });
+  // M4 — operations polish
   registerWorkflowRoutes(app, { pool, transport });
   registerTemplateRoutes(app, { pool });
   registerNotificationRoutes(app, { pool });

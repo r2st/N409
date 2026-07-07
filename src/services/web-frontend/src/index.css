@@ -72,3 +72,58 @@ html {
     linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px);
   background-size: 44px 44px;
 }
+
+/* Report editor / read-only report body — typography for the HTML whitelist
+   (p, h1–h3, lists, tables, blockquote) since Tailwind preflight resets it. */
+.report-editor h1 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 0.8em 0 0.4em;
+}
+.report-editor h2 {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0.8em 0 0.35em;
+}
+.report-editor h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 0.7em 0 0.3em;
+}
+.report-editor p {
+  margin: 0.45em 0;
+}
+.report-editor ul,
+.report-editor ol {
+  margin: 0.45em 0;
+  padding-left: 1.4em;
+}
+.report-editor ul {
+  list-style: disc;
+}
+.report-editor ol {
+  list-style: decimal;
+}
+.report-editor blockquote {
+  border-left: 3px solid var(--color-paper-300);
+  padding-left: 0.9em;
+  margin: 0.6em 0;
+  color: var(--color-ink-600);
+}
+.report-editor table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  width: 100%;
+}
+.report-editor th,
+.report-editor td {
+  border: 1px solid var(--color-paper-300);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+.report-editor th {
+  background: var(--color-paper-100);
+  font-weight: 600;
+}

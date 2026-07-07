@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { editableFields, isOps } from '../lib/rbac';
 import { formatDate, formatDateTime, STATE_LABELS } from '../lib/format';
 import { VALUATION_STATES } from '../lib/types';
-import type { Valuation, ValuationEvent } from '../lib/types';
-import { Button, ErrorNote, Field, KindBadge, Select, Spinner, StateBadge, TextInput } from '../components/ui';
+import type { ValuationEvent } from '../lib/types';
+import { useWorkspace } from './valuation/ValuationWorkspace';
+import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { WorkflowActions } from '../components/WorkflowActions';
 import { FundingHistory } from '../components/FundingHistory';
 
@@ -24,6 +24,12 @@ const EVENT_LABELS: Record<string, string> = {
   valuation_created: 'Valuation created',
   valuation_updated: 'Details updated',
   state_changed: 'State changed',
+  overwrite_applied: 'Override applied',
+  overwrite_reverted: 'Override reverted',
+  workbook_updated: 'Workbook updated',
+  report_saved: 'Report saved',
+  report_reverted: 'Report version restored',
+  report_rendered: 'Report PDF rendered',
   funding_round_added: 'Funding round added',
   funding_round_updated: 'Funding round updated',
   funding_round_deleted: 'Funding round removed',
@@ -32,51 +38,36 @@ const EVENT_LABELS: Record<string, string> = {
   transaction_deleted: 'Transaction removed',
 };
 
+/** Overview tab — engagement facts, role-gated editing, workflow, funding, audit. */
 export function ValuationDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  const { valuation, reload } = useWorkspace();
   const { user } = useAuth();
-  const [valuation, setValuation] = useState<Valuation | null>(null);
   const [events, setEvents] = useState<ValuationEvent[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ company_name: '', service_name: '', state: '' });
+  const [form, setForm] = useState({
+    company_name: valuation.company_name,
+    service_name: valuation.service_name ?? '',
+    state: valuation.state as string,
+  });
 
-  const load = useCallback(async () => {
-    if (!id) return;
+  const loadEvents = useCallback(async () => {
     try {
-      const [{ valuation: v }, { events: ev }] = await Promise.all([
-        api<{ valuation: Valuation }>(`/valuations/${id}`),
-        api<{ events: ValuationEvent[] }>(`/valuations/${id}/events`),
-      ]);
-      setValuation(v);
+      const { events: ev } = await api<{ events: ValuationEvent[] }>(`/valuations/${valuation.id}/events`);
       setEvents(ev);
-      setForm({ company_name: v.company_name, service_name: v.service_name ?? '', state: v.state });
-    } catch (err) {
-      setError(
-        err instanceof ApiError && err.status === 404
-          ? 'This valuation does not exist or you do not have access to it.'
-          : 'Could not load the valuation.',
-      );
+    } catch {
+      setEvents([]);
     }
-  }, [id]);
+  }, [valuation.id]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadEvents();
+  }, [loadEvents]);
 
-  if (error) {
-    return (
-      <div className="max-w-xl">
-        <ErrorNote>{error}</ErrorNote>
-        <Link to="/valuations" className="mt-4 inline-block text-sm font-semibold text-bond-600 hover:text-bond-700">
-          ← Back to valuations
-        </Link>
-      </div>
-    );
-  }
-  if (!valuation) return <Spinner />;
+  const refresh = useCallback(async () => {
+    await Promise.all([reload(), loadEvents()]);
+  }, [reload, loadEvents]);
 
   const editable = editableFields(user, valuation);
   const canEdit = editable.size > 0;
@@ -96,7 +87,7 @@ export function ValuationDetailPage() {
     try {
       if (Object.keys(patch).length > 0) {
         await api(`/valuations/${valuation.id}`, { method: 'PATCH', body: patch });
-        await load();
+        await refresh();
       }
       setSaved(true);
     } catch (err) {
@@ -107,161 +98,138 @@ export function ValuationDetailPage() {
   };
 
   return (
-    <div>
-      <Link to="/valuations" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
-        ← Valuations
-      </Link>
+    <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
+      <div className="space-y-8">
+        {/* Facts */}
+        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <h2 className="overline mb-5 text-ink-400">Engagement details</h2>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
+            <Meta label="Service" value={valuation.service_name} />
+            <Meta label="Currency" value={valuation.currency} />
+            <Meta label="Created" value={formatDate(valuation.created_at)} />
+            <Meta label="Due date" value={formatDate(valuation.due_date)} />
+            <Meta
+              label="Delivery SLA"
+              value={valuation.delivery_days ? `${valuation.delivery_days} days` : null}
+            />
+            <Meta
+              label="Payment"
+              value={
+                valuation.paid_status === 'unpaid'
+                  ? 'Unpaid'
+                  : valuation.paid_status === 'paid_by_partner'
+                    ? 'Paid by partner'
+                    : 'Paid'
+              }
+            />
+            {ops && <Meta label="Source" value={valuation.source} />}
+            {ops && <Meta label="Reviewer" value={valuation.assigned_reviewer_id} />}
+            <Meta
+              label="QSBS attestation"
+              value={
+                valuation.qsbs_attestation === null ? '—' : valuation.qsbs_attestation ? 'Yes' : 'No'
+              }
+            />
+          </dl>
+        </section>
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-3xl font-semibold text-ink-900">{valuation.company_name}</h1>
-        <KindBadge kind={valuation.kind} />
-        <StateBadge state={valuation.state} />
-        {valuation.waiting_on_client && (
-          <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset">
-            Waiting on client
-          </span>
-        )}
-      </div>
-      <div className="mt-1.5 flex items-center gap-4">
-        <p className="tnum text-xs text-ink-400">Ref {valuation.id}</p>
-        {ops && (
-          <Link
-            to={`/valuations/${valuation.id}/sensitivity`}
-            className="text-xs font-semibold text-bond-600 hover:text-bond-700"
-          >
-            Sensitivity dashboard →
-          </Link>
-        )}
-      </div>
-
-      <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_20rem]">
-        <div className="space-y-8">
-          {/* Facts */}
+        {/* Edit — only fields this role may patch */}
+        {canEdit && (
           <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-            <h2 className="overline mb-5 text-ink-400">Engagement details</h2>
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
-              <Meta label="Service" value={valuation.service_name} />
-              <Meta label="Currency" value={valuation.currency} />
-              <Meta label="Created" value={formatDate(valuation.created_at)} />
-              <Meta label="Due date" value={formatDate(valuation.due_date)} />
-              <Meta
-                label="Delivery SLA"
-                value={valuation.delivery_days ? `${valuation.delivery_days} days` : null}
-              />
-              <Meta
-                label="Payment"
-                value={
-                  valuation.paid_status === 'unpaid'
-                    ? 'Unpaid'
-                    : valuation.paid_status === 'paid_by_partner'
-                      ? 'Paid by partner'
-                      : 'Paid'
-                }
-              />
-              {ops && <Meta label="Source" value={valuation.source} />}
-              {ops && <Meta label="Reviewer" value={valuation.assigned_reviewer_id} />}
-              <Meta
-                label="QSBS attestation"
-                value={
-                  valuation.qsbs_attestation === null ? '—' : valuation.qsbs_attestation ? 'Yes' : 'No'
-                }
-              />
-            </dl>
+            <h2 className="overline mb-5 text-ink-400">Edit</h2>
+            <form onSubmit={save} className="space-y-5">
+              {saveError && <ErrorNote>{saveError}</ErrorNote>}
+              {saved && (
+                <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
+                  Changes saved.
+                </div>
+              )}
+              <div className="grid gap-5 sm:grid-cols-2">
+                {editable.has('company_name') && (
+                  <Field label="Company name">
+                    <TextInput
+                      value={form.company_name}
+                      onChange={(e) => setForm((f) => ({ ...f, company_name: e.target.value }))}
+                      required
+                      maxLength={300}
+                    />
+                  </Field>
+                )}
+                {editable.has('service_name') && (
+                  <Field label="Service name">
+                    <TextInput
+                      value={form.service_name}
+                      onChange={(e) => setForm((f) => ({ ...f, service_name: e.target.value }))}
+                      maxLength={300}
+                      placeholder="e.g. 409A FY26 refresh"
+                    />
+                  </Field>
+                )}
+                {editable.has('state') && (
+                  <Field label="State" hint="Operations only — recorded to the audit trail.">
+                    <Select
+                      value={form.state}
+                      onChange={(e) => setForm((f) => ({ ...f, state: e.target.value }))}
+                    >
+                      {VALUATION_STATES.map((s) => (
+                        <option key={s} value={s}>
+                          {STATE_LABELS[s]}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                )}
+              </div>
+              <Button type="submit" disabled={busy || !form.company_name.trim()}>
+                {busy ? 'Saving…' : 'Save changes'}
+              </Button>
+            </form>
           </section>
+        )}
 
-          {/* Edit — only fields this role may patch */}
-          {canEdit && (
-            <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-              <h2 className="overline mb-5 text-ink-400">Edit</h2>
-              <form onSubmit={save} className="space-y-5">
-                {saveError && <ErrorNote>{saveError}</ErrorNote>}
-                {saved && (
-                  <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-                    Changes saved.
+        {/* M4: workflow engine controls (ops) */}
+        {ops && <WorkflowActions valuation={valuation} onChanged={refresh} />}
+
+        {/* M4: transaction & funding-round history */}
+        <FundingHistory
+          valuationId={valuation.id}
+          currency={valuation.currency}
+          canEdit={ops || valuation.user_id === user?.id}
+        />
+      </div>
+
+      {/* Audit timeline */}
+      <aside>
+        <h2 className="overline mb-4 text-ink-400">Activity</h2>
+        {!events && <Spinner />}
+        {events && events.length === 0 && <p className="text-sm text-ink-400">No activity yet.</p>}
+        {events && events.length > 0 && (
+          <ol className="relative space-y-5 border-l border-paper-300 pl-5">
+            {events.map((ev) => (
+              <li key={ev.id} className="relative">
+                <span className="absolute top-1.5 -left-[1.42rem] h-2.5 w-2.5 rounded-full border-2 border-paper-100 bg-bond-500" />
+                <div className="text-sm font-semibold text-ink-800">
+                  {EVENT_LABELS[ev.type] ?? ev.type}
+                </div>
+                {ev.type === 'state_changed' && ev.payload && (
+                  <div className="mt-0.5 text-xs text-ink-600">
+                    {String((ev.payload as { from?: string }).from ?? '')} →{' '}
+                    {String((ev.payload as { to?: string }).to ?? '')}
                   </div>
                 )}
-                <div className="grid gap-5 sm:grid-cols-2">
-                  {editable.has('company_name') && (
-                    <Field label="Company name">
-                      <TextInput
-                        value={form.company_name}
-                        onChange={(e) => setForm((f) => ({ ...f, company_name: e.target.value }))}
-                        required
-                        maxLength={300}
-                      />
-                    </Field>
-                  )}
-                  {editable.has('service_name') && (
-                    <Field label="Service name">
-                      <TextInput
-                        value={form.service_name}
-                        onChange={(e) => setForm((f) => ({ ...f, service_name: e.target.value }))}
-                        maxLength={300}
-                        placeholder="e.g. 409A FY26 refresh"
-                      />
-                    </Field>
-                  )}
-                  {editable.has('state') && (
-                    <Field label="State" hint="Operations only — recorded to the audit trail.">
-                      <Select
-                        value={form.state}
-                        onChange={(e) => setForm((f) => ({ ...f, state: e.target.value }))}
-                      >
-                        {VALUATION_STATES.map((s) => (
-                          <option key={s} value={s}>
-                            {STATE_LABELS[s]}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                  )}
+                {(ev.type === 'overwrite_applied' || ev.type === 'overwrite_reverted') && ev.payload && (
+                  <div className="mt-0.5 text-xs text-ink-600">
+                    {String((ev.payload as { field_key?: string }).field_key ?? '')}
+                  </div>
+                )}
+                <div className="tnum mt-0.5 text-xs text-ink-400">
+                  {formatDateTime(ev.occurred_at)} · {ev.actor_type}
                 </div>
-                <Button type="submit" disabled={busy || !form.company_name.trim()}>
-                  {busy ? 'Saving…' : 'Save changes'}
-                </Button>
-              </form>
-            </section>
-          )}
-
-          {/* M4: workflow engine controls (ops) */}
-          {ops && <WorkflowActions valuation={valuation} onChanged={load} />}
-
-          {/* M4: transaction & funding-round history */}
-          <FundingHistory
-            valuationId={valuation.id}
-            currency={valuation.currency}
-            canEdit={ops || valuation.user_id === user?.id}
-          />
-        </div>
-
-        {/* Audit timeline */}
-        <aside>
-          <h2 className="overline mb-4 text-ink-400">Activity</h2>
-          {!events && <Spinner />}
-          {events && events.length === 0 && <p className="text-sm text-ink-400">No activity yet.</p>}
-          {events && events.length > 0 && (
-            <ol className="relative space-y-5 border-l border-paper-300 pl-5">
-              {events.map((ev) => (
-                <li key={ev.id} className="relative">
-                  <span className="absolute top-1.5 -left-[1.42rem] h-2.5 w-2.5 rounded-full border-2 border-paper-100 bg-bond-500" />
-                  <div className="text-sm font-semibold text-ink-800">
-                    {EVENT_LABELS[ev.type] ?? ev.type}
-                  </div>
-                  {ev.type === 'state_changed' && ev.payload && (
-                    <div className="mt-0.5 text-xs text-ink-600">
-                      {String((ev.payload as { from?: string }).from ?? '')} →{' '}
-                      {String((ev.payload as { to?: string }).to ?? '')}
-                    </div>
-                  )}
-                  <div className="tnum mt-0.5 text-xs text-ink-400">
-                    {formatDateTime(ev.occurred_at)} · {ev.actor_type}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </aside>
-      </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </aside>
     </div>
   );
 }

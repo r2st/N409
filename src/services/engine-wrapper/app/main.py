@@ -1,0 +1,63 @@
+"""Engine wrapper — Python reimplementation of the R calculation engine (M1).
+
+Exposes the versioned /engine/v1 contract (api-design.md §4). The original
+plan wrapped the legacy R/Plumber engine; per the gap analysis the engine is
+reimplemented natively in Python instead.
+"""
+
+import time
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from .engine.approaches import EngineInputError
+from .engine.compute import ENGINE_VERSION, compute
+
+SERVICE = "engine-wrapper"
+_started = time.monotonic()
+
+app = FastAPI(title="n409-engine-wrapper", version=ENGINE_VERSION)
+
+
+class ComputeRequest(BaseModel):
+    params: dict = Field(default_factory=dict)
+    inputs: dict = Field(default_factory=dict)
+
+
+@app.get("/")
+def root() -> dict:
+    return {
+        "service": SERVICE,
+        "version": ENGINE_VERSION,
+        "status": "ok",
+        "contract": "engine/v1",
+        "endpoints": ["/health", "/ready", "/docs", "/engine/v1/health", "/engine/v1/compute"],
+    }
+
+
+@app.get("/health")
+def health() -> dict:
+    return {
+        "status": "ok",
+        "service": SERVICE,
+        "version": ENGINE_VERSION,
+        "uptime_s": int(time.monotonic() - _started),
+    }
+
+
+@app.get("/ready")
+def ready() -> dict:
+    return {"status": "ready", "checks": {"engine": ENGINE_VERSION}}
+
+
+@app.get("/engine/v1/health")
+def engine_health() -> dict:
+    return {"status": "ok", "engine_version": ENGINE_VERSION, "contract": "engine/v1"}
+
+
+@app.post("/engine/v1/compute")
+def engine_compute(request: ComputeRequest) -> dict:
+    try:
+        return compute(request.params, request.inputs)
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

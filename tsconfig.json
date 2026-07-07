@@ -4,7 +4,6 @@
     { "path": "src/packages/shared" },
     { "path": "src/services/valuation" },
     { "path": "src/services/web" },
-    { "path": "src/services/engine-wrapper" },
     { "path": "src/services/report" }
   ]
 }

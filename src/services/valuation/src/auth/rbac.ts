@@ -83,6 +83,30 @@ export function isOps(p: Principal): boolean {
   return p.roles.some((r) => OPS_ROLES.has(r));
 }
 
+/**
+ * Working data (workbook cells, overwrites, report editing) is analyst
+ * tooling — ops only. Clients and partners never see the model internals.
+ */
+export function canEditWorkingData(p: Principal): boolean {
+  return isOps(p);
+}
+
+/** States in which the deliverable report is visible outside ops. */
+export const REPORT_VISIBLE_STATES: ReadonlySet<string> = new Set([
+  'drafted',
+  'draft_accepted',
+  'published',
+]);
+
+/**
+ * Ops always see the report; the owner/partner only once a draft has been
+ * shared (drafted → published lifecycle).
+ */
+export function canReadReport(p: Principal, v: ValuationRef & { state: string }): boolean {
+  if (isOps(p)) return true;
+  return canReadValuation(p, v) && REPORT_VISIBLE_STATES.has(v.state);
+}
+
 export function canManageUsers(p: Principal): boolean {
   return p.roles.some((r) => USER_ADMIN_ROLES.has(r));
 }

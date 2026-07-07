@@ -11,6 +11,10 @@ const Env = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),
+  // M1 core pipeline — internal service URLs + document storage
+  AI_URL: z.string().url().default('http://127.0.0.1:3002'),
+  ENGINE_URL: z.string().url().default('http://127.0.0.1:3003'),
+  DOCUMENTS_DIR: z.string().min(1).default('./data/documents'),
   // M4 auto email workflows — 'log' records delivery in the service log
   // (outbox rows track status either way); 'off' only queues.
   EMAIL_MODE: z.enum(['log', 'off']).default('log'),
