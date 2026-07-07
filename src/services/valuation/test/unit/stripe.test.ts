@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   encodeForm,
   parseSignatureHeader,
+  retrieveReceipt,
+  StripeApiError,
   verifyWebhookSignature,
 } from '../../src/payments/stripe.js';
 import { priceForKind, DEFAULT_PRICE_CENTS, FALLBACK_PRICE_CENTS } from '../../src/routes/payments.js';
@@ -52,6 +54,44 @@ describe('Stripe webhook signature', () => {
     expect(verifyWebhookSignature({ payload: payload + 'x', header, secret })).toBe(false);
     const stale = sign(payload, secret, now - 3600);
     expect(verifyWebhookSignature({ payload, header: stale, secret })).toBe(false);
+  });
+});
+
+describe('retrieveReceipt', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const jsonResponse = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+  it('expands the latest charge and returns its id and receipt URL', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        id: 'pi_1',
+        latest_charge: { id: 'ch_1', receipt_url: 'https://pay.stripe.com/receipts/r1' },
+      }),
+    );
+    await expect(retrieveReceipt('sk_test', 'pi_1')).resolves.toEqual({
+      chargeId: 'ch_1',
+      receiptUrl: 'https://pay.stripe.com/receipts/r1',
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe('https://api.stripe.com/v1/payment_intents/pi_1?expand[]=latest_charge');
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer sk_test');
+  });
+
+  it('tolerates a missing charge (nulls, not a crash)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ id: 'pi_1' }));
+    await expect(retrieveReceipt('sk_test', 'pi_1')).resolves.toEqual({
+      chargeId: null,
+      receiptUrl: null,
+    });
+  });
+
+  it('surfaces Stripe errors as StripeApiError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ error: { message: 'No such payment_intent' } }, 404),
+    );
+    await expect(retrieveReceipt('sk_test', 'pi_missing')).rejects.toThrow(StripeApiError);
   });
 });
 

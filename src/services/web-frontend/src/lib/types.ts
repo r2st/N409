@@ -283,6 +283,35 @@ export interface SensitivityResult {
   currency: string | null;
 }
 
+// ── P0 #2 — Payments ─────────────────────────────────────────────────────────
+
+export const PAYMENT_STATUSES = ['pending', 'succeeded', 'failed', 'expired'] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+export interface Payment {
+  id: string;
+  valuation_id: string;
+  provider: string;
+  session_id: string;
+  payment_intent_id: string | null;
+  amount_cents: string | number;
+  currency: string;
+  status: PaymentStatus;
+  checkout_url: string | null;
+  charge_id: string | null;
+  receipt_url: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentQuote {
+  amount_cents: number;
+  currency: string;
+  kind: ValuationKind;
+  configured: boolean;
+}
+
 export interface BulkResult {
   results: Array<{ id: string; ok: boolean; error?: string; state?: ValuationState }>;
   succeeded: number;

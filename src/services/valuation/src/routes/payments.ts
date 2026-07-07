@@ -5,8 +5,19 @@ import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import type { ValuationKind } from '../domain/valuation.js';
 import { findValuationById, patchValuation, type ValuationRow } from '../repos/valuations.js';
-import { createPayment, findPaymentBySessionId, listPayments, markPayment } from '../repos/payments.js';
-import { createCheckoutSession, StripeApiError, verifyWebhookSignature } from '../payments/stripe.js';
+import {
+  createPayment,
+  findPaymentBySessionId,
+  listPayments,
+  markPayment,
+  setPaymentReceipt,
+} from '../repos/payments.js';
+import {
+  createCheckoutSession,
+  retrieveReceipt,
+  StripeApiError,
+  verifyWebhookSignature,
+} from '../payments/stripe.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -103,7 +114,6 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           : priceForKind(valuation.kind);
 
       const base = deps.publicBaseUrl.replace(/\/$/, '');
-      const back = `${base}/valuations/${valuation.id}`;
       let session;
       try {
         session = await createCheckoutSession(deps.stripeSecretKey, {
@@ -111,8 +121,8 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           productName: `${valuation.kind.toUpperCase()} valuation — ${valuation.company_name}`,
           amountCents,
           currency: valuation.currency || 'USD',
-          successUrl: `${back}?payment=success`,
-          cancelUrl: `${back}?payment=cancelled`,
+          successUrl: `${base}/payment/success?valuation=${valuation.id}`,
+          cancelUrl: `${base}/payment/cancel?valuation=${valuation.id}`,
         });
       } catch (err) {
         if (err instanceof StripeApiError) {
@@ -140,6 +150,26 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     await loadAuthorized(deps.pool, principal, id);
     return { payments: await listPayments(deps.pool, id) };
   });
+
+  // Price transparency: what "Pay now" will charge, before opening Stripe.
+  app.get(
+    '/api/v1/valuations/:id/payments/quote',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      const { id } = req.params as { id: string };
+      const valuation = await loadAuthorized(deps.pool, principal, id);
+      return {
+        quote: {
+          amount_cents: priceForKind(valuation.kind),
+          currency: valuation.currency || 'USD',
+          kind: valuation.kind,
+          // false → the UI shows the invoice-fallback messaging up front.
+          configured: Boolean(deps.stripeSecretKey),
+        },
+      };
+    },
+  );
 
   // Webhook lives in its own plugin scope so the raw-buffer content parser
   // (required for signature verification) can't leak to other routes.
@@ -183,7 +213,17 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // Idempotent: replayed events find the row already succeeded.
         if (payment.status !== 'succeeded') {
           const intent = typeof session.payment_intent === 'string' ? session.payment_intent : null;
-          await markPayment(deps.pool, payment.id, 'succeeded', intent);
+          await markPayment(deps.pool, payment.id, 'succeeded', { paymentIntentId: intent });
+          // Best-effort receipt capture — the charge (not the session) carries
+          // receipt_url, so resolve it via the API. Failure never blocks the ack.
+          if (deps.stripeSecretKey && intent) {
+            try {
+              const receipt = await retrieveReceipt(deps.stripeSecretKey, intent);
+              await setPaymentReceipt(deps.pool, payment.id, receipt);
+            } catch (err) {
+              req.log.warn({ err }, 'stripe receipt lookup failed');
+            }
+          }
           const valuation = await findValuationById(deps.pool, payment.valuation_id);
           if (valuation && valuation.paid_status === 'unpaid') {
             const amount =

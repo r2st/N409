@@ -33,6 +33,7 @@ import { SupportInboxPage } from './pages/SupportInboxPage';
 import { CompanyTab } from './pages/valuation/CompanyTab';
 import { PackageTab } from './pages/valuation/PackageTab';
 import { OnboardingPage } from './pages/OnboardingPage';
+import { PaymentCancelPage, PaymentSuccessPage } from './pages/PaymentRedirectPages';
 
 export default function App() {
   return (
@@ -52,6 +53,8 @@ export default function App() {
         <Route path="/valuations" element={<ValuationsPage />} />
         <Route path="/valuations/new" element={<NewValuationPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route path="/payment/success" element={<PaymentSuccessPage />} />
+        <Route path="/payment/cancel" element={<PaymentCancelPage />} />
         <Route path="/valuations/:id" element={<ValuationWorkspace />}>
           <Route index element={<ValuationDetailPage />} />
           <Route path="company" element={<CompanyTab />} />

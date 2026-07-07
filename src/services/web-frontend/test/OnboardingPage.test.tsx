@@ -38,6 +38,11 @@ describe('OnboardingPage (guided client funnel)', () => {
       if (url.endsWith('/valuations') && init?.method === 'POST') {
         return jsonResponse({ valuation: VALUATION }, 201);
       }
+      if (url.includes('/payments/quote')) {
+        return jsonResponse({
+          quote: { amount_cents: 119_000, currency: 'USD', kind: '409a', configured: false },
+        });
+      }
       if (url.includes('/payments/checkout')) {
         return jsonResponse({ status: 503, detail: 'Payments are not configured' }, 503);
       }
@@ -51,15 +56,18 @@ describe('OnboardingPage (guided client funnel)', () => {
     await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
-    // Step 2 — payment
-    await waitFor(() => expect(screen.getByRole('button', { name: /pay now with card/i })).toBeInTheDocument());
+    // Step 2 — payment, with the exact list price shown before checkout
+    await waitFor(() => expect(screen.getByRole('button', { name: /with card/i })).toBeInTheDocument());
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/valuations'),
       expect.objectContaining({ method: 'POST' }),
     );
+    await waitFor(() =>
+      expect(screen.getByTestId('onboarding-quote')).toHaveTextContent('$1,190.00'),
+    );
 
     // Stripe unconfigured → 503 → invoice fallback advances to uploads
-    await user.click(screen.getByRole('button', { name: /pay now with card/i }));
+    await user.click(screen.getByRole('button', { name: /with card/i }));
     await waitFor(() =>
       expect(screen.getByText(/online payment is not available yet/i)).toBeInTheDocument(),
     );

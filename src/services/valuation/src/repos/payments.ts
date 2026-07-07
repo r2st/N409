@@ -13,6 +13,8 @@ export interface PaymentRow {
   currency: string;
   status: PaymentStatus;
   checkout_url: string | null;
+  charge_id: string | null;
+  receipt_url: string | null;
   created_by: string | null;
   created_at: Date;
   updated_at: Date;
@@ -60,16 +62,34 @@ export async function markPayment(
   pool: pg.Pool,
   id: string,
   status: Exclude<PaymentStatus, 'pending'>,
-  paymentIntentId?: string | null,
+  extra: { paymentIntentId?: string | null; chargeId?: string | null; receiptUrl?: string | null } = {},
 ): Promise<PaymentRow | null> {
   const { rows } = await pool.query<PaymentRow>(
     `UPDATE payments
-     SET status = $2, payment_intent_id = COALESCE($3, payment_intent_id), updated_at = now()
+     SET status = $2,
+         payment_intent_id = COALESCE($3, payment_intent_id),
+         charge_id = COALESCE($4, charge_id),
+         receipt_url = COALESCE($5, receipt_url),
+         updated_at = now()
      WHERE id = $1
      RETURNING *`,
-    [id, status, paymentIntentId ?? null],
+    [id, status, extra.paymentIntentId ?? null, extra.chargeId ?? null, extra.receiptUrl ?? null],
   );
   return rows[0] ?? null;
+}
+
+/** Attaches receipt details after the fact (webhook receipt resolution). */
+export async function setPaymentReceipt(
+  pool: pg.Pool,
+  id: string,
+  receipt: { chargeId: string | null; receiptUrl: string | null },
+): Promise<void> {
+  await pool.query(
+    `UPDATE payments
+     SET charge_id = COALESCE($2, charge_id), receipt_url = COALESCE($3, receipt_url), updated_at = now()
+     WHERE id = $1`,
+    [id, receipt.chargeId, receipt.receiptUrl],
+  );
 }
 
 export async function listPayments(pool: pg.Pool, valuationId: string): Promise<PaymentRow[]> {

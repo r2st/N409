@@ -12,7 +12,7 @@ import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../compone
 import { CommentsSection } from '../components/CommentThread';
 import { WorkflowActions } from '../components/WorkflowActions';
 import { FundingHistory } from '../components/FundingHistory';
-import { PaymentSection } from '../components/PaymentSection';
+import { PaymentHistory, PaymentSection } from '../components/PaymentSection';
 import { SignaturePanel } from '../components/SignaturePanel';
 
 function Meta({ label, value }: { label: string; value: ReactNode }) {
@@ -127,6 +127,9 @@ export function ValuationDetailPage() {
       <div className="space-y-8">
         {/* P0: Stripe checkout for unpaid engagements */}
         <PaymentSection valuation={valuation} />
+
+        {/* P0: past checkout attempts with receipt links (hides when empty) */}
+        <PaymentHistory valuation={valuation} />
 
         {/* Facts */}
         <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">

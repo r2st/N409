@@ -2,9 +2,9 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, apiUpload, ApiError } from '../lib/api';
-import { KIND_LABELS } from '../lib/format';
+import { formatMoney, KIND_LABELS } from '../lib/format';
 import { DOCUMENT_KIND_LABELS, type DocumentKind } from '../lib/pipeline';
-import { VALUATION_KINDS, type Valuation, type ValuationKind } from '../lib/types';
+import { VALUATION_KINDS, type PaymentQuote, type Valuation, type ValuationKind } from '../lib/types';
 import { Button, ErrorNote, Field, Select, TextInput } from '../components/ui';
 
 /**
@@ -59,6 +59,7 @@ export function OnboardingPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [valuation, setValuation] = useState<Valuation | null>(null);
+  const [quote, setQuote] = useState<PaymentQuote | null>(null);
   const [paymentNote, setPaymentNote] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<Record<string, string[]>>({});
   const [docKind, setDocKind] = useState<DocumentKind>('cap_table');
@@ -85,6 +86,10 @@ export function OnboardingPage() {
       });
       setValuation(res.valuation);
       setStep(1);
+      // Price transparency on the payment step — best effort, never blocks.
+      void api<{ quote: PaymentQuote }>(`/valuations/${res.valuation.id}/payments/quote`)
+        .then(({ quote: q }) => setQuote(q))
+        .catch(() => {});
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the valuation request.');
     } finally {
@@ -197,9 +202,21 @@ export function OnboardingPage() {
             <span className="font-semibold">{valuation.company_name}</span> is in. Pay now to move it
             to the front of the queue — or skip and settle by invoice later.
           </p>
+          {quote && (
+            <p className="text-sm text-ink-800" data-testid="onboarding-quote">
+              {KIND_LABELS[valuation.kind]}:{' '}
+              <span className="tnum text-lg font-semibold text-ink-900">
+                {formatMoney(quote.amount_cents, quote.currency)}
+              </span>
+            </p>
+          )}
           <div className="flex flex-wrap gap-3">
             <Button disabled={busy} onClick={() => void checkout()}>
-              {busy ? 'Opening checkout…' : 'Pay now with card'}
+              {busy
+                ? 'Opening checkout…'
+                : quote
+                  ? `Pay ${formatMoney(quote.amount_cents, quote.currency)} with card`
+                  : 'Pay now with card'}
             </Button>
             <Button variant="secondary" disabled={busy} onClick={() => setStep(2)}>
               Skip for now →

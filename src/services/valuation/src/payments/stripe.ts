@@ -134,3 +134,35 @@ export async function createCheckoutSession(
   }
   return json as unknown as CheckoutSession;
 }
+
+export interface ChargeReceipt {
+  chargeId: string | null;
+  receiptUrl: string | null;
+}
+
+/**
+ * `checkout.session.completed` doesn't carry the receipt — that lives on the
+ * charge, so we resolve it from the payment intent with the charge expanded.
+ */
+export async function retrieveReceipt(
+  secretKey: string,
+  paymentIntentId: string,
+): Promise<ChargeReceipt> {
+  const res = await fetch(
+    `${STRIPE_API}/payment_intents/${encodeURIComponent(paymentIntentId)}?expand[]=latest_charge`,
+    {
+      headers: { Authorization: `Bearer ${secretKey}` },
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = (json.error ?? {}) as Record<string, unknown>;
+    throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
+  }
+  const charge = (json.latest_charge ?? {}) as Record<string, unknown>;
+  return {
+    chargeId: typeof charge.id === 'string' ? charge.id : null,
+    receiptUrl: typeof charge.receipt_url === 'string' ? charge.receipt_url : null,
+  };
+}

@@ -62,13 +62,14 @@ export interface TestApp {
   teardown: () => Promise<void>;
 }
 
-export async function setupTestApp(): Promise<TestApp> {
+export async function setupTestApp(env: Record<string, string> = {}): Promise<TestApp> {
   const db = await setupTestDb();
   const config = loadConfig({
     ...process.env,
     NODE_ENV: 'test',
     JWT_SECRET: 'integration-test-secret-0123456789abcdef',
     LOG_LEVEL: 'silent',
+    ...env,
   });
   const app = buildApp({ config, pool: db.pool });
   await app.ready();
