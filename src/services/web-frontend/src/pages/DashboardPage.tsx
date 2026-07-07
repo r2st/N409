@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isOps } from '../lib/rbac';
+import { isOps, isPartner } from '../lib/rbac';
 import { computeStats } from '../lib/stats';
-import { displayName, formatDate, GROUP_LABELS, KIND_LABELS, SOURCE_LABELS } from '../lib/format';
+import { displayName, formatDate, GROUP_LABELS, KIND_LABELS, SOURCE_LABELS, STATE_LABELS } from '../lib/format';
+import { VALUATION_STATES } from '../lib/types';
 import type { DashboardAnalytics, Valuation, ValuationList } from '../lib/types';
 import { Button, EmptyState, ErrorNote, KindBadge, Spinner, StatCard, StateBadge, TextInput } from '../components/ui';
 import { DonutChart } from '../components/charts';
@@ -25,18 +26,35 @@ export function DashboardPage() {
       .catch(() => setError('Could not load valuations.'));
   }, []);
 
+  // Analytics is noise for clients with 1–2 valuations — ops and partners only
+  // (partner data is already server-scoped to their organisation).
+  const showAnalytics = isOps(user) || isPartner(user);
+
   // Analytics (M3 feature 17) — server-side pivot within the date range.
   useEffect(() => {
+    if (!showAnalytics) return;
     const q = new URLSearchParams();
     if (range.from) q.set('created_from', range.from);
     if (range.to) q.set('created_to', range.to);
     api<DashboardAnalytics>(`/stats/dashboard?${q}`)
       .then(setAnalytics)
       .catch(() => setAnalytics(null));
-  }, [range]);
+  }, [range, showAnalytics]);
 
   const stats = valuations ? computeStats(valuations) : null;
   const recent = valuations?.slice(0, 6) ?? [];
+
+  /** Worklist URL matching a pivot cell's cohort — same date range, plus filters. */
+  const drillTo = (filters: Record<string, string>) => {
+    const q = new URLSearchParams();
+    if (range.from) q.set('created_from', range.from);
+    if (range.to) q.set('created_to', range.to);
+    for (const [key, value] of Object.entries(filters)) q.set(key, value);
+    const qs = q.toString();
+    return qs ? `/valuations?${qs}` : '/valuations';
+  };
+
+  const drillLinkClass = 'font-medium text-bond-600 underline-offset-2 hover:text-bond-700 hover:underline';
 
   return (
     <div>
@@ -72,7 +90,9 @@ export function DashboardPage() {
             </div>
           )}
 
-          {/* ── Analytics: date range + product pivot + pies (M3) ─────────── */}
+          {/* ── Analytics: date range + product pivot + pies (M3) — ops/partner only */}
+          {showAnalytics && (
+          <>
           <div className="mt-10 flex flex-wrap items-end justify-between gap-4">
             <h2 className="overline text-ink-400">Analytics</h2>
             <div className="flex items-center gap-1.5">
@@ -138,28 +158,77 @@ export function DashboardPage() {
                           <td className="px-5 py-3"><KindBadge kind={row.kind} /></td>
                           {PIVOT_GROUPS.map((g) => (
                             <td key={g} className="tnum px-4 py-3 text-right text-ink-600">
-                              {row[g] || '—'}
+                              {row[g] ? (
+                                <Link to={drillTo({ kind: row.kind, group: g })} className={drillLinkClass}>
+                                  {row[g]}
+                                </Link>
+                              ) : (
+                                '—'
+                              )}
                             </td>
                           ))}
-                          <td className="tnum px-5 py-3 text-right font-semibold text-ink-900">{row.total}</td>
+                          <td className="tnum px-5 py-3 text-right font-semibold">
+                            <Link to={drillTo({ kind: row.kind })} className={drillLinkClass}>
+                              {row.total}
+                            </Link>
+                          </td>
                         </tr>
                       ))}
                       <tr className="bg-paper-50">
                         <td className="px-5 py-3 text-xs font-semibold text-ink-400 uppercase">Total</td>
-                        {PIVOT_GROUPS.map((g) => (
-                          <td key={g} className="tnum px-4 py-3 text-right font-semibold text-ink-900">
-                            {analytics.by_kind.reduce((sum, row) => sum + row[g], 0) || '—'}
-                          </td>
-                        ))}
-                        <td className="tnum px-5 py-3 text-right font-semibold text-bond-700">
-                          {analytics.total}
+                        {PIVOT_GROUPS.map((g) => {
+                          const sum = analytics.by_kind.reduce((acc, row) => acc + row[g], 0);
+                          return (
+                            <td key={g} className="tnum px-4 py-3 text-right font-semibold">
+                              {sum ? (
+                                <Link to={drillTo({ group: g })} className={drillLinkClass}>
+                                  {sum}
+                                </Link>
+                              ) : (
+                                '—'
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="tnum px-5 py-3 text-right font-semibold">
+                          <Link to={drillTo({})} className={drillLinkClass}>
+                            {analytics.total}
+                          </Link>
                         </td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
               )}
+
+              {/* Per-state detail — surfaces the states the grouped pivot hides. */}
+              {Object.keys(analytics.by_state).length > 0 && (
+                <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+                  <table className="w-full min-w-[360px] text-sm" aria-label="State detail">
+                    <thead>
+                      <tr className="border-b border-paper-300 text-left">
+                        <th className="overline px-5 py-3 font-semibold text-ink-400">State</th>
+                        <th className="overline px-5 py-3 text-right font-semibold text-ink-400">Valuations</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {VALUATION_STATES.filter((s) => analytics.by_state[s]).map((s) => (
+                        <tr key={s} className="border-b border-paper-200 last:border-0">
+                          <td className="px-5 py-3">{STATE_LABELS[s] ?? s}</td>
+                          <td className="tnum px-5 py-3 text-right">
+                            <Link to={drillTo({ state: s })} className={drillLinkClass}>
+                              {analytics.by_state[s]}
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
+          )}
+          </>
           )}
 
           <div className="mt-10 flex items-center justify-between">
