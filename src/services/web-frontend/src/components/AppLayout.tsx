@@ -290,7 +290,7 @@ export function AppLayout() {
         </button>
       </div>
       {menuOpen && (
-        <div className="ledger-grid fixed inset-x-0 top-[52px] z-20 flex flex-col bg-ink-900 pb-2 shadow-lift lg:hidden">
+        <div className="ledger-grid fixed inset-x-0 top-[52px] z-20 flex max-h-[calc(100dvh-52px)] flex-col overflow-y-auto bg-ink-900 pb-2 shadow-lift lg:hidden">
           {nav}
           {userCard}
         </div>

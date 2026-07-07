@@ -110,8 +110,8 @@ describe('ValuationsPage bulk operations', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText('Select Acme Corp'));
-    await user.click(screen.getByLabelText('Select Beta LLC'));
+    await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
+    await user.click(screen.getAllByLabelText('Select Beta LLC')[0]!);
     expect(screen.getByText('2 selected')).toBeInTheDocument();
 
     // default action is "Set state"; pick the target state and apply
@@ -135,7 +135,7 @@ describe('ValuationsPage bulk operations', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText('Select Acme Corp'));
+    await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
     await user.selectOptions(screen.getByLabelText('Bulk action'), 'assign_reviewer');
     await user.click(screen.getByRole('button', { name: 'Apply' }));
 
@@ -168,7 +168,7 @@ describe('ValuationsPage bulk operations', () => {
     globalThis.URL.revokeObjectURL = vi.fn();
     renderPage();
 
-    await user.click(await screen.findByLabelText('Select Acme Corp'));
+    await user.click((await screen.findAllByLabelText('Select Acme Corp'))[0]!);
     await user.click(screen.getByRole('button', { name: 'Export selected CSV' }));
 
     await waitFor(() => {

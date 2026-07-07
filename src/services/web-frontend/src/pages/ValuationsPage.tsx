@@ -485,8 +485,57 @@ export function ValuationsPage() {
         </div>
       )}
 
+      {/* Mobile / tablet-portrait: card list (improvement 7) — table below md is unusable */}
       {data && data.valuations.length > 0 && (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <ul className="mt-6 space-y-3 md:hidden" aria-label="Valuations">
+          {data.valuations.map((v) => (
+            <li key={v.id}>
+              <div
+                onClick={() => navigate(`/valuations/${v.id}`)}
+                className="cursor-pointer rounded-lg border border-paper-300 bg-white p-4 shadow-card transition-shadow active:shadow-lift"
+              >
+                <div className="flex items-start gap-3">
+                  {ops && (
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${v.company_name}`}
+                      className="mt-1 h-5 w-5 shrink-0 accent-bond-600"
+                      checked={selected.has(v.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleSelected(v.id)}
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="truncate font-display text-[1.05rem] font-semibold text-ink-900">
+                        {v.company_name}
+                      </span>
+                      <span className="tnum shrink-0 text-xs text-ink-400">#{v.number ?? '—'}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <KindBadge kind={v.kind} />
+                      <StateBadge state={v.state} />
+                      {v.waiting_on_client && (
+                        <span className="text-xs font-medium text-amber-700">Waiting on client</span>
+                      )}
+                      {ops && v.paid_status === 'unpaid' && (
+                        <span className="text-xs font-semibold text-red-600">Unpaid</span>
+                      )}
+                    </div>
+                    <div className="tnum mt-2 text-xs text-ink-400">
+                      Created {formatDate(v.created_at)}
+                      {v.due_date && <> · due {formatDate(v.due_date)}</>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {data && data.valuations.length > 0 && (
+        <div className="mt-6 hidden overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card md:block">
           <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-paper-300 text-left">
@@ -495,6 +544,7 @@ export function ValuationsPage() {
                     <input
                       type="checkbox"
                       aria-label="Select all on page"
+                      className="h-4 w-4 accent-bond-600"
                       checked={allOnPageSelected}
                       onChange={() =>
                         setSelected((prev) => {
@@ -528,6 +578,7 @@ export function ValuationsPage() {
                       <input
                         type="checkbox"
                         aria-label={`Select ${v.company_name}`}
+                        className="h-4 w-4 accent-bond-600"
                         checked={selected.has(v.id)}
                         onChange={() => toggleSelected(v.id)}
                       />
