@@ -42,23 +42,36 @@ export const ALLOWED_TAGS: ReadonlySet<string> = new Set([
   'th',
   'td',
   'blockquote',
+  'a',
 ]);
 
 /**
  * Reduces arbitrary editor HTML to the whitelist: script/style bodies are
- * removed outright, allowed tags are kept with ALL attributes stripped,
+ * removed outright, allowed tags are kept with all attributes stripped —
+ * except <a>, which keeps a validated http(s)/mailto href (gap 9) —
  * anything else is dropped (its text content survives).
  */
 export function sanitizeHtml(html: string): string {
   return html
     .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (_m, close: string, name: string) => {
-      const tag = name.toLowerCase();
-      if (!ALLOWED_TAGS.has(tag)) return '';
-      if (tag === 'br') return '<br>';
-      return `<${close}${tag}>`;
-    })
+    .replace(
+      /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g,
+      (_m, close: string, name: string, attrs: string) => {
+        const tag = name.toLowerCase();
+        if (!ALLOWED_TAGS.has(tag)) return '';
+        if (tag === 'br') return '<br>';
+        if (tag === 'a' && !close) {
+          const href = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs);
+          const url = (href?.[1] ?? href?.[2] ?? href?.[3] ?? '').trim();
+          if (/^(https?:\/\/|mailto:)/i.test(url)) {
+            return `<a href="${url.replace(/"/g, '&quot;')}">`;
+          }
+          return '<a>';
+        }
+        return `<${close}${tag}>`;
+      },
+    )
     .replace(/<[^a-zA-Z/!][^>]*>/g, '');
 }
 

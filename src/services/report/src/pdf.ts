@@ -181,6 +181,11 @@ export function htmlToBlocks(html: string): Block[] {
       case 'u':
         underline = Math.max(0, underline + (closing ? -1 : 1));
         break;
+      // Links (gap 9) render as underlined text — the href itself is not
+      // reproduced; a printed report can't follow it anyway.
+      case 'a':
+        underline = Math.max(0, underline + (closing ? -1 : 1));
+        break;
       case 'ul':
       case 'ol':
         if (closing) {

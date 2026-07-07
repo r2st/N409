@@ -133,3 +133,29 @@ describe('unread markers (gap 4)', () => {
     expect(calls.some((u) => u.includes('unread=true'))).toBe(true);
   });
 });
+
+describe('worklist quick actions + partner badge (gap 10)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('rows carry Docs/Report quick links and a Partner chip', async () => {
+    mockApi([{ ...row, partner_id: '01BX5ZZKBKACTAV9WEVGEMMVS0' }]);
+    render(
+      <MemoryRouter>
+        <ValuationsPage />
+      </MemoryRouter>,
+    );
+    await screen.findAllByText('Dotted Co');
+    expect(screen.getByLabelText('Documents of Dotted Co')).toHaveAttribute(
+      'href',
+      `/valuations/${VAL_A}/documents`,
+    );
+    expect(screen.getByLabelText('Report of Dotted Co')).toHaveAttribute(
+      'href',
+      `/valuations/${VAL_A}/report`,
+    );
+    // partner chip on both the table row and the mobile card
+    expect(screen.getAllByText('Partner').length).toBeGreaterThanOrEqual(2);
+  });
+});

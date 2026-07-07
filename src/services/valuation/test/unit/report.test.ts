@@ -22,7 +22,8 @@ describe('sanitizeHtml', () => {
   it('drops non-whitelisted tags but keeps their text', () => {
     expect(sanitizeHtml('<div><span>text</span></div>')).toBe('text');
     expect(sanitizeHtml('<img src=x onerror=alert(1)>after')).toBe('after');
-    expect(sanitizeHtml('<a href="javascript:x">link</a>')).toBe('link');
+    // links are whitelisted since gap 9 — unsafe schemes lose only the href
+    expect(sanitizeHtml('<a href="javascript:x">link</a>')).toBe('<a>link</a>');
     expect(sanitizeHtml('<iframe src="https://evil.example"></iframe>')).toBe('');
   });
 

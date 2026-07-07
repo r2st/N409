@@ -537,6 +537,11 @@ export function ValuationsPage() {
                       {ops && v.paid_status === 'unpaid' && (
                         <span className="text-xs font-semibold text-red-600">Unpaid</span>
                       )}
+                      {ops && v.partner_id && (
+                        <span className="rounded-full bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-500 ring-1 ring-ink-200 ring-inset">
+                          Partner
+                        </span>
+                      )}
                     </div>
                     <div className="tnum mt-2 text-xs text-ink-400">
                       Created {formatDate(v.created_at)}
@@ -580,6 +585,7 @@ export function ValuationsPage() {
                 <SortableTh column="created_at" label="Created" sortParam={sortParam} onSort={onSort} />
                 <SortableTh column="due_date" label="Due" sortParam={sortParam} onSort={onSort} />
                 {ops && <SortableTh column="paid_status" label="Paid" sortParam={sortParam} onSort={onSort} />}
+                <th className="overline px-4 py-3 font-semibold text-ink-400" aria-label="Quick actions" />
               </tr>
             </thead>
             <tbody>
@@ -611,6 +617,11 @@ export function ValuationsPage() {
                         />
                       )}
                       {v.company_name}
+                      {ops && v.partner_id && (
+                        <span className="rounded-full bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-500 ring-1 ring-ink-200 ring-inset">
+                          Partner
+                        </span>
+                      )}
                     </div>
                     {v.waiting_on_client && (
                       <div className="mt-0.5 text-xs font-medium text-amber-700">Waiting on client</div>
@@ -631,6 +642,25 @@ export function ValuationsPage() {
                       )}
                     </td>
                   )}
+                  {/* Quick actions (gap 10) — jump straight to a tab without opening the overview */}
+                  <td className="px-4 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-3 text-xs font-semibold">
+                      <Link
+                        to={`/valuations/${v.id}/documents`}
+                        aria-label={`Documents of ${v.company_name}`}
+                        className="text-bond-600 hover:text-bond-700"
+                      >
+                        Docs
+                      </Link>
+                      <Link
+                        to={`/valuations/${v.id}/report`}
+                        aria-label={`Report of ${v.company_name}`}
+                        className="text-bond-600 hover:text-bond-700"
+                      >
+                        Report
+                      </Link>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

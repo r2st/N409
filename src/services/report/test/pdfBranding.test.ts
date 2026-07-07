@@ -65,3 +65,20 @@ describe('renderReportPdf branding', () => {
     expect(extractText(pdf)).not.toContain('Prepared in partnership');
   });
 });
+
+describe('link rendering (gap 9)', () => {
+  it('renders anchor text underlined in the PDF', async () => {
+    const pdf = await renderReportPdf(
+      {
+        ...BASE,
+        sections: [
+          { heading: 'Refs', html: '<p>See <a href="https://ex.com/x">the data room</a> for detail.</p>' },
+        ],
+      },
+      { compress: false },
+    );
+    const text = extractText(pdf);
+    expect(text).toContain('the data room');
+    expect(text).not.toContain('https://ex.com/x');
+  });
+});
