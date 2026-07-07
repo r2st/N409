@@ -83,6 +83,7 @@ export function AdminUsersPage() {
 
   const q = params.get('q') ?? '';
   const role = params.get('role') ?? '';
+  const showDeleted = params.get('deleted') === '1';
   const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
 
   const load = useCallback(() => {
@@ -90,10 +91,11 @@ export function AdminUsersPage() {
     const query = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) });
     if (q) query.set('q', q);
     if (role) query.set('role', role);
+    if (showDeleted) query.set('include_deleted', 'true');
     api<UserList>(`/users?${query}`)
       .then(setData)
       .catch(() => setError('Could not load users.'));
-  }, [q, role, page]);
+  }, [q, role, showDeleted, page]);
 
   useEffect(() => {
     load();
@@ -199,6 +201,28 @@ export function AdminUsersPage() {
     }
   };
 
+  const restore = async (u: AdminUser) => {
+    try {
+      await api(`/users/${u.id}/restore`, { method: 'POST' });
+      load();
+      // Deactivation dropped their roles — take the admin straight to the
+      // editor so the account doesn't come back scoped to nothing.
+      setEditorError(null);
+      setEditor({
+        mode: 'edit',
+        id: u.id,
+        email: u.email,
+        password: '',
+        first_name: u.first_name ?? '',
+        last_name: u.last_name ?? '',
+        partner_id: u.partner_id ?? '',
+        roles: new Set(['valuation_user']),
+      });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not restore the user.');
+    }
+  };
+
   const resendInvite = async (i: Invitation) => {
     try {
       await api(`/users/invitations/${i.id}/resend`, { method: 'POST' });
@@ -301,6 +325,15 @@ export function AdminUsersPage() {
             </option>
           ))}
         </Select>
+        <label className="flex cursor-pointer items-center gap-1.5 self-center text-sm text-ink-700">
+          <input
+            type="checkbox"
+            checked={showDeleted}
+            onChange={(e) => setFilter('deleted', e.target.checked ? '1' : '')}
+            className="accent-bond-600"
+          />
+          Show deactivated
+        </label>
         <button type="submit" hidden />
       </form>
 
@@ -485,9 +518,19 @@ export function AdminUsersPage() {
             </thead>
             <tbody>
               {data.users.map((u) => (
-                <tr key={u.id} className="border-b border-paper-200 last:border-0">
+                <tr
+                  key={u.id}
+                  className={`border-b border-paper-200 last:border-0 ${u.deleted_at ? 'opacity-60' : ''}`}
+                >
                   <td className="px-5 py-3.5">
-                    <div className="font-semibold text-ink-900">{displayName(u)}</div>
+                    <div className="font-semibold text-ink-900">
+                      {displayName(u)}
+                      {u.deleted_at && (
+                        <span className="ml-2 rounded-full bg-paper-200 px-2 py-0.5 text-[0.65rem] font-semibold text-ink-500 ring-1 ring-ink-200 ring-inset">
+                          Deactivated
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-ink-400">{u.email}</div>
                   </td>
                   <td className="px-5 py-3.5">
@@ -507,19 +550,30 @@ export function AdminUsersPage() {
                   <td className="tnum px-5 py-3.5 text-ink-600">{formatDate(u.created_at)}</td>
                   <td className="px-5 py-3.5">
                     <div className="flex gap-3 text-xs font-semibold">
-                      <button
-                        onClick={() => openEdit(u)}
-                        className="cursor-pointer text-bond-600 hover:text-bond-700"
-                      >
-                        Edit
-                      </button>
-                      {u.id !== user?.id && (
+                      {u.deleted_at ? (
                         <button
-                          onClick={() => remove(u)}
-                          className="cursor-pointer text-red-600 hover:text-red-700"
+                          onClick={() => restore(u)}
+                          className="cursor-pointer text-bond-600 hover:text-bond-700"
                         >
-                          Deactivate
+                          Restore
                         </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => openEdit(u)}
+                            className="cursor-pointer text-bond-600 hover:text-bond-700"
+                          >
+                            Edit
+                          </button>
+                          {u.id !== user?.id && (
+                            <button
+                              onClick={() => remove(u)}
+                              className="cursor-pointer text-red-600 hover:text-red-700"
+                            >
+                              Deactivate
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </td>

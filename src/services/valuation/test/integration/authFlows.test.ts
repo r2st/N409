@@ -337,4 +337,46 @@ describe.skipIf(!dbUp)('password reset + invitations (P0 #3 / feature #9)', () =
       expect(invitations[0]).toHaveProperty('invited_by_email');
     });
   });
+
+  describe('restore (feature #9 — reactivate deactivated accounts)', () => {
+    it('restores a deactivated user so they can sign in again', async () => {
+      const target = await seedUser(ctx, { roles: ['valuation_user'] });
+      const del = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/users/${target.id}`,
+        headers: authHeader(admin.token),
+      });
+      expect(del.statusCode).toBe(204);
+      expect((await login(ctx, target.email, 'test-password-123')).statusCode).toBe(401);
+
+      const restored = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/users/${target.id}/restore`,
+        headers: authHeader(admin.token),
+      });
+      expect(restored.statusCode).toBe(200);
+      expect(restored.json().user.deleted_at).toBeNull();
+      // Deactivation dropped the roles; restore intentionally leaves them
+      // empty for the admin to re-assign.
+      expect(restored.json().user.password_digest).toBeUndefined();
+      expect((await login(ctx, target.email, 'test-password-123')).statusCode).toBe(200);
+    });
+
+    it('404s for active users and requires a user admin', async () => {
+      const active = await seedUser(ctx, { roles: ['valuation_user'] });
+      const notDeleted = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/users/${active.id}/restore`,
+        headers: authHeader(admin.token),
+      });
+      expect(notDeleted.statusCode).toBe(404);
+
+      const forbidden = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/users/${active.id}/restore`,
+        headers: authHeader(client.token),
+      });
+      expect(forbidden.statusCode).toBe(403);
+    });
+  });
 });

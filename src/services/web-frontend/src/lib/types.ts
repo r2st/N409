@@ -344,6 +344,14 @@ export interface PaymentQuote {
   configured: boolean;
 }
 
+// ── P1 #6 — Review workflow ──────────────────────────────────────────────────
+
+/** A valuation awaiting review, with signature rollups for publish gating. */
+export interface ReviewQueueItem extends Valuation {
+  signed_main: boolean;
+  signed_second: boolean;
+}
+
 export interface BulkResult {
   results: Array<{ id: string; ok: boolean; error?: string; state?: ValuationState }>;
   succeeded: number;

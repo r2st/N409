@@ -29,6 +29,7 @@ const EVENT_LABELS: Record<string, string> = {
   valuation_updated: 'Details updated',
   state_changed: 'State changed',
   comment_added: 'Comment added',
+  review_decision: 'Review decision',
   email_received: 'Email received',
   valuation_cloned: 'Cloned from another valuation',
   overwrite_applied: 'Override applied',
@@ -265,6 +266,16 @@ export function ValuationDetailPage() {
                 </div>
                 {ev.type === 'state_changed' && ev.payload && (
                   <div className="mt-0.5 text-xs text-ink-600">
+                    {String((ev.payload as { from?: string }).from ?? '')} →{' '}
+                    {String((ev.payload as { to?: string }).to ?? '')}
+                  </div>
+                )}
+                {ev.type === 'review_decision' && ev.payload && (
+                  <div className="mt-0.5 text-xs text-ink-600">
+                    {(ev.payload as { decision?: string }).decision === 'approve'
+                      ? 'Approved'
+                      : 'Changes requested'}
+                    {' · '}
                     {String((ev.payload as { from?: string }).from ?? '')} →{' '}
                     {String((ev.payload as { to?: string }).to ?? '')}
                   </div>

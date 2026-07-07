@@ -14,6 +14,7 @@ import {
   listUserOptions,
   listUsers,
   renamePartner,
+  restoreUser,
   softDeleteUser,
   type AdminUserRow,
 } from '../repos/adminUsers.js';
@@ -310,6 +311,18 @@ export function registerAdminUserRoutes(
     const deleted = await softDeleteUser(deps.pool, id);
     if (!deleted) throw problems.notFound();
     return reply.status(204).send();
+  });
+
+  // Reactivate a deactivated account (feature #9). Roles were dropped on
+  // deactivation, so the admin re-assigns them via PATCH afterwards.
+  app.post('/api/v1/users/:id/restore', { preHandler: app.authenticate }, async (req) => {
+    requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const restored = await restoreUser(deps.pool, id);
+    if (!restored) throw problems.notFound('No deactivated user with this id');
+    const user = await findUserById(deps.pool, id);
+    return { user: { ...user, password_digest: undefined } };
   });
 
   // ── Partners (pickers + creation for the admin console) ───────────────────

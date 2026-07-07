@@ -113,6 +113,19 @@ export async function softDeleteUser(pool: pg.Pool, id: string): Promise<boolean
   });
 }
 
+/**
+ * Reactivate a soft-deleted user (feature #9). Deactivation dropped their
+ * roles, so the restored account comes back role-less — the admin re-assigns
+ * roles from the console before the user can see anything.
+ */
+export async function restoreUser(pool: pg.Pool, id: string): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    'UPDATE users SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL',
+    [id],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 // ── Partners (pickers + admin creation) ──────────────────────────────────────
 
 export interface PartnerRow {

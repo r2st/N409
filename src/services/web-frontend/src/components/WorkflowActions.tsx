@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
-import { STATE_LABELS } from '../lib/format';
-import type { Valuation, ValuationState } from '../lib/types';
-import { Button, ErrorNote, TextInput } from './ui';
+import { displayName, STATE_LABELS } from '../lib/format';
+import type { UserOption, Valuation, ValuationState } from '../lib/types';
+import { Button, ErrorNote, Select } from './ui';
 
 /**
  * Workflow engine controls (M4) — auto-advance, restart, reassign. Rendered
@@ -31,6 +31,13 @@ export function WorkflowActions({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reviewerId, setReviewerId] = useState(valuation.assigned_reviewer_id ?? '');
+  const [options, setOptions] = useState<UserOption[]>([]);
+
+  useEffect(() => {
+    api<{ options: UserOption[] }>('/users/options?group=ops')
+      .then((res) => setOptions(res.options))
+      .catch(() => {});
+  }, []);
 
   const next = AUTO_ADVANCE[valuation.state];
   const canRestart = valuation.state !== 'published' && valuation.state !== 'started';
@@ -63,16 +70,23 @@ export function WorkflowActions({
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <div className="w-72">
           <label className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">Assigned reviewer</label>
-          <TextInput
+          <Select
+            aria-label="Assigned reviewer"
             value={reviewerId}
             onChange={(e) => setReviewerId(e.target.value)}
-            placeholder="Reviewer user id (blank to unassign)"
-          />
+          >
+            <option value="">Unassigned</option>
+            {options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {displayName(o)}
+              </option>
+            ))}
+          </Select>
         </div>
         <Button
           variant="secondary"
-          disabled={busy || (reviewerId.trim() || null) === valuation.assigned_reviewer_id}
-          onClick={() => void run('reassign', { reviewer_id: reviewerId.trim() || null })}
+          disabled={busy || (reviewerId || null) === valuation.assigned_reviewer_id}
+          onClick={() => void run('reassign', { reviewer_id: reviewerId || null })}
         >
           Reassign
         </Button>
