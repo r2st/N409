@@ -158,9 +158,14 @@ export function PartnerPortalPage() {
       {/* API tokens — partner org admins only */}
       {canMint && partnerId && (
         <section className="mt-10 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-          <h2 className="overline mb-1 text-ink-400">API tokens</h2>
+          <div className="mb-1 flex items-center justify-between">
+            <h2 className="overline text-ink-400">API tokens</h2>
+            <Link to="/partner/api-docs" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
+              API documentation →
+            </Link>
+          </div>
           <p className="text-sm text-ink-400">
-            Integrate your systems with the N409 API. Send the token as{' '}
+            Integrate your systems with the N409 partner API. Send the token as{' '}
             <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
               Authorization: Bearer …
             </code>

@@ -72,13 +72,13 @@ export async function revokeApiToken(pool: pg.Pool, id: string): Promise<boolean
 export async function resolveApiToken(
   pool: pg.Pool,
   secret: string,
-): Promise<{ tokenId: string; userId: string } | null> {
-  const { rows } = await pool.query<{ id: string; created_by: string }>(
+): Promise<{ tokenId: string; userId: string; partnerId: string } | null> {
+  const { rows } = await pool.query<{ id: string; created_by: string; partner_id: string }>(
     `UPDATE api_tokens SET last_used_at = now()
      WHERE token_hash = $1 AND revoked_at IS NULL
-     RETURNING id, created_by`,
+     RETURNING id, created_by, partner_id`,
     [hashToken(secret)],
   );
   const row = rows[0];
-  return row ? { tokenId: row.id, userId: row.created_by } : null;
+  return row ? { tokenId: row.id, userId: row.created_by, partnerId: row.partner_id } : null;
 }

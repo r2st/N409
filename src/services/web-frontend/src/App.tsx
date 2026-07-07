@@ -32,6 +32,7 @@ import { AdminPartnersPage } from './pages/AdminPartnersPage';
 import { PartnerDetailPage } from './pages/PartnerDetailPage';
 import { EmailOutboxPage } from './pages/EmailOutboxPage';
 import { PartnerPortalPage } from './pages/PartnerPortalPage';
+import { ApiDocsPage } from './pages/ApiDocsPage';
 import { SearchPage } from './pages/SearchPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
@@ -112,6 +113,7 @@ export default function App() {
         <Route element={<RequireRole allow={isPartner} />}>
           <Route path="/partner" element={<PartnerPortalPage />} />
         </Route>
+        <Route path="/partner/api-docs" element={<ApiDocsPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/help" element={<HelpPage />} />

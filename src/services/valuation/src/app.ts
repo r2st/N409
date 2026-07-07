@@ -38,12 +38,16 @@ import { registerSupportRoutes } from './routes/support.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerHelpRoutes } from './routes/help.js';
 import { registerEvidenceRoutes } from './routes/evidence.js';
+import { registerPartnerApiRoutes } from './routes/partnerApi.js';
+import type { FixedWindowRateLimiter } from './plugins/rateLimit.js';
 
 export interface AppDeps {
   config: Config;
   pool: pg.Pool;
   /** injectable for tests */
   google?: GoogleOidc;
+  /** injectable for tests — partner API per-key rate limiter */
+  partnerApiLimiter?: FixedWindowRateLimiter;
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
@@ -136,6 +140,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerHelpRoutes(app, { pool });
   // Beyond-parity #1 — audit-defense evidence bundle (final-status §4.4)
   registerEvidenceRoutes(app, { pool });
+  // Improvement 6 — programmatic partner API (API-key auth + per-key rate limit)
+  registerPartnerApiRoutes(app, {
+    pool,
+    documentsDir: config.DOCUMENTS_DIR,
+    limiter: deps.partnerApiLimiter,
+  });
   // P0 — outside-world integrations (remaining-gaps §6): Stripe + signatures
   registerPaymentRoutes(app, {
     pool,

@@ -62,7 +62,10 @@ export interface TestApp {
   teardown: () => Promise<void>;
 }
 
-export async function setupTestApp(env: Record<string, string> = {}): Promise<TestApp> {
+export async function setupTestApp(
+  env: Record<string, string> = {},
+  deps: Partial<Parameters<typeof buildApp>[0]> = {},
+): Promise<TestApp> {
   const db = await setupTestDb();
   const config = loadConfig({
     ...process.env,
@@ -71,7 +74,7 @@ export async function setupTestApp(env: Record<string, string> = {}): Promise<Te
     LOG_LEVEL: 'silent',
     ...env,
   });
-  const app = buildApp({ config, pool: db.pool });
+  const app = buildApp({ config, pool: db.pool, ...deps });
   await app.ready();
   return {
     app,

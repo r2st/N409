@@ -47,6 +47,44 @@ export function safeFilename(name: string): string {
   return (base || 'upload').slice(0, 200);
 }
 
+/**
+ * Writes the blob to disk and records the document row + event. Shared by the
+ * session upload route below and the partner API (improvement 6).
+ */
+export async function storeDocument(
+  pool: pg.Pool,
+  documentsDir: string,
+  valuation: ValuationRow,
+  input: { kind: DocumentKind; filename: string; contentType: string; buffer: Buffer },
+  actor: EventActor,
+  uploadedBy: string,
+): Promise<DocumentRow> {
+  const filename = safeFilename(input.filename);
+  const sha256 = createHash('sha256').update(input.buffer).digest('hex');
+  const dir = path.join(documentsDir, valuation.id);
+  await mkdir(dir, { recursive: true });
+
+  // Storage path is <valuationId>/<sha-prefix>__<filename>; identical content
+  // re-uploaded under the same name simply overwrites the same blob.
+  const storageRel = path.join(valuation.id, `${sha256.slice(0, 16)}__${filename}`);
+  await writeFile(path.join(documentsDir, storageRel), input.buffer);
+
+  return createDocument(
+    pool,
+    {
+      valuationId: valuation.id,
+      kind: input.kind,
+      filename,
+      contentType: input.contentType || 'application/octet-stream',
+      sizeBytes: input.buffer.length,
+      sha256,
+      storagePath: storageRel,
+      uploadedBy,
+    },
+    actor,
+  );
+}
+
 export function registerDocumentRoutes(
   app: FastifyInstance,
   deps: { pool: pg.Pool; documentsDir: string },
@@ -76,29 +114,13 @@ export function registerDocumentRoutes(
     }
     if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
 
-    const filename = safeFilename(file.filename);
-    const sha256 = createHash('sha256').update(buffer).digest('hex');
-    const dir = path.join(deps.documentsDir, valuation.id);
-    await mkdir(dir, { recursive: true });
-
-    // Storage path is <valuationId>/<sha-prefix>__<filename>; identical content
-    // re-uploaded under the same name simply overwrites the same blob.
-    const storageRel = path.join(valuation.id, `${sha256.slice(0, 16)}__${filename}`);
-    await writeFile(path.join(deps.documentsDir, storageRel), buffer);
-
-    const document = await createDocument(
+    const document = await storeDocument(
       deps.pool,
-      {
-        valuationId: valuation.id,
-        kind,
-        filename,
-        contentType: file.mimetype || 'application/octet-stream',
-        sizeBytes: buffer.length,
-        sha256,
-        storagePath: storageRel,
-        uploadedBy: principal.id,
-      },
+      deps.documentsDir,
+      valuation,
+      { kind, filename: file.filename, contentType: file.mimetype, buffer },
       actorFor(principal),
+      principal.id,
     );
     return reply.status(201).send({ document });
   });

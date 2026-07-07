@@ -6,9 +6,17 @@ import type { Principal } from '../auth/rbac.js';
 import { findUserById } from '../repos/users.js';
 import { resolveApiToken, TOKEN_SCHEME } from '../repos/apiTokens.js';
 
+/** How the request authenticated — the partner API accepts api_token only. */
+export interface ApiTokenContext {
+  tokenId: string;
+  partnerId: string;
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
     principal: Principal | null;
+    /** Set when the bearer was a partner API token (n409_pat_…). */
+    apiToken: ApiTokenContext | null;
   }
   interface FastifyInstance {
     authenticate: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
@@ -23,6 +31,7 @@ declare module 'fastify' {
  */
 export function registerAuth(app: FastifyInstance, deps: { pool: pg.Pool; jwt: JwtConfig }): void {
   app.decorateRequest('principal', null);
+  app.decorateRequest('apiToken', null);
 
   app.decorate('authenticate', async (req: FastifyRequest, _reply: FastifyReply) => {
     const header = req.headers.authorization;
@@ -34,6 +43,7 @@ export function registerAuth(app: FastifyInstance, deps: { pool: pg.Pool; jwt: J
       const resolved = await resolveApiToken(deps.pool, bearer);
       if (!resolved) throw problems.unauthorized('Invalid or revoked API token');
       sub = resolved.userId;
+      req.apiToken = { tokenId: resolved.tokenId, partnerId: resolved.partnerId };
     } else {
       try {
         ({ sub } = await verifySession(bearer, deps.jwt));
