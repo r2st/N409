@@ -73,13 +73,19 @@ export function registerAuthRoutes(
     return { user: toPublicUser(user), token: await issueToken(user) };
   });
 
+  // Public: lets the SPA know which login methods to offer.
+  app.get('/api/v1/auth/providers', async () => ({
+    password: true,
+    google: Boolean(deps.google),
+  }));
+
   app.get('/api/v1/auth/google', async (_req, reply) => {
     if (!deps.google) throw problems.badRequest('Google SSO is not configured');
     const state = await signOidcState(deps.jwt);
     return reply.redirect(deps.google.authorizationUrl(state), 302);
   });
 
-  app.get('/api/v1/auth/google/callback', async (req) => {
+  app.get('/api/v1/auth/google/callback', async (req, reply) => {
     if (!deps.google) throw problems.badRequest('Google SSO is not configured');
     const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).safeParse(req.query);
     if (!query.success) throw problems.badRequest('Missing code/state');
@@ -94,7 +100,13 @@ export function registerAuthRoutes(
     if (!identity.emailVerified) throw problems.unauthorized('Google account email is not verified');
 
     const user = await upsertGoogleUser(deps.pool, identity);
-    return { user: toPublicUser(user), token: await issueToken(user) };
+    const token = await issueToken(user);
+    // Browsers land here from Google's redirect — hand the token to the SPA.
+    // API callers (no text/html Accept) keep the JSON contract.
+    if (req.headers.accept?.includes('text/html')) {
+      return reply.redirect(`/auth/google/complete#token=${encodeURIComponent(token)}`, 302);
+    }
+    return { user: toPublicUser(user), token };
   });
 
   app.get('/api/v1/auth/me', { preHandler: app.authenticate }, async (req) => {

@@ -1,0 +1,48 @@
+import { describe, expect, it } from 'vitest';
+import { editableFields, isOps, isPartner, scopeLabel } from '../src/lib/rbac';
+import type { User } from '../src/lib/types';
+
+const base: Omit<User, 'roles'> = {
+  id: 'u1',
+  email: 'u@example.com',
+  first_name: null,
+  last_name: null,
+  verified: true,
+  sso_provider: null,
+  partner_id: null,
+};
+
+const user = (roles: string[], id = 'u1'): User => ({ ...base, id, roles });
+
+describe('rbac (mirrors valuation service policy)', () => {
+  it('classifies ops, partner and client roles', () => {
+    expect(isOps(user(['admin']))).toBe(true);
+    expect(isOps(user(['reviewer']))).toBe(true);
+    expect(isOps(user(['valuation_user']))).toBe(false);
+    expect(isPartner(user(['partner']))).toBe(true);
+    // ops trumps partner if both are present
+    expect(isPartner(user(['partner', 'admin']))).toBe(false);
+  });
+
+  it('gives ops the full patchable field set', () => {
+    const fields = editableFields(user(['admin']), { user_id: 'someone-else' });
+    expect(fields.has('state')).toBe(true);
+    expect(fields.has('paid_status')).toBe(true);
+  });
+
+  it('limits owners to cosmetic fields on their own valuation', () => {
+    const fields = editableFields(user(['valuation_user']), { user_id: 'u1' });
+    expect([...fields].sort()).toEqual(['company_name', 'qsbs_attestation', 'service_name']);
+  });
+
+  it('gives non-owners nothing', () => {
+    expect(editableFields(user(['valuation_user']), { user_id: 'other' }).size).toBe(0);
+    expect(editableFields(null, { user_id: 'u1' }).size).toBe(0);
+  });
+
+  it('describes the data scope per role', () => {
+    expect(scopeLabel(user(['admin']))).toMatch(/All valuations/);
+    expect(scopeLabel(user(['partner']))).toMatch(/partner/i);
+    expect(scopeLabel(user(['valuation_user']))).toMatch(/Your valuations/);
+  });
+});

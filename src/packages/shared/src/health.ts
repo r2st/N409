@@ -8,16 +8,24 @@ export type ReadinessCheck = () => Promise<void>;
  */
 export function registerHealth(
   app: FastifyInstance,
-  opts: { service: string; version?: string; checks?: Record<string, ReadinessCheck> },
+  opts: {
+    service: string;
+    version?: string;
+    checks?: Record<string, ReadinessCheck>;
+    /** Set false when the service serves its own / (e.g. the web SPA). */
+    rootRoute?: boolean;
+  },
 ): void {
   const startedAt = Date.now();
 
-  app.get('/', async () => ({
-    service: opts.service,
-    version: opts.version ?? '0.1.0',
-    status: 'ok',
-    endpoints: ['/health', '/ready'],
-  }));
+  if (opts.rootRoute !== false) {
+    app.get('/', async () => ({
+      service: opts.service,
+      version: opts.version ?? '0.1.0',
+      status: 'ok',
+      endpoints: ['/health', '/ready'],
+    }));
+  }
 
   app.get('/health', async () => ({
     status: 'ok',

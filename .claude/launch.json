@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "n409-web",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["src/services/web/dist/index.js"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+@import '@fontsource-variable/public-sans';
+@import '@fontsource-variable/fraunces';
+@import 'tailwindcss';
+
+/*
+ * N409 — "institutional ledger" theme.
+ * Deep midnight-ink navigation, warm paper content, bond-green accent,
+ * a single brass detail in the mark. Fraunces for display, Public Sans body.
+ */
+@theme {
+  --font-sans: 'Public Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces Variable', Georgia, 'Times New Roman', serif;
+
+  /* ink — the sidebar / brand darks */
+  --color-ink-950: #070b14;
+  --color-ink-900: #0b1220;
+  --color-ink-800: #131c30;
+  --color-ink-700: #1e2a45;
+  --color-ink-600: #2c3b5e;
+  --color-ink-400: #5d6c8f;
+  --color-ink-300: #8b97b3;
+  --color-ink-200: #b9c1d4;
+
+  /* paper — warm light surfaces */
+  --color-paper-50: #faf9f6;
+  --color-paper-100: #f5f3ee;
+  --color-paper-200: #eceae2;
+  --color-paper-300: #ddd9cc;
+
+  /* bond — accent green */
+  --color-bond-50: #edf7f2;
+  --color-bond-100: #d7eee2;
+  --color-bond-200: #aedcc6;
+  --color-bond-500: #12936f;
+  --color-bond-600: #0e7a5c;
+  --color-bond-700: #0a5f48;
+  --color-bond-800: #084a39;
+
+  /* brass — sparing premium detail */
+  --color-brass-300: #dfc98c;
+  --color-brass-400: #c9a54a;
+  --color-brass-500: #b08d35;
+
+  --shadow-card: 0 1px 2px rgb(11 18 32 / 0.05), 0 1px 3px rgb(11 18 32 / 0.06);
+  --shadow-lift: 0 4px 12px rgb(11 18 32 / 0.08), 0 1px 3px rgb(11 18 32 / 0.06);
+}
+
+html {
+  font-family: var(--font-sans);
+  background-color: var(--color-paper-100);
+  color: var(--color-ink-900);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Figures line up in tables and stat cards. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Small-caps section labels, a print-ledger detail. */
+.overline {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Subtle grid texture for the brand panel. */
+.ledger-grid {
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
