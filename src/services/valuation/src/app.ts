@@ -37,6 +37,7 @@ import { registerPackageRoutes } from './routes/packageView.js';
 import { registerSupportRoutes } from './routes/support.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerHelpRoutes } from './routes/help.js';
+import { registerEvidenceRoutes } from './routes/evidence.js';
 
 export interface AppDeps {
   config: Config;
@@ -133,6 +134,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAdminEventRoutes(app, { pool });
   // P2 #10 — help / knowledge base
   registerHelpRoutes(app, { pool });
+  // Beyond-parity #1 — audit-defense evidence bundle (final-status §4.4)
+  registerEvidenceRoutes(app, { pool });
   // P0 — outside-world integrations (remaining-gaps §6): Stripe + signatures
   registerPaymentRoutes(app, {
     pool,

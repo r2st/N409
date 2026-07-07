@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, apiDownload, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { editableFields, isOps } from '../lib/rbac';
 import { formatDate, formatDateTime, STATE_LABELS } from '../lib/format';
@@ -56,6 +56,7 @@ export function ValuationDetailPage() {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [cloning, setCloning] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [form, setForm] = useState({
     company_name: valuation.company_name,
     service_name: valuation.service_name ?? '',
@@ -123,6 +124,22 @@ export function ValuationDetailPage() {
     }
   };
 
+  const exportEvidence = async () => {
+    setExporting(true);
+    setSaveError(null);
+    try {
+      await apiDownload(
+        `/valuations/${valuation.id}/evidence-bundle`,
+        `evidence-bundle-${valuation.number ?? valuation.id}.zip`,
+        { method: 'POST' },
+      );
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : 'Could not export the evidence bundle.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
       <div className="space-y-8">
@@ -165,8 +182,18 @@ export function ValuationDetailPage() {
           </dl>
         </section>
 
-        {/* M3: clone / roll-forward */}
+        {/* M3: clone / roll-forward · evidence bundle (audit defense, ops-only) */}
         <div className="flex flex-wrap justify-end gap-2">
+          {ops && (
+            <Button
+              variant="secondary"
+              disabled={exporting}
+              onClick={() => void exportEvidence()}
+              title="Download the full audit trail — events, calculations, documents, signatures, AI provenance — as a ZIP"
+            >
+              {exporting ? 'Exporting…' : 'Export Evidence Bundle'}
+            </Button>
+          )}
           <Button variant="secondary" disabled={cloning} onClick={() => clone(false)}>
             {cloning ? 'Cloning…' : 'Clone'}
           </Button>

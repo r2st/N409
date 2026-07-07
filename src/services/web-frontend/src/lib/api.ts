@@ -80,12 +80,16 @@ export async function api<T>(
   return (await res.json()) as T;
 }
 
-/** Fetches a file with auth and triggers a browser download (CSV/PDF exports). */
-export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+/** Fetches a file with auth and triggers a browser download (CSV/PDF/ZIP exports). */
+export async function apiDownload(
+  path: string,
+  fallbackName: string,
+  init: { method?: 'GET' | 'POST' } = {},
+): Promise<void> {
   const headers = new Headers();
   const token = getToken();
   if (token) headers.set('authorization', `Bearer ${token}`);
-  const res = await fetch(`/api/v1${path}`, { headers });
+  const res = await fetch(`/api/v1${path}`, { method: init.method ?? 'GET', headers });
   if (!res.ok) {
     const problem: Problem = await res.json().catch(() => ({ status: res.status }));
     throw new ApiError(res.status, problem);

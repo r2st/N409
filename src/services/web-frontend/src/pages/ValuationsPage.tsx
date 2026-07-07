@@ -168,10 +168,11 @@ export function ValuationsPage() {
     setBulkBusy(true);
     setBulkNote(null);
     try {
-      const body: Record<string, unknown> = { ids: [...selected], action: bulkAction };
-      if (bulkAction === 'set_state') body.state = bulkState;
-      if (bulkAction === 'assign_reviewer') body.reviewer_id = bulkReviewer.trim() || null;
-      const result = await api<BulkResult>('/valuations/bulk', { method: 'POST', body });
+      const params: Record<string, unknown> = {};
+      if (bulkAction === 'set_state') params.state = bulkState;
+      if (bulkAction === 'assign_reviewer') params.reviewer_id = bulkReviewer.trim() || null;
+      const body = { action: bulkAction, valuation_ids: [...selected], params };
+      const result = await api<BulkResult>('/valuations/bulk-action', { method: 'POST', body });
       setBulkNote(
         result.failed === 0
           ? `Applied to ${result.succeeded} valuation${result.succeeded === 1 ? '' : 's'}.`
@@ -197,6 +198,17 @@ export function ValuationsPage() {
       await apiDownload(`/valuations/export?${q}`, `valuations.${format}`);
     } catch {
       setExportError('Export failed.');
+    }
+  };
+
+  // Bulk export (improvement 5): download summaries of exactly the checked rows.
+  const exportSelected = async (format: 'csv' | 'pdf') => {
+    setBulkNote(null);
+    try {
+      const q = new URLSearchParams({ ids: [...selected].join(','), format });
+      await apiDownload(`/valuations/export?${q}`, `valuations-selected.${format}`);
+    } catch {
+      setBulkNote('Export of selected valuations failed.');
     }
   };
 
@@ -403,14 +415,24 @@ export function ValuationsPage() {
       {ops && selected.size > 0 && (
         <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-bond-200 bg-bond-50 px-4 py-3">
           <span className="tnum text-sm font-semibold text-ink-800">{selected.size} selected</span>
-          <Select value={bulkAction} onChange={(e) => setBulkAction(e.target.value)} className="!w-auto">
+          <Select
+            aria-label="Bulk action"
+            value={bulkAction}
+            onChange={(e) => setBulkAction(e.target.value)}
+            className="!w-auto"
+          >
             <option value="set_state">Set state</option>
             <option value="assign_reviewer">Assign reviewer</option>
             <option value="advance">Auto-advance</option>
             <option value="restart">Restart</option>
           </Select>
           {bulkAction === 'set_state' && (
-            <Select value={bulkState} onChange={(e) => setBulkState(e.target.value)} className="!w-auto">
+            <Select
+              aria-label="Bulk target state"
+              value={bulkState}
+              onChange={(e) => setBulkState(e.target.value)}
+              className="!w-auto"
+            >
               {VALUATION_STATES.map((s) => (
                 <option key={s} value={s}>
                   {STATE_LABELS[s]}
@@ -420,6 +442,7 @@ export function ValuationsPage() {
           )}
           {bulkAction === 'assign_reviewer' && (
             <Select
+              aria-label="Bulk reviewer"
               value={bulkReviewer}
               onChange={(e) => setBulkReviewer(e.target.value)}
               className="!w-auto min-w-52"
@@ -434,6 +457,12 @@ export function ValuationsPage() {
           )}
           <Button disabled={bulkBusy} onClick={() => void applyBulk()}>
             {bulkBusy ? 'Applying…' : 'Apply'}
+          </Button>
+          <Button variant="secondary" onClick={() => void exportSelected('csv')}>
+            Export selected CSV
+          </Button>
+          <Button variant="secondary" onClick={() => void exportSelected('pdf')}>
+            Export selected PDF
           </Button>
           <Button variant="ghost" onClick={() => setSelected(new Set())}>
             Clear

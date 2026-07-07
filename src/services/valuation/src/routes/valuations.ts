@@ -68,6 +68,19 @@ export const ValuationFilterQuery = z.object({
   kind: z.enum(VALUATION_KINDS).optional(),
   group: z.enum(STATE_GROUP_KEYS as [StateGroup, ...StateGroup[]]).optional(),
   q: z.string().max(300).optional(),
+  // Comma-separated id list — lets the UI export exactly the checked rows.
+  // Non-ULID entries are dropped; scope still applies on top.
+  ids: z
+    .string()
+    .max(6000)
+    .transform((s) =>
+      s
+        .split(',')
+        .map((part) => part.trim().toUpperCase())
+        .filter((part) => isUlid(part))
+        .slice(0, 200),
+    )
+    .optional(),
   reviewer_id: z.string().optional(),
   partner_id: z.string().optional(),
   user_id: z.string().optional(),
@@ -89,6 +102,7 @@ export function toRepoFilters(f: z.infer<typeof ValuationFilterQuery>): Valuatio
     kind: f.kind,
     group: f.group,
     q: f.q || undefined,
+    ids: f.ids?.length ? f.ids : undefined,
     reviewerId: f.reviewer_id,
     partnerId: f.partner_id,
     userId: f.user_id,

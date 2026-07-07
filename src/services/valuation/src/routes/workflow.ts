@@ -27,6 +27,39 @@ const BulkBody = z.object({
   reviewer_id: z.string().nullable().optional(),
 });
 
+/**
+ * Canonical bulk contract (improvement 5):
+ * POST /valuations/bulk-action { action, valuation_ids, params }.
+ * Normalized into the same executor as the legacy /valuations/bulk shape.
+ */
+export const BulkActionBody = z.object({
+  action: z.enum(BULK_ACTIONS),
+  valuation_ids: z.array(z.string()).min(1).max(200),
+  params: z
+    .object({
+      state: z.enum(VALUATION_STATES).optional(),
+      reviewer_id: z.string().nullable().optional(),
+    })
+    .optional(),
+});
+
+export interface BulkInput {
+  ids: string[];
+  action: (typeof BULK_ACTIONS)[number];
+  state?: ValuationState;
+  reviewer_id?: string | null;
+}
+
+/** Maps the bulk-action contract onto the executor's input. Pure — unit tested. */
+export function toBulkInput(body: z.infer<typeof BulkActionBody>): BulkInput {
+  return {
+    ids: body.valuation_ids,
+    action: body.action,
+    state: body.params?.state,
+    reviewer_id: body.params?.reviewer_id,
+  };
+}
+
 export interface WorkflowDeps {
   pool: pg.Pool;
   transport?: EmailTransport;
@@ -107,12 +140,8 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     return { valuation: updated };
   });
 
-  app.post('/api/v1/valuations/bulk', { preHandler: app.authenticate }, async (req) => {
-    const principal = requirePrincipal(req);
-    requireOps(principal);
-    const parsed = BulkBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid bulk action', { errors: parsed.error.issues });
-    const { ids, action, state, reviewer_id } = parsed.data;
+  const executeBulk = async (principal: Principal, input: BulkInput) => {
+    const { ids, action, state, reviewer_id } = input;
 
     if (action === 'set_state' && !state) {
       throw problems.unprocessable('state is required for set_state');
@@ -170,5 +199,21 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
       }
     }
     return { results, succeeded: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
+  };
+
+  app.post('/api/v1/valuations/bulk', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    requireOps(principal);
+    const parsed = BulkBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid bulk action', { errors: parsed.error.issues });
+    return executeBulk(principal, parsed.data);
+  });
+
+  app.post('/api/v1/valuations/bulk-action', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    requireOps(principal);
+    const parsed = BulkActionBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid bulk action', { errors: parsed.error.issues });
+    return executeBulk(principal, toBulkInput(parsed.data));
   });
 }

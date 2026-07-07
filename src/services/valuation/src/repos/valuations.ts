@@ -127,6 +127,8 @@ export interface ValuationFilters {
   group?: StateGroup;
   /** Free search: exact ULID / engagement number / workflow id, else company-name substring. */
   q?: string;
+  /** Explicit id list — powers bulk export of a checkbox selection. */
+  ids?: string[];
   reviewerId?: string;
   partnerId?: string;
   userId?: string;
@@ -186,8 +188,9 @@ export interface ListFilters extends ValuationFilters {
 /**
  * Shared WHERE builder: RBAC scope + M3 advanced filters, all enforced in SQL.
  * `alias` prefixes column references when the query joins other tables.
+ * Exported for unit tests only.
  */
-function buildValuationWhere(
+export function buildValuationWhere(
   scope: ValuationScope,
   filters: ValuationFilters,
   alias = '',
@@ -201,6 +204,7 @@ function buildValuationWhere(
 
   if (scope.kind === 'partner') add('partner_id = ?', scope.partnerId);
   if (scope.kind === 'own') add('user_id = ?', scope.userId);
+  if (filters.ids?.length) add('id = ANY(?)', filters.ids);
   if (filters.state) add('state = ?', filters.state);
   else if (filters.group) add('state = ANY(?::valuation_state[])', [...STATE_GROUPS[filters.group]]);
   if (filters.kind) add('kind = ?', filters.kind);
