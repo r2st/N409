@@ -11,7 +11,14 @@ import { Button, ErrorNote, Spinner } from './ui';
  * M3 features 10 + 11 — per-valuation conversation (chat + threaded email)
  * and, for ops, internal sticky notes.
  */
-export function CommentsSection({ valuationId }: { valuationId: string }) {
+export function CommentsSection({
+  valuationId,
+  refreshKey = 0,
+}: {
+  valuationId: string;
+  /** Bump to re-fetch the thread (improvement 4 — live SSE comment pushes). */
+  refreshKey?: number;
+}) {
   const { user } = useAuth();
   const ops = isOps(user);
   const [comments, setComments] = useState<Comment[] | null>(null);
@@ -28,7 +35,7 @@ export function CommentsSection({ valuationId }: { valuationId: string }) {
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   const post = async (kind: 'chat' | 'note', body: string, reset: () => void) => {
     if (!body.trim()) return;

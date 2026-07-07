@@ -48,7 +48,7 @@ const EVENT_LABELS: Record<string, string> = {
 
 /** Overview tab — engagement facts, role-gated editing, workflow, funding, audit. */
 export function ValuationDetailPage() {
-  const { valuation, reload } = useWorkspace();
+  const { valuation, reload, commentTick } = useWorkspace();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [events, setEvents] = useState<ValuationEvent[] | null>(null);
@@ -274,8 +274,8 @@ export function ValuationDetailPage() {
           canEdit={ops || valuation.user_id === user?.id}
         />
 
-        {/* M3: client chat + sticky notes + threaded email */}
-        <CommentsSection valuationId={valuation.id} />
+        {/* M3: client chat + sticky notes + threaded email — live via SSE */}
+        <CommentsSection valuationId={valuation.id} refreshKey={commentTick} />
       </div>
 
       {/* Audit timeline */}

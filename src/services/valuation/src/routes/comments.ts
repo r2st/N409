@@ -24,6 +24,7 @@ import {
   findValuationByNumber,
   type ValuationRow,
 } from '../repos/valuations.js';
+import { createSupportMessage } from '../repos/support.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -189,11 +190,20 @@ export function registerCommentRoutes(app: FastifyInstance, deps: { pool: pg.Poo
       else if (ref.number) valuation = await findValuationByNumber(deps.pool, ref.number);
       if (!valuation) valuation = await findLatestValuationByOwnerEmail(deps.pool, email.from);
     }
-    if (!valuation)
-      throw problems.unprocessable('Could not match this email to a valuation', {
-        from: email.from,
-        subject: email.subject,
+    // Catch-all (gap 3): an unmatched email lands in the support inbox for
+    // manual routing instead of bouncing with a 422.
+    if (!valuation) {
+      const ticket = await createSupportMessage(deps.pool, {
+        userId: principal.id,
+        subject: `Unmatched inbound email: ${email.subject}`.slice(0, 300),
+        body:
+          `From: ${email.from}\n` +
+          (email.message_id ? `Message-Id: ${email.message_id}\n` : '') +
+          `\n${email.body}`,
+        pagePath: 'inbox:email',
       });
+      return reply.status(202).send({ matched: false, support_message_id: ticket.id });
+    }
 
     const { comment, created } = await createComment(
       deps.pool,

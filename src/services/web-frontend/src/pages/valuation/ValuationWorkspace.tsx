@@ -4,12 +4,35 @@ import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { REPORT_VISIBLE_STATES } from '../../lib/m2';
+import { useValuationStream, type Viewer } from '../../lib/realtime';
 import type { Valuation } from '../../lib/types';
 import { ErrorNote, KindBadge, Spinner, StateBadge } from '../../components/ui';
 
 export interface WorkspaceContext {
   valuation: Valuation;
   reload: () => Promise<void>;
+  /** Live co-viewers of this valuation (excluding the current user). */
+  viewers: Viewer[];
+  /** Bumps when a comment lands anywhere on this valuation (SSE). */
+  commentTick: number;
+}
+
+/** Improvement 4 — "X is viewing" presence badges (live via SSE). */
+export function PresenceBadges({ viewers }: { viewers: Viewer[] }) {
+  if (viewers.length === 0) return null;
+  return (
+    <span className="flex flex-wrap items-center gap-1.5" data-testid="presence-badges">
+      {viewers.map((v) => (
+        <span
+          key={v.user_id}
+          className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200 ring-inset"
+        >
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+          {v.name} is viewing
+        </span>
+      ))}
+    </span>
+  );
 }
 
 export function useWorkspace(): WorkspaceContext {
@@ -45,6 +68,7 @@ export function ValuationWorkspace() {
   const { user } = useAuth();
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { viewers, commentTick } = useValuationStream(id ?? '');
 
   const reload = useCallback(async () => {
     if (!id) return;
@@ -96,6 +120,7 @@ export function ValuationWorkspace() {
             Waiting on client
           </span>
         )}
+        <PresenceBadges viewers={viewers.filter((v) => v.user_id !== user?.id)} />
       </div>
       <p className="tnum mt-1.5 text-xs text-ink-400">Ref {valuation.id}</p>
 
@@ -119,7 +144,16 @@ export function ValuationWorkspace() {
       </nav>
 
       <div className="mt-8">
-        <Outlet context={{ valuation, reload } satisfies WorkspaceContext} />
+        <Outlet
+          context={
+            {
+              valuation,
+              reload,
+              viewers: viewers.filter((v) => v.user_id !== user?.id),
+              commentTick,
+            } satisfies WorkspaceContext
+          }
+        />
       </div>
     </div>
   );

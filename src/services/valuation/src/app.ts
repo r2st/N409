@@ -41,6 +41,8 @@ import { registerSupportRoutes } from './routes/support.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerHelpRoutes } from './routes/help.js';
 import { registerEvidenceRoutes } from './routes/evidence.js';
+import { registerStreamRoutes } from './routes/stream.js';
+import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
 import type { FixedWindowRateLimiter } from './plugins/rateLimit.js';
 
@@ -128,8 +130,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerOverwriteRoutes(app, { pool });
   registerWorkbookRoutes(app, { pool });
   registerReportRoutes(app, { pool });
+  // Improvement 4 — realtime collaboration: presence + live comment pushes
+  const hub = new ValuationHub();
+  registerStreamRoutes(app, { pool, hub });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
-  registerCommentRoutes(app, { pool });
+  registerCommentRoutes(app, { pool, hub });
   registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerApiTokenRoutes(app, { pool });
   registerOperationsRoutes(app, { pool });
