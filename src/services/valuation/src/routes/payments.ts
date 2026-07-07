@@ -9,9 +9,12 @@ import {
   createPayment,
   findPaymentBySessionId,
   listPayments,
+  listPaymentsForScope,
+  listUnpaidValuationsForScope,
   markPayment,
   setPaymentReceipt,
 } from '../repos/payments.js';
+import { valuationScope } from '../auth/rbac.js';
 import {
   createCheckoutSession,
   retrieveReceipt,
@@ -170,6 +173,35 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       };
     },
   );
+
+  // Account-level billing rollup (P2 #13): every payment across the caller's
+  // accessible valuations — client: own, partner: org, ops: all — plus the
+  // unpaid engagements the page turns into a pay-now call-to-action.
+  app.get('/api/v1/me/billing', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const scope = valuationScope(principal);
+    const [payments, unpaid] = await Promise.all([
+      listPaymentsForScope(deps.pool, scope),
+      listUnpaidValuationsForScope(deps.pool, scope),
+    ]);
+    const totalPaid = payments
+      .filter((p) => p.status === 'succeeded')
+      .reduce((sum, p) => sum + Number(p.amount_cents), 0);
+    return {
+      billing: {
+        payments,
+        unpaid_valuations: unpaid.map((v) => ({
+          ...v,
+          amount_cents: priceForKind(v.kind),
+        })),
+        totals: {
+          paid_cents: totalPaid,
+          succeeded_count: payments.filter((p) => p.status === 'succeeded').length,
+          payment_count: payments.length,
+        },
+      },
+    };
+  });
 
   // Webhook lives in its own plugin scope so the raw-buffer content parser
   // (required for signature verification) can't leak to other routes.

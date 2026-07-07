@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import type { ValuationScope } from '../auth/rbac.js';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'failed' | 'expired';
 
@@ -96,6 +97,75 @@ export async function listPayments(pool: pg.Pool, valuationId: string): Promise<
   const { rows } = await pool.query<PaymentRow>(
     'SELECT * FROM payments WHERE valuation_id = $1 ORDER BY created_at DESC',
     [valuationId],
+  );
+  return rows;
+}
+
+// ── Account-level billing rollup (P2 #13) ────────────────────────────────────
+
+/** Payment row + enough valuation context to render the billing table. */
+export interface BillingPaymentRow extends PaymentRow {
+  valuation_number: string;
+  company_name: string;
+  kind: string;
+}
+
+export interface UnpaidValuationRow {
+  id: string;
+  number: string;
+  company_name: string;
+  kind: string;
+  currency: string;
+}
+
+function scopeWhere(scope: ValuationScope, params: unknown[]): string {
+  switch (scope.kind) {
+    case 'all':
+      return 'TRUE';
+    case 'partner':
+      params.push(scope.partnerId);
+      return `v.partner_id = $${params.length}`;
+    case 'own':
+      params.push(scope.userId);
+      return `v.user_id = $${params.length}`;
+    case 'none':
+      return 'FALSE';
+  }
+}
+
+/** Every payment across the scope's valuations, newest first. */
+export async function listPaymentsForScope(
+  pool: pg.Pool,
+  scope: ValuationScope,
+): Promise<BillingPaymentRow[]> {
+  const params: unknown[] = [];
+  const where = scopeWhere(scope, params);
+  const { rows } = await pool.query<BillingPaymentRow>(
+    `SELECT p.*, v.number::text AS valuation_number, v.company_name, v.kind::text AS kind
+     FROM payments p
+     JOIN valuations v ON v.id = p.valuation_id
+     WHERE ${where}
+     ORDER BY p.created_at DESC
+     LIMIT 500`,
+    params,
+  );
+  return rows;
+}
+
+/** Unpaid, still-active engagements — the billing page's pay-now CTA. */
+export async function listUnpaidValuationsForScope(
+  pool: pg.Pool,
+  scope: ValuationScope,
+): Promise<UnpaidValuationRow[]> {
+  const params: unknown[] = [];
+  const where = scopeWhere(scope, params);
+  const { rows } = await pool.query<UnpaidValuationRow>(
+    `SELECT v.id, v.number::text AS number, v.company_name, v.kind::text AS kind, v.currency
+     FROM valuations v
+     WHERE ${where} AND v.paid_status = 'unpaid' AND v.state NOT IN ('cancelled', 'timeout')
+     ORDER BY v.created_at DESC
+     LIMIT 100`,
+    params,
   );
   return rows;
 }

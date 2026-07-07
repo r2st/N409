@@ -59,9 +59,13 @@ describe('HelpWidget', () => {
 
   it('sends a support message with the current page path', async () => {
     const user = userEvent.setup();
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ message: { id: 'm1', status: 'open' } }, 201),
-    );
+    // Fresh Response per call — the widget also fetches /help/articles on
+    // mount (P2 #10) and a Response body is single-read.
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() =>
+        Promise.resolve(jsonResponse({ message: { id: 'm1', status: 'open' } }, 201)),
+      );
     renderWidget('/valuations/01ABC/documents');
 
     await user.click(screen.getByLabelText('Open help'));
@@ -82,7 +86,8 @@ describe('HelpWidget', () => {
       '/api/v1/support/messages',
       expect.objectContaining({ method: 'POST' }),
     );
-    const body = JSON.parse(String((fetchSpy.mock.calls[0]![1] as RequestInit).body));
+    const postCall = fetchSpy.mock.calls.find(([url]) => url === '/api/v1/support/messages');
+    const body = JSON.parse(String((postCall![1] as RequestInit).body));
     expect(body).toEqual({
       subject: 'Upload fails',
       body: 'The cap table upload errors out.',
@@ -92,8 +97,8 @@ describe('HelpWidget', () => {
 
   it('surfaces API failures in the form', async () => {
     const user = userEvent.setup();
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ title: 'Unprocessable', detail: 'Message too long' }, 422),
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve(jsonResponse({ title: 'Unprocessable', detail: 'Message too long' }, 422)),
     );
     renderWidget();
 
