@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import { effectiveUser } from '../lib/rbac';
 import type { User } from '../lib/types';
 
 /**
@@ -44,7 +45,9 @@ export function RequireRole({
   allow: (user: User | null) => boolean;
   children?: ReactNode;
 }) {
-  const { user } = useAuth();
-  if (!allow(user)) return <AccessDenied />;
+  const { user, viewMode } = useAuth();
+  // Gate on the effective user so an admin previewing "normal view" is held to
+  // the same route guards a client would be. The API still enforces real roles.
+  if (!allow(effectiveUser(user, viewMode))) return <AccessDenied />;
   return children ? <>{children}</> : <Outlet />;
 }

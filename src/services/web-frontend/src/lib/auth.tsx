@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api, clearToken, getToken, setToken, tokenExpiry, UNAUTHORIZED_EVENT } from './api';
+import type { ViewMode } from './rbac';
 import type { User } from './types';
 
 type AuthStatus = 'loading' | 'anonymous' | 'authenticated';
@@ -8,6 +9,13 @@ type AuthStatus = 'loading' | 'anonymous' | 'authenticated';
 interface AuthContextValue {
   status: AuthStatus;
   user: User | null;
+  /**
+   * Admin / normal-user view toggle (admin-role-management feature B). Lives in
+   * React state only — never persisted — so it resets on refresh, logout and in
+   * new tabs. A temporary preview, not a stored setting.
+   */
+  viewMode: ViewMode;
+  setViewMode: (mode: ViewMode) => void;
   login: (email: string, password: string) => Promise<void>;
   register: (input: {
     email: string;
@@ -33,11 +41,14 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [status, setStatus] = useState<AuthStatus>(() => (getToken() ? 'loading' : 'anonymous'));
+  const [viewMode, setViewMode] = useState<ViewMode>('admin');
 
   const logout = useCallback(() => {
     clearToken();
     setUser(null);
     setStatus('anonymous');
+    // Never carry a "normal view" preview across sign-outs.
+    setViewMode('admin');
   }, []);
 
   // Restore the session from a stored token on first load.
@@ -114,8 +125,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const replaceToken = useCallback((token: string) => setToken(token), []);
 
   const value = useMemo(
-    () => ({ status, user, login, register, adoptToken, setUser, replaceToken, logout }),
-    [status, user, login, register, adoptToken, replaceToken, logout],
+    () => ({ status, user, viewMode, setViewMode, login, register, adoptToken, setUser, replaceToken, logout }),
+    [status, user, viewMode, login, register, adoptToken, replaceToken, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

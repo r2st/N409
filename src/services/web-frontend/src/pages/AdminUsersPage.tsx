@@ -262,6 +262,44 @@ export function AdminUsersPage() {
     }
   };
 
+  /**
+   * One-click promotion (admin-role-management feature A). Additive: the API
+   * adds the admin role without touching the user's other roles.
+   */
+  const promote = async (u: AdminUser) => {
+    if (
+      !window.confirm(
+        `Promote ${displayName(u)} (${u.email}) to admin?\n\n` +
+          'They will gain access to user management, partner management, and all operations tools.',
+      )
+    )
+      return;
+    setError(null);
+    try {
+      await api(`/users/${u.id}/promote`, { method: 'POST', body: { role: 'admin' } });
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not promote the user.');
+    }
+  };
+
+  const demote = async (u: AdminUser) => {
+    if (
+      !window.confirm(
+        `Remove admin access from ${displayName(u)} (${u.email})?\n\n` +
+          'They will lose user management, partner management, and operations tools.',
+      )
+    )
+      return;
+    setError(null);
+    try {
+      await api(`/users/${u.id}/demote`, { method: 'POST', body: { role: 'admin' } });
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not remove admin access.');
+    }
+  };
+
   const resendInvite = async (i: Invitation) => {
     try {
       await api(`/users/invitations/${i.id}/resend`, { method: 'POST' });
@@ -627,6 +665,24 @@ export function AdminUsersPage() {
                           >
                             Edit
                           </button>
+                          {/* Streamlined role promotion (feature A). */}
+                          {!u.roles.includes('admin') && (
+                            <button
+                              onClick={() => promote(u)}
+                              className="cursor-pointer text-bond-600 hover:text-bond-700"
+                            >
+                              Promote to admin
+                            </button>
+                          )}
+                          {/* Self-demotion is blocked, so hide it on your own row. */}
+                          {u.roles.includes('admin') && u.id !== user?.id && (
+                            <button
+                              onClick={() => demote(u)}
+                              className="cursor-pointer text-red-600 hover:text-red-700"
+                            >
+                              Remove admin
+                            </button>
+                          )}
                           {!u.sso_provider && (
                             <button
                               onClick={() => sendPasswordReset(u)}

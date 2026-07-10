@@ -3,10 +3,11 @@ import type { ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
+import { canManageUsers, effectiveUser, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, initials } from '../lib/format';
 import { Wordmark } from './Logo';
 import { HelpWidget } from './HelpWidget';
+import { ViewModeToggle } from './ViewModeToggle';
 
 function NavItem({
   to,
@@ -225,21 +226,25 @@ const icons = {
 };
 
 export function AppLayout() {
-  const { user, logout } = useAuth();
+  const { user, viewMode, logout } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const close = () => setMenuOpen(false);
   const unread = useUnreadCount();
 
-  const roleTag = isOps(user) ? 'Operations' : isPartner(user) ? 'Partner' : 'Client';
+  // Nav gating follows the effective user so "User view" hides the Operations
+  // and Administration sections; the ViewModeToggle keeps using the real user.
+  const eff = effectiveUser(user, viewMode);
+  const roleTag = isOps(eff) ? 'Operations' : isPartner(eff) ? 'Partner' : 'Client';
 
   const nav = (
     <nav className="flex flex-1 flex-col gap-1 px-3">
-      <div className="overline mt-1 mb-2 px-3 text-ink-400/80">Workspace</div>
+      <ViewModeToggle onNavigate={close} />
+      <div className="overline mt-3 mb-2 px-3 text-ink-400/80">Workspace</div>
       <NavItem to="/dashboard" label="Dashboard" icon={icons.dashboard} onNavigate={close} />
       <NavItem
         to="/valuations"
-        label={isOps(user) ? 'All valuations' : 'Valuations'}
+        label={isOps(eff) ? 'All valuations' : 'Valuations'}
         icon={icons.valuations}
         onNavigate={close}
       />
@@ -252,10 +257,10 @@ export function AppLayout() {
         onNavigate={close}
         badge={unread}
       />
-      {isPartner(user) && (
+      {isPartner(eff) && (
         <NavItem to="/partner" label="Partner portal" icon={icons.partner} onNavigate={close} />
       )}
-      {isOps(user) && (
+      {isOps(eff) && (
         <NavGroup label="Operations">
           <NavItem to="/tasks" label="Review tasks" icon={icons.tasks} onNavigate={close} />
           <NavItem to="/templates" label="Report templates" icon={icons.templates} onNavigate={close} />
@@ -275,7 +280,7 @@ export function AppLayout() {
           <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />
         </NavGroup>
       )}
-      {canManageUsers(user) && (
+      {canManageUsers(eff) && (
         <NavGroup label="Administration">
           <NavItem to="/admin/users" label="Users & roles" icon={icons.users} onNavigate={close} />
           <NavItem to="/admin/partners" label="Partners" icon={icons.partner} onNavigate={close} />
@@ -296,7 +301,7 @@ export function AppLayout() {
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-paper-50">{displayName(user)}</div>
           <div className="truncate text-xs text-ink-400">
-            {roleTag} · {scopeLabel(user).split(' (')[0]}
+            {roleTag} · {scopeLabel(eff).split(' (')[0]}
           </div>
         </div>
       </div>

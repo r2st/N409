@@ -380,6 +380,67 @@ export function registerAdminUserRoutes(
     return { user: { ...updated, password_digest: undefined } };
   });
 
+  /**
+   * Streamlined role promotion (admin-role-management feature A). A convenience
+   * wrapper around the PATCH role-update path that is *additive-only*: it adds a
+   * single role to the target's current set without the caller needing to know
+   * (and re-send) their existing roles, so a stale client can't accidentally
+   * drop them. Distinct `user_promoted`/`user_demoted` audit events, too.
+   */
+  const RoleMutationBody = z.object({ role: z.enum(ROLE_KEYS) });
+
+  app.post('/api/v1/users/:id/promote', { preHandler: app.authenticate }, async (req) => {
+    const principal = requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const parsed = RoleMutationBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid role', { errors: parsed.error.issues });
+    const { role } = parsed.data;
+
+    const existing = await findUserById(deps.pool, id);
+    if (!existing || existing.deleted_at) throw problems.notFound();
+    // Idempotent-safe: a double-click returns 409 rather than silently no-op'ing.
+    if (existing.roles.includes(role)) throw problems.conflict(`This user already has the ${role} role`);
+
+    const nextRoles = [...existing.roles, role];
+    assertPartnerScopeConsistent(nextRoles, existing.partner_id);
+
+    await adminPatchUser(deps.pool, id, { roles: nextRoles });
+    const updated = await findUserById(deps.pool, id);
+    await audit(principal.id, 'user_promoted', 'user', id, existing.email, {
+      role,
+      promoted_by: principal.id,
+    });
+    return { user: { ...updated, password_digest: undefined } };
+  });
+
+  app.post('/api/v1/users/:id/demote', { preHandler: app.authenticate }, async (req) => {
+    const principal = requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const parsed = RoleMutationBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid role', { errors: parsed.error.issues });
+    const { role } = parsed.data;
+
+    const existing = await findUserById(deps.pool, id);
+    if (!existing || existing.deleted_at) throw problems.notFound();
+    // Mirrors the PATCH self-lockout guard: an admin can't strip their own tier.
+    if (id === principal.id && USER_ADMIN_ROLES.has(role))
+      throw problems.unprocessable('You cannot remove your own admin access');
+    if (!existing.roles.includes(role)) throw problems.conflict(`This user does not have the ${role} role`);
+
+    const nextRoles = existing.roles.filter((r) => r !== role);
+    assertPartnerScopeConsistent(nextRoles, existing.partner_id);
+
+    await adminPatchUser(deps.pool, id, { roles: nextRoles });
+    const updated = await findUserById(deps.pool, id);
+    await audit(principal.id, 'user_demoted', 'user', id, existing.email, {
+      role,
+      demoted_by: principal.id,
+    });
+    return { user: { ...updated, password_digest: undefined } };
+  });
+
   app.delete('/api/v1/users/:id', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireUserAdmin(req);
     const { id } = req.params as { id: string };
