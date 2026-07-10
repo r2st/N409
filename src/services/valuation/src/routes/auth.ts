@@ -5,13 +5,21 @@ import { problems } from '@n409/shared';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signOidcState, signSession, verifyOidcState, type JwtConfig } from '../auth/jwt.js';
 import type { GoogleOidc } from '../auth/google.js';
-import { createUser, findUserByEmail, upsertGoogleUser, type UserWithRoles } from '../repos/users.js';
+import {
+  bumpSessionEpoch,
+  createUser,
+  findUserByEmail,
+  setPasswordDigest,
+  upsertGoogleUser,
+  type UserWithRoles,
+} from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findUserById } from '../repos/users.js';
 import { createPasswordResetToken, resetPasswordWithToken } from '../repos/passwordResets.js';
 import { acceptInvitation, findPendingInvitationByToken } from '../repos/invitations.js';
 import { passwordResetEmail } from '../domain/emailWorkflows.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
+import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 
 const RegisterBody = z.object({
@@ -76,6 +84,10 @@ function toPublicUser(u: UserWithRoles) {
     email: u.email,
     first_name: u.first_name,
     last_name: u.last_name,
+    phone: u.phone,
+    job_title: u.job_title,
+    company_name: u.company_name,
+    timezone: u.timezone,
     verified: u.verified,
     sso_provider: u.sso_provider,
     partner_id: u.partner_id,
@@ -91,18 +103,39 @@ export function registerAuthRoutes(
     google?: GoogleOidc;
     transport?: EmailTransport;
     publicBaseUrl?: string;
+    settings?: SystemSettingsStore;
   },
 ): void {
-  const issueToken = (u: UserWithRoles) =>
-    signSession({ sub: u.id, roles: u.roles, partner_id: u.partner_id }, deps.jwt);
+  const issueToken = (u: UserWithRoles, sessionEpoch = u.session_epoch) =>
+    signSession(
+      { sub: u.id, roles: u.roles, partner_id: u.partner_id, session_epoch: sessionEpoch },
+      deps.jwt,
+    );
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
   const allow = slidingWindowLimiter();
 
+  /**
+   * The route schemas already enforce a 10-character floor; an administrator
+   * can only tighten it. Checked at the point of use rather than baked into
+   * the zod schema so a settings change takes effect without a restart.
+   */
+  const assertPasswordLongEnough = async (password: string) => {
+    const min = (await deps.settings?.get('password_min_length')) ?? 10;
+    if (password.length < min)
+      throw problems.unprocessable(`Password must be at least ${min} characters`, {
+        errors: [{ path: ['password'] }],
+      });
+  };
+
   app.post('/api/v1/auth/register', async (req, reply) => {
+    if (deps.settings && !(await deps.settings.get('registration_enabled')))
+      throw problems.forbidden('Self-service registration is currently closed');
+
     const parsed = RegisterBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid registration', { errors: parsed.error.issues });
     const { email, password, first_name, last_name } = parsed.data;
+    await assertPasswordLongEnough(password);
 
     if (await findUserByEmail(deps.pool, email)) {
       throw problems.conflict('An account with this email already exists');
@@ -214,6 +247,7 @@ export function registerAuthRoutes(
     const parsed = ResetPasswordBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    await assertPasswordLongEnough(parsed.data.password);
 
     const digest = await hashPassword(parsed.data.password);
     const ok = await resetPasswordWithToken(deps.pool, parsed.data.token, digest);
@@ -226,6 +260,7 @@ export function registerAuthRoutes(
     const parsed = ChangePasswordBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    await assertPasswordLongEnough(parsed.data.new_password);
 
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();
@@ -234,11 +269,15 @@ export function registerAuthRoutes(
     if (!(await verifyPassword(parsed.data.current_password, user.password_digest)))
       throw problems.badRequest('Current password is incorrect');
 
-    await deps.pool.query('UPDATE users SET password_digest = $2 WHERE id = $1', [
-      user.id,
-      await hashPassword(parsed.data.new_password),
-    ]);
-    return { message: 'Password updated.' };
+    await setPasswordDigest(deps.pool, user.id, await hashPassword(parsed.data.new_password));
+    // A password change signs out every other session — the whole point of
+    // changing it may be that someone else holds a token. The caller gets a
+    // replacement so they aren't logged out of the tab they're standing in.
+    const epoch = await bumpSessionEpoch(deps.pool, user.id);
+    return {
+      message: 'Password updated. Other sessions have been signed out.',
+      token: await issueToken(user, epoch),
+    };
   });
 
   // ── Invitation acceptance (feature #9; public side) ────────────────────────

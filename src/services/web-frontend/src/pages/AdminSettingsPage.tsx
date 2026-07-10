@@ -1,0 +1,206 @@
+import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
+import { api, ApiError } from '../lib/api';
+import { formatDateTime } from '../lib/format';
+import type { SystemSettings, SystemSettingsResponse } from '../lib/types';
+import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+
+/**
+ * Runtime system configuration. Readable by any ops user, editable only by
+ * administrators — the API enforces both, and `editable` in the response tells
+ * us which of the two we're rendering for.
+ */
+
+interface Knob {
+  key: keyof SystemSettings;
+  label: string;
+  help: string;
+}
+
+const TOGGLES: Knob[] = [
+  {
+    key: 'registration_enabled',
+    label: 'Self-service registration',
+    help: 'When off, new accounts can only be created by invitation. Existing users sign in as normal.',
+  },
+  {
+    key: 'maintenance_mode',
+    label: 'Maintenance mode',
+    help: 'Makes the platform read-only for clients and partners. Operations users keep full access, and everyone can still sign in.',
+  },
+];
+
+const NUMBERS: Knob[] = [
+  {
+    key: 'password_min_length',
+    label: 'Minimum password length',
+    help: 'Applies to registration, invitations, resets and password changes. Cannot be set below 10.',
+  },
+  {
+    key: 'default_delivery_days',
+    label: 'Default delivery days',
+    help: 'Pre-filled turnaround on a new valuation.',
+  },
+];
+
+export function AdminSettingsPage() {
+  const [data, setData] = useState<SystemSettingsResponse | null>(null);
+  const [draft, setDraft] = useState<SystemSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api<SystemSettingsResponse>('/admin/settings')
+      .then((d) => {
+        setData(d);
+        setDraft(d.settings);
+      })
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : 'Could not load system settings.'),
+      );
+  }, []);
+
+  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
+  if (!data || !draft) return <Spinner />;
+
+  const editable = data.editable;
+  const dirty = (Object.keys(draft) as Array<keyof SystemSettings>).filter(
+    (k) => draft[k] !== data.settings[k],
+  );
+
+  /** Only the changed keys are sent, so two admins editing different knobs don't collide. */
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+    setBusy(true);
+    try {
+      const patch = Object.fromEntries(dirty.map((k) => [k, draft[k]]));
+      const res = await api<{ settings: SystemSettings }>('/admin/settings', {
+        method: 'PUT',
+        body: patch,
+      });
+      setData({ ...data, settings: res.settings });
+      setDraft(res.settings);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not save system settings.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const provenance = (key: keyof SystemSettings) => {
+    const meta = data.updated[key];
+    if (!meta) return `Default (${String(data.defaults[key])})`;
+    return `Changed ${formatDateTime(meta.updated_at)}`;
+  };
+
+  return (
+    <div className="max-w-2xl">
+      <div className="overline text-ink-400">Administration</div>
+      <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">System settings</h1>
+      <p className="mt-2 text-sm text-ink-400">
+        Platform-wide switches that take effect immediately, without a redeploy. Secrets and service
+        URLs stay in the environment. Every change is recorded in the activity log.
+      </p>
+
+      {!editable && (
+        <p className="mt-4 rounded-md border border-paper-300 bg-paper-100 px-3.5 py-2.5 text-sm text-ink-600">
+          You have read-only access — only administrators can change these.
+        </p>
+      )}
+
+      <form onSubmit={save} className="mt-8 space-y-6" noValidate>
+        <ErrorNote>{error}</ErrorNote>
+        {saved && (
+          <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
+            System settings updated.
+          </div>
+        )}
+
+        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <h2 className="overline mb-4 text-ink-400">Access</h2>
+          <div className="space-y-5">
+            {TOGGLES.map((knob) => (
+              <div key={knob.key} className="flex items-start gap-3">
+                <input
+                  id={knob.key}
+                  type="checkbox"
+                  className="mt-1 accent-bond-600"
+                  disabled={!editable}
+                  checked={draft[knob.key] as boolean}
+                  onChange={(e) => {
+                    setDraft({ ...draft, [knob.key]: e.target.checked });
+                    setSaved(false);
+                  }}
+                />
+                <div>
+                  <label htmlFor={knob.key} className="text-sm font-semibold text-ink-800">
+                    {knob.label}
+                  </label>
+                  <p className="text-sm text-ink-400">{knob.help}</p>
+                  <p className="mt-1 text-xs text-ink-300">{provenance(knob.key)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <h2 className="overline mb-4 text-ink-400">Defaults</h2>
+          <div className="space-y-5">
+            {NUMBERS.map((knob) => (
+              <Field key={knob.key} label={knob.label} hint={knob.help}>
+                <TextInput
+                  type="number"
+                  className="max-w-[10rem]"
+                  disabled={!editable}
+                  min={knob.key === 'password_min_length' ? 10 : 1}
+                  max={knob.key === 'password_min_length' ? 128 : 365}
+                  value={String(draft[knob.key])}
+                  onChange={(e) => {
+                    setDraft({ ...draft, [knob.key]: Number(e.target.value) });
+                    setSaved(false);
+                  }}
+                />
+              </Field>
+            ))}
+            <Field label="Support email" hint="Shown to signed-out visitors on the contact page.">
+              <TextInput
+                type="email"
+                disabled={!editable}
+                value={draft.support_email}
+                onChange={(e) => {
+                  setDraft({ ...draft, support_email: e.target.value });
+                  setSaved(false);
+                }}
+              />
+            </Field>
+          </div>
+        </section>
+
+        {editable && (
+          <div className="flex items-center gap-4">
+            <Button type="submit" disabled={busy || dirty.length === 0}>
+              {busy ? 'Saving…' : 'Save changes'}
+            </Button>
+            {dirty.length > 0 && (
+              <button
+                type="button"
+                className="cursor-pointer text-sm text-ink-400 hover:text-ink-700"
+                onClick={() => {
+                  setDraft(data.settings);
+                  setSaved(false);
+                }}
+              >
+                Discard {dirty.length} change{dirty.length === 1 ? '' : 's'}
+              </button>
+            )}
+          </div>
+        )}
+      </form>
+    </div>
+  );
+}

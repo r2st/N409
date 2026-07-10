@@ -31,6 +31,7 @@ import { QaTab } from './pages/valuation/QaTab';
 import { DecisionsTab } from './pages/valuation/DecisionsTab';
 import { OverwritesSchemaPage } from './pages/OverwritesSchemaPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminPartnersPage } from './pages/AdminPartnersPage';
 import { PartnerDetailPage } from './pages/PartnerDetailPage';
@@ -160,6 +161,8 @@ export default function App() {
           <Route path="/admin/communications" element={<CommunicationsPage />} />
           <Route path="/admin/activity" element={<ActivityLogPage />} />
           <Route path="/admin/help" element={<AdminHelpPage />} />
+          {/* Ops read the settings; the API rejects writes from non-admins. */}
+          <Route path="/admin/settings" element={<AdminSettingsPage />} />
         </Route>
         {/* User-admin surfaces */}
         <Route element={<RequireRole allow={canManageUsers} />}>

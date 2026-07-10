@@ -32,6 +32,10 @@ export async function createPasswordResetToken(pool: pg.Pool, userId: string): P
 /**
  * Consumes the token and sets the new digest atomically. False for unknown,
  * expired, already-used tokens, or a since-deactivated account.
+ *
+ * The reset also bumps `session_epoch`: whoever forced the reset — the user
+ * who forgot their password, or an admin acting on a compromise — expects
+ * every session already out there to stop working.
  */
 export async function resetPasswordWithToken(
   pool: pg.Pool,
@@ -48,7 +52,9 @@ export async function resetPasswordWithToken(
     const userId = rows[0]?.user_id;
     if (!userId) return false;
     const { rowCount } = await client.query(
-      `UPDATE users SET password_digest = $2 WHERE id = $1 AND deleted_at IS NULL`,
+      `UPDATE users
+       SET password_digest = $2, session_epoch = session_epoch + 1
+       WHERE id = $1 AND deleted_at IS NULL`,
       [userId, passwordDigest],
     );
     if ((rowCount ?? 0) === 0) return false;

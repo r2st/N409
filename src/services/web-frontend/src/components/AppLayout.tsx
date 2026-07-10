@@ -270,6 +270,8 @@ export function AppLayout() {
           />
           <NavItem to="/admin/activity" label="Activity log" icon={icons.activity} onNavigate={close} />
           <NavItem to="/admin/help" label="Help articles" icon={icons.help} onNavigate={close} />
+          {/* Read-only for ops; only admins can save. */}
+          <NavItem to="/admin/settings" label="System settings" icon={icons.settings} onNavigate={close} />
           <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />
         </NavGroup>
       )}

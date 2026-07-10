@@ -53,7 +53,12 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!isUlid(id)) throw problems.notFound();
     const token = await findApiTokenById(deps.pool, id);
     if (!token) throw problems.notFound();
-    if (!canManageTokens(principal, token.partner_id)) throw problems.notFound();
+    // A personal token (no partner) is governed by ownership, not by the
+    // partner policy — nobody else may revoke it, not even ops.
+    const allowed = token.partner_id
+      ? canManageTokens(principal, token.partner_id)
+      : token.created_by === principal.id;
+    if (!allowed) throw problems.notFound();
     await revokeApiToken(deps.pool, id);
     return reply.status(204).send();
   });

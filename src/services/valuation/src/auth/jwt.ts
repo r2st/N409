@@ -5,6 +5,13 @@ export interface SessionClaims {
   sub: string; // user id (ulid)
   roles: RoleKey[];
   partner_id: string | null;
+  /**
+   * The value of `users.session_epoch` when this token was minted. A token
+   * whose epoch trails the user's row has been revoked — see plugins/auth.ts.
+   * Tokens minted before this claim existed report 0, which matches the
+   * column default, so deploying this does not sign everyone out.
+   */
+  session_epoch: number;
 }
 
 export interface JwtConfig {
@@ -18,7 +25,11 @@ function key(secret: string): Uint8Array {
 }
 
 export async function signSession(claims: SessionClaims, cfg: JwtConfig): Promise<string> {
-  return new SignJWT({ roles: claims.roles, partner_id: claims.partner_id })
+  return new SignJWT({
+    roles: claims.roles,
+    partner_id: claims.partner_id,
+    session_epoch: claims.session_epoch,
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)
     .setIssuer(cfg.issuer)
@@ -34,6 +45,7 @@ export async function verifySession(token: string, cfg: JwtConfig): Promise<Sess
     sub: payload.sub,
     roles: (payload.roles as RoleKey[]) ?? [],
     partner_id: (payload.partner_id as string | null) ?? null,
+    session_epoch: typeof payload.session_epoch === 'number' ? payload.session_epoch : 0,
   };
 }
 

@@ -17,6 +17,12 @@
         "src/services/valuation/dist/index.js"
       ],
       "port": 3001
+    },
+    {
+      "name": "n409-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "-w", "@n409/web-frontend", "--", "--port", "5199", "--strictPort"],
+      "port": 5199
     }
   ]
 }

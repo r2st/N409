@@ -3,15 +3,20 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 
 /**
- * Partner API tokens (M3 feature 14). The bearer secret (`n409_pat_…`) is
- * returned exactly once at creation; only its sha256 digest is stored.
+ * API tokens (M3 feature 14). The bearer secret (`n409_pat_…`) is returned
+ * exactly once at creation; only its sha256 digest is stored.
+ *
+ * A token always acts as the user in `created_by`. With a `partner_id` it is a
+ * partner token, usable against the programmatic partner API. With a NULL
+ * `partner_id` it is a *personal* token: it carries only its owner's own scope,
+ * which is what lets a client user script against their own valuations.
  */
 
 export const TOKEN_SCHEME = 'n409_pat_';
 
 export interface ApiTokenRow {
   id: string;
-  partner_id: string;
+  partner_id: string | null;
   created_by: string;
   name: string;
   token_prefix: string;
@@ -26,7 +31,7 @@ export function hashToken(secret: string): string {
 
 export async function createApiToken(
   pool: pg.Pool,
-  args: { partnerId: string; createdBy: string; name: string },
+  args: { partnerId: string | null; createdBy: string; name: string },
 ): Promise<{ token: ApiTokenRow; secret: string }> {
   const secret = `${TOKEN_SCHEME}${randomBytes(32).toString('base64url')}`;
   const prefix = secret.slice(0, TOKEN_SCHEME.length + 6);
@@ -46,6 +51,28 @@ export async function listApiTokens(pool: pg.Pool, partnerId: string): Promise<A
     [partnerId],
   );
   return rows;
+}
+
+/** A user's personal tokens — partner tokens they minted for an org are excluded. */
+export async function listPersonalApiTokens(
+  pool: pg.Pool,
+  userId: string,
+): Promise<ApiTokenRow[]> {
+  const { rows } = await pool.query<ApiTokenRow>(
+    `SELECT id, partner_id, created_by, name, token_prefix, created_at, last_used_at, revoked_at
+     FROM api_tokens WHERE created_by = $1 AND partner_id IS NULL ORDER BY created_at DESC`,
+    [userId],
+  );
+  return rows;
+}
+
+/** Revokes every live token a user owns — used when closing an account. */
+export async function revokeTokensOwnedBy(pool: pg.Pool, userId: string): Promise<number> {
+  const { rowCount } = await pool.query(
+    'UPDATE api_tokens SET revoked_at = now() WHERE created_by = $1 AND revoked_at IS NULL',
+    [userId],
+  );
+  return rowCount ?? 0;
 }
 
 export async function findApiTokenById(pool: pg.Pool, id: string): Promise<ApiTokenRow | null> {
@@ -72,8 +99,8 @@ export async function revokeApiToken(pool: pg.Pool, id: string): Promise<boolean
 export async function resolveApiToken(
   pool: pg.Pool,
   secret: string,
-): Promise<{ tokenId: string; userId: string; partnerId: string } | null> {
-  const { rows } = await pool.query<{ id: string; created_by: string; partner_id: string }>(
+): Promise<{ tokenId: string; userId: string; partnerId: string | null } | null> {
+  const { rows } = await pool.query<{ id: string; created_by: string; partner_id: string | null }>(
     `UPDATE api_tokens SET last_used_at = now()
      WHERE token_hash = $1 AND revoked_at IS NULL
      RETURNING id, created_by, partner_id`,

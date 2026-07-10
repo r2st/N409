@@ -3,7 +3,6 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import type { Principal } from '../auth/rbac.js';
-import type { ApiTokenContext } from '../plugins/auth.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { VALUATION_KINDS, VALUATION_STATES } from '../domain/valuation.js';
@@ -30,6 +29,12 @@ import type { EventActor } from '../events/record.js';
  */
 
 export const PARTNER_API_PREFIX = '/api/partner/v1';
+
+/** An API token that named an organisation — the only kind this API accepts. */
+interface PartnerApiToken {
+  tokenId: string;
+  partnerId: string;
+}
 
 /** Per-key limit: generous for polling, tight enough to protect the engine. */
 export const PARTNER_API_RATE_LIMIT = 120;
@@ -106,6 +111,14 @@ export function registerPartnerApiRoutes(
         'The partner API requires an API key (Authorization: Bearer n409_pat_…) — session tokens are not accepted',
       );
     }
+    // A personal token has no organisation to scope valuations to, and every
+    // route below scopes by partner_id — a NULL would silently match every
+    // partner-less valuation on the platform.
+    if (!req.apiToken.partnerId) {
+      throw problems.forbidden(
+        'The partner API requires a partner API key — personal tokens are not accepted',
+      );
+    }
     const result = limiter.check(req.apiToken.tokenId);
     void reply.header('x-ratelimit-limit', result.limit);
     void reply.header('x-ratelimit-remaining', result.remaining);
@@ -118,14 +131,15 @@ export function registerPartnerApiRoutes(
     }
   };
 
-  const requireToken = (req: FastifyRequest): { principal: Principal; token: ApiTokenContext } => {
+  /** apiKeyGuard has already rejected session bearers and personal tokens. */
+  const requireToken = (req: FastifyRequest): { principal: Principal; token: PartnerApiToken } => {
     const principal = requirePrincipal(req);
-    if (!req.apiToken) throw problems.forbidden();
-    return { principal, token: req.apiToken };
+    if (!req.apiToken?.partnerId) throw problems.forbidden();
+    return { principal, token: { tokenId: req.apiToken.tokenId, partnerId: req.apiToken.partnerId } };
   };
 
   /** Loads a valuation, 404-ing anything outside the key's partner scope. */
-  const loadScoped = async (token: ApiTokenContext, id: string): Promise<ValuationRow> => {
+  const loadScoped = async (token: PartnerApiToken, id: string): Promise<ValuationRow> => {
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
     if (!valuation || valuation.partner_id !== token.partnerId) throw problems.notFound();

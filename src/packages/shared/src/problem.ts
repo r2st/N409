@@ -69,6 +69,13 @@ export const problems = {
       type: 'urn:n409:problem:rate-limited',
       detail,
     }),
+  serviceUnavailable: (detail = 'Service temporarily unavailable') =>
+    new ApiProblem({
+      status: 503,
+      title: 'Service Unavailable',
+      type: 'urn:n409:problem:unavailable',
+      detail,
+    }),
 };
 
 /**

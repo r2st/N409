@@ -5,10 +5,48 @@ export interface User {
   email: string;
   first_name: string | null;
   last_name: string | null;
+  phone: string | null;
+  job_title: string | null;
+  company_name: string | null;
+  timezone: string | null;
   verified: boolean;
   sso_provider: string | null;
   partner_id: string | null;
   roles: string[];
+}
+
+/** A personal API token. The secret is returned only once, at creation. */
+export interface ApiToken {
+  id: string;
+  name: string;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface SystemSettings {
+  registration_enabled: boolean;
+  maintenance_mode: boolean;
+  password_min_length: number;
+  support_email: string;
+  default_delivery_days: number;
+}
+
+export type SystemSettingKey = keyof SystemSettings;
+
+/** Public subset served to signed-out visitors. */
+export type PublicSystemSettings = Pick<
+  SystemSettings,
+  'registration_enabled' | 'maintenance_mode' | 'support_email'
+>;
+
+export interface SystemSettingsResponse {
+  settings: SystemSettings;
+  defaults: SystemSettings;
+  /** Only carries keys an admin has actually written. */
+  updated: Partial<Record<SystemSettingKey, { updated_at: string; updated_by: string | null }>>;
+  editable: boolean;
 }
 
 export const VALUATION_KINDS = [
@@ -136,6 +174,8 @@ export interface AdminUser {
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
+  job_title: string | null;
+  company_name: string | null;
   verified: boolean;
   sso_provider: string | null;
   partner_id: string | null;

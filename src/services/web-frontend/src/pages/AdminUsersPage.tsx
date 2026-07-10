@@ -76,6 +76,8 @@ export function AdminUsersPage() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** Confirmation for actions with no visible effect on the table. */
+  const [notice, setNotice] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -227,6 +229,36 @@ export function AdminUsersPage() {
       });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not restore the user.');
+    }
+  };
+
+  /** Support path for a user who can't complete the self-service reset flow. */
+  const sendPasswordReset = async (u: AdminUser) => {
+    if (!window.confirm(`Email a password reset link to ${u.email}?`)) return;
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api<{ message: string }>(`/users/${u.id}/send-password-reset`, {
+        method: 'POST',
+      });
+      setNotice(res.message);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not send the reset link.');
+    }
+  };
+
+  /** Kills the user's session tokens. Their API tokens keep working. */
+  const revokeSessions = async (u: AdminUser) => {
+    if (!window.confirm(`Sign ${u.email} out of every browser and device?`)) return;
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api<{ message: string }>(`/users/${u.id}/revoke-sessions`, {
+        method: 'POST',
+      });
+      setNotice(res.message);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not sign the user out.');
     }
   };
 
@@ -518,6 +550,14 @@ export function AdminUsersPage() {
       )}
 
       {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
+      {notice && (
+        <div
+          role="status"
+          className="mt-6 rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700"
+        >
+          {notice}
+        </div>
+      )}
       {!data && !error && <Spinner />}
 
       {data && data.users.length === 0 && (
@@ -587,13 +627,29 @@ export function AdminUsersPage() {
                           >
                             Edit
                           </button>
-                          {u.id !== user?.id && (
+                          {!u.sso_provider && (
                             <button
-                              onClick={() => remove(u)}
-                              className="cursor-pointer text-red-600 hover:text-red-700"
+                              onClick={() => sendPasswordReset(u)}
+                              className="cursor-pointer text-bond-600 hover:text-bond-700"
                             >
-                              Deactivate
+                              Send reset
                             </button>
+                          )}
+                          {u.id !== user?.id && (
+                            <>
+                              <button
+                                onClick={() => revokeSessions(u)}
+                                className="cursor-pointer text-bond-600 hover:text-bond-700"
+                              >
+                                Sign out
+                              </button>
+                              <button
+                                onClick={() => remove(u)}
+                                className="cursor-pointer text-red-600 hover:text-red-700"
+                              >
+                                Deactivate
+                              </button>
+                            </>
                           )}
                         </>
                       )}

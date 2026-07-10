@@ -73,6 +73,8 @@ export interface AdminUserPatch {
   last_name?: string | null;
   email?: string;
   phone?: string | null;
+  job_title?: string | null;
+  company_name?: string | null;
   verified?: boolean;
   partner_id?: string | null;
   roles?: RoleKey[];

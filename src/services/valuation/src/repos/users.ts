@@ -9,6 +9,9 @@ export interface UserRow {
   last_name: string | null;
   email: string;
   phone: string | null;
+  job_title: string | null;
+  company_name: string | null;
+  timezone: string | null;
   verified: boolean;
   sso_provider: 'google' | null;
   password_digest: string | null;
@@ -16,10 +19,23 @@ export interface UserRow {
   created_at: Date;
   /** Soft delete (M3 admin console): set = cannot authenticate. */
   deleted_at: Date | null;
+  /** Bumped to invalidate every session JWT minted for this user so far. */
+  session_epoch: number;
 }
 
 export interface UserWithRoles extends UserRow {
   roles: RoleKey[];
+}
+
+/** Columns a user may edit on their own account. */
+export interface OwnProfilePatch {
+  first_name?: string | null;
+  last_name?: string | null;
+  phone?: string | null;
+  job_title?: string | null;
+  company_name?: string | null;
+  timezone?: string | null;
+  email?: string;
 }
 
 export async function findUserByEmail(pool: pg.Pool, email: string): Promise<UserWithRoles | null> {
@@ -116,4 +132,58 @@ export async function upsertGoogleUser(
     verified: true,
     roles: ['valuation_user'],
   });
+}
+
+/**
+ * Self-service profile edit. The column allow-list is repeated here rather
+ * than trusted from the caller's parsed body — this builds raw SQL identifiers,
+ * so an unexpected key must be impossible, not merely unlikely.
+ */
+const OWN_PROFILE_COLUMNS: ReadonlySet<string> = new Set([
+  'first_name',
+  'last_name',
+  'phone',
+  'job_title',
+  'company_name',
+  'timezone',
+  'email',
+]);
+
+export async function updateOwnProfile(
+  pool: pg.Pool,
+  id: string,
+  patch: OwnProfilePatch,
+): Promise<void> {
+  const entries = Object.entries(patch).filter(
+    ([k, v]) => v !== undefined && OWN_PROFILE_COLUMNS.has(k),
+  );
+  if (entries.length === 0) return;
+  const sets = entries.map(([k], i) => `${k} = $${i + 1}`);
+  await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${entries.length + 1}`, [
+    ...entries.map(([, v]) => v),
+    id,
+  ]);
+}
+
+export async function setPasswordDigest(
+  pool: pg.Pool,
+  id: string,
+  digest: string,
+): Promise<void> {
+  await pool.query('UPDATE users SET password_digest = $2 WHERE id = $1', [id, digest]);
+}
+
+/**
+ * Invalidates every session JWT issued to this user so far, and returns the
+ * new epoch so the caller can mint a replacement token for the session that
+ * asked for the revocation.
+ */
+export async function bumpSessionEpoch(pool: pg.Pool, id: string): Promise<number> {
+  const { rows } = await pool.query<{ session_epoch: number }>(
+    'UPDATE users SET session_epoch = session_epoch + 1 WHERE id = $1 RETURNING session_epoch',
+    [id],
+  );
+  const epoch = rows[0]?.session_epoch;
+  if (epoch === undefined) throw new Error(`no such user: ${id}`);
+  return epoch;
 }

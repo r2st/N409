@@ -5,10 +5,181 @@ import { api, ApiError, tokenExpiry } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
-import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
+import type { ApiToken, User } from '../lib/types';
+import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+
+function Card({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+  return (
+    <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <h2 className="overline mb-1 text-ink-400">{title}</h2>
+      {description && <p className="mb-4 text-sm text-ink-400">{description}</p>}
+      <div className={description ? '' : 'mt-4'}>{children}</div>
+    </section>
+  );
+}
+
+function SavedNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The browser's own tz database, so the list can't drift from what the API
+ * accepts (it validates against the same source via Intl).
+ */
+function timezoneOptions(): string[] {
+  const supported = Intl.supportedValuesOf?.('timeZone');
+  return supported?.length ? [...supported] : [Intl.DateTimeFormat().resolvedOptions().timeZone];
+}
+
+/** Self-service profile: name, contact details, company, time zone. */
+function ProfileCard() {
+  const { user, setUser } = useAuth();
+  const [form, setForm] = useState(() => ({
+    first_name: user?.first_name ?? '',
+    last_name: user?.last_name ?? '',
+    phone: user?.phone ?? '',
+    job_title: user?.job_title ?? '',
+    company_name: user?.company_name ?? '',
+    timezone: user?.timezone ?? '',
+  }));
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  if (!user) return null;
+  const set = (key: keyof typeof form) => (e: { target: { value: string } }) => {
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+    setSaved(false);
+  };
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+    setBusy(true);
+    try {
+      const res = await api<{ user: User }>('/me', { method: 'PATCH', body: form });
+      setUser(res.user);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not save your profile.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Profile" description="How your name appears on reports and in comment threads.">
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <ErrorNote>{error}</ErrorNote>
+        {saved && <SavedNote>Profile updated.</SavedNote>}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="First name">
+            <TextInput value={form.first_name} onChange={set('first_name')} maxLength={100} />
+          </Field>
+          <Field label="Last name">
+            <TextInput value={form.last_name} onChange={set('last_name')} maxLength={100} />
+          </Field>
+          <Field label="Company">
+            <TextInput value={form.company_name} onChange={set('company_name')} maxLength={200} />
+          </Field>
+          <Field label="Job title">
+            <TextInput value={form.job_title} onChange={set('job_title')} maxLength={150} />
+          </Field>
+          <Field label="Phone">
+            <TextInput type="tel" value={form.phone} onChange={set('phone')} maxLength={50} />
+          </Field>
+          <Field label="Time zone" hint="Used for dates and deadlines.">
+            <Select value={form.timezone} onChange={set('timezone')}>
+              <option value="">Use my browser's time zone</option>
+              {timezoneOptions().map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        <Button type="submit" disabled={busy}>
+          {busy ? 'Saving…' : 'Save profile'}
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+/** Changing the login email is a credential change — it re-authenticates. */
+function ChangeEmailCard() {
+  const { user, setUser } = useAuth();
+  const [email, setEmail] = useState(user?.email ?? '');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  if (!user) return null;
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+    setBusy(true);
+    try {
+      const res = await api<{ user: User }>('/me', {
+        method: 'PATCH',
+        body: { email, current_password: password },
+      });
+      setUser(res.user);
+      setPassword('');
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not change your email.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Email address"
+      description="This is how you sign in and where password resets are sent. Changing it means verifying the new address."
+    >
+      <form onSubmit={submit} className="max-w-sm space-y-4" noValidate>
+        <ErrorNote>{error}</ErrorNote>
+        {saved && <SavedNote>Email updated. Check your inbox to verify the new address.</SavedNote>}
+        <Field label="Email">
+          <TextInput
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </Field>
+        <Field label="Current password" hint="Required to change the email on your account.">
+          <TextInput
+            type="password"
+            required
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </Field>
+        <Button type="submit" disabled={busy || !password || email === user.email}>
+          {busy ? 'Updating…' : 'Update email'}
+        </Button>
+      </form>
+    </Card>
+  );
+}
 
 /** P0 #3 — change password for signed-in accounts (hidden for Google SSO). */
 function ChangePasswordCard() {
+  const { replaceToken } = useAuth();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -30,10 +201,13 @@ function ChangePasswordCard() {
     }
     setBusy(true);
     try {
-      await api('/auth/change-password', {
+      const res = await api<{ token?: string }>('/auth/change-password', {
         method: 'POST',
         body: { current_password: current, new_password: next },
       });
+      // The change signed out every session, this one included — adopt the
+      // replacement before the next request 401s us.
+      if (res.token) replaceToken(res.token);
       setCurrent('');
       setNext('');
       setConfirm('');
@@ -46,15 +220,10 @@ function ChangePasswordCard() {
   };
 
   return (
-    <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-      <h2 className="overline mb-4 text-ink-400">Change password</h2>
+    <Card title="Change password">
       <form onSubmit={submit} className="max-w-sm space-y-4" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        {saved && (
-          <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-            Password updated.
-          </div>
-        )}
+        {saved && <SavedNote>Password updated. Other sessions have been signed out.</SavedNote>}
         <Field label="Current password">
           <TextInput
             type="password"
@@ -87,7 +256,7 @@ function ChangePasswordCard() {
           {busy ? 'Updating…' : 'Update password'}
         </Button>
       </form>
-    </section>
+    </Card>
   );
 }
 
@@ -142,13 +311,15 @@ function NotificationPreferencesCard() {
   };
 
   return (
-    <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-      <h2 className="overline mb-1 text-ink-400">Notifications</h2>
-      <p className="mb-4 text-sm text-ink-400">
-        Choose how you hear about each event. Account emails (password reset, invitations) are
-        always delivered.
-      </p>
-      {error && <div className="mb-3"><ErrorNote>{error}</ErrorNote></div>}
+    <Card
+      title="Notifications"
+      description="Choose how you hear about each event. Account emails (password reset, invitations) are always delivered."
+    >
+      {error && (
+        <div className="mb-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {!prefs && !error && <Spinner />}
       {prefs && (
         <table className="w-full text-sm" aria-label="Notification preferences">
@@ -180,16 +351,266 @@ function NotificationPreferencesCard() {
           </tbody>
         </table>
       )}
-    </section>
+    </Card>
+  );
+}
+
+/**
+ * Personal API tokens. Distinct from the partner keys on the partner portal:
+ * these carry only the owner's own scope and are rejected by the partner API.
+ */
+function ApiTokensCard() {
+  const [tokens, setTokens] = useState<ApiToken[] | null>(null);
+  const [name, setName] = useState('');
+  const [minted, setMinted] = useState<{ name: string; secret: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () =>
+    api<{ tokens: ApiToken[] }>('/me/tokens')
+      .then((d) => setTokens(d.tokens))
+      .catch(() => setError('Could not load your API tokens.'));
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await api<{ token: ApiToken; secret: string }>('/me/tokens', {
+        method: 'POST',
+        body: { name },
+      });
+      setMinted({ name: res.token.name, secret: res.secret });
+      setName('');
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not create the token.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (token: ApiToken) => {
+    if (!window.confirm(`Revoke "${token.name}"? Anything using it will stop working.`)) return;
+    setError(null);
+    try {
+      await api(`/me/tokens/${token.id}`, { method: 'DELETE' });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not revoke the token.');
+    }
+  };
+
+  const live = tokens?.filter((t) => !t.revoked_at) ?? [];
+
+  return (
+    <Card
+      title="API tokens"
+      description="Personal tokens act as you, with your access. Send one as an Authorization: Bearer header."
+    >
+      {error && (
+        <div className="mb-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+      {minted && (
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3.5">
+          <p className="text-sm font-semibold text-amber-900">
+            Copy “{minted.name}” now — it won't be shown again.
+          </p>
+          <code className="mt-2 block overflow-x-auto rounded bg-white px-3 py-2 font-mono text-xs text-ink-900">
+            {minted.secret}
+          </code>
+        </div>
+      )}
+
+      {!tokens && !error && <Spinner />}
+      {tokens && live.length === 0 && (
+        <p className="text-sm text-ink-400">You have no active tokens.</p>
+      )}
+      {live.length > 0 && (
+        <table className="w-full text-sm" aria-label="Personal API tokens">
+          <thead>
+            <tr className="border-b border-paper-300 text-left">
+              <th className="overline py-2 font-semibold text-ink-400">Name</th>
+              <th className="overline py-2 font-semibold text-ink-400">Prefix</th>
+              <th className="overline py-2 font-semibold text-ink-400">Last used</th>
+              <th className="py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {live.map((t) => (
+              <tr key={t.id} className="border-b border-paper-200 last:border-0">
+                <td className="py-2.5 text-ink-700">{t.name}</td>
+                <td className="tnum py-2.5 font-mono text-xs text-ink-400">{t.token_prefix}…</td>
+                <td className="py-2.5 text-ink-400">
+                  {t.last_used_at ? formatDateTime(t.last_used_at) : 'Never'}
+                </td>
+                <td className="py-2.5 text-right">
+                  <Button variant="ghost" onClick={() => void revoke(t)}>
+                    Revoke
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <form onSubmit={create} className="mt-5 flex max-w-md items-end gap-3">
+        <div className="flex-1">
+          <Field label="New token name">
+            <TextInput
+              required
+              maxLength={200}
+              placeholder="e.g. reporting script"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+        </div>
+        <Button type="submit" disabled={busy || !name.trim()}>
+          {busy ? 'Creating…' : 'Create token'}
+        </Button>
+      </form>
+    </Card>
+  );
+}
+
+/** Session controls: expiry, sign out here, sign out everywhere. */
+function SessionCard() {
+  const { logout, replaceToken } = useAuth();
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const revokeAll = async () => {
+    if (!window.confirm('Sign out of every other browser and device?')) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await api<{ token: string }>('/me/sessions/revoke', { method: 'POST' });
+      // This request's own token was invalidated too — adopt its successor.
+      replaceToken(res.token);
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not sign out other sessions.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exp = tokenExpiry();
+  return (
+    <Card
+      title="Sessions"
+      description="Signing out clears the session token from this browser. API tokens are unaffected — revoke those separately."
+    >
+      {error && (
+        <div className="mb-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+      {done && <div className="mb-3"><SavedNote>Other sessions have been signed out.</SavedNote></div>}
+      <p className="mb-4 text-sm text-ink-400">
+        This session expires{' '}
+        <span className="tnum text-ink-700">
+          {exp ? formatDateTime(new Date(exp).toISOString()) : '—'}
+        </span>
+        .
+      </p>
+      <div className="flex flex-wrap gap-3">
+        <Button
+          variant="secondary"
+          disabled={busy}
+          onClick={() => void revokeAll()}
+        >
+          {busy ? 'Signing out…' : 'Sign out everywhere else'}
+        </Button>
+        <Button
+          variant="danger"
+          onClick={() => {
+            logout();
+            navigate('/login');
+          }}
+        >
+          Sign out
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+/** Irreversible from the user's side — an administrator can restore it. */
+function CloseAccountCard() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const close = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await api('/me', { method: 'DELETE', body: { current_password: password } });
+      logout();
+      navigate('/login');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not close your account.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Close account"
+      description="You'll be signed out immediately and your API tokens will stop working. Your valuations are retained; contact support to reopen the account."
+    >
+      {!confirming ? (
+        <Button variant="danger" onClick={() => setConfirming(true)}>
+          Close my account
+        </Button>
+      ) : (
+        <form onSubmit={close} className="max-w-sm space-y-4" noValidate>
+          <ErrorNote>{error}</ErrorNote>
+          {user?.sso_provider !== 'google' && (
+            <Field label="Confirm your password">
+              <TextInput
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </Field>
+          )}
+          <div className="flex gap-3">
+            <Button type="submit" variant="danger" disabled={busy}>
+              {busy ? 'Closing…' : 'Permanently close account'}
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+    </Card>
   );
 }
 
 export function SettingsPage() {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+  const { user } = useAuth();
   if (!user) return null;
 
-  const exp = tokenExpiry();
+  const isSso = user.sso_provider === 'google';
   const accessTag = isOps(user) ? 'Operations' : isPartner(user) ? 'Partner' : 'Client';
 
   return (
@@ -218,9 +639,7 @@ export function SettingsPage() {
           </div>
           <div>
             <dt className="overline text-ink-400">Sign-in</dt>
-            <dd className="mt-1 text-sm text-ink-900">
-              {user.sso_provider === 'google' ? 'Google SSO' : 'Email & password'}
-            </dd>
+            <dd className="mt-1 text-sm text-ink-900">{isSso ? 'Google SSO' : 'Email & password'}</dd>
           </div>
           <div>
             <dt className="overline text-ink-400">Email verified</dt>
@@ -232,10 +651,6 @@ export function SettingsPage() {
               <dd className="tnum mt-1 text-sm text-ink-900">{user.partner_id}</dd>
             </div>
           )}
-          <div>
-            <dt className="overline text-ink-400">Session expires</dt>
-            <dd className="tnum mt-1 text-sm text-ink-900">{exp ? formatDateTime(new Date(exp).toISOString()) : '—'}</dd>
-          </div>
         </dl>
       </section>
 
@@ -254,30 +669,20 @@ export function SettingsPage() {
         </div>
         {canManageUsers(user) && (
           <p className="mt-4 text-sm text-ink-400">
-            You can administer users, roles and partners. The admin console ships in a later milestone.
+            You can administer users, roles, partners and system settings.
           </p>
         )}
       </section>
 
+      <ProfileCard />
+      {/* Google owns the email on an SSO account, and there's no password to
+          re-authenticate the change with. */}
+      {!isSso && <ChangeEmailCard />}
       <NotificationPreferencesCard />
-
-      {user.sso_provider !== 'google' && <ChangePasswordCard />}
-
-      <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-        <h2 className="overline mb-2 text-ink-400">Session</h2>
-        <p className="mb-4 text-sm text-ink-400">
-          Signing out clears the session token from this browser.
-        </p>
-        <Button
-          variant="danger"
-          onClick={() => {
-            logout();
-            navigate('/login');
-          }}
-        >
-          Sign out
-        </Button>
-      </section>
+      <ApiTokensCard />
+      {!isSso && <ChangePasswordCard />}
+      <SessionCard />
+      <CloseAccountCard />
     </div>
   );
 }

@@ -6,7 +6,8 @@ import { canManageUsers, isOps } from '../auth/rbac.js';
 import { PARTNER_ROLES, ROLE_KEYS, USER_ADMIN_ROLES, type RoleKey } from '../domain/roles.js';
 import { toCsv } from '../domain/csv.js';
 import { hashPassword } from '../auth/password.js';
-import { createUser, findUserByEmail, findUserById } from '../repos/users.js';
+import { bumpSessionEpoch, createUser, findUserByEmail, findUserById } from '../repos/users.js';
+import { createPasswordResetToken } from '../repos/passwordResets.js';
 import {
   adminPatchUser,
   createPartner,
@@ -30,7 +31,11 @@ import {
   type InvitationListRow,
   type InvitationRow,
 } from '../repos/invitations.js';
-import { invitationEmail, PARTNER_EMAIL_TEMPLATE_KEYS } from '../domain/emailWorkflows.js';
+import {
+  invitationEmail,
+  passwordResetEmail,
+  PARTNER_EMAIL_TEMPLATE_KEYS,
+} from '../domain/emailWorkflows.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
@@ -61,6 +66,8 @@ const PatchBody = z
     first_name: z.string().max(100).nullable(),
     last_name: z.string().max(100).nullable(),
     phone: z.string().max(50).nullable(),
+    job_title: z.string().max(150).nullable(),
+    company_name: z.string().max(200).nullable(),
     verified: z.boolean(),
     partner_id: z.string().nullable(),
     roles: z.array(z.enum(ROLE_KEYS)),
@@ -75,6 +82,8 @@ function toAdminUser(u: AdminUserRow) {
     first_name: u.first_name,
     last_name: u.last_name,
     phone: u.phone,
+    job_title: u.job_title,
+    company_name: u.company_name,
     verified: u.verified,
     sso_provider: u.sso_provider,
     partner_id: u.partner_id,
@@ -283,6 +292,8 @@ export function registerAdminUserRoutes(
       'first_name',
       'last_name',
       'phone',
+      'job_title',
+      'company_name',
       'verified',
       'roles',
       'partner_name',
@@ -392,6 +403,51 @@ export function registerAdminUserRoutes(
     const user = await findUserById(deps.pool, id);
     await audit(principal.id, 'user_restored', 'user', id, user?.email ?? null);
     return { user: { ...user, password_digest: undefined } };
+  });
+
+  /**
+   * Send a password-reset link to a user on their behalf — the support path
+   * when someone can't receive the self-service email or is locked out. Unlike
+   * /auth/forgot-password this is authenticated, so it may safely 404 on an
+   * unknown user and 400 on an SSO account instead of staying silent.
+   */
+  app.post('/api/v1/users/:id/send-password-reset', { preHandler: app.authenticate }, async (req) => {
+    const principal = requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const user = await findUserById(deps.pool, id);
+    if (!user || user.deleted_at) throw problems.notFound();
+    if (!user.password_digest)
+      throw problems.badRequest('This account signs in with Google SSO and has no password');
+
+    const secret = await createPasswordResetToken(deps.pool, user.id);
+    const link = `${baseUrl}/reset-password#token=${secret}`;
+    const template = passwordResetEmail(link);
+    await sendTransactionalEmail(
+      { pool: deps.pool, transport: deps.transport, log: req.log },
+      { toUserId: user.id, toEmail: user.email, ...template, vars: { link } },
+    );
+    await audit(principal.id, 'user_password_reset_sent', 'user', id, user.email);
+    return { message: `Reset link sent to ${user.email}.` };
+  });
+
+  /**
+   * Force-sign-out: invalidates every session JWT the user holds. Their API
+   * tokens keep working — revoke those individually if that's the intent.
+   */
+  app.post('/api/v1/users/:id/revoke-sessions', { preHandler: app.authenticate }, async (req) => {
+    const principal = requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    // Revoking your own sessions here would 401 you on the next request with
+    // no replacement token; /me/sessions/revoke does it properly.
+    if (id === principal.id)
+      throw problems.unprocessable('Use Settings → sign out everywhere for your own account');
+    const user = await findUserById(deps.pool, id);
+    if (!user) throw problems.notFound();
+    await bumpSessionEpoch(deps.pool, id);
+    await audit(principal.id, 'user_sessions_revoked', 'user', id, user.email);
+    return { message: `Signed ${user.email} out of all sessions.` };
   });
 
   // ── Partners (pickers + management console, P1 #7) ─────────────────────────

@@ -17,6 +17,14 @@ interface AuthContextValue {
   }) => Promise<void>;
   /** Complete a Google OIDC redirect: store the issued token, load the user. */
   adoptToken: (token: string) => Promise<void>;
+  /** Push an updated user into context after a profile edit. */
+  setUser: (user: User) => void;
+  /**
+   * Swap in a replacement token without re-fetching the user. Changing your
+   * password or signing out other sessions invalidates the token in hand; the
+   * API hands back its successor so this tab stays signed in.
+   */
+  replaceToken: (token: string) => void;
   logout: () => void;
 }
 
@@ -103,9 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const adoptToken = useCallback(async (token: string) => adopt(token), [adopt]);
 
+  const replaceToken = useCallback((token: string) => setToken(token), []);
+
   const value = useMemo(
-    () => ({ status, user, login, register, adoptToken, logout }),
-    [status, user, login, register, adoptToken, logout],
+    () => ({ status, user, login, register, adoptToken, setUser, replaceToken, logout }),
+    [status, user, login, register, adoptToken, replaceToken, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

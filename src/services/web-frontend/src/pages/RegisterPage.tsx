@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { ApiError } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { AuthShell } from '../components/AuthShell';
+import type { PublicSystemSettings } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
 
 /** The onboarding funnel is per-valuation; company name collected here seeds the first one. */
@@ -21,8 +22,45 @@ export function RegisterPage() {
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** null until we know; the API is the authority either way. */
+  const [openToSignup, setOpenToSignup] = useState<boolean | null>(null);
+  const [supportEmail, setSupportEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ settings: PublicSystemSettings }>('/public/settings')
+      .then(({ settings }) => {
+        setOpenToSignup(settings.registration_enabled);
+        setSupportEmail(settings.support_email);
+      })
+      // If we can't read the flag, show the form — the API still rejects the
+      // POST, so the worst case is a clear error instead of a blank page.
+      .catch(() => setOpenToSignup(true));
+  }, []);
 
   if (status === 'authenticated') return <Navigate to="/dashboard" replace />;
+
+  if (openToSignup === false) {
+    return (
+      <AuthShell title="Registration is closed" subtitle="New accounts are currently by invitation only.">
+        <p className="text-sm text-ink-400">
+          If you were expecting an invitation, check your inbox — or reach us at{' '}
+          <a
+            href={`mailto:${supportEmail ?? 'support@409.ai'}`}
+            className="font-semibold text-bond-600 hover:text-bond-700"
+          >
+            {supportEmail ?? 'support@409.ai'}
+          </a>
+          .
+        </p>
+        <p className="mt-8 text-center text-sm text-ink-400">
+          Already have an account?{' '}
+          <Link to="/login" className="font-semibold text-bond-600 hover:text-bond-700">
+            Sign in
+          </Link>
+        </p>
+      </AuthShell>
+    );
+  }
 
   const set = (key: keyof typeof form) => (e: ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
