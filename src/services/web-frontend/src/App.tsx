@@ -16,13 +16,7 @@ import { ValuationsPage } from './pages/ValuationsPage';
 import { NewValuationPage } from './pages/NewValuationPage';
 import { ValuationDetailPage } from './pages/ValuationDetailPage';
 import { ValuationWorkspace } from './pages/valuation/ValuationWorkspace';
-import {
-  AiTab,
-  CalculationsTab,
-  DocumentsTab,
-  ParamsTab,
-  TasksTab,
-} from './pages/valuation/PipelineTabs';
+import { AiTab, CalculationsTab, DocumentsTab, ParamsTab, TasksTab } from './pages/valuation/PipelineTabs';
 import { WorkbookTab } from './pages/valuation/WorkbookTab';
 import { ScenariosTab } from './pages/valuation/ScenariosTab';
 import { OverwritesTab } from './pages/valuation/OverwritesTab';
@@ -62,6 +56,7 @@ import { PricingPage } from './pages/marketing/PricingPage';
 import { ProductPage } from './pages/marketing/ProductPage';
 import { WhichValuationPage } from './pages/marketing/WhichValuationPage';
 import { ComparePage } from './pages/marketing/ComparePage';
+import { CompareHubPage } from './pages/marketing/CompareHubPage';
 import { AboutPage, ContactPage, PrivacyPage, TermsPage } from './pages/marketing/StaticPages';
 
 /** Role-aware landing: partners live in their portal, everyone else on /dashboard. */
@@ -106,6 +101,8 @@ export default function App() {
         <Route path="/pricing" element={<PricingPage />} />
         <Route path="/which-valuation" element={<WhichValuationPage />} />
         <Route path="/products/:slug" element={<ProductPage />} />
+        {/* Hub route must precede the :slug catch-all (gap #30) */}
+        <Route path="/compare/409a-valuation-providers" element={<CompareHubPage />} />
         <Route path="/compare/:slug" element={<ComparePage />} />
         <Route path="/about" element={<AboutPage />} />
         <Route path="/contact" element={<ContactPage />} />

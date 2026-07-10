@@ -19,6 +19,7 @@ export function marketingRoutes(): SitemapRoute[] {
     { path: '/', changefreq: 'weekly', priority: 1.0 },
     { path: '/pricing', changefreq: 'weekly', priority: 0.9 },
     { path: '/which-valuation', changefreq: 'monthly', priority: 0.7 },
+    { path: '/compare/409a-valuation-providers', changefreq: 'monthly', priority: 0.7 },
     { path: '/about', changefreq: 'monthly', priority: 0.5 },
     { path: '/contact', changefreq: 'monthly', priority: 0.5 },
     { path: '/terms-of-service', changefreq: 'yearly', priority: 0.3 },

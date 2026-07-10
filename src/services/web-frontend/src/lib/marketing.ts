@@ -136,11 +136,7 @@ export const PRODUCTS: Product[] = [
     tagline: 'HMRC-ready Company Share Option Plan values.',
     description:
       'Share valuations for UK Company Share Option Plans, prepared for HMRC agreement and grant documentation.',
-    bullets: [
-      'UMV and AMV determinations',
-      'HMRC VAL231 support',
-      'UK market comparables and methodology',
-    ],
+    bullets: ['UMV and AMV determinations', 'HMRC VAL231 support', 'UK market comparables and methodology'],
     audience: 'UK companies operating a CSOP',
     priceCents: P(99_000),
     deliveryDays: 7,
@@ -319,8 +315,7 @@ const CTA_START = 'Start my valuation';
 
 export const PRODUCT_CONTENT: Record<string, ProductContent> = {
   '409a-valuation': {
-    heroSubhead:
-      'A safe-harbor 409A valuation your board, your investors, and your auditor can all rely on.',
+    heroSubhead: 'A safe-harbor 409A valuation your board, your investors, and your auditor can all rely on.',
     ctaLabel: CTA_START,
     problem: {
       headline: 'Priced options wrong, and the tax falls on your team',
@@ -990,6 +985,10 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
         a: 'Commonly customer relationships, developed technology, trade names, non-compete agreements, and backlog, depending on the business.',
       },
       {
+        q: 'Do you coordinate with our auditor?',
+        a: 'Yes. We work directly with your audit team’s review comments so the allocation clears the first time rather than bouncing back for rework.',
+      },
+      {
         q: 'How long does it take?',
         a: 'A first draft in 24 hours and the final in 10 business days, given the additional analysis a PPA involves.',
       },
@@ -1048,6 +1047,10 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
       {
         q: 'What standards apply?',
         a: 'ASC 350 for goodwill and indefinite-lived intangibles, and ASC 360 for long-lived assets to be held and used.',
+      },
+      {
+        q: 'How is the reporting unit’s fair value determined?',
+        a: 'We build the reporting-unit fair value from documented income and market assumptions, then run a sensitivity analysis so you can see how the conclusion holds up under different inputs.',
       },
       {
         q: 'How long does it take?',
@@ -1201,7 +1204,10 @@ export const EXPRESS_DELIVERY_CENTS = 50_000;
 export const QSBS_ADDON_CENTS = 50_000;
 export const EXPRESS_DELIVERY_DAYS = 1;
 
-export function quote(product: Product, opts: { express: boolean; qsbsLetter: boolean }): {
+export function quote(
+  product: Product,
+  opts: { express: boolean; qsbsLetter: boolean },
+): {
   totalCents: number;
   deliveryDays: number;
 } {
@@ -1404,6 +1410,102 @@ export function comparisonBySlug(slug: string): Comparison | undefined {
   return COMPARISONS.find((c) => c.slug === slug);
 }
 
+// ── Compare provider hub (gap #30) ────────────────────────────────────────────
+// The overview page at /compare/409a-valuation-providers categorises the market
+// into model types and links out to each individual comparison page above.
+
+/** A named provider; `slug` links to an individual /compare/:slug page when one exists. */
+export interface HubProvider {
+  name: string;
+  slug?: string;
+}
+
+export interface ProviderCategory {
+  title: string;
+  description: string;
+  /** One-line summary of the trade-off founders make with this model. */
+  tradeoff: string;
+  providers: HubProvider[];
+}
+
+export const PROVIDER_CATEGORIES: ProviderCategory[] = [
+  {
+    title: 'AI-native valuation platforms',
+    description:
+      'Purpose-built valuation shops that use AI to extract your data and draft the report, then have credentialed analysts review and sign it. Fast, transparent, and priced per report.',
+    tradeoff: 'Newest model — choose one that exposes its methodology and backs it with real analysts.',
+    providers: [{ name: 'N409' }],
+  },
+  {
+    title: 'Cap-table & equity platforms',
+    description:
+      'Equity-management products that offer a 409A as an add-on to a cap-table subscription. Convenient if you already live in the platform, but the valuation is a side feature.',
+    tradeoff: 'Bundled with a subscription; methodology internals are rarely exposed.',
+    providers: [
+      { name: 'Carta', slug: 'carta' },
+      { name: 'Pulley', slug: 'pulley' },
+      { name: 'Eqvista', slug: 'eqvista' },
+    ],
+  },
+  {
+    title: 'Bundled valuation providers',
+    description:
+      'Platforms that productise valuations for funds and startups with an online intake and standardised reports, sitting between a pure software product and a traditional firm.',
+    tradeoff: 'Product experience varies; confirm you get analyst review and audit support.',
+    providers: [{ name: 'Scalar', slug: 'scalar' }],
+  },
+  {
+    title: 'Startup CPA & accounting firms',
+    description:
+      'Accounting firms that deliver a 409A as part of a broader bookkeeping or tax engagement. Good if you want one relationship for everything, at a firm’s pace and price.',
+    tradeoff: 'Priced per relationship, not per report; turnaround is measured in weeks.',
+    providers: [{ name: 'Kruze Consulting', slug: 'kruze' }],
+  },
+  {
+    title: 'Independent valuation firms',
+    description:
+      'Traditional, analyst-led valuation practices. Deep rigor and a human relationship, but slower onboarding and longer turnarounds than a modern pipeline.',
+    tradeoff: 'Highest-touch and often highest-cost; email-and-calls onboarding.',
+    providers: [
+      { name: 'Eton Venture Services', slug: 'eton' },
+      { name: 'Aranca', slug: 'aranca' },
+    ],
+  },
+];
+
+/** "What founders should ask" — questions to put to any 409A provider. */
+export interface FounderQuestion {
+  q: string;
+  why: string;
+}
+
+export const FOUNDER_QUESTIONS: FounderQuestion[] = [
+  {
+    q: 'Is the valuation prepared under the §409A safe harbor?',
+    why: 'A safe-harbor valuation shifts the burden of proof to the IRS. Anything less leaves you exposed.',
+  },
+  {
+    q: 'Who reviews and signs the report?',
+    why: 'Credentialed analyst review and a signature are what make a report defensible in an audit.',
+  },
+  {
+    q: 'Can I see the methodology and the underlying calculations?',
+    why: 'A transparent, auditable workbook means you can answer questions later; a black box can’t.',
+  },
+  {
+    q: 'How fast is the first draft, and the final report?',
+    why: 'Grant windows and board dates are real deadlines — weeks-long turnarounds can cost you hires.',
+  },
+  {
+    q: 'What does audit defence cost if my auditor has questions?',
+    why: `Rates range widely — N409 supports the valuation at $${AUDIT_DEFENCE_RATE_USD}/hr versus $300–$500+/hr at many firms.`,
+  },
+  {
+    q: 'Is the valuation tied to a subscription or platform?',
+    why: 'Per-report pricing with no lock-in keeps you free to move; a bundled model may not.',
+  },
+];
+
 // ── Landing page content ──────────────────────────────────────────────────────
 
 export const HERO_KINDS = ['409A', 'ASC 820', 'Gift & Estate', 'EMI', 'QSBS', 'ESOP'];
@@ -1432,14 +1534,7 @@ export const HOW_IT_WORKS = [
   },
 ];
 
-export const ACCOUNTING_PROVIDERS = [
-  'QuickBooks',
-  'Xero',
-  'FreshBooks',
-  'Oracle NetSuite',
-  'Sage',
-  'Wave',
-];
+export const ACCOUNTING_PROVIDERS = ['QuickBooks', 'Xero', 'FreshBooks', 'Oracle NetSuite', 'Sage', 'Wave'];
 
 // ── Customer testimonials (409.ai gap #20) ────────────────────────────────────
 // Fictional companies — N409 is an independent clone, so these are illustrative
@@ -1536,6 +1631,22 @@ export const PRICING_FAQ: FaqEntry[] = [
     a: 'A standard 409A valuation starts at $1,190 with a 7-business-day turnaround. Express delivery (1 business day) is available as a $500 add-on. Other report types are priced per product on each product page.',
   },
   {
+    q: 'How is pricing structured across report types?',
+    a: 'Every report is a single flat price — no subscription, no per-seat fees, no platform lock-in. The price you configure in the calculator is exactly what checkout charges.',
+  },
+  {
+    q: 'Do you offer express delivery?',
+    a: 'Yes. Express delivery returns your final report in 1 business day instead of the standard 7, for a $500 add-on. Your first draft still arrives within 24 hours either way.',
+  },
+  {
+    q: 'Do you offer bundles or discounts for multiple reports?',
+    a: 'Companies that need several reports — for example a 409A alongside an ASC 718 valuation — or firms placing volume through our partner programme can contact us for bundled pricing.',
+  },
+  {
+    q: 'What is a 409A valuation?',
+    a: 'An independent appraisal of the fair market value of your common stock, used to set the strike price of employee stock options in compliance with Section 409A of the Internal Revenue Code.',
+  },
+  {
     q: 'How long does a valuation take?',
     a: 'You receive a draft within 24 hours and an analyst-reviewed, dual-signed final report in 7 business days on the standard plan, or 1 business day with Express delivery.',
   },
@@ -1544,8 +1655,28 @@ export const PRICING_FAQ: FaqEntry[] = [
     a: 'A 409A valuation is generally valid for 12 months, or until a material event such as a new financing round, whichever comes first.',
   },
   {
+    q: 'How often do I need a new valuation?',
+    a: 'At least once every 12 months, and again after any material event — a new priced round, an acquisition offer, or a significant change in the business — that could change your common stock’s value.',
+  },
+  {
+    q: 'Do you value public as well as private companies?',
+    a: 'Our valuations are built for privately held companies. Public-company share values come from the market; if you hold public securities as part of a portfolio, our ASC 820 product covers fair-value measurement.',
+  },
+  {
     q: 'What methodology do you use?',
     a: 'We apply the income, market, and asset approaches as appropriate, with an OPM backsolve against your latest round and DLOM support using the Chaffee and Finnerty put-option models — all documented in a transparent, auditable workbook.',
+  },
+  {
+    q: 'What is the difference between a 409A and an ASC 718 valuation?',
+    a: 'A 409A sets the fair market value used to price option grants for tax purposes; ASC 718 measures the fair value of share-based compensation for your financial statements. They use related inputs but serve different rules — we keep the two consistent.',
+  },
+  {
+    q: 'Can you use my prior valuation?',
+    a: 'Yes. If you have a prior valuation we can roll it forward, reusing prior approaches and updating for what has changed. It is faster and keeps your valuation history consistent.',
+  },
+  {
+    q: 'How accurate is the data you use?',
+    a: 'We build from your real financials — connected accounting software or uploaded statements — and every figure is traced to its source document in the report, so nothing is assumed.',
   },
   {
     q: 'Is the valuation audit-defensible?',
@@ -1553,6 +1684,10 @@ export const PRICING_FAQ: FaqEntry[] = [
   },
   {
     q: 'Do you offer audit defence support?',
-    a: 'Audit defence is available on request at an hourly rate, so you have expert backup if your auditor has questions about the valuation.',
+    a: `Yes. If your auditor or the IRS has questions, our analysts support the valuation at an hourly rate of USD $${AUDIT_DEFENCE_RATE_USD}/hr — well below the $300–$500+/hr typical of accounting firms. Report revisions during the draft cycle are always included at no extra cost.`,
+  },
+  {
+    q: 'What if I need help choosing the right report?',
+    a: 'Take our 30-second “Which valuation?” quiz, or book a call with our team. We’ll point you to the right product before you pay for anything.',
   },
 ];

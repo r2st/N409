@@ -78,7 +78,10 @@ export function MarketingHeader() {
               </div>
             )}
           </div>
-          <Link to="/pricing" className="rounded-md px-3 py-2 text-sm font-semibold text-ink-700 hover:text-ink-900">
+          <Link
+            to="/pricing"
+            className="rounded-md px-3 py-2 text-sm font-semibold text-ink-700 hover:text-ink-900"
+          >
             Pricing
           </Link>
           <Link
@@ -116,7 +119,11 @@ export function MarketingHeader() {
         <div className="border-t border-paper-300 bg-white px-5 py-4 md:hidden">
           <ProductsMenu onNavigate={() => setMobileOpen(false)} />
           <div className="mt-3 flex flex-col gap-2 border-t border-paper-200 pt-3">
-            <Link to="/pricing" onClick={() => setMobileOpen(false)} className="text-sm font-semibold text-ink-700">
+            <Link
+              to="/pricing"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-semibold text-ink-700"
+            >
               Pricing
             </Link>
             <Link
@@ -126,7 +133,11 @@ export function MarketingHeader() {
             >
               Which valuation?
             </Link>
-            <Link to="/login" onClick={() => setMobileOpen(false)} className="text-sm font-semibold text-ink-700">
+            <Link
+              to="/login"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-semibold text-ink-700"
+            >
               Log in
             </Link>
             <Link
@@ -171,6 +182,9 @@ export function MarketingFooter() {
         <div>
           <div className="overline mb-4 text-brass-400">Compare</div>
           <div className="grid grid-cols-1 gap-1.5 text-sm">
+            <Link to="/compare/409a-valuation-providers" className="font-semibold hover:text-paper-50">
+              All providers
+            </Link>
             {COMPARISONS.map((c) => (
               <Link key={c.slug} to={`/compare/${c.slug}`} className="hover:text-paper-50">
                 N409 vs {c.competitor}

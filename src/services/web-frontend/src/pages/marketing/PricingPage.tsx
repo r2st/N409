@@ -1,8 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PRICING_FAQ, PRODUCTS, formatUsd, quote } from '../../lib/marketing';
+import { AUDIT_DEFENCE_RATE_USD, PRICING_FAQ, PRODUCTS, formatUsd, quote } from '../../lib/marketing';
 import { Seo } from '../../components/Seo';
 import { faqJsonLd } from '../../lib/seo';
+import { FaqAccordion } from '../../components/FaqAccordion';
+
+/** Firms/partners contact address for the enterprise tier (gap #32). */
+const FIRMS_CONTACT_EMAIL = 'partners@n409.example';
 
 /** Interactive pricing calculator + comparison table (409.ai §22.4). */
 export function PricingPage() {
@@ -27,8 +31,8 @@ export function PricingPage() {
           Transparent, per-report pricing
         </h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink-600">
-          One flat price per report — no subscriptions, no platform lock-in. What you configure here
-          is what checkout charges.
+          One flat price per report — no subscriptions, no platform lock-in. What you configure here is what
+          checkout charges.
         </p>
 
         <div className="mt-10 grid gap-8 lg:grid-cols-2">
@@ -85,12 +89,15 @@ export function PricingPage() {
             <div className="mt-6 flex items-end justify-between border-t border-paper-300 pt-5">
               <div>
                 <div className="overline text-ink-400">Your price</div>
-                <div className="tnum font-display text-4xl font-semibold text-ink-900" data-testid="quote-total">
+                <div
+                  className="tnum font-display text-4xl font-semibold text-ink-900"
+                  data-testid="quote-total"
+                >
                   {formatUsd(totalCents)}
                 </div>
                 <div className="mt-1 text-xs text-ink-500">
-                  Delivered in {deliveryDays} business day{deliveryDays === 1 ? '' : 's'} · first
-                  draft in 24 hours
+                  Delivered in {deliveryDays} business day{deliveryDays === 1 ? '' : 's'} · first draft in 24
+                  hours
                 </div>
               </div>
               <Link
@@ -110,9 +117,7 @@ export function PricingPage() {
 
           {/* What's included */}
           <div className="rounded-lg border border-paper-300 bg-paper-100 p-6">
-            <h2 className="font-display text-lg font-semibold text-ink-900">
-              Every report includes
-            </h2>
+            <h2 className="font-display text-lg font-semibold text-ink-900">Every report includes</h2>
             <ul className="mt-4 space-y-2.5 text-sm text-ink-700">
               {[
                 'Credentialed analyst review and dual signatures',
@@ -150,14 +155,35 @@ export function PricingPage() {
               </thead>
               <tbody>
                 {[
-                  ['Onboarding', 'Online form + software connect', 'Email + document back-and-forth', 'Mostly email or manual uploads'],
+                  [
+                    'Onboarding',
+                    'Online form + software connect',
+                    'Email + document back-and-forth',
+                    'Mostly email or manual uploads',
+                  ],
                   ['Time required', '15 minutes', '8–20+ hours', '1–5 hours'],
                   ['First draft', '24 hours', '4–12 weeks', '3–8 weeks'],
                   ['Final report', '7 business days · 1 day Express', '4–12 weeks', '3–8 weeks'],
-                  ['Software integrations', 'QuickBooks, Xero, FreshBooks & more', 'Manual document collection', 'Limited or platform-dependent'],
-                  ['Report quality', 'AI-assisted draft + expert review', 'Manual analyst process', 'Platform-dependent'],
+                  [
+                    'Software integrations',
+                    'QuickBooks, Xero, FreshBooks & more',
+                    'Manual document collection',
+                    'Limited or platform-dependent',
+                  ],
+                  [
+                    'Report quality',
+                    'AI-assisted draft + expert review',
+                    'Manual analyst process',
+                    'Platform-dependent',
+                  ],
                   ['Expert sign-off', '✓', '✓', '✓'],
                   ['Report revisions', 'Included', 'Limited or extra fees', 'Varies'],
+                  [
+                    'Audit support',
+                    `$${AUDIT_DEFENCE_RATE_USD}/hour`,
+                    '$300–$500+/hour',
+                    'Often unavailable',
+                  ],
                 ].map(([feature, us, firm, provider]) => (
                   <tr key={feature} className="border-b border-paper-200 bg-white last:border-0">
                     <td className="px-5 py-3 font-semibold text-ink-800">{feature}</td>
@@ -169,6 +195,67 @@ export function PricingPage() {
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      {/* Firms / partners tier (gap #32) */}
+      <section className="mx-auto max-w-6xl px-5 pb-16">
+        <div className="grid items-center gap-8 rounded-lg border border-ink-800 bg-ink-900 p-8 text-paper-50 lg:grid-cols-[1.5fr_1fr]">
+          <div>
+            <div className="overline text-brass-400">For firms &amp; partners</div>
+            <h2 className="mt-2 font-display text-2xl font-semibold">
+              Leverage our AI-powered valuation technology
+            </h2>
+            <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink-300">
+              Accounting firms, fund administrators, and advisors run valuations at scale on N409 — with
+              white-label reports, a partner API, and volume pricing. Tell us about your book of business and
+              we’ll put together a plan.
+            </p>
+            <ul className="mt-5 grid gap-2 text-sm text-ink-300 sm:grid-cols-2">
+              {[
+                'White-label reports and client portal',
+                'Partner API and bulk intake',
+                'Volume pricing across all report types',
+                'Dedicated support and onboarding',
+              ].map((line) => (
+                <li key={line} className="flex gap-2.5">
+                  <span className="text-bond-400">✓</span>
+                  {line}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="text-center lg:text-right">
+            <a
+              href={`mailto:${FIRMS_CONTACT_EMAIL}?subject=N409%20for%20firms`}
+              className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+            >
+              Get in touch
+            </a>
+            <p className="mt-3 text-xs text-ink-400">{FIRMS_CONTACT_EMAIL}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ (gap #31) */}
+      <section className="border-t border-paper-300 bg-paper-50">
+        <div className="mx-auto max-w-3xl px-5 py-16">
+          <div className="overline text-ink-400">FAQ</div>
+          <h2 className="mt-2 mb-8 font-display text-3xl font-semibold text-ink-900">
+            Pricing &amp; valuation questions
+          </h2>
+          <FaqAccordion items={PRICING_FAQ} />
+          <p className="mt-8 text-sm text-ink-500">
+            Still have questions?{' '}
+            <Link to="/contact" className="font-semibold text-bond-600 hover:text-bond-700">
+              Get in touch
+            </Link>{' '}
+            or{' '}
+            <Link to="/which-valuation" className="font-semibold text-bond-600 hover:text-bond-700">
+              take the 30-second quiz
+            </Link>
+            .
+          </p>
         </div>
       </section>
     </div>

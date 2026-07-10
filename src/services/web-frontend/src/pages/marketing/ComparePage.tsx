@@ -52,6 +52,12 @@ export function ComparePage() {
         <Link to="/pricing" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
           See pricing →
         </Link>
+        <Link
+          to="/compare/409a-valuation-providers"
+          className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+        >
+          Compare all providers →
+        </Link>
       </div>
     </div>
   );
