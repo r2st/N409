@@ -205,12 +205,14 @@ export interface Invitation {
 }
 
 export type OutboxStatus = 'queued' | 'sent' | 'failed' | 'skipped';
+export type CommChannel = 'email' | 'sms';
 
 export interface OutboxEmail {
   id: string;
   valuation_id: string | null;
   to_user_id: string | null;
   to_email: string;
+  channel?: CommChannel;
   template_key: string;
   subject: string;
   body: string;
@@ -219,6 +221,38 @@ export interface OutboxEmail {
   attempts: number;
   created_at: string;
   sent_at: string | null;
+}
+
+// §15.5/§15.6 — communication templates + auto email campaigns
+
+export interface CommunicationTemplate {
+  id: string;
+  key: string;
+  channel: CommChannel;
+  description: string;
+  subject: string;
+  body: string;
+  enabled: boolean;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AutoEmailCondition = 'always' | 'unpaid' | 'no_documents' | 'waiting_on_client';
+
+export interface AutoEmail {
+  id: string;
+  name: string;
+  channel: CommChannel;
+  trigger_state: ValuationState;
+  condition: AutoEmailCondition;
+  delay_hours: number;
+  repeat_hours: number | null;
+  max_sends: number;
+  template_key: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface UserOption {

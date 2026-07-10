@@ -167,10 +167,11 @@ export function registerAdminUserRoutes(
     invitedByEmail: string,
   ) => {
     // Fragment, not query string — the token never reaches server logs.
-    const template = invitationEmail(`${baseUrl}/accept-invite#token=${secret}`, invitedByEmail);
+    const link = `${baseUrl}/accept-invite#token=${secret}`;
+    const template = invitationEmail(link, invitedByEmail);
     await sendTransactionalEmail(
       { pool: deps.pool, transport: deps.transport, log: req.log },
-      { toEmail: invitation.email, ...template },
+      { toEmail: invitation.email, ...template, vars: { link, invited_by: invitedByEmail } },
     );
   };
 

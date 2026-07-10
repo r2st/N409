@@ -7,7 +7,9 @@ export interface EmailOutboxRow {
   id: string;
   valuation_id: string | null;
   to_user_id: string | null;
+  /** Destination address — an email, or a phone number when channel = 'sms'. */
   to_email: string;
+  channel: 'email' | 'sms';
   template_key: string;
   subject: string;
   body: string;
@@ -24,20 +26,22 @@ export async function enqueueEmail(
     valuationId?: string | null;
     toUserId?: string | null;
     toEmail: string;
+    channel?: 'email' | 'sms';
     templateKey: string;
     subject: string;
     body: string;
   },
 ): Promise<EmailOutboxRow> {
   const { rows } = await db.query<EmailOutboxRow>(
-    `INSERT INTO email_outbox (id, valuation_id, to_user_id, to_email, template_key, subject, body)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO email_outbox (id, valuation_id, to_user_id, to_email, channel, template_key, subject, body)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
       newUlid(),
       input.valuationId ?? null,
       input.toUserId ?? null,
       input.toEmail,
+      input.channel ?? 'email',
       input.templateKey,
       input.subject,
       input.body,

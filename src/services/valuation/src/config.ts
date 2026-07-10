@@ -27,6 +27,13 @@ const Env = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().default('N409 Valuations <no-reply@n409.local>'),
+  // SMS drip campaigns (§15.6) — 'log' records delivery in the service log
+  // (a real provider adapter slots into buildEmailTransports); 'off' only
+  // queues outbox rows.
+  SMS_MODE: z.enum(['log', 'off']).default('log'),
+  // Drip campaign scan interval in minutes; 0 disables the interval (the
+  // POST /admin/auto-emails/run endpoint still works).
+  AUTO_EMAIL_SCAN_MINUTES: z.coerce.number().int().min(0).default(15),
   // Stripe payment processing (remaining-gaps §3 #1). Routes 503 when unset.
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),

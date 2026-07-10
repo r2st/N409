@@ -46,6 +46,7 @@ import { HelpPage } from './pages/HelpPage';
 import { AdminHelpPage } from './pages/AdminHelpPage';
 import { BillingPage } from './pages/BillingPage';
 import { SupportInboxPage } from './pages/SupportInboxPage';
+import { CommunicationsPage } from './pages/CommunicationsPage';
 import { CompanyTab } from './pages/valuation/CompanyTab';
 import { PackageTab } from './pages/valuation/PackageTab';
 import { OnboardingPage } from './pages/OnboardingPage';
@@ -105,6 +106,7 @@ export default function App() {
           <Route path="/admin/prompts" element={<BotPromptsPage />} />
           <Route path="/admin/support" element={<SupportInboxPage />} />
           <Route path="/admin/outbox" element={<EmailOutboxPage />} />
+          <Route path="/admin/communications" element={<CommunicationsPage />} />
           <Route path="/admin/activity" element={<ActivityLogPage />} />
           <Route path="/admin/help" element={<AdminHelpPage />} />
         </Route>

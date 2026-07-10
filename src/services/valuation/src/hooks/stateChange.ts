@@ -13,6 +13,8 @@ import {
 import { createNotification } from '../repos/notifications.js';
 import { channelsFor, preferenceOverrides } from '../repos/notificationPreferences.js';
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../repos/emailOutbox.js';
+import { applyTemplateOverrides, valuationTemplateVars } from '../domain/communications.js';
+import { templateOverrides } from '../repos/communications.js';
 
 /**
  * Fires the auto email workflows + in-app notifications for a state change
@@ -59,6 +61,16 @@ export async function onStateChanged(
   let emailSpecs = emailsForTransition(valuation, to);
   const notifySpecs = notificationsForTransition(valuation, to);
   if (emailSpecs.length === 0 && notifySpecs.length === 0) return;
+
+  // DB communication templates (§15.5): enabled rows re-template the built-in
+  // workflow content. Applied before partner overrides so white-label still wins.
+  if (emailSpecs.length > 0) {
+    const overrides = await templateOverrides(
+      deps.pool,
+      emailSpecs.map((s) => s.templateKey),
+    );
+    emailSpecs = applyTemplateOverrides(emailSpecs, overrides, valuationTemplateVars(valuation));
+  }
 
   // White-label (improvement 8): partner engagements use the partner's own
   // email templates where defined; missing keys fall back to the defaults.

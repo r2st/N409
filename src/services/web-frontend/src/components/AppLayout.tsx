@@ -198,6 +198,12 @@ const icons = {
       <path d="m3.5 7 8.5 6 8.5-6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
+  communications: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 5.5h16v10.5H9L4.5 20V5.5Z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 9.5h8M8 12.5h5" strokeLinecap="round" />
+    </svg>
+  ),
   activity: (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="M3.5 12h4l2.5-7 4 14 2.5-7h4" strokeLinecap="round" strokeLinejoin="round" />
@@ -256,6 +262,12 @@ export function AppLayout() {
           <NavItem to="/admin/prompts" label="Bot prompts" icon={icons.prompts} onNavigate={close} />
           <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
           <NavItem to="/admin/outbox" label="Email outbox" icon={icons.outbox} onNavigate={close} />
+          <NavItem
+            to="/admin/communications"
+            label="Communications"
+            icon={icons.communications}
+            onNavigate={close}
+          />
           <NavItem to="/admin/activity" label="Activity log" icon={icons.activity} onNavigate={close} />
           <NavItem to="/admin/help" label="Help articles" icon={icons.help} onNavigate={close} />
           <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />

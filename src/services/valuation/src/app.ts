@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
 import type pg from 'pg';
 import { createLogger, registerHealth, registerProblemHandler } from '@n409/shared';
@@ -40,6 +40,7 @@ import { registerPackageRoutes } from './routes/packageView.js';
 import { registerSupportRoutes } from './routes/support.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerHelpRoutes } from './routes/help.js';
+import { registerCommunicationRoutes } from './routes/communications.js';
 import { registerEvidenceRoutes } from './routes/evidence.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
@@ -53,6 +54,40 @@ export interface AppDeps {
   google?: GoogleOidc;
   /** injectable for tests — partner API per-key rate limiter */
   partnerApiLimiter?: FixedWindowRateLimiter;
+}
+
+/**
+ * Email + SMS transports from config. Email: 'smtp' delivers through
+ * SMTP_HOST (falling back to 'log' when unset), 'log' records delivery in the
+ * service log, 'off' only queues outbox rows. SMS has no real provider yet —
+ * 'log' mirrors the email log transport (a Twilio-style adapter slots in
+ * here); 'off' only queues. Shared by buildApp and the index.ts drip
+ * interval.
+ */
+export function buildEmailTransports(
+  config: Config,
+  log: FastifyBaseLogger,
+): { transport?: EmailTransport; smsTransport?: EmailTransport } {
+  let transport: EmailTransport | undefined;
+  if (config.EMAIL_MODE === 'smtp' && config.SMTP_HOST) {
+    transport = smtpTransport(
+      {
+        host: config.SMTP_HOST,
+        port: config.SMTP_PORT,
+        user: config.SMTP_USER,
+        pass: config.SMTP_PASS,
+        from: config.SMTP_FROM,
+      },
+      log,
+    );
+  } else if (config.EMAIL_MODE !== 'off') {
+    if (config.EMAIL_MODE === 'smtp') {
+      log.warn('EMAIL_MODE=smtp but SMTP_HOST is unset — falling back to log transport');
+    }
+    transport = logTransport(log);
+  }
+  const smsTransport = config.SMS_MODE === 'log' ? logTransport(log) : undefined;
+  return { transport, smsTransport };
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
@@ -83,26 +118,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     },
   });
   // Auto-email transport; delivery status is tracked in email_outbox.
-  // 'smtp' needs SMTP_HOST — otherwise fall back to 'log' so a misconfigured
-  // box degrades to logging instead of silently dropping mail.
-  let transport: EmailTransport | undefined;
-  if (config.EMAIL_MODE === 'smtp' && config.SMTP_HOST) {
-    transport = smtpTransport(
-      {
-        host: config.SMTP_HOST,
-        port: config.SMTP_PORT,
-        user: config.SMTP_USER,
-        pass: config.SMTP_PASS,
-        from: config.SMTP_FROM,
-      },
-      app.log,
-    );
-  } else if (config.EMAIL_MODE !== 'off') {
-    if (config.EMAIL_MODE === 'smtp') {
-      app.log.warn('EMAIL_MODE=smtp but SMTP_HOST is unset — falling back to log transport');
-    }
-    transport = logTransport(app.log);
-  }
+  const { transport, smsTransport } = buildEmailTransports(config, app.log);
 
   void app.register(multipart, { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
   registerAuth(app, { pool, jwt });
@@ -158,6 +174,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAdminEventRoutes(app, { pool });
   // P2 #10 — help / knowledge base
   registerHelpRoutes(app, { pool });
+  // §15.5/§15.6 — communication templates + auto email/SMS drip campaigns
+  registerCommunicationRoutes(app, { pool, transport, smsTransport });
   // Beyond-parity #1 — audit-defense evidence bundle (final-status §4.4)
   registerEvidenceRoutes(app, { pool });
   // Improvement 6 — programmatic partner API (API-key auth + per-key rate limit)

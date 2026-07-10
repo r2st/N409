@@ -196,12 +196,13 @@ export function registerAuthRoutes(
     if (user?.password_digest && !user.deleted_at) {
       const secret = await createPasswordResetToken(deps.pool, user.id);
       // Fragment, not query string — the token never reaches server logs.
-      const template = passwordResetEmail(`${baseUrl}/reset-password#token=${secret}`);
+      const link = `${baseUrl}/reset-password#token=${secret}`;
+      const template = passwordResetEmail(link);
       // Deliberately not awaited: response latency must not reveal whether
       // an account exists. The outbox row tracks delivery either way.
       void sendTransactionalEmail(
         { pool: deps.pool, transport: deps.transport, log: req.log },
-        { toUserId: user.id, toEmail: user.email, ...template },
+        { toUserId: user.id, toEmail: user.email, ...template, vars: { link } },
       );
     }
     return reply
