@@ -51,6 +51,13 @@ import { CompanyTab } from './pages/valuation/CompanyTab';
 import { PackageTab } from './pages/valuation/PackageTab';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { PaymentCancelPage, PaymentSuccessPage } from './pages/PaymentRedirectPages';
+import { MarketingFooter, MarketingHeader, MarketingLayout } from './components/MarketingLayout';
+import { LandingPage } from './pages/marketing/LandingPage';
+import { PricingPage } from './pages/marketing/PricingPage';
+import { ProductPage } from './pages/marketing/ProductPage';
+import { WhichValuationPage } from './pages/marketing/WhichValuationPage';
+import { ComparePage } from './pages/marketing/ComparePage';
+import { AboutPage, ContactPage, PrivacyPage, TermsPage } from './pages/marketing/StaticPages';
 
 /** Role-aware landing: partners live in their portal, everyone else on /dashboard. */
 function RoleLanding() {
@@ -58,9 +65,48 @@ function RoleLanding() {
   return <Navigate to={isPartner(user) ? '/partner' : '/dashboard'} replace />;
 }
 
+/**
+ * / serves the public marketing landing to anonymous visitors (409.ai §22)
+ * and routes signed-in users straight to their workspace.
+ */
+function HomeGate() {
+  const { status } = useAuth();
+  if (status === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper-100">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-ink-200 border-t-bond-600" />
+      </div>
+    );
+  }
+  if (status === 'anonymous') {
+    return (
+      <div className="flex min-h-screen flex-col bg-paper-50">
+        <MarketingHeader />
+        <main className="flex-1">
+          <LandingPage />
+        </main>
+        <MarketingFooter />
+      </div>
+    );
+  }
+  return <RoleLanding />;
+}
+
 export default function App() {
   return (
     <Routes>
+      {/* Public marketing site (409.ai §22) */}
+      <Route path="/" element={<HomeGate />} />
+      <Route element={<MarketingLayout />}>
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/which-valuation" element={<WhichValuationPage />} />
+        <Route path="/products/:slug" element={<ProductPage />} />
+        <Route path="/compare/:slug" element={<ComparePage />} />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/contact" element={<ContactPage />} />
+        <Route path="/terms-of-service" element={<TermsPage />} />
+        <Route path="/privacy-policy" element={<PrivacyPage />} />
+      </Route>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -76,7 +122,6 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<RoleLanding />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/valuations" element={<ValuationsPage />} />
         <Route path="/valuations/new" element={<NewValuationPage />} />
