@@ -22,6 +22,10 @@ import {
 } from '../repos/apiTokens.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { createEmailVerificationToken } from '../repos/emailVerifications.js';
+import { emailVerificationEmail } from '../domain/emailWorkflows.js';
+import { sendTransactionalEmail } from '../email/transactional.js';
+import type { EmailTransport } from '../hooks/stateChange.js';
 
 /**
  * Self-service account management: the things a signed-in user does to their
@@ -95,8 +99,9 @@ function toPublicUser(u: UserWithRoles) {
 
 export function registerAccountRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; jwt: JwtConfig },
+  deps: { pool: pg.Pool; jwt: JwtConfig; transport?: EmailTransport; publicBaseUrl?: string },
 ): void {
+  const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
   const loadSelf = async (id: string): Promise<UserWithRoles> => {
     const user = await findUserById(deps.pool, id);
     if (!user) throw problems.unauthorized();
@@ -154,6 +159,21 @@ export function registerAccountRoutes(
     if (changingEmail) {
       // The new address is unproven until it round-trips a message.
       await deps.pool.query('UPDATE users SET verified = false WHERE id = $1', [user.id]);
+      // …so send the link that proves it (gap #26). Fire-and-forget: the outbox
+      // row tracks delivery and the response shouldn't hinge on the transport.
+      void (async () => {
+        try {
+          const secret = await createEmailVerificationToken(deps.pool, user.id, patch.email!);
+          const link = `${baseUrl}/verify-email#token=${secret}`;
+          const template = emailVerificationEmail(link);
+          await sendTransactionalEmail(
+            { pool: deps.pool, transport: deps.transport, log: req.log },
+            { toUserId: user.id, toEmail: patch.email!, ...template, vars: { link } },
+          );
+        } catch (err) {
+          req.log.warn({ err, userId: user.id }, 'failed to send verification email on email change');
+        }
+      })();
     }
     return { user: toPublicUser(await loadSelf(user.id)) };
   });

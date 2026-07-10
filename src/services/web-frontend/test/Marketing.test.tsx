@@ -60,9 +60,10 @@ describe('landing page', () => {
     );
     expect(screen.getByText('Thirteen report types, one platform')).toBeInTheDocument();
     expect(screen.getAllByText('409A Valuation').length).toBeGreaterThan(0);
-    // Accounting integrations strip (§23 marketing surface)
-    expect(screen.getByText('Xero')).toBeInTheDocument();
-    expect(screen.getByText('QuickBooks')).toBeInTheDocument();
+    // Accounting integrations strip (§23) + the partner-logo trust badges
+    // (gap #21) both surface these names, so there may be more than one.
+    expect(screen.getAllByText('Xero').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('QuickBooks').length).toBeGreaterThan(0);
   });
 });
 

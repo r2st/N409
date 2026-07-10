@@ -7,6 +7,7 @@ import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
 import type { ApiToken, User } from '../lib/types';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import { PhoneInput } from '../components/PhoneInput';
 
 function Card({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
@@ -91,7 +92,13 @@ function ProfileCard() {
             <TextInput value={form.job_title} onChange={set('job_title')} maxLength={150} />
           </Field>
           <Field label="Phone">
-            <TextInput type="tel" value={form.phone} onChange={set('phone')} maxLength={50} />
+            <PhoneInput
+              value={form.phone}
+              onChange={(phone) => {
+                setForm((f) => ({ ...f, phone }));
+                setSaved(false);
+              }}
+            />
           </Field>
           <Field label="Time zone" hint="Used for dates and deadlines.">
             <Select value={form.timezone} onChange={set('timezone')}>

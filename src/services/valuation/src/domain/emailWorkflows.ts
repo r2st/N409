@@ -249,6 +249,17 @@ export function passwordResetEmail(link: string): TransactionalEmail {
   };
 }
 
+export function emailVerificationEmail(link: string): TransactionalEmail {
+  return {
+    templateKey: 'email_verification',
+    subject: 'Verify your N409 email address',
+    body:
+      `Welcome to N409. Please confirm this is your email address so we can secure your account.\n\n` +
+      `Use this link within the next 24 hours to verify:\n\n${link}\n\n` +
+      `If you didn't create an N409 account, you can safely ignore this email.`,
+  };
+}
+
 export function invitationEmail(link: string, invitedByEmail: string): TransactionalEmail {
   return {
     templateKey: 'user_invite',

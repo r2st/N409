@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="N409 — independent, defensible 409A and business valuations">
+  <rect width="1200" height="630" fill="#0B1220"/>
+  <g stroke="#1B2740" stroke-width="1">
+    <path d="M0 158 H1200 M0 316 H1200 M0 474 H1200 M300 0 V630 M600 0 V630 M900 0 V630"/>
+  </g>
+  <g transform="translate(96 200)">
+    <rect x="0" y="-64" width="88" height="88" rx="18" fill="#111C2E"/>
+    <path d="M22 -18 V-52 L58 -18 V-52" stroke="#C9A54A" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <circle cx="58" cy="-8" r="7" fill="#12936F"/>
+    <text x="116" y="4" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-weight="600" fill="#F7F5EF">N409</text>
+  </g>
+  <text x="96" y="360" font-family="Georgia, 'Times New Roman', serif" font-size="66" font-weight="600" fill="#F7F5EF">Independent, defensible</text>
+  <text x="96" y="436" font-family="Georgia, 'Times New Roman', serif" font-size="66" font-weight="600" fill="#C9A54A">409A &amp; business valuations</text>
+  <text x="96" y="516" font-family="Arial, Helvetica, sans-serif" font-size="30" fill="#9AA6BC">AI-assisted intake · transparent engine · analyst-signed reports</text>
+</svg>

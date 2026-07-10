@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PRODUCTS, formatUsd, quote } from '../../lib/marketing';
+import { PRICING_FAQ, PRODUCTS, formatUsd, quote } from '../../lib/marketing';
+import { Seo } from '../../components/Seo';
+import { faqJsonLd } from '../../lib/seo';
 
 /** Interactive pricing calculator + comparison table (409.ai §22.4). */
 export function PricingPage() {
@@ -13,6 +15,12 @@ export function PricingPage() {
 
   return (
     <div>
+      <Seo
+        title="Pricing"
+        description="Transparent, per-report valuation pricing — one flat price, no subscriptions. 409A from $1,190 with a 24-hour first draft and Express delivery available."
+        path="/pricing"
+        jsonLd={faqJsonLd(PRICING_FAQ)}
+      />
       <section className="mx-auto max-w-6xl px-5 py-16">
         <div className="overline text-ink-400">Pricing</div>
         <h1 className="mt-2 font-display text-4xl font-semibold text-ink-900">

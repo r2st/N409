@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { problems } from '@n409/shared';
@@ -16,8 +16,12 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import { findUserById } from '../repos/users.js';
 import { createPasswordResetToken, resetPasswordWithToken } from '../repos/passwordResets.js';
+import {
+  createEmailVerificationToken,
+  verifyEmailWithToken,
+} from '../repos/emailVerifications.js';
 import { acceptInvitation, findPendingInvitationByToken } from '../repos/invitations.js';
-import { passwordResetEmail } from '../domain/emailWorkflows.js';
+import { emailVerificationEmail, passwordResetEmail } from '../domain/emailWorkflows.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
@@ -35,6 +39,8 @@ const LoginBody = z.object({
 });
 
 const ForgotPasswordBody = z.object({ email: z.string().email() });
+
+const VerifyEmailBody = z.object({ token: z.string().min(1) });
 
 const ResetPasswordBody = z.object({
   token: z.string().min(1),
@@ -115,6 +121,29 @@ export function registerAuthRoutes(
   const allow = slidingWindowLimiter();
 
   /**
+   * Mints a verification token and emails the link (gap #26). Fire-and-forget
+   * like the reset flow — the outbox row tracks delivery, and registration
+   * latency must not hinge on the mail transport. Bound to the user's current
+   * address so a later email change invalidates the link.
+   */
+  const sendVerificationEmail = (user: UserWithRoles, log: FastifyBaseLogger) => {
+    void (async () => {
+      try {
+        const secret = await createEmailVerificationToken(deps.pool, user.id, user.email);
+        // Fragment, not query string — the token never reaches server logs.
+        const link = `${baseUrl}/verify-email#token=${secret}`;
+        const template = emailVerificationEmail(link);
+        await sendTransactionalEmail(
+          { pool: deps.pool, transport: deps.transport, log },
+          { toUserId: user.id, toEmail: user.email, ...template, vars: { link } },
+        );
+      } catch (err) {
+        log.warn({ err, userId: user.id }, 'failed to send verification email');
+      }
+    })();
+  };
+
+  /**
    * The route schemas already enforce a 10-character floor; an administrator
    * can only tighten it. Checked at the point of use rather than baked into
    * the zod schema so a settings change takes effect without a restart.
@@ -147,6 +176,8 @@ export function registerAuthRoutes(
       lastName: last_name,
       roles: ['valuation_user'],
     });
+    // Prove ownership of the address before the account is trusted (gap #26).
+    sendVerificationEmail(user, req.log);
     return reply.status(201).send({ user: toPublicUser(user), token: await issueToken(user) });
   });
 
@@ -253,6 +284,42 @@ export function registerAuthRoutes(
     const ok = await resetPasswordWithToken(deps.pool, parsed.data.token, digest);
     if (!ok) throw problems.badRequest('This reset link is invalid, expired, or already used');
     return { message: 'Password updated — you can now sign in.' };
+  });
+
+  // ── Email verification (gap #26) ───────────────────────────────────────────
+
+  // Public: the link lands unauthenticated. POST so the token stays out of
+  // URLs/server logs — the SPA reads it from the fragment and posts it here.
+  app.post('/api/v1/auth/verify-email', async (req) => {
+    const parsed = VerifyEmailBody.safeParse(req.body);
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+
+    const outcome = await verifyEmailWithToken(deps.pool, parsed.data.token);
+    if (outcome === 'invalid')
+      throw problems.badRequest('This verification link is invalid, expired, or already used');
+    return {
+      status: outcome,
+      message:
+        outcome === 'already_verified'
+          ? 'Your email is already verified.'
+          : 'Your email address has been verified.',
+    };
+  });
+
+  // Authenticated: re-send the link to the signed-in user's own address.
+  // Rate-limited per user and per IP so it can't be used to spam a mailbox.
+  app.post('/api/v1/auth/resend-verification', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const user = await findUserById(deps.pool, principal.id);
+    if (!user) throw problems.unauthorized();
+    if (user.verified) return { message: 'Your email is already verified.' };
+
+    if (!allow(`verify:${user.id}`, 3, HOUR_MS) || !allow(`verify-ip:${req.ip}`, 30, HOUR_MS)) {
+      throw problems.tooManyRequests('Too many verification requests — try again later');
+    }
+    sendVerificationEmail(user, req.log);
+    return { message: "We've sent a fresh verification link to your email." };
   });
 
   app.post('/api/v1/auth/change-password', { preHandler: app.authenticate }, async (req) => {

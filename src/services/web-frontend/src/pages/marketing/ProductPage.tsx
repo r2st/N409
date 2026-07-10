@@ -1,5 +1,8 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { formatUsd, productBySlug, PRODUCTS } from '../../lib/marketing';
+import { BookACallSection } from './MarketingSections';
+import { Seo } from '../../components/Seo';
+import { productJsonLd } from '../../lib/seo';
 
 /** Data-driven product landing page (409.ai §22.2) — one per valuation kind. */
 export function ProductPage() {
@@ -11,6 +14,13 @@ export function ProductPage() {
 
   return (
     <div>
+      <Seo
+        title={product.name}
+        description={product.description}
+        path={`/products/${product.slug}`}
+        type="product"
+        jsonLd={productJsonLd(product)}
+      />
       <section className="ledger-grid bg-ink-900 text-paper-50">
         <div className="mx-auto max-w-6xl px-5 py-20">
           <div className="overline mb-4 text-brass-400">{product.audience}</div>
@@ -76,6 +86,9 @@ export function ProductPage() {
           </div>
         </div>
       </section>
+
+      {/* Book a call + demo video (gap #22) */}
+      <BookACallSection />
 
       <section className="border-t border-paper-300 bg-white">
         <div className="mx-auto max-w-6xl px-5 py-14">

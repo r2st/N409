@@ -41,6 +41,7 @@ import { registerPromptRoutes } from './routes/prompts.js';
 import { registerCompanyProfileRoutes } from './routes/companyProfile.js';
 import { registerPackageRoutes } from './routes/packageView.js';
 import { registerSupportRoutes } from './routes/support.js';
+import { registerContactRoutes } from './routes/contact.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerHelpRoutes } from './routes/help.js';
 import { registerCommunicationRoutes } from './routes/communications.js';
@@ -145,7 +146,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     publicBaseUrl: config.PUBLIC_BASE_URL,
     settings,
   });
-  registerAccountRoutes(app, { pool, jwt });
+  registerAccountRoutes(app, { pool, jwt, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerSystemSettingsRoutes(app, { pool, settings });
   registerValuationRoutes(app, { pool, transport });
   // M1 — core pipeline
@@ -199,6 +200,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerCompanyProfileRoutes(app, { pool });
   registerPackageRoutes(app, { pool });
   registerSupportRoutes(app, { pool });
+  // P3 gap #28 — public marketing contact form + ops triage queue
+  registerContactRoutes(app, { pool });
   // P2 #12 — global activity audit viewer
   registerAdminEventRoutes(app, { pool });
   // P2 #10 — help / knowledge base

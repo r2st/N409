@@ -1,0 +1,34 @@
+import { COMPARISONS, PRODUCTS } from './marketing';
+
+/**
+ * Static route inventory for SEO (409.ai §24). Pure data — no browser or
+ * `import.meta` access — so it can be imported both by the client bundle and by
+ * the Vite build plugin that emits `sitemap.xml`.
+ */
+export interface SitemapRoute {
+  /** Absolute path, always leading-slash, never trailing-slash (except '/'). */
+  path: string;
+  changefreq: 'daily' | 'weekly' | 'monthly' | 'yearly';
+  /** 0.0–1.0 relative priority hint. */
+  priority: number;
+}
+
+/** Marketing/public routes only — auth and app routes are intentionally excluded. */
+export function marketingRoutes(): SitemapRoute[] {
+  const routes: SitemapRoute[] = [
+    { path: '/', changefreq: 'weekly', priority: 1.0 },
+    { path: '/pricing', changefreq: 'weekly', priority: 0.9 },
+    { path: '/which-valuation', changefreq: 'monthly', priority: 0.7 },
+    { path: '/about', changefreq: 'monthly', priority: 0.5 },
+    { path: '/contact', changefreq: 'monthly', priority: 0.5 },
+    { path: '/terms-of-service', changefreq: 'yearly', priority: 0.3 },
+    { path: '/privacy-policy', changefreq: 'yearly', priority: 0.3 },
+  ];
+  for (const product of PRODUCTS) {
+    routes.push({ path: `/products/${product.slug}`, changefreq: 'monthly', priority: 0.8 });
+  }
+  for (const comparison of COMPARISONS) {
+    routes.push({ path: `/compare/${comparison.slug}`, changefreq: 'monthly', priority: 0.6 });
+  }
+  return routes;
+}

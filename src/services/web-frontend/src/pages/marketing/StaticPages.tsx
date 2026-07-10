@@ -1,11 +1,30 @@
-import type { ReactNode } from 'react';
+import { useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { api, ApiError } from '../../lib/api';
+import { Button, ErrorNote, Field, TextInput } from '../../components/ui';
+import { Seo } from '../../components/Seo';
 
 /** About / contact / legal pages (409.ai §22.7) — static content. */
 
-function Prose({ title, overline, children }: { title: string; overline: string; children: ReactNode }) {
+function Prose({
+  title,
+  overline,
+  path,
+  description,
+  children,
+}: {
+  title: string;
+  overline: string;
+  /** Canonical path for SEO tags. */
+  path: string;
+  /** Meta/OG description for SEO tags. */
+  description: string;
+  children: ReactNode;
+}) {
   return (
     <div className="mx-auto max-w-3xl px-5 py-16">
+      <Seo title={title} description={description} path={path} />
       <div className="overline text-ink-400">{overline}</div>
       <h1 className="mt-2 font-display text-4xl font-semibold text-ink-900">{title}</h1>
       <div className="mt-8 space-y-5 text-[0.95rem] leading-relaxed text-ink-700">{children}</div>
@@ -15,7 +34,12 @@ function Prose({ title, overline, children }: { title: string; overline: string;
 
 export function AboutPage() {
   return (
-    <Prose overline="Company" title="About N409">
+    <Prose
+      overline="Company"
+      title="About N409"
+      path="/about"
+      description="N409 is an AI-assisted valuation platform producing independent, defensible 409A and business valuations — AI intake, a transparent engine, and credentialed analyst sign-off."
+    >
       <p>
         N409 is an AI-assisted valuation platform producing independent, defensible business
         valuations — IRC §409A common-stock valuations for venture-backed companies, and a full
@@ -43,28 +67,135 @@ export function AboutPage() {
   );
 }
 
+/** Functional contact form (409.ai gap #28) — posts to the public endpoint. */
+function ContactForm() {
+  const [form, setForm] = useState({ name: '', email: '', company: '', phone: '', message: '' });
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const set = (key: keyof typeof form) => (e: { target: { value: string } }) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await api('/contact', {
+        method: 'POST',
+        body: {
+          name: form.name,
+          email: form.email,
+          company: form.company || undefined,
+          phone: form.phone || undefined,
+          message: form.message,
+        },
+      });
+      setSent(true);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : 'Could not send your message — please try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="rounded-lg border border-bond-200 bg-bond-50 p-6 text-sm text-bond-800">
+        <p className="font-semibold">Thanks — your message is in.</p>
+        <p className="mt-1.5">
+          A member of the team will get back to you by email shortly. In a hurry?{' '}
+          <Link to="/register" className="font-semibold text-bond-700 underline">
+            Start your valuation
+          </Link>{' '}
+          in the meantime.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="space-y-4 rounded-lg border border-paper-300 bg-white p-6 shadow-card"
+      noValidate
+      aria-label="Contact form"
+    >
+      <ErrorNote>{error}</ErrorNote>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Full name">
+          <TextInput
+            required
+            autoComplete="name"
+            value={form.name}
+            onChange={set('name')}
+            placeholder="Ada Lovelace"
+          />
+        </Field>
+        <Field label="Email">
+          <TextInput
+            type="email"
+            required
+            autoComplete="email"
+            value={form.email}
+            onChange={set('email')}
+            placeholder="you@company.com"
+          />
+        </Field>
+        <Field label="Company">
+          <TextInput
+            autoComplete="organization"
+            value={form.company}
+            onChange={set('company')}
+            placeholder="Acme, Inc."
+          />
+        </Field>
+        <Field label="Phone">
+          <TextInput
+            type="tel"
+            autoComplete="tel"
+            value={form.phone}
+            onChange={set('phone')}
+            placeholder="(555) 123-4567"
+          />
+        </Field>
+      </div>
+      <Field label="Message">
+        <textarea
+          required
+          rows={5}
+          value={form.message}
+          onChange={set('message')}
+          placeholder="Tell us what you need and your timeline…"
+          className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
+        />
+      </Field>
+      <Button type="submit" disabled={busy || !form.name || !form.email || !form.message}>
+        {busy ? 'Sending…' : 'Send message'}
+      </Button>
+    </form>
+  );
+}
+
 export function ContactPage() {
   return (
-    <Prose overline="Company" title="Contact us">
-      <p>Questions, concerns, requests — talk to us.</p>
-      <div className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-        <dl className="space-y-4 text-sm">
-          <div>
-            <dt className="overline text-ink-400">Sales &amp; general</dt>
-            <dd className="mt-1 font-semibold text-ink-900">hello@n409.example</dd>
-          </div>
-          <div>
-            <dt className="overline text-ink-400">Support (existing clients)</dt>
-            <dd className="mt-1 font-semibold text-ink-900">
-              Use the in-app support widget from your dashboard — it routes straight to the team
-              working on your valuation.
-            </dd>
-          </div>
-          <div>
-            <dt className="overline text-ink-400">Partnerships</dt>
-            <dd className="mt-1 font-semibold text-ink-900">partners@n409.example</dd>
-          </div>
-        </dl>
+    <Prose
+      overline="Company"
+      title="Contact us"
+      path="/contact"
+      description="Get in touch with the N409 team — questions about a valuation, pricing, partnerships, or support."
+    >
+      <p>Questions, concerns, requests — talk to us and we&apos;ll reply by email.</p>
+      <ContactForm />
+      <div className="rounded-lg border border-paper-300 bg-paper-50 p-6 text-sm">
+        <p className="text-ink-600">
+          Existing client? Use the in-app support widget from your dashboard — it routes straight to
+          the team working on your valuation. For partnerships, reach us at{' '}
+          <span className="font-semibold text-ink-900">partners@n409.example</span>.
+        </p>
       </div>
       <p>
         Ready to start instead?{' '}
@@ -79,7 +210,12 @@ export function ContactPage() {
 
 export function TermsPage() {
   return (
-    <Prose overline="Legal" title="Terms of service">
+    <Prose
+      overline="Legal"
+      title="Terms of service"
+      path="/terms-of-service"
+      description="The terms governing your use of the N409 valuation platform."
+    >
       <p className="text-xs text-ink-400">Last updated: July 2026</p>
       <h2 className="font-display text-xl font-semibold text-ink-900">1. Services</h2>
       <p>
@@ -114,7 +250,12 @@ export function TermsPage() {
 
 export function PrivacyPage() {
   return (
-    <Prose overline="Legal" title="Privacy policy">
+    <Prose
+      overline="Legal"
+      title="Privacy policy"
+      path="/privacy-policy"
+      description="How N409 collects, uses, and protects your data, including cookies and analytics."
+    >
       <p className="text-xs text-ink-400">Last updated: July 2026</p>
       <h2 className="font-display text-xl font-semibold text-ink-900">What we collect</h2>
       <p>

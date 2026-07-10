@@ -8,6 +8,9 @@ import {
   STATS,
   formatUsd,
 } from '../../lib/marketing';
+import { BookACallSection, PartnerLogos, TestimonialsSection } from './MarketingSections';
+import { Seo } from '../../components/Seo';
+import { SITE_TAGLINE, organizationJsonLd } from '../../lib/seo';
 
 /** Public landing page (409.ai §22.3). */
 export function LandingPage() {
@@ -22,6 +25,12 @@ export function LandingPage() {
 
   return (
     <div>
+      <Seo
+        title="N409"
+        description={`${SITE_TAGLINE} AI-assisted intake, a transparent valuation engine, and analyst-signed reports across 13 report types.`}
+        path="/"
+        jsonLd={organizationJsonLd()}
+      />
       {/* Hero */}
       <section className="ledger-grid relative overflow-hidden bg-ink-900 text-paper-50">
         <div className="mx-auto max-w-6xl px-5 py-24 lg:py-32">
@@ -68,6 +77,9 @@ export function LandingPage() {
           ))}
         </div>
       </section>
+
+      {/* Partner logos (gap #21) */}
+      <PartnerLogos />
 
       {/* Why */}
       <section className="mx-auto max-w-6xl px-5 py-20">
@@ -167,6 +179,12 @@ export function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* Testimonials (gap #20) */}
+      <TestimonialsSection />
+
+      {/* Book a call + demo video (gap #22) */}
+      <BookACallSection />
 
       {/* CTA */}
       <section className="ledger-grid bg-ink-900">
