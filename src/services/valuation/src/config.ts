@@ -39,6 +39,20 @@ const Env = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   // Base URL the browser lands on after Stripe checkout (the web frontend).
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
+  // Accounting integrations (§23) — each provider activates when its OAuth
+  // client id + secret are both set; unset providers show as "not configured".
+  XERO_CLIENT_ID: z.string().optional(),
+  XERO_CLIENT_SECRET: z.string().optional(),
+  QUICKBOOKS_CLIENT_ID: z.string().optional(),
+  QUICKBOOKS_CLIENT_SECRET: z.string().optional(),
+  FRESHBOOKS_CLIENT_ID: z.string().optional(),
+  FRESHBOOKS_CLIENT_SECRET: z.string().optional(),
+  NETSUITE_CLIENT_ID: z.string().optional(),
+  NETSUITE_CLIENT_SECRET: z.string().optional(),
+  SAGE_CLIENT_ID: z.string().optional(),
+  SAGE_CLIENT_SECRET: z.string().optional(),
+  WAVE_CLIENT_ID: z.string().optional(),
+  WAVE_CLIENT_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof Env>;

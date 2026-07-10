@@ -2,6 +2,7 @@ import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
 import { DocumentsPanel } from '../../components/valuation/DocumentsPanel';
+import { AccountingConnect } from '../../components/valuation/AccountingConnect';
 import { ParamsPanel } from '../../components/valuation/ParamsPanel';
 import { AiPanel } from '../../components/valuation/AiPanel';
 import { TasksPanel } from '../../components/valuation/TasksPanel';
@@ -11,7 +12,13 @@ import { CalculationPanel } from '../../components/valuation/CalculationPanel';
 
 export function DocumentsTab() {
   const { valuation } = useWorkspace();
-  return <DocumentsPanel valuationId={valuation.id} />;
+  return (
+    <div>
+      <DocumentsPanel valuationId={valuation.id} />
+      {/* §23 — accounting software connect + import */}
+      <AccountingConnect valuationId={valuation.id} />
+    </div>
+  );
 }
 
 export function ParamsTab() {

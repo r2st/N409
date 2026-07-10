@@ -41,6 +41,8 @@ import { registerSupportRoutes } from './routes/support.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerHelpRoutes } from './routes/help.js';
 import { registerCommunicationRoutes } from './routes/communications.js';
+import { registerAccountingRoutes } from './routes/accounting.js';
+import type { AccountingProvider, FetchFn, ProviderCredentials } from './clients/accounting.js';
 import { registerEvidenceRoutes } from './routes/evidence.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
@@ -54,6 +56,8 @@ export interface AppDeps {
   google?: GoogleOidc;
   /** injectable for tests — partner API per-key rate limiter */
   partnerApiLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests — accounting provider HTTP */
+  accountingFetch?: FetchFn;
 }
 
 /**
@@ -192,6 +196,33 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     publicBaseUrl: config.PUBLIC_BASE_URL,
   });
   registerSignatureRoutes(app, { pool });
+  // §23 — accounting software integrations (OAuth connect + P&L import)
+  registerAccountingRoutes(app, {
+    pool,
+    jwt,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+    credentials: accountingCredentials(config),
+    fetchFn: deps.accountingFetch,
+  });
 
   return app;
+}
+
+/** Provider OAuth credentials from env; a provider is active only when both halves are set. */
+export function accountingCredentials(
+  config: Config,
+): Partial<Record<AccountingProvider, ProviderCredentials>> {
+  const pairs: Array<[AccountingProvider, string | undefined, string | undefined]> = [
+    ['xero', config.XERO_CLIENT_ID, config.XERO_CLIENT_SECRET],
+    ['quickbooks', config.QUICKBOOKS_CLIENT_ID, config.QUICKBOOKS_CLIENT_SECRET],
+    ['freshbooks', config.FRESHBOOKS_CLIENT_ID, config.FRESHBOOKS_CLIENT_SECRET],
+    ['netsuite', config.NETSUITE_CLIENT_ID, config.NETSUITE_CLIENT_SECRET],
+    ['sage', config.SAGE_CLIENT_ID, config.SAGE_CLIENT_SECRET],
+    ['wave', config.WAVE_CLIENT_ID, config.WAVE_CLIENT_SECRET],
+  ];
+  const out: Partial<Record<AccountingProvider, ProviderCredentials>> = {};
+  for (const [provider, clientId, clientSecret] of pairs) {
+    if (clientId && clientSecret) out[provider] = { clientId, clientSecret };
+  }
+  return out;
 }

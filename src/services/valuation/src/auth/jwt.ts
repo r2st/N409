@@ -51,3 +51,39 @@ export async function verifyOidcState(state: string, cfg: JwtConfig): Promise<vo
   const { payload } = await jwtVerify(state, key(cfg.secret), { issuer: cfg.issuer });
   if (payload.purpose !== 'oidc-state') throw new Error('invalid state');
 }
+
+// ── Accounting OAuth state (409.ai §23) ───────────────────────────────────────
+// The redirect round-trip carries which valuation/provider is being connected
+// and who initiated it; the signature is the callback's only authentication.
+
+export interface AccountingState {
+  valuationId: string;
+  provider: string;
+  userId: string;
+}
+
+export async function signAccountingState(s: AccountingState, cfg: JwtConfig): Promise<string> {
+  return new SignJWT({ purpose: 'accounting-state', v: s.valuationId, p: s.provider })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(s.userId)
+    .setIssuer(cfg.issuer)
+    .setIssuedAt()
+    .setExpirationTime('30m')
+    .sign(key(cfg.secret));
+}
+
+export async function verifyAccountingState(
+  state: string,
+  cfg: JwtConfig,
+): Promise<AccountingState> {
+  const { payload } = await jwtVerify(state, key(cfg.secret), { issuer: cfg.issuer });
+  if (
+    payload.purpose !== 'accounting-state' ||
+    typeof payload.v !== 'string' ||
+    typeof payload.p !== 'string' ||
+    typeof payload.sub !== 'string'
+  ) {
+    throw new Error('invalid state');
+  }
+  return { valuationId: payload.v, provider: payload.p, userId: payload.sub };
+}
