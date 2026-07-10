@@ -116,6 +116,9 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
         'admin-events.json',
         'ai-jobs.json',
         'ai-prompt-versions.json',
+        'decisions.json',
+        'qa-reviews.json',
+        'scenarios.json',
         'report-versions.json',
       ].sort(),
     );

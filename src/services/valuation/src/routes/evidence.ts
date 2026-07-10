@@ -11,6 +11,9 @@ import { listDocuments } from '../repos/documents.js';
 import { listComments } from '../repos/comments.js';
 import { listSignatures } from '../repos/signatures.js';
 import { listAiJobs } from '../repos/aiJobs.js';
+import { listDecisions } from '../repos/methodologyDecisions.js';
+import { listQaReviews } from '../repos/qaReviews.js';
+import { listScenarios } from '../repos/scenarios.js';
 import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
 import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -55,6 +58,13 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
           findReportByValuation(deps.pool, id),
           findUserById(deps.pool, principal.id),
         ]);
+      // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
+      // methodology decision log, QA review history, and saved scenarios.
+      const [decisions, qaReviews, scenarios] = await Promise.all([
+        listDecisions(deps.pool, id),
+        listQaReviews(deps.pool, id),
+        listScenarios(deps.pool, id),
+      ]);
 
       // Review tasks carry the approve / request-changes workflow; decisions
       // themselves are `review_decision` events (already in events.json).
@@ -109,6 +119,9 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         { name: 'admin-events.json', data: toJson(adminEvents) },
         { name: 'ai-jobs.json', data: toJson(aiJobs) },
         { name: 'ai-prompt-versions.json', data: toJson(promptVersions) },
+        { name: 'decisions.json', data: toJson(decisions) },
+        { name: 'qa-reviews.json', data: toJson(qaReviews) },
+        { name: 'scenarios.json', data: toJson(scenarios) },
         {
           name: 'report-versions.json',
           data: toJson({ report: report ?? null, versions }),
@@ -139,6 +152,9 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
           review_tasks: reviewTasks.length,
           admin_events: adminEvents.length,
           ai_jobs: aiJobs.length,
+          decisions: decisions.length,
+          qa_reviews: qaReviews.length,
+          scenarios: scenarios.length,
           report_versions: versions.length,
         },
         files: ['manifest.json', ...entries.map((e) => e.name)],

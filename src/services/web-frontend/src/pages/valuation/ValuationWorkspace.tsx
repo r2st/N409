@@ -129,6 +129,7 @@ export function ValuationWorkspace() {
         aria-label="Valuation workspace"
       >
         <Tab to={base} label="Overview" end />
+        <Tab to={`${base}/progress`} label="Progress" />
         {(ops || owner) && <Tab to={`${base}/company`} label="Company" />}
         <Tab to={`${base}/documents`} label="Documents" />
         {(ops || owner) && <Tab to={`${base}/params`} label="Params" />}
@@ -137,6 +138,8 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/ai`} label="AI" />}
         {ops && <Tab to={`${base}/tasks`} label="Tasks" />}
         {ops && <Tab to={`${base}/calculations`} label="Calculations" />}
+        {ops && <Tab to={`${base}/qa`} label="QA" />}
+        {ops && <Tab to={`${base}/decisions`} label="Decisions" />}
         <Tab to={`${base}/scenarios`} label="What-If Scenarios" />
         {ops && <Tab to={`${base}/sensitivity`} label="Sensitivity" />}
         {showReportTab && <Tab to={`${base}/report`} label="Report" />}

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, problems, TtlCache } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { sanitizeHtml } from '../domain/report.js';
 import {
@@ -42,18 +42,30 @@ const PatchBody = ArticleBody.partial().refine((v) => Object.keys(v).length > 0,
 });
 
 export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+  // Read-through cache (IMPROVEMENTS_RESEARCH §6): the HelpWidget fetches the
+  // article list on every page it mounts on, for every user, against content
+  // that changes at most a few times a day. Any admin write clears the whole
+  // cache — 30s of cross-replica staleness on help content is acceptable.
+  const cache = new TtlCache<unknown>({ ttlMs: 30_000 });
+
   // ── Reading (all authenticated users; drafts stay ops-only) ───────────────
 
   app.get('/api/v1/help/articles', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    const articles = await listArticles(deps.pool, { includeUnpublished: isOps(principal) });
+    const ops = isOps(principal);
+    const articles = await cache.getOrLoad(`list:${ops ? 'all' : 'published'}`, () =>
+      listArticles(deps.pool, { includeUnpublished: ops }),
+    );
     return { articles };
   });
 
   app.get('/api/v1/help/articles/:slug', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { slug } = req.params as { slug: string };
-    const article = await findArticleBySlug(deps.pool, slug);
+    const article = (await cache.getOrLoad(`slug:${slug}`, async () =>
+      // Cache the miss too (null), so unknown slugs don't hammer the DB.
+      (await findArticleBySlug(deps.pool, slug)) ?? null,
+    )) as HelpArticleRow | null;
     if (!article || (!article.published && !isOps(principal))) throw problems.notFound();
     return { article };
   });
@@ -90,6 +102,7 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       principal.id,
     );
     await audit(principal.id, 'help_article_created', article);
+    cache.clear();
     return reply.status(201).send({ article });
   });
 
@@ -112,6 +125,7 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     const article = await updateArticle(deps.pool, id, patch, principal.id);
     if (!article) throw problems.notFound();
     await audit(principal.id, 'help_article_updated', article);
+    cache.clear();
     return { article };
   });
 
@@ -126,6 +140,7 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       if (!existing) throw problems.notFound();
       await deleteArticle(deps.pool, id);
       await audit(principal.id, 'help_article_deleted', existing);
+      cache.clear();
       return reply.status(204).send();
     },
   );

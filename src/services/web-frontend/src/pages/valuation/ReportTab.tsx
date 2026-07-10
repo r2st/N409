@@ -12,6 +12,7 @@ import {
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { RichTextEditor } from '../../components/RichTextEditor';
+import { ExplanationCard } from '../../components/valuation/ExplanationCard';
 import { Button, EmptyState, ErrorNote, Spinner, TextInput } from '../../components/ui';
 
 const STATUS_LABELS: Record<Report['status'], string> = {
@@ -180,6 +181,9 @@ export function ReportTab() {
         {ops && dirty && (
           <p className="text-xs font-medium text-amber-700">Unsaved changes — render is disabled until you save.</p>
         )}
+
+        {/* §4.5 — plain-English summary; renders only when one exists. */}
+        <ExplanationCard valuationId={valuation.id} />
 
         {ops ? (
           <TextInput

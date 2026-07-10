@@ -44,6 +44,9 @@ import { registerCommunicationRoutes } from './routes/communications.js';
 import { registerAccountingRoutes } from './routes/accounting.js';
 import type { AccountingProvider, FetchFn, ProviderCredentials } from './clients/accounting.js';
 import { registerEvidenceRoutes } from './routes/evidence.js';
+import { registerQaRoutes } from './routes/qa.js';
+import { registerDecisionRoutes } from './routes/decisions.js';
+import { registerProgressRoutes } from './routes/progress.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
@@ -143,6 +146,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerPipelineRoutes(app, { pool, autoPipeline });
   registerParamsRoutes(app, { pool });
   registerAiRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
+  // IMPROVEMENTS_RESEARCH Phase 1 — QA gate before publish, audit-defense
+  // decision log, client-portal progress tracker
+  registerQaRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
+  registerDecisionRoutes(app, { pool });
+  registerProgressRoutes(app, { pool });
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // Improvement 3 — client-facing what-if scenario sandbox (read-only)
   registerScenarioRoutes(app, { pool, engineUrl: config.ENGINE_URL });

@@ -4,9 +4,10 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import { isOps, type Principal } from '../auth/rbac.js';
+import { canReadReport, canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { AI_PIPELINES, type AiPipeline } from '../domain/pipeline.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
+import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { listDocuments, type DocumentRow } from '../repos/documents.js';
 import { completeAiJob, createAiJob, latestSucceededJob, listAiJobs, type AiJobRow } from '../repos/aiJobs.js';
@@ -95,6 +96,10 @@ export async function runAiPipeline(
     autoApply: boolean;
     createdBy: string;
     actor: EventActor;
+    /** QA reviews output, not source documents — lets callers skip the corpus. */
+    includeDocuments?: boolean;
+    /** Extra payload fields (e.g. the calculation for 'qa'/'explain' runs). */
+    extraPayload?: Record<string, unknown>;
   },
 ): Promise<{ job: AiJobRow; appliedInputs: Record<string, unknown> | null }> {
   const { valuation, pipeline } = args;
@@ -114,9 +119,11 @@ export async function runAiPipeline(
       service_countries: valuation.service_countries,
     },
     params,
-    documents: await encodeDocuments(deps.documentsDir, documents),
+    documents:
+      args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents),
     prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
     options: { anonymize: args.anonymize },
+    ...(args.extraPayload ?? {}),
   };
 
   const job = await createAiJob(deps.pool, {
@@ -173,6 +180,16 @@ export async function runAiPipeline(
   }
 }
 
+/** The slice of a calculation the 'qa'/'explain' pipelines receive. */
+export function calculationPayload(calc: CalculationRow): Record<string, unknown> {
+  return {
+    equity_value: calc.equity_value,
+    fmv_per_share: calc.fmv_per_share,
+    results: calc.results,
+    inputs: calc.inputs,
+  };
+}
+
 export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): void {
   const loadValuation = async (id: string): Promise<ValuationRow> => {
     if (!isUlid(id)) throw problems.notFound();
@@ -189,11 +206,26 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     if (!(AI_PIPELINES as readonly string[]).includes(pipeline)) {
       throw problems.notFound(`Unknown pipeline "${pipeline}"`);
     }
+    if (pipeline === 'qa') {
+      // QA runs through its own route so the deterministic checks and the
+      // gate-visible review row always accompany the AI reviewer.
+      throw problems.unprocessable('Run the QA reviewer via POST /valuations/:id/qa');
+    }
     const valuation = await loadValuation(id);
     const documents = await listDocuments(deps.pool, id);
 
     if (pipeline === 'extract' && documents.length === 0) {
       throw problems.unprocessable('Upload at least one document before running data extraction');
+    }
+
+    // The explainer narrates a result — it needs one to exist.
+    let extraPayload: Record<string, unknown> | undefined;
+    if (pipeline === 'explain') {
+      const calc = await latestSucceededCalculation(deps.pool, id);
+      if (!calc) {
+        throw problems.unprocessable('Run a calculation before generating the plain-English explanation');
+      }
+      extraPayload = { calculation: calculationPayload(calc) };
     }
 
     const body = RunBody.safeParse(req.body ?? {});
@@ -207,6 +239,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
         autoApply: body.data.auto_apply,
         createdBy: principal.id,
         actor: actorFor(principal),
+        extraPayload,
       });
       return reply.status(201).send({ job, applied_inputs: appliedInputs });
     } catch (err) {
@@ -243,5 +276,28 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     const { id } = req.params as { id: string };
     await loadValuation(id);
     return { jobs: await listAiJobs(deps.pool, id) };
+  });
+
+  // Plain-English methodology summary (IMPROVEMENTS_RESEARCH §4.5). Readable
+  // by anyone who can see the valuation, but the content follows the report's
+  // visibility: clients get it once a draft has been shared, never before.
+  app.get('/api/v1/valuations/:id/explanation', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const valuation = await findValuationById(deps.pool, id);
+    const ref = valuation
+      ? { userId: valuation.user_id, partnerId: valuation.partner_id, state: valuation.state }
+      : null;
+    if (!valuation || !ref || !canReadValuation(principal, ref)) throw problems.notFound();
+    if (!canReadReport(principal, ref)) {
+      return { explanation: null, model: null, generated_at: null };
+    }
+    const job = await latestSucceededJob(deps.pool, id, 'explain');
+    return {
+      explanation: job?.result ?? null,
+      model: job?.model ?? null,
+      generated_at: job?.completed_at ?? null,
+    };
   });
 }

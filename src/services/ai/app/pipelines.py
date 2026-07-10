@@ -328,6 +328,133 @@ actually present in that document (share counts, preferences, cash, revenue)."""
     return llm.model, result
 
 
+QA_SEVERITIES = {"info", "warn", "fail"}
+QA_VERDICTS = {"pass", "warn", "fail"}
+
+
+def _calculation_summary(payload: dict) -> str:
+    """Compact JSON of the calculation under review (results + key inputs)."""
+    calc = payload.get("calculation")
+    if not isinstance(calc, dict):
+        return "(no calculation provided)"
+    keep = {
+        "equity_value": calc.get("equity_value"),
+        "fmv_per_share": calc.get("fmv_per_share"),
+        "results": calc.get("results"),
+        "inputs": calc.get("inputs"),
+    }
+    return json.dumps(keep, default=str)[:20000]
+
+
+def run_qa(payload: dict) -> tuple[str, dict]:
+    """Output QA reviewer (IMPROVEMENTS_RESEARCH §4.3): judges a finished
+    calculation for reasonableness and internal consistency. The valuation
+    service runs its deterministic checks first and ships them along; the
+    reviewer looks for what rules can't catch. The verdict only ever
+    tightens the deterministic outcome — the caller enforces that."""
+    valuation = payload.get("valuation") or {}
+    params = payload.get("params") or {}
+    checks = payload.get("qa_checks") or []
+
+    system, model = _prompt_overrides(
+        payload,
+        "You are a senior 409A valuation reviewer performing quality assurance "
+        "before delivery. Be skeptical: look for inconsistent figures, "
+        "implausible assumptions, and results that would not survive an IRS or "
+        "auditor challenge. Do not repeat findings the deterministic checks "
+        "already flagged. Respond ONLY with JSON.",
+    )
+    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
+Params: {_params_summary(params)}
+Calculation under review: {_calculation_summary(payload)}
+Deterministic checks already run: {json.dumps(checks, default=str)[:8000]}
+
+Review the calculation. Return JSON:
+{{
+  "findings": [{{"area": "<inputs|assumptions|outputs|consistency>", "finding": "<one sentence>", "severity": "info|warn|fail"}}],
+  "assessment": "<one-paragraph overall judgement>",
+  "verdict": "pass|warn|fail"
+}}
+"fail" only for defects that make the result indefensible. Maximum 10 findings."""
+
+    llm = chat(system, user, model=model)
+    parsed = _safe_result(llm)
+    findings = []
+    if isinstance(parsed, dict) and isinstance(parsed.get("findings"), list):
+        for entry in parsed["findings"][:10]:
+            if not isinstance(entry, dict) or not entry.get("finding"):
+                continue
+            severity = entry.get("severity")
+            findings.append(
+                {
+                    "area": str(entry.get("area") or "outputs"),
+                    "finding": str(entry.get("finding")),
+                    "severity": severity if severity in QA_SEVERITIES else "info",
+                }
+            )
+    verdict = parsed.get("verdict") if isinstance(parsed, dict) else None
+    if verdict not in QA_VERDICTS:
+        # Derive from findings when the model skipped/mangled the verdict.
+        severities = {f["severity"] for f in findings}
+        verdict = "fail" if "fail" in severities else "warn" if "warn" in severities else "pass"
+    result = {
+        "findings": findings,
+        "assessment": str(parsed.get("assessment", "")) if isinstance(parsed, dict) else "",
+        "verdict": verdict,
+    }
+    return llm.model, result
+
+
+def run_explain(payload: dict) -> tuple[str, dict]:
+    """Plain-English report summary (IMPROVEMENTS_RESEARCH §4.5): explains the
+    methodology and result to a founder with no valuation background."""
+    valuation = payload.get("valuation") or {}
+    params = payload.get("params") or {}
+
+    system, model = _prompt_overrides(
+        payload,
+        "You explain 409A valuations to startup founders in plain English. "
+        "No jargon without a one-clause explanation. Describe only what is in "
+        "the provided data — never invent figures. This is not legal, tax or "
+        "financial advice and must not read as such. Respond ONLY with JSON.",
+    )
+    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
+Params: {_params_summary(params)}
+Calculation: {_calculation_summary(payload)}
+
+Explain this valuation to the company's founder. Return JSON:
+{{
+  "summary": "<2-3 plain-English paragraphs: what was concluded and what it means>",
+  "methodology": [{{"approach": "<name>", "weight": <0-1|null>, "explanation": "<1-2 sentences on what it does and why it was used>"}}],
+  "drivers": ["<key factor that moved the value>", ...],
+  "caveats": "<one sentence on limits of this explanation>"
+}}
+Only include approaches that actually carried weight. Maximum 6 drivers."""
+
+    llm = chat(system, user, model=model)
+    parsed = _safe_result(llm)
+    methodology = []
+    if isinstance(parsed, dict) and isinstance(parsed.get("methodology"), list):
+        for entry in parsed["methodology"][:6]:
+            if not isinstance(entry, dict) or not entry.get("approach"):
+                continue
+            methodology.append(
+                {
+                    "approach": str(entry.get("approach")),
+                    "weight": _to_number(entry.get("weight")),
+                    "explanation": str(entry.get("explanation") or ""),
+                }
+            )
+    drivers = parsed.get("drivers") if isinstance(parsed, dict) else None
+    result = {
+        "summary": str(parsed.get("summary", "")) if isinstance(parsed, dict) else "",
+        "methodology": methodology,
+        "drivers": [str(d) for d in drivers[:6]] if isinstance(drivers, list) else [],
+        "caveats": str(parsed.get("caveats", "")) if isinstance(parsed, dict) else "",
+    }
+    return llm.model, result
+
+
 def _safe_result(llm: LlmResult) -> dict | list:
     try:
         return extract_json(llm.content)
@@ -340,4 +467,6 @@ PIPELINES = {
     "extract": run_extract,
     "comparables": run_comparables,
     "summarize": run_summarize,
+    "qa": run_qa,
+    "explain": run_explain,
 }

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatMoney } from '../../lib/pipeline';
+import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { EmptyState, ErrorNote, Field, Spinner, StatCard, TextInput } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, Field, Select, Spinner, StatCard, TextInput } from '../../components/ui';
 
 interface Baseline {
   calculation_id: string;
@@ -29,6 +30,34 @@ interface PreviewResponse {
   baseline: Baseline;
   delta: { equity_value: number | null; fmv_per_share: number | null };
   currency: string;
+}
+
+/** IMPROVEMENTS_RESEARCH §5.7 — saved bull/base/bear/custom cases. */
+export const SCENARIO_LABELS = ['bull', 'base', 'bear', 'custom'] as const;
+export type ScenarioLabel = (typeof SCENARIO_LABELS)[number];
+
+const LABEL_STYLES: Record<ScenarioLabel, string> = {
+  bull: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  base: 'bg-bond-50 text-bond-700 ring-bond-200',
+  bear: 'bg-red-50 text-red-700 ring-red-200',
+  custom: 'bg-paper-100 text-ink-500 ring-paper-300',
+};
+
+interface SavedScenario {
+  id: string;
+  name: string;
+  label: ScenarioLabel;
+  inputs: Record<string, unknown>;
+  equity_value: string | null;
+  fmv_per_share: string | null;
+  created_at: string;
+}
+
+interface ScenarioListResponse {
+  scenarios: SavedScenario[];
+  baseline: Baseline | null;
+  currency: string;
+  max_scenarios: number;
 }
 
 /** Form state is kept as strings so partially-typed numbers don't fight the user. */
@@ -110,6 +139,21 @@ export function ScenariosTab() {
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestSeq = useRef(0);
 
+  // Saved bull/base/bear cases (§5.7) — side-by-side comparison state.
+  const [saved, setSaved] = useState<ScenarioListResponse | null>(null);
+  const [saveName, setSaveName] = useState('');
+  const [saveLabel, setSaveLabel] = useState<ScenarioLabel>('custom');
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const loadSaved = useCallback(async () => {
+    try {
+      setSaved(await api<ScenarioListResponse>(`/valuations/${valuation.id}/scenarios`));
+    } catch {
+      setSaved(null); // comparison section simply hides on failure
+    }
+  }, [valuation.id]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -124,7 +168,40 @@ export function ScenariosTab() {
         setBootError(err instanceof ApiError ? err.message : 'Could not load the scenario sandbox.');
       }
     })();
-  }, [valuation.id]);
+    void loadSaved();
+  }, [valuation.id, loadSaved]);
+
+  const saveScenario = async () => {
+    if (!knobs || !defaults) return;
+    const body = toPreviewBody(knobs, defaults);
+    if (!body) {
+      setSaveError('Fix the highlighted assumptions before saving.');
+      return;
+    }
+    setSaveBusy(true);
+    setSaveError(null);
+    try {
+      await api(`/valuations/${valuation.id}/scenarios`, {
+        method: 'POST',
+        body: { ...body, name: saveName.trim(), label: saveLabel },
+      });
+      setSaveName('');
+      await loadSaved();
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : 'Could not save the scenario.');
+    } finally {
+      setSaveBusy(false);
+    }
+  };
+
+  const deleteScenario = async (scenarioId: string) => {
+    try {
+      await api(`/valuations/${valuation.id}/scenarios/${scenarioId}`, { method: 'DELETE' });
+      await loadSaved();
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : 'Could not delete the scenario.');
+    }
+  };
 
   const runPreview = useCallback(
     (body: Record<string, unknown>) => {
@@ -277,7 +354,114 @@ export function ScenariosTab() {
             This valuation is weighted entirely on approaches without adjustable assumptions.
           </p>
         )}
+
+        {/* §5.7 — persist the current knobs as a named bull/base/bear case. */}
+        <div className="mt-6 border-t border-paper-200 pt-5">
+          <h3 className="mb-3 text-sm font-semibold text-ink-900">Save as a scenario</h3>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-48 flex-1">
+              <TextInput
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                placeholder="e.g. Bull case — 2027 raise"
+                aria-label="Scenario name"
+              />
+            </div>
+            <Select
+              value={saveLabel}
+              onChange={(e) => setSaveLabel(e.target.value as ScenarioLabel)}
+              aria-label="Scenario label"
+              className="w-32"
+            >
+              {SCENARIO_LABELS.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </Select>
+            <Button onClick={() => void saveScenario()} disabled={saveBusy || saveName.trim() === ''}>
+              {saveBusy ? 'Saving…' : 'Save scenario'}
+            </Button>
+          </div>
+          {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
+        </div>
       </section>
+
+      {saved && saved.scenarios.length > 0 && (
+        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="overline text-ink-400">Scenario comparison</h2>
+            <span className="text-xs text-ink-400">
+              {saved.scenarios.length} of {saved.max_scenarios}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm" data-testid="scenario-comparison">
+              <thead>
+                <tr className="border-b border-paper-300 text-xs text-ink-400">
+                  <th className="py-2 pr-4 font-semibold">Scenario</th>
+                  <th className="py-2 pr-4 font-semibold">FMV / share</th>
+                  <th className="py-2 pr-4 font-semibold">Equity value</th>
+                  <th className="py-2 pr-4 font-semibold">Δ vs baseline</th>
+                  <th className="py-2 pr-4 font-semibold">Saved</th>
+                  <th className="py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {saved.baseline && (
+                  <tr className="border-b border-paper-200 bg-paper-50">
+                    <td className="py-2.5 pr-4 font-semibold text-ink-800">Baseline (official)</td>
+                    <td className="tnum py-2.5 pr-4">{formatMoney(saved.baseline.fmv_per_share, currency)}</td>
+                    <td className="tnum py-2.5 pr-4">{formatMoney(saved.baseline.equity_value, currency)}</td>
+                    <td className="py-2.5 pr-4 text-ink-400">—</td>
+                    <td className="py-2.5 pr-4 text-ink-400">—</td>
+                    <td />
+                  </tr>
+                )}
+                {saved.scenarios.map((scenario) => {
+                  const equity = scenario.equity_value != null ? Number(scenario.equity_value) : null;
+                  const delta =
+                    equity != null && saved.baseline?.equity_value != null
+                      ? equity - saved.baseline.equity_value
+                      : null;
+                  return (
+                    <tr key={scenario.id} className="border-b border-paper-200 last:border-0">
+                      <td className="py-2.5 pr-4">
+                        <span className="font-medium text-ink-800">{scenario.name}</span>
+                        <span
+                          className={`ml-2 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${LABEL_STYLES[scenario.label]}`}
+                        >
+                          {scenario.label}
+                        </span>
+                      </td>
+                      <td className="tnum py-2.5 pr-4">{formatMoney(scenario.fmv_per_share, currency)}</td>
+                      <td className="tnum py-2.5 pr-4">{formatMoney(scenario.equity_value, currency)}</td>
+                      <td className="py-2.5 pr-4">
+                        <DeltaBadge delta={delta} currency={currency} />
+                        {(delta === null || Math.abs(delta) < 1e-9) && (
+                          <span className="text-ink-400">—</span>
+                        )}
+                      </td>
+                      <td className="tnum py-2.5 pr-4 text-xs text-ink-400">
+                        {formatDateTime(scenario.created_at)}
+                      </td>
+                      <td className="py-2.5 text-right">
+                        <button
+                          onClick={() => void deleteScenario(scenario.id)}
+                          className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700"
+                          aria-label={`Delete scenario ${scenario.name}`}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

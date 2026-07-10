@@ -96,8 +96,10 @@ export interface ValuationDocument {
   created_at: string;
 }
 
-export const AI_PIPELINES = ['missing_data', 'extract', 'comparables', 'summarize'] as const;
-export type AiPipeline = (typeof AI_PIPELINES)[number];
+/** Pipelines runnable from the AI tab. 'qa' runs from the QA tab instead, so
+ * the deterministic checks and the publish-gate review always ride along. */
+export const AI_PIPELINES = ['missing_data', 'extract', 'comparables', 'summarize', 'explain'] as const;
+export type AiPipeline = (typeof AI_PIPELINES)[number] | 'qa';
 
 export const AI_PIPELINE_META: Record<AiPipeline, { label: string; description: string }> = {
   missing_data: {
@@ -115,6 +117,14 @@ export const AI_PIPELINE_META: Record<AiPipeline, { label: string; description: 
   summarize: {
     label: 'Summarize attachments',
     description: 'Per-document summaries plus an overall synthesis for the analyst.',
+  },
+  explain: {
+    label: 'Plain-English explanation',
+    description: 'Explains the methodology and result in founder-friendly language (needs a calculation).',
+  },
+  qa: {
+    label: 'QA review',
+    description: 'Output quality review — run from the QA tab so the publish gate records it.',
   },
 };
 

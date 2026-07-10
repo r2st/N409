@@ -15,11 +15,41 @@ export class InternalServiceError extends Error {
   }
 }
 
+/** A 4xx means our payload was wrong — retrying can't fix it. */
+function isRetryable(err: InternalServiceError): boolean {
+  return err.status === null || err.status >= 500;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function postJson<T>(
   service: string,
   url: string,
   body: unknown,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; retries?: number; backoffMs?: number } = {},
+): Promise<T> {
+  // One retry by default: both internal services are stateless computations,
+  // so a transient outage/restart shouldn't surface as a failed run.
+  const retries = opts.retries ?? 1;
+  const backoffMs = opts.backoffMs ?? 250;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await postJsonOnce<T>(service, url, body, opts.timeoutMs);
+    } catch (err) {
+      if (err instanceof InternalServiceError && isRetryable(err) && attempt < retries) {
+        await sleep(backoffMs * 2 ** attempt);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+async function postJsonOnce<T>(
+  service: string,
+  url: string,
+  body: unknown,
+  timeoutMs?: number,
 ): Promise<T> {
   let res: Response;
   try {
@@ -27,7 +57,7 @@ export async function postJson<T>(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 120_000),
+      signal: AbortSignal.timeout(timeoutMs ?? 120_000),
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : 'unreachable';

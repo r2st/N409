@@ -26,6 +26,9 @@ import { WorkbookTab } from './pages/valuation/WorkbookTab';
 import { ScenariosTab } from './pages/valuation/ScenariosTab';
 import { OverwritesTab } from './pages/valuation/OverwritesTab';
 import { ReportTab } from './pages/valuation/ReportTab';
+import { ProgressTab } from './pages/valuation/ProgressTab';
+import { QaTab } from './pages/valuation/QaTab';
+import { DecisionsTab } from './pages/valuation/DecisionsTab';
 import { OverwritesSchemaPage } from './pages/OverwritesSchemaPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
@@ -136,6 +139,9 @@ export default function App() {
           <Route path="ai" element={<AiTab />} />
           <Route path="tasks" element={<TasksTab />} />
           <Route path="calculations" element={<CalculationsTab />} />
+          <Route path="progress" element={<ProgressTab />} />
+          <Route path="qa" element={<QaTab />} />
+          <Route path="decisions" element={<DecisionsTab />} />
           <Route path="scenarios" element={<ScenariosTab />} />
           <Route path="workbook" element={<WorkbookTab />} />
           <Route path="overwrites" element={<OverwritesTab />} />

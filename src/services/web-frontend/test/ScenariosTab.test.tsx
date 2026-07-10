@@ -39,6 +39,18 @@ const PREVIEW = {
   currency: 'USD',
 };
 
+const SAVED_BEAR = {
+  id: '01JSCENARIOAAAAAAAAAAAAAAA',
+  name: 'Bear case',
+  label: 'bear',
+  inputs: { discount_rate: 0.5 },
+  equity_value: '10000000',
+  fmv_per_share: '1',
+  created_at: '2026-07-02T00:00:00Z',
+};
+
+const emptyList = { scenarios: [], baseline: BOOT.baseline, currency: 'USD', max_scenarios: 12 };
+
 function WithWorkspace() {
   return <Outlet context={{ valuation, reload: async () => {} }} />;
 }
@@ -58,13 +70,25 @@ function renderTab() {
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+/** Routes the sandbox boot, preview, and saved-scenario endpoints. */
+function mockApi(overrides: { boot?: unknown; list?: unknown } = {}) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.includes('/scenarios/baseline')) return jsonResponse(overrides.boot ?? BOOT);
+    if (path.includes('/scenarios/preview')) return jsonResponse(PREVIEW);
+    if (init?.method === 'POST') return jsonResponse({ scenario: SAVED_BEAR }, 201);
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+    return jsonResponse(overrides.list ?? emptyList);
+  });
+}
+
 describe('ScenariosTab', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
   it('boots with baseline numbers, knobs, and the read-only note', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(BOOT));
+    mockApi();
     renderTab();
 
     expect(await screen.findByText(/Sandbox only/)).toBeInTheDocument();
@@ -78,10 +102,7 @@ describe('ScenariosTab', () => {
   });
 
   it('previews after a knob change and shows the delta', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
-      if (init?.method === 'POST') return jsonResponse(PREVIEW);
-      return jsonResponse(BOOT);
-    });
+    const fetchMock = mockApi();
     renderTab();
 
     const dr = await screen.findByLabelText(/Discount rate/);
@@ -96,17 +117,74 @@ describe('ScenariosTab', () => {
     );
     expect(screen.getAllByText(/▼/).length).toBeGreaterThanOrEqual(1);
 
-    const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST');
+    const post = fetchMock.mock.calls.find(
+      ([u, init]) => init?.method === 'POST' && String(u).includes('preview'),
+    );
     expect(post).toBeTruthy();
     expect(String(post![0])).toContain(`/valuations/${valuation.id}/scenarios/preview`);
     expect(JSON.parse(String(post![1]!.body))).toEqual({ discount_rate: 0.5 });
   });
 
   it('shows an empty state when there is no baseline calculation', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ baseline: null, defaults: null, approaches: null, currency: 'USD' }),
-    );
+    mockApi({
+      boot: { baseline: null, defaults: null, approaches: null, currency: 'USD' },
+      list: { scenarios: [], baseline: null, currency: 'USD', max_scenarios: 12 },
+    });
     renderTab();
     expect(await screen.findByText('No calculation to explore yet')).toBeInTheDocument();
+  });
+
+  it('saves the current knobs as a named scenario (§5.7)', async () => {
+    const fetchMock = mockApi();
+    renderTab();
+
+    const dr = await screen.findByLabelText(/Discount rate/);
+    await userEvent.clear(dr);
+    await userEvent.type(dr, '50');
+
+    await userEvent.type(screen.getByLabelText('Scenario name'), 'Bear case');
+    await userEvent.selectOptions(screen.getByLabelText('Scenario label'), 'bear');
+    await userEvent.click(screen.getByRole('button', { name: 'Save scenario' }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([u, init]) => init?.method === 'POST' && String(u).endsWith('/scenarios'),
+      );
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post![1]!.body))).toEqual({
+        discount_rate: 0.5,
+        name: 'Bear case',
+        label: 'bear',
+      });
+    });
+  });
+
+  it('renders the side-by-side comparison with deltas and supports delete', async () => {
+    const fetchMock = mockApi({
+      list: { scenarios: [SAVED_BEAR], baseline: BOOT.baseline, currency: 'USD', max_scenarios: 12 },
+    });
+    renderTab();
+
+    const table = await screen.findByTestId('scenario-comparison');
+    expect(table).toHaveTextContent('Baseline (official)');
+    expect(table).toHaveTextContent('Bear case');
+    expect(table).toHaveTextContent('bear');
+    expect(table).toHaveTextContent('$1.00'); // scenario FMV/share
+    expect(table).toHaveTextContent('$10,000,000'); // scenario equity vs 20M baseline
+    expect(table).toHaveTextContent('▼'); // negative delta badge
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete scenario Bear case' }));
+    await waitFor(() => {
+      const del = fetchMock.mock.calls.find(([, init]) => init?.method === 'DELETE');
+      expect(del).toBeTruthy();
+      expect(String(del![0])).toContain(`/scenarios/${SAVED_BEAR.id}`);
+    });
+  });
+
+  it('disables saving until a name is entered', async () => {
+    mockApi();
+    renderTab();
+    const button = await screen.findByRole('button', { name: 'Save scenario' });
+    expect(button).toBeDisabled();
   });
 });

@@ -39,7 +39,17 @@ export const DOCUMENT_KINDS = [
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
-export const AI_PIPELINES = ['missing_data', 'extract', 'comparables', 'summarize'] as const;
+export const AI_PIPELINES = [
+  'missing_data',
+  'extract',
+  'comparables',
+  'summarize',
+  // IMPROVEMENTS_RESEARCH §4.3/§4.5 — output QA review + plain-English
+  // methodology explanation. 'qa' runs only via POST /valuations/:id/qa so
+  // the deterministic checks and the review row always ride along.
+  'qa',
+  'explain',
+] as const;
 export type AiPipeline = (typeof AI_PIPELINES)[number];
 
 export const PIPELINE_EVENT_TYPES = {

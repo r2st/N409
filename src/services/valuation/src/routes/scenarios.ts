@@ -2,12 +2,21 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import { canReadValuation, type Principal } from '../auth/rbac.js';
+import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
+import {
+  countScenarios,
+  createScenario,
+  deleteScenario,
+  findScenarioById,
+  listScenarios,
+  SCENARIO_LABELS,
+} from '../repos/scenarios.js';
 import { deepMerge, type EngineComputeResponse } from './calculations.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import type { EventActor } from '../events/record.js';
 
 /**
  * Improvement 3 — client-facing what-if scenario sandbox. Clients clone the
@@ -25,6 +34,14 @@ const PreviewBody = z.object({
   volatility: z.number().gt(0).max(5).optional(),
 });
 export type ScenarioInputs = z.infer<typeof PreviewBody>;
+
+/** IMPROVEMENTS_RESEARCH §5.7 — saved bull/base/bear/custom cases. */
+export const MAX_SCENARIOS = 12;
+
+const SaveBody = PreviewBody.extend({
+  name: z.string().trim().min(1).max(100),
+  label: z.enum(SCENARIO_LABELS).default('custom'),
+});
 
 interface EnginePayload {
   params: Record<string, unknown>;
@@ -164,4 +181,101 @@ export function registerScenarioRoutes(
       throw err;
     }
   });
+
+  // ── Saved scenarios (IMPROVEMENTS_RESEARCH §5.7) ───────────────────────────
+
+  const actorFor = (principal: Principal): EventActor => ({
+    actorType: 'human',
+    actorId: principal.id,
+    source: 'scenarios',
+  });
+
+  // Save the current knobs as a named case, computed against the latest
+  // official calculation and persisted with its results for comparison.
+  app.post('/api/v1/valuations/:id/scenarios', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadValuation(principal, id);
+
+    const parsed = SaveBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw problems.unprocessable('Invalid scenario', { errors: parsed.error.issues });
+    const { name, label, ...knobs } = parsed.data;
+
+    if ((await countScenarios(deps.pool, valuation.id)) >= MAX_SCENARIOS) {
+      throw problems.unprocessable(
+        `A valuation holds at most ${MAX_SCENARIOS} saved scenarios — delete one first`,
+      );
+    }
+    const calc = await latestSucceededCalculation(deps.pool, valuation.id);
+    if (!calc) {
+      throw problems.unprocessable('No completed calculation to build scenarios from yet');
+    }
+
+    const base = basePayload(calc);
+    const payload: EnginePayload = {
+      params: base.params,
+      inputs: deepMerge(base.inputs, scenarioOverrides(knobs)),
+    };
+    try {
+      const response = await postJson<EngineComputeResponse>(
+        'engine',
+        `${deps.engineUrl}/engine/v1/compute`,
+        payload,
+        { timeoutMs: 30_000 },
+      );
+      const scenario = await createScenario(
+        deps.pool,
+        {
+          valuationId: valuation.id,
+          name,
+          label,
+          inputs: knobs,
+          baselineCalculationId: calc.id,
+          equityValue: response.results.equity_value,
+          fmvPerShare: response.results.fmv_per_share,
+          results: { approaches: response.results.approaches ?? null },
+          createdBy: principal.id,
+        },
+        actorFor(principal),
+      );
+      return reply.status(201).send({ scenario });
+    } catch (err) {
+      if (err instanceof InternalServiceError) throw toProblem(err);
+      throw err;
+    }
+  });
+
+  // Side-by-side comparison payload: saved cases + the current baseline.
+  app.get('/api/v1/valuations/:id/scenarios', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadValuation(principal, id);
+    const [scenarios, calc] = await Promise.all([
+      listScenarios(deps.pool, valuation.id),
+      latestSucceededCalculation(deps.pool, valuation.id),
+    ]);
+    return {
+      scenarios,
+      baseline: calc ? baselineOf(calc) : null,
+      currency: valuation.currency,
+      max_scenarios: MAX_SCENARIOS,
+    };
+  });
+
+  app.delete(
+    '/api/v1/valuations/:id/scenarios/:scenarioId',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id, scenarioId } = req.params as { id: string; scenarioId: string };
+      const valuation = await loadValuation(principal, id);
+      if (!isUlid(scenarioId)) throw problems.notFound();
+      const scenario = await findScenarioById(deps.pool, scenarioId);
+      if (!scenario || scenario.valuation_id !== valuation.id) throw problems.notFound();
+      // Ops can prune anything; everyone else only what they saved.
+      if (!isOps(principal) && scenario.created_by !== principal.id) throw problems.forbidden();
+      await deleteScenario(deps.pool, scenario, actorFor(principal));
+      return reply.status(204).send();
+    },
+  );
 }

@@ -3,3 +3,4 @@ export { startTelemetry, type TelemetryHandle } from './otel.js';
 export { ApiProblem, problems, registerProblemHandler } from './problem.js';
 export { registerHealth, type ReadinessCheck } from './health.js';
 export { newUlid, isUlid } from './ids.js';
+export { TtlCache } from './cache.js';

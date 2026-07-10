@@ -30,6 +30,10 @@ class PipelineRequest(BaseModel):
     prompt: dict | None = None
     # Run options, e.g. {"anonymize": false} to skip the PII redaction step.
     options: dict = Field(default_factory=dict)
+    # 'qa'/'explain' context: the calculation under review and the valuation
+    # service's deterministic check results.
+    calculation: dict | None = None
+    qa_checks: list[dict] = Field(default_factory=list)
 
 
 class PipelineResponse(BaseModel):
