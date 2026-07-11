@@ -114,4 +114,16 @@ describe('ViewModeToggle', () => {
     await waitFor(() => expect(screen.getByText('Admin view')).toBeInTheDocument());
     expect(toggle()).toHaveAttribute('aria-checked', 'false');
   });
+
+  // Regression: on a short viewport the fixed sidebar's nav must scroll
+  // internally (min-h-0 + overflow-y-auto) instead of growing past the column
+  // and pushing the user card / bottom items below the fold.
+  it('makes the sidebar nav scrollable so bottom menu items stay reachable', async () => {
+    renderLayout(['admin']);
+    const nav = await screen.findByRole('navigation');
+    expect(nav.className).toContain('overflow-y-auto');
+    // Without min-h-0 the flex child can't shrink, so overflow never engages.
+    expect(nav.className).toContain('min-h-0');
+    expect(nav.className).toContain('flex-1');
+  });
 });

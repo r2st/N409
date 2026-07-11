@@ -238,7 +238,10 @@ export function AppLayout() {
   const roleTag = isOps(eff) ? 'Operations' : isPartner(eff) ? 'Partner' : 'Client';
 
   const nav = (
-    <nav className="flex flex-1 flex-col gap-1 px-3">
+    // min-h-0 lets this flex child shrink below its content height so
+    // overflow-y-auto can take over; without it the nav grows past the fixed
+    // sidebar and pushes the user card below the viewport (bottom items hidden).
+    <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
       <ViewModeToggle onNavigate={close} />
       <div className="overline mt-3 mb-2 px-3 text-ink-400/80">Workspace</div>
       <NavItem to="/dashboard" label="Dashboard" icon={icons.dashboard} onNavigate={close} />
