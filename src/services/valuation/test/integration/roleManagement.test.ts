@@ -146,4 +146,33 @@ describe.skipIf(!dbUp)('admin role promotion', () => {
     expect((await promote(admin.token, 'not-a-ulid')).statusCode).toBe(404);
     expect((await promote(admin.token, '01N409NOSUCHUSER0000000000')).statusCode).toBe(404);
   });
+
+  // #12 — regression: additive promotion must not re-validate pre-existing
+  // partner scope. A user holding a partner/member role without an organisation
+  // (legacy-inconsistent data) could not be promoted to admin — the endpoint
+  // 422'd on a role the admin never touched. Adding admin needs no partner org.
+  it('promotes a user who holds a member role without a partner organisation', async () => {
+    const user = await seedUser(ctx, { roles: ['member'] }); // no partner_id
+    const res = await promote(admin.token, user.id);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().user.roles.sort()).toEqual(['admin', 'member']);
+    expect((await rolesOf(user.id)).sort()).toEqual(['admin', 'member']);
+  });
+
+  // #13 — mirror on demote: removing a role never introduces a scope violation,
+  // so an admin can still be stripped from a partner/member user with no org.
+  it('demotes admin from a member-without-organisation user', async () => {
+    const user = await seedUser(ctx, { roles: ['member', 'admin'] }); // no partner_id
+    const res = await demote(admin.token, user.id);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().user.roles).toEqual(['member']);
+    expect(await rolesOf(user.id)).toEqual(['member']);
+  });
+
+  // #14 — the delta is still validated: promoting *to* a partner role with no
+  // organisation remains a 422, so the additive guard hasn't gone slack.
+  it('still rejects promotion to a partner role without an organisation', async () => {
+    const user = await seedUser(ctx, { roles: ['valuation_user'] });
+    expect((await promote(admin.token, user.id, { role: 'member' })).statusCode).toBe(422);
+  });
 });

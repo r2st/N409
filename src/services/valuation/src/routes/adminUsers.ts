@@ -403,7 +403,12 @@ export function registerAdminUserRoutes(
     if (existing.roles.includes(role)) throw problems.conflict(`This user already has the ${role} role`);
 
     const nextRoles = [...existing.roles, role];
-    assertPartnerScopeConsistent(nextRoles, existing.partner_id);
+    // Additive promotion: only the role *being added* can introduce a scope
+    // violation, so validate that role alone — not the target's whole role set.
+    // Re-validating the full set would 422 an otherwise-valid admin promotion
+    // whenever the user already carries a partner/member role without an
+    // organisation (legacy/inconsistent data the admin never touched here).
+    assertPartnerScopeConsistent([role], existing.partner_id);
 
     await adminPatchUser(deps.pool, id, { roles: nextRoles });
     const updated = await findUserById(deps.pool, id);
@@ -430,7 +435,10 @@ export function registerAdminUserRoutes(
     if (!existing.roles.includes(role)) throw problems.conflict(`This user does not have the ${role} role`);
 
     const nextRoles = existing.roles.filter((r) => r !== role);
-    assertPartnerScopeConsistent(nextRoles, existing.partner_id);
+    // Removing a role can never introduce a partner-scope violation, so there
+    // is nothing to assert here — validating the remaining set would only
+    // wrongly 422 a demotion when the user already held an inconsistent
+    // partner/member role, trapping them in that role.
 
     await adminPatchUser(deps.pool, id, { roles: nextRoles });
     const updated = await findUserById(deps.pool, id);
