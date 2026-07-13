@@ -187,6 +187,55 @@ export interface ValuationParams {
   updated_at: string;
 }
 
+/** One cap-table row — mirrors the engine's waterfall share-class shape. */
+export interface ShareClassInput {
+  name: string;
+  kind: 'common' | 'preferred' | 'option';
+  shares: number;
+  /** preferred */
+  preference?: number;
+  seniority?: number;
+  participating?: boolean;
+  conversion_ratio?: number;
+  /** option */
+  strike?: number;
+}
+
+/**
+ * The analyst-entered financial model (valuation_params.engine_inputs). Mirrors
+ * exactly what the compute engine reads; all fields optional because a model is
+ * built up incrementally and only the weighted approaches are required at
+ * calculation time.
+ */
+export interface EngineInputs {
+  shares_outstanding_common?: number | null;
+  shares_outstanding_preferred?: number | null;
+  options_outstanding?: number | null;
+  liquidation_preference?: number | null;
+  share_classes?: ShareClassInput[] | null;
+  volatility?: number | null;
+  risk_free_rate?: number | null;
+  time_to_exit_years?: number | null;
+  valuation_date?: string | null;
+  cash?: number | null;
+  debt?: number | null;
+  last_round_post_money?: number | null;
+  last_round_price_per_share?: number | null;
+  last_round_class?: string | null;
+  asset?: {
+    total_assets?: number | null;
+    total_liabilities?: number | null;
+    cost_to_replicate?: number | null;
+  } | null;
+  income?: {
+    free_cash_flows?: number[] | null;
+    revenues?: number[] | null;
+    discount_rate?: number | null;
+    terminal_growth?: number | null;
+  } | null;
+  market?: { metric?: number | null; multiples?: number[] | null } | null;
+}
+
 /** Mirrors the API's basis-point weight validation for instant UI feedback. */
 export function weightsProblem(weights: {
   asset: string;

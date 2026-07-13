@@ -132,6 +132,7 @@ export function ValuationWorkspace() {
         <Tab to={`${base}/progress`} label="Progress" />
         {(ops || owner) && <Tab to={`${base}/company`} label="Company" />}
         <Tab to={`${base}/documents`} label="Documents" />
+        {ops && <Tab to={`${base}/model`} label="Financial Model" />}
         {(ops || owner) && <Tab to={`${base}/params`} label="Params" />}
         {ops && <Tab to={`${base}/workbook`} label="Workbook" />}
         {ops && <Tab to={`${base}/overwrites`} label="Overwrites" />}

@@ -31,6 +31,7 @@ import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.j
 import { registerPipelineRoutes } from './routes/pipeline.js';
 import type { AutoPipelineDeps } from './pipeline/autoPipeline.js';
 import { registerParamsRoutes } from './routes/params.js';
+import { registerEngineInputsRoutes } from './routes/engineInputs.js';
 import { registerAiRoutes } from './routes/ai.js';
 import { registerCalculationRoutes } from './routes/calculations.js';
 import { registerScenarioRoutes } from './routes/scenarios.js';
@@ -163,6 +164,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerDocumentRoutes(app, { pool, documentsDir: config.DOCUMENTS_DIR, autoPipeline });
   registerPipelineRoutes(app, { pool, autoPipeline });
   registerParamsRoutes(app, { pool });
+  registerEngineInputsRoutes(app, { pool });
   registerAiRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
   // IMPROVEMENTS_RESEARCH Phase 1 — QA gate before publish, audit-defense
   // decision log, client-portal progress tracker

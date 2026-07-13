@@ -4,6 +4,7 @@ import { useWorkspace } from './ValuationWorkspace';
 import { DocumentsPanel } from '../../components/valuation/DocumentsPanel';
 import { AccountingConnect } from '../../components/valuation/AccountingConnect';
 import { ParamsPanel } from '../../components/valuation/ParamsPanel';
+import { FinancialModelPanel } from '../../components/valuation/FinancialModelPanel';
 import { AiPanel } from '../../components/valuation/AiPanel';
 import { TasksPanel } from '../../components/valuation/TasksPanel';
 import { CalculationPanel } from '../../components/valuation/CalculationPanel';
@@ -25,6 +26,12 @@ export function ParamsTab() {
   const { valuation } = useWorkspace();
   const { user } = useAuth();
   return <ParamsPanel valuationId={valuation.id} readOnly={!isOps(user)} />;
+}
+
+export function FinancialModelTab() {
+  const { valuation } = useWorkspace();
+  const { user } = useAuth();
+  return <FinancialModelPanel valuationId={valuation.id} readOnly={!isOps(user)} />;
 }
 
 export function AiTab() {

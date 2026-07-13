@@ -16,7 +16,14 @@ import { ValuationsPage } from './pages/ValuationsPage';
 import { NewValuationPage } from './pages/NewValuationPage';
 import { ValuationDetailPage } from './pages/ValuationDetailPage';
 import { ValuationWorkspace } from './pages/valuation/ValuationWorkspace';
-import { AiTab, CalculationsTab, DocumentsTab, ParamsTab, TasksTab } from './pages/valuation/PipelineTabs';
+import {
+  AiTab,
+  CalculationsTab,
+  DocumentsTab,
+  FinancialModelTab,
+  ParamsTab,
+  TasksTab,
+} from './pages/valuation/PipelineTabs';
 import { WorkbookTab } from './pages/valuation/WorkbookTab';
 import { ScenariosTab } from './pages/valuation/ScenariosTab';
 import { OverwritesTab } from './pages/valuation/OverwritesTab';
@@ -135,6 +142,7 @@ export default function App() {
           <Route index element={<ValuationDetailPage />} />
           <Route path="company" element={<CompanyTab />} />
           <Route path="documents" element={<DocumentsTab />} />
+          <Route path="model" element={<FinancialModelTab />} />
           <Route path="params" element={<ParamsTab />} />
           <Route path="ai" element={<AiTab />} />
           <Route path="tasks" element={<TasksTab />} />
