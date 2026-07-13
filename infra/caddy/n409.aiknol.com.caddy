@@ -1,0 +1,29 @@
+# n409.aiknol.com — reverse proxy to the N409 web service (host port 3000).
+#
+# Caddy provisions and renews a Let's Encrypt certificate automatically for
+# this hostname (HTTP-01 / TLS-ALPN), so no explicit `tls` block is needed.
+# HTTP on :80 is auto-redirected to HTTPS.
+#
+# Drop this file into the Caddy container's sites directory (see README.md) or
+# `import` it from the main Caddyfile. Caddy runs in Docker, so the upstream
+# must be reachable from *inside* the container — `host.docker.internal`
+# resolves to the Docker host when the container is started with
+# `--add-host host.docker.internal:host-gateway` (see README for how to verify
+# / pick the right upstream for this box).
+
+n409.aiknol.com {
+	encode zstd gzip
+
+	# The web service already forwards /api/v1 to the valuation service, so a
+	# single upstream covers both the SPA and the API. Caddy passes Host and
+	# X-Forwarded-* by default; add X-Real-IP for backends that read it.
+	reverse_proxy host.docker.internal:3000 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	# Keep access logs with the other Caddy logs; adjust path to taste.
+	log {
+		output stderr
+		format console
+	}
+}
