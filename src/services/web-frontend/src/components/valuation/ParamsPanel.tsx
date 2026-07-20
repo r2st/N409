@@ -93,6 +93,8 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const [scenarios, setScenarios] = useState<ScenarioRow[]>([]);
   const [scenariosBusy, setScenariosBusy] = useState(false);
   const [scenariosSaved, setScenariosSaved] = useState(false);
+  const [hybridOpmWeight, setHybridOpmWeight] = useState('0.5');
+  const [hybridPwermWeight, setHybridPwermWeight] = useState('0.5');
 
   const load = useCallback(async () => {
     try {
@@ -101,8 +103,16 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       setForm(fromParams(p));
       try {
         const { engine_inputs } = await api<{
-          engine_inputs: { pwerm?: { scenarios?: unknown[] } };
+          engine_inputs: {
+            pwerm?: { scenarios?: unknown[] };
+            hybrid?: { opm_weight?: number | null; pwerm_weight?: number | null };
+          };
         }>(`/valuations/${valuationId}/engine-inputs`);
+        const hy = engine_inputs?.hybrid;
+        if (hy) {
+          if (hy.opm_weight != null) setHybridOpmWeight(String(hy.opm_weight));
+          if (hy.pwerm_weight != null) setHybridPwermWeight(String(hy.pwerm_weight));
+        }
         const raw = engine_inputs?.pwerm?.scenarios;
         if (Array.isArray(raw) && raw.length > 0) {
           setScenarios(
@@ -196,6 +206,8 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     .reduce((a, b) => a + b, 0);
 
   const isPwerm = form.allocation_method === 'pwerm';
+  const isHybrid = form.allocation_method === 'hybrid';
+  const isCvm = form.allocation_method === 'cvm';
   const probabilityTotal = scenarios.reduce((sum, s) => sum + (Number(s.probability) || 0), 0);
   const probabilityOff = scenarios.length > 0 && Math.abs(probabilityTotal - 1) > 1e-4;
 
@@ -208,7 +220,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     setError(null);
     setScenariosBusy(true);
     try {
-      const body = {
+      const body: Record<string, unknown> = {
         pwerm: {
           scenarios: scenarios.map((s) => ({
             name: s.name.trim() || null,
@@ -220,6 +232,14 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           })),
         },
       };
+      // Hybrid needs both the discrete scenarios (PWERM leg) and the blend
+      // weights, saved together to engine_inputs.
+      if (isHybrid) {
+        body.hybrid = {
+          opm_weight: hybridOpmWeight.trim() === '' ? null : Number(hybridOpmWeight),
+          pwerm_weight: hybridPwermWeight.trim() === '' ? null : Number(hybridPwermWeight),
+        };
+      }
       await api(`/valuations/${valuationId}/engine-inputs`, { method: 'PATCH', body });
       setScenariosSaved(true);
     } catch (err) {
@@ -286,7 +306,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         <div className="grid gap-5 sm:grid-cols-2">
           <Field
             label="Equity allocation"
-            hint="OPM allocates via a Black-Scholes call; PWERM uses discrete exit scenarios."
+            hint="OPM: Black-Scholes call. PWERM: discrete exit scenarios. Hybrid: blend of both. CVM: current-value waterfall."
           >
             <Select
               disabled={readOnly}
@@ -296,15 +316,64 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             >
               <option value="opm">Option Pricing Method (OPM)</option>
               <option value="pwerm">Probability-Weighted Expected Return (PWERM)</option>
+              <option value="hybrid">Hybrid (OPM + PWERM blend)</option>
+              <option value="cvm">Current Value Method (CVM)</option>
             </Select>
           </Field>
+          {isHybrid && (
+            <div className="grid grid-cols-2 gap-4" data-testid="hybrid-weights">
+              <Field label="OPM weight" hint="Far-term continuation.">
+                <TextInput
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  max="1"
+                  disabled={readOnly}
+                  value={hybridOpmWeight}
+                  onChange={(e) => {
+                    setScenariosSaved(false);
+                    setHybridOpmWeight(e.target.value);
+                  }}
+                  aria-label="Hybrid OPM weight"
+                />
+              </Field>
+              <Field label="PWERM weight" hint="Near-term discrete exits.">
+                <TextInput
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  max="1"
+                  disabled={readOnly}
+                  value={hybridPwermWeight}
+                  onChange={(e) => {
+                    setScenariosSaved(false);
+                    setHybridPwermWeight(e.target.value);
+                  }}
+                  aria-label="Hybrid PWERM weight"
+                />
+              </Field>
+            </div>
+          )}
         </div>
+        {isHybrid && Math.abs((Number(hybridOpmWeight) || 0) + (Number(hybridPwermWeight) || 0) - 1) > 1e-4 && (
+          <p className="mt-3 text-sm text-red-600" data-testid="hybrid-weight-warning">
+            OPM + PWERM weights must sum to 1.00.
+          </p>
+        )}
+        {isCvm && (
+          <p className="mt-3 text-sm text-ink-400">
+            CVM allocates the current equity value by the deterministic liquidation waterfall — best
+            for very early-stage, pre-revenue, or distressed companies.
+          </p>
+        )}
       </section>
 
-      {isPwerm && (
+      {(isPwerm || isHybrid) && (
         <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card" data-testid="pwerm-scenarios">
           <div className="mb-4 flex items-baseline justify-between">
-            <h3 className="overline text-ink-400">PWERM exit scenarios</h3>
+            <h3 className="overline text-ink-400">
+              {isHybrid ? 'Hybrid — near-term exit scenarios (PWERM leg)' : 'PWERM exit scenarios'}
+            </h3>
             <span
               className={`tnum text-sm font-semibold ${probabilityOff ? 'text-red-600' : 'text-bond-700'}`}
               data-testid="pwerm-probability-total"

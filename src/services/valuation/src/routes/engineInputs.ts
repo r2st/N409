@@ -100,6 +100,19 @@ export const EngineInputsBody = z
       .nullable()
       .optional(),
 
+    // Hybrid method weights (compute.py `allocation_method == 'hybrid'`,
+    // hybrid.py). The OPM weight covers the far-term continuation outcome, the
+    // PWERM weight the modelled near-term liquidity scenarios; they must sum to
+    // 1 (validated in the engine). Absent → the engine defaults to 50/50.
+    hybrid: z
+      .object({
+        opm_weight: z.number().min(0).max(1).nullable().optional(),
+        pwerm_weight: z.number().min(0).max(1).nullable().optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
+
     // PWERM discrete exit scenarios (compute.py `allocation_method == 'pwerm'`,
     // pwerm.py). Each scenario carries a probability, an exit value (equity or
     // enterprise), a time to exit and an optional per-scenario discount rate.

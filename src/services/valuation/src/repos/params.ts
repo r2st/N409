@@ -28,8 +28,9 @@ export interface ValuationParamsRow {
   market_horizon: 'ltm' | 'ntm' | null;
   market_custom_ranges: unknown;
   asset_method: 'cost_to_replicate' | 'nav' | null;
-  /** How equity value is allocated to common: OPM (default) or PWERM. */
-  allocation_method: 'opm' | 'pwerm';
+  /** How equity value is allocated to common: OPM (default), PWERM, a hybrid
+   * blend of the two, or the Current Value Method. */
+  allocation_method: 'opm' | 'pwerm' | 'hybrid' | 'cvm';
   updated_at: Date;
   [key: string]: unknown;
 }

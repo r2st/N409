@@ -132,4 +132,19 @@ describe('EngineInputsBody', () => {
     });
     expect(res.success).toBe(false);
   });
+
+  it('accepts hybrid blend weights', () => {
+    const res = EngineInputsBody.safeParse({ hybrid: { opm_weight: 0.4, pwerm_weight: 0.6 } });
+    expect(res.success).toBe(true);
+  });
+
+  it('rejects hybrid weights outside [0, 1]', () => {
+    const res = EngineInputsBody.safeParse({ hybrid: { opm_weight: 1.4, pwerm_weight: -0.4 } });
+    expect(res.success).toBe(false);
+  });
+
+  it('rejects unknown keys in the hybrid block', () => {
+    const res = EngineInputsBody.safeParse({ hybrid: { opm_weight: 0.5, bogus: 1 } });
+    expect(res.success).toBe(false);
+  });
 });

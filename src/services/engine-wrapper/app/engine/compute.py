@@ -16,13 +16,17 @@ from datetime import date
 
 from .approaches import EngineInputError, asset_value, income_dcf, market_multiples, opm_backsolve
 from .bs import bs_call
+from .current_value import allocate_cvm
 from .dlom import chaffee_dlom, finnerty_dlom
+from .hybrid import blend_hybrid, resolve_hybrid_weights
 from .pwerm import allocate_pwerm
 from .volatility import estimate_volatility
 from .wacc import compute_wacc
 from .waterfall import allocate_waterfall
 
 ENGINE_VERSION = "py-1.0.0"
+
+ALLOCATION_METHODS = ("opm", "pwerm", "hybrid", "cvm")
 DEFAULT_RISK_FREE_RATE = 0.04
 DEFAULT_TIME_TO_EXIT_YEARS = 3.0
 
@@ -219,13 +223,9 @@ def _resolve_discounts(
     return dloc, round(dlom, 4), method
 
 
-def _compute_pwerm(params: dict, inputs: dict) -> dict:
-    """PWERM allocation path (allocation_method == 'pwerm').
-
-    The scenarios themselves determine equity value and its allocation to
-    common, so PWERM bypasses the weighted-approach step the OPM path uses.
-    Common per-share value then feeds the same DLOC/DLOM discounts.
-    """
+def _pwerm_allocation(inputs: dict) -> dict:
+    """Run the PWERM waterfall allocation from ``inputs`` (shared by the PWERM
+    and hybrid paths). Returns the ``allocate_pwerm`` result dict."""
     pwerm_in = inputs.get("pwerm")
     if not isinstance(pwerm_in, dict):
         raise EngineInputError("allocation_method 'pwerm' requires inputs.pwerm.scenarios")
@@ -250,6 +250,18 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
     equity_value = allocation["equity_value"]
     if equity_value <= 0:
         raise EngineInputError(f"PWERM weighted equity value is not positive ({equity_value:.2f})")
+    return allocation
+
+
+def _compute_pwerm(params: dict, inputs: dict) -> dict:
+    """PWERM allocation path (allocation_method == 'pwerm').
+
+    The scenarios themselves determine equity value and its allocation to
+    common, so PWERM bypasses the weighted-approach step the OPM path uses.
+    Common per-share value then feeds the same DLOC/DLOM discounts.
+    """
+    allocation = _pwerm_allocation(inputs)
+    equity_value = allocation["equity_value"]
 
     common_shares = _req(
         inputs.get("shares_outstanding_common"), "shares_outstanding_common", positive=True
@@ -288,53 +300,15 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
     return {"engine_version": ENGINE_VERSION, "results": results}
 
 
-def compute(
-    params: dict,
-    inputs: dict,
-    recompute: list[str] | None = None,
-    prior_approaches: dict | None = None,
-    *,
-    auto_volatility: bool = False,
-    auto_wacc: bool = False,
-    auto_comparables: bool = False,
+def _weighted_equity(
+    params: dict, inputs: dict, recompute: list[str] | None, prior: dict
 ) -> dict:
-    """Full 409A computation, or — with `recompute` — a per-subsystem rerun.
+    """Weighted marketable equity value across the four approaches.
 
-    When `recompute` names a subset of APPROACH_KEYS, only those approaches are
-    computed fresh; the rest reuse `prior_approaches` (a previous run's
-    results.approaches). Weighting, allocation and discounts always re-run.
-
-    The `auto_*` flags run the estimation engines (volatility / WACC /
-    comparables) to pre-fill their manual inputs before the calculation; a
-    manual value always takes precedence, so the flags are backward compatible.
+    Shared by the OPM, hybrid and CVM paths (PWERM derives equity value from its
+    scenarios instead). Returns the equity value, the per-approach results and
+    weights, and the resolved time / rate / cash / debt.
     """
-    inputs, auto_meta = _apply_autopilot(
-        params,
-        inputs,
-        auto_volatility=auto_volatility,
-        auto_wacc=auto_wacc,
-        auto_comparables=auto_comparables,
-    )
-
-    if recompute is not None:
-        unknown = set(recompute) - set(APPROACH_KEYS)
-        if unknown:
-            raise EngineInputError(f"unknown recompute approaches: {sorted(unknown)}")
-        if not recompute:
-            raise EngineInputError("recompute must name at least one approach")
-    prior = prior_approaches or {}
-
-    # PWERM is a self-contained allocation method: its discrete exit scenarios
-    # set both the equity value and the allocation to common, so it bypasses
-    # the weighted-approach + OPM chain the default path runs.
-    allocation_method = params.get("allocation_method") or "opm"
-    if allocation_method not in ("opm", "pwerm"):
-        raise EngineInputError("allocation_method must be 'opm' or 'pwerm'")
-    if allocation_method == "pwerm":
-        out = _compute_pwerm(params, inputs)
-        if auto_meta is not None:
-            out["results"]["auto"] = auto_meta
-        return out
 
     def _fresh(name: str) -> bool:
         """Full runs compute everything; partial runs compute the selected
@@ -434,7 +408,22 @@ def compute(
     if equity_value <= 0:
         raise EngineInputError(f"weighted equity value is not positive ({equity_value:.2f})")
 
-    # ── OPM allocation to common ────────────────────────────────────────────
+    return {
+        "equity_value": equity_value,
+        "approaches": approaches,
+        "weight_by_approach": weight_by_approach,
+        "t": t,
+        "r": r,
+        "cash": cash,
+        "debt": debt,
+    }
+
+
+def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: float) -> dict:
+    """OPM allocation of ``equity_value`` to common (waterfall / single
+    breakpoint / as-converted). Returns the allocation metadata, common equity,
+    fully diluted common, volatility, and the pre-discount common per share.
+    Shared by the OPM and hybrid paths."""
     common_shares = _req(inputs.get("shares_outstanding_common"), "shares_outstanding_common", positive=True)
     options = _num(inputs.get("options_outstanding"), "options_outstanding") or 0.0
     preferred_shares = _num(inputs.get("shares_outstanding_preferred"), "shares_outstanding_preferred") or 0.0
@@ -481,24 +470,129 @@ def compute(
         common_equity = equity_value * common_fraction
         allocation = {"method": "as_converted", "common_fraction": common_fraction}
 
-    # ── Discounts ───────────────────────────────────────────────────────────
-    dloc, dlom, method = _resolve_discounts(params, volatility, t, r)
+    common_per_share = (
+        waterfall_per_share if waterfall_per_share is not None else common_equity / fully_diluted_common
+    )
+    return {
+        "allocation": allocation,
+        "common_equity": common_equity,
+        "fully_diluted_common": fully_diluted_common,
+        "volatility": volatility,
+        "common_per_share": common_per_share,
+    }
 
-    if waterfall_per_share is not None:
-        # Waterfall already spread value over the cap table's common shares.
-        fmv_per_share = waterfall_per_share * (1.0 - dloc) * (1.0 - dlom)
-    else:
-        fmv_per_share = common_equity * (1.0 - dloc) * (1.0 - dlom) / fully_diluted_common
+
+def _compute_opm(params: dict, inputs: dict, recompute: list[str] | None, prior: dict) -> dict:
+    """Default allocation path: weighted approaches → OPM allocation → DLOM."""
+    we = _weighted_equity(params, inputs, recompute, prior)
+    equity_value, t, r = we["equity_value"], we["t"], we["r"]
+    alloc = _opm_allocate(equity_value, params, inputs, t, r)
+
+    dloc, dlom, method = _resolve_discounts(params, alloc["volatility"], t, r)
+    fmv_per_share = alloc["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
 
     results: dict = {
         "equity_value": round(equity_value, 2),
         "approaches": {
-            name: {**data, "weight": weight_by_approach[name]} for name, data in approaches.items()
+            name: {**data, "weight": we["weight_by_approach"][name]}
+            for name, data in we["approaches"].items()
         },
-        "allocation": allocation,
-        "common_equity_value": round(common_equity, 2),
+        "allocation": alloc["allocation"],
+        "common_equity_value": round(alloc["common_equity"], 2),
         "assumptions": {
             "time_to_exit_years": round(t, 4),
+            "risk_free_rate": r,
+            "volatility": alloc["volatility"],
+        },
+        "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
+        "fully_diluted_common": alloc["fully_diluted_common"],
+        "fmv_per_share": round(fmv_per_share, 4),
+    }
+    if recompute is not None:
+        results["recomputed"] = sorted(recompute)
+    return {"engine_version": ENGINE_VERSION, "results": results}
+
+
+def _compute_cvm(params: dict, inputs: dict, recompute: list[str] | None, prior: dict) -> dict:
+    """Current Value Method: weighted equity value allocated by the σ→0
+    deterministic waterfall (current_value.allocate_cvm), then DLOC/DLOM."""
+    we = _weighted_equity(params, inputs, recompute, prior)
+    equity_value, t, r = we["equity_value"], we["t"], we["r"]
+    allocation = allocate_cvm(equity_value, inputs)
+
+    volatility = _num(inputs.get("volatility"), "volatility", positive=True)
+    if params.get("dlom_method") in ("chaffee", "finnerty") and volatility is None:
+        raise EngineInputError("volatility is required for the selected model DLOM")
+
+    dloc, dlom, method = _resolve_discounts(params, volatility, t, r)
+    fmv_per_share = allocation["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
+
+    results: dict = {
+        "equity_value": round(equity_value, 2),
+        "approaches": {
+            name: {**data, "weight": we["weight_by_approach"][name]}
+            for name, data in we["approaches"].items()
+        },
+        "allocation": allocation,
+        "allocation_method": "cvm",
+        "common_equity_value": round(allocation["common_value"], 2),
+        "assumptions": {
+            "time_to_exit_years": round(t, 4),
+            "risk_free_rate": r,
+            "volatility": volatility,
+        },
+        "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
+        "fully_diluted_common": allocation["fully_diluted_common"],
+        "fmv_per_share": round(fmv_per_share, 4),
+    }
+    if recompute is not None:
+        results["recomputed"] = sorted(recompute)
+    return {"engine_version": ENGINE_VERSION, "results": results}
+
+
+def _compute_hybrid(params: dict, inputs: dict, recompute: list[str] | None, prior: dict) -> dict:
+    """Hybrid: blend the OPM common-per-share (weighted approaches + waterfall)
+    with the PWERM common-per-share by configurable weights, then DLOC/DLOM."""
+    weights = resolve_hybrid_weights(inputs)
+    we = _weighted_equity(params, inputs, recompute, prior)
+    t, r = we["t"], we["r"]
+    opm_alloc = _opm_allocate(we["equity_value"], params, inputs, t, r)
+    pwerm_allocation = _pwerm_allocation(inputs)
+
+    blend = blend_hybrid(
+        {
+            "equity_value": we["equity_value"],
+            "common_per_share": opm_alloc["common_per_share"],
+            "time_to_exit_years": t,
+            "allocation": opm_alloc["allocation"],
+        },
+        {
+            "equity_value": pwerm_allocation["equity_value"],
+            "common_per_share": pwerm_allocation["common_per_share"],
+            "expected_time_to_exit_years": pwerm_allocation["expected_time_to_exit_years"],
+        },
+        weights,
+    )
+
+    t_blend = blend["blended_time_to_exit_years"]
+    volatility = opm_alloc["volatility"]
+    dloc, dlom, method = _resolve_discounts(params, volatility, t_blend, r)
+    common_per_share = blend["common_per_share"]
+    fully_diluted_common = opm_alloc["fully_diluted_common"]
+    fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
+
+    results: dict = {
+        "equity_value": blend["equity_value"],
+        "approaches": {
+            name: {**data, "weight": we["weight_by_approach"][name]}
+            for name, data in we["approaches"].items()
+        },
+        "allocation": blend,
+        "allocation_method": "hybrid",
+        "pwerm_allocation": pwerm_allocation,
+        "common_equity_value": round(common_per_share * fully_diluted_common, 2),
+        "assumptions": {
+            "time_to_exit_years": t_blend,
             "risk_free_rate": r,
             "volatility": volatility,
         },
@@ -508,6 +602,61 @@ def compute(
     }
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
-    if auto_meta is not None:
-        results["auto"] = auto_meta
     return {"engine_version": ENGINE_VERSION, "results": results}
+
+
+def compute(
+    params: dict,
+    inputs: dict,
+    recompute: list[str] | None = None,
+    prior_approaches: dict | None = None,
+    *,
+    auto_volatility: bool = False,
+    auto_wacc: bool = False,
+    auto_comparables: bool = False,
+) -> dict:
+    """Full 409A computation, or — with `recompute` — a per-subsystem rerun.
+
+    Dispatches on ``params.allocation_method`` (opm / pwerm / hybrid / cvm).
+    When `recompute` names a subset of APPROACH_KEYS, only those approaches are
+    computed fresh; the rest reuse `prior_approaches` (a previous run's
+    results.approaches). Weighting, allocation and discounts always re-run.
+
+    The `auto_*` flags run the estimation engines (volatility / WACC /
+    comparables) to pre-fill their manual inputs before the calculation; a
+    manual value always takes precedence, so the flags are backward compatible.
+    """
+    inputs, auto_meta = _apply_autopilot(
+        params,
+        inputs,
+        auto_volatility=auto_volatility,
+        auto_wacc=auto_wacc,
+        auto_comparables=auto_comparables,
+    )
+
+    if recompute is not None:
+        unknown = set(recompute) - set(APPROACH_KEYS)
+        if unknown:
+            raise EngineInputError(f"unknown recompute approaches: {sorted(unknown)}")
+        if not recompute:
+            raise EngineInputError("recompute must name at least one approach")
+    prior = prior_approaches or {}
+
+    allocation_method = params.get("allocation_method") or "opm"
+    if allocation_method not in ALLOCATION_METHODS:
+        raise EngineInputError(f"allocation_method must be one of {ALLOCATION_METHODS}")
+
+    if allocation_method == "pwerm":
+        # Self-contained: discrete exit scenarios set both equity value and its
+        # allocation to common, bypassing the weighted-approach + OPM chain.
+        out = _compute_pwerm(params, inputs)
+    elif allocation_method == "cvm":
+        out = _compute_cvm(params, inputs, recompute, prior)
+    elif allocation_method == "hybrid":
+        out = _compute_hybrid(params, inputs, recompute, prior)
+    else:
+        out = _compute_opm(params, inputs, recompute, prior)
+
+    if auto_meta is not None:
+        out["results"]["auto"] = auto_meta
+    return out
