@@ -1,6 +1,45 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 /**
+ * Scrubs secrets/PII that can slip into a free-text error `message` or `stack`
+ * (audit B-1 P3). Pino's `redact` paths only cover structured fields, so a
+ * thrown `Error("... postgres://user:pw@host ...")` would otherwise reach the
+ * logs verbatim. Applied only to the 5xx log line; the client body never
+ * includes the message.
+ */
+export function scrubSensitive(text: string): string {
+  if (!text) return text;
+  return (
+    text
+      // credentials embedded in DSNs: keep scheme + host, drop user:password
+      .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s:/@]+:[^\s:/@]+@/gi, '$1[REDACTED]@')
+      // bearer / authorization tokens
+      .replace(/\b(bearer\s+)[A-Za-z0-9._~+/-]{8,}=*/gi, '$1[REDACTED]')
+      // JWTs (three base64url segments)
+      .replace(/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g, '[REDACTED-JWT]')
+      // common API-key shapes (sk-..., AKIA..., long hex/base64 secrets)
+      .replace(/\b(?:sk|rk|pk)[-_][A-Za-z0-9]{16,}\b/g, '[REDACTED-KEY]')
+      .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED-KEY]')
+      // email addresses
+      .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[REDACTED-EMAIL]')
+      // US SSN
+      .replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[REDACTED-SSN]')
+  );
+}
+
+/** Returns a log-safe view of an error with message/stack scrubbed. */
+export function scrubError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: scrubSensitive(err.message),
+      stack: err.stack ? scrubSensitive(err.stack) : undefined,
+    };
+  }
+  return { message: scrubSensitive(String(err)) };
+}
+
+/**
  * RFC 9457 application/problem+json error (api-design.md §1).
  */
 export class ApiProblem extends Error {
@@ -90,7 +129,9 @@ export function registerProblemHandler(app: FastifyInstance): void {
     const fastifyErr = err as { statusCode?: number; message?: string };
     const status = fastifyErr.statusCode && fastifyErr.statusCode < 500 ? fastifyErr.statusCode : 500;
     if (status >= 500) {
-      req.log.error({ err }, 'unhandled error');
+      // Scrub the free-text message/stack — pino `redact` only masks structured
+      // fields, so secrets interpolated into an Error string would leak (B-1 P3).
+      req.log.error({ err: scrubError(err) }, 'unhandled error');
     }
     return reply
       .status(status)
