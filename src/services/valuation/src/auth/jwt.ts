@@ -49,6 +49,31 @@ export async function verifySession(token: string, cfg: JwtConfig): Promise<Sess
   };
 }
 
+// ── MFA challenge (feature: 2FA) ─────────────────────────────────────────────
+// After the password step of a login for a 2FA-enabled account, the server
+// issues a short-lived challenge token instead of a session. It proves the
+// first factor passed and names the user the second factor must be verified
+// for — nothing else authenticates the /auth/mfa/verify call.
+
+/** Mint a 5-minute challenge token for `userId`. */
+export async function signMfaChallenge(userId: string, cfg: JwtConfig): Promise<string> {
+  return new SignJWT({ purpose: 'mfa-challenge' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(userId)
+    .setIssuer(cfg.issuer)
+    .setIssuedAt()
+    .setExpirationTime('5m')
+    .sign(key(cfg.secret));
+}
+
+export async function verifyMfaChallenge(token: string, cfg: JwtConfig): Promise<string> {
+  const { payload } = await jwtVerify(token, key(cfg.secret), { issuer: cfg.issuer });
+  if (payload.purpose !== 'mfa-challenge' || typeof payload.sub !== 'string') {
+    throw new Error('invalid mfa challenge');
+  }
+  return payload.sub;
+}
+
 /** Short-lived signed state for the OIDC redirect round-trip (CSRF protection). */
 export async function signOidcState(cfg: JwtConfig): Promise<string> {
   return new SignJWT({ purpose: 'oidc-state' })

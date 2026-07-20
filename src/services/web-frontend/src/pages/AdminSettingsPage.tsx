@@ -28,6 +28,11 @@ const TOGGLES: Knob[] = [
     label: 'Maintenance mode',
     help: 'Makes the platform read-only for clients and partners. Operations users keep full access, and everyone can still sign in.',
   },
+  {
+    key: 'require_mfa',
+    label: 'Require two-factor authentication',
+    help: 'When on, password accounts must enrol in TOTP 2FA and cannot disable it. Google SSO accounts are unaffected.',
+  },
 ];
 
 const NUMBERS: Knob[] = [

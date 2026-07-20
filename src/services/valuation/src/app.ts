@@ -9,6 +9,7 @@ import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAccountRoutes } from './routes/account.js';
+import { registerMfaRoutes } from './routes/mfa.js';
 import { registerSystemSettingsRoutes } from './routes/systemSettings.js';
 import { SystemSettingsStore } from './repos/systemSettings.js';
 import { registerValuationRoutes } from './routes/valuations.js';
@@ -190,6 +191,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     publicBaseUrl: config.PUBLIC_BASE_URL,
     cookie: sessionCookie,
   });
+  registerMfaRoutes(app, { pool, settings });
   registerSystemSettingsRoutes(app, { pool, settings });
   registerValuationRoutes(app, { pool, transport });
   // M1 — core pipeline

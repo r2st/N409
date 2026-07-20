@@ -14,6 +14,8 @@ import type { User } from './types';
 
 type AuthStatus = 'loading' | 'anonymous' | 'authenticated';
 
+export type LoginResult = { mfaRequired: false } | { mfaRequired: true; challenge: string };
+
 interface AuthContextValue {
   status: AuthStatus;
   user: User | null;
@@ -24,7 +26,19 @@ interface AuthContextValue {
    */
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
-  login: (email: string, password: string) => Promise<void>;
+  /**
+   * Password step. Resolves to `{ mfaRequired: false }` and signs the user in,
+   * or `{ mfaRequired: true, challenge }` when the account has 2FA — the caller
+   * then collects a code and calls `verifyMfa` with the challenge.
+   */
+  login: (email: string, password: string) => Promise<LoginResult>;
+  /** Second factor: redeem the login challenge with a TOTP or backup code. */
+  verifyMfa: (input: {
+    challenge: string;
+    code?: string;
+    backupCode?: string;
+    rememberDevice?: boolean;
+  }) => Promise<void>;
   register: (input: {
     email: string;
     password: string;
@@ -114,10 +128,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(
-    async (email: string, password: string) => {
-      const res = await api<{ user: User; token: string }>('/auth/login', {
+    async (email: string, password: string): Promise<LoginResult> => {
+      const res = await api<
+        { user: User; token: string } | { mfa_required: true; challenge: string }
+      >('/auth/login', { method: 'POST', body: { email, password } });
+      if (!('token' in res)) {
+        return { mfaRequired: true, challenge: res.challenge };
+      }
+      await adopt(res.token, res.user);
+      return { mfaRequired: false };
+    },
+    [adopt],
+  );
+
+  const verifyMfa = useCallback(
+    async (input: {
+      challenge: string;
+      code?: string;
+      backupCode?: string;
+      rememberDevice?: boolean;
+    }) => {
+      const res = await api<{ user: User; token: string }>('/auth/mfa/verify', {
         method: 'POST',
-        body: { email, password },
+        body: {
+          challenge: input.challenge,
+          code: input.code,
+          backup_code: input.backupCode,
+          remember_device: input.rememberDevice,
+        },
       });
       await adopt(res.token, res.user);
     },
@@ -140,8 +178,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const replaceToken = useCallback((token: string) => setToken(token), []);
 
   const value = useMemo(
-    () => ({ status, user, viewMode, setViewMode, login, register, adoptToken, setUser, replaceToken, logout }),
-    [status, user, viewMode, login, register, adoptToken, replaceToken, logout],
+    () => ({ status, user, viewMode, setViewMode, login, verifyMfa, register, adoptToken, setUser, replaceToken, logout }),
+    [status, user, viewMode, login, verifyMfa, register, adoptToken, replaceToken, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

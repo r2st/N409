@@ -27,6 +27,11 @@ export const SYSTEM_SETTINGS_SCHEMA = z.object({
   support_email: z.string().email(),
   /** Pre-filled turnaround on a new valuation when ops don't set one. */
   default_delivery_days: z.number().int().min(1).max(365),
+  /**
+   * When on, every password account must enrol in TOTP 2FA: an un-enrolled
+   * user is allowed to sign in but is required to set it up before proceeding.
+   */
+  require_mfa: z.boolean(),
 });
 
 export type SystemSettings = z.infer<typeof SYSTEM_SETTINGS_SCHEMA>;
@@ -38,6 +43,7 @@ export const SYSTEM_SETTINGS_DEFAULTS: SystemSettings = {
   password_min_length: 10,
   support_email: 'support@409.ai',
   default_delivery_days: 10,
+  require_mfa: false,
 };
 
 export const SYSTEM_SETTING_KEYS = Object.keys(SYSTEM_SETTINGS_DEFAULTS) as [

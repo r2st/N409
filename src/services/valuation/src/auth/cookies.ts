@@ -38,3 +38,22 @@ export function clearSessionCookie(reply: FastifyReply, config: SessionCookieCon
     path: '/',
   });
 }
+
+/**
+ * "Remember this device for 30 days" cookie (feature: 2FA). Holds an opaque
+ * random token whose SHA-256 hash is stored server-side (mfa_trusted_devices);
+ * presence of a live trust lets login skip the second-factor challenge.
+ */
+export const DEVICE_COOKIE = 'n409_device';
+export const DEVICE_TRUST_DAYS = 30;
+const DEVICE_TTL_SECONDS = DEVICE_TRUST_DAYS * 24 * 60 * 60;
+
+export function setDeviceCookie(reply: FastifyReply, token: string, secure: boolean): void {
+  reply.setCookie(DEVICE_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure,
+    path: '/',
+    maxAge: DEVICE_TTL_SECONDS,
+  });
+}

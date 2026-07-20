@@ -13,6 +13,8 @@ export interface User {
   sso_provider: string | null;
   partner_id: string | null;
   roles: string[];
+  /** Whether TOTP 2FA is enabled (feature: MFA). Absent on older payloads. */
+  totp_enabled?: boolean;
 }
 
 /** A personal API token. The secret is returned only once, at creation. */
@@ -31,6 +33,7 @@ export interface SystemSettings {
   password_min_length: number;
   support_email: string;
   default_delivery_days: number;
+  require_mfa: boolean;
 }
 
 export type SystemSettingKey = keyof SystemSettings;

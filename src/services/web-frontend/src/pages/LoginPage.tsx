@@ -25,7 +25,7 @@ function GoogleButton() {
 }
 
 export function LoginPage() {
-  const { status, login } = useAuth();
+  const { status, login, verifyMfa } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
@@ -33,6 +33,11 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [providers, setProviders] = useState<AuthProviders | null>(null);
+  // Second-factor step: set once the password step returns a challenge.
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  const [useBackup, setUseBackup] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(false);
 
   useEffect(() => {
     api<AuthProviders>('/auth/providers')
@@ -46,19 +51,90 @@ export function LoginPage() {
     return <Navigate to={from ?? '/'} replace />;
   }
 
+  const goHome = () =>
+    navigate((location.state as { from?: string } | null)?.from ?? '/', { replace: true });
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     setBusy(true);
     try {
-      await login(email, password);
-      navigate((location.state as { from?: string } | null)?.from ?? '/', { replace: true });
+      const result = await login(email, password);
+      if (result.mfaRequired) {
+        setChallenge(result.challenge);
+      } else {
+        goHome();
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to sign in — please try again.');
     } finally {
       setBusy(false);
     }
   };
+
+  const submitCode = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!challenge) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await verifyMfa({
+        challenge,
+        code: useBackup ? undefined : code.trim(),
+        backupCode: useBackup ? code.trim() : undefined,
+        rememberDevice,
+      });
+      goHome();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'That code was not accepted.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (challenge) {
+    return (
+      <AuthShell title="Two-factor authentication" subtitle="Enter the code from your authenticator app.">
+        <form onSubmit={submitCode} className="space-y-5" noValidate>
+          <ErrorNote>{error}</ErrorNote>
+          <Field label={useBackup ? 'Backup code' : 'Authenticator code'}>
+            <TextInput
+              autoFocus
+              inputMode={useBackup ? 'text' : 'numeric'}
+              autoComplete="one-time-code"
+              required
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder={useBackup ? 'XXXX-XXXX' : '123456'}
+              aria-label={useBackup ? 'Backup code' : 'Authenticator code'}
+            />
+          </Field>
+          <label className="flex items-center gap-2 text-sm text-ink-500">
+            <input
+              type="checkbox"
+              checked={rememberDevice}
+              onChange={(e) => setRememberDevice(e.target.checked)}
+            />
+            Remember this device for 30 days
+          </label>
+          <Button type="submit" disabled={busy || !code.trim()} className="w-full">
+            {busy ? 'Verifying…' : 'Verify'}
+          </Button>
+          <button
+            type="button"
+            className="block w-full text-center text-sm font-semibold text-bond-600 hover:text-bond-700"
+            onClick={() => {
+              setUseBackup((v) => !v);
+              setCode('');
+              setError(null);
+            }}
+          >
+            {useBackup ? 'Use your authenticator app instead' : 'Use a backup code instead'}
+          </button>
+        </form>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell title="Sign in" subtitle="Access your valuations workspace.">

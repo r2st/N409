@@ -2,13 +2,32 @@ import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { problems } from '@n409/shared';
+import { randomBytes } from 'node:crypto';
 import { hashPassword, verifyPassword } from '../auth/password.js';
-import { signOidcState, signSession, verifyOidcState, type JwtConfig } from '../auth/jwt.js';
+import {
+  signMfaChallenge,
+  signOidcState,
+  signSession,
+  verifyMfaChallenge,
+  verifyOidcState,
+  type JwtConfig,
+} from '../auth/jwt.js';
 import {
   clearSessionCookie,
+  setDeviceCookie,
   setSessionCookie,
+  DEVICE_COOKIE,
+  DEVICE_TRUST_DAYS,
   type SessionCookieConfig,
 } from '../auth/cookies.js';
+import { verifyTotp } from '../auth/totp.js';
+import { decryptSecret, backupCodeMatches } from '../auth/mfaCrypto.js';
+import {
+  consumeBackupCode,
+  isDeviceTrusted,
+  listUnusedBackupCodeHashes,
+  trustDevice,
+} from '../repos/mfa.js';
 import type { GoogleOidc } from '../auth/google.js';
 import {
   bumpSessionEpoch,
@@ -42,6 +61,17 @@ const LoginBody = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+const MfaVerifyBody = z
+  .object({
+    challenge: z.string().min(1),
+    code: z.string().min(6).max(10).optional(),
+    backup_code: z.string().min(1).max(20).optional(),
+    remember_device: z.boolean().optional(),
+  })
+  .refine((b) => b.code != null || b.backup_code != null, {
+    message: 'A TOTP code or a backup code is required.',
+  });
 
 const ForgotPasswordBody = z.object({ email: z.string().email() });
 
@@ -106,6 +136,7 @@ function toPublicUser(u: UserWithRoles) {
     sso_provider: u.sso_provider,
     partner_id: u.partner_id,
     roles: u.roles,
+    totp_enabled: u.totp_enabled,
   };
 }
 
@@ -230,6 +261,61 @@ export function registerAuthRoutes(
       allow(emailKey, 10, LOGIN_WINDOW_MS);
       allow(ipKey, 100, LOGIN_WINDOW_MS);
       throw problems.unauthorized('Invalid email or password');
+    }
+
+    // Second factor: a 2FA-enabled account gets a challenge instead of a
+    // session — unless this browser is a remembered, still-trusted device.
+    if (user.totp_enabled) {
+      const deviceToken = req.cookies?.[DEVICE_COOKIE];
+      const trusted = deviceToken ? await isDeviceTrusted(deps.pool, user.id, deviceToken) : false;
+      if (!trusted) {
+        return {
+          mfa_required: true,
+          challenge: await signMfaChallenge(user.id, deps.jwt),
+        };
+      }
+    }
+    return { user: toPublicUser(user), token: await issueSession(reply, user) };
+  });
+
+  // Second-factor verification: redeem the challenge token from login with a
+  // TOTP code or a one-time backup code, and (optionally) remember the device.
+  app.post('/api/v1/auth/mfa/verify', async (req, reply) => {
+    const parsed = MfaVerifyBody.safeParse(req.body);
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+
+    let userId: string;
+    try {
+      userId = await verifyMfaChallenge(parsed.data.challenge, deps.jwt);
+    } catch {
+      throw problems.unauthorized('This 2FA challenge is invalid or has expired — sign in again');
+    }
+    const user = await findUserById(deps.pool, userId);
+    if (!user || user.deleted_at || !user.totp_enabled || !user.totp_secret) {
+      throw problems.unauthorized('2FA is not enabled for this account');
+    }
+
+    // Throttle second-factor guessing per user.
+    if (!allow(`mfa:${user.id}`, 10, LOGIN_WINDOW_MS)) {
+      throw problems.tooManyRequests('Too many verification attempts — try again later');
+    }
+
+    let ok = false;
+    if (parsed.data.code) {
+      ok = verifyTotp(decryptSecret(user.totp_secret), parsed.data.code);
+    } else if (parsed.data.backup_code) {
+      const hashes = await listUnusedBackupCodeHashes(deps.pool, user.id);
+      const matched = backupCodeMatches(parsed.data.backup_code, hashes);
+      if (matched) ok = await consumeBackupCode(deps.pool, user.id, matched);
+    }
+    if (!ok) throw problems.unauthorized('That code is incorrect');
+
+    if (parsed.data.remember_device) {
+      const raw = randomBytes(32).toString('base64url');
+      const expires = new Date(Date.now() + DEVICE_TRUST_DAYS * 24 * 60 * 60 * 1000);
+      await trustDevice(deps.pool, user.id, raw, expires);
+      if (deps.cookie) setDeviceCookie(reply, raw, deps.cookie.secure);
     }
     return { user: toPublicUser(user), token: await issueSession(reply, user) };
   });

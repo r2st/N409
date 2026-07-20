@@ -21,6 +21,11 @@ export interface UserRow {
   deleted_at: Date | null;
   /** Bumped to invalidate every session JWT minted for this user so far. */
   session_epoch: number;
+  /** AES-256-GCM-encrypted base32 TOTP secret (feature: MFA/2FA). */
+  totp_secret: string | null;
+  /** True once a TOTP enrolment has been confirmed with a valid code. */
+  totp_enabled: boolean;
+  totp_confirmed_at: Date | null;
 }
 
 export interface UserWithRoles extends UserRow {

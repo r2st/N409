@@ -16,6 +16,7 @@ const DEFAULTS: SystemSettings = {
   password_min_length: 10,
   support_email: 'support@409.ai',
   default_delivery_days: 10,
+  require_mfa: false,
 };
 
 interface Call {

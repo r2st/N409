@@ -8,6 +8,7 @@ import { displayName, formatDateTime, initials } from '../lib/format';
 import type { ApiToken, User } from '../lib/types';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { PhoneInput } from '../components/PhoneInput';
+import { MfaCard } from '../components/MfaCard';
 
 function Card({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
@@ -688,6 +689,7 @@ export function SettingsPage() {
       <NotificationPreferencesCard />
       <ApiTokensCard />
       {!isSso && <ChangePasswordCard />}
+      {!isSso && <MfaCard />}
       <SessionCard />
       <CloseAccountCard />
     </div>
