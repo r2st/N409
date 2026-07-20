@@ -33,6 +33,7 @@ import { registerGrantRoutes } from './routes/grants.js';
 import { registerIntakeRoutes } from './routes/intake.js';
 import { registerEngagementRoutes } from './routes/engagements.js';
 import { registerCapTableRoutes } from './routes/capTable.js';
+import { registerMonitoringRoutes } from './routes/monitoring.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
 import { registerPipelineRoutes } from './routes/pipeline.js';
@@ -283,6 +284,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerEngagementRoutes(app, { pool, transport });
   // Feature 9 — cap-table import + validation + waterfall feed
   registerCapTableRoutes(app, { pool });
+  // Feature 10 — real-time valuation monitoring (revaluation triggers)
+  registerMonitoringRoutes(app, { pool, transport });
   // §23 — accounting software integrations (OAuth connect + P&L import)
   registerAccountingRoutes(app, {
     pool,

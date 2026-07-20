@@ -32,6 +32,8 @@ import { IntakeTab } from './pages/valuation/IntakeTab';
 import { EngagementTab } from './pages/valuation/EngagementTab';
 import { EngagementsPage } from './pages/EngagementsPage';
 import { CapTableTab } from './pages/valuation/CapTableTab';
+import { MonitoringTab } from './pages/valuation/MonitoringTab';
+import { MonitorsPage } from './pages/MonitorsPage';
 import { OverwritesTab } from './pages/valuation/OverwritesTab';
 import { ReportTab } from './pages/valuation/ReportTab';
 import { ProgressTab } from './pages/valuation/ProgressTab';
@@ -168,6 +170,7 @@ export default function App() {
           <Route path="overwrites" element={<OverwritesTab />} />
           <Route path="report" element={<ReportTab />} />
           <Route path="grants" element={<GrantsTab />} />
+          <Route path="monitoring" element={<MonitoringTab />} />
           <Route path="engagement" element={<EngagementTab />} />
           <Route path="package" element={<PackageTab />} />
         </Route>
@@ -175,6 +178,7 @@ export default function App() {
         <Route element={<RequireRole allow={isOps} />}>
           <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
           <Route path="/engagements" element={<EngagementsPage />} />
+          <Route path="/monitors" element={<MonitorsPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />

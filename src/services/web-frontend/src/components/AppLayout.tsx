@@ -267,6 +267,7 @@ export function AppLayout() {
         <NavGroup label="Operations">
           <NavItem to="/tasks" label="Review tasks" icon={icons.tasks} onNavigate={close} />
           <NavItem to="/engagements" label="Engagement pipeline" icon={icons.tasks} onNavigate={close} />
+          <NavItem to="/monitors" label="Monitored valuations" icon={icons.tasks} onNavigate={close} />
           <NavItem to="/templates" label="Report templates" icon={icons.templates} onNavigate={close} />
           <NavItem to="/admin/prompts" label="Bot prompts" icon={icons.prompts} onNavigate={close} />
           <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
