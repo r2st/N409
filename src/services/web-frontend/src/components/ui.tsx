@@ -292,3 +292,185 @@ export function Modal({
     document.body,
   );
 }
+
+export interface Column<T> {
+  /** Stable key; also used as the React key for the cell. */
+  key: string;
+  header: ReactNode;
+  /** Cell renderer; defaults to `String(row[key])`. */
+  render?: (row: T) => ReactNode;
+  align?: 'left' | 'right' | 'center';
+  /** Extra classes on the <td>/<th> (e.g. column width, hide-on-mobile). */
+  className?: string;
+}
+
+const alignClass = { left: 'text-left', right: 'text-right', center: 'text-center' } as const;
+
+/**
+ * Shared semantic table primitive (audit F-4 P3): each list page re-implemented
+ * its own `<table>`. One accessible table (scoped `<th>`, optional caption, an
+ * empty-state row) that scrolls horizontally inside its own container so the
+ * page body never scrolls sideways on mobile.
+ */
+export function DataTable<T>({
+  columns,
+  rows,
+  rowKey,
+  caption,
+  empty = 'Nothing to show.',
+  onRowClick,
+}: {
+  columns: Array<Column<T>>;
+  rows: T[];
+  rowKey: (row: T, index: number) => string;
+  caption?: string;
+  empty?: ReactNode;
+  onRowClick?: (row: T) => void;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-sm">
+        {caption && <caption className="sr-only">{caption}</caption>}
+        <thead>
+          <tr className="border-b border-paper-300 text-left">
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                scope="col"
+                className={`px-3 py-2.5 text-xs font-semibold tracking-wide text-ink-500 uppercase ${alignClass[col.align ?? 'left']} ${col.className ?? ''}`}
+              >
+                {col.header}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length} className="px-3 py-10 text-center text-sm text-ink-400">
+                {empty}
+              </td>
+            </tr>
+          ) : (
+            rows.map((row, index) => (
+              <tr
+                key={rowKey(row, index)}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                className={`border-b border-paper-200 last:border-0 ${
+                  onRowClick ? 'cursor-pointer hover:bg-paper-50' : ''
+                }`}
+              >
+                {columns.map((col) => (
+                  <td
+                    key={col.key}
+                    className={`px-3 py-2.5 text-ink-800 ${alignClass[col.align ?? 'left']} ${col.className ?? ''}`}
+                  >
+                    {col.render ? col.render(row) : String((row as Record<string, unknown>)[col.key] ?? '')}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Total number of pages for `total` items at `pageSize` (min 1). */
+export function pageCountOf(total: number, pageSize: number): number {
+  if (pageSize <= 0) return 1;
+  return Math.max(1, Math.ceil(total / pageSize));
+}
+
+/**
+ * Shared pagination control (audit F-4 P3). 1-indexed; disables Prev/Next at the
+ * ends and renders as a labelled <nav> so it's reachable by assistive tech.
+ */
+export function Pagination({
+  page,
+  pageCount,
+  onPage,
+  className = '',
+}: {
+  page: number;
+  pageCount: number;
+  onPage: (page: number) => void;
+  className?: string;
+}) {
+  if (pageCount <= 1) return null;
+  const clamped = Math.min(Math.max(page, 1), pageCount);
+  return (
+    <nav aria-label="Pagination" className={`flex items-center justify-between gap-4 text-sm ${className}`}>
+      <Button
+        variant="secondary"
+        onClick={() => onPage(clamped - 1)}
+        disabled={clamped <= 1}
+        aria-label="Previous page"
+      >
+        Previous
+      </Button>
+      <span aria-live="polite" className="text-ink-500">
+        Page {clamped} of {pageCount}
+      </span>
+      <Button
+        variant="secondary"
+        onClick={() => onPage(clamped + 1)}
+        disabled={clamped >= pageCount}
+        aria-label="Next page"
+      >
+        Next
+      </Button>
+    </nav>
+  );
+}
+
+const toastTone = {
+  success: 'border-bond-200 bg-bond-50 text-bond-800',
+  error: 'border-red-200 bg-red-50 text-red-800',
+  info: 'border-ink-200 bg-white text-ink-800',
+} as const;
+
+/**
+ * Lightweight controlled toast (audit F-4 P3). Announces via `role=status`
+ * (errors as `alert`) and auto-dismisses after `duration` ms; the parent owns
+ * visibility so it stays trivially testable without a global provider.
+ */
+export function Toast({
+  message,
+  tone = 'info',
+  onDismiss,
+  duration = 4000,
+}: {
+  message: ReactNode;
+  tone?: keyof typeof toastTone;
+  onDismiss?: () => void;
+  duration?: number;
+}) {
+  useEffect(() => {
+    if (!onDismiss || duration <= 0) return;
+    const timer = setTimeout(onDismiss, duration);
+    return () => clearTimeout(timer);
+  }, [onDismiss, duration, message]);
+
+  return (
+    <div
+      role={tone === 'error' ? 'alert' : 'status'}
+      className={`fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border px-4 py-2.5 text-sm font-medium shadow-lift ${toastTone[tone]}`}
+    >
+      <span>{message}</span>
+      {onDismiss && (
+        <button
+          type="button"
+          aria-label="Dismiss"
+          onClick={onDismiss}
+          className="rounded p-0.5 text-current/60 hover:text-current"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M5 5l14 14M19 5L5 19" strokeLinecap="round" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
