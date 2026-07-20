@@ -11,6 +11,7 @@ Pipeline (features.md §engine, requirements FR-14/15):
 
 from __future__ import annotations
 
+import math
 from datetime import date
 
 from .approaches import EngineInputError, asset_value, income_dcf, market_multiples, opm_backsolve
@@ -54,6 +55,10 @@ def _num(value, name: str, *, positive: bool = False) -> float | None:
         out = float(value)
     except (TypeError, ValueError):
         raise EngineInputError(f"{name} must be a number") from None
+    # Reject NaN/Inf at the boundary: otherwise they propagate silently through
+    # bs_call/allocation and surface as a NaN fair-market value (audit T-1 P3).
+    if not math.isfinite(out):
+        raise EngineInputError(f"{name} must be a finite number")
     if positive and out <= 0:
         raise EngineInputError(f"{name} must be positive")
     return out
@@ -337,7 +342,10 @@ def compute(
     share_classes = inputs.get("share_classes")
     has_waterfall = isinstance(share_classes, list) and len(share_classes) > 0
 
-    volatility = _num(inputs.get("volatility"), "volatility")
+    # Volatility must be strictly positive: a negative value would otherwise be
+    # passed straight to bs_call (σ ≤ 0 → intrinsic) and silently produce a
+    # wrong allocation instead of an error (audit T-1 P3).
+    volatility = _num(inputs.get("volatility"), "volatility", positive=True)
     needs_vol = (
         liquidation_preference > 0
         or has_waterfall
