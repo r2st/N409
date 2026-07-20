@@ -43,6 +43,7 @@ import { registerParamsRoutes } from './routes/params.js';
 import { registerEngineInputsRoutes } from './routes/engineInputs.js';
 import { registerAiRoutes } from './routes/ai.js';
 import { registerCalculationRoutes } from './routes/calculations.js';
+import { registerBridgeRoutes } from './routes/bridge.js';
 import { registerScenarioRoutes } from './routes/scenarios.js';
 import { registerOverwriteRoutes } from './routes/overwrites.js';
 import { registerWorkbookRoutes } from './routes/workbook.js';
@@ -217,6 +218,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerDecisionRoutes(app, { pool });
   registerProgressRoutes(app, { pool });
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  registerBridgeRoutes(app, { pool });
   // Improvement 3 — client-facing what-if scenario sandbox (read-only)
   registerScenarioRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // M2 — output & delivery

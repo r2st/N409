@@ -27,6 +27,7 @@ import {
 } from './pages/valuation/PipelineTabs';
 import { WorkbookTab } from './pages/valuation/WorkbookTab';
 import { ScenariosTab } from './pages/valuation/ScenariosTab';
+import { BridgeTab } from './pages/valuation/BridgeTab';
 import { GrantsTab } from './pages/valuation/GrantsTab';
 import { IntakeTab } from './pages/valuation/IntakeTab';
 import { EngagementTab } from './pages/valuation/EngagementTab';
@@ -166,6 +167,7 @@ export default function App() {
           <Route path="health" element={<HealthTab />} />
           <Route path="decisions" element={<DecisionsTab />} />
           <Route path="scenarios" element={<ScenariosTab />} />
+          <Route path="bridge" element={<BridgeTab />} />
           <Route path="workbook" element={<WorkbookTab />} />
           <Route path="overwrites" element={<OverwritesTab />} />
           <Route path="report" element={<ReportTab />} />

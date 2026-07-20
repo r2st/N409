@@ -86,6 +86,89 @@ export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells
 // ledger palette: bond green, brass, ink tones
 const PALETTE = ['#2f7d5b', '#b98d4f', '#3b5b7d', '#8d5a7d', '#5b8d8a', '#7d6e3b', '#a05252', '#6b7280'];
 
+export interface WaterfallStep {
+  label: string;
+  /** Signed contribution (an intermediate delta). */
+  value: number;
+}
+
+/**
+ * Floating-bar waterfall (feature 3 value bridge): a start total, a sequence of
+ * signed contributions, and an end total. Green bars add value, red subtract;
+ * the running total connects them. Dependency-free SVG to stay printable.
+ */
+export function WaterfallChart({
+  title,
+  start,
+  steps,
+  format,
+}: {
+  title: string;
+  start: { label: string; value: number };
+  steps: WaterfallStep[];
+  format: (v: number) => string;
+}) {
+  const end = start.value + steps.reduce((a, s) => a + s.value, 0);
+  // Running cumulative levels for each floating bar.
+  const bars: Array<{ label: string; from: number; to: number; value: number; kind: 'total' | 'up' | 'down' }> = [];
+  bars.push({ label: start.label, from: 0, to: start.value, value: start.value, kind: 'total' });
+  let cum = start.value;
+  for (const s of steps) {
+    bars.push({ label: s.label, from: cum, to: cum + s.value, value: s.value, kind: s.value >= 0 ? 'up' : 'down' });
+    cum += s.value;
+  }
+  bars.push({ label: end >= 0 ? 'New' : 'New', from: 0, to: end, value: end, kind: 'total' });
+
+  const lo = Math.min(0, ...bars.map((b) => Math.min(b.from, b.to)));
+  const hi = Math.max(0, ...bars.map((b) => Math.max(b.from, b.to)));
+  const span = hi - lo || 1;
+  const W = 100 / bars.length;
+  const H = 100;
+  const y = (v: number) => ((hi - v) / span) * H;
+  const color = (kind: string) => (kind === 'total' ? '#3b5b7d' : kind === 'up' ? '#2f7d5b' : '#a05252');
+
+  return (
+    <div className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+      <div className="overline text-ink-400">{title}</div>
+      <svg viewBox="0 0 100 118" className="mt-4 w-full" role="img" aria-label={title} preserveAspectRatio="none">
+        {/* zero baseline */}
+        <line x1="0" x2="100" y1={y(0)} y2={y(0)} stroke="#d9d2c4" strokeWidth="0.4" />
+        {bars.map((b, i) => {
+          const x = i * W + W * 0.15;
+          const w = W * 0.7;
+          const top = Math.min(y(b.from), y(b.to));
+          const h = Math.max(0.6, Math.abs(y(b.to) - y(b.from)));
+          return (
+            <g key={i}>
+              <rect x={x} y={top} width={w} height={h} fill={color(b.kind)} rx="0.6">
+                <title>{`${b.label}: ${format(b.value)}`}</title>
+              </rect>
+              <text
+                x={i * W + W / 2}
+                y={110}
+                textAnchor="middle"
+                className="fill-ink-400"
+                style={{ fontSize: '3.2px' }}
+              >
+                {b.label.length > 14 ? `${b.label.slice(0, 13)}…` : b.label}
+              </text>
+              <text
+                x={i * W + W / 2}
+                y={Math.max(4, top - 1.5)}
+                textAnchor="middle"
+                className="fill-ink-700 font-semibold"
+                style={{ fontSize: '3px' }}
+              >
+                {b.kind === 'total' ? format(b.value) : `${b.value >= 0 ? '+' : ''}${format(b.value)}`}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 export function DonutChart({ title, slices }: { title: string; slices: PieSlice[] }) {
   const total = slices.reduce((sum, s) => sum + s.value, 0);
   const shown = slices.filter((s) => s.value > 0);
