@@ -10,6 +10,9 @@ export interface AiPromptRow {
   description: string | null;
   system_prompt: string;
   model: string | null;
+  /** On/off toggle (migration 0060). A disabled pipeline is refused before any
+   * LLM call. Defaults to true for every existing pipeline. */
+  enabled: boolean;
   updated_by: string | null;
   created_at: Date;
   updated_at: Date;
@@ -109,7 +112,13 @@ async function insertNextVersion(
 export async function updatePrompt(
   pool: pg.Pool,
   id: string,
-  fields: { label?: string; description?: string | null; system_prompt?: string; model?: string | null },
+  fields: {
+    label?: string;
+    description?: string | null;
+    system_prompt?: string;
+    model?: string | null;
+    enabled?: boolean;
+  },
   updatedBy: string,
 ): Promise<AiPromptRow | null> {
   return withTransaction(pool, async (client) => {
@@ -123,6 +132,9 @@ export async function updatePrompt(
     if (fields.description !== undefined) set('description', fields.description);
     if (fields.system_prompt !== undefined) set('system_prompt', fields.system_prompt);
     if (fields.model !== undefined) set('model', fields.model);
+    // The on/off toggle is operational state, not prompt content — it does not
+    // append a version (unlike system_prompt/model below).
+    if (fields.enabled !== undefined) set('enabled', fields.enabled);
     set('updated_by', updatedBy);
     params.push(id);
     const { rows } = await client.query<AiPromptRow>(

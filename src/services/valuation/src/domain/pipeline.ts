@@ -49,8 +49,33 @@ export const AI_PIPELINES = [
   // the deterministic checks and the review row always ride along.
   'qa',
   'explain',
+  // Analyst agents (migrations 0060/0061). Multi-step / structured generators
+  // that share the pipeline job + prompt-registry machinery.
+  'cap_table',
+  'comp_selection',
+  'report_narrative',
+  'assumptions',
+  'audit_defense',
+  'roll_forward',
 ] as const;
 export type AiPipeline = (typeof AI_PIPELINES)[number];
+
+/**
+ * Agents that narrate or defend a finished result — the route auto-attaches the
+ * latest successful calculation and refuses to run without one, exactly like
+ * 'explain'.
+ */
+export const CALCULATION_DEPENDENT_PIPELINES: ReadonlySet<AiPipeline> = new Set([
+  'explain',
+  'report_narrative',
+  'audit_defense',
+]);
+
+/** Agents that read the uploaded document corpus (cap-table docs, financials). */
+export const DOCUMENT_DEPENDENT_PIPELINES: ReadonlySet<AiPipeline> = new Set([
+  'extract',
+  'cap_table',
+]);
 
 export const PIPELINE_EVENT_TYPES = {
   taskCreated: 'review_task_created',

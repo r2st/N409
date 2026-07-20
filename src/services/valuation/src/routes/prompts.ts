@@ -28,6 +28,8 @@ const PatchBody = z
     description: z.string().max(2000).nullable(),
     system_prompt: z.string().min(1).max(20_000),
     model: z.string().min(1).max(200).nullable(),
+    // Per-agent on/off toggle (migration 0060).
+    enabled: z.boolean(),
   })
   .partial()
   .strict();

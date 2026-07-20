@@ -5,7 +5,12 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadReport, canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import { AI_PIPELINES, type AiPipeline } from '../domain/pipeline.js';
+import {
+  AI_PIPELINES,
+  CALCULATION_DEPENDENT_PIPELINES,
+  DOCUMENT_DEPENDENT_PIPELINES,
+  type AiPipeline,
+} from '../domain/pipeline.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
@@ -41,6 +46,10 @@ const RunBody = z
     anonymize: z.boolean().default(true),
     // extract only: apply the extracted engine inputs to params on success.
     auto_apply: z.boolean().default(false),
+    // Agent-specific context (comp_context, company_profile, comparables,
+    // methodology, prior_valuation, new_data, ...) passed straight to the AI
+    // service. Kept opaque here so new agents don't need a route change.
+    context: z.record(z.unknown()).optional(),
   })
   .default({ anonymize: true, auto_apply: false });
 
@@ -109,6 +118,11 @@ export async function runAiPipeline(
   // Registry-managed prompt: the stored system prompt + model binding ride
   // along so admins can tune pipelines without a deploy (Bot Prompts view).
   const promptRow = await findPromptByPipeline(deps.pool, pipeline);
+  // On/off toggle (migration 0060): a disabled agent is refused before any job
+  // is created or LLM call is made.
+  if (promptRow && promptRow.enabled === false) {
+    throw problems.unprocessable(`The "${pipeline}" agent is disabled`);
+  }
   const promptVersion = promptRow ? await latestPromptVersion(deps.pool, promptRow.id) : null;
   const payload = {
     valuation: {
@@ -211,19 +225,24 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       // gate-visible review row always accompany the AI reviewer.
       throw problems.unprocessable('Run the QA reviewer via POST /valuations/:id/qa');
     }
+    const typedPipeline = pipeline as AiPipeline;
     const valuation = await loadValuation(id);
     const documents = await listDocuments(deps.pool, id);
 
     if (pipeline === 'extract' && documents.length === 0) {
       throw problems.unprocessable('Upload at least one document before running data extraction');
     }
+    // Agents that read the corpus (e.g. cap-table structuring) need documents.
+    if (DOCUMENT_DEPENDENT_PIPELINES.has(typedPipeline) && documents.length === 0) {
+      throw problems.unprocessable('Upload at least one document before running this agent');
+    }
 
-    // The explainer narrates a result — it needs one to exist.
+    // Agents that narrate or defend a result need a calculation to exist.
     let extraPayload: Record<string, unknown> | undefined;
-    if (pipeline === 'explain') {
+    if (CALCULATION_DEPENDENT_PIPELINES.has(typedPipeline)) {
       const calc = await latestSucceededCalculation(deps.pool, id);
       if (!calc) {
-        throw problems.unprocessable('Run a calculation before generating the plain-English explanation');
+        throw problems.unprocessable('Run a calculation before running this agent');
       }
       extraPayload = { calculation: calculationPayload(calc) };
     }
@@ -231,15 +250,18 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     const body = RunBody.safeParse(req.body ?? {});
     if (!body.success) throw problems.unprocessable('Invalid options', { errors: body.error.issues });
 
+    // Merge the auto-attached calculation with any caller-supplied agent context.
+    const merged = { ...(extraPayload ?? {}), ...(body.data.context ?? {}) };
+
     try {
       const { job, appliedInputs } = await runAiPipeline(deps, {
         valuation,
-        pipeline: pipeline as AiPipeline,
+        pipeline: typedPipeline,
         anonymize: body.data.anonymize,
         autoApply: body.data.auto_apply,
         createdBy: principal.id,
         actor: actorFor(principal),
-        extraPayload,
+        extraPayload: Object.keys(merged).length > 0 ? merged : undefined,
       });
       return reply.status(201).send({ job, applied_inputs: appliedInputs });
     } catch (err) {

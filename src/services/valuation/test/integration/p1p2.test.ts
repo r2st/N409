@@ -116,9 +116,15 @@ describe.skipIf(!dbUp)('P1/P2 features API', () => {
       expect(res.statusCode).toBe(200);
       const { prompts } = res.json();
       expect(prompts.map((p: { pipeline: string }) => p.pipeline).sort()).toEqual([
+        'assumptions',
+        'audit_defense',
+        'cap_table',
+        'comp_selection',
         'comparables',
         'extract',
         'missing_data',
+        'report_narrative',
+        'roll_forward',
         'summarize',
       ]);
       const extract = prompts.find((p: { pipeline: string }) => p.pipeline === 'extract');
