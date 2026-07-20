@@ -14,10 +14,20 @@ const Env = z.object({
   // M1 core pipeline — internal service URLs + document storage
   AI_URL: z.string().url().default('http://127.0.0.1:3002'),
   ENGINE_URL: z.string().url().default('http://127.0.0.1:3003'),
+  // Shared secret sent as X-Internal-Token on every AI/engine call (audit
+  // B-1 P0). Both Python services enforce it when set; leave unset in local
+  // dev where the services also skip the check.
+  INTERNAL_SERVICE_TOKEN: z.string().optional(),
   DOCUMENTS_DIR: z.string().min(1).default('./data/documents'),
   // Auto-pipeline on upload (extraction → param fill → draft calculation).
   // 'off' disables it globally; per-valuation opt-out is valuations.auto_pipeline.
   AUTO_PIPELINE: z.enum(['on', 'off']).default('on'),
+  // Max auto-pipeline orchestrations to run concurrently in-process; excess
+  // uploads keep a 'queued' run row until a slot frees (B-3 §auto-pipeline).
+  AUTO_PIPELINE_MAX_CONCURRENT: z.coerce.number().int().min(1).default(4),
+  // A run stuck in an active status longer than this is failed by the reaper
+  // (recovers orphaned runs after a restart). 0 disables the sweep.
+  AUTO_PIPELINE_STALE_MINUTES: z.coerce.number().int().min(0).default(30),
   // Auto email workflows — 'smtp' delivers through SMTP_HOST; 'log' records
   // delivery in the service log (outbox rows track status either way); 'off'
   // only queues. 'smtp' without SMTP_HOST falls back to 'log'.

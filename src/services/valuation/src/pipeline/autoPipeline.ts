@@ -13,6 +13,26 @@ import {
 import type { ValuationRow } from '../repos/valuations.js';
 import type { DocumentRow } from '../repos/documents.js';
 import type { EventActor } from '../events/record.js';
+import { Semaphore } from './semaphore.js';
+
+/**
+ * Bounds how many auto-pipeline orchestrations execute at once in a single
+ * process (B-3 §auto-pipeline). Each run does two blocking upstream calls, so
+ * unbounded fan-out under a burst of uploads is a self-inflicted DoS. Runs
+ * beyond the cap keep their `queued` row and start when a slot frees.
+ * Override with AUTO_PIPELINE_MAX_CONCURRENT.
+ */
+function envMaxConcurrent(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.AUTO_PIPELINE_MAX_CONCURRENT);
+  return Number.isInteger(raw) && raw >= 1 ? raw : 4;
+}
+
+const autoPipelineLimiter = new Semaphore(envMaxConcurrent());
+
+/** Live concurrency snapshot — surfaced as a gauge / asserted in tests. */
+export function autoPipelineConcurrency(): { active: number; pending: number } {
+  return { active: autoPipelineLimiter.activeCount, pending: autoPipelineLimiter.pendingCount };
+}
 
 /**
  * Auto-pipeline orchestrator (final-status §4.4 #3): when a document lands,
@@ -86,11 +106,16 @@ export async function startPipelineRun(
     },
     actorFor(args.triggeredBy),
   );
-  void executeRun(deps, run, args.valuation, args.triggeredBy).catch((err) => {
-    // executeRun already converts step failures into a 'failed' run; this only
-    // catches a failure to record that status (e.g. the pool going away).
-    deps.log.error({ err, runId: run.id }, 'auto-pipeline run crashed');
-  });
+  // Fire-and-forget, but gated by the concurrency limiter: the run row returns
+  // immediately (status 'queued'); execution waits for a free slot so a burst
+  // of uploads can't spawn unbounded concurrent orchestrations.
+  void autoPipelineLimiter
+    .run(() => executeRun(deps, run, args.valuation, args.triggeredBy))
+    .catch((err) => {
+      // executeRun already converts step failures into a 'failed' run; this only
+      // catches a failure to record that status (e.g. the pool going away).
+      deps.log.error({ err, runId: run.id }, 'auto-pipeline run crashed');
+    });
   return run;
 }
 

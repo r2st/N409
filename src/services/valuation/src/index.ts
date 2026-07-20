@@ -8,6 +8,7 @@ const { createPool } = await import('./db/pool.js');
 const { migrate } = await import('./db/migrate.js');
 const { buildApp, buildEmailTransports } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
+const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
 
 const config = loadConfig();
 const pool = createPool(config.DATABASE_URL);
@@ -23,21 +24,39 @@ let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
   const transports = buildEmailTransports(config, app.log);
   let scanning = false;
-  autoEmailTimer = setInterval(
-    () => {
-      if (scanning) return;
-      scanning = true;
-      runDueAutoEmails({ pool, ...transports, log: app.log })
-        .then((r) => {
-          if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
-        })
-        .catch((err) => app.log.error({ err }, 'auto email scan failed'))
-        .finally(() => {
-          scanning = false;
-        });
-    },
-    config.AUTO_EMAIL_SCAN_MINUTES * 60_000,
-  );
+  autoEmailTimer = setInterval(() => {
+    if (scanning) return;
+    scanning = true;
+    runDueAutoEmails({ pool, ...transports, log: app.log })
+      .then((r) => {
+        if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
+      })
+      .catch((err) => app.log.error({ err }, 'auto email scan failed'))
+      .finally(() => {
+        scanning = false;
+      });
+  }, config.AUTO_EMAIL_SCAN_MINUTES * 60_000);
+}
+
+// Auto-pipeline reaper (B-3 §auto-pipeline): sweep runs orphaned by a restart or
+// wedged on a stuck upstream call. Run once at boot, then on an interval.
+let reaperTimer: NodeJS.Timeout | undefined;
+if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
+  const olderThanMs = config.AUTO_PIPELINE_STALE_MINUTES * 60_000;
+  const reaperActor = { actorType: 'system', actorId: 'reaper', source: 'auto-pipeline' } as const;
+  const sweep = () =>
+    reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor })
+      .then((reaped) => {
+        if (reaped.length > 0) {
+          app.log.warn(
+            { count: reaped.length, runIds: reaped.map((r) => r.id) },
+            'reaped stale pipeline runs',
+          );
+        }
+      })
+      .catch((err) => app.log.error({ err }, 'pipeline reaper failed'));
+  void sweep();
+  reaperTimer = setInterval(sweep, Math.min(olderThanMs, 5 * 60_000));
 }
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
@@ -45,6 +64,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     void (async () => {
       app.log.info({ signal }, 'shutting down');
       if (autoEmailTimer) clearInterval(autoEmailTimer);
+      if (reaperTimer) clearInterval(reaperTimer);
       await app.close();
       await pool.end();
       await telemetry.shutdown();

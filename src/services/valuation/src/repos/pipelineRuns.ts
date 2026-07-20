@@ -81,10 +81,7 @@ export async function setPipelineRunStatus(
   });
 }
 
-export async function latestPipelineRun(
-  pool: pg.Pool,
-  valuationId: string,
-): Promise<PipelineRunRow | null> {
+export async function latestPipelineRun(pool: pg.Pool, valuationId: string): Promise<PipelineRunRow | null> {
   const { rows } = await pool.query<PipelineRunRow>(
     `SELECT * FROM pipeline_runs WHERE valuation_id = $1
      ORDER BY created_at DESC, id DESC LIMIT 1`,
@@ -102,10 +99,7 @@ export async function setValuationAutoPipeline(
 ): Promise<{ auto_pipeline: boolean }> {
   if (valuation.auto_pipeline === enabled) return { auto_pipeline: enabled };
   return withTransaction(pool, async (client) => {
-    await client.query('UPDATE valuations SET auto_pipeline = $1 WHERE id = $2', [
-      enabled,
-      valuation.id,
-    ]);
+    await client.query('UPDATE valuations SET auto_pipeline = $1 WHERE id = $2', [enabled, valuation.id]);
     await recordEvent(client, {
       valuationId: valuation.id,
       type: 'auto_pipeline_toggled',
@@ -116,11 +110,54 @@ export async function setValuationAutoPipeline(
   });
 }
 
-/** An unfinished run blocks a new trigger (no overlapping orchestration). */
-export async function activePipelineRun(
+/**
+ * Fails auto-pipeline runs that have sat in an active status past `olderThanMs`
+ * (B-3 §auto-pipeline). Two cases this recovers from:
+ *   - a process restart mid-run leaves the row stuck 'extracting'/'calculating'
+ *     with no worker to finish it (orphaned run);
+ *   - a run wedged on an upstream call that never returns.
+ * Runs the sweep once at boot and on an interval. Returns the reaped rows so the
+ * caller can log/alert. Each reap lands a 'failed' event on the audit spine.
+ */
+export async function reapStalePipelineRuns(
   pool: pg.Pool,
-  valuationId: string,
-): Promise<PipelineRunRow | null> {
+  opts: { olderThanMs: number; actor: EventActor; limit?: number },
+): Promise<PipelineRunRow[]> {
+  const seconds = Math.max(1, Math.floor(opts.olderThanMs / 1000));
+  const reason = `run exceeded ${seconds}s in an active state (reaped)`;
+  return withTransaction(pool, async (client) => {
+    // Lock the stale rows so two concurrent reapers (or instances) don't both
+    // fail — and double-event — the same run.
+    const { rows: stale } = await client.query<PipelineRunRow>(
+      `SELECT * FROM pipeline_runs
+       WHERE status IN ('queued', 'extracting', 'calculating')
+         AND updated_at < now() - ($1 || ' seconds')::interval
+       ORDER BY updated_at ASC
+       LIMIT $2
+       FOR UPDATE SKIP LOCKED`,
+      [String(seconds), opts.limit ?? 100],
+    );
+    const reaped: PipelineRunRow[] = [];
+    for (const run of stale) {
+      const { rows } = await client.query<PipelineRunRow>(
+        `UPDATE pipeline_runs SET status = 'failed', error = $1, updated_at = now()
+         WHERE id = $2 RETURNING *`,
+        [reason, run.id],
+      );
+      await recordEvent(client, {
+        valuationId: run.valuation_id,
+        type: 'auto_pipeline_failed',
+        actor: opts.actor,
+        payload: { run_id: run.id, error: reason, reaped: true },
+      });
+      reaped.push(rows[0]!);
+    }
+    return reaped;
+  });
+}
+
+/** An unfinished run blocks a new trigger (no overlapping orchestration). */
+export async function activePipelineRun(pool: pg.Pool, valuationId: string): Promise<PipelineRunRow | null> {
   const { rows } = await pool.query<PipelineRunRow>(
     `SELECT * FROM pipeline_runs
      WHERE valuation_id = $1 AND status IN ('queued', 'extracting', 'calculating')
