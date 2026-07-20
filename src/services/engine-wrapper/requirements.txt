@@ -1,2 +1,5 @@
 fastapi>=0.115
 uvicorn>=0.32
+# Optional: live market-data feed (app.engine.market_feed). Imported lazily and
+# degrades to a fallback when absent — uncomment to enable live yfinance fetches.
+# yfinance>=0.2

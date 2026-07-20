@@ -8,6 +8,14 @@ dependencies = [
     "uvicorn>=0.32",
 ]
 
+[project.optional-dependencies]
+# Live market-data feed (app.engine.market_feed). Optional: the module imports
+# yfinance lazily and degrades to a fallback payload when it is absent, so the
+# service installs and its tests pass without this heavy (pandas) dependency.
+market = [
+    "yfinance>=0.2",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",

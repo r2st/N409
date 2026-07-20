@@ -16,6 +16,8 @@ from datetime import date
 from .approaches import EngineInputError, asset_value, income_dcf, market_multiples, opm_backsolve
 from .bs import bs_call
 from .dlom import chaffee_dlom, finnerty_dlom
+from .volatility import estimate_volatility
+from .wacc import compute_wacc
 from .waterfall import allocate_waterfall
 
 ENGINE_VERSION = "py-1.0.0"
@@ -24,6 +26,25 @@ DEFAULT_TIME_TO_EXIT_YEARS = 3.0
 
 WEIGHT_KEYS = ("weight_asset", "weight_opm", "weight_income", "weight_market")
 APPROACH_KEYS = ("asset", "opm_backsolve", "income", "market")
+
+# Keys accepted inside inputs.wacc when auto_wacc is set (mirrors compute_wacc).
+_WACC_KEYS = frozenset(
+    {
+        "comparable_betas",
+        "unlevered_beta_input",
+        "target_debt_to_equity",
+        "market_cap",
+        "tax_rate",
+        "equity_risk_premium",
+        "forecast_horizon_years",
+        "risk_free_rate_override",
+        "treasury_curve",
+        "company_specific_premium",
+        "size_premium_override",
+        "cost_of_debt",
+        "debt_weight",
+    }
+)
 
 
 def _num(value, name: str, *, positive: bool = False) -> float | None:
@@ -84,18 +105,122 @@ def _reused_prior(prior_approaches: dict, name: str) -> dict:
     return reused
 
 
+def _apply_autopilot(
+    params: dict,
+    inputs: dict,
+    *,
+    auto_volatility: bool,
+    auto_wacc: bool,
+    auto_comparables: bool,
+) -> tuple[dict, dict | None]:
+    """Run the estimation engines that pre-fill manual inputs (features.md §5).
+
+    Returns a (possibly) modified copy of ``inputs`` plus an ``auto`` metadata
+    block describing what was computed. A manually supplied value always wins —
+    the auto engines only fill a gap, never override an analyst entry — so the
+    pipeline stays backward compatible. Operates on data already carried in
+    ``inputs`` (comp price series, beta set, comparable tickers) so a compute
+    stays deterministic and offline; live fetching is a separate endpoint.
+    """
+    if not (auto_volatility or auto_wacc or auto_comparables):
+        return inputs, None
+
+    inputs = dict(inputs)  # shallow copy; nested dicts we mutate are copied below
+    meta: dict = {}
+
+    # ── auto_comparables → market.multiples from verified comparable tickers ──
+    if auto_comparables:
+        market_in = dict(inputs.get("market") or {})
+        tickers = market_in.get("comparable_tickers")
+        if isinstance(tickers, list) and tickers:
+            from . import market_data
+
+            metric_field = market_in.get("multiple_metric", "ev_revenue")
+            if metric_field not in ("ev_revenue", "ev_ebitda"):
+                raise EngineInputError("market.multiple_metric must be 'ev_revenue' or 'ev_ebitda'")
+            looked = market_data.lookup(tickers)
+            multiples = [
+                c[metric_field] for c in looked["companies"] if c.get(metric_field) is not None
+            ]
+            existing = market_in.get("multiples")
+            manual = isinstance(existing, list) and bool(existing)
+            if not manual:
+                if not multiples:
+                    raise EngineInputError(
+                        f"auto_comparables: no {metric_field} multiples for {tickers}"
+                    )
+                market_in["multiples"] = multiples
+            inputs["market"] = market_in
+            meta["comparables"] = {
+                "tickers": tickers,
+                "metric": metric_field,
+                "resolved_count": len(looked["companies"]),
+                "not_found": looked["not_found"],
+                "multiples": multiples,
+                "used_manual_override": manual,
+            }
+
+    # ── auto_volatility → volatility from comparable price series ─────────────
+    if auto_volatility:
+        comps = inputs.get("volatility_comparables")
+        if isinstance(comps, list) and comps:
+            method = inputs.get("volatility_method", "historical")
+            manual_vol = inputs.get("volatility")
+            est = estimate_volatility(
+                comps,
+                method=method,
+                time_to_exit_years=_num(inputs.get("time_to_exit_years"), "time_to_exit_years"),
+                manual_override=manual_vol,
+            )
+            inputs["volatility"] = est["recommended_volatility"]
+            meta["volatility"] = est
+
+    # ── auto_wacc → income.discount_rate from CAPM WACC ──────────────────────
+    if auto_wacc:
+        wacc_in = inputs.get("wacc")
+        if isinstance(wacc_in, dict) and wacc_in:
+            unknown = set(wacc_in) - _WACC_KEYS
+            if unknown:
+                raise EngineInputError(f"auto_wacc: unknown wacc keys {sorted(unknown)}")
+            result = compute_wacc(**wacc_in)
+            income_in = dict(inputs.get("income") or {})
+            manual = income_in.get("discount_rate") is not None
+            if not manual:
+                income_in["discount_rate"] = result["wacc"]
+                inputs["income"] = income_in
+            meta["wacc"] = {**result, "used_manual_override": manual}
+
+    return inputs, (meta or None)
+
+
 def compute(
     params: dict,
     inputs: dict,
     recompute: list[str] | None = None,
     prior_approaches: dict | None = None,
+    *,
+    auto_volatility: bool = False,
+    auto_wacc: bool = False,
+    auto_comparables: bool = False,
 ) -> dict:
     """Full 409A computation, or — with `recompute` — a per-subsystem rerun.
 
     When `recompute` names a subset of APPROACH_KEYS, only those approaches are
     computed fresh; the rest reuse `prior_approaches` (a previous run's
     results.approaches). Weighting, allocation and discounts always re-run.
+
+    The `auto_*` flags run the estimation engines (volatility / WACC /
+    comparables) to pre-fill their manual inputs before the calculation; a
+    manual value always takes precedence, so the flags are backward compatible.
     """
+    inputs, auto_meta = _apply_autopilot(
+        params,
+        inputs,
+        auto_volatility=auto_volatility,
+        auto_wacc=auto_wacc,
+        auto_comparables=auto_comparables,
+    )
+
     if recompute is not None:
         unknown = set(recompute) - set(APPROACH_KEYS)
         if unknown:
@@ -285,4 +410,6 @@ def compute(
     }
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
+    if auto_meta is not None:
+        results["auto"] = auto_meta
     return {"engine_version": ENGINE_VERSION, "results": results}
