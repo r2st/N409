@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { Button, ErrorNote, Field, TextInput, inputClass } from './ui';
+import { Button, ErrorNote, Field, TextInput, inputClass, useFocusTrap } from './ui';
 
 interface HelpTopic {
   id: string;
@@ -77,9 +77,16 @@ export function htmlToText(html: string): string {
 export function useHelpTopics(): HelpTopic[] {
   const [topics, setTopics] = useState<HelpTopic[]>(HELP_TOPICS);
   useEffect(() => {
-    api<{ articles: Array<{ id: string; slug: string; title: string; keywords: string; body_html: string; published: boolean }> }>(
-      '/help/articles',
-    )
+    api<{
+      articles: Array<{
+        id: string;
+        slug: string;
+        title: string;
+        keywords: string;
+        body_html: string;
+        published: boolean;
+      }>;
+    }>('/help/articles')
       .then((d) => {
         const published = d.articles.filter((a) => a.published);
         if (published.length > 0) {
@@ -105,10 +112,7 @@ export function filterTopics(topics: HelpTopic[], query: string): HelpTopic[] {
   const q = query.trim().toLowerCase();
   if (!q) return topics;
   return topics.filter(
-    (t) =>
-      t.title.toLowerCase().includes(q) ||
-      t.keywords.includes(q) ||
-      t.body.toLowerCase().includes(q),
+    (t) => t.title.toLowerCase().includes(q) || t.keywords.includes(q) || t.body.toLowerCase().includes(q),
   );
 }
 
@@ -173,14 +177,21 @@ export function HelpWidget() {
 
   const allTopics = useHelpTopics();
   const topics = useMemo(() => filterTopics(allTopics, query), [allTopics, query]);
+  // Trap focus in the panel while open; Esc closes and focus returns to the
+  // launcher (audit F-3 P2).
+  const closePanel = useCallback(() => setOpen(false), []);
+  const panelRef = useFocusTrap<HTMLDivElement>(open, closePanel);
 
   return (
     <>
       {open && (
         <div
+          ref={panelRef}
           role="dialog"
+          aria-modal="true"
           aria-label="Help & support"
-          className="fixed right-4 bottom-20 z-50 flex max-h-[70vh] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-paper-300 bg-white shadow-lift"
+          tabIndex={-1}
+          className="fixed right-4 bottom-20 z-50 flex max-h-[70vh] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-paper-300 bg-white shadow-lift focus:outline-none"
         >
           <div className="bg-ink-900 px-5 py-4">
             <div className="flex items-center justify-between">
@@ -192,7 +203,14 @@ export function HelpWidget() {
                 onClick={() => setOpen(false)}
                 className="rounded-md p-1 text-ink-300 hover:bg-ink-800 hover:text-paper-50"
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
                   <path d="M5 5l14 14M19 5L5 19" strokeLinecap="round" />
                 </svg>
               </button>
@@ -257,8 +275,8 @@ export function HelpWidget() {
               <div className="px-2 py-8 text-center">
                 <p className="font-display text-lg text-ink-800">Thanks — we're on it.</p>
                 <p className="mt-2 text-sm text-ink-500">
-                  The operations team reads every message and will follow up on your valuation's chat
-                  thread or by email.
+                  The operations team reads every message and will follow up on your valuation's chat thread
+                  or by email.
                 </p>
               </div>
             )}

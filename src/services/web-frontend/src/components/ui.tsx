@@ -1,4 +1,16 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react';
+import {
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useRef,
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactElement,
+  type ReactNode,
+  type SelectHTMLAttributes,
+} from 'react';
+import { createPortal } from 'react-dom';
 import type { StateTone } from '../lib/format';
 import { STATE_LABELS, STATE_TONES, KIND_LABELS } from '../lib/format';
 import type { ValuationKind, ValuationState } from '../lib/types';
@@ -6,8 +18,7 @@ import type { ValuationKind, ValuationState } from '../lib/types';
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 const buttonStyles: Record<ButtonVariant, string> = {
-  primary:
-    'bg-bond-600 text-white hover:bg-bond-700 active:bg-bond-800 shadow-card disabled:bg-ink-300',
+  primary: 'bg-bond-600 text-white hover:bg-bond-700 active:bg-bond-800 shadow-card disabled:bg-ink-300',
   secondary:
     'border border-ink-200 bg-white text-ink-800 hover:border-ink-400 hover:bg-paper-50 disabled:text-ink-300',
   ghost: 'text-ink-600 hover:bg-paper-200 hover:text-ink-900',
@@ -38,12 +49,40 @@ export function Field({
   hint?: string;
   children: ReactNode;
 }) {
+  // Wire aria so screen readers announce validation errors (audit F-3 P2). The
+  // control gets an id + aria-invalid + aria-describedby pointing at the error
+  // (or hint) node, injected into the single child so call sites don't change.
+  const fieldId = useId();
+  const errorId = `${fieldId}-error`;
+  const hintId = `${fieldId}-hint`;
+  const describedBy = error ? errorId : hint ? hintId : undefined;
+
+  let control: ReactNode = children;
+  if (isValidElement(children)) {
+    const child = children as ReactElement<Record<string, unknown>>;
+    const props = child.props;
+    const existingDescribedBy = props['aria-describedby'] as string | undefined;
+    control = cloneElement(child, {
+      id: (props.id as string | undefined) ?? fieldId,
+      'aria-invalid': error ? true : props['aria-invalid'],
+      'aria-describedby': [existingDescribedBy, describedBy].filter(Boolean).join(' ') || undefined,
+    });
+  }
+
   return (
     <label className="block">
       <span className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">{label}</span>
-      {children}
-      {hint && !error && <span className="mt-1 block text-xs text-ink-400">{hint}</span>}
-      {error && <span className="mt-1 block text-xs font-medium text-red-600">{error}</span>}
+      {control}
+      {hint && !error && (
+        <span id={hintId} className="mt-1 block text-xs text-ink-400">
+          {hint}
+        </span>
+      )}
+      {error && (
+        <span id={errorId} className="mt-1 block text-xs font-medium text-red-600">
+          {error}
+        </span>
+      )}
     </label>
   );
 }
@@ -128,10 +167,128 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
   );
 }
 
-export function Spinner() {
+export function Spinner({ label = 'Loading…' }: { label?: string }) {
+  // role=status + an sr-only label so non-sighted users hear the load (F-3 P3).
   return (
-    <div className="flex justify-center py-16">
+    <div role="status" aria-live="polite" className="flex justify-center py-16">
       <div className="h-7 w-7 animate-spin rounded-full border-2 border-ink-200 border-t-bond-600" />
+      <span className="sr-only">{label}</span>
     </div>
+  );
+}
+
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Focus-trap for overlays (audit F-3 P2). While `active`, keeps Tab/Shift+Tab
+ * cycling inside the referenced element, moves focus in on activate and restores
+ * it to the trigger on deactivate, and calls `onEscape` on the Esc key. Attach
+ * the returned ref to the dialog container.
+ */
+export function useFocusTrap<T extends HTMLElement>(
+  active: boolean,
+  onEscape: () => void,
+): React.RefObject<T | null> {
+  const ref = useRef<T>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    restoreFocusRef.current = document.activeElement as HTMLElement | null;
+    const container = ref.current;
+
+    const focusable = (): HTMLElement[] =>
+      container ? Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)) : [];
+
+    (focusable()[0] ?? container)?.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onEscape();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = focusable();
+      if (items.length === 0) {
+        e.preventDefault();
+        container?.focus();
+        return;
+      }
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      const activeEl = document.activeElement;
+      if (e.shiftKey && (activeEl === first || activeEl === container)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && activeEl === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      restoreFocusRef.current?.focus?.();
+    };
+  }, [active, onEscape]);
+
+  return ref;
+}
+
+/**
+ * Accessible modal dialog (audit F-3 P2): `role="dialog"` + `aria-modal`, a focus
+ * trap (Tab/Shift+Tab cycle within), `Esc` to close, focus moved in on open and
+ * restored to the trigger on close, and a backdrop click to dismiss.
+ */
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  labelledBy,
+  className = '',
+}: {
+  open: boolean;
+  onClose: () => void;
+  title?: string;
+  children: ReactNode;
+  labelledBy?: string;
+  className?: string;
+}) {
+  const dialogRef = useFocusTrap<HTMLDivElement>(open, onClose);
+  const titleId = useId();
+
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy ?? (title ? titleId : undefined)}
+        tabIndex={-1}
+        className={`max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-paper-300 bg-white shadow-lift focus:outline-none ${className}`}
+      >
+        {title && (
+          <h2
+            id={titleId}
+            className="border-b border-paper-200 px-5 py-4 font-display text-lg font-semibold text-ink-900"
+          >
+            {title}
+          </h2>
+        )}
+        {children}
+      </div>
+    </div>,
+    document.body,
   );
 }

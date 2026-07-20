@@ -65,6 +65,7 @@ import { WhichValuationPage } from './pages/marketing/WhichValuationPage';
 import { ComparePage } from './pages/marketing/ComparePage';
 import { CompareHubPage } from './pages/marketing/CompareHubPage';
 import { AboutPage, ContactPage, PrivacyPage, TermsPage } from './pages/marketing/StaticPages';
+import { NotFoundPage } from './pages/NotFoundPage';
 
 /** Role-aware landing: partners live in their portal, everyone else on /dashboard. */
 function RoleLanding() {
@@ -189,7 +190,8 @@ export default function App() {
         <Route path="/billing" element={<BillingPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
+      {/* Real 404 for unknown URLs instead of a silent redirect home (F-1 P2). */}
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }
