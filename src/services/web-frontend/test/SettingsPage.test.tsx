@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '../src/lib/auth';
+import { getToken } from '../src/lib/api';
 import { SettingsPage } from '../src/pages/SettingsPage';
 import type { User } from '../src/lib/types';
 
@@ -221,7 +222,7 @@ describe('SettingsPage — password change', () => {
 
     await screen.findByText(/Other sessions have been signed out/);
     // Without this the very next request would 401 and bounce us to /login.
-    expect(localStorage.getItem('n409.token')).toBe('rotated.jwt.token');
+    expect(getToken()).toBe('rotated.jwt.token');
   });
 
   it('rejects a mismatched confirmation before calling the API', async () => {
@@ -302,7 +303,7 @@ describe('SettingsPage — sessions and account closure', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Sign out everywhere else' }));
     await screen.findByText('Other sessions have been signed out.');
-    expect(localStorage.getItem('n409.token')).toBe('fresh.jwt.token');
+    expect(getToken()).toBe('fresh.jwt.token');
   });
 
   it('closes the account behind a confirmation step and signs out', async () => {

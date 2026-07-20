@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { problems } from '@n409/shared';
 import { verifySession, type JwtConfig } from '../auth/jwt.js';
+import { SESSION_COOKIE } from '../auth/cookies.js';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { findUserById } from '../repos/users.js';
 import { resolveApiToken, TOKEN_SCHEME } from '../repos/apiTokens.js';
@@ -42,9 +43,13 @@ export function registerAuth(
   app.decorateRequest('apiToken', null);
 
   app.decorate('authenticate', async (req: FastifyRequest, _reply: FastifyReply) => {
+    // Bearer header first (API tokens + JS clients), falling back to the
+    // httpOnly session cookie (audit F-2) so the SPA never needs a JS-readable
+    // token. An empty/whitespace bearer is treated as absent.
     const header = req.headers.authorization;
-    if (!header?.startsWith('Bearer ')) throw problems.unauthorized();
-    const bearer = header.slice('Bearer '.length);
+    const headerBearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+    const bearer = headerBearer || req.cookies?.[SESSION_COOKIE] || '';
+    if (!bearer) throw problems.unauthorized();
 
     let sub: string;
     let sessionEpoch: number | null = null;

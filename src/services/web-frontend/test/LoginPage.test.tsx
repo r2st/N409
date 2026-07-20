@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '../src/lib/auth';
+import { getToken } from '../src/lib/api';
 import { LoginPage } from '../src/pages/LoginPage';
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -76,7 +77,10 @@ describe('LoginPage', () => {
     await userEvent.type(screen.getByLabelText('Password'), 'hunter2hunter2');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     expect(await screen.findByText('ROLE_LANDING')).toBeInTheDocument();
-    expect(localStorage.getItem('n409.token')).toBe('jwt-token');
+    // The JWT is held in memory (audit F-2), not localStorage; only a session
+    // marker persists there.
+    expect(getToken()).toBe('jwt-token');
+    expect(localStorage.getItem('n409.token')).not.toBeNull();
   });
 
   it('surfaces the API problem detail on bad credentials', async () => {

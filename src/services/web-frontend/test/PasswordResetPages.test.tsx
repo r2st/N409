@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '../src/lib/auth';
+import { getToken } from '../src/lib/api';
 import { ForgotPasswordPage } from '../src/pages/ForgotPasswordPage';
 import { ResetPasswordPage } from '../src/pages/ResetPasswordPage';
 import { AcceptInvitePage } from '../src/pages/AcceptInvitePage';
@@ -156,6 +157,6 @@ describe('AcceptInvitePage', () => {
     await userEvent.type(screen.getByLabelText('Confirm password'), 'invitee-password-1');
     await userEvent.click(screen.getByRole('button', { name: 'Create account & sign in' }));
     expect(await screen.findByText('ROLE_LANDING')).toBeInTheDocument();
-    expect(localStorage.getItem('n409.token')).toBe('session-jwt');
+    expect(getToken()).toBe('session-jwt');
   });
 });

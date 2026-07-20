@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { signSession, type JwtConfig } from '../auth/jwt.js';
+import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
 import { verifyPassword } from '../auth/password.js';
 import { USER_ADMIN_ROLES } from '../domain/roles.js';
 import {
@@ -99,7 +100,13 @@ function toPublicUser(u: UserWithRoles) {
 
 export function registerAccountRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; jwt: JwtConfig; transport?: EmailTransport; publicBaseUrl?: string },
+  deps: {
+    pool: pg.Pool;
+    jwt: JwtConfig;
+    transport?: EmailTransport;
+    publicBaseUrl?: string;
+    cookie?: SessionCookieConfig;
+  },
 ): void {
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
   const loadSelf = async (id: string): Promise<UserWithRoles> => {
@@ -185,11 +192,14 @@ export function registerAccountRoutes(
    * including the one that made this request — so a replacement is issued for
    * the caller, who stays signed in on this device.
    */
-  app.post('/api/v1/me/sessions/revoke', { preHandler: app.authenticate }, async (req) => {
+  app.post('/api/v1/me/sessions/revoke', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const epoch = await bumpSessionEpoch(deps.pool, principal.id);
     const user = await loadSelf(principal.id);
-    return { token: await issueToken(user, epoch), message: 'Other sessions have been signed out.' };
+    const token = await issueToken(user, epoch);
+    // Refresh this device's cookie to the new epoch so it isn't logged out.
+    if (deps.cookie) setSessionCookie(reply, token, deps.cookie);
+    return { token, message: 'Other sessions have been signed out.' };
   });
 
   // ── Personal API tokens ────────────────────────────────────────────────────

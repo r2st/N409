@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach } from 'vitest';
+import { clearToken } from '../src/lib/api';
 
 // Node 26 defines an experimental globalThis.localStorage that is inert
 // (undefined) without --localstorage-file and shadows jsdom's implementation.
@@ -36,4 +37,6 @@ Object.defineProperty(globalThis, 'localStorage', {
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  // Reset the in-memory session token (module state) between tests.
+  clearToken();
 });

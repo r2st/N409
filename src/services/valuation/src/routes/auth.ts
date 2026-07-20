@@ -1,9 +1,14 @@
-import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { problems } from '@n409/shared';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { signOidcState, signSession, verifyOidcState, type JwtConfig } from '../auth/jwt.js';
+import {
+  clearSessionCookie,
+  setSessionCookie,
+  type SessionCookieConfig,
+} from '../auth/cookies.js';
 import type { GoogleOidc } from '../auth/google.js';
 import {
   bumpSessionEpoch,
@@ -113,6 +118,7 @@ export function registerAuthRoutes(
     transport?: EmailTransport;
     publicBaseUrl?: string;
     settings?: SystemSettingsStore;
+    cookie?: SessionCookieConfig;
   },
 ): void {
   const issueToken = (u: UserWithRoles, sessionEpoch = u.session_epoch) =>
@@ -120,6 +126,17 @@ export function registerAuthRoutes(
       { sub: u.id, roles: u.roles, partner_id: u.partner_id, session_epoch: sessionEpoch },
       deps.jwt,
     );
+  // Mint a session token and, when cookies are configured, also drop it in the
+  // httpOnly cookie so the SPA authenticates without a JS-readable token.
+  const issueSession = async (
+    reply: FastifyReply,
+    u: UserWithRoles,
+    sessionEpoch?: number,
+  ): Promise<string> => {
+    const token = await issueToken(u, sessionEpoch);
+    if (deps.cookie) setSessionCookie(reply, token, deps.cookie);
+    return token;
+  };
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
   const allow = slidingWindowLimiter();
 
@@ -181,10 +198,11 @@ export function registerAuthRoutes(
     });
     // Prove ownership of the address before the account is trusted (gap #26).
     sendVerificationEmail(user, req.log);
-    return reply.status(201).send({ user: toPublicUser(user), token: await issueToken(user) });
+    const token = await issueSession(reply, user);
+    return reply.status(201).send({ user: toPublicUser(user), token });
   });
 
-  app.post('/api/v1/auth/login', async (req) => {
+  app.post('/api/v1/auth/login', async (req, reply) => {
     const parsed = LoginBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid login', { errors: parsed.error.issues });
     const { email, password } = parsed.data;
@@ -213,7 +231,14 @@ export function registerAuthRoutes(
       allow(ipKey, 100, LOGIN_WINDOW_MS);
       throw problems.unauthorized('Invalid email or password');
     }
-    return { user: toPublicUser(user), token: await issueToken(user) };
+    return { user: toPublicUser(user), token: await issueSession(reply, user) };
+  });
+
+  // Clears the session cookie (audit F-2). Public + idempotent: logging out
+  // must work even with an already-expired or missing session.
+  app.post('/api/v1/auth/logout', async (_req, reply) => {
+    if (deps.cookie) clearSessionCookie(reply, deps.cookie);
+    return reply.status(200).send({ message: 'Signed out.' });
   });
 
   // Public: lets the SPA know which login methods to offer.
@@ -243,7 +268,7 @@ export function registerAuthRoutes(
     if (!identity.emailVerified) throw problems.unauthorized('Google account email is not verified');
 
     const user = await upsertGoogleUser(deps.pool, identity);
-    const token = await issueToken(user);
+    const token = await issueSession(reply, user);
     // Browsers land here from Google's redirect — hand the token to the SPA.
     // API callers (no text/html Accept) keep the JSON contract.
     if (req.headers.accept?.includes('text/html')) {
@@ -339,7 +364,7 @@ export function registerAuthRoutes(
     return { message: "We've sent a fresh verification link to your email." };
   });
 
-  app.post('/api/v1/auth/change-password', { preHandler: app.authenticate }, async (req) => {
+  app.post('/api/v1/auth/change-password', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = ChangePasswordBody.safeParse(req.body);
     if (!parsed.success)
@@ -360,7 +385,7 @@ export function registerAuthRoutes(
     const epoch = await bumpSessionEpoch(deps.pool, user.id);
     return {
       message: 'Password updated. Other sessions have been signed out.',
-      token: await issueToken(user, epoch),
+      token: await issueSession(reply, user, epoch),
     };
   });
 
@@ -394,8 +419,7 @@ export function registerAuthRoutes(
       throw problems.badRequest('This invitation is invalid, expired, or has been revoked');
     if (result.status === 'conflict')
       throw problems.conflict('An account with this email already exists');
-    return reply
-      .status(201)
-      .send({ user: toPublicUser(result.user), token: await issueToken(result.user) });
+    const sessionToken = await issueSession(reply, result.user);
+    return reply.status(201).send({ user: toPublicUser(result.user), token: sessionToken });
   });
 }

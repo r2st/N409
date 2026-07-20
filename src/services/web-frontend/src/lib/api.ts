@@ -1,25 +1,44 @@
 /**
  * Minimal API client. Same-origin /api/* (the web service proxies to the
- * valuation service), bearer JWT from localStorage, RFC 9457 problem+json
- * errors surfaced as ApiError.
+ * valuation service), RFC 9457 problem+json errors surfaced as ApiError.
+ *
+ * Auth (audit F-2): the JWT lives in an httpOnly cookie the server sets on
+ * login — it is never written to localStorage, so injected script can't read
+ * it. Same-origin fetch sends that cookie automatically. We keep the token in
+ * a module variable only for the current tab's lifetime (belt-and-suspenders
+ * Authorization header, and the SSE/download flows), and persist only a
+ * non-secret session marker — the expiry timestamp — under TOKEN_KEY so a
+ * reload knows a session exists and can schedule a clean sign-out.
  */
 
 const TOKEN_KEY = 'n409.token';
 export const UNAUTHORIZED_EVENT = 'n409:unauthorized';
 
+/** The JWT for this tab, in memory only. Lost on reload — the cookie persists. */
+let memToken: string | null = null;
+
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return memToken;
 }
 
 export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+  memToken = token;
+  // Persist only the (non-secret) expiry as a session marker, never the JWT.
+  const exp = tokenExpiry(token);
+  localStorage.setItem(TOKEN_KEY, exp !== null ? String(exp) : '1');
 }
 
 export function clearToken(): void {
+  memToken = null;
   localStorage.removeItem(TOKEN_KEY);
 }
 
-/** Epoch millis when the stored JWT expires, or null if absent/opaque. */
+/** True when a session marker is present (a cookie session may exist). */
+export function hasStoredSession(): boolean {
+  return localStorage.getItem(TOKEN_KEY) !== null;
+}
+
+/** Epoch millis when the in-memory JWT expires, or null if absent/opaque. */
 export function tokenExpiry(token: string | null = getToken()): number | null {
   if (!token) return null;
   const part = token.split('.')[1];
@@ -32,6 +51,14 @@ export function tokenExpiry(token: string | null = getToken()): number | null {
   } catch {
     return null;
   }
+}
+
+/** Expiry epoch millis from the persisted session marker (survives reload). */
+export function storedExpiry(): number | null {
+  const raw = localStorage.getItem(TOKEN_KEY);
+  if (raw === null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 1 ? n : null;
 }
 
 export interface Problem {

@@ -70,10 +70,13 @@ export function DocumentsPanel({ valuationId }: { valuationId: string }) {
   };
 
   const download = async (doc: ValuationDocument) => {
-    // fetch with auth → blob URL; a plain <a href> would miss the bearer token.
+    // fetch → blob URL; a plain <a href> can't carry auth. The httpOnly session
+    // cookie authenticates same-origin; add the bearer only when a token is in
+    // memory this tab (audit F-2).
     try {
+      const token = getToken();
       const res = await fetch(`/api/v1/valuations/${valuationId}/documents/${doc.id}/download`, {
-        headers: { authorization: `Bearer ${getToken() ?? ''}` },
+        headers: token ? { authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(String(res.status));
       const url = URL.createObjectURL(await res.blob());

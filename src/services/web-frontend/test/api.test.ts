@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError, clearToken, getToken, setToken, tokenExpiry, UNAUTHORIZED_EVENT } from '../src/lib/api';
+import {
+  api,
+  ApiError,
+  clearToken,
+  getToken,
+  hasStoredSession,
+  setToken,
+  storedExpiry,
+  tokenExpiry,
+  UNAUTHORIZED_EVENT,
+} from '../src/lib/api';
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const b64 = (o: unknown) => btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_');
@@ -17,6 +27,36 @@ describe('api client', () => {
     setToken(fakeJwt({ sub: 'u1', exp }));
     expect(getToken()).not.toBeNull();
     expect(tokenExpiry()).toBe(exp * 1000);
+  });
+
+  it('keeps the JWT in memory only — never the raw token in localStorage (F-2)', () => {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const jwt = fakeJwt({ sub: 'u1', exp });
+    setToken(jwt);
+    // getToken returns the in-memory JWT…
+    expect(getToken()).toBe(jwt);
+    // …but localStorage holds only the non-secret expiry marker, not the JWT.
+    const stored = localStorage.getItem('n409.token');
+    expect(stored).not.toBe(jwt);
+    expect(stored).toBe(String(exp * 1000));
+    expect(hasStoredSession()).toBe(true);
+    expect(storedExpiry()).toBe(exp * 1000);
+  });
+
+  it('clearToken wipes both the in-memory token and the marker', () => {
+    setToken(fakeJwt({ sub: 'u1', exp: Math.floor(Date.now() / 1000) + 60 }));
+    clearToken();
+    expect(getToken()).toBeNull();
+    expect(hasStoredSession()).toBe(false);
+    expect(storedExpiry()).toBeNull();
+  });
+
+  it('persists a marker even for an opaque token, without an expiry', () => {
+    setToken('opaque-token');
+    expect(getToken()).toBe('opaque-token');
+    expect(hasStoredSession()).toBe(true);
+    // No decodable exp → marker is a bare presence flag, storedExpiry null.
+    expect(storedExpiry()).toBeNull();
   });
 
   it('attaches the bearer token and parses JSON', async () => {

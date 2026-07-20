@@ -1,6 +1,7 @@
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
 import helmet from '@fastify/helmet';
+import cookie from '@fastify/cookie';
 import type pg from 'pg';
 import { createLogger, registerHealth, registerProblemHandler } from '@n409/shared';
 import type { Config } from './config.js';
@@ -159,6 +160,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const settings = new SystemSettingsStore(pool);
 
   void app.register(multipart, { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
+  // Parses Cookie headers into req.cookies so the auth plugin can read the
+  // httpOnly session cookie (audit F-2).
+  void app.register(cookie);
+  // Secure cookies over HTTPS in production; plain http in dev/test.
+  const sessionCookie = { secure: config.NODE_ENV === 'production', ttlSeconds: config.JWT_TTL_SECONDS };
   registerAuth(app, { pool, jwt, settings });
   registerAuthRoutes(app, {
     pool,
@@ -167,8 +173,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     transport,
     publicBaseUrl: config.PUBLIC_BASE_URL,
     settings,
+    cookie: sessionCookie,
   });
-  registerAccountRoutes(app, { pool, jwt, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
+  registerAccountRoutes(app, {
+    pool,
+    jwt,
+    transport,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+    cookie: sessionCookie,
+  });
   registerSystemSettingsRoutes(app, { pool, settings });
   registerValuationRoutes(app, { pool, transport });
   // M1 — core pipeline

@@ -1,6 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { api, clearToken, getToken, setToken, tokenExpiry, UNAUTHORIZED_EVENT } from './api';
+import {
+  api,
+  clearToken,
+  hasStoredSession,
+  setToken,
+  storedExpiry,
+  tokenExpiry,
+  UNAUTHORIZED_EVENT,
+} from './api';
 import type { ViewMode } from './rbac';
 import type { User } from './types';
 
@@ -40,7 +48,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [status, setStatus] = useState<AuthStatus>(() => (getToken() ? 'loading' : 'anonymous'));
+  const [status, setStatus] = useState<AuthStatus>(() =>
+    hasStoredSession() ? 'loading' : 'anonymous',
+  );
   const [viewMode, setViewMode] = useState<ViewMode>('admin');
 
   const logout = useCallback(() => {
@@ -49,11 +59,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('anonymous');
     // Never carry a "normal view" preview across sign-outs.
     setViewMode('admin');
+    // Clear the httpOnly session cookie server-side (audit F-2). Fire-and-forget
+    // and outside api() so a 401 can't recurse into another logout.
+    void fetch('/api/v1/auth/logout', { method: 'POST' }).catch(() => {});
   }, []);
 
-  // Restore the session from a stored token on first load.
+  // Restore the session from the httpOnly cookie on first load (the marker tells
+  // us a session may exist; /auth/me confirms it via the cookie).
   useEffect(() => {
-    if (!getToken()) return;
+    if (!hasStoredSession()) return;
     let cancelled = false;
     api<{ user: User }>('/auth/me')
       .then(({ user: me }) => {
@@ -80,7 +94,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // a clean sign-out at expiry instead of letting requests start failing.
   useEffect(() => {
     if (status !== 'authenticated') return;
-    const exp = tokenExpiry();
+    // In-memory token has the exact exp; after a reload only the marker remains.
+    const exp = tokenExpiry() ?? storedExpiry();
     if (!exp) return;
     const ms = exp - Date.now();
     if (ms <= 0) {
