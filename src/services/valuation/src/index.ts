@@ -1,4 +1,4 @@
-import { startTelemetry } from '@n409/shared';
+import { startTelemetry, createHttpMetrics, registerGauge } from '@n409/shared';
 
 // OTel first so http/pg get instrumented before anything imports them (issue #4).
 const telemetry = startTelemetry('valuation');
@@ -9,10 +9,49 @@ const { migrate } = await import('./db/migrate.js');
 const { buildApp, buildEmailTransports } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
+const { autoPipelineConcurrency } = await import('./pipeline/autoPipeline.js');
 
 const config = loadConfig();
 const pool = createPool(config.DATABASE_URL);
 const app = buildApp({ config, pool });
+
+// RED metrics (audit B-3 §metrics): request rate/latency/errors by route, plus
+// DB-pool and auto-pipeline saturation gauges. No-ops without an OTLP endpoint.
+const httpMetrics = createHttpMetrics('valuation');
+app.addHook('onResponse', (req, reply, done) => {
+  httpMetrics.record({
+    method: req.method,
+    route: req.routeOptions?.url ?? req.url,
+    statusCode: reply.statusCode,
+    durationMs: reply.elapsedTime,
+  });
+  done();
+});
+registerGauge(
+  'valuation',
+  'db.pool.connections.total',
+  'pg pool clients (in use + idle)',
+  () => pool.totalCount,
+);
+registerGauge('valuation', 'db.pool.connections.idle', 'idle pg pool clients', () => pool.idleCount);
+registerGauge(
+  'valuation',
+  'db.pool.connections.waiting',
+  'requests waiting for a pg client',
+  () => pool.waitingCount,
+);
+registerGauge(
+  'valuation',
+  'auto_pipeline.runs.active',
+  'in-flight auto-pipeline orchestrations',
+  () => autoPipelineConcurrency().active,
+);
+registerGauge(
+  'valuation',
+  'auto_pipeline.runs.pending',
+  'queued auto-pipeline orchestrations',
+  () => autoPipelineConcurrency().pending,
+);
 
 await migrate(pool, { log: (msg) => app.log.info({ migration: msg }, 'migration applied') });
 await app.listen({ port: config.PORT, host: '0.0.0.0' });
