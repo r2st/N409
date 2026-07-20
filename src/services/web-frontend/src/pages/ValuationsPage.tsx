@@ -9,6 +9,7 @@ import type { SortableColumn } from '../lib/sort';
 import { STATE_GROUPS, VALUATION_KINDS, VALUATION_STATES } from '../lib/types';
 import type { BulkResult, Partner, UserOption, ValuationCounts, ValuationList } from '../lib/types';
 import { Button, EmptyState, ErrorNote, KindBadge, Select, Spinner, StateBadge, TextInput } from '../components/ui';
+import { HelpIcon } from '../components/HelpIcon';
 
 const PER_PAGE = 25;
 
@@ -226,7 +227,10 @@ export function ValuationsPage() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="overline text-ink-400">{ops ? 'Operations' : 'Portfolio'}</div>
+          <div className="overline flex items-center gap-1.5 text-ink-400">
+            {ops ? 'Operations' : 'Portfolio'}
+            <HelpIcon article="valuations-overview" />
+          </div>
           <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">
             {ops ? 'All valuations' : 'Valuations'}
           </h1>

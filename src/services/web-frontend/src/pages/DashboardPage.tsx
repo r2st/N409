@@ -9,6 +9,8 @@ import { VALUATION_STATES } from '../lib/types';
 import type { DashboardAnalytics, Valuation, ValuationList } from '../lib/types';
 import { Button, EmptyState, ErrorNote, KindBadge, Spinner, StatCard, StateBadge, TextInput } from '../components/ui';
 import { DonutChart } from '../components/charts';
+import { HelpIcon } from '../components/HelpIcon';
+import { GettingStarted } from '../components/GettingStarted';
 
 const PIVOT_GROUPS = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
 
@@ -60,7 +62,10 @@ export function DashboardPage() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="overline text-ink-400">Dashboard</div>
+          <div className="overline flex items-center gap-1.5 text-ink-400">
+            Dashboard
+            <HelpIcon article="dashboard-overview" />
+          </div>
           <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">
             {user ? `Welcome, ${displayName(user).split(' ')[0]}` : 'Welcome'}
           </h1>
@@ -70,6 +75,9 @@ export function DashboardPage() {
         </div>
         <Button onClick={() => navigate('/valuations/new')}>+ New valuation</Button>
       </div>
+
+      {/* Getting Started checklist — new (client) users only; dismissible. */}
+      {!isOps(user) && !isPartner(user) && <div className="mt-8"><GettingStarted /></div>}
 
       {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
       {!valuations && !error && <Spinner />}

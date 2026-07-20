@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { weightsProblem, type ValuationParams } from '../../lib/pipeline';
-import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../ui';
+import { Button, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
+import { HelpIcon } from '../HelpIcon';
 
 interface FormState {
   weight_asset: string;
@@ -260,7 +261,13 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
 
       <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
         <div className="mb-5 flex items-baseline justify-between">
-          <h3 className="overline text-ink-400">Approach weights</h3>
+          <h3 className="overline flex items-center gap-1.5 text-ink-400">
+            Approach weights
+            <InfoTooltip
+              label="About approach weights"
+              text="How much each valuation approach (asset, OPM, income, market) counts toward the final value. The four weights must sum to 1.0."
+            />
+          </h3>
           <span
             className={`tnum text-sm font-semibold ${weightsIssue ? 'text-red-600' : 'text-bond-700'}`}
             data-testid="weight-total"
@@ -302,7 +309,10 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       </section>
 
       <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
-        <h3 className="overline mb-5 text-ink-400">Allocation method</h3>
+        <h3 className="overline mb-5 flex items-center gap-1.5 text-ink-400">
+          Allocation method
+          <HelpIcon article="methodology-overview" />
+        </h3>
         <div className="grid gap-5 sm:grid-cols-2">
           <Field
             label="Equity allocation"
@@ -395,7 +405,15 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                     <th className="py-2 pr-3 text-left font-semibold">Probability</th>
                     <th className="py-2 pr-3 text-left font-semibold">Exit equity ($)</th>
                     <th className="py-2 pr-3 text-left font-semibold">Years</th>
-                    <th className="py-2 pr-3 text-left font-semibold">Disc. rate</th>
+                    <th className="py-2 pr-3 text-left font-semibold">
+                      <span className="inline-flex items-center gap-1.5">
+                        Disc. rate
+                        <InfoTooltip
+                          label="About the discount rate"
+                          text="The annual required return used to bring this scenario's exit payoff back to present value. Leave blank to use the engagement default."
+                        />
+                      </span>
+                    </th>
                     <th className="py-2 font-semibold" />
                   </tr>
                 </thead>
@@ -462,7 +480,11 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
         <h3 className="overline mb-5 text-ink-400">Discounts</h3>
         <div className="grid gap-5 sm:grid-cols-3">
-          <Field label="DLOC (fraction)" hint="Discount for lack of control, 0–1.">
+          <Field
+            label="DLOC (fraction)"
+            hint="Discount for lack of control, 0–1."
+            tooltip="Discount for Lack of Control: minority holders can't direct the company, so their shares may be worth less. Enter a fraction from 0 to 1."
+          >
             <TextInput
               type="number"
               min={0}
@@ -473,7 +495,11 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               onChange={(e) => set('dloc')(e.target.value)}
             />
           </Field>
-          <Field label="DLOM method" hint="Chaffee/Finnerty are computed by the engine.">
+          <Field
+            label="DLOM method"
+            hint="Chaffee/Finnerty are computed by the engine."
+            tooltip="Discount for Lack of Marketability: private stock can't be sold freely. Chaffee and Finnerty model it as a protective put; Qualitative takes a fraction you enter."
+          >
             <Select
               disabled={readOnly}
               value={form.dlom_method}

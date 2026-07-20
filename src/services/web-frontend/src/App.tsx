@@ -64,6 +64,7 @@ import { TasksPage } from './pages/TasksPage';
 import { BotPromptsPage } from './pages/BotPromptsPage';
 import { ActivityLogPage } from './pages/ActivityLogPage';
 import { HelpPage } from './pages/HelpPage';
+import { FeaturesPage } from './pages/FeaturesPage';
 import { AdminHelpPage } from './pages/AdminHelpPage';
 import { BillingPage } from './pages/BillingPage';
 import { SupportInboxPage } from './pages/SupportInboxPage';
@@ -219,6 +220,7 @@ export default function App() {
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/help" element={<HelpPage />} />
         <Route path="/help/:slug" element={<HelpPage />} />
+        <Route path="/features" element={<FeaturesPage />} />
         <Route path="/billing" element={<BillingPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

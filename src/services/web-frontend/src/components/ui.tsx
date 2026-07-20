@@ -4,6 +4,7 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactElement,
@@ -38,15 +39,68 @@ export function Button({
   );
 }
 
+/**
+ * Small contextual "?" that reveals a short explanation on hover/focus/click.
+ * Accessible: a real button with an aria-label, and the bubble is wired via
+ * aria-describedby while visible. Used for field-level tooltips (see `Field`'s
+ * `tooltip` prop) and anywhere a term needs a one-line gloss.
+ */
+export function InfoTooltip({
+  text,
+  label = 'More information',
+  className = '',
+}: {
+  text: ReactNode;
+  label?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <span className={`relative inline-flex ${className}`}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-describedby={open ? id : undefined}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={(e) => {
+          // Inside a <label> a bare click would toggle the field; keep it local.
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-ink-300 text-[0.6rem] font-bold text-ink-400 transition-colors hover:border-bond-500 hover:text-bond-600 focus:ring-2 focus:ring-bond-600/30 focus:outline-none"
+      >
+        ?
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          id={id}
+          className="absolute bottom-full left-1/2 z-50 mb-1.5 w-56 -translate-x-1/2 rounded-md bg-ink-900 px-3 py-2 text-xs leading-snug font-normal text-paper-50 shadow-lift"
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function Field({
   label,
   error,
   hint,
+  tooltip,
   children,
 }: {
   label: string;
   error?: string | null;
   hint?: string;
+  /** Optional one-line explanation shown via an InfoTooltip next to the label. */
+  tooltip?: string;
   children: ReactNode;
 }) {
   // Wire aria so screen readers announce validation errors (audit F-3 P2). The
@@ -71,7 +125,10 @@ export function Field({
 
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">{label}</span>
+      <span className="mb-1.5 flex items-center gap-1.5 text-[0.8rem] font-semibold text-ink-700">
+        {label}
+        {tooltip && <InfoTooltip text={tooltip} label={`About ${label}`} />}
+      </span>
       {control}
       {hint && !error && (
         <span id={hintId} className="mt-1 block text-xs text-ink-400">

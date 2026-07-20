@@ -270,9 +270,9 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
   const numField = (
     key: keyof FormState,
     label: string,
-    opts: { hint?: string; step?: number; min?: number; max?: number } = {},
+    opts: { hint?: string; step?: number; min?: number; max?: number; tooltip?: string } = {},
   ) => (
-    <Field label={label} hint={opts.hint}>
+    <Field label={label} hint={opts.hint} tooltip={opts.tooltip}>
       <TextInput
         type="number"
         step={opts.step ?? 'any'}
@@ -455,8 +455,18 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
       <section className={cardClass}>
         <h3 className={headingClass}>Valuation assumptions</h3>
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {numField('volatility', 'Volatility', { hint: 'Decimal, e.g. 0.60 for 60%.', step: 0.01 })}
-          {numField('risk_free_rate', 'Risk-free rate', { hint: 'Decimal, e.g. 0.043.', step: 0.001 })}
+          {numField('volatility', 'Volatility', {
+            hint: 'Decimal, e.g. 0.60 for 60%.',
+            step: 0.01,
+            tooltip:
+              'Annualized standard deviation of equity value, usually taken from comparable public companies. A core OPM input — higher volatility raises the common-stock value.',
+          })}
+          {numField('risk_free_rate', 'Risk-free rate', {
+            hint: 'Decimal, e.g. 0.043.',
+            step: 0.001,
+            tooltip:
+              'The return on a risk-free asset (Treasury yield) matched to the time to exit. Used by the Black-Scholes OPM allocation.',
+          })}
           {numField('time_to_exit_years', 'Time to exit (years)', { hint: 'Overrides the params exit date.', step: 0.25 })}
           <Field label="Valuation date" hint="Used with the exit date if no explicit term.">
             <TextInput

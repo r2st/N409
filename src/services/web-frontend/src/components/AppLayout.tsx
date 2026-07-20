@@ -223,6 +223,11 @@ const icons = {
       <path d="M3 9.5h18M6.5 14.5h4" strokeLinecap="round" />
     </svg>
   ),
+  features: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 2.5l2.6 5.5 6 .8-4.4 4.2 1.1 6L12 16.9 6.7 19l1.1-6L3.4 8.8l6-.8L12 2.5Z" strokeLinejoin="round" />
+    </svg>
+  ),
 };
 
 export function AppLayout() {
@@ -297,6 +302,8 @@ export function AppLayout() {
       <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Account</div>
       <NavItem to="/billing" label="Billing" icon={icons.billing} onNavigate={close} />
       <NavItem to="/settings" label="Settings" icon={icons.settings} onNavigate={close} />
+      <NavItem to="/features" label="Features" icon={icons.features} onNavigate={close} />
+      <NavItem to="/help" label="Help Center" icon={icons.help} onNavigate={close} />
     </nav>
   );
 
