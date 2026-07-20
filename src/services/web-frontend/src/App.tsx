@@ -11,6 +11,7 @@ import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
 import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { GoogleCompletePage } from './pages/GoogleCompletePage';
+import { BoardSignPage } from './pages/BoardSignPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ValuationsPage } from './pages/ValuationsPage';
 import { NewValuationPage } from './pages/NewValuationPage';
@@ -124,6 +125,8 @@ export default function App() {
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/accept-invite" element={<AcceptInvitePage />} />
       <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
+      {/* Public board-member resolution signing (feature 5) */}
+      <Route path="/board-sign" element={<BoardSignPage />} />
       {/* White-label partner login (improvement 8) — public, branded per slug */}
       <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
       <Route

@@ -28,6 +28,7 @@ import { logTransport, type EmailTransport } from './hooks/stateChange.js';
 import { smtpTransport } from './email/smtp.js';
 import { registerPaymentRoutes } from './routes/payments.js';
 import { registerSignatureRoutes } from './routes/signatures.js';
+import { registerBoardApprovalRoutes } from './routes/boardApproval.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
 import { registerPipelineRoutes } from './routes/pipeline.js';
@@ -260,6 +261,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     publicBaseUrl: config.PUBLIC_BASE_URL,
   });
   registerSignatureRoutes(app, { pool });
+  // Feature 5 — board approval workflow (resolution + e-signature collection)
+  registerBoardApprovalRoutes(app, {
+    pool,
+    transport,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+  });
   // §23 — accounting software integrations (OAuth connect + P&L import)
   registerAccountingRoutes(app, {
     pool,

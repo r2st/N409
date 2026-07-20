@@ -14,6 +14,7 @@ import { WorkflowActions } from '../components/WorkflowActions';
 import { FundingHistory } from '../components/FundingHistory';
 import { PaymentHistory, PaymentSection } from '../components/PaymentSection';
 import { SignaturePanel } from '../components/SignaturePanel';
+import { BoardApprovalPanel } from '../components/BoardApprovalPanel';
 
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -266,6 +267,9 @@ export function ValuationDetailPage() {
 
         {/* Signature gating before publish (ops) */}
         {ops && <SignaturePanel valuation={valuation} />}
+
+        {/* Feature 5: board resolution + e-signature collection (ops) */}
+        {ops && <BoardApprovalPanel valuation={valuation} />}
 
         {/* M4: transaction & funding-round history */}
         <FundingHistory
