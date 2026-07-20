@@ -5,6 +5,7 @@ import { formatMoney, formatNumber } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
+import { HrisSyncPanel } from '../../components/valuation/HrisSyncPanel';
 import {
   Button,
   EmptyState,
@@ -269,6 +270,8 @@ export function GrantsTab() {
       </div>
 
       {error && <ErrorNote>{error}</ErrorNote>}
+
+      {ops && <HrisSyncPanel valuationId={valuation.id} onImported={load} />}
 
       {ops && showForm && (
         <form onSubmit={create} className="grid gap-4 rounded-lg border border-paper-300 bg-white p-5 shadow-card sm:grid-cols-2">

@@ -72,6 +72,13 @@ const Env = z.object({
   CARTA_CLIENT_SECRET: z.string().optional(),
   PULLEY_CLIENT_ID: z.string().optional(),
   PULLEY_CLIENT_SECRET: z.string().optional(),
+  // HRIS/payroll (feature 11) — Rippling / Gusto / Deel OAuth.
+  RIPPLING_CLIENT_ID: z.string().optional(),
+  RIPPLING_CLIENT_SECRET: z.string().optional(),
+  GUSTO_CLIENT_ID: z.string().optional(),
+  GUSTO_CLIENT_SECRET: z.string().optional(),
+  DEEL_CLIENT_ID: z.string().optional(),
+  DEEL_CLIENT_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof Env>;

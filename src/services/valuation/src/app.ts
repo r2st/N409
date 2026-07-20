@@ -52,6 +52,8 @@ import { registerSamlRoutes } from './routes/saml.js';
 import { registerScimRoutes } from './routes/scim.js';
 import { registerAdminSsoRoutes } from './routes/adminSso.js';
 import { registerRetentionRoutes } from './routes/retention.js';
+import { registerHrisRoutes } from './routes/hris.js';
+import type { HrisProvider } from './clients/hris.js';
 import { registerScenarioRoutes } from './routes/scenarios.js';
 import { registerOverwriteRoutes } from './routes/overwrites.js';
 import { registerWorkbookRoutes } from './routes/workbook.js';
@@ -90,6 +92,8 @@ export interface AppDeps {
   accountingFetch?: FetchFn;
   /** injectable for tests — cap-table sync provider HTTP */
   capTableSyncFetch?: FetchFn;
+  /** injectable for tests — HRIS provider HTTP */
+  hrisFetch?: FetchFn;
 }
 
 /**
@@ -240,6 +244,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAdminSsoRoutes(app, { pool });
   // Feature 10 — data retention + legal hold administration
   registerRetentionRoutes(app, { pool });
+  // Feature 11 — HRIS/payroll integration for ASC 718 (Rippling/Gusto/Deel)
+  registerHrisRoutes(app, {
+    pool,
+    jwt,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+    credentials: hrisCredentials(config),
+    fetchFn: deps.hrisFetch,
+  });
   // Improvement 3 — client-facing what-if scenario sandbox (read-only)
   registerScenarioRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // M2 — output & delivery
@@ -347,6 +359,18 @@ export function capTableSyncCredentials(
     out.carta = { clientId: config.CARTA_CLIENT_ID, clientSecret: config.CARTA_CLIENT_SECRET };
   if (config.PULLEY_CLIENT_ID && config.PULLEY_CLIENT_SECRET)
     out.pulley = { clientId: config.PULLEY_CLIENT_ID, clientSecret: config.PULLEY_CLIENT_SECRET };
+  return out;
+}
+
+/** HRIS provider OAuth credentials from env (feature 11). */
+export function hrisCredentials(config: Config): Partial<Record<HrisProvider, ProviderCredentials>> {
+  const out: Partial<Record<HrisProvider, ProviderCredentials>> = {};
+  if (config.RIPPLING_CLIENT_ID && config.RIPPLING_CLIENT_SECRET)
+    out.rippling = { clientId: config.RIPPLING_CLIENT_ID, clientSecret: config.RIPPLING_CLIENT_SECRET };
+  if (config.GUSTO_CLIENT_ID && config.GUSTO_CLIENT_SECRET)
+    out.gusto = { clientId: config.GUSTO_CLIENT_ID, clientSecret: config.GUSTO_CLIENT_SECRET };
+  if (config.DEEL_CLIENT_ID && config.DEEL_CLIENT_SECRET)
+    out.deel = { clientId: config.DEEL_CLIENT_ID, clientSecret: config.DEEL_CLIENT_SECRET };
   return out;
 }
 

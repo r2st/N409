@@ -40,6 +40,9 @@ export interface CreateGrantInput {
   frequencyMonths: number;
   notes?: string | null;
   createdBy: string;
+  /** Provenance for HRIS-imported grants (feature 11). */
+  source?: string;
+  externalId?: string | null;
 }
 
 export async function createGrant(
@@ -53,8 +56,8 @@ export async function createGrant(
       `INSERT INTO option_grants
          (id, valuation_id, grantee_name, grantee_email, grant_date, options_count,
           exercise_price, currency, vesting_template, vesting_start_date,
-          vesting_months, cliff_months, frequency_months, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+          vesting_months, cliff_months, frequency_months, notes, created_by, source, external_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        RETURNING *`,
       [
         id,
@@ -72,6 +75,8 @@ export async function createGrant(
         input.frequencyMonths,
         input.notes ?? null,
         input.createdBy,
+        input.source ?? 'manual',
+        input.externalId ?? null,
       ],
     );
     await recordEvent(client, {

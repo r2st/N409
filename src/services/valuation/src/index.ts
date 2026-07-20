@@ -11,6 +11,7 @@ const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
 const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
 const { runRetentionSweep } = await import('./routes/retention.js');
+const { runDueHrisSyncs } = await import('./routes/hris.js');
 const { autoPipelineConcurrency } = await import('./pipeline/autoPipeline.js');
 
 const config = loadConfig();
@@ -121,6 +122,25 @@ let capTableSyncTimer: NodeJS.Timeout | undefined;
   capTableSyncTimer = setInterval(tick, 15 * 60_000);
 }
 
+// HRIS/payroll sync scheduler (feature 11): pull due roster/grant connections.
+let hrisSyncTimer: NodeJS.Timeout | undefined;
+{
+  let syncing = false;
+  const tick = () => {
+    if (syncing) return;
+    syncing = true;
+    runDueHrisSyncs({ pool, log: app.log })
+      .then((n) => {
+        if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
+      })
+      .catch((err) => app.log.error({ err }, 'HRIS sync scan failed'))
+      .finally(() => {
+        syncing = false;
+      });
+  };
+  hrisSyncTimer = setInterval(tick, 15 * 60_000);
+}
+
 // Retention archival sweep (feature 10): archive records past their policy age
 // unless a legal hold freezes them. Runs at boot, then every 6 hours.
 let retentionTimer: NodeJS.Timeout | undefined;
@@ -149,6 +169,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
       if (autoEmailTimer) clearInterval(autoEmailTimer);
       if (reaperTimer) clearInterval(reaperTimer);
       if (capTableSyncTimer) clearInterval(capTableSyncTimer);
+      if (hrisSyncTimer) clearInterval(hrisSyncTimer);
       if (retentionTimer) clearInterval(retentionTimer);
       await app.close();
       await pool.end();
