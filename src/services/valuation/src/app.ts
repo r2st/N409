@@ -28,6 +28,7 @@ import { registerSensitivityRoutes } from './routes/sensitivity.js';
 import { logTransport, type EmailTransport } from './hooks/stateChange.js';
 import { smtpTransport } from './email/smtp.js';
 import { registerPaymentRoutes } from './routes/payments.js';
+import { registerBillingRoutes } from './routes/billing.js';
 import { registerSignatureRoutes } from './routes/signatures.js';
 import { registerBoardApprovalRoutes } from './routes/boardApproval.js';
 import { registerGrantRoutes } from './routes/grants.js';
@@ -276,6 +277,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
   // P0 — outside-world integrations (remaining-gaps §6): Stripe + signatures
   registerPaymentRoutes(app, {
+    pool,
+    stripeSecretKey: config.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: config.STRIPE_WEBHOOK_SECRET,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+  });
+  // Feature 7 — subscription / retainer billing + invoicing
+  registerBillingRoutes(app, {
     pool,
     stripeSecretKey: config.STRIPE_SECRET_KEY,
     stripeWebhookSecret: config.STRIPE_WEBHOOK_SECRET,

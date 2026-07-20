@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
 import { formatDateTime, formatMoney } from '../lib/format';
 import { EmptyState, ErrorNote, KindBadge, Spinner, StatCard } from '../components/ui';
+import { SubscriptionSection } from '../components/SubscriptionSection';
 import type { ValuationKind } from '../lib/types';
 
 interface BillingPayment {
@@ -168,6 +169,9 @@ export function BillingPage() {
           </div>
         )}
       </section>
+
+      {/* Feature 7: recurring subscription / retainer billing + invoices */}
+      <SubscriptionSection />
     </div>
   );
 }

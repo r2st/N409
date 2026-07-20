@@ -135,6 +135,62 @@ export async function createCheckoutSession(
   return json as unknown as CheckoutSession;
 }
 
+/**
+ * Recurring subscription Checkout Session (feature 7). Uses inline recurring
+ * price_data so no pre-created Stripe Price is required; the plan tier + user
+ * are carried in metadata for the webhook to reconcile.
+ */
+export async function createSubscriptionCheckoutSession(
+  secretKey: string,
+  args: {
+    userId: string;
+    planTier: string;
+    planName: string;
+    amountCents: number;
+    currency: string;
+    interval: 'month' | 'year';
+    successUrl: string;
+    cancelUrl: string;
+    customerEmail?: string;
+  },
+): Promise<CheckoutSession> {
+  const body = encodeForm({
+    mode: 'subscription',
+    client_reference_id: args.userId,
+    success_url: args.successUrl,
+    cancel_url: args.cancelUrl,
+    customer_email: args.customerEmail,
+    metadata: { user_id: args.userId, plan_tier: args.planTier },
+    subscription_data: { metadata: { user_id: args.userId, plan_tier: args.planTier } },
+    line_items: [
+      {
+        quantity: 1,
+        price_data: {
+          currency: args.currency.toLowerCase(),
+          unit_amount: args.amountCents,
+          recurring: { interval: args.interval },
+          product_data: { name: args.planName },
+        },
+      },
+    ],
+  });
+  const res = await fetch(`${STRIPE_API}/checkout/sessions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = (json.error ?? {}) as Record<string, unknown>;
+    throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
+  }
+  return json as unknown as CheckoutSession;
+}
+
 export interface ChargeReceipt {
   chargeId: string | null;
   receiptUrl: string | null;

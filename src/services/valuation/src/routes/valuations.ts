@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { consumeValuation, findActiveSubscription } from '../repos/billing.js';
 import {
   canCreateValuation,
   canReadValuation,
@@ -165,6 +166,19 @@ export function registerValuationRoutes(
     const ops = isOps(principal);
     const userId = ops && body.user_id ? body.user_id : principal.id;
     const partnerId = ops && body.partner_id !== undefined ? body.partner_id : principal.partnerId;
+
+    // Feature 7: subscribers consume against their plan limit; a user with no
+    // active subscription is on the one-time per-valuation flow and unaffected.
+    const subscription = await findActiveSubscription(deps.pool, userId);
+    if (subscription && !(await consumeValuation(deps.pool, userId))) {
+      throw new ApiProblem({
+        status: 402,
+        title: 'Plan limit reached',
+        type: 'urn:n409:problem:plan-limit',
+        detail:
+          "Your plan's included valuations are used up for this period — upgrade or purchase additional valuations to continue.",
+      });
+    }
 
     const valuation = await createValuation(
       deps.pool,
