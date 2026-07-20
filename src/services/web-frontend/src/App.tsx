@@ -27,6 +27,7 @@ import {
 } from './pages/valuation/PipelineTabs';
 import { WorkbookTab } from './pages/valuation/WorkbookTab';
 import { ScenariosTab } from './pages/valuation/ScenariosTab';
+import { GrantsTab } from './pages/valuation/GrantsTab';
 import { OverwritesTab } from './pages/valuation/OverwritesTab';
 import { ReportTab } from './pages/valuation/ReportTab';
 import { ProgressTab } from './pages/valuation/ProgressTab';
@@ -158,6 +159,7 @@ export default function App() {
           <Route path="workbook" element={<WorkbookTab />} />
           <Route path="overwrites" element={<OverwritesTab />} />
           <Route path="report" element={<ReportTab />} />
+          <Route path="grants" element={<GrantsTab />} />
           <Route path="package" element={<PackageTab />} />
         </Route>
         {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}

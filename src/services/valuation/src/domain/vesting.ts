@@ -32,21 +32,28 @@ export function templateByKey(key: string): VestingTemplate | undefined {
 
 export interface VestingSchedule {
   totalShares: number;
-  vestingStartDate: string; // ISO date (YYYY-MM-DD)
+  /** ISO date string or a Date (pg returns `date` columns as Date objects). */
+  vestingStartDate: string | Date;
   vestingMonths: number;
   cliffMonths: number;
   frequencyMonths: number;
 }
 
-/** Whole months from `startIso` up to `asOf` (never negative). */
-export function monthsElapsed(startIso: string, asOf: Date): number {
-  const start = new Date(`${startIso.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(start.getTime())) return 0;
+/** Coerce a Date or ISO string to a bare YYYY-MM-DD date string. */
+export function toIsoDate(value: string | Date): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
+/** Whole months from `start` up to `asOf` (never negative). */
+export function monthsElapsed(start: string | Date, asOf: Date): number {
+  const startDate = new Date(`${toIsoDate(start)}T00:00:00Z`);
+  if (Number.isNaN(startDate.getTime())) return 0;
   let months =
-    (asOf.getUTCFullYear() - start.getUTCFullYear()) * 12 +
-    (asOf.getUTCMonth() - start.getUTCMonth());
+    (asOf.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
+    (asOf.getUTCMonth() - startDate.getUTCMonth());
   // Not a full month until the day-of-month is reached.
-  if (asOf.getUTCDate() < start.getUTCDate()) months -= 1;
+  if (asOf.getUTCDate() < startDate.getUTCDate()) months -= 1;
   return Math.max(0, months);
 }
 
@@ -103,9 +110,8 @@ export interface VestingPoint {
 }
 
 /** Add `months` to an ISO date, clamping the day of month. */
-function addMonths(startIso: string, months: number): string {
-  const start = new Date(`${startIso.slice(0, 10)}T00:00:00Z`);
-  const d = new Date(start);
+function addMonths(start: string | Date, months: number): string {
+  const d = new Date(`${toIsoDate(start)}T00:00:00Z`);
   d.setUTCMonth(d.getUTCMonth() + months);
   return d.toISOString().slice(0, 10);
 }
@@ -117,7 +123,9 @@ function addMonths(startIso: string, months: number): string {
 export function vestingTimeline(schedule: VestingSchedule): VestingPoint[] {
   const total = Math.max(0, Math.floor(schedule.totalShares));
   const freq = Math.max(1, schedule.frequencyMonths);
-  const points: VestingPoint[] = [{ monthOffset: 0, date: schedule.vestingStartDate, cumulativeVested: 0 }];
+  const points: VestingPoint[] = [
+    { monthOffset: 0, date: toIsoDate(schedule.vestingStartDate), cumulativeVested: 0 },
+  ];
   for (let m = freq; m <= schedule.vestingMonths; m += freq) {
     const asOf = new Date(`${addMonths(schedule.vestingStartDate, m)}T00:00:00Z`);
     const status = vestingStatus(schedule, asOf);
