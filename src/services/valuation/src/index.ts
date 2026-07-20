@@ -10,6 +10,7 @@ const { buildApp, buildEmailTransports } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
 const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
+const { runRetentionSweep } = await import('./routes/retention.js');
 const { autoPipelineConcurrency } = await import('./pipeline/autoPipeline.js');
 
 const config = loadConfig();
@@ -120,6 +121,27 @@ let capTableSyncTimer: NodeJS.Timeout | undefined;
   capTableSyncTimer = setInterval(tick, 15 * 60_000);
 }
 
+// Retention archival sweep (feature 10): archive records past their policy age
+// unless a legal hold freezes them. Runs at boot, then every 6 hours.
+let retentionTimer: NodeJS.Timeout | undefined;
+{
+  let sweeping = false;
+  const sweep = () => {
+    if (sweeping) return;
+    sweeping = true;
+    runRetentionSweep(pool)
+      .then((r) => {
+        if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
+      })
+      .catch((err) => app.log.error({ err }, 'retention sweep failed'))
+      .finally(() => {
+        sweeping = false;
+      });
+  };
+  void sweep();
+  retentionTimer = setInterval(sweep, 6 * 60 * 60_000);
+}
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     void (async () => {
@@ -127,6 +149,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
       if (autoEmailTimer) clearInterval(autoEmailTimer);
       if (reaperTimer) clearInterval(reaperTimer);
       if (capTableSyncTimer) clearInterval(capTableSyncTimer);
+      if (retentionTimer) clearInterval(retentionTimer);
       await app.close();
       await pool.end();
       await telemetry.shutdown();

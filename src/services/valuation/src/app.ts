@@ -51,6 +51,7 @@ import { registerAuditorPortalRoutes } from './routes/auditorPortal.js';
 import { registerSamlRoutes } from './routes/saml.js';
 import { registerScimRoutes } from './routes/scim.js';
 import { registerAdminSsoRoutes } from './routes/adminSso.js';
+import { registerRetentionRoutes } from './routes/retention.js';
 import { registerScenarioRoutes } from './routes/scenarios.js';
 import { registerOverwriteRoutes } from './routes/overwrites.js';
 import { registerWorkbookRoutes } from './routes/workbook.js';
@@ -237,6 +238,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSamlRoutes(app, { pool, jwt, publicBaseUrl: config.PUBLIC_BASE_URL, cookie: sessionCookie });
   registerScimRoutes(app, { pool });
   registerAdminSsoRoutes(app, { pool });
+  // Feature 10 — data retention + legal hold administration
+  registerRetentionRoutes(app, { pool });
   // Improvement 3 — client-facing what-if scenario sandbox (read-only)
   registerScenarioRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // M2 — output & delivery

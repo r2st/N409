@@ -290,6 +290,7 @@ export function AppLayout() {
         <NavGroup label="Administration">
           <NavItem to="/admin/users" label="Users & roles" icon={icons.users} onNavigate={close} />
           <NavItem to="/admin/sso" label="Enterprise SSO" icon={icons.settings} onNavigate={close} />
+          <NavItem to="/admin/retention" label="Data retention" icon={icons.settings} onNavigate={close} />
           <NavItem to="/admin/partners" label="Partners" icon={icons.partner} onNavigate={close} />
         </NavGroup>
       )}
