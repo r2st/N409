@@ -14,6 +14,8 @@ export const KIND_LABELS: Record<ValuationKind, string> = {
   goodwill: 'Goodwill Impairment',
   esop: 'ESOP',
   ip: 'IP Valuation',
+  fund: 'ASC 820 Fund',
+  debt: 'Debt / Credit',
 };
 
 export const STATE_LABELS: Record<ValuationState, string> = {

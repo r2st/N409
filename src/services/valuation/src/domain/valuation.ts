@@ -13,6 +13,8 @@ export const VALUATION_KINDS = [
   'goodwill',
   'esop',
   'ip',
+  'fund',
+  'debt',
 ] as const;
 export type ValuationKind = (typeof VALUATION_KINDS)[number];
 

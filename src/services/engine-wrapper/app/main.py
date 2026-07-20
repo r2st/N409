@@ -19,6 +19,12 @@ from .observability import configure_logging, make_request_context_middleware
 from .engine.market_data import lookup as market_lookup
 from .engine.market_data import universe as market_universe
 from .engine.market_feed import MarketFeedClient
+from .engine.fund_valuation import (
+    calibrate_implied_volatility,
+    fund_valuation,
+    lp_waterfall,
+    roll_forward_mark,
+)
 from .engine.projection import project_financials
 from .engine.rollforward import roll_forward
 from .engine.sensitivity import sensitivity as run_sensitivity
@@ -113,6 +119,43 @@ class RollForwardRequest(BaseModel):
     annual_accretion: float | None = None
     value_adjustments: list | None = None
     new_round_post_money: float | None = None
+
+
+class FundValuationRequest(BaseModel):
+    positions: list = Field(default_factory=list)
+    liabilities: float = 0.0
+    lp_terms: dict | None = None
+
+
+class FundWaterfallRequest(BaseModel):
+    committed_capital: float = 0.0
+    contributed_capital: float = 0.0
+    distributable: float = 0.0
+    preferred_return_rate: float = 0.08
+    years: float = 1.0
+    carry_pct: float = 0.20
+    gp_catch_up: bool = True
+    management_fees_paid: float = 0.0
+    gp_distributions_to_date: float = 0.0
+
+
+class FundCalibrateRequest(BaseModel):
+    round_price_per_share: float
+    total_equity_value: float
+    strike: float
+    time_to_exit_years: float
+    risk_free_rate: float
+    preferred_shares: float
+    fully_diluted_shares: float
+
+
+class FundRollForwardRequest(BaseModel):
+    prior_fair_value: float
+    method: str = "index"
+    index_return: float | None = None
+    accretion_rate: float | None = None
+    periods: float = 1.0
+    new_calibrated_value: float | None = None
 
 
 class MarketFeedRequest(BaseModel):
@@ -274,6 +317,69 @@ def engine_rollforward(request: RollForwardRequest) -> dict:
             annual_accretion=request.annual_accretion,
             value_adjustments=request.value_adjustments,
             new_round_post_money=request.new_round_post_money,
+        )
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/fund-valuation")
+def engine_fund_valuation(request: FundValuationRequest) -> dict:
+    """ASC 820 fund NAV: mark each position, level it, and roll up (+ waterfall)."""
+    try:
+        return fund_valuation(
+            {"positions": request.positions, "liabilities": request.liabilities, "lp_terms": request.lp_terms}
+        )
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/fund-waterfall")
+def engine_fund_waterfall(request: FundWaterfallRequest) -> dict:
+    """LP distribution waterfall (ROC, preferred return, catch-up, carry, clawback)."""
+    try:
+        return lp_waterfall(
+            committed_capital=request.committed_capital,
+            contributed_capital=request.contributed_capital,
+            distributable=request.distributable,
+            preferred_return_rate=request.preferred_return_rate,
+            years=request.years,
+            carry_pct=request.carry_pct,
+            gp_catch_up=request.gp_catch_up,
+            management_fees_paid=request.management_fees_paid,
+            gp_distributions_to_date=request.gp_distributions_to_date,
+        )
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/fund-calibrate")
+def engine_fund_calibrate(request: FundCalibrateRequest) -> dict:
+    """Backsolve the OPM implied volatility that reproduces the last round."""
+    try:
+        return calibrate_implied_volatility(
+            round_price_per_share=request.round_price_per_share,
+            total_equity_value=request.total_equity_value,
+            strike=request.strike,
+            time_to_exit_years=request.time_to_exit_years,
+            risk_free_rate=request.risk_free_rate,
+            preferred_shares=request.preferred_shares,
+            fully_diluted_shares=request.fully_diluted_shares,
+        )
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/fund-rollforward")
+def engine_fund_rollforward(request: FundRollForwardRequest) -> dict:
+    """Roll a prior position mark to a new measurement date."""
+    try:
+        return roll_forward_mark(
+            prior_fair_value=request.prior_fair_value,
+            method=request.method,
+            index_return=request.index_return,
+            accretion_rate=request.accretion_rate,
+            periods=request.periods,
+            new_calibrated_value=request.new_calibrated_value,
         )
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

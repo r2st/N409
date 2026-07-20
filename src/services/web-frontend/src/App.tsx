@@ -15,6 +15,7 @@ import { GoogleCompletePage } from './pages/GoogleCompletePage';
 import { BoardSignPage } from './pages/BoardSignPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { PortfolioPage } from './pages/PortfolioPage';
+import { FundPortfolioPage } from './pages/FundPortfolioPage';
 import { ValuationsPage } from './pages/ValuationsPage';
 import { NewValuationPage } from './pages/NewValuationPage';
 import { ValuationDetailPage } from './pages/ValuationDetailPage';
@@ -190,6 +191,7 @@ export default function App() {
         </Route>
         {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
         <Route element={<RequireRole allow={isOps} />}>
+          <Route path="/funds" element={<FundPortfolioPage />} />
           <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
           <Route path="/engagements" element={<EngagementsPage />} />
           <Route path="/monitors" element={<MonitorsPage />} />
