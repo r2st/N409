@@ -184,6 +184,7 @@ export interface ValuationParams {
   market_method: 'revenue' | 'ebitda' | null;
   market_horizon: 'ltm' | 'ntm' | null;
   asset_method: 'cost_to_replicate' | 'nav' | null;
+  allocation_method: 'opm' | 'pwerm';
   updated_at: string;
 }
 

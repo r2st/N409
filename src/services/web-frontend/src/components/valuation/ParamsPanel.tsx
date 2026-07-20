@@ -19,8 +19,39 @@ interface FormState {
   market_method: string;
   market_horizon: string;
   asset_method: string;
+  allocation_method: string;
   business_overview: string;
 }
+
+/** One editable PWERM exit scenario (values in whole currency units). */
+interface ScenarioRow {
+  name: string;
+  type: string;
+  probability: string;
+  exit_value: string;
+  time_years: string;
+  discount_rate: string;
+}
+
+const SCENARIO_TYPES = [
+  { value: '', label: '—' },
+  { value: 'ipo', label: 'IPO' },
+  { value: 'acquisition', label: 'Acquisition' },
+  { value: 'merger', label: 'Merger' },
+  { value: 'continuation', label: 'Continuation' },
+  { value: 'stay_private', label: 'Stay private' },
+  { value: 'liquidation', label: 'Liquidation' },
+  { value: 'dissolution', label: 'Dissolution' },
+];
+
+const emptyScenario = (): ScenarioRow => ({
+  name: '',
+  type: '',
+  probability: '',
+  exit_value: '',
+  time_years: '',
+  discount_rate: '',
+});
 
 const str = (v: string | number | null) => (v === null || v === undefined ? '' : String(v));
 
@@ -40,6 +71,7 @@ function fromParams(p: ValuationParams): FormState {
     market_method: p.market_method ?? '',
     market_horizon: p.market_horizon ?? '',
     asset_method: p.asset_method ?? '',
+    allocation_method: p.allocation_method ?? 'opm',
     business_overview: p.business_overview ?? '',
   };
 }
@@ -58,12 +90,43 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [scenarios, setScenarios] = useState<ScenarioRow[]>([]);
+  const [scenariosBusy, setScenariosBusy] = useState(false);
+  const [scenariosSaved, setScenariosSaved] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const { params: p } = await api<{ params: ValuationParams }>(`/valuations/${valuationId}/params`);
       setParams(p);
       setForm(fromParams(p));
+      try {
+        const { engine_inputs } = await api<{
+          engine_inputs: { pwerm?: { scenarios?: unknown[] } };
+        }>(`/valuations/${valuationId}/engine-inputs`);
+        const raw = engine_inputs?.pwerm?.scenarios;
+        if (Array.isArray(raw) && raw.length > 0) {
+          setScenarios(
+            raw.map((s) => {
+              const r = s as Record<string, unknown>;
+              return {
+                name: r.name ? String(r.name) : '',
+                type: r.type ? String(r.type) : '',
+                probability: r.probability != null ? String(r.probability) : '',
+                exit_value:
+                  r.equity_value != null
+                    ? String(r.equity_value)
+                    : r.enterprise_value != null
+                      ? String(r.enterprise_value)
+                      : '',
+                time_years: r.time_to_exit_years != null ? String(r.time_to_exit_years) : '',
+                discount_rate: r.discount_rate != null ? String(r.discount_rate) : '',
+              };
+            }),
+          );
+        }
+      } catch {
+        /* engine-inputs is ops-only / may 404 for owners — scenarios stay empty */
+      }
     } catch {
       setError('Could not load valuation params.');
     }
@@ -111,6 +174,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         market_method: form.market_method || null,
         market_horizon: form.market_horizon || null,
         asset_method: form.asset_method || null,
+        allocation_method: form.allocation_method || 'opm',
         business_overview: form.business_overview.trim() || null,
       };
       const { params: updated } = await api<{ params: ValuationParams }>(
@@ -130,6 +194,40 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const weightTotal = [form.weight_asset, form.weight_opm, form.weight_income, form.weight_market]
     .map((v) => Number(v) || 0)
     .reduce((a, b) => a + b, 0);
+
+  const isPwerm = form.allocation_method === 'pwerm';
+  const probabilityTotal = scenarios.reduce((sum, s) => sum + (Number(s.probability) || 0), 0);
+  const probabilityOff = scenarios.length > 0 && Math.abs(probabilityTotal - 1) > 1e-4;
+
+  const setScenario = (i: number, key: keyof ScenarioRow) => (value: string) => {
+    setScenariosSaved(false);
+    setScenarios((rows) => rows.map((r, j) => (j === i ? { ...r, [key]: value } : r)));
+  };
+
+  const saveScenarios = async () => {
+    setError(null);
+    setScenariosBusy(true);
+    try {
+      const body = {
+        pwerm: {
+          scenarios: scenarios.map((s) => ({
+            name: s.name.trim() || null,
+            type: s.type || null,
+            probability: Number(s.probability) || 0,
+            equity_value: Number(s.exit_value) || 0,
+            time_to_exit_years: Number(s.time_years) || 0,
+            discount_rate: s.discount_rate.trim() === '' ? null : Number(s.discount_rate),
+          })),
+        },
+      };
+      await api(`/valuations/${valuationId}/engine-inputs`, { method: 'PATCH', body });
+      setScenariosSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not save PWERM scenarios.');
+    } finally {
+      setScenariosBusy(false);
+    }
+  };
 
   return (
     <form onSubmit={save} className="space-y-6">
@@ -182,6 +280,115 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         </div>
         {weightsIssue && <p className="mt-3 text-sm font-medium text-red-600">{weightsIssue}</p>}
       </section>
+
+      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <h3 className="overline mb-5 text-ink-400">Allocation method</h3>
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field
+            label="Equity allocation"
+            hint="OPM allocates via a Black-Scholes call; PWERM uses discrete exit scenarios."
+          >
+            <Select
+              disabled={readOnly}
+              value={form.allocation_method}
+              onChange={(e) => set('allocation_method')(e.target.value)}
+              aria-label="Allocation method"
+            >
+              <option value="opm">Option Pricing Method (OPM)</option>
+              <option value="pwerm">Probability-Weighted Expected Return (PWERM)</option>
+            </Select>
+          </Field>
+        </div>
+      </section>
+
+      {isPwerm && (
+        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card" data-testid="pwerm-scenarios">
+          <div className="mb-4 flex items-baseline justify-between">
+            <h3 className="overline text-ink-400">PWERM exit scenarios</h3>
+            <span
+              className={`tnum text-sm font-semibold ${probabilityOff ? 'text-red-600' : 'text-bond-700'}`}
+              data-testid="pwerm-probability-total"
+            >
+              Σp {probabilityTotal.toFixed(4)}
+            </span>
+          </div>
+          {scenarios.length === 0 ? (
+            <p className="text-sm text-ink-400">
+              No scenarios yet — add IPO / acquisition / continuation / liquidation outcomes.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead>
+                  <tr className="border-b border-paper-300 text-xs text-ink-400">
+                    <th className="py-2 pr-3 text-left font-semibold">Name</th>
+                    <th className="py-2 pr-3 text-left font-semibold">Type</th>
+                    <th className="py-2 pr-3 text-left font-semibold">Probability</th>
+                    <th className="py-2 pr-3 text-left font-semibold">Exit equity ($)</th>
+                    <th className="py-2 pr-3 text-left font-semibold">Years</th>
+                    <th className="py-2 pr-3 text-left font-semibold">Disc. rate</th>
+                    <th className="py-2 font-semibold" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {scenarios.map((s, i) => (
+                    <tr key={i} className="border-b border-paper-200 last:border-0">
+                      <td className="py-1.5 pr-3">
+                        <TextInput disabled={readOnly} value={s.name} onChange={(e) => setScenario(i, 'name')(e.target.value)} aria-label={`Scenario ${i + 1} name`} />
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        <Select disabled={readOnly} value={s.type} onChange={(e) => setScenario(i, 'type')(e.target.value)} aria-label={`Scenario ${i + 1} type`}>
+                          {SCENARIO_TYPES.map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                        </Select>
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        <TextInput type="number" min={0} max={1} step={0.01} disabled={readOnly} value={s.probability} onChange={(e) => setScenario(i, 'probability')(e.target.value)} className="w-24" aria-label={`Scenario ${i + 1} probability`} />
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        <TextInput type="number" min={0} step="any" disabled={readOnly} value={s.exit_value} onChange={(e) => setScenario(i, 'exit_value')(e.target.value)} className="w-36" aria-label={`Scenario ${i + 1} exit value`} />
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        <TextInput type="number" min={0} step="any" disabled={readOnly} value={s.time_years} onChange={(e) => setScenario(i, 'time_years')(e.target.value)} className="w-20" aria-label={`Scenario ${i + 1} years`} />
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        <TextInput type="number" step="any" disabled={readOnly} value={s.discount_rate} onChange={(e) => setScenario(i, 'discount_rate')(e.target.value)} className="w-24" placeholder="dflt" aria-label={`Scenario ${i + 1} discount rate`} />
+                      </td>
+                      <td className="py-1.5">
+                        {!readOnly && (
+                          <button
+                            type="button"
+                            onClick={() => setScenarios((rows) => rows.filter((_, j) => j !== i))}
+                            className="text-xs font-semibold text-red-600 hover:text-red-700"
+                            aria-label={`Remove scenario ${i + 1}`}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {probabilityOff && (
+            <p className="mt-3 text-sm font-medium text-red-600">Scenario probabilities must sum to 1.0000.</p>
+          )}
+          {scenariosSaved && <p className="mt-3 text-sm font-medium text-bond-700">Scenarios saved.</p>}
+          {!readOnly && (
+            <div className="mt-4 flex gap-2">
+              <Button type="button" variant="secondary" onClick={() => { setScenariosSaved(false); setScenarios((r) => [...r, emptyScenario()]); }}>
+                Add scenario
+              </Button>
+              <Button type="button" onClick={() => void saveScenarios()} disabled={scenariosBusy || scenarios.length === 0 || probabilityOff}>
+                {scenariosBusy ? 'Saving…' : 'Save scenarios'}
+              </Button>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
         <h3 className="overline mb-5 text-ink-400">Discounts</h3>

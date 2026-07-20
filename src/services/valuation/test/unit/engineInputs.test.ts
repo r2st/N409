@@ -102,4 +102,34 @@ describe('EngineInputsBody', () => {
   it('accepts an empty patch', () => {
     expect(EngineInputsBody.safeParse({}).success).toBe(true);
   });
+
+  it('accepts PWERM scenarios and defaults time_to_exit_years', () => {
+    const res = EngineInputsBody.safeParse({
+      pwerm: {
+        discount_rate: 0.25,
+        scenarios: [
+          { name: 'IPO', type: 'ipo', probability: 0.4, equity_value: 20_000_000, time_to_exit_years: 2 },
+          { name: 'Liquidation', type: 'liquidation', probability: 0.6, enterprise_value: 5_000_000 },
+        ],
+      },
+    });
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.data.pwerm?.scenarios?.[1]?.time_to_exit_years).toBe(0);
+    }
+  });
+
+  it('rejects a PWERM scenario without an exit value', () => {
+    const res = EngineInputsBody.safeParse({
+      pwerm: { scenarios: [{ probability: 1, time_to_exit_years: 1 }] },
+    });
+    expect(res.success).toBe(false);
+  });
+
+  it('rejects an unknown PWERM scenario type', () => {
+    const res = EngineInputsBody.safeParse({
+      pwerm: { scenarios: [{ probability: 1, equity_value: 1_000_000, type: 'spac' }] },
+    });
+    expect(res.success).toBe(false);
+  });
 });

@@ -28,6 +28,8 @@ export interface ValuationParamsRow {
   market_horizon: 'ltm' | 'ntm' | null;
   market_custom_ranges: unknown;
   asset_method: 'cost_to_replicate' | 'nav' | null;
+  /** How equity value is allocated to common: OPM (default) or PWERM. */
+  allocation_method: 'opm' | 'pwerm';
   updated_at: Date;
   [key: string]: unknown;
 }
@@ -55,6 +57,7 @@ export const PARAM_COLUMNS = [
   'market_horizon',
   'market_custom_ranges',
   'asset_method',
+  'allocation_method',
 ] as const;
 
 export async function findParams(pool: pg.Pool, valuationId: string): Promise<ValuationParamsRow | null> {

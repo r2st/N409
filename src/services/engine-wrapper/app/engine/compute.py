@@ -17,6 +17,7 @@ from datetime import date
 from .approaches import EngineInputError, asset_value, income_dcf, market_multiples, opm_backsolve
 from .bs import bs_call
 from .dlom import chaffee_dlom, finnerty_dlom
+from .pwerm import allocate_pwerm
 from .volatility import estimate_volatility
 from .wacc import compute_wacc
 from .waterfall import allocate_waterfall
@@ -198,6 +199,95 @@ def _apply_autopilot(
     return inputs, (meta or None)
 
 
+def _resolve_discounts(
+    params: dict, volatility: float | None, t: float, r: float
+) -> tuple[float, float, str | None]:
+    """DLOC + DLOM (model or qualitative), validated to fractions in [0, 1)."""
+    dloc = _num(params.get("dloc"), "dloc") or 0.0
+    method = params.get("dlom_method")
+    if method == "chaffee":
+        dlom = chaffee_dlom(volatility or 0.0, t, r)
+    elif method == "finnerty":
+        dlom = finnerty_dlom(volatility or 0.0, t)
+    elif method == "qualitative":
+        dlom_q = _num(params.get("dlom_qualitative"), "dlom_qualitative")
+        dlom = dlom_q if dlom_q is not None else _req(params.get("dlom"), "dlom")
+    else:
+        dlom = _num(params.get("dlom"), "dlom") or 0.0
+    if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
+        raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
+    return dloc, round(dlom, 4), method
+
+
+def _compute_pwerm(params: dict, inputs: dict) -> dict:
+    """PWERM allocation path (allocation_method == 'pwerm').
+
+    The scenarios themselves determine equity value and its allocation to
+    common, so PWERM bypasses the weighted-approach step the OPM path uses.
+    Common per-share value then feeds the same DLOC/DLOM discounts.
+    """
+    pwerm_in = inputs.get("pwerm")
+    if not isinstance(pwerm_in, dict):
+        raise EngineInputError("allocation_method 'pwerm' requires inputs.pwerm.scenarios")
+    scenarios = pwerm_in.get("scenarios")
+    share_classes = inputs.get("share_classes")
+    if not isinstance(share_classes, list) or not share_classes:
+        raise EngineInputError("PWERM requires inputs.share_classes (the cap table)")
+
+    cash = _num(inputs.get("cash"), "cash") or 0.0
+    debt = _num(inputs.get("debt"), "debt") or 0.0
+    default_rate = _num(pwerm_in.get("discount_rate"), "pwerm.discount_rate")
+    if default_rate is None:
+        default_rate = _num(inputs.get("risk_free_rate"), "risk_free_rate") or DEFAULT_RISK_FREE_RATE
+
+    allocation = allocate_pwerm(
+        scenarios if isinstance(scenarios, list) else [],
+        share_classes,
+        default_discount_rate=default_rate,
+        cash=cash,
+        debt=debt,
+    )
+    equity_value = allocation["equity_value"]
+    if equity_value <= 0:
+        raise EngineInputError(f"PWERM weighted equity value is not positive ({equity_value:.2f})")
+
+    common_shares = _req(
+        inputs.get("shares_outstanding_common"), "shares_outstanding_common", positive=True
+    )
+    options = _num(inputs.get("options_outstanding"), "options_outstanding") or 0.0
+    fully_diluted_common = common_shares + options
+
+    # Expected (probability-weighted) time to exit drives any model DLOM.
+    t = allocation["expected_time_to_exit_years"]
+    r = _num(inputs.get("risk_free_rate"), "risk_free_rate") or DEFAULT_RISK_FREE_RATE
+    method = params.get("dlom_method")
+    volatility = _num(inputs.get("volatility"), "volatility", positive=True)
+    if method in ("chaffee", "finnerty") and volatility is None:
+        raise EngineInputError("volatility is required for the selected model DLOM")
+
+    dloc, dlom, dlom_method = _resolve_discounts(params, volatility, t, r)
+
+    # The waterfall already spread value across the cap table's common shares.
+    common_per_share = allocation["common_per_share"]
+    fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
+
+    results: dict = {
+        "equity_value": round(equity_value, 2),
+        "allocation": allocation,
+        "allocation_method": "pwerm",
+        "common_equity_value": round(allocation["common_value"], 2),
+        "assumptions": {
+            "expected_time_to_exit_years": t,
+            "risk_free_rate": r,
+            "volatility": volatility,
+        },
+        "discounts": {"dloc": dloc, "dlom": dlom, "dlom_method": dlom_method},
+        "fully_diluted_common": fully_diluted_common,
+        "fmv_per_share": round(fmv_per_share, 4),
+    }
+    return {"engine_version": ENGINE_VERSION, "results": results}
+
+
 def compute(
     params: dict,
     inputs: dict,
@@ -233,6 +323,18 @@ def compute(
         if not recompute:
             raise EngineInputError("recompute must name at least one approach")
     prior = prior_approaches or {}
+
+    # PWERM is a self-contained allocation method: its discrete exit scenarios
+    # set both the equity value and the allocation to common, so it bypasses
+    # the weighted-approach + OPM chain the default path runs.
+    allocation_method = params.get("allocation_method") or "opm"
+    if allocation_method not in ("opm", "pwerm"):
+        raise EngineInputError("allocation_method must be 'opm' or 'pwerm'")
+    if allocation_method == "pwerm":
+        out = _compute_pwerm(params, inputs)
+        if auto_meta is not None:
+            out["results"]["auto"] = auto_meta
+        return out
 
     def _fresh(name: str) -> bool:
         """Full runs compute everything; partial runs compute the selected
@@ -380,19 +482,7 @@ def compute(
         allocation = {"method": "as_converted", "common_fraction": common_fraction}
 
     # ── Discounts ───────────────────────────────────────────────────────────
-    dloc = _num(params.get("dloc"), "dloc") or 0.0
-    method = params.get("dlom_method")
-    if method == "chaffee":
-        dlom = chaffee_dlom(volatility or 0.0, t, r)
-    elif method == "finnerty":
-        dlom = finnerty_dlom(volatility or 0.0, t)
-    elif method == "qualitative":
-        dlom_q = _num(params.get("dlom_qualitative"), "dlom_qualitative")
-        dlom = dlom_q if dlom_q is not None else _req(params.get("dlom"), "dlom")
-    else:
-        dlom = _num(params.get("dlom"), "dlom") or 0.0
-    if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
-        raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
+    dloc, dlom, method = _resolve_discounts(params, volatility, t, r)
 
     if waterfall_per_share is not None:
         # Waterfall already spread value over the cap table's common shares.

@@ -62,6 +62,7 @@ export function engineParams(p: ValuationParamsRow): Record<string, unknown> {
     revenue_status: p.revenue_status,
     exit_timeline: p.exit_timeline,
     asset_method: p.asset_method,
+    allocation_method: p.allocation_method ?? 'opm',
   };
 }
 

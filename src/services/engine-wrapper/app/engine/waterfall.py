@@ -30,6 +30,11 @@ from .errors import EngineInputError
 _KINDS = ("preferred", "common", "option")
 
 
+def normalize_share_classes(classes: list[dict]) -> list[dict]:
+    """Public entry point for the shared cap-table normaliser (used by PWERM)."""
+    return _normalize(classes)
+
+
 def _normalize(classes: list[dict]) -> list[dict]:
     if not isinstance(classes, list) or not classes:
         raise EngineInputError("share_classes must be a non-empty list")
@@ -210,6 +215,62 @@ def allocate_waterfall(
         "common_value": round(common_value, 2),
         "common_shares": common_shares,
         "common_per_share": round(common_value / common_shares, 6),
+    }
+
+
+def exit_allocation(exit_value: float, classes: list[dict]) -> dict:
+    """Deterministic liquidation waterfall at a *known* exit equity value.
+
+    This is the intrinsic (σ → 0, t → 0) limit of ``allocate_waterfall``: the
+    same breakpoint segments, but each tranche is filled by the exit value
+    that actually lands in it rather than by its Black-Scholes expectation.
+    PWERM allocates each of its discrete exit scenarios with this, so PWERM
+    and the OPM allocation agree on the underlying payoff structure. Value is
+    conserved exactly: ``Σ class values == exit_value``.
+    """
+    if exit_value < 0:
+        raise EngineInputError("exit_value must be >= 0 for the waterfall allocation")
+    normalized = _normalize(classes)
+    segments = _segments(normalized)
+
+    values: dict[str, float] = {c["name"]: 0.0 for c in normalized}
+    breakpoints: list[dict] = []
+    for seg in segments:
+        lo = seg["from"]
+        upper = exit_value if seg["to"] is None else min(exit_value, seg["to"])
+        width = max(0.0, upper - lo)
+        if width <= 0:
+            continue
+        for name, fraction in seg["participants"].items():
+            values[name] += width * fraction
+        breakpoints.append(
+            {
+                "from": round(lo, 2),
+                "to": round(seg["to"], 2) if seg["to"] is not None else None,
+                "participants": {k: round(v, 6) for k, v in seg["participants"].items()},
+                "value": round(width, 2),
+            }
+        )
+
+    by_class = {
+        c["name"]: {
+            "kind": c["kind"],
+            "shares": c["shares"],
+            "value": round(values[c["name"]], 2),
+            "per_share": round(values[c["name"]] / c["shares"], 6),
+        }
+        for c in normalized
+    }
+    common_shares = sum(c["shares"] for c in normalized if c["kind"] == "common")
+    common_value = sum(values[c["name"]] for c in normalized if c["kind"] == "common")
+    return {
+        "method": "deterministic_waterfall",
+        "exit_value": round(exit_value, 2),
+        "breakpoints": breakpoints,
+        "classes": by_class,
+        "common_value": round(common_value, 2),
+        "common_shares": common_shares,
+        "common_per_share": round(common_value / common_shares, 6) if common_shares > 0 else 0.0,
     }
 
 

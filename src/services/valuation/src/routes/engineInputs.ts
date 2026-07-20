@@ -99,6 +99,49 @@ export const EngineInputsBody = z
       .strict()
       .nullable()
       .optional(),
+
+    // PWERM discrete exit scenarios (compute.py `allocation_method == 'pwerm'`,
+    // pwerm.py). Each scenario carries a probability, an exit value (equity or
+    // enterprise), a time to exit and an optional per-scenario discount rate.
+    pwerm: z
+      .object({
+        discount_rate: z.number().min(-0.99).max(1).nullable().optional(),
+        scenarios: z
+          .array(
+            z
+              .object({
+                name: z.string().trim().min(1).max(120).nullable().optional(),
+                type: z
+                  .enum([
+                    'ipo',
+                    'acquisition',
+                    'merger',
+                    'continuation',
+                    'stay_private',
+                    'liquidation',
+                    'dissolution',
+                  ])
+                  .nullable()
+                  .optional(),
+                probability: z.number().min(0).max(1),
+                equity_value: nonNeg.nullable().optional(),
+                enterprise_value: z.number().nullable().optional(),
+                time_to_exit_years: z.number().min(0).max(50).default(0),
+                discount_rate: z.number().min(-0.99).max(1).nullable().optional(),
+              })
+              .strict()
+              .refine((s) => s.equity_value != null || s.enterprise_value != null, {
+                message: 'Each scenario needs an equity_value or enterprise_value.',
+              }),
+          )
+          .min(1)
+          .max(50)
+          .nullable()
+          .optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict()
   .superRefine((val, ctx) => {
