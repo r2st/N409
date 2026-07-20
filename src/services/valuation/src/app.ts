@@ -1,5 +1,6 @@
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
+import helmet from '@fastify/helmet';
 import type pg from 'pg';
 import { createLogger, registerHealth, registerProblemHandler } from '@n409/shared';
 import type { Config } from './config.js';
@@ -119,6 +120,26 @@ export function buildApp(deps: AppDeps): FastifyInstance {
           redirectUri: config.GOOGLE_REDIRECT_URI,
         })
       : undefined);
+
+  // Security headers (audit B-1 P1). This is a JSON API behind the web BFF, so
+  // lock the CSP right down (no resources are ever loaded from these responses)
+  // and deny framing outright. HSTS/nosniff/referrer-policy are defence-in-depth
+  // for any response that reaches a browser directly.
+  void app.register(helmet, {
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        'default-src': ["'none'"],
+        'frame-ancestors': ["'none'"],
+        'base-uri': ["'none'"],
+        'form-action': ["'none'"],
+      },
+    },
+    frameguard: { action: 'deny' },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    hsts: { maxAge: 15552000, includeSubDomains: true }, // 180 days
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  });
 
   registerProblemHandler(app);
   registerHealth(app, {

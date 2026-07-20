@@ -26,6 +26,21 @@ describe('web service', () => {
       await app.close();
     });
 
+    it('sets CSP and security headers on the served SPA (audit B-1 P1)', async () => {
+      const app = buildApp({ staticRoot: root });
+      const res = await app.inject({ method: 'GET', url: '/' });
+      const csp = res.headers['content-security-policy'];
+      expect(csp).toContain("default-src 'self'");
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(csp).toContain("object-src 'none'");
+      expect(csp).toContain('https://www.googletagmanager.com');
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['x-frame-options']).toBe('DENY');
+      expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
+      expect(res.headers['strict-transport-security']).toContain('max-age=15552000');
+      await app.close();
+    });
+
     it('falls back to index.html for client-side routes', async () => {
       const app = buildApp({ staticRoot: root });
       const res = await app.inject({ method: 'GET', url: '/valuations/01ARZ3NDEKTSV4RRFFQ69G5FAV' });

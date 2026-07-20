@@ -159,9 +159,12 @@ export function registerDocumentRoutes(
       } catch {
         throw problems.notFound('Stored file is missing');
       }
+      // nosniff so a stored text/html blob can't be sniffed and rendered
+      // inline (audit B-1 P1); attachment already forces a download.
       return reply
         .header('content-type', doc.content_type)
         .header('content-disposition', `attachment; filename="${doc.filename.replace(/"/g, '')}"`)
+        .header('x-content-type-options', 'nosniff')
         .send(createReadStream(abs));
     },
   );

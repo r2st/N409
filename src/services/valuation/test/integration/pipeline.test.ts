@@ -310,6 +310,8 @@ describe.skipIf(!dbUp)('M1 core pipeline API', () => {
       expect(dl.statusCode).toBe(200);
       expect(dl.body).toContain('Founders,8000000');
       expect(dl.headers['content-disposition']).toContain('cap-table.csv');
+      // nosniff so an uploaded text/html blob can't render inline (audit B-1 P1).
+      expect(dl.headers['x-content-type-options']).toBe('nosniff');
     });
 
     it('scopes documents: a stranger gets 404, the owner can upload', async () => {
