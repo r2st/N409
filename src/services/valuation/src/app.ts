@@ -276,7 +276,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSearchRoutes(app, { pool });
   registerExportRoutes(app, { pool });
   registerSensitivityRoutes(app, { pool, engineUrl: config.ENGINE_URL });
-  registerAsc718Routes(app, { pool });
+  registerAsc718Routes(app, { pool, engineUrl: config.ENGINE_URL });
   // P1/P2 remaining features — prompt registry, company profile, package
   // explorer, in-app support (docs/remaining-gaps.md)
   registerPromptRoutes(app, { pool, aiUrl: config.AI_URL });

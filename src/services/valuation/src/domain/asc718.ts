@@ -18,7 +18,16 @@
 
 import { normCdf } from './sensitivity.js';
 
+export type Asc718CompanyType = 'private' | 'public';
+
 export interface Asc718Assumptions {
+  /**
+   * Issuer type. 'private' resolves the underlying to the concluded 409A FMV
+   * (the default); 'public' resolves it to the issuer's observable market price
+   * with its own historical volatility (domain/asc718Public.ts). The flag is
+   * carried through the result for disclosure; the measurement core is shared.
+   */
+  companyType?: Asc718CompanyType;
   /** Underlying common-stock fair value at grant (the 409A FMV). */
   grantDateFairValue: number;
   /** Option exercise (strike) price. */

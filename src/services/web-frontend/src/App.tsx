@@ -32,6 +32,7 @@ import { ScenariosTab } from './pages/valuation/ScenariosTab';
 import { BridgeTab } from './pages/valuation/BridgeTab';
 import { AnalyticsTab } from './pages/valuation/AnalyticsTab';
 import { GrantsTab } from './pages/valuation/GrantsTab';
+import { Asc718Tab } from './pages/valuation/Asc718Tab';
 import { IntakeTab } from './pages/valuation/IntakeTab';
 import { EngagementTab } from './pages/valuation/EngagementTab';
 import { EngagementsPage } from './pages/EngagementsPage';
@@ -182,6 +183,7 @@ export default function App() {
           <Route path="overwrites" element={<OverwritesTab />} />
           <Route path="report" element={<ReportTab />} />
           <Route path="grants" element={<GrantsTab />} />
+          <Route path="asc718" element={<Asc718Tab />} />
           <Route path="monitoring" element={<MonitoringTab />} />
           <Route path="engagement" element={<EngagementTab />} />
           <Route path="package" element={<PackageTab />} />
