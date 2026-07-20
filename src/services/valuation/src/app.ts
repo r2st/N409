@@ -48,6 +48,9 @@ import { registerBridgeRoutes } from './routes/bridge.js';
 import { registerAnalyticsRoutes } from './routes/analytics.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerAuditorPortalRoutes } from './routes/auditorPortal.js';
+import { registerSamlRoutes } from './routes/saml.js';
+import { registerScimRoutes } from './routes/scim.js';
+import { registerAdminSsoRoutes } from './routes/adminSso.js';
 import { registerScenarioRoutes } from './routes/scenarios.js';
 import { registerOverwriteRoutes } from './routes/overwrites.js';
 import { registerWorkbookRoutes } from './routes/workbook.js';
@@ -230,6 +233,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAnalyticsRoutes(app, { pool });
   registerOrganizationRoutes(app, { pool });
   registerAuditorPortalRoutes(app, { pool, publicBaseUrl: config.PUBLIC_BASE_URL });
+  // Feature 9 — enterprise SSO: SAML 2.0 SP + SCIM 2.0 provisioning
+  registerSamlRoutes(app, { pool, jwt, publicBaseUrl: config.PUBLIC_BASE_URL, cookie: sessionCookie });
+  registerScimRoutes(app, { pool });
+  registerAdminSsoRoutes(app, { pool });
   // Improvement 3 — client-facing what-if scenario sandbox (read-only)
   registerScenarioRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // M2 — output & delivery

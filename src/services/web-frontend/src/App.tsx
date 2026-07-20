@@ -47,6 +47,7 @@ import { DecisionsTab } from './pages/valuation/DecisionsTab';
 import { OverwritesSchemaPage } from './pages/OverwritesSchemaPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
+import { AdminSsoPage } from './pages/AdminSsoPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminPartnersPage } from './pages/AdminPartnersPage';
 import { PartnerDetailPage } from './pages/PartnerDetailPage';
@@ -203,6 +204,7 @@ export default function App() {
         {/* User-admin surfaces */}
         <Route element={<RequireRole allow={canManageUsers} />}>
           <Route path="/admin/users" element={<AdminUsersPage />} />
+          <Route path="/admin/sso" element={<AdminSsoPage />} />
           <Route path="/admin/partners" element={<AdminPartnersPage />} />
           <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
         </Route>

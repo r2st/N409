@@ -173,14 +173,22 @@ export function LoginPage() {
         </Button>
       </form>
 
-      {providers?.google && (
+      {(providers?.google || providers?.saml) && (
         <>
           <div className="my-6 flex items-center gap-3 text-xs text-ink-300">
             <span className="h-px flex-1 bg-paper-300" />
             or
             <span className="h-px flex-1 bg-paper-300" />
           </div>
-          <GoogleButton />
+          {providers?.google && <GoogleButton />}
+          {providers?.saml && (
+            <a
+              href="/api/v1/auth/saml/login"
+              className="mt-3 flex w-full items-center justify-center gap-2.5 rounded-md border border-ink-200 bg-white px-4 py-2 text-sm font-semibold text-ink-800 transition-colors hover:border-ink-400 hover:bg-paper-50"
+            >
+              Sign in with SSO
+            </a>
+          )}
         </>
       )}
 

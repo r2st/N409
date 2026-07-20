@@ -134,6 +134,8 @@ export interface ValuationList {
 export interface AuthProviders {
   password: boolean;
   google: boolean;
+  /** Enterprise SAML SSO configured + enabled (feature 9). */
+  saml?: boolean;
 }
 
 // ── M3 — Operations ──────────────────────────────────────────────────────────

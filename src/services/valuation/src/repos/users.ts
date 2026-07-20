@@ -26,6 +26,9 @@ export interface UserRow {
   /** True once a TOTP enrolment has been confirmed with a valid code. */
   totp_enabled: boolean;
   totp_confirmed_at: Date | null;
+  /** External-provisioning provenance (feature 9): 'saml' | 'scim' | null. */
+  provisioned_by: string | null;
+  scim_external_id: string | null;
 }
 
 export interface UserWithRoles extends UserRow {
@@ -102,6 +105,59 @@ export async function createUser(
     await assignRoles(client, id, args.roles);
     return { ...rows[0]!, roles: args.roles };
   });
+}
+
+/**
+ * Create a user provisioned by an external identity source (SAML JIT / SCIM),
+ * with no password and no Google link — the relaxed users_auth_method
+ * constraint (migration 0082) accepts a `provisioned_by` account.
+ */
+export async function createProvisionedUser(
+  pool: pg.Pool,
+  args: {
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    provisionedBy: 'saml' | 'scim';
+    externalId?: string | null;
+    roles: RoleKey[];
+  },
+): Promise<UserWithRoles> {
+  return withTransaction(pool, async (client) => {
+    const id = newUlid();
+    const { rows } = await client.query<UserRow>(
+      `INSERT INTO users (id, email, first_name, last_name, verified, provisioned_by, scim_external_id)
+       VALUES ($1, $2, $3, $4, true, $5, $6)
+       RETURNING *`,
+      [id, args.email, args.firstName ?? null, args.lastName ?? null, args.provisionedBy, args.externalId ?? null],
+    );
+    await assignRoles(client, id, args.roles);
+    return { ...rows[0]!, roles: args.roles };
+  });
+}
+
+export async function findUserByExternalId(
+  pool: pg.Pool,
+  externalId: string,
+): Promise<UserWithRoles | null> {
+  const { rows } = await pool.query<UserWithRoles>(
+    `SELECT u.*, coalesce(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
+       FROM users u
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id
+      WHERE u.scim_external_id = $1
+      GROUP BY u.id`,
+    [externalId],
+  );
+  return rows[0] ?? null;
+}
+
+/** Soft delete / reactivate for SCIM `active` toggling. */
+export async function setUserActive(pool: pg.Pool, id: string, active: boolean): Promise<void> {
+  await pool.query(
+    `UPDATE users SET deleted_at = ${active ? 'NULL' : 'now()'} WHERE id = $1`,
+    [id],
+  );
 }
 
 export async function assignRoles(client: pg.PoolClient, userId: string, roles: RoleKey[]): Promise<void> {

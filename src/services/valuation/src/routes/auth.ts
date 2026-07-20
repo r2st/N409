@@ -45,6 +45,7 @@ import {
   verifyEmailWithToken,
 } from '../repos/emailVerifications.js';
 import { acceptInvitation, findPendingInvitationByToken } from '../repos/invitations.js';
+import { getSamlConfig } from '../repos/ssoConfig.js';
 import { emailVerificationEmail, passwordResetEmail } from '../domain/emailWorkflows.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
@@ -328,10 +329,14 @@ export function registerAuthRoutes(
   });
 
   // Public: lets the SPA know which login methods to offer.
-  app.get('/api/v1/auth/providers', async () => ({
-    password: true,
-    google: Boolean(deps.google),
-  }));
+  app.get('/api/v1/auth/providers', async () => {
+    const saml = await getSamlConfig(deps.pool).catch(() => null);
+    return {
+      password: true,
+      google: Boolean(deps.google),
+      saml: Boolean(saml?.enabled && saml.idp_sso_url && saml.idp_cert),
+    };
+  });
 
   app.get('/api/v1/auth/google', async (_req, reply) => {
     if (!deps.google) throw problems.badRequest('Google SSO is not configured');
