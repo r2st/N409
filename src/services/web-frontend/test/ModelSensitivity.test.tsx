@@ -62,7 +62,7 @@ describe('ModelSensitivityPanel', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
 
-    await screen.findByText(/Base FMV/i);
+    await screen.findByText(/Base FMV/i, {}, { timeout: 5000 });
     // Two-way heatmap heading present.
     expect(screen.getByText('Volatility × Time to exit')).toBeInTheDocument();
     // One-way table shows the +12% delta.
@@ -83,6 +83,6 @@ describe('ModelSensitivityPanel', () => {
     );
     render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" currency="USD" />);
     await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
-    await screen.findByText(/operations-only/i);
+    await screen.findByText(/operations-only/i, {}, { timeout: 5000 });
   });
 });

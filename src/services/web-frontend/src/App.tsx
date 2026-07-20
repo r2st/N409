@@ -28,10 +28,15 @@ import {
 import { WorkbookTab } from './pages/valuation/WorkbookTab';
 import { ScenariosTab } from './pages/valuation/ScenariosTab';
 import { GrantsTab } from './pages/valuation/GrantsTab';
+import { IntakeTab } from './pages/valuation/IntakeTab';
+import { EngagementTab } from './pages/valuation/EngagementTab';
+import { EngagementsPage } from './pages/EngagementsPage';
+import { CapTableTab } from './pages/valuation/CapTableTab';
 import { OverwritesTab } from './pages/valuation/OverwritesTab';
 import { ReportTab } from './pages/valuation/ReportTab';
 import { ProgressTab } from './pages/valuation/ProgressTab';
 import { QaTab } from './pages/valuation/QaTab';
+import { HealthTab } from './pages/valuation/HealthTab';
 import { DecisionsTab } from './pages/valuation/DecisionsTab';
 import { OverwritesSchemaPage } from './pages/OverwritesSchemaPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -145,8 +150,10 @@ export default function App() {
         <Route path="/payment/cancel" element={<PaymentCancelPage />} />
         <Route path="/valuations/:id" element={<ValuationWorkspace />}>
           <Route index element={<ValuationDetailPage />} />
+          <Route path="intake" element={<IntakeTab />} />
           <Route path="company" element={<CompanyTab />} />
           <Route path="documents" element={<DocumentsTab />} />
+          <Route path="cap-table" element={<CapTableTab />} />
           <Route path="model" element={<FinancialModelTab />} />
           <Route path="params" element={<ParamsTab />} />
           <Route path="ai" element={<AiTab />} />
@@ -154,17 +161,20 @@ export default function App() {
           <Route path="calculations" element={<CalculationsTab />} />
           <Route path="progress" element={<ProgressTab />} />
           <Route path="qa" element={<QaTab />} />
+          <Route path="health" element={<HealthTab />} />
           <Route path="decisions" element={<DecisionsTab />} />
           <Route path="scenarios" element={<ScenariosTab />} />
           <Route path="workbook" element={<WorkbookTab />} />
           <Route path="overwrites" element={<OverwritesTab />} />
           <Route path="report" element={<ReportTab />} />
           <Route path="grants" element={<GrantsTab />} />
+          <Route path="engagement" element={<EngagementTab />} />
           <Route path="package" element={<PackageTab />} />
         </Route>
         {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
         <Route element={<RequireRole allow={isOps} />}>
           <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
+          <Route path="/engagements" element={<EngagementsPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />

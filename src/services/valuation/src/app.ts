@@ -30,6 +30,9 @@ import { registerPaymentRoutes } from './routes/payments.js';
 import { registerSignatureRoutes } from './routes/signatures.js';
 import { registerBoardApprovalRoutes } from './routes/boardApproval.js';
 import { registerGrantRoutes } from './routes/grants.js';
+import { registerIntakeRoutes } from './routes/intake.js';
+import { registerEngagementRoutes } from './routes/engagements.js';
+import { registerCapTableRoutes } from './routes/capTable.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
 import { registerPipelineRoutes } from './routes/pipeline.js';
@@ -54,6 +57,8 @@ import { registerAccountingRoutes } from './routes/accounting.js';
 import type { AccountingProvider, FetchFn, ProviderCredentials } from './clients/accounting.js';
 import { registerEvidenceRoutes } from './routes/evidence.js';
 import { registerQaRoutes } from './routes/qa.js';
+import { registerHealthCheckRoutes } from './routes/healthChecks.js';
+import { registerAsc718Routes } from './routes/asc718.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerProgressRoutes } from './routes/progress.js';
 import { registerStreamRoutes } from './routes/stream.js';
@@ -205,6 +210,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // IMPROVEMENTS_RESEARCH Phase 1 — QA gate before publish, audit-defense
   // decision log, client-portal progress tracker
   registerQaRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
+  registerHealthCheckRoutes(app, { pool });
   registerDecisionRoutes(app, { pool });
   registerProgressRoutes(app, { pool });
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
@@ -232,6 +238,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSearchRoutes(app, { pool });
   registerExportRoutes(app, { pool });
   registerSensitivityRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  registerAsc718Routes(app, { pool });
   // P1/P2 remaining features — prompt registry, company profile, package
   // explorer, in-app support (docs/remaining-gaps.md)
   registerPromptRoutes(app, { pool, aiUrl: config.AI_URL });
@@ -270,6 +277,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
   // Feature 6 — grant management (option grants at the adopted 409A FMV)
   registerGrantRoutes(app, { pool });
+  // Feature 7 — client self-service portal (intake questionnaire + reminders)
+  registerIntakeRoutes(app, { pool, transport });
+  // Feature 8 — engagement lifecycle (stages, SLA, pipeline dashboard)
+  registerEngagementRoutes(app, { pool, transport });
+  // Feature 9 — cap-table import + validation + waterfall feed
+  registerCapTableRoutes(app, { pool });
   // §23 — accounting software integrations (OAuth connect + P&L import)
   registerAccountingRoutes(app, {
     pool,

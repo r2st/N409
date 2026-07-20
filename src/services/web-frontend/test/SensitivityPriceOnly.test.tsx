@@ -65,7 +65,7 @@ describe('SensitivityPage price-only view', () => {
       </MemoryRouter>,
     );
 
-    await user.click(screen.getByRole('button', { name: /Run stress tables|Compute|Run/ }));
+    await user.click(screen.getByRole('button', { name: /Run stress table/ }));
     await screen.findByText(/Base FMV/);
 
     // deltas visible by default
