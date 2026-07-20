@@ -67,11 +67,43 @@ const Env = z.object({
 
 export type Config = z.infer<typeof Env>;
 
+/**
+ * Well-known example / placeholder secrets that ship in the repo. They pass the
+ * length check but are publicly known, so anyone could forge admin JWTs if one
+ * reached production (audit B-1 P1). Compared case-insensitively.
+ */
+export const KNOWN_EXAMPLE_JWT_SECRETS: readonly string[] = [
+  'dev-only-secret-change-me-0123456789abcdef',
+  'ci-only-secret-0123456789abcdef-0123456789',
+  'integration-test-secret-0123456789abcdef',
+];
+
+/** Distinct characters as a crude entropy proxy — "aaaa…aaaa" must not pass. */
+function looksLowEntropy(secret: string): boolean {
+  return new Set(secret).size < 8;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = Env.safeParse(env);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new Error(`Invalid configuration: ${issues}`);
   }
-  return parsed.data;
+  const config = parsed.data;
+
+  // Fail closed on boot in production if the signing key is a known example or
+  // trivially low-entropy — a publicly known key is a full auth bypass.
+  if (config.NODE_ENV === 'production') {
+    const secret = config.JWT_SECRET;
+    const denied = KNOWN_EXAMPLE_JWT_SECRETS.some(
+      (known) => known.toLowerCase() === secret.toLowerCase(),
+    );
+    if (denied || looksLowEntropy(secret)) {
+      throw new Error(
+        'Invalid configuration: JWT_SECRET is a known example or low-entropy value — ' +
+          'set a unique random secret in production (openssl rand -hex 32)',
+      );
+    }
+  }
+  return config;
 }
