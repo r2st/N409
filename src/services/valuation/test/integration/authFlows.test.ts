@@ -91,6 +91,28 @@ describe.skipIf(!dbUp)('password reset + invitations (P0 #3 / feature #9)', () =
     });
   });
 
+  describe('login rate limiting (audit B-1 P1)', () => {
+    it('locks out an email after 10 failed attempts, then 429s', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      // 10 wrong-password attempts are each rejected 401 (not throttled yet).
+      for (let i = 0; i < 10; i++) {
+        expect((await login(ctx, user.email, 'wrong-password')).statusCode).toBe(401);
+      }
+      // The 11th is throttled before any password check.
+      expect((await login(ctx, user.email, 'wrong-password')).statusCode).toBe(429);
+      // …and even the correct password is refused while the window is hot.
+      expect((await login(ctx, user.email, 'test-password-123')).statusCode).toBe(429);
+    });
+
+    it('does not count successful logins toward the lockout', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      // Many correct logins in a row never trip the limiter (peek, not record).
+      for (let i = 0; i < 15; i++) {
+        expect((await login(ctx, user.email, 'test-password-123')).statusCode).toBe(200);
+      }
+    });
+  });
+
   describe('reset-password', () => {
     it('sets a new password exactly once from the emailed link', async () => {
       const user = await seedUser(ctx, { roles: ['valuation_user'] });

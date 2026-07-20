@@ -69,20 +69,23 @@ const AcceptInviteBody = z.object({
  */
 function slidingWindowLimiter() {
   const hits = new Map<string, number[]>();
-  return (key: string, limit: number, windowMs: number): boolean => {
+  return (key: string, limit: number, windowMs: number, opts?: { peek?: boolean }): boolean => {
     const now = Date.now();
     const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
     if (recent.length >= limit) {
       hits.set(key, recent);
       return false;
     }
-    recent.push(now);
+    // peek: report headroom without consuming it — the caller records a hit
+    // itself (e.g. only on a *failed* login) so success doesn't count.
+    if (!opts?.peek) recent.push(now);
     hits.set(key, recent);
     return true;
   };
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
 function toPublicUser(u: UserWithRoles) {
   return {
@@ -186,6 +189,17 @@ export function registerAuthRoutes(
     if (!parsed.success) throw problems.unprocessable('Invalid login', { errors: parsed.error.issues });
     const { email, password } = parsed.data;
 
+    // Throttle credential brute-force / stuffing (audit B-1 P1): 10 attempts /
+    // 15 min per email and 100 / 15 min per IP. Checked before any DB/scrypt
+    // work so a flood can't pin the CPU either. The counter only advances on a
+    // *failed* login (see below), so a legitimate user is never locked out by
+    // their own successful sign-ins.
+    const emailKey = `login:${email.toLowerCase()}`;
+    const ipKey = `login-ip:${req.ip}`;
+    if (!allow(emailKey, 10, LOGIN_WINDOW_MS, { peek: true }) || !allow(ipKey, 100, LOGIN_WINDOW_MS, { peek: true })) {
+      throw problems.tooManyRequests('Too many sign-in attempts — try again later');
+    }
+
     const user = await findUserByEmail(deps.pool, email);
     // Same error for unknown email, bad password, and deleted account —
     // no account enumeration.
@@ -194,6 +208,9 @@ export function registerAuthRoutes(
       user.deleted_at ||
       !(await verifyPassword(password, user.password_digest))
     ) {
+      // Record the failed attempt against both windows so guesses accumulate.
+      allow(emailKey, 10, LOGIN_WINDOW_MS);
+      allow(ipKey, 100, LOGIN_WINDOW_MS);
       throw problems.unauthorized('Invalid email or password');
     }
     return { user: toPublicUser(user), token: await issueToken(user) };
