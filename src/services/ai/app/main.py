@@ -6,15 +6,20 @@ caller: it ships valuation context + params + base64 documents and persists
 the result (with provenance) in ai_jobs.
 """
 
+import logging
 import os
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents import AGENT_PIPELINES
 from .internal_auth import internal_token_middleware, warn_if_unset
-from .openrouter import OpenRouterError, chat, configured_models
+from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
+from .observability import configure_logging, make_request_context_middleware
+from .openrouter import OpenRouterError, chat, configured_models, tokens_used
+from .output_schema import validate_result
 from .pipelines import PIPELINES
 
 # The built-in M1 pipelines plus the analyst agents share one dispatch table
@@ -25,11 +30,32 @@ SERVICE = "ai"
 VERSION = "0.2.0"
 _started = time.monotonic()
 
-app = FastAPI(title="n409-ai", version=VERSION)
+# Documents arrive as base64 blobs; default the body cap generously (32 MB)
+# but keep it bounded so an oversized `documents` array can't OOM the process.
+_MAX_BODY_BYTES = max_body_bytes(32 * 1024 * 1024)
 
+configure_logging(SERVICE)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Sync handlers (LLM calls block up to 90s) run in this pool; make its size
+    # a deliberate, tunable number rather than the implicit default (audit B-2 P2).
+    configure_threadpool(threadpool_size())
+    yield
+
+
+app = FastAPI(title="n409-ai", version=VERSION, lifespan=lifespan)
+
+# Middleware order (Starlette runs last-added first): request-context wraps
+# everything so its access log captures 401/413 responses too.
 # Shared-secret gate (audit B-1 P0): every non-health route requires the
 # X-Internal-Token the valuation service injects. No-op until the secret is set.
 app.middleware("http")(internal_token_middleware)
+# Body-size cap (audit B-2 P2): reject oversized payloads before buffering.
+app.middleware("http")(make_body_limit_middleware(_MAX_BODY_BYTES))
+# Structured access logging + x-request-id propagation (audit B-2 P3).
+app.middleware("http")(make_request_context_middleware(SERVICE))
 warn_if_unset()
 
 
@@ -101,6 +127,7 @@ def ready() -> dict:
     checks = {
         "openrouter_key": "configured" if os.environ.get("OPENROUTER_API_KEY") else "missing",
         "models": configured_models(),
+        "tokens_used": tokens_used(),
     }
     return {"status": "ready", "checks": checks}
 
@@ -133,4 +160,11 @@ def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=f"Model output unusable: {exc}") from exc
+    # Non-fatal output-shape check (audit B-2 P3): surface contract drift.
+    issues = validate_result(pipeline, result)
+    if issues:
+        logging.getLogger(SERVICE).warning(
+            "pipeline output failed shape validation",
+            extra={"event": "output_schema", "path": pipeline, "status": "; ".join(issues)},
+        )
     return PipelineResponse(model=model, result=result)
