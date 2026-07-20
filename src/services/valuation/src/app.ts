@@ -29,6 +29,7 @@ import { smtpTransport } from './email/smtp.js';
 import { registerPaymentRoutes } from './routes/payments.js';
 import { registerSignatureRoutes } from './routes/signatures.js';
 import { registerBoardApprovalRoutes } from './routes/boardApproval.js';
+import { registerGrantRoutes } from './routes/grants.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
 import { registerPipelineRoutes } from './routes/pipeline.js';
@@ -230,7 +231,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerTransactionRoutes(app, { pool });
   registerSearchRoutes(app, { pool });
   registerExportRoutes(app, { pool });
-  registerSensitivityRoutes(app, { pool });
+  registerSensitivityRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // P1/P2 remaining features — prompt registry, company profile, package
   // explorer, in-app support (docs/remaining-gaps.md)
   registerPromptRoutes(app, { pool, aiUrl: config.AI_URL });
@@ -267,6 +268,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     transport,
     publicBaseUrl: config.PUBLIC_BASE_URL,
   });
+  // Feature 6 — grant management (option grants at the adopted 409A FMV)
+  registerGrantRoutes(app, { pool });
   // §23 — accounting software integrations (OAuth connect + P&L import)
   registerAccountingRoutes(app, {
     pool,

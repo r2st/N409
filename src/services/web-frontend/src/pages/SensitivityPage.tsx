@@ -5,6 +5,7 @@ import { api, ApiError } from '../lib/api';
 import { formatMoney } from '../lib/format';
 import type { AxisTable, SensitivityAxis, SensitivityResult } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
+import { ModelSensitivityPanel } from '../components/valuation/ModelSensitivityPanel';
 
 /**
  * Sensitivity dashboard — three OPM stress tables (Term×Vol, RFR×Vol,
@@ -257,6 +258,10 @@ export function SensitivityPage() {
           </p>
         </div>
       )}
+
+      <div className="mt-10 border-t border-paper-300 pt-8">
+        <ModelSensitivityPanel valuationId={id ?? ''} currency={result?.currency ?? null} />
+      </div>
     </div>
   );
 }

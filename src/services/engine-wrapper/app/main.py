@@ -21,6 +21,7 @@ from .engine.market_data import universe as market_universe
 from .engine.market_feed import MarketFeedClient
 from .engine.projection import project_financials
 from .engine.rollforward import roll_forward
+from .engine.sensitivity import sensitivity as run_sensitivity
 from .engine.volatility import estimate_volatility
 from .engine.wacc import compute_wacc
 
@@ -68,6 +69,17 @@ class ComputeRequest(BaseModel):
     auto_volatility: bool = False
     auto_wacc: bool = False
     auto_comparables: bool = False
+
+
+class SensitivityRequest(BaseModel):
+    params: dict = Field(default_factory=dict)
+    inputs: dict = Field(default_factory=dict)
+    # One-way levers (default: every lever the payload drives) and two-way
+    # [row, col] lever pairs.
+    parameters: list[str] | None = None
+    two_way: list[list[str]] | None = None
+    span: float = 0.20
+    steps: int = 5
 
 
 class MarketDataRequest(BaseModel):
@@ -127,6 +139,7 @@ def root() -> dict:
             "/docs",
             "/engine/v1/health",
             "/engine/v1/compute",
+            "/engine/v1/sensitivity",
             "/engine/v1/market-data",
             "/engine/v1/market-feed",
             "/engine/v1/volatility",
@@ -168,6 +181,22 @@ def engine_compute(request: ComputeRequest) -> dict:
             auto_volatility=request.auto_volatility,
             auto_wacc=request.auto_wacc,
             auto_comparables=request.auto_comparables,
+        )
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/sensitivity")
+def engine_sensitivity(request: SensitivityRequest) -> dict:
+    """One-way + two-way sensitivity of the common FMV to the key assumptions."""
+    try:
+        return run_sensitivity(
+            request.params,
+            request.inputs,
+            parameters=request.parameters,
+            two_way=request.two_way,
+            span=request.span,
+            steps=request.steps,
         )
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
