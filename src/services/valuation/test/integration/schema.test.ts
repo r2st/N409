@@ -26,11 +26,13 @@ describe.skipIf(!dbUp)('core schema (issue #2)', () => {
     expect(await migrate(db.pool)).toEqual([]);
   });
 
-  it('seeds all 17 roles', async () => {
+  it('seeds all 18 roles', async () => {
     const { rows } = await db.pool.query('SELECT key FROM roles ORDER BY key');
-    expect(rows.length).toBe(17);
+    // 17 original roles + 'auditor' (feature 8, migration 0081).
+    expect(rows.length).toBe(18);
     expect(rows.map((r) => r.key)).toContain('god');
     expect(rows.map((r) => r.key)).toContain('valuation_user');
+    expect(rows.map((r) => r.key)).toContain('auditor');
   });
 
   it('assigns human-friendly sequential valuation numbers', async () => {
