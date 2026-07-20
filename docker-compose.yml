@@ -59,6 +59,8 @@ services:
       context: src/services/ai
     environment:
       PORT: '3002'
+      # The comparable-company agent verifies tickers against the engine.
+      ENGINE_URL: 'http://engine-wrapper:3003'
     ports:
       - '3002:3002'
 

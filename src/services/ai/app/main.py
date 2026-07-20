@@ -10,10 +10,15 @@ import os
 import time
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from .agents import AGENT_PIPELINES
 from .openrouter import OpenRouterError, chat, configured_models
 from .pipelines import PIPELINES
+
+# The built-in M1 pipelines plus the analyst agents share one dispatch table
+# and one route contract.
+ALL_PIPELINES = {**PIPELINES, **AGENT_PIPELINES}
 
 SERVICE = "ai"
 VERSION = "0.2.0"
@@ -23,6 +28,11 @@ app = FastAPI(title="n409-ai", version=VERSION)
 
 
 class PipelineRequest(BaseModel):
+    # Agents accept assorted context blocks (comp_context, company_profile,
+    # comparables, methodology, prior_valuation, new_data, ...); allow extra
+    # top-level keys through to the runner rather than enumerate every one.
+    model_config = ConfigDict(extra="allow")
+
     valuation: dict = Field(default_factory=dict)
     params: dict | None = None
     documents: list[dict] = Field(default_factory=list)
@@ -58,7 +68,7 @@ def root() -> dict:
         "service": SERVICE,
         "version": VERSION,
         "status": "ok",
-        "pipelines": sorted(PIPELINES),
+        "pipelines": sorted(ALL_PIPELINES),
         "endpoints": [
             "/health",
             "/ready",
@@ -107,7 +117,7 @@ def test_prompt(request: TestRequest) -> TestResponse:
 
 @app.post("/ai/v1/pipelines/{pipeline}", response_model=PipelineResponse)
 def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
-    runner = PIPELINES.get(pipeline)
+    runner = ALL_PIPELINES.get(pipeline)
     if runner is None:
         raise HTTPException(status_code=404, detail=f"Unknown pipeline '{pipeline}'")
     try:
