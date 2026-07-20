@@ -165,6 +165,27 @@ const TEMPLATE_409A: ReportTemplate = {
       ),
     },
     {
+      key: 'asc718',
+      heading: 'ASC 718 Stock-Based Compensation',
+      html:
+        P(
+          'This section presents the grant-date fair value of option awards and the related stock-based compensation expense recognized under ASC 718, measured using the concluded 409A fair market value above as the grant-date price of the underlying common stock.',
+        ) +
+        P(
+          'Grant-date fair value is estimated with the Black-Scholes-Merton option-pricing model using the expected term, expected volatility, risk-free rate and dividend yield tabulated below; the resulting compensation cost is recognized on a straight-line basis over each award’s requisite service (vesting) period, net of expected forfeitures.',
+        ) +
+        '<table><thead><tr><th>Assumption</th><th>Input</th></tr></thead><tbody>' +
+        '<tr><td>Underlying fair value (409A)</td><td>$ … per share</td></tr>' +
+        '<tr><td>Exercise price</td><td>$ …</td></tr>' +
+        '<tr><td>Expected term</td><td>… years</td></tr>' +
+        '<tr><td>Expected volatility</td><td>… %</td></tr>' +
+        '<tr><td>Risk-free rate</td><td>… %</td></tr>' +
+        '<tr><td>Dividend yield</td><td>… %</td></tr>' +
+        '<tr><td>Grant-date fair value per option</td><td>$ …</td></tr>' +
+        '<tr><td>Total compensation cost</td><td>$ …</td></tr>' +
+        '</tbody></table>',
+    },
+    {
       key: 'limiting_conditions',
       heading: 'Assumptions & Limiting Conditions',
       html: P(

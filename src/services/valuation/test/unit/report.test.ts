@@ -74,6 +74,22 @@ describe('report templates', () => {
     expect(intro.html).not.toContain('{{');
   });
 
+  it('includes an ASC 718 stock-based-compensation section in the 409A template', () => {
+    const content = instantiateTemplate(templateForKind('409a'), {
+      company_name: 'Acme',
+      kind: '409a',
+      valuation_ref: 'ref',
+      date: '2026-07-06',
+      currency: 'USD',
+    });
+    const asc718 = content.sections.find((s) => s.key === 'asc718');
+    expect(asc718).toBeDefined();
+    expect(asc718!.heading).toMatch(/ASC 718/);
+    expect(asc718!.html).toMatch(/Black-Scholes-Merton/);
+    expect(asc718!.html).toMatch(/straight-line/);
+    expect(asc718!.html).toContain('<table>');
+  });
+
   it('produces template HTML that survives its own sanitizer unchanged', () => {
     for (const template of REPORT_TEMPLATES.values()) {
       const content = instantiateTemplate(template, {
