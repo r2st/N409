@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
@@ -19,6 +19,7 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { maybeStartAutoPipeline, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
+import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
@@ -67,8 +68,10 @@ export async function storeDocument(
 
   // Storage path is <valuationId>/<sha-prefix>__<filename>; identical content
   // re-uploaded under the same name simply overwrites the same blob.
+  // sha256 is over the plaintext (stable dedup + integrity); the bytes on disk
+  // are encrypted when DOCUMENTS_ENCRYPTION_KEY is set (audit B-5 P1).
   const storageRel = path.join(valuation.id, `${sha256.slice(0, 16)}__${filename}`);
-  await writeFile(path.join(documentsDir, storageRel), input.buffer);
+  await writeFile(path.join(documentsDir, storageRel), encodeForStorage(input.buffer));
 
   return createDocument(
     pool,
@@ -154,18 +157,21 @@ export function registerDocumentRoutes(
       const doc = await loadDocument(deps.pool, valuation.id, documentId);
 
       const abs = path.join(deps.documentsDir, doc.storage_path);
+      let stored: Buffer;
       try {
-        await stat(abs);
+        stored = await readFile(abs);
       } catch {
         throw problems.notFound('Stored file is missing');
       }
+      // Decrypt in memory (blobs are ≤25 MB) — GCM can't be streamed off disk.
+      const plain = decodeFromStorage(stored);
       // nosniff so a stored text/html blob can't be sniffed and rendered
       // inline (audit B-1 P1); attachment already forces a download.
       return reply
         .header('content-type', doc.content_type)
         .header('content-disposition', `attachment; filename="${doc.filename.replace(/"/g, '')}"`)
         .header('x-content-type-options', 'nosniff')
-        .send(createReadStream(abs));
+        .send(plain);
     },
   );
 

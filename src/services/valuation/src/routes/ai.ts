@@ -18,6 +18,7 @@ import { listDocuments, type DocumentRow } from '../repos/documents.js';
 import { completeAiJob, createAiJob, latestSucceededJob, listAiJobs, type AiJobRow } from '../repos/aiJobs.js';
 import { findPromptByPipeline, latestPromptVersion } from '../repos/aiPrompts.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { decodeFromStorage } from '../storage/documentEncryption.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -68,7 +69,8 @@ async function encodeDocuments(
   const encoded: Array<Record<string, unknown>> = [];
   for (const doc of eligible) {
     try {
-      const buf = await readFile(path.join(documentsDir, doc.storage_path));
+      const stored = await readFile(path.join(documentsDir, doc.storage_path));
+      const buf = decodeFromStorage(stored);
       encoded.push({
         id: doc.id,
         filename: doc.filename,

@@ -19,6 +19,10 @@ const Env = z.object({
   // dev where the services also skip the check.
   INTERNAL_SERVICE_TOKEN: z.string().optional(),
   DOCUMENTS_DIR: z.string().min(1).default('./data/documents'),
+  // Encrypt document blobs at rest with AES-256-GCM (audit B-5 P1). 32 bytes as
+  // 64 hex chars or base64; unset leaves blobs in the clear (dev). Legacy
+  // plaintext blobs are still readable after the key is enabled.
+  DOCUMENTS_ENCRYPTION_KEY: z.string().optional(),
   // Auto-pipeline on upload (extraction → param fill → draft calculation).
   // 'off' disables it globally; per-valuation opt-out is valuations.auto_pipeline.
   AUTO_PIPELINE: z.enum(['on', 'off']).default('on'),
