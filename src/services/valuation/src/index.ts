@@ -9,6 +9,7 @@ const { migrate } = await import('./db/migrate.js');
 const { buildApp, buildEmailTransports } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
+const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
 const { autoPipelineConcurrency } = await import('./pipeline/autoPipeline.js');
 
 const config = loadConfig();
@@ -98,12 +99,34 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
   reaperTimer = setInterval(sweep, Math.min(olderThanMs, 5 * 60_000));
 }
 
+// Cap-table sync scheduler (feature 4): pull connections whose daily/weekly
+// cadence is due. A non-overlapping tick every 15 minutes; per-connection
+// errors are recorded on the row and don't stop the scan.
+let capTableSyncTimer: NodeJS.Timeout | undefined;
+{
+  let syncing = false;
+  const tick = () => {
+    if (syncing) return;
+    syncing = true;
+    runDueCapTableSyncs({ pool, log: app.log })
+      .then((n) => {
+        if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
+      })
+      .catch((err) => app.log.error({ err }, 'cap-table sync scan failed'))
+      .finally(() => {
+        syncing = false;
+      });
+  };
+  capTableSyncTimer = setInterval(tick, 15 * 60_000);
+}
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     void (async () => {
       app.log.info({ signal }, 'shutting down');
       if (autoEmailTimer) clearInterval(autoEmailTimer);
       if (reaperTimer) clearInterval(reaperTimer);
+      if (capTableSyncTimer) clearInterval(capTableSyncTimer);
       await app.close();
       await pool.end();
       await telemetry.shutdown();

@@ -124,3 +124,33 @@ export async function verifyAccountingState(
   }
   return { valuationId: payload.v, provider: payload.p, userId: payload.sub };
 }
+
+// ── Cap-table sync OAuth state (feature 4) ────────────────────────────────────
+// Same shape and role as the accounting state: the OAuth round-trip carries
+// which valuation/provider is being connected and who initiated it.
+
+export async function signCapTableSyncState(s: AccountingState, cfg: JwtConfig): Promise<string> {
+  return new SignJWT({ purpose: 'captable-state', v: s.valuationId, p: s.provider })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(s.userId)
+    .setIssuer(cfg.issuer)
+    .setIssuedAt()
+    .setExpirationTime('30m')
+    .sign(key(cfg.secret));
+}
+
+export async function verifyCapTableSyncState(
+  state: string,
+  cfg: JwtConfig,
+): Promise<AccountingState> {
+  const { payload } = await jwtVerify(state, key(cfg.secret), { issuer: cfg.issuer });
+  if (
+    payload.purpose !== 'captable-state' ||
+    typeof payload.v !== 'string' ||
+    typeof payload.p !== 'string' ||
+    typeof payload.sub !== 'string'
+  ) {
+    throw new Error('invalid state');
+  }
+  return { valuationId: payload.v, provider: payload.p, userId: payload.sub };
+}

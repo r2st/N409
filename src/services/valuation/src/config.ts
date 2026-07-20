@@ -67,6 +67,11 @@ const Env = z.object({
   SAGE_CLIENT_SECRET: z.string().optional(),
   WAVE_CLIENT_ID: z.string().optional(),
   WAVE_CLIENT_SECRET: z.string().optional(),
+  // Cap-table sync (feature 4) — Carta / Pulley OAuth, same activation rule.
+  CARTA_CLIENT_ID: z.string().optional(),
+  CARTA_CLIENT_SECRET: z.string().optional(),
+  PULLEY_CLIENT_ID: z.string().optional(),
+  PULLEY_CLIENT_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof Env>;

@@ -57,6 +57,8 @@ import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerHelpRoutes } from './routes/help.js';
 import { registerCommunicationRoutes } from './routes/communications.js';
 import { registerAccountingRoutes } from './routes/accounting.js';
+import { registerCapTableSyncRoutes } from './routes/capTableSync.js';
+import type { CapTableProvider } from './clients/capTableSync.js';
 import type { AccountingProvider, FetchFn, ProviderCredentials } from './clients/accounting.js';
 import { registerEvidenceRoutes } from './routes/evidence.js';
 import { registerQaRoutes } from './routes/qa.js';
@@ -78,6 +80,8 @@ export interface AppDeps {
   partnerApiLimiter?: FixedWindowRateLimiter;
   /** injectable for tests — accounting provider HTTP */
   accountingFetch?: FetchFn;
+  /** injectable for tests — cap-table sync provider HTTP */
+  capTableSyncFetch?: FetchFn;
 }
 
 /**
@@ -298,8 +302,28 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     credentials: accountingCredentials(config),
     fetchFn: deps.accountingFetch,
   });
+  // Feature 4 — live cap-table sync (Carta / Pulley OAuth connect + pull)
+  registerCapTableSyncRoutes(app, {
+    pool,
+    jwt,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+    credentials: capTableSyncCredentials(config),
+    fetchFn: deps.capTableSyncFetch,
+  });
 
   return app;
+}
+
+/** Cap-table sync provider OAuth credentials from env (feature 4). */
+export function capTableSyncCredentials(
+  config: Config,
+): Partial<Record<CapTableProvider, ProviderCredentials>> {
+  const out: Partial<Record<CapTableProvider, ProviderCredentials>> = {};
+  if (config.CARTA_CLIENT_ID && config.CARTA_CLIENT_SECRET)
+    out.carta = { clientId: config.CARTA_CLIENT_ID, clientSecret: config.CARTA_CLIENT_SECRET };
+  if (config.PULLEY_CLIENT_ID && config.PULLEY_CLIENT_SECRET)
+    out.pulley = { clientId: config.PULLEY_CLIENT_ID, clientSecret: config.PULLEY_CLIENT_SECRET };
+  return out;
 }
 
 /** Provider OAuth credentials from env; a provider is active only when both halves are set. */

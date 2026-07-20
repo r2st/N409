@@ -4,6 +4,7 @@ import { api, ApiError } from '../../lib/api';
 import { formatMoney, formatNumber } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner } from '../../components/ui';
+import { CapTableSyncPanel } from '../../components/valuation/CapTableSyncPanel';
 
 /**
  * Cap-table integration (feature 9). Import a CSV (Carta / Pulley / generic),
@@ -345,6 +346,8 @@ export function CapTableTab() {
           )}
         </section>
       )}
+
+      {canEdit && <CapTableSyncPanel valuationId={valuation.id} onApplied={load} />}
 
       {!stored && !importing ? (
         <EmptyState title="No cap table imported yet">

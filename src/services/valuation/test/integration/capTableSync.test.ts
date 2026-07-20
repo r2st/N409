@@ -1,0 +1,175 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createValuation } from '../../src/repos/valuations.js';
+import { findCapTable } from '../../src/repos/capTables.js';
+import { signCapTableSyncState } from '../../src/auth/jwt.js';
+import { runDueCapTableSyncs } from '../../src/routes/capTableSync.js';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+
+const dbUp = await isDbAvailable();
+
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+const CARTA_V1 = {
+  companyName: 'Acme Inc',
+  shareClasses: [
+    { name: 'Common', type: 'common', outstandingShares: 8_000_000 },
+    { name: 'Series A', type: 'preferred', outstandingShares: 2_000_000, amountInvested: 3_000_000, liquidationPreference: 1 },
+  ],
+  optionPools: [{ name: 'Option Pool', outstandingShares: 1_000_000, strikePrice: 0.5 }],
+};
+// A later pull where Series A grew.
+const CARTA_V2 = {
+  ...CARTA_V1,
+  shareClasses: [
+    { name: 'Common', type: 'common', outstandingShares: 8_000_000 },
+    { name: 'Series A', type: 'preferred', outstandingShares: 2_500_000, amountInvested: 3_500_000, liquidationPreference: 1 },
+  ],
+};
+
+/** Fetch mock: token endpoint + Carta capitalization endpoint. */
+function mockFetch(capPayload: () => unknown) {
+  return vi.fn(async (url: string | URL | Request) => {
+    const u = String(url);
+    if (u.includes('/oauth/token')) {
+      return jsonResponse({ access_token: 'tok', refresh_token: 'ref', expires_in: 3600, company_id: 'co_1' });
+    }
+    if (u.includes('/capitalization')) return jsonResponse(capPayload());
+    throw new Error(`unexpected fetch ${u}`);
+  });
+}
+
+const CARTA_ENV = { CARTA_CLIENT_ID: 'cid', CARTA_CLIENT_SECRET: 'csecret' };
+
+describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
+  let ctx: TestApp;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+  let payload = CARTA_V1 as unknown;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp(CARTA_ENV, { capTableSyncFetch: mockFetch(() => payload) as unknown as typeof fetch });
+    ops = await seedUser(ctx, { roles: ['valuation_user'] });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  async function seedValuation() {
+    return createValuation(
+      ctx.pool,
+      { kind: '409a', companyName: 'Acme Inc', userId: ops.id },
+      { actorType: 'human', actorId: ops.id, source: 'test' },
+    );
+  }
+
+  /** Drive the OAuth callback with a validly signed state to connect. */
+  async function connect(valuationId: string) {
+    const state = await signCapTableSyncState(
+      { valuationId, provider: 'carta', userId: ops.id },
+      { secret: 'integration-test-secret-0123456789abcdef', issuer: 'n409', ttlSeconds: 3600 },
+    );
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/cap-table-sync/callback?state=${encodeURIComponent(state)}&code=abc&company_id=co_1`,
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toContain('sync=connected');
+  }
+
+  it('lists providers with Carta configured', async () => {
+    const v = await seedValuation();
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync`,
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(200);
+    const carta = res.json().providers.find((p: { provider: string }) => p.provider === 'carta');
+    expect(carta.configured).toBe(true);
+  });
+
+  it('connects, pulls and applies the cap table on first sync', async () => {
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+
+    const pull = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/pull`,
+      headers: authHeader(ops.token),
+      payload: {},
+    });
+    expect(pull.statusCode).toBe(200);
+    const body = pull.json();
+    expect(body.applied).toBe(true); // nothing on file → applied
+    expect(body.class_count).toBe(3);
+
+    const saved = await findCapTable(ctx.pool, v.id);
+    expect(saved?.source_format).toBe('carta');
+    expect(saved?.entries.length).toBe(3);
+  });
+
+  it('previews conflicts without applying, then applies when asked', async () => {
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+    // First pull applies V1.
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/pull`,
+      headers: authHeader(ops.token),
+      payload: { apply: true },
+    });
+
+    // Provider data changes; a plain pull previews the conflict, no overwrite.
+    payload = CARTA_V2;
+    const preview = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/pull`,
+      headers: authHeader(ops.token),
+      payload: { apply: false },
+    });
+    expect(preview.statusCode).toBe(200);
+    const pbody = preview.json();
+    expect(pbody.applied).toBe(false);
+    expect(pbody.diff.has_conflicts).toBe(true);
+    expect(pbody.diff.changed).toBe(1);
+    // On-file table is unchanged (still Series A = 2,000,000).
+    const stillOld = await findCapTable(ctx.pool, v.id);
+    const seriesA = stillOld?.entries.find((e) => e.security_class === 'Series A');
+    expect(seriesA?.shares).toBe(2_000_000);
+
+    // Applying overwrites.
+    const applied = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/pull`,
+      headers: authHeader(ops.token),
+      payload: { apply: true },
+    });
+    expect(applied.json().applied).toBe(true);
+    const updated = await findCapTable(ctx.pool, v.id);
+    expect(updated?.entries.find((e) => e.security_class === 'Series A')?.shares).toBe(2_500_000);
+  });
+
+  it('runs a due scheduled sync and applies automatically', async () => {
+    payload = CARTA_V1;
+    const v = await seedValuation();
+    await connect(v.id);
+    // Set weekly cadence, then force it due.
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${v.id}/cap-table/sync/carta/frequency`,
+      headers: authHeader(ops.token),
+      payload: { frequency: 'weekly' },
+    });
+    await ctx.pool.query(
+      `UPDATE cap_table_connections SET next_sync_at = now() - interval '1 hour' WHERE valuation_id = $1`,
+      [v.id],
+    );
+    const processed = await runDueCapTableSyncs({
+      pool: ctx.pool,
+      fetchFn: mockFetch(() => CARTA_V1) as unknown as typeof fetch,
+    });
+    expect(processed).toBeGreaterThanOrEqual(1);
+    const saved = await findCapTable(ctx.pool, v.id);
+    expect(saved?.entries.length).toBe(3);
+  });
+});
