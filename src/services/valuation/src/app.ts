@@ -75,6 +75,7 @@ import { registerQaRoutes } from './routes/qa.js';
 import { registerHealthCheckRoutes } from './routes/healthChecks.js';
 import { registerAsc718Routes } from './routes/asc718.js';
 import { registerFundRoutes } from './routes/funds.js';
+import { registerDebtRoutes } from './routes/debt.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerProgressRoutes } from './routes/progress.js';
 import { registerStreamRoutes } from './routes/stream.js';
@@ -279,6 +280,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSensitivityRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerAsc718Routes(app, { pool, engineUrl: config.ENGINE_URL });
   registerFundRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  registerDebtRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // P1/P2 remaining features — prompt registry, company profile, package
   // explorer, in-app support (docs/remaining-gaps.md)
   registerPromptRoutes(app, { pool, aiUrl: config.AI_URL });

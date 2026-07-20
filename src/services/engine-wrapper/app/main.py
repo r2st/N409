@@ -25,6 +25,7 @@ from .engine.fund_valuation import (
     lp_waterfall,
     roll_forward_mark,
 )
+from .engine.debt_valuation import rating_implied_spread, value_instrument
 from .engine.projection import project_financials
 from .engine.rollforward import roll_forward
 from .engine.sensitivity import sensitivity as run_sensitivity
@@ -156,6 +157,15 @@ class FundRollForwardRequest(BaseModel):
     accretion_rate: float | None = None
     periods: float = 1.0
     new_calibrated_value: float | None = None
+
+
+class DebtValuationRequest(BaseModel):
+    instrument_type: str  # bond | term_loan | credit_spread | convertible | safe
+    params: dict = Field(default_factory=dict)
+
+
+class RatingSpreadRequest(BaseModel):
+    rating: str
 
 
 class MarketFeedRequest(BaseModel):
@@ -381,6 +391,26 @@ def engine_fund_rollforward(request: FundRollForwardRequest) -> dict:
             periods=request.periods,
             new_calibrated_value=request.new_calibrated_value,
         )
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/debt-valuation")
+def engine_debt_valuation(request: DebtValuationRequest) -> dict:
+    """Fair-value a debt/credit instrument (bond, term loan, convertible, SAFE)."""
+    try:
+        return value_instrument(request.instrument_type, request.params)
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (KeyError, TypeError) as exc:  # missing/extra params from the dict
+        raise HTTPException(status_code=422, detail=f"invalid debt params: {exc}") from exc
+
+
+@app.post("/engine/v1/debt-rating-spread")
+def engine_debt_rating_spread(request: RatingSpreadRequest) -> dict:
+    """Implied credit spread (decimal) for a letter rating."""
+    try:
+        return {"rating": request.rating.upper(), "spread": rating_implied_spread(request.rating)}
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

@@ -16,6 +16,7 @@ import { BoardSignPage } from './pages/BoardSignPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { PortfolioPage } from './pages/PortfolioPage';
 import { FundPortfolioPage } from './pages/FundPortfolioPage';
+import { DebtInstrumentsPage } from './pages/DebtInstrumentsPage';
 import { ValuationsPage } from './pages/ValuationsPage';
 import { NewValuationPage } from './pages/NewValuationPage';
 import { ValuationDetailPage } from './pages/ValuationDetailPage';
@@ -192,6 +193,7 @@ export default function App() {
         {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
         <Route element={<RequireRole allow={isOps} />}>
           <Route path="/funds" element={<FundPortfolioPage />} />
+          <Route path="/debt" element={<DebtInstrumentsPage />} />
           <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
           <Route path="/engagements" element={<EngagementsPage />} />
           <Route path="/monitors" element={<MonitorsPage />} />
