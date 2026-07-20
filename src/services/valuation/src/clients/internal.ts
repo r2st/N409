@@ -22,6 +22,16 @@ function isRetryable(err: InternalServiceError): boolean {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Shared-secret header for the internal AI/engine services (audit B-1 P0).
+ * Read from the environment per-call so the token can rotate without a
+ * restart; omitted (and the Python side skips the check) when unset.
+ */
+export function internalAuthHeaders(): Record<string, string> {
+  const token = process.env.INTERNAL_SERVICE_TOKEN;
+  return token ? { 'x-internal-token': token } : {};
+}
+
 export async function postJson<T>(
   service: string,
   url: string,
@@ -55,7 +65,7 @@ async function postJsonOnce<T>(
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...internalAuthHeaders() },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs ?? 120_000),
     });

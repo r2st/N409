@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents import AGENT_PIPELINES
+from .internal_auth import internal_token_middleware, warn_if_unset
 from .openrouter import OpenRouterError, chat, configured_models
 from .pipelines import PIPELINES
 
@@ -25,6 +26,11 @@ VERSION = "0.2.0"
 _started = time.monotonic()
 
 app = FastAPI(title="n409-ai", version=VERSION)
+
+# Shared-secret gate (audit B-1 P0): every non-health route requires the
+# X-Internal-Token the valuation service injects. No-op until the secret is set.
+app.middleware("http")(internal_token_middleware)
+warn_if_unset()
 
 
 class PipelineRequest(BaseModel):

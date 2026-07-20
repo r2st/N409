@@ -36,6 +36,10 @@ services:
       JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
       PORT: '3001'
       LOG_LEVEL: info
+      AI_URL: http://ai:3002
+      ENGINE_URL: http://engine-wrapper:3003
+      # Shared secret injected as X-Internal-Token on every AI/engine call (P0).
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token-change-me}
     ports:
       - '3001:3001'
     depends_on:
@@ -57,30 +61,39 @@ services:
   ai:
     build:
       context: src/services/ai
+    # Internal service — reachable only on the compose network, no host port
+    # (audit B-1 P0 / I-1 P3). It listens on all interfaces *inside* the
+    # container but is never published to the host.
     environment:
+      HOST: '0.0.0.0'
       PORT: '3002'
       # The comparable-company agent verifies tickers against the engine.
       ENGINE_URL: 'http://engine-wrapper:3003'
-    ports:
-      - '3002:3002'
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token-change-me}
+    expose:
+      - '3002'
 
   engine-wrapper:
     build:
       context: .
       dockerfile: src/services/engine-wrapper/Dockerfile
+    # Internal service — no host port (audit B-1 P0 / I-1 P3).
     environment:
+      HOST: '0.0.0.0'
       PORT: '3003'
-    ports:
-      - '3003:3003'
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token-change-me}
+    expose:
+      - '3003'
 
   report:
     build:
       context: .
       dockerfile: src/services/report/Dockerfile
+    # Internal service — no host port (audit I-1 P3).
     environment:
       PORT: '3004'
-    ports:
-      - '3004:3004'
+    expose:
+      - '3004'
 
 volumes:
   pgdata:

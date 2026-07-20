@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { InternalServiceError, postJson, toProblem } from '../../src/clients/internal.js';
+import {
+  InternalServiceError,
+  internalAuthHeaders,
+  postJson,
+  toProblem,
+} from '../../src/clients/internal.js';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -68,5 +73,34 @@ describe('internal client retry (IMPROVEMENTS_RESEARCH §6 — error handling)',
       InternalServiceError,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('internal shared-secret header (audit B-1 P0)', () => {
+  const original = process.env.INTERNAL_SERVICE_TOKEN;
+  afterEach(() => {
+    if (original === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
+    else process.env.INTERNAL_SERVICE_TOKEN = original;
+  });
+
+  it('omits the header when no token is configured', () => {
+    delete process.env.INTERNAL_SERVICE_TOKEN;
+    expect(internalAuthHeaders()).toEqual({});
+  });
+
+  it('emits x-internal-token when configured', () => {
+    process.env.INTERNAL_SERVICE_TOKEN = 'top-secret';
+    expect(internalAuthHeaders()).toEqual({ 'x-internal-token': 'top-secret' });
+  });
+
+  it('attaches the token to every outgoing AI/engine request', async () => {
+    process.env.INTERNAL_SERVICE_TOKEN = 'top-secret';
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await postJson('ai-service', 'http://ai/pipe', { a: 1 });
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['x-internal-token']).toBe('top-secret');
+    expect((init.headers as Record<string, string>)['content-type']).toBe('application/json');
   });
 });

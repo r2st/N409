@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .engine.approaches import EngineInputError
 from .engine.compute import ENGINE_VERSION, compute
+from .internal_auth import internal_token_middleware, warn_if_unset
 from .engine.market_data import lookup as market_lookup
 from .engine.market_data import universe as market_universe
 from .engine.market_feed import MarketFeedClient
@@ -24,6 +25,11 @@ SERVICE = "engine-wrapper"
 _started = time.monotonic()
 
 app = FastAPI(title="n409-engine-wrapper", version=ENGINE_VERSION)
+
+# Shared-secret gate (audit B-1 P0): every non-health route requires the
+# X-Internal-Token the valuation service injects. No-op until the secret is set.
+app.middleware("http")(internal_token_middleware)
+warn_if_unset()
 
 
 class ComputeRequest(BaseModel):
