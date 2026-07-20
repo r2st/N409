@@ -13,6 +13,7 @@ import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { GoogleCompletePage } from './pages/GoogleCompletePage';
 import { BoardSignPage } from './pages/BoardSignPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { PortfolioPage } from './pages/PortfolioPage';
 import { ValuationsPage } from './pages/ValuationsPage';
 import { NewValuationPage } from './pages/NewValuationPage';
 import { ValuationDetailPage } from './pages/ValuationDetailPage';
@@ -148,6 +149,7 @@ export default function App() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/valuations" element={<ValuationsPage />} />
+        <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/valuations/new" element={<NewValuationPage />} />
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/payment/success" element={<PaymentSuccessPage />} />

@@ -15,6 +15,7 @@ import { FundingHistory } from '../components/FundingHistory';
 import { PaymentHistory, PaymentSection } from '../components/PaymentSection';
 import { SignaturePanel } from '../components/SignaturePanel';
 import { BoardApprovalPanel } from '../components/BoardApprovalPanel';
+import { OrgAssignmentCard } from '../components/valuation/OrgAssignmentCard';
 
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -149,6 +150,9 @@ export function ValuationDetailPage() {
 
         {/* P0: past checkout attempts with receipt links (hides when empty) */}
         <PaymentHistory valuation={valuation} />
+
+        {/* Feature 6: assign this entity to an organization / fund */}
+        <OrgAssignmentCard valuationId={valuation.id} />
 
         {/* Facts */}
         <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">

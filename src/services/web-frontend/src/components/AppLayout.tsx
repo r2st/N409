@@ -252,6 +252,7 @@ export function AppLayout() {
         onNavigate={close}
       />
       <NavItem to="/valuations/new" label="New valuation" icon={icons.newValuation} onNavigate={close} />
+      <NavItem to="/portfolio" label="Portfolio" icon={icons.dashboard} onNavigate={close} />
       <NavItem to="/search" label="Search" icon={icons.search} onNavigate={close} />
       <NavItem
         to="/notifications"
