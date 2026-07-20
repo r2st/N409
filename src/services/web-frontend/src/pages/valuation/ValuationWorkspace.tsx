@@ -148,6 +148,7 @@ export function ValuationWorkspace() {
         <Tab to={`${base}/scenarios`} label="What-If Scenarios" />
         {ops && <Tab to={`${base}/sensitivity`} label="Sensitivity" />}
         {ops && <Tab to={`${base}/bridge`} label="Value Bridge" />}
+        {ops && <Tab to={`${base}/analytics`} label="Analytics" />}
         {showReportTab && <Tab to={`${base}/report`} label="Report" />}
         {(ops || owner) && <Tab to={`${base}/grants`} label="Grants" />}
         {ops && <Tab to={`${base}/monitoring`} label="Monitoring" />}

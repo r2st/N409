@@ -169,6 +169,80 @@ export function WaterfallChart({
   );
 }
 
+export interface LinePoint {
+  label: string;
+  value: number | null;
+}
+
+/**
+ * Single-series SVG line chart for a trend (feature 5 analytics). Null values
+ * break the line. Dependency-free to match the rest of this file and stay
+ * printable in reports.
+ */
+export function LineChart({
+  title,
+  points,
+  format,
+  color = '#2f7d5b',
+}: {
+  title: string;
+  points: LinePoint[];
+  format: (v: number) => string;
+  color?: string;
+}) {
+  const vals = points.map((p) => p.value).filter((v): v is number => v !== null);
+  const hasData = vals.length > 0;
+  const lo = hasData ? Math.min(...vals) : 0;
+  const hi = hasData ? Math.max(...vals) : 1;
+  const span = hi - lo || Math.abs(hi) || 1;
+  const W = 100;
+  const H = 60;
+  const n = points.length;
+  const x = (i: number) => (n <= 1 ? W / 2 : (i / (n - 1)) * W);
+  const y = (v: number) => H - ((v - lo) / span) * H * 0.9 - H * 0.05;
+
+  // Build the polyline path, breaking on nulls.
+  const segments: string[] = [];
+  let current: string[] = [];
+  points.forEach((p, i) => {
+    if (p.value === null) {
+      if (current.length) segments.push(current.join(' '));
+      current = [];
+    } else {
+      current.push(`${x(i).toFixed(2)},${y(p.value).toFixed(2)}`);
+    }
+  });
+  if (current.length) segments.push(current.join(' '));
+
+  return (
+    <div className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+      <div className="flex items-baseline justify-between">
+        <div className="overline text-ink-400">{title}</div>
+        {hasData && (
+          <div className="tnum text-sm font-semibold text-ink-900">{format(vals[vals.length - 1]!)}</div>
+        )}
+      </div>
+      {!hasData ? (
+        <p className="mt-4 text-sm text-ink-400">Not enough data yet.</p>
+      ) : (
+        <svg viewBox="0 0 100 66" className="mt-3 w-full" role="img" aria-label={title} preserveAspectRatio="none">
+          <line x1="0" x2="100" y1={y(lo)} y2={y(lo)} stroke="#eee9df" strokeWidth="0.3" />
+          {segments.map((pts, i) => (
+            <polyline key={i} points={pts} fill="none" stroke={color} strokeWidth="0.8" strokeLinejoin="round" />
+          ))}
+          {points.map((p, i) =>
+            p.value === null ? null : (
+              <circle key={i} cx={x(i)} cy={y(p.value)} r="0.9" fill={color}>
+                <title>{`${p.label}: ${format(p.value)}`}</title>
+              </circle>
+            ),
+          )}
+        </svg>
+      )}
+    </div>
+  );
+}
+
 export function DonutChart({ title, slices }: { title: string; slices: PieSlice[] }) {
   const total = slices.reduce((sum, s) => sum + s.value, 0);
   const shown = slices.filter((s) => s.value > 0);

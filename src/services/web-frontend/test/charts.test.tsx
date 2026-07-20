@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { DonutChart, WaterfallChart } from '../src/components/charts';
+import { DonutChart, WaterfallChart, LineChart } from '../src/components/charts';
 
 describe('DonutChart', () => {
   it('renders a legend entry per non-zero slice and the total in the middle', () => {
@@ -45,5 +45,25 @@ describe('WaterfallChart', () => {
     expect(screen.getByText('$2.00')).toBeInTheDocument();
     expect(screen.getByText('+$1.20')).toBeInTheDocument();
     expect(screen.getByText('$3.50')).toBeInTheDocument(); // 2 + 1.2 + 0.3
+  });
+});
+
+describe('LineChart', () => {
+  it('renders the latest value and an empty state', () => {
+    const { rerender } = render(
+      <LineChart
+        title="FMV"
+        points={[
+          { label: 'A', value: 2 },
+          { label: 'B', value: 3 },
+        ]}
+        format={(v) => `$${v.toFixed(2)}`}
+      />,
+    );
+    expect(screen.getByText('FMV')).toBeInTheDocument();
+    expect(screen.getByText('$3.00')).toBeInTheDocument(); // latest
+
+    rerender(<LineChart title="FMV" points={[{ label: 'A', value: null }]} format={(v) => `${v}`} />);
+    expect(screen.getByText('Not enough data yet.')).toBeInTheDocument();
   });
 });
