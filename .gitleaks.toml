@@ -1,0 +1,20 @@
+# gitleaks config (audit T-2 P1). Extends the default rule set and allowlists
+# paths that legitimately contain placeholder/dev-only material so real leaks
+# stand out. The `keys/` directory is gitignored (never committed); it is listed
+# here so a `--no-git` filesystem scan on a developer machine stays quiet too.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore example env files, generated locks, and the gitignored keys dir"
+paths = [
+  '''\.env\.example$''',
+  '''keys/''',
+  '''package-lock\.json$''',
+  '''docs/''',
+]
+regexes = [
+  # The well-known example JWT secret shipped in .env.example / compose (it is
+  # explicitly denylisted at runtime in config.ts, so it is safe to allow here).
+  '''dev-only-secret-change-me-0123456789abcdef''',
+]

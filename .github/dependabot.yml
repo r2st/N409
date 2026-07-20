@@ -1,0 +1,51 @@
+# Dependency update automation (audit T-2 P1).
+version: 2
+updates:
+  # Root npm workspace (covers all TS services + the shared package).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Batch low-risk minor/patch bumps into one PR to cut noise.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Python services.
+  - package-ecosystem: pip
+    directory: /src/services/ai
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: pip
+    directory: /src/services/engine-wrapper
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # GitHub Actions used by the workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Base images in the service Dockerfiles.
+  - package-ecosystem: docker
+    directory: /src/services/valuation
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /src/services/ai
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /src/services/engine-wrapper
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /src/services/web
+    schedule:
+      interval: weekly
