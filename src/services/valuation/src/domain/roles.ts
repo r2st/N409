@@ -24,6 +24,7 @@ export const ROLE_KEYS = [
   'auto',
   'spa',
   'ignored',
+  'auditor',
 ] as const;
 
 export type RoleKey = (typeof ROLE_KEYS)[number];

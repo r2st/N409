@@ -16,6 +16,7 @@ import { PaymentHistory, PaymentSection } from '../components/PaymentSection';
 import { SignaturePanel } from '../components/SignaturePanel';
 import { BoardApprovalPanel } from '../components/BoardApprovalPanel';
 import { OrgAssignmentCard } from '../components/valuation/OrgAssignmentCard';
+import { AuditorAccessPanel } from '../components/valuation/AuditorAccessPanel';
 
 function Meta({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -153,6 +154,9 @@ export function ValuationDetailPage() {
 
         {/* Feature 6: assign this entity to an organization / fund */}
         <OrgAssignmentCard valuationId={valuation.id} />
+
+        {/* Feature 8: external auditor share links */}
+        <AuditorAccessPanel valuationId={valuation.id} />
 
         {/* Facts */}
         <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">

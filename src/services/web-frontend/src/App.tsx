@@ -9,6 +9,7 @@ import { RegisterPage } from './pages/RegisterPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
+import { AuditorPortalPage } from './pages/AuditorPortalPage';
 import { AcceptInvitePage } from './pages/AcceptInvitePage';
 import { GoogleCompletePage } from './pages/GoogleCompletePage';
 import { BoardSignPage } from './pages/BoardSignPage';
@@ -138,6 +139,8 @@ export default function App() {
       <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
       {/* Public board-member resolution signing (feature 5) */}
       <Route path="/board-sign" element={<BoardSignPage />} />
+      {/* Public external auditor portal (feature 8), token from link fragment */}
+      <Route path="/auditor" element={<AuditorPortalPage />} />
       {/* White-label partner login (improvement 8) — public, branded per slug */}
       <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
       <Route
