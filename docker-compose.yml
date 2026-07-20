@@ -3,6 +3,7 @@ name: n409
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: n409
       POSTGRES_PASSWORD: n409_dev
@@ -19,6 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - '6379:6379'
     healthcheck:
@@ -31,6 +33,7 @@ services:
     build:
       context: .
       dockerfile: src/services/valuation/Dockerfile
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://n409:n409_dev@postgres:5432/n409_dev
       JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
@@ -42,6 +45,22 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token-change-me}
     ports:
       - '3001:3001'
+    # Healthcheck via the Node runtime (no curl/wget in the image) (audit I-1 P2).
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,17 +69,36 @@ services:
     build:
       context: .
       dockerfile: src/services/web/Dockerfile
+    restart: unless-stopped
     environment:
       PORT: '3000'
       VALUATION_SERVICE_URL: http://valuation:3001
     ports:
       - '3000:3000'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    # Wait for the API to be healthy, not merely started (audit I-1 P2).
     depends_on:
-      - valuation
+      valuation:
+        condition: service_healthy
 
   ai:
     build:
       context: src/services/ai
+    restart: unless-stopped
     # Internal service — reachable only on the compose network, no host port
     # (audit B-1 P0 / I-1 P3). It listens on all interfaces *inside* the
     # container but is never published to the host.
@@ -72,11 +110,31 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token-change-me}
     expose:
       - '3002'
+    # /health is a public path (no internal token needed); check via stdlib urllib.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:3002/health').status==200 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+    depends_on:
+      engine-wrapper:
+        condition: service_healthy
 
   engine-wrapper:
     build:
       context: .
       dockerfile: src/services/engine-wrapper/Dockerfile
+    restart: unless-stopped
     # Internal service — no host port (audit B-1 P0 / I-1 P3).
     environment:
       HOST: '0.0.0.0'
@@ -84,16 +142,48 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token-change-me}
     expose:
       - '3003'
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:3003/health').status==200 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          # CPU-bound OPM/waterfall compute — give it more headroom.
+          cpus: '2.0'
+          memory: 1024M
 
   report:
     build:
       context: .
       dockerfile: src/services/report/Dockerfile
+    restart: unless-stopped
     # Internal service — no host port (audit I-1 P3).
     environment:
       PORT: '3004'
     expose:
       - '3004'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3004/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
 
 volumes:
   pgdata:
