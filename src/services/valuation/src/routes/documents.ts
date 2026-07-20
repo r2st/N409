@@ -19,6 +19,7 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { maybeStartAutoPipeline, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
+import { checkUploadType } from '../documents/fileType.js';
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
@@ -36,7 +37,10 @@ async function loadAuthorizedValuation(
 ): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
-  if (!valuation || !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })) {
+  if (
+    !valuation ||
+    !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })
+  ) {
     throw problems.notFound();
   }
   return valuation;
@@ -44,9 +48,24 @@ async function loadAuthorizedValuation(
 
 /** Strip directories and control characters; keep the name recognizable. */
 export function safeFilename(name: string): string {
-  // eslint-disable-next-line no-control-regex -- stripping control chars is the point
-  const base = path.basename(name).replace(/[\\/:\u0000-\u001f"]+/g, '_').trim();
-  return (base || 'upload').slice(0, 200);
+  const base = path.basename(name);
+  // Replace path separators, colons, quotes, and any control char (code < 0x20)
+  // with '_', collapsing consecutive runs. Avoids a control-char regex literal.
+  const bad = new Set(['\\', '/', ':', '"']);
+  let cleaned = '';
+  let prevReplaced = false;
+  for (const ch of base) {
+    const isBad = bad.has(ch) || ch.charCodeAt(0) < 0x20;
+    if (isBad) {
+      if (!prevReplaced) cleaned += '_';
+      prevReplaced = true;
+    } else {
+      cleaned += ch;
+      prevReplaced = false;
+    }
+  }
+  cleaned = cleaned.trim();
+  return (cleaned || 'upload').slice(0, 200);
 }
 
 /**
@@ -117,6 +136,16 @@ export function registerDocumentRoutes(
       throw problems.unprocessable(`File exceeds the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`);
     }
     if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
+
+    // Confirm the bytes match the declared type before the file can feed the AI
+    // pipeline or be served back (audit B-1 P2).
+    const typeCheck = checkUploadType(file.filename, buffer);
+    if (!typeCheck.ok) {
+      throw problems.unprocessable(`Rejected upload: ${typeCheck.reason}`, {
+        filename: file.filename,
+        sniffed: typeCheck.sniffed,
+      });
+    }
 
     const document = await storeDocument(
       deps.pool,
