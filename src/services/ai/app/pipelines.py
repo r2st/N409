@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .anonymize import redact
+from .anonymize import anonymization_enforced, redact
 from .documents import DocText, extract_texts, render_corpus
 from .openrouter import LlmResult, chat, extract_json
 
@@ -89,19 +89,38 @@ def _prompt_overrides(payload: dict, default_system: str) -> tuple[str, str | No
     )
 
 
+def _known_entities(payload: dict) -> tuple[list[str], list[str]]:
+    """(company_names, person_names) the caller already knows. The subject
+    company name always comes through on the valuation; callers may pass more
+    via options.known_companies / options.known_people."""
+    valuation = payload.get("valuation") or {}
+    options = payload.get("options") or {}
+    companies: list[str] = [str(valuation["company_name"])] if valuation.get("company_name") else []
+    companies += [str(c) for c in (options.get("known_companies") or []) if c]
+    people = [str(p) for p in (options.get("known_people") or []) if p]
+    return companies, people
+
+
 def _load_docs(payload: dict) -> tuple[list[DocText], dict]:
     """Extract document texts, redacting PII first (remaining-gaps §2 — the
-    cap-table anonymization step) unless options.anonymize is switched off."""
+    cap-table anonymization step) unless options.anonymize is switched off.
+
+    Named-entity redaction (company + known person names) supplements the
+    regexes so a cap table's most identifying fields don't leave the trust
+    boundary. In production the anonymize=false escape hatch is ignored
+    (audit B-1 P1)."""
     docs = extract_texts(payload.get("documents") or [])
     options = payload.get("options") or {}
-    if not options.get("anonymize", True):
+    enforced = anonymization_enforced()
+    if not enforced and not options.get("anonymize", True):
         return docs, {"applied": False, "redacted": {}}
+    companies, people = _known_entities(payload)
     totals: dict[str, int] = {}
     for doc in docs:
-        doc.text, counts = redact(doc.text)
+        doc.text, counts = redact(doc.text, company_names=companies, person_names=people)
         for category, n in counts.items():
             totals[category] = totals.get(category, 0) + n
-    return docs, {"applied": True, "redacted": totals}
+    return docs, {"applied": True, "redacted": totals, "enforced": enforced}
 
 
 def _to_number(value: Any) -> float | None:
