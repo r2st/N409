@@ -1,0 +1,85 @@
+# N409 deployment (source of truth)
+
+**Audit I-1 P1.** The committed Terraform (`infra/terraform/`) describes an
+AWS-style containerized stack (RDS/Redis/S3/VPC) that is **not** how N409 runs.
+The live system is **five systemd units on a single Hetzner host**, deployed by
+pushing a build of the local checkout, fronted by Caddy. That divergence meant
+the real production config — firewall, service bind addresses, DB SSL, backups —
+was captured nowhere and reviewed nowhere. This document is the source of truth
+for what actually runs; the Terraform is kept as an aspirational/reference design
+and should be treated as **unused** until a migration is actually planned.
+
+## Topology
+
+| Unit                   | Port | Runtime                    | Exposure                         |
+| ---------------------- | ---- | -------------------------- | -------------------------------- |
+| `n409-web`             | 3000 | Node (`dist/index.js`)     | Public (Caddy → :3000)           |
+| `n409-valuation`       | 3001 | Node (`dist/index.js`)     | **Internal only** (loopback)     |
+| `n409-ai`              | 3002 | Python/uvicorn (venv)      | **Internal only** (loopback)     |
+| `n409-engine-wrapper`  | 3003 | Python/uvicorn (venv)      | **Internal only** (loopback)     |
+| `n409-report`          | 3004 | Node (`dist/index.js`)     | **Internal only** (loopback)     |
+
+- Host: a Hetzner VPS (Ubuntu), code at `/opt/N409`, uploaded documents at
+  `/opt/n409-data/documents` (outside the deploy tree). Native services — no
+  Docker on the server. `docker-compose.yml` is for **local dev only**.
+- Caddy terminates TLS for `n409.aiknol.com` and reverse-proxies to `:3000`
+  (`infra/caddy/`). Only the web service faces the internet.
+- Unit files: `infra/systemd/*.service` — install to `/etc/systemd/system/`,
+  then `systemctl daemon-reload && systemctl enable --now 'n409-*'`.
+
+## Security posture (audit B-1 P0 / I-1)
+
+The single most important production control, and the reason this doc exists:
+
+1. **Host firewall — run `infra/firewall/ufw-setup.sh` once as root.** It denies
+   inbound by default and opens only SSH, 80/443 (Caddy), and 3000 (web). Ports
+   **3001–3004 are never opened to the internet.** Historically `ufw` was
+   inactive and the services bound `0.0.0.0`, leaving the unauthenticated AI and
+   engine services reachable by anyone who could hit the box (the P0).
+2. **Loopback bind.** The `n409-ai` / `n409-engine-wrapper` units start uvicorn
+   with `--host 127.0.0.1`; the valuation service reaches them over loopback.
+3. **Shared-secret header.** `INTERNAL_SERVICE_TOKEN` (in `/opt/N409/.env`) is
+   sent as `X-Internal-Token` by the valuation client and required by both
+   Python services on every non-health route.
+4. **Forced PII redaction.** `n409-ai` runs with `APP_ENV=production`, which
+   makes `options.anonymize=false` a no-op.
+5. **Document encryption at rest.** Set `DOCUMENTS_ENCRYPTION_KEY` in
+   `/opt/N409/.env` (`openssl rand -hex 32`) to AES-256-GCM the stored blobs.
+
+## Required environment (`/opt/N409/.env`, chmod 600)
+
+Beyond the pre-existing vars (DATABASE_URL, JWT_SECRET, JWT_ISSUER,
+JWT_TTL_SECONDS, LOG_LEVEL, OPENROUTER_API_KEY, DOCUMENTS_DIR, …), the hardening
+work adds:
+
+```
+NODE_ENV=production
+INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>   # valuation ⇄ ai/engine
+DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
+# On the ai unit (set in the unit file, not .env): APP_ENV=production
+```
+
+> `JWT_SECRET` must be a unique random value — the config layer refuses to boot
+> in production with a known example or low-entropy secret.
+
+## Deploy procedure
+
+1. Build locally and push the tree to `/opt/N409` (rsync excluding
+   `node_modules dist keys .env* .venv __pycache__ *.tsbuildinfo`, or
+   `git fetch + reset --hard origin/main` with a PAT — the server is a real git
+   checkout).
+2. On the server: `npm ci && npm run build` (**mandatory** — `dist/` is
+   gitignored, so a skipped build is a silent no-op that keeps old code live).
+   When a Python service's `requirements.txt` changed:
+   `.venv/bin/pip install -r requirements.txt`.
+3. `systemctl restart 'n409-*'` (restart `n409-valuation` first — migrations run
+   on its boot).
+4. Verify: all five `/health` (engine-wrapper: `/engine/v1/health`) return 200,
+   and 3001–3004 are **not** reachable from off-host (`nc -z <public-ip> 3002`
+   must fail).
+
+## Backups / DR (audit B-5 / P3 follow-ups)
+
+- Postgres: enable scheduled `pg_dump` (or PITR) and test a restore; document the
+  cadence here once configured.
+- `/opt/n409-data/documents`: back up the (now optionally encrypted) blobs.

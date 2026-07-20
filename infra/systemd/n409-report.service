@@ -1,0 +1,26 @@
+# /etc/systemd/system/n409-report.service
+# Internal report-rendering service (port 3004). Never public — the firewall
+# blocks 3004 from the internet. See infra/DEPLOYMENT.md.
+[Unit]
+Description=N409 report service (TS/Fastify)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/N409/src/services/report
+EnvironmentFile=/opt/N409/.env
+Environment=NODE_ENV=production
+Environment=PORT=3004
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# User=n409
+# Group=n409
+
+[Install]
+WantedBy=multi-user.target

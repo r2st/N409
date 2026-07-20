@@ -1,0 +1,29 @@
+# /etc/systemd/system/n409-ai.service
+# Internal AI pipeline service (port 3002, FastAPI/uvicorn from its own venv).
+# SECURITY (audit B-1 P0): binds 127.0.0.1 so the port is never world-reachable,
+# and requires X-Internal-Token (INTERNAL_SERVICE_TOKEN in /opt/N409/.env). The
+# host firewall (infra/firewall/) is the belt to this braces. APP_ENV=production
+# forces PII redaction on (options.anonymize=false is ignored). See DEPLOYMENT.md.
+[Unit]
+Description=N409 AI service (FastAPI, OpenRouter pipelines)
+After=network-online.target n409-engine-wrapper.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/N409/src/services/ai
+EnvironmentFile=/opt/N409/.env
+Environment=APP_ENV=production
+Environment=ENGINE_URL=http://127.0.0.1:3003
+ExecStart=/opt/N409/src/services/ai/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 3002
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# User=n409
+# Group=n409
+
+[Install]
+WantedBy=multi-user.target

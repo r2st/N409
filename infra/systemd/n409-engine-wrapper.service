@@ -1,0 +1,26 @@
+# /etc/systemd/system/n409-engine-wrapper.service
+# Internal calculation engine (port 3003, FastAPI/uvicorn from its own venv).
+# SECURITY (audit B-1 P0): binds 127.0.0.1 (never world-reachable) and requires
+# X-Internal-Token (INTERNAL_SERVICE_TOKEN in /opt/N409/.env). The CPU-bound
+# /engine/v1/compute is a DoS target if exposed. See infra/DEPLOYMENT.md.
+[Unit]
+Description=N409 engine-wrapper (FastAPI calculation engine)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/N409/src/services/engine-wrapper
+EnvironmentFile=/opt/N409/.env
+ExecStart=/opt/N409/src/services/engine-wrapper/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 3003
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# User=n409
+# Group=n409
+
+[Install]
+WantedBy=multi-user.target

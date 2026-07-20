@@ -1,0 +1,31 @@
+# /etc/systemd/system/n409-valuation.service
+# The public API + BFF upstream (port 3001). Reached only via the web service
+# and Caddy; the host firewall keeps 3001 off the public internet (see
+# infra/firewall/). See infra/DEPLOYMENT.md.
+[Unit]
+Description=N409 valuation service (TS/Fastify API)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/N409/src/services/valuation
+EnvironmentFile=/opt/N409/.env
+Environment=NODE_ENV=production
+Environment=PORT=3001
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=3
+# Hardening (defence-in-depth).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/n409-data
+# Run as a dedicated non-root user in production (create it first):
+#   useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409
+# User=n409
+# Group=n409
+
+[Install]
+WantedBy=multi-user.target
