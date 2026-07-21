@@ -4,7 +4,11 @@
 # infra/firewall/). See infra/DEPLOYMENT.md.
 [Unit]
 Description=N409 valuation service (TS/Fastify API)
-After=network-online.target postgresql.service redis-server.service
+# Redis is not currently a runtime dependency — rate limiting is in-process
+# (see src/services/valuation/src/plugins/rateLimit.ts, P2-1). Re-add
+# `redis-server.service` to After= if/when rate limiting moves to Redis for
+# horizontal scaling.
+After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
@@ -22,10 +26,11 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/n409-data
-# Run as a dedicated non-root user in production (create it first):
+# Runs as a dedicated non-root system user (audit P1-1). Create it once on the
+# host before enabling the unit:
 #   useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409
-# User=n409
-# Group=n409
+User=n409
+Group=n409
 
 [Install]
 WantedBy=multi-user.target

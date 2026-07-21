@@ -1,0 +1,15 @@
+# /etc/systemd/system/n409-backup.timer
+# Fires n409-backup.service nightly at 02:00 (audit P0-1). Persistent=true so a
+# backup missed while the host was down runs at next boot. RandomizedDelaySec
+# spreads load slightly off the top of the hour.
+[Unit]
+Description=Nightly N409 PostgreSQL backup timer
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=n409-backup.service
+
+[Install]
+WantedBy=timers.target

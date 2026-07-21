@@ -1,0 +1,27 @@
+# /etc/systemd/system/n409-backup.service
+# Nightly PostgreSQL backup (audit P0-1). Oneshot unit invoked by
+# n409-backup.timer. Runs pg-backup.sh, which dumps the DB, promotes a weekly
+# copy on Sundays, and prunes to 7 daily + 4 weekly. See infra/backup/README.md.
+[Unit]
+Description=N409 PostgreSQL backup (pg_dump + rotation)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# Run as the dedicated service user (created during hardening; see DEPLOYMENT.md).
+User=n409
+Group=n409
+EnvironmentFile=/opt/N409/.env
+Environment=BACKUP_ROOT=/opt/n409-backups
+ExecStart=/opt/N409/infra/backup/pg-backup.sh
+# Hardening: the job only needs to read the app tree + write the backup root.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/n409-backups
+
+[Install]
+WantedBy=multi-user.target

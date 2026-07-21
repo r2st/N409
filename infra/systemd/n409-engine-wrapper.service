@@ -19,8 +19,10 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-# User=n409
-# Group=n409
+# Non-root service user (audit P1-1). Create on the host first:
+#   useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409
+User=n409
+Group=n409
 
 [Install]
 WantedBy=multi-user.target

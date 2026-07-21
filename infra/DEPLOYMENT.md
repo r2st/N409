@@ -78,8 +78,40 @@ DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
    and 3001–3004 are **not** reachable from off-host (`nc -z <public-ip> 3002`
    must fail).
 
-## Backups / DR (audit B-5 / P3 follow-ups)
+## Service user (audit P1-1)
 
-- Postgres: enable scheduled `pg_dump` (or PITR) and test a restore; document the
-  cadence here once configured.
-- `/opt/n409-data/documents`: back up the (now optionally encrypted) blobs.
+The five services and the backup job run as the dedicated **`n409`** system user
+(never root). Create it once on the host, then the unit files' `User=n409` /
+`Group=n409` take effect:
+
+```
+useradd --system --home /opt/N409 --shell /usr/sbin/nologin n409
+chown -R n409:n409 /opt/N409 /opt/n409-data
+chown n409:n409 /opt/N409/.env && chmod 600 /opt/N409/.env   # audit P1-2
+```
+
+The units run with `ProtectSystem=strict` (the whole FS is read-only), so each
+service can write only to its `ReadWritePaths`: `n409-valuation` →
+`/opt/n409-data` (uploaded documents), `n409-backup` → `/opt/n409-backups`. The
+other services (web, ai, engine-wrapper, report) write nothing to disk (logs go
+to the journal), so they need no `ReadWritePaths`. Code under `/opt/N409` stays
+world-readable, so services still start even if a deploy resets file ownership;
+only `/opt/n409-data` and `/opt/n409-backups` must remain `n409`-owned.
+
+## Backups / DR (audit P0-1)
+
+Automated nightly PostgreSQL backups are live — see **`infra/backup/`**
+(`README.md` has the full runbook):
+
+- **`pg-backup.sh`** — `pg_dump -Fc` into `/opt/n409-backups/daily`, promotes a
+  weekly copy on Sundays, prunes to **7 daily + 4 weekly**.
+- **`n409-backup.timer`** fires **`n409-backup.service`** nightly at **02:00**
+  (`Persistent=true`, runs as `n409`). Install:
+  `cp infra/backup/n409-backup.{service,timer} /etc/systemd/system/ &&
+  systemctl enable --now n409-backup.timer`.
+- **Restore:** `infra/backup/pg-restore.sh <dump> [target-url]`
+  (`pg_restore --clean --if-exists --single-transaction`). Rehearse monthly into
+  a scratch DB per the README; the initial rehearsal passed (77 tables restored,
+  matching live).
+- **Off-host copies:** `/opt/n409-backups` lives on the same VPS — for true DR,
+  also sync it (and `/opt/n409-data/documents`, now optionally encrypted) off-box.
