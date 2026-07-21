@@ -4,7 +4,8 @@ import { formatMoney, formatNumber } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../../components/ui';
+import { HelpIcon } from '../../components/HelpIcon';
 
 /**
  * ASC 718 stock-based-compensation workspace (feature: ASC 718 Public).
@@ -182,7 +183,10 @@ export function Asc718Tab() {
   return (
     <div className="space-y-6">
       <header>
-        <h2 className="text-lg font-semibold text-ink-800">ASC 718 — stock-based compensation</h2>
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-ink-800">
+          ASC 718 — stock-based compensation
+          <HelpIcon article="asc718-public-overview" label="Help: ASC 718 for public companies" />
+        </h2>
         <p className="mt-1 text-sm text-ink-500">
           Measure grant-date fair value and the expense schedule. Public issuers price off their own market
           data and can add ESPP, RSU and relative-TSR awards.
@@ -203,7 +207,10 @@ export function Asc718Tab() {
               <Field label="Ticker">
                 <TextInput value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="ACME" className="w-28" />
               </Field>
-              <Field label="Expected-term method">
+              <Field
+                label="Expected-term method"
+                tooltip="How the option's expected life is estimated. SAB 107 simplified averages the vesting and contractual terms; the binomial lattice models early exercise when the price reaches an exercise multiple of the strike; historical uses your own exercise data."
+              >
                 <Select value={termMethod} onChange={(e) => setTermMethod(e.target.value as TermMethod)}>
                   <option value="simplified">SAB 107 simplified</option>
                   <option value="lattice">Lattice (exercise behaviour)</option>
@@ -224,7 +231,14 @@ export function Asc718Tab() {
           <Field label={companyType === 'public' ? 'Underlying (blank → market price)' : 'Underlying (blank → 409A FMV)'}>
             <TextInput value={defaultUnderlying} onChange={(e) => setDefaultUnderlying(e.target.value)} placeholder="e.g. 20" className="w-40" />
           </Field>
-          <Field label={companyType === 'public' ? 'Volatility (blank → historical)' : 'Volatility'}>
+          <Field
+            label={companyType === 'public' ? 'Volatility (blank → historical)' : 'Volatility'}
+            tooltip={
+              companyType === 'public'
+                ? 'Annualised return volatility used in Black-Scholes. Leave blank to use the historical volatility of the issuer’s own stock, computed from the market feed.'
+                : 'Annualised return volatility used in Black-Scholes, typically derived from a comparable-company peer set (e.g. 0.40 = 40%).'
+            }
+          >
             <TextInput value={defaultVol} onChange={(e) => setDefaultVol(e.target.value)} placeholder="e.g. 0.4" className="w-40" />
           </Field>
         </div>
@@ -270,7 +284,7 @@ function OptionSection({ options, setOptions }: { options: (typeof emptyOption)[
             <Field label="Grant date"><TextInput value={o.grant_date} onChange={(e) => upd(i, 'grant_date', e.target.value)} /></Field>
             <Field label="Vesting months"><TextInput value={o.vesting_months} onChange={(e) => upd(i, 'vesting_months', e.target.value)} /></Field>
             <Field label="Exercise price"><TextInput value={o.exercise_price} onChange={(e) => upd(i, 'exercise_price', e.target.value)} placeholder="required" /></Field>
-            <Field label="Expected term (y)"><TextInput value={o.expected_term_years} onChange={(e) => upd(i, 'expected_term_years', e.target.value)} /></Field>
+            <Field label="Expected term (y)" tooltip="Years the option is expected to stay outstanding before exercise — shorter than the contractual term. Used directly by the simplified method; the lattice derives it from modelled exercise behaviour instead."><TextInput value={o.expected_term_years} onChange={(e) => upd(i, 'expected_term_years', e.target.value)} /></Field>
             <Field label="Volatility"><TextInput value={o.volatility} onChange={(e) => upd(i, 'volatility', e.target.value)} placeholder="blank → default" /></Field>
             <Field label="Risk-free"><TextInput value={o.risk_free_rate} onChange={(e) => upd(i, 'risk_free_rate', e.target.value)} /></Field>
             <div className="col-span-full">
@@ -300,7 +314,7 @@ function EsppSection({ espps, setEspps, disabled }: { espps: (typeof emptyEspp)[
               <Field label="Shares enrolled"><TextInput value={e.shares_enrolled} onChange={(ev) => upd(i, 'shares_enrolled', ev.target.value)} /></Field>
               <Field label="Grant-date price"><TextInput value={e.grant_date_price} onChange={(ev) => upd(i, 'grant_date_price', ev.target.value)} /></Field>
               <Field label="Discount %"><TextInput value={e.discount_pct} onChange={(ev) => upd(i, 'discount_pct', ev.target.value)} /></Field>
-              <Field label="Lookback months"><TextInput value={e.lookback_months} onChange={(ev) => upd(i, 'lookback_months', ev.target.value)} /></Field>
+              <Field label="Lookback months" tooltip="Length of the ESPP lookback window. Employees buy at a price based on the lower of the offering-date and purchase-date prices, so a longer lookback embeds a more valuable call option and raises the fair value."><TextInput value={e.lookback_months} onChange={(ev) => upd(i, 'lookback_months', ev.target.value)} /></Field>
               <Field label="Risk-free"><TextInput value={e.risk_free_rate} onChange={(ev) => upd(i, 'risk_free_rate', ev.target.value)} /></Field>
               <div className="col-span-full"><button className="text-xs text-red-600 hover:underline" onClick={() => setEspps(espps.filter((_, j) => j !== i))}>Remove</button></div>
             </div>
@@ -428,7 +442,13 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
       )}
       {result.tsr.length > 0 && (
         <div>
-          <h4 className="overline mb-2 text-ink-400">Relative TSR</h4>
+          <h4 className="overline mb-2 flex items-center gap-1.5 text-ink-400">
+            Relative TSR
+            <InfoTooltip
+              label="About relative TSR"
+              text="Market-condition awards that pay out on the company’s total-shareholder-return rank against a TSR peer group. Valued by a Monte Carlo simulation of correlated peer price paths; the fair value is fixed at grant and never trued up."
+            />
+          </h4>
           <table className="w-full text-sm">
             <thead><tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase"><th className="py-1.5 pr-3">Award</th><th className="py-1.5 pr-3">Units</th><th className="py-1.5 pr-3">FV/unit</th><th className="py-1.5 pr-3">Exp. %ile</th><th className="py-1.5 pr-3">Payout</th><th className="py-1.5">Total</th></tr></thead>
             <tbody className="tnum">

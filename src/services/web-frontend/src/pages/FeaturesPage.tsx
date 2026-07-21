@@ -34,6 +34,9 @@ const EMOJI: Record<string, string> = {
   'data-retention': '🗄️',
   hris: '👥',
   settings: '⚙️',
+  'asc718-public': '📐',
+  'fund-holdings': '🏦',
+  'debt-valuation': '💵',
 };
 
 const SECTIONS: Array<{ title: string; blurb: string; categories: string[] }> = [
@@ -59,6 +62,11 @@ const SECTIONS: Array<{ title: string; blurb: string; categories: string[] }> = 
     title: 'Deliver & approve',
     blurb: 'Turn the result into an audit-ready, board-adopted deliverable.',
     categories: ['reports', 'board-approval', 'auditor-portal', 'grants'],
+  },
+  {
+    title: 'Specialized valuation engines',
+    blurb: 'Purpose-built engines beyond the core 409A: public-company stock comp, fund holdings and debt.',
+    categories: ['asc718-public', 'fund-holdings', 'debt-valuation'],
   },
   {
     title: 'Collaborate',

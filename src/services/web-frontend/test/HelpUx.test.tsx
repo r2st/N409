@@ -63,6 +63,25 @@ describe('GettingStarted', () => {
     const { container } = wrap(<GettingStarted />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it('surfaces the specialized engines as explore links (not extra steps)', () => {
+    wrap(<GettingStarted />);
+    // Still exactly eight checklist steps.
+    expect(screen.getAllByRole('checkbox')).toHaveLength(8);
+    expect(screen.getByText('Beyond your first valuation')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /ASC 718 \(public company\)/ })).toHaveAttribute(
+      'href',
+      '/help/asc718-public-overview',
+    );
+    expect(screen.getByRole('link', { name: /Fund holdings/ })).toHaveAttribute(
+      'href',
+      '/help/fund-holdings-overview',
+    );
+    expect(screen.getByRole('link', { name: /Debt valuation/ })).toHaveAttribute(
+      'href',
+      '/help/debt-valuation-overview',
+    );
+  });
 });
 
 describe('FeaturesPage', () => {
@@ -72,5 +91,19 @@ describe('FeaturesPage', () => {
     const learnMore = screen.getAllByRole('link', { name: 'Learn more →' });
     expect(learnMore.length).toBeGreaterThanOrEqual(20);
     expect(learnMore.every((l) => l.getAttribute('href')?.startsWith('/help/'))).toBe(true);
+  });
+
+  it('showcases the specialized valuation engines section', () => {
+    wrap(<FeaturesPage />);
+    expect(
+      screen.getByRole('heading', { name: 'Specialized valuation engines', level: 2 }),
+    ).toBeInTheDocument();
+    // The three engine categories each render a learn-more link into the Help Center.
+    const hrefs = screen
+      .getAllByRole('link', { name: 'Learn more →' })
+      .map((l) => l.getAttribute('href'));
+    expect(hrefs).toContain('/help/asc718-public-overview');
+    expect(hrefs).toContain('/help/fund-holdings-overview');
+    expect(hrefs).toContain('/help/debt-valuation-overview');
   });
 });

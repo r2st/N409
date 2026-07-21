@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import { HelpIcon } from '../components/HelpIcon';
 
 /**
  * Debt Instruments (feature: Debt Valuation Engine). Bonds, term loans,
@@ -24,14 +25,17 @@ const TYPE_LABELS: Record<InstrumentType, string> = {
   credit_spread: 'Credit-spread bond',
 };
 
-/** Per-type parameter fields (key, label, default). */
-const PARAM_FIELDS: Record<InstrumentType, Array<{ key: string; label: string; def: string; bool?: boolean }>> = {
+const YTM_TIP =
+  'Yield to maturity — the annual return the market demands. Every cash flow is discounted at this rate; a yield above the coupon prices the instrument at a discount, below it at a premium.';
+
+/** Per-type parameter fields (key, label, default). `tip` shows a field tooltip. */
+const PARAM_FIELDS: Record<InstrumentType, Array<{ key: string; label: string; def: string; bool?: boolean; tip?: string }>> = {
   bond: [
     { key: 'face', label: 'Face', def: '1000' },
     { key: 'coupon_rate', label: 'Coupon rate', def: '0.05' },
     { key: 'frequency', label: 'Freq/yr', def: '2' },
     { key: 'maturity_years', label: 'Maturity (y)', def: '5' },
-    { key: 'market_yield', label: 'Market yield', def: '0.06' },
+    { key: 'market_yield', label: 'Market yield', def: '0.06', tip: YTM_TIP },
     { key: 'amortizing', label: 'Amortizing', def: 'false', bool: true },
   ],
   term_loan: [
@@ -39,7 +43,7 @@ const PARAM_FIELDS: Record<InstrumentType, Array<{ key: string; label: string; d
     { key: 'coupon_rate', label: 'Coupon rate', def: '0.07' },
     { key: 'frequency', label: 'Freq/yr', def: '4' },
     { key: 'maturity_years', label: 'Maturity (y)', def: '5' },
-    { key: 'market_yield', label: 'Market yield', def: '0.09' },
+    { key: 'market_yield', label: 'Market yield', def: '0.09', tip: YTM_TIP },
     { key: 'amortizing', label: 'Amortizing', def: 'true', bool: true },
   ],
   credit_spread: [
@@ -53,17 +57,17 @@ const PARAM_FIELDS: Record<InstrumentType, Array<{ key: string; label: string; d
     { key: 'coupon_rate', label: 'Coupon rate', def: '0.04' },
     { key: 'frequency', label: 'Freq/yr', def: '2' },
     { key: 'maturity_years', label: 'Maturity (y)', def: '5' },
-    { key: 'conversion_ratio', label: 'Conversion ratio', def: '20' },
+    { key: 'conversion_ratio', label: 'Conversion ratio', def: '20', tip: 'Shares received per note on conversion. Conversion ratio × stock price gives the conversion parity — the note’s value as pure equity.' },
     { key: 'stock_price', label: 'Stock price', def: '40' },
     { key: 'volatility', label: 'Volatility', def: '0.4' },
     { key: 'risk_free_rate', label: 'Risk-free', def: '0.03' },
-    { key: 'credit_spread', label: 'Credit spread', def: '0.02' },
+    { key: 'credit_spread', label: 'Credit spread', def: '0.02', tip: 'Extra yield over the risk-free rate for the issuer’s default risk. In Tsiveriotis-Fernandes the debt component is discounted at risk-free + this spread; a wider spread lowers the bond floor.' },
     { key: 'dividend_yield', label: 'Dividend yield', def: '0' },
   ],
   safe: [
     { key: 'investment', label: 'Investment', def: '100000' },
-    { key: 'valuation_cap', label: 'Valuation cap', def: '5000000' },
-    { key: 'discount', label: 'Discount', def: '0.2' },
+    { key: 'valuation_cap', label: 'Valuation cap', def: '5000000', tip: 'The cap amount — the maximum company valuation at which the SAFE converts. If the next round prices above the cap, the SAFE converts as if the company were worth the cap, giving the investor extra ownership.' },
+    { key: 'discount', label: 'Discount', def: '0.2', tip: 'Discount rate off the next round’s price (e.g. 0.20 = 20%). The SAFE converts at whichever is better for the investor — the cap or this discount.' },
     { key: 'next_round_pre_money', label: 'Next round pre-money', def: '20000000' },
     { key: 'next_round_shares', label: 'Next round shares', def: '10000000' },
   ],
@@ -140,7 +144,10 @@ export function DebtInstrumentsPage() {
     <div className="mx-auto max-w-5xl space-y-6 p-1">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-ink-800">Debt Instruments</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-ink-800">
+            Debt Instruments
+            <HelpIcon article="debt-valuation-overview" label="Help: Debt valuation engine" />
+          </h1>
           <p className="mt-1 text-sm text-ink-500">Fair-value bonds, term loans, convertible notes and SAFEs.</p>
         </div>
         <Button onClick={() => setShowNew((s) => !s)}>{showNew ? 'Cancel' : 'New instrument'}</Button>
@@ -286,7 +293,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
         <h3 className="mb-3 text-sm font-semibold text-ink-700">{TYPE_LABELS[instrument.instrument_type]} parameters</h3>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {PARAM_FIELDS[instrument.instrument_type].map((f) => (
-            <Field key={f.key} label={f.label}>
+            <Field key={f.key} label={f.label} tooltip={f.tip}>
               {f.bool ? (
                 <Select value={params[f.key] ?? 'false'} onChange={(e) => setParams({ ...params, [f.key]: e.target.value })}>
                   <option value="false">No</option>
@@ -440,8 +447,8 @@ function CreditTermsCard({ instrumentId, terms, onSaved }: { instrumentId: strin
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Field label="Rating"><TextInput value={form.rating} onChange={(e) => setForm({ ...form, rating: e.target.value })} placeholder="BBB" /></Field>
-        <Field label="Benchmark yield"><TextInput value={form.benchmark_yield} onChange={(e) => setForm({ ...form, benchmark_yield: e.target.value })} /></Field>
-        <Field label="Spread (blank → rating)"><TextInput value={form.spread} onChange={(e) => setForm({ ...form, spread: e.target.value })} /></Field>
+        <Field label="Benchmark yield" tooltip="The risk-free base rate (e.g. the matching Treasury yield). The all-in discount yield is this benchmark plus the credit spread."><TextInput value={form.benchmark_yield} onChange={(e) => setForm({ ...form, benchmark_yield: e.target.value })} /></Field>
+        <Field label="Spread (blank → rating)" tooltip="Credit spread over the benchmark. Leave blank and the engine infers it from the rating, then tightens it for senior or secured debt and widens it for subordinated or unsecured debt."><TextInput value={form.spread} onChange={(e) => setForm({ ...form, spread: e.target.value })} /></Field>
         <Field label="Seniority">
           <Select value={form.seniority} onChange={(e) => setForm({ ...form, seniority: e.target.value })}>
             {['senior_secured', 'senior', 'subordinated', 'mezzanine'].map((s) => <option key={s} value={s}>{s}</option>)}

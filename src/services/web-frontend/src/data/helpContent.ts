@@ -38,6 +38,12 @@ export interface HelpArticleContent {
   body: string;
   /** Ids of related articles shown at the foot of the article. */
   related?: string[];
+  /**
+   * In-app destination for the feature this article documents (e.g. `/debt`).
+   * When present, the Help Center renders a "Go to the feature" link so readers
+   * can jump straight from the docs to the tool.
+   */
+  route?: string;
 }
 
 export const HELP_CATEGORIES: HelpCategoryMeta[] = [
@@ -123,6 +129,21 @@ export const HELP_CATEGORIES: HelpCategoryMeta[] = [
   },
   { id: 'hris', label: 'HRIS Integration', blurb: 'Sync headcount and grants from your payroll system.' },
   { id: 'settings', label: 'Settings', blurb: 'Profile, notifications and system-wide preferences.' },
+  {
+    id: 'asc718-public',
+    label: 'ASC 718 (Public Company)',
+    blurb: 'Measure options, ESPPs, RSUs and relative-TSR awards off market data.',
+  },
+  {
+    id: 'fund-holdings',
+    label: 'Fund Holdings (ASC 820)',
+    blurb: 'Mark a fund portfolio to fair value, build NAV and run the LP waterfall.',
+  },
+  {
+    id: 'debt-valuation',
+    label: 'Debt Valuation',
+    blurb: 'Value bonds, term loans, convertible notes and SAFEs.',
+  },
 ];
 
 export const HELP_ARTICLES: HelpArticleContent[] = [
@@ -644,13 +665,15 @@ The signed resolution is the evidence that the board adopted the FMV as of a spe
   // ── Grant Management ─────────────────────────────────────────────────────
   {
     id: 'grants-overview',
-    title: 'Grant management & ASC 718',
+    title: 'Grant management & ASC 718 (private company)',
     category: 'grants',
-    summary: 'Turn option grants into stock-based compensation expense under ASC 718.',
-    keywords: ['grants', 'asc 718', 'stock compensation', 'expense', 'vesting', 'black-scholes', 'esop'],
-    body: `# Grant management & ASC 718
+    summary: 'Turn a private company’s option grants into ASC 718 stock-comp expense off the 409A FMV.',
+    keywords: ['grants', 'asc 718', 'private company', 'stock compensation', 'expense', 'vesting', 'black-scholes', 'esop'],
+    body: `# Grant management & ASC 718 (private company)
 
-Once you have an FMV, **ASC 718** governs how you book the cost of stock-based compensation on your financial statements. The **Grants** tab manages this.
+Once you have an FMV, **ASC 718** governs how you book the cost of stock-based compensation on your financial statements. The **Grants** tab manages this for a **private company**, measuring **option** expense off the concluded **[409A FMV](/help/what-is-409a)**.
+
+> **Public company?** If your shares are publicly traded — or you grant ESPPs, RSUs or relative-TSR awards — use the [ASC 718 public-company engine](/help/asc718-public-overview) instead. It prices off your own market price and volatility and handles those award types.
 
 ## What it computes
 
@@ -661,7 +684,7 @@ Once you have an FMV, **ASC 718** governs how you book the cost of stock-based c
 ## Where the data comes from
 
 Grants can be entered directly, imported with your [cap-table sync](/help/cap-table-sync), or pulled from your [HRIS/payroll system](/help/hris-overview) so headcount and grant changes flow through automatically. The valuation's FMV feeds the fair-value calculation, keeping your 409A and your ASC 718 expense consistent.`,
-    related: ['hris-overview', 'cap-table-sync', 'what-is-409a'],
+    related: ['asc718-public-overview', 'hris-overview', 'cap-table-sync', 'what-is-409a'],
   },
 
   // ── Health Checks ────────────────────────────────────────────────────────
@@ -999,10 +1022,16 @@ Configure both under **Administration → Data retention**. Changes are logged f
     title: 'HRIS & payroll integration',
     category: 'hris',
     summary: 'Sync headcount and grant data from your payroll/HR system for ASC 718.',
-    keywords: ['hris', 'payroll', 'integration', 'sync', 'headcount', 'grants', 'asc 718', 'employees'],
+    keywords: ['hris', 'payroll', 'integration', 'sync', 'headcount', 'grants', 'asc 718', 'employees', 'rippling', 'gusto', 'deel'],
     body: `# HRIS & payroll integration
 
 For companies tracking stock-comp expense under [ASC 718](/help/grants-overview), keeping grant and employment data current by hand is tedious and error-prone. The **HRIS integration** syncs it from your HR/payroll system.
+
+## Supported providers
+
+- **Rippling**
+- **Gusto**
+- **Deel**
 
 ## What it syncs
 
@@ -1046,6 +1075,522 @@ Access is role-based:
 
 Administrators configure workspace-wide defaults and integrations under **Administration → System settings**. Need help with something not covered here? Open the **help widget** in the bottom-right corner and message the operations team.`,
     related: ['mfa-overview', 'sso-overview', 'organizations-overview', 'client-portal-overview'],
+  },
+
+  // ── ASC 718 (Public Company) ─────────────────────────────────────────────
+  {
+    id: 'asc718-public-overview',
+    title: 'ASC 718 for public companies',
+    category: 'asc718-public',
+    summary: 'Measure stock-based compensation for a public issuer off its own market price.',
+    keywords: [
+      'asc 718',
+      'public company',
+      'stock compensation',
+      'stock-based comp',
+      'market price',
+      'ticker',
+      'espp',
+      'rsu',
+      'tsr',
+      'expected term',
+      'sab 107',
+      'lattice',
+    ],
+    route: '/valuations',
+    body: `# ASC 718 for public companies
+
+The **ASC 718** tab measures the grant-date fair value and expense schedule of stock-based compensation. It works for both private and public issuers — flip the **Company type** toggle to switch between them.
+
+## Private vs. public underlying
+
+- **Private** — options are measured off the concluded **[409A FMV](/help/what-is-409a)**, and volatility comes from a comparable-company peer set. This is the same expense that the private-company [Grants tab](/help/grants-overview) produces.
+- **Public** — the underlying is the issuer's **own market price**, auto-fetched from a **ticker**, with its **own historical volatility**. Switching to public also unlocks the award types public issuers grant.
+
+## What public issuers can value
+
+- **Options** — with a choice of [expected-term method](/help/asc718-expected-term) (SAB 107 simplified, a binomial lattice, or historical exercise data).
+- **[ESPPs](/help/asc718-espp)** — employee stock purchase plans, including the lookback provision.
+- **RSUs** — service, performance and market-condition restricted stock units.
+- **[Relative TSR awards](/help/asc718-tsr)** — market-condition awards valued with a Monte Carlo simulation against a peer group.
+
+## Running it
+
+Set the company type (and ticker, for public), add your grants, ESPPs and RSUs, then **Run ASC 718**. The result shows total compensation cost, the per-grant fair values and the expense-by-year schedule. Everything is operations-only — measurement lives with the valuation team.`,
+    related: ['asc718-expected-term', 'asc718-espp', 'asc718-tsr', 'grants-overview'],
+  },
+  {
+    id: 'asc718-expected-term',
+    title: 'Expected term & exercise behaviour',
+    category: 'asc718-public',
+    summary: 'SAB 107 simplified term, the binomial lattice and historical exercise data.',
+    keywords: [
+      'expected term',
+      'sab 107',
+      'simplified method',
+      'binomial lattice',
+      'exercise behaviour',
+      'exercise multiple',
+      'suboptimal exercise',
+      'contractual term',
+      'vesting',
+    ],
+    route: '/valuations',
+    body: `# Expected term & exercise behaviour
+
+The **expected term** is how long, on average, options are expected to remain outstanding before exercise or forfeiture. Because employees rarely hold options to full contractual maturity, the expected term is shorter than the contract — and it materially affects the Black-Scholes fair value. Choose one of three methods:
+
+## SAB 107 simplified
+
+The **simplified method** from SEC Staff Accounting Bulletin 107 estimates the expected term as the **average of the vesting period and the full contractual term**. It's appropriate for "plain-vanilla" options when a company lacks sufficient historical exercise data — common for newly public issuers.
+
+## Binomial lattice (exercise behaviour)
+
+A **lattice** model builds a tree of possible price paths and models **early exercise** explicitly: at each node, employees are assumed to exercise once the stock price reaches an **exercise multiple** of the strike (e.g. 2× the exercise price). This captures suboptimal early exercise and post-vesting termination far more richly than a single expected-term input — the effective term emerges from the modelled behaviour rather than being assumed.
+
+## Historical exercise data
+
+If you have enough of your own **historical exercise and post-vesting cancellation data**, you can derive the expected term directly from it — the most defensible approach once a track record exists.
+
+Set the method on the **Expected-term method** control; it applies to every option grant in the run.`,
+    related: ['asc718-public-overview', 'assumptions-volatility', 'grants-overview'],
+  },
+  {
+    id: 'asc718-espp',
+    title: 'ESPP valuation with lookback',
+    category: 'asc718-public',
+    summary: 'Value an employee stock purchase plan, including its lookback and discount.',
+    keywords: [
+      'espp',
+      'employee stock purchase plan',
+      'lookback',
+      'lookback period',
+      'purchase discount',
+      'call component',
+      'put component',
+      'section 423',
+    ],
+    route: '/valuations',
+    body: `# ESPP valuation with lookback
+
+An **Employee Stock Purchase Plan (ESPP)** lets employees buy shares at a discount, often with a **lookback** provision. Under ASC 718 a compensatory ESPP has a real fair value that must be expensed — it is not simply the headline discount.
+
+## The three components
+
+The engine decomposes each offering into:
+
+- **Purchase discount** — the stated discount (e.g. 15%) applied to the purchase price.
+- **Call component** — the value of the lookback's upside: employees buy at a price based on the **lower** of the offering-date and purchase-date prices, so they hold a call on the appreciation over the **lookback period**.
+- **Put component** — the value of the downside protection the discount provides.
+
+## Key inputs
+
+- **Discount %** — the plan's stated purchase discount.
+- **Lookback months** — the length of the lookback window; a longer lookback is worth more because the embedded call has more time to run.
+- **Grant-date price** and **risk-free rate** — the option-pricing inputs.
+
+Add an offering under **ESPP (public)** on the ASC 718 tab; the result reports the fair value per share and the component breakdown.`,
+    related: ['asc718-public-overview', 'asc718-expected-term'],
+  },
+  {
+    id: 'asc718-tsr',
+    title: 'Relative TSR (market conditions)',
+    category: 'asc718-public',
+    summary: 'Monte Carlo valuation of relative total-shareholder-return awards.',
+    keywords: [
+      'tsr',
+      'total shareholder return',
+      'relative tsr',
+      'market condition',
+      'monte carlo',
+      'peer group',
+      'percentile',
+      'payout ratio',
+      'psu',
+    ],
+    route: '/valuations',
+    body: `# Relative TSR (market conditions)
+
+A **relative total-shareholder-return (TSR)** award pays out based on how the company's stock performs **against a peer group** over a performance period — for example, target vesting at the median and 200% at the 75th percentile. TSR is a **market condition** under ASC 718.
+
+## Why Monte Carlo
+
+Market conditions are baked into the **grant-date fair value** — you do *not* true them up for actual outcomes. Because the payoff depends on the joint path of your stock and every peer, there's no closed form, so the engine runs a **Monte Carlo simulation**: it simulates correlated price paths for the issuer and the **peer group**, computes each award's payout under the vesting schedule, and averages the discounted payoffs.
+
+## What drives the value
+
+- **TSR peer group** — the comparator companies; their volatilities and correlations shape the distribution of relative outcomes.
+- **Payout schedule** — the percentile-to-payout curve (threshold, target, maximum).
+- **Volatility and the risk-free rate** — standard option-pricing inputs.
+
+The result reports the fair value per unit, the **expected percentile** and the **expected payout ratio**. Because it's a market condition, the expense is recognised over the service period **regardless** of whether the market target is ultimately met.`,
+    related: ['asc718-public-overview', 'assumptions-volatility', 'comparables-overview'],
+  },
+
+  // ── Fund Holdings (ASC 820) ──────────────────────────────────────────────
+  {
+    id: 'fund-holdings-overview',
+    title: 'Fund holdings & ASC 820',
+    category: 'fund-holdings',
+    summary: 'Mark a fund portfolio to fair value, roll it into NAV and run the LP waterfall.',
+    keywords: [
+      'asc 820',
+      'fair value',
+      'fund',
+      'portfolio',
+      'holdings',
+      'nav',
+      'net asset value',
+      'marks',
+      'venture',
+      'private equity',
+      'lp',
+      'waterfall',
+    ],
+    route: '/funds',
+    body: `# Fund holdings & ASC 820
+
+The **Fund Portfolios** page is for investment funds — venture, PE, growth and credit — that must report their positions at **fair value** under **ASC 820**. It is distinct from the corporate-group roll-up on the Portfolio page: here a fund marks each position, aggregates them into NAV, and distributes proceeds through an LP waterfall.
+
+## The workflow
+
+1. **Create a fund** — set its type, currency and vintage year.
+2. **Add positions** — each holding (common, preferred, SAFE, note, warrant) with its cost basis and a default [mark method](/help/fund-fair-value-hierarchy).
+3. **Record marks** — at each measurement date, mark every position to fair value and the engine assigns its [ASC 820 level](/help/fund-fair-value-hierarchy).
+4. **Read NAV** — positions roll up into [net asset value](/help/fund-nav) with a Level 1/2/3 disclosure.
+5. **Run the waterfall** — model the [LP distribution](/help/fund-waterfall) including preferred return, carry and clawback.
+
+## Who it's for
+
+Fund managers and their finance teams preparing quarterly fair-value marks and LP reporting. The page is operations-only.`,
+    related: ['fund-fair-value-hierarchy', 'fund-calibrated-opm', 'fund-nav', 'fund-waterfall'],
+  },
+  {
+    id: 'fund-fair-value-hierarchy',
+    title: 'ASC 820 fair-value hierarchy (Levels 1–3)',
+    category: 'fund-holdings',
+    summary: 'How each position is classified Level 1, 2 or 3 by the observability of its inputs.',
+    keywords: [
+      'asc 820',
+      'fair value hierarchy',
+      'level 1',
+      'level 2',
+      'level 3',
+      'observable',
+      'unobservable',
+      'quoted price',
+      'mark method',
+      'disclosure',
+    ],
+    route: '/funds',
+    body: `# ASC 820 fair-value hierarchy (Levels 1–3)
+
+ASC 820 classifies every fair-value measurement into a **three-level hierarchy** based on how observable its inputs are. The level drives your financial-statement disclosures, and Level 3 gets the most auditor scrutiny.
+
+## The three levels
+
+- **Level 1 — quoted prices.** Unadjusted quoted prices in active markets for identical assets. In the app, the **Market** mark method (a quoted price × quantity) produces a Level 1 mark — typical for a publicly traded holding.
+- **Level 2 — observable inputs.** Prices for the asset are not directly quoted, but observable market inputs are — for instance the price of a recent financing round. The **Last round** mark method produces a Level 2 mark.
+- **Level 3 — unobservable inputs.** Fair value relies on the fund's own assumptions and a model. The **[Calibrated OPM](/help/fund-calibrated-opm)** mark method and plain **Cost** produce Level 3 marks — typical for illiquid private positions.
+
+## Choosing a mark method
+
+Set a **default mark method** per position, then pick the specific method when you record each mark. The engine assigns the level from the method, and the NAV view shows the **Level 1 / 2 / 3 breakdown** you disclose in the notes.`,
+    related: ['fund-holdings-overview', 'fund-calibrated-opm', 'fund-nav'],
+  },
+  {
+    id: 'fund-calibrated-opm',
+    title: 'Calibrated-OPM backsolve for illiquid positions',
+    category: 'fund-holdings',
+    summary: 'Mark hard-to-value positions with an OPM calibrated to the last round.',
+    keywords: [
+      'calibrated opm',
+      'backsolve',
+      'calibration',
+      'calibration date',
+      'illiquid',
+      'level 3',
+      'option pricing',
+      'last round',
+      'fair value mark',
+    ],
+    route: '/funds',
+    body: `# Calibrated-OPM backsolve for illiquid positions
+
+Most fund positions are **illiquid** private securities with no quoted price. The most defensible way to mark them is a **calibrated Option Pricing Method** — the same [OPM backsolve](/help/methodology-opm) used in a 409A, anchored to the position's own transaction history.
+
+## How calibration works
+
+1. **Backsolve at the calibration date.** At the last observable transaction (usually the financing round in which the fund invested), solve for the total equity value that reproduces the price paid — this **calibrates** the model to a real, arm's-length data point.
+2. **Roll forward.** At each later measurement date, adjust the calibrated equity value for changes in the company's performance, comparable multiples and time, then re-allocate through the OPM to the fund's specific security.
+3. **Mark.** The allocated value becomes the position's fair value — a **Level 3** measurement because it depends on unobservable, model-based inputs.
+
+## Why it's preferred
+
+Calibrating to the entry round keeps the mark grounded in a real transaction rather than a bare assumption, which is exactly what auditors look for in a Level 3 measurement. Record it with the **Calibrated OPM** method and supply the model value on the mark form.`,
+    related: ['fund-fair-value-hierarchy', 'methodology-opm', 'fund-holdings-overview'],
+  },
+  {
+    id: 'fund-nav',
+    title: 'Net asset value (NAV)',
+    category: 'fund-holdings',
+    summary: 'How position marks roll up into the fund’s net asset value.',
+    keywords: [
+      'nav',
+      'net asset value',
+      'gross asset value',
+      'unrealized gain',
+      'liabilities',
+      'cost basis',
+      'level breakdown',
+      'fund',
+    ],
+    route: '/funds',
+    body: `# Net asset value (NAV)
+
+A fund's **net asset value (NAV)** is the total fair value of everything it holds, net of liabilities. It's the headline number LPs care about and the basis for the fair-value marks in the financial statements.
+
+## How it's built
+
+- **Gross asset value** — the sum of every position's latest fair-value [mark](/help/fund-fair-value-hierarchy).
+- **Less liabilities** — fund-level obligations.
+- **= Net asset value.**
+
+Alongside NAV the view reports the **total cost basis** and **total unrealized gain** (fair value minus cost), so you can see the portfolio's markup at a glance.
+
+## The Level 1 / 2 / 3 disclosure
+
+NAV is broken down by ASC 820 level, so you can drop the **Level 1 / Level 2 / Level 3** split straight into your fair-value note. A portfolio weighted toward Level 3 signals to auditors and LPs that most of the value rests on model-based marks — expect more diligence there.
+
+NAV recomputes whenever you record a new mark, so it always reflects the latest measurement date.`,
+    related: ['fund-holdings-overview', 'fund-fair-value-hierarchy', 'fund-waterfall'],
+  },
+  {
+    id: 'fund-waterfall',
+    title: 'LP waterfall & carried interest',
+    category: 'fund-holdings',
+    summary: 'Distribute proceeds through preferred return, GP catch-up, carry and clawback.',
+    keywords: [
+      'waterfall',
+      'lp',
+      'gp',
+      'carried interest',
+      'carry',
+      'carry percentage',
+      'preferred return',
+      'hurdle',
+      'catch-up',
+      'clawback',
+      'distribution',
+      'tiers',
+    ],
+    route: '/funds',
+    body: `# LP waterfall & carried interest
+
+When a fund distributes proceeds, the **LP waterfall** governs how much goes to limited partners versus the general partner's **carried interest**. The calculator models the standard tiers.
+
+## The distribution tiers
+
+1. **Return of capital** — LPs get their contributed capital back first.
+2. **Preferred return** — LPs earn a **hurdle** (e.g. 8%) on their capital before the GP shares in profits.
+3. **GP catch-up** — if enabled, the GP then receives a run of distributions until it has earned its carry percentage of profits above the return of capital.
+4. **Carry split** — remaining proceeds split by the **carry percentage** (commonly 80/20 to LPs/GP).
+
+## Key inputs
+
+- **Committed / contributed capital** — the LP commitment and how much has been drawn.
+- **Preferred return rate** — the hurdle.
+- **Carry %** — the GP's share of profits above the hurdle (the **carry percentage**).
+- **GP catch-up** — whether the catch-up tier applies.
+
+## Clawback
+
+If earlier distributions overpaid the GP relative to the fund's lifetime performance, a **clawback** is owed back to the LPs. The result surfaces the LP distribution, the GP carry and any clawback owed.`,
+    related: ['fund-holdings-overview', 'fund-nav', 'methodology-cvm'],
+  },
+
+  // ── Debt Valuation ───────────────────────────────────────────────────────
+  {
+    id: 'debt-valuation-overview',
+    title: 'Debt valuation engine',
+    category: 'debt-valuation',
+    summary: 'Fair-value bonds, term loans, convertible notes and SAFEs.',
+    keywords: [
+      'debt',
+      'bond',
+      'term loan',
+      'convertible',
+      'safe',
+      'credit spread',
+      'yield',
+      'dcf',
+      'fair value',
+      'fixed income',
+      'instrument',
+    ],
+    route: '/debt',
+    body: `# Debt valuation engine
+
+The **Debt Instruments** page fair-values fixed-income and hybrid instruments: straight **bonds**, **term loans**, **convertible notes**, **SAFEs** and **credit-spread** bonds. Create an instrument, set its parameters, and value it.
+
+## What each instrument uses
+
+- **Bonds & term loans** — a **[yield-based DCF](/help/debt-yield-dcf)** with duration and convexity analytics; term loans can amortize.
+- **Credit-spread bonds** — priced off a **[benchmark yield plus a credit spread](/help/debt-credit-spread)** driven by rating and seniority.
+- **Convertible notes** — the **[Tsiveriotis-Fernandes](/help/debt-convertible)** binomial tree that splits value into debt and equity components.
+- **SAFEs** — **[cap-and-discount](/help/debt-safe)** conversion into the next priced round.
+
+## Analytics
+
+Beyond fair value, the engine returns the **cash-flow schedule**, **modified duration** and **convexity**, and a one-click **yield / spread / discount sensitivity** table so you can see how the value responds to rate moves. Results are illustrative and not investment advice. The page is operations-only.`,
+    related: ['debt-yield-dcf', 'debt-credit-spread', 'debt-convertible', 'debt-safe'],
+  },
+  {
+    id: 'debt-yield-dcf',
+    title: 'Yield DCF, duration & convexity',
+    category: 'debt-valuation',
+    summary: 'Discount a bond or loan’s cash flows at its market yield, with rate analytics.',
+    keywords: [
+      'yield to maturity',
+      'ytm',
+      'dcf',
+      'discounted cash flow',
+      'duration',
+      'modified duration',
+      'convexity',
+      'clean price',
+      'dirty price',
+      'accrued interest',
+      'amortizing',
+    ],
+    route: '/debt',
+    body: `# Yield DCF, duration & convexity
+
+A bond or term loan is worth the **present value of its future cash flows**, discounted at the rate the market demands — its **yield to maturity (YTM)**. That's the yield-based DCF at the core of the engine.
+
+## Price
+
+The engine builds the coupon (and, for **amortizing** loans, principal) schedule, discounts every cash flow at the market yield, and reports:
+
+- **Dirty price** — the full present value, including interest accrued since the last coupon.
+- **Clean price** — the dirty price minus **accrued interest** (the quoted price).
+
+A market yield **above** the coupon rate prices the instrument at a discount; **below** it, at a premium.
+
+## Interest-rate risk
+
+- **Modified duration** — the approximate **% change in price for a 1% change in yield**. Higher duration means more rate sensitivity.
+- **Convexity** — the curvature the duration estimate misses; it corrects the linear approximation for larger yield moves.
+
+Use the **yield sensitivity** button to re-value across a range of yield shifts and see duration and convexity in action.`,
+    related: ['debt-valuation-overview', 'debt-credit-spread'],
+  },
+  {
+    id: 'debt-credit-spread',
+    title: 'Credit-spread pricing',
+    category: 'debt-valuation',
+    summary: 'Build the discount yield from a benchmark plus a rating-driven credit spread.',
+    keywords: [
+      'credit spread',
+      'benchmark yield',
+      'rating',
+      'seniority',
+      'secured',
+      'all-in yield',
+      'risk premium',
+      'spread',
+      'treasury',
+    ],
+    route: '/debt',
+    body: `# Credit-spread pricing
+
+For a corporate bond, the discount yield isn't a single number you observe — it's a risk-free **benchmark** plus a **credit spread** that compensates lenders for default risk.
+
+## All-in yield = benchmark + spread
+
+- **Benchmark yield** — the risk-free base (e.g. the matching Treasury).
+- **Credit spread** — the extra yield for the issuer's credit risk. Leave the spread blank and the engine infers it from the **rating** (AAA down to CCC), adjusted for **seniority** and whether the debt is **secured**. A senior secured BBB loan carries a tighter spread than subordinated unsecured paper.
+- **All-in yield** — the sum, which becomes the DCF discount rate.
+
+## Why seniority and security matter
+
+In a default, senior and secured lenders recover more, so they accept a smaller spread. The engine reflects this: moving from subordinated to senior, or unsecured to secured, narrows the spread and **raises** the bond's price.
+
+Enter the credit terms on the **Credit terms** panel for a credit-spread instrument; the result reports the resulting credit spread and all-in yield.`,
+    related: ['debt-valuation-overview', 'debt-yield-dcf'],
+  },
+  {
+    id: 'debt-convertible',
+    title: 'Convertible notes (Tsiveriotis-Fernandes)',
+    category: 'debt-valuation',
+    summary: 'Split a convertible into its debt and equity components on a binomial tree.',
+    keywords: [
+      'convertible',
+      'convertible note',
+      'tsiveriotis-fernandes',
+      'binomial tree',
+      'conversion ratio',
+      'parity',
+      'straight debt value',
+      'option value',
+      'credit spread',
+    ],
+    route: '/debt',
+    body: `# Convertible notes (Tsiveriotis-Fernandes)
+
+A **convertible note** is a bond the holder can convert into shares, so its value blends debt and equity. The engine prices it with the **Tsiveriotis-Fernandes** binomial tree — the standard method for handling the two different discount rates a convertible needs.
+
+## The key insight
+
+Cash flows that will be paid in **stock** carry equity risk and are discounted at the **risk-free rate**; cash flows that will be paid in **cash** carry credit risk and are discounted at the **risky rate** (risk-free + [credit spread](/help/debt-credit-spread)). Tsiveriotis-Fernandes tracks these separately at every node of the tree, so each part is discounted correctly.
+
+## Inputs and outputs
+
+- **Conversion ratio** — shares received per note on conversion; times the stock price gives the **conversion parity** (the note's value as pure equity).
+- **Stock price, volatility, risk-free rate, credit spread** — the tree's option-pricing inputs.
+
+The result decomposes fair value into the **straight-debt value** (the bond floor) and the **option value** (the conversion upside), and reports the conversion parity. Run the **spread sensitivity** to see how a wider credit spread lowers the debt floor.`,
+    related: ['debt-valuation-overview', 'debt-credit-spread', 'methodology-opm'],
+  },
+  {
+    id: 'debt-safe',
+    title: 'SAFE valuation (cap & discount)',
+    category: 'debt-valuation',
+    summary: 'Value a SAFE by modelling its conversion into the next priced round.',
+    keywords: [
+      'safe',
+      'simple agreement for future equity',
+      'valuation cap',
+      'cap amount',
+      'discount rate',
+      'discount',
+      'conversion price',
+      'ownership',
+      'moic',
+      'pre-money',
+    ],
+    route: '/debt',
+    body: `# SAFE valuation (cap & discount)
+
+A **SAFE** (Simple Agreement for Future Equity) isn't debt and has no maturity — it converts into equity at the **next priced round**. Its value comes from the conversion terms that reward the early investor: a **valuation cap** and a **discount**.
+
+## How conversion is priced
+
+At the next round, the SAFE converts at the price that's **better for the investor** of:
+
+- **Cap amount** — the **valuation cap** sets a maximum effective price. If the round prices above the cap, the SAFE converts as if the company were worth the cap, handing the investor extra ownership.
+- **Discount** — the **discount rate** (e.g. 20%) gives a percentage off the round price.
+
+The engine computes the **conversion price**, the **shares received**, the resulting **ownership %** and the **MOIC** (multiple of invested capital) implied by the modelled round.
+
+## Inputs
+
+- **Investment** — the amount put in.
+- **Valuation cap** and **discount** — the SAFE's terms.
+- **Next-round pre-money** and **shares** — the priced round the SAFE converts into.
+
+Run the **discount sensitivity** to see how the value moves as the modelled round price changes.`,
+    related: ['debt-valuation-overview', 'methodology-opm'],
   },
 ];
 

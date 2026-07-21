@@ -73,6 +73,13 @@ const STEPS: Step[] = [
   },
 ];
 
+/** Specialized engines beyond a first 409A — surfaced as explore links, not steps. */
+const EXPLORE: Array<{ to: string; label: string }> = [
+  { to: '/help/asc718-public-overview', label: 'ASC 718 (public company)' },
+  { to: '/help/fund-holdings-overview', label: 'Fund holdings (ASC 820)' },
+  { to: '/help/debt-valuation-overview', label: 'Debt valuation' },
+];
+
 const DISMISS_KEY = 'n409.getting-started.dismissed';
 const PROGRESS_KEY = 'n409.getting-started.done';
 
@@ -184,6 +191,19 @@ export function GettingStarted() {
           );
         })}
       </ol>
+
+      <div className="mt-5 border-t border-paper-200 pt-4">
+        <div className="overline mb-2 text-ink-400">Beyond your first valuation</div>
+        <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs font-semibold">
+          {EXPLORE.map((e) => (
+            <li key={e.to}>
+              <Link to={e.to} className="text-bond-600 hover:text-bond-700">
+                {e.label} →
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
     </section>
   );
 }

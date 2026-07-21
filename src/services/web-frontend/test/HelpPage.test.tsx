@@ -63,6 +63,22 @@ describe('HelpPage (Help Center)', () => {
     expect(screen.getByRole('link', { name: /PWERM: probability-weighted scenarios/ })).toBeInTheDocument();
   });
 
+  it('renders a "Go to the feature" link for articles with a route', async () => {
+    mockArticles();
+    renderAt('/help/debt-valuation-overview');
+    expect(
+      await screen.findByRole('heading', { name: 'Debt valuation engine', level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Go to the feature/ })).toHaveAttribute('href', '/debt');
+  });
+
+  it('omits the feature link for articles without a route', async () => {
+    mockArticles();
+    renderAt('/help/methodology-opm');
+    await screen.findByRole('heading', { name: 'Option Pricing Method (OPM)', level: 1 });
+    expect(screen.queryByRole('link', { name: /Go to the feature/ })).toBeNull();
+  });
+
   it('shows a not-found state for an unknown slug', async () => {
     mockArticles();
     renderAt('/help/does-not-exist');

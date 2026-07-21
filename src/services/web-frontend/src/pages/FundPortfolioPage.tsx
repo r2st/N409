@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import { Button, EmptyState, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../components/ui';
+import { HelpIcon } from '../components/HelpIcon';
 
 /**
  * ASC 820 Fund Portfolio (feature: ASC 820 Fund Holdings). Distinct from the
@@ -117,7 +118,10 @@ export function FundPortfolioPage() {
     <div className="mx-auto max-w-5xl space-y-6 p-1">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-ink-800">Fund Portfolios</h1>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold text-ink-800">
+            Fund Portfolios
+            <HelpIcon article="fund-holdings-overview" label="Help: Fund holdings & ASC 820" />
+          </h1>
           <p className="mt-1 text-sm text-ink-500">ASC 820 fair-value marks, NAV and LP waterfall for investment funds.</p>
         </div>
         <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : 'New fund'}</Button>
@@ -258,7 +262,10 @@ function FundDetailView({ fundId }: { fundId: string }) {
                 {['common', 'preferred', 'safe', 'note', 'warrant', 'other'].map((s) => <option key={s} value={s}>{s}</option>)}
               </Select>
             </Field>
-            <Field label="Default mark method">
+            <Field
+              label="Default mark method"
+              tooltip="Sets the ASC 820 fair-value level: Market = Level 1 (quoted price), Last round = Level 2 (observable), Calibrated OPM and Cost = Level 3 (model / unobservable). Level 3 marks get the most auditor scrutiny."
+            >
               <Select value={posForm.mark_method} onChange={(e) => setPosForm({ ...posForm, mark_method: e.target.value })}>
                 <option value="cost">Cost</option>
                 <option value="market">Market (L1)</option>
@@ -330,7 +337,7 @@ function PositionRow({ fundId, position, currency, onChange }: { fundId: string;
         <div className="space-y-3 border-t border-paper-200 p-3">
           {error && <ErrorNote>{error}</ErrorNote>}
           <form onSubmit={addMark} className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            <Field label="Date"><TextInput value={markForm.measurement_date} onChange={(e) => setMarkForm({ ...markForm, measurement_date: e.target.value })} /></Field>
+            <Field label="Date" tooltip="Measurement date for this mark. For a calibrated OPM, this is the calibration date the model is anchored to — usually the last observable transaction, such as the round the fund invested in."><TextInput value={markForm.measurement_date} onChange={(e) => setMarkForm({ ...markForm, measurement_date: e.target.value })} /></Field>
             <Field label="Method">
               <Select value={markForm.method} onChange={(e) => setMarkForm({ ...markForm, method: e.target.value })}>
                 <option value="market">Market (L1)</option>
@@ -406,13 +413,19 @@ function WaterfallCard({ fundId, lpTerms, currency, onSaved }: { fundId: string;
 
   return (
     <div className="rounded-lg border border-paper-200 bg-white p-4">
-      <h3 className="mb-3 text-sm font-semibold text-ink-700">LP waterfall calculator</h3>
+      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-ink-700">
+        LP waterfall calculator
+        <InfoTooltip
+          label="About the LP waterfall"
+          text="Distributes proceeds through the standard tiers, in order: return of capital to LPs, the preferred return (hurdle), an optional GP catch-up, then the carry split. Any GP overpayment across the fund’s life shows as a clawback."
+        />
+      </h3>
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Field label="Committed"><TextInput value={terms.committed_capital} onChange={(e) => setTerms({ ...terms, committed_capital: e.target.value })} /></Field>
         <Field label="Contributed"><TextInput value={terms.contributed_capital} onChange={(e) => setTerms({ ...terms, contributed_capital: e.target.value })} /></Field>
-        <Field label="Pref return"><TextInput value={terms.preferred_return_rate} onChange={(e) => setTerms({ ...terms, preferred_return_rate: e.target.value })} /></Field>
-        <Field label="Carry"><TextInput value={terms.carry_pct} onChange={(e) => setTerms({ ...terms, carry_pct: e.target.value })} /></Field>
+        <Field label="Pref return" tooltip="The LP hurdle rate (e.g. 0.08 = 8%). LPs earn this preferred return on contributed capital before the GP shares in profits."><TextInput value={terms.preferred_return_rate} onChange={(e) => setTerms({ ...terms, preferred_return_rate: e.target.value })} /></Field>
+        <Field label="Carry" tooltip="The GP’s carried-interest percentage — its share of profits above the hurdle (e.g. 0.20 = 20%, the ‘20’ in a 20% carry / 80% LP split)."><TextInput value={terms.carry_pct} onChange={(e) => setTerms({ ...terms, carry_pct: e.target.value })} /></Field>
       </div>
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className="flex items-center gap-2 text-sm text-ink-600"><input type="checkbox" checked={terms.gp_catch_up} onChange={(e) => setTerms({ ...terms, gp_catch_up: e.target.checked })} /> GP catch-up</label>

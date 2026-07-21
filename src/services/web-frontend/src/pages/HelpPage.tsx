@@ -47,6 +47,8 @@ interface UnifiedArticle {
   bodyHtml?: string;
   related?: string[];
   updatedAt?: string;
+  /** In-app destination for the feature this article documents. */
+  route?: string;
 }
 
 function fromStatic(a: HelpArticleContent): UnifiedArticle {
@@ -61,6 +63,7 @@ function fromStatic(a: HelpArticleContent): UnifiedArticle {
     source: 'static',
     body: a.body,
     related: a.related,
+    route: a.route,
   };
 }
 
@@ -188,6 +191,14 @@ export function HelpPage() {
         <div className="overline text-ink-400">{article.categoryLabel}</div>
         <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">{article.title}</h1>
         {article.summary && <p className="mt-2 text-sm text-ink-500">{article.summary}</p>}
+        {article.route && (
+          <Link
+            to={article.route}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-bond-600 px-3 py-1.5 text-sm font-semibold text-paper-50 hover:bg-bond-700"
+          >
+            Go to the feature →
+          </Link>
+        )}
 
         <div className="mt-6">
           {article.source === 'static' ? (
