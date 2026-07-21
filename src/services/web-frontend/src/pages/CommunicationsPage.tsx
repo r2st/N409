@@ -20,14 +20,34 @@ const CONDITIONS = [
 function ChannelBadge({ channel }: { channel: 'email' | 'sms' }) {
   return (
     <span
-      className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
         channel === 'sms'
           ? 'border-violet-200 bg-violet-50 text-violet-800'
           : 'border-sky-200 bg-sky-50 text-sky-800'
       }`}
     >
       {channel.toUpperCase()}
+      {channel === 'sms' && (
+        <span className="rounded-sm bg-violet-200/70 px-1 text-[0.6rem] font-bold tracking-wide text-violet-900 uppercase">
+          Preview
+        </span>
+      )}
     </span>
+  );
+}
+
+/**
+ * SMS has no real delivery provider yet — the backend only logs sends
+ * (SMS_MODE=log). Surface that wherever an SMS channel is chosen so ops don't
+ * assume texts are actually going out (P2-4).
+ */
+function SmsPreviewNote() {
+  return (
+    <p className="mt-2 rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
+      <strong>SMS is in preview.</strong> There is no live SMS provider connected yet — messages on
+      this channel are recorded in the service log but not delivered to phones. Email delivery is
+      unaffected.
+    </p>
   );
 }
 
@@ -116,10 +136,11 @@ function TemplateEditor({
         <Field label="Channel">
           <Select value={channel} onChange={(e) => setChannel(e.target.value as 'email' | 'sms')} disabled={!isNew}>
             <option value="email">Email</option>
-            <option value="sms">SMS</option>
+            <option value="sms">SMS (preview)</option>
           </Select>
         </Field>
       </div>
+      {channel === 'sms' && <SmsPreviewNote />}
       <Field label="Description">
         <TextInput value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this template is for" />
       </Field>
@@ -353,7 +374,7 @@ function AutoEmailEditor({
             }}
           >
             <option value="email">Email</option>
-            <option value="sms">SMS</option>
+            <option value="sms">SMS (preview)</option>
           </Select>
         </Field>
         <Field label="Template">
@@ -399,6 +420,7 @@ function AutoEmailEditor({
           <TextInput type="number" min={1} max={10} value={maxSends} onChange={(e) => setMaxSends(Number(e.target.value))} />
         </Field>
       </div>
+      {channel === 'sms' && <SmsPreviewNote />}
       <label className="flex items-center gap-2 text-sm text-ink-700">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         Enabled

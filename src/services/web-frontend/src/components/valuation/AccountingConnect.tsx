@@ -148,6 +148,11 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
                   </span>
                 )}
               </div>
+              {!p.import_supported && (
+                <div className="mt-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[0.65rem] font-semibold text-amber-800">
+                  Connect only — import coming soon
+                </div>
+              )}
               {connected && p.connection!.external_org_name && (
                 <div className="mt-1 truncate text-xs text-ink-500">{p.connection!.external_org_name}</div>
               )}

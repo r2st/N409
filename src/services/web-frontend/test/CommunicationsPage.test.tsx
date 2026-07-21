@@ -91,6 +91,28 @@ describe('CommunicationsPage', () => {
     expect(screen.getByText('Disabled')).toBeInTheDocument();
   });
 
+  it('marks the SMS channel as preview in the badge (P2-4)', async () => {
+    mockApi();
+    renderPage();
+    await screen.findByText('sms_payment_reminder');
+    // The SMS template's channel badge carries a "Preview" marker.
+    expect(screen.getByText('Preview')).toBeInTheDocument();
+  });
+
+  it('warns that SMS is preview-only when composing an SMS template (P2-4)', async () => {
+    const user = userEvent.setup();
+    mockApi();
+    renderPage();
+    await screen.findByText('draft_ready');
+
+    await user.click(screen.getByRole('button', { name: 'New template' }));
+    // Email is the default channel — no preview warning yet.
+    expect(screen.queryByText(/SMS is in preview/i)).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole('combobox'), 'sms');
+    expect(await screen.findByText(/SMS is in preview/i)).toBeInTheDocument();
+  });
+
   it('shows auto email campaigns with schedule summary on the Auto emails tab', async () => {
     const user = userEvent.setup();
     mockApi();

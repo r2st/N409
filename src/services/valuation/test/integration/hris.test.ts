@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { listGrants } from '../../src/repos/grants.js';
 import { signCapTableSyncState } from '../../src/auth/jwt.js';
+import { runDueHrisSyncs } from '../../src/routes/hris.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -121,5 +122,52 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       headers: authHeader(client.token),
     });
     expect(res.statusCode).toBe(403);
+  });
+
+  it('runs due HRIS syncs with bounded concurrency and isolates a failing one (P2-7)', async () => {
+    const N = 6;
+    const vals = [];
+    for (let i = 0; i < N; i++) {
+      vals.push(await connectedValuation());
+    }
+    await ctx.pool.query(`UPDATE hris_connections SET next_sync_at = now() + interval '30 days'`);
+    await ctx.pool.query(
+      `UPDATE hris_connections
+         SET sync_frequency = 'weekly', next_sync_at = now() - interval '1 hour'
+       WHERE valuation_id = ANY($1)`,
+      [vals.map((v) => v.id)],
+    );
+
+    let inFlight = 0;
+    let peak = 0;
+    let rosterCalls = 0;
+    const trackingFetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/token')) return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
+      if (u.includes('/employees')) {
+        rosterCalls += 1;
+        const myCall = rosterCalls;
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 15));
+        inFlight -= 1;
+        if (myCall === 2) return jsonResponse({ error: 'boom' }, 500);
+        return jsonResponse(ROSTER);
+      }
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const warnings: unknown[] = [];
+    const processed = await runDueHrisSyncs({
+      pool: ctx.pool,
+      fetchFn: trackingFetch as unknown as typeof fetch,
+      log: { warn: (o) => warnings.push(o) },
+    });
+
+    expect(rosterCalls).toBe(N);
+    expect(processed).toBe(N - 1);
+    expect(warnings).toHaveLength(1);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
   });
 });

@@ -82,6 +82,16 @@ describe('AccountingConnect (§23)', () => {
     expect(screen.getByRole('button', { name: 'Import financials' })).toBeInTheDocument();
   });
 
+  it('flags connect-only providers with a "coming soon" badge (P2-3)', async () => {
+    mockApi();
+    renderComponent();
+
+    await screen.findByText('Wave');
+    // Exactly one provider in the fixture is import-unsupported (Wave), so the
+    // honesty badge must appear exactly once — not on Xero or QuickBooks.
+    expect(screen.getAllByText('Connect only — import coming soon')).toHaveLength(1);
+  });
+
   it('starts the OAuth flow via the authorize URL', async () => {
     const user = userEvent.setup();
     mockApi({

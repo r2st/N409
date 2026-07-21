@@ -172,4 +172,62 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     const saved = await findCapTable(ctx.pool, v.id);
     expect(saved?.entries.length).toBe(3);
   });
+
+  it('runs due syncs with bounded concurrency and isolates a failing one (P2-7)', async () => {
+    payload = CARTA_V1;
+    const N = 6;
+    const vals = [];
+    for (let i = 0; i < N; i++) {
+      const v = await seedValuation();
+      await connect(v.id);
+      vals.push(v);
+    }
+    // Make exactly these N connections due (push everything else into the future
+    // first so leftovers from earlier tests can't inflate the batch).
+    await ctx.pool.query(`UPDATE cap_table_connections SET next_sync_at = now() + interval '30 days'`);
+    await ctx.pool.query(
+      `UPDATE cap_table_connections
+         SET sync_frequency = 'weekly', next_sync_at = now() - interval '1 hour'
+       WHERE valuation_id = ANY($1)`,
+      [vals.map((v) => v.id)],
+    );
+
+    let inFlight = 0;
+    let peak = 0;
+    let capCalls = 0;
+    const trackingFetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('/oauth/token')) {
+        return jsonResponse({ access_token: 'tok', refresh_token: 'ref', expires_in: 3600, company_id: 'co_1' });
+      }
+      if (u.includes('/capitalization')) {
+        capCalls += 1;
+        const myCall = capCalls;
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        // Hold the slot briefly so overlapping calls are observable.
+        await new Promise((r) => setTimeout(r, 15));
+        inFlight -= 1;
+        // Fail exactly one connection to prove failures don't abort the batch.
+        if (myCall === 2) return jsonResponse({ error: 'boom' }, 500);
+        return jsonResponse(CARTA_V1);
+      }
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const warnings: unknown[] = [];
+    const processed = await runDueCapTableSyncs({
+      pool: ctx.pool,
+      fetchFn: trackingFetch as unknown as typeof fetch,
+      log: { warn: (o) => warnings.push(o) },
+    });
+
+    // All N were attempted; the one 500 is isolated → N-1 succeed.
+    expect(capCalls).toBe(N);
+    expect(processed).toBe(N - 1);
+    expect(warnings).toHaveLength(1);
+    // Bounded to 4 in flight, yet genuinely concurrent (>1 at once).
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
+  });
 });

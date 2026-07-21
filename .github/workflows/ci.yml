@@ -38,8 +38,9 @@ jobs:
       - run: npm test
         env:
           JWT_SECRET: ci-only-secret-0123456789abcdef-0123456789
-      # Coverage measurement (audit T-2 P2). Report-only for now — a floor can be
-      # enforced per package once the baselines are agreed.
+      # Coverage with an enforced per-package floor (audit T-2 / P2-2). The
+      # thresholds live in each package's vitest config; `--coverage` makes these
+      # steps fail if coverage drops below the agreed baseline.
       - name: Coverage (shared)
         run: npx vitest run --coverage --coverage.reporter=text-summary
         working-directory: src/packages/shared

@@ -2,6 +2,11 @@
  * Per-API-key rate limiting for the partner API (improvement 6). Fixed-window
  * counters in process memory — the deployment is a single host/process, so
  * there is no shared-state problem; if that changes this moves to Redis.
+ *
+ * NOTE (P2-1): This in-memory limiter is only correct for a single-process/
+ * single-box deployment. Before scaling horizontally (multiple app instances
+ * behind a load balancer), move the counters to a shared store such as Redis
+ * so limits are enforced across the whole fleet rather than per process.
  */
 
 export interface RateLimitResult {

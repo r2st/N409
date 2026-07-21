@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import threading
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -23,6 +24,15 @@ DEFAULT_MODELS = [
     "mistralai/mistral-small-3.2-24b-instruct:free",
 ]
 TIMEOUT_S = 90.0
+# Transient-failure retry policy (P2-8). A connect/transport error or a 5xx from
+# OpenRouter is usually momentary, so retry the same model a couple of times with
+# exponential backoff before falling through to the next candidate. 4xx (including
+# 429 rate-limits) are not retried here — model fallback already handles those.
+MAX_RETRIES = 2
+RETRY_BACKOFF_BASE_S = 0.5
+# httpx transport-layer failures (connect refused, DNS, timeouts, dropped
+# sockets) all derive from TransportError — treat them as retryable "connect errors".
+_RETRYABLE_HTTP_EXC = (httpx.TransportError,)
 # Per-call output ceiling (audit B-2 P2). Free tiers cap exposure today, but a
 # paid key + a runaway loop is uncapped without this. Override OPENROUTER_MAX_TOKENS.
 DEFAULT_MAX_TOKENS = 2000
@@ -132,6 +142,64 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _backoff_sleep(attempt: int) -> None:
+    """Exponential backoff between retries (attempt is 0-indexed)."""
+    time.sleep(RETRY_BACKOFF_BASE_S * (2**attempt))
+
+
+def _post_once(
+    http: httpx.Client, candidate: str, system: str, user: str
+) -> httpx.Response:
+    return http.post(
+        OPENROUTER_URL,
+        headers=_headers(),
+        json={
+            "model": candidate,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.1,
+            # Cap output so a runaway completion can't burn the key.
+            "max_tokens": max_output_tokens(),
+        },
+    )
+
+
+def _post_with_retry(
+    http: httpx.Client, candidate: str, system: str, user: str
+) -> httpx.Response:
+    """POST to one model, retrying transient failures (connect errors / 5xx).
+
+    Returns the final response (which may still be a non-200 the caller must
+    handle) or raises the last transport error after exhausting retries.
+    """
+    last_exc: httpx.HTTPError | None = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            resp = _post_once(http, candidate, system, user)
+        except _RETRYABLE_HTTP_EXC as exc:
+            last_exc = exc
+            if attempt < MAX_RETRIES:
+                _log.warning(
+                    "llm connect error, retrying",
+                    extra={"event": "llm_retry", "path": candidate, "status": attempt},
+                )
+                _backoff_sleep(attempt)
+                continue
+            raise
+        if resp.status_code >= 500 and attempt < MAX_RETRIES:
+            _log.warning(
+                "llm 5xx, retrying",
+                extra={"event": "llm_retry", "path": candidate, "status": resp.status_code},
+            )
+            _backoff_sleep(attempt)
+            continue
+        return resp
+    # Unreachable: the loop either returns a response or raises, but satisfy typing.
+    raise last_exc if last_exc else OpenRouterError(f"{candidate}: retries exhausted")
+
+
 def chat(
     system: str, user: str, *, model: str | None = None, client: httpx.Client | None = None
 ) -> LlmResult:
@@ -149,20 +217,7 @@ def chat(
     try:
         for candidate in configured_models(preferred=model):
             try:
-                resp = http.post(
-                    OPENROUTER_URL,
-                    headers=_headers(),
-                    json={
-                        "model": candidate,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user},
-                        ],
-                        "temperature": 0.1,
-                        # Cap output so a runaway completion can't burn the key.
-                        "max_tokens": max_output_tokens(),
-                    },
-                )
+                resp = _post_with_retry(http, candidate, system, user)
             except httpx.HTTPError as exc:
                 errors.append(f"{candidate}: {exc}")
                 continue

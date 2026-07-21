@@ -59,5 +59,16 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['test/**/*.test.{ts,tsx}'],
     setupFiles: ['test/setup.ts'],
+    coverage: {
+      // Enforced coverage floor (audit P2-2). Set at the current measured level
+      // (a point or two below) so CI can't silently regress — the TS analogue of
+      // the Python services' `--cov-fail-under=80`. Ratchet upward over time.
+      thresholds: {
+        lines: 65,
+        statements: 65,
+        functions: 52,
+        branches: 77,
+      },
+    },
   },
 });

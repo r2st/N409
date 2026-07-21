@@ -14,5 +14,16 @@ export default defineConfig({
     fileParallelism: false,
     testTimeout: 30000,
     hookTimeout: 60000,
+    coverage: {
+      // Enforced coverage floor (audit P2-2). Set at the current measured level
+      // (a point or two below) so CI can't silently regress — the TS analogue of
+      // the Python services' `--cov-fail-under=80`. Ratchet upward over time.
+      thresholds: {
+        lines: 87,
+        statements: 87,
+        functions: 89,
+        branches: 75,
+      },
+    },
   },
 });

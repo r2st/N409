@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
+import pLimit from 'p-limit';
 import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
@@ -158,20 +159,29 @@ export async function runDueCapTableSyncs(deps: {
 }): Promise<number> {
   const fetchFn = deps.fetchFn ?? fetch;
   const due = await findDueConnections(deps.pool);
-  let processed = 0;
-  for (const connection of due) {
-    try {
-      await syncCapTableConnection(
-        { pool: deps.pool, fetchFn },
-        connection,
-        { apply: true, actorId: connection.connected_by ?? connection.id },
-      );
-      processed++;
-    } catch (err) {
-      deps.log?.warn({ err, connectionId: connection.id }, 'scheduled cap-table sync failed');
-    }
-  }
-  return processed;
+  // Bounded concurrency (P2-7): connections are independent, so run up to 4 in
+  // parallel rather than strictly serially — capped to avoid hammering the
+  // providers' APIs and the DB pool. A failing connection is logged and counted
+  // as unprocessed without aborting the others.
+  const limit = pLimit(4);
+  const results = await Promise.all(
+    due.map((connection) =>
+      limit(async () => {
+        try {
+          await syncCapTableConnection(
+            { pool: deps.pool, fetchFn },
+            connection,
+            { apply: true, actorId: connection.connected_by ?? connection.id },
+          );
+          return true;
+        } catch (err) {
+          deps.log?.warn({ err, connectionId: connection.id }, 'scheduled cap-table sync failed');
+          return false;
+        }
+      }),
+    ),
+  );
+  return results.filter(Boolean).length;
 }
 
 export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableSyncDeps): void {
