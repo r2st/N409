@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
 
@@ -110,7 +111,10 @@ export function AdminSsoPage() {
 
   return (
     <div className="max-w-2xl">
-      <div className="overline text-ink-400">Admin</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        Admin
+        <HelpIcon article="sso-overview" />
+      </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Enterprise SSO</h1>
 
       {error && <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>}

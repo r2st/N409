@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError, tokenExpiry } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
@@ -623,7 +624,10 @@ export function SettingsPage() {
 
   return (
     <div className="max-w-2xl">
-      <div className="overline text-ink-400">Account</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        Account
+        <HelpIcon article="settings-overview" />
+      </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Settings</h1>
 
       <section className="mt-8 rounded-lg border border-paper-300 bg-white p-6 shadow-card">

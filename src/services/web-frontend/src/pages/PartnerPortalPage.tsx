@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { computeStats } from '../lib/stats';
 import { formatDate, formatDateTime } from '../lib/format';
@@ -86,7 +87,10 @@ export function PartnerPortalPage() {
 
   return (
     <div>
-      <div className="overline text-ink-400">Partner portal</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        Partner portal
+        <HelpIcon article="client-portal-overview" />
+      </div>
       <h1 className="mt-1 flex items-center gap-3 font-display text-3xl font-semibold text-ink-900">
         {org?.logo_url && (
           <img src={org.logo_url} alt={`${org.name} logo`} className="h-9 w-9 rounded object-contain" />

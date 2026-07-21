@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import { KindBadge, EmptyState, ErrorNote, Spinner } from '../components/ui';
 import { MONITOR_TONE } from './valuation/MonitoringTab';
@@ -38,7 +39,10 @@ export function MonitorsPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="font-display text-3xl font-semibold text-ink-900">Monitored valuations</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="font-display text-3xl font-semibold text-ink-900">Monitored valuations</h1>
+          <HelpIcon article="monitoring-overview" className="h-6 w-6 text-sm" />
+        </div>
         <p className="mt-1 text-sm text-ink-400">
           {monitors.length} monitored · {attention} need attention
         </p>

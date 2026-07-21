@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import { Button, ErrorNote, Select, Spinner, TextInput } from '../components/ui';
 
@@ -110,7 +111,10 @@ export function AdminRetentionPage() {
 
   return (
     <div className="max-w-4xl">
-      <div className="overline text-ink-400">Admin</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        Admin
+        <HelpIcon article="data-retention-overview" />
+      </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Data retention</h1>
       {error && <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>}
       {note && <div className="mt-4 rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">{note}</div>}

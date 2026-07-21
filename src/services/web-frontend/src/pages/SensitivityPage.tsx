@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { formatMoney } from '../lib/format';
 import type { AxisTable, SensitivityAxis, SensitivityResult } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
@@ -151,7 +152,10 @@ export function SensitivityPage() {
         ← Back to valuation
       </Link>
       <div className="mt-3">
-        <div className="overline text-ink-400">OPM stress analysis</div>
+        <div className="overline flex items-center gap-1.5 text-ink-400">
+          OPM stress analysis
+          <HelpIcon article="sensitivity-overview" />
+        </div>
         <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Sensitivity dashboard</h1>
       </div>
 

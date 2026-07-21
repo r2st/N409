@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS } from '../lib/types';
 import type { Valuation, ValuationKind } from '../lib/types';
@@ -60,7 +61,10 @@ export function NewValuationPage() {
 
   return (
     <div className="max-w-2xl">
-      <div className="overline text-ink-400">New engagement</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        New engagement
+        <HelpIcon article="creating-a-valuation" />
+      </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Start a valuation</h1>
       <p className="mt-1 text-sm text-ink-400">
         Choose the opinion you need — an analyst-reviewed, engine-computed report follows.

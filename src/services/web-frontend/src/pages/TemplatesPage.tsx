@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime, KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS } from '../lib/types';
 import type { ReportTemplate } from '../lib/types';
@@ -83,7 +84,10 @@ export function TemplatesPage() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="overline text-ink-400">Operations</div>
+          <div className="overline flex items-center gap-1.5 text-ink-400">
+            Operations
+            <HelpIcon article="report-overview" />
+          </div>
           <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Report templates</h1>
         </div>
         <Button onClick={() => setCreating((v) => !v)}>{creating ? 'Cancel' : '+ New version'}</Button>

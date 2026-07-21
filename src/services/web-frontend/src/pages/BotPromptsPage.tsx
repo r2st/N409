@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { diffLines } from '../lib/diff';
 import { formatDateTime } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput, inputClass } from '../components/ui';
@@ -358,7 +359,10 @@ export function BotPromptsPage() {
 
   return (
     <div>
-      <h1 className="font-display text-3xl font-semibold text-ink-900">Bot prompts</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="font-display text-3xl font-semibold text-ink-900">Bot prompts</h1>
+        <HelpIcon article="ai-agents-overview" className="h-6 w-6 text-sm" />
+      </div>
       <p className="mt-2 max-w-2xl text-sm text-ink-500">
         Each AI pipeline runs with a registry-managed system prompt and an optional pinned
         OpenRouter model. Changes apply to the next run — no deploy needed.

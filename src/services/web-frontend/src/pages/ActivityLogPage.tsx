@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Select, Spinner, TextInput } from '../components/ui';
 
@@ -137,7 +138,10 @@ export function ActivityLogPage() {
 
   return (
     <div>
-      <div className="overline text-ink-400">Operations</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        Operations
+        <HelpIcon article="data-retention-overview" />
+      </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Activity log</h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-500">
         Every valuation mutation and admin console action, newest first. The log is append-only —

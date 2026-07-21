@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
 import { formatDateTime, formatMoney } from '../lib/format';
@@ -67,7 +68,10 @@ export function BillingPage() {
 
   return (
     <div>
-      <div className="overline text-ink-400">Account</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        Account
+        <HelpIcon article="billing-overview" />
+      </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Billing</h1>
       <p className="mt-2 text-sm text-ink-500">{scopeNote}</p>
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
 import { KindBadge, EmptyState, ErrorNote, Spinner } from '../components/ui';
 import { SLA_TONE } from './valuation/EngagementTab';
@@ -61,7 +62,10 @@ export function EngagementsPage() {
     <div>
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl font-semibold text-ink-900">Engagement pipeline</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold text-ink-900">Engagement pipeline</h1>
+            <HelpIcon article="engagement-overview" className="h-6 w-6 text-sm" />
+          </div>
           <p className="mt-1 text-sm text-ink-400">
             {engagements.length} active · {overdue} past SLA
           </p>

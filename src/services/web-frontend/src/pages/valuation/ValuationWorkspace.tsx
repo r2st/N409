@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, NavLink, Outlet, useOutletContext, useParams } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
@@ -7,6 +7,41 @@ import { REPORT_VISIBLE_STATES } from '../../lib/m2';
 import { useValuationStream, type Viewer } from '../../lib/realtime';
 import type { Valuation } from '../../lib/types';
 import { ErrorNote, KindBadge, Spinner, StateBadge } from '../../components/ui';
+import { HelpIcon } from '../../components/HelpIcon';
+
+/**
+ * Maps each workspace tab (keyed by its sub-path, '' = Overview) to the help
+ * article that explains it. Feeds the single contextual "?" in the header so
+ * every tab surfaces a help link without each tab wiring its own icon. Tabs
+ * without a dedicated article fall back to the general valuations overview.
+ */
+export const TAB_HELP: Record<string, string> = {
+  '': 'valuations-overview',
+  progress: 'engagement-overview',
+  intake: 'creating-a-valuation',
+  company: 'comparables-overview',
+  documents: 'financial-data-overview',
+  'cap-table': 'cap-table-basics',
+  model: 'financial-data-overview',
+  params: 'assumptions-overview',
+  workbook: 'methodology-overview',
+  overwrites: 'assumptions-overview',
+  ai: 'ai-agents-overview',
+  engagement: 'engagement-overview',
+  tasks: 'engagement-overview',
+  calculations: 'methodology-overview',
+  qa: 'health-checks-overview',
+  health: 'health-checks-overview',
+  decisions: 'board-approval-overview',
+  scenarios: 'pwerm-overview',
+  bridge: 'value-bridge-overview',
+  analytics: 'sensitivity-overview',
+  report: 'report-overview',
+  grants: 'grants-overview',
+  asc718: 'asc718-public-overview',
+  monitoring: 'monitoring-overview',
+  package: 'report-overview',
+};
 
 export interface WorkspaceContext {
   valuation: Valuation;
@@ -66,6 +101,7 @@ function Tab({ to, label, end = false }: { to: string; label: string; end?: bool
 export function ValuationWorkspace() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
+  const location = useLocation();
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { viewers, commentTick } = useValuationStream(id ?? '');
@@ -105,6 +141,10 @@ export function ValuationWorkspace() {
   const showReportTab = ops || REPORT_VISIBLE_STATES.has(valuation.state);
   const base = `/valuations/${valuation.id}`;
 
+  // Active tab = first path segment after the workspace base ('' on Overview).
+  const activeTab = location.pathname.slice(base.length).replace(/^\//, '').split('/')[0] ?? '';
+  const helpArticle = TAB_HELP[activeTab] ?? 'valuations-overview';
+
   return (
     <div>
       <Link to="/valuations" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
@@ -113,6 +153,12 @@ export function ValuationWorkspace() {
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <h1 className="font-display text-3xl font-semibold text-ink-900">{valuation.company_name}</h1>
+        <HelpIcon
+          key={helpArticle}
+          article={helpArticle}
+          label="Help for this tab"
+          className="h-6 w-6 text-sm"
+        />
         <KindBadge kind={valuation.kind} />
         <StateBadge state={valuation.state} />
         {valuation.waiting_on_client && (

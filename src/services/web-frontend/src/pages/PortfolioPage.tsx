@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 
 /** Engine equity/FMV values are in whole currency units (dollars), not cents. */
@@ -108,7 +109,10 @@ export function PortfolioPage() {
 
   return (
     <div className="max-w-5xl">
-      <div className="overline text-ink-400">Portfolio</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        Portfolio
+        <HelpIcon article="organizations-overview" />
+      </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Entities & funds</h1>
 
       {error && <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>}

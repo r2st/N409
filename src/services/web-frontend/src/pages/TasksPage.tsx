@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDate, KIND_LABELS, STATE_LABELS } from '../lib/format';
@@ -71,7 +72,10 @@ export function TasksPage() {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-3xl font-semibold text-ink-900">Review tasks</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold text-ink-900">Review tasks</h1>
+            <HelpIcon article="engagement-overview" className="h-6 w-6 text-sm" />
+          </div>
           <p className="mt-1 text-sm text-ink-500">
             The analyst → reviewer → sign-off pipeline across all valuations.
           </p>

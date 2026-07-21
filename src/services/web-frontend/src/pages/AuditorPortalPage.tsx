@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AuthShell } from '../components/AuthShell';
+import { HelpIcon } from '../components/HelpIcon';
 import { ErrorNote, Spinner } from '../components/ui';
 
 interface Section {
@@ -68,7 +69,10 @@ export function AuditorPortalPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
-      <div className="overline text-ink-400">Auditor portal · read-only</div>
+      <div className="overline flex items-center gap-1.5 text-ink-400">
+        Auditor portal · read-only
+        <HelpIcon article="auditor-portal-overview" />
+      </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">
         {bundle.valuation.company_name}
       </h1>
