@@ -1510,10 +1510,22 @@ export const FOUNDER_QUESTIONS: FounderQuestion[] = [
 
 export const HERO_KINDS = ['409A', 'ASC 820', 'Gift & Estate', 'EMI', 'QSBS', 'ESOP'];
 
+/**
+ * Landing-page stat strip. Every figure here is a *verifiable product fact* —
+ * the catalogue's own floor price, our published draft SLA, the number of
+ * report types we actually ship. Comparative claims ("2× faster than a
+ * traditional firm") are deliberately absent: they sit directly above our
+ * competitor comparison pages, and an unsubstantiated advertising comparison is
+ * exactly the kind of claim we would have to withdraw. Substantiate first, then
+ * add. `MIN_PRODUCT_PRICE_CENTS` derives from PRODUCTS so the headline number
+ * can never drift from the price the checkout charges.
+ */
+export const MIN_PRODUCT_PRICE_CENTS = Math.min(...PRODUCTS.map((p) => p.priceCents));
+
 export const STATS = [
-  { value: '2×', label: 'faster than a traditional firm' },
   { value: '24h', label: 'to your first draft' },
-  { value: '13', label: 'report types, one platform' },
+  { value: String(PRODUCTS.length), label: 'report types, one platform' },
+  { value: `$${(MIN_PRODUCT_PRICE_CENTS / 100).toLocaleString('en-US')}`, label: 'flat, from' },
 ];
 
 export const HOW_IT_WORKS = [
@@ -1537,8 +1549,6 @@ export const HOW_IT_WORKS = [
 export const ACCOUNTING_PROVIDERS = ['QuickBooks', 'Xero', 'FreshBooks', 'Oracle NetSuite', 'Sage', 'Wave'];
 
 // ── Customer testimonials (409.ai gap #20) ────────────────────────────────────
-// Fictional companies — N409 is an independent clone, so these are illustrative
-// social proof rather than real 409.ai customer quotes.
 
 export interface Testimonial {
   quote: string;
@@ -1549,37 +1559,24 @@ export interface Testimonial {
   monogram: string;
 }
 
-export const TESTIMONIALS: Testimonial[] = [
-  {
-    quote:
-      'We had a board meeting in five days and needed a defensible strike price. The draft landed the next morning and the final passed our auditor without a single question.',
-    name: 'Priya Nadella',
-    role: 'CFO',
-    company: 'Verstack',
-    monogram: 'VS',
-  },
-  {
-    quote:
-      'Connecting our accounting software meant we never re-typed a number. The workbook showed exactly how every figure was built — our tax advisor loved that.',
-    name: 'Marcus Bellandi',
-    role: 'Co-founder & CEO',
-    company: 'Halden Robotics',
-    monogram: 'HR',
-  },
-  {
-    quote:
-      'We switched from a traditional firm that took six weeks. Same rigor, a fraction of the price, and I could watch the valuation progress in real time.',
-    name: 'Amara Osei',
-    role: 'Head of Finance',
-    company: 'Cadence Bio',
-    monogram: 'CB',
-  },
-];
+/**
+ * Real, permissioned customer quotes only — and therefore empty until we have
+ * some. This list previously held three invented quotes attributed to named
+ * people at invented companies under the heading "Hear it from our customers".
+ * On a live site that is a fabricated endorsement (FTC 16 CFR §255), and it is
+ * the single fastest way to lose a finance buyer who checks whether the
+ * companies exist. `TestimonialsSection` renders nothing while this is empty,
+ * and the landing page shows verifiable product proof instead.
+ *
+ * To add one: get written permission covering the quote, the person's name and
+ * role, and the company name, then append it here.
+ */
+export const TESTIMONIALS: Testimonial[] = [];
 
-// ── Trust-badge partner logos (409.ai gap #21) ────────────────────────────────
-// Placeholder wordmark badges for the accounting integrations we support. Real
-// vendor logos are trademarked; we render neutral text badges in brand-ish
-// accents instead so the "Trusted by" strip carries no third-party marks.
+// ── Accounting integrations strip (409.ai gap #21) ────────────────────────────
+// These are the accounting packages we *connect to*, not customers or partners
+// — the strip is labelled accordingly. Real vendor logos are trademarked, so we
+// render neutral text badges rather than shipping third-party marks.
 
 export interface PartnerLogo {
   name: string;
@@ -1596,25 +1593,27 @@ export const PARTNER_LOGOS: PartnerLogo[] = [
   { name: 'Wave', accent: 'text-cyan-600' },
 ];
 
-// ── Booking + demo video (409.ai gap #22) ─────────────────────────────────────
-// External links; kept here so landing and product pages share one source.
-
-export const CALENDLY_URL = 'https://calendly.com/n409-demo/30min';
-/** YouTube privacy-enhanced embed host (no cookies until the user hits play). */
-export const DEMO_VIDEO_EMBED_URL = 'https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ';
-export const DEMO_VIDEO_TITLE = 'N409 product demo';
-
-// ── Social media (409.ai gap #29) ─────────────────────────────────────────────
-
-export interface SocialLink {
-  label: string;
-  href: string;
-}
-
-export const SOCIAL_LINKS: SocialLink[] = [
-  { label: 'X (Twitter)', href: 'https://twitter.com/n409valuations' },
-  { label: 'LinkedIn', href: 'https://www.linkedin.com/company/n409valuations/' },
+/**
+ * Verifiable proof points shown in place of testimonials. Each one describes
+ * something the delivered report actually contains, so it needs no third-party
+ * attestation to stand behind.
+ */
+export const PROOF_POINTS: Array<{ title: string; body: string }> = [
+  {
+    title: 'Dual analyst sign-off',
+    body: 'Every report is prepared and independently reviewed by credentialed analysts, then signed by both. No report leaves the platform on a model alone.',
+  },
+  {
+    title: 'Every number traces to a source',
+    body: 'The workbook ships with the report: each figure links back to the document, connected ledger, or model assumption it came from — the trail an auditor asks for.',
+  },
+  {
+    title: 'Methodology in the open',
+    body: 'Income, market, and asset approaches, the OPM backsolve, and the DLOM models are all documented in the appendix with their inputs. Nothing is a black box.',
+  },
 ];
+
+export const DEMO_VIDEO_TITLE = 'N409 product demo';
 
 // ── Pricing FAQ (409.ai §24 — FAQ structured data) ────────────────────────────
 // Source for the pricing page's FAQPage JSON-LD. Kept in the data module so the

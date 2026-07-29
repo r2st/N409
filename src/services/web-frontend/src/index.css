@@ -1,3 +1,9 @@
+/* Both families ship latin, latin-ext and vietnamese faces, each scoped by
+   unicode-range — so a browser only ever downloads the subset a page actually
+   uses (latin, here). The extra files cost build output, not bandwidth. The
+   latin faces are preloaded from the document head at build time (see
+   vite.config.ts) because CSS-referenced fonts are otherwise discovered late,
+   which delays the display-font headline that is our LCP element. */
 @import '@fontsource-variable/public-sans';
 @import '@fontsource-variable/fraunces';
 @import 'tailwindcss';

@@ -62,6 +62,14 @@ export interface TestApp {
   teardown: () => Promise<void>;
 }
 
+/**
+ * Stands in for the AI/engine `/ready` probes. `status` drives every probe;
+ * pass 503 (or throw) to model a downstream outage.
+ */
+export function stubReadinessFetch(status = 200): typeof fetch {
+  return (async () => new Response(JSON.stringify({ status: 'ready' }), { status })) as typeof fetch;
+}
+
 export async function setupTestApp(
   env: Record<string, string> = {},
   deps: Partial<Parameters<typeof buildApp>[0]> = {},
@@ -74,7 +82,15 @@ export async function setupTestApp(
     LOG_LEVEL: 'silent',
     ...env,
   });
-  const app = buildApp({ config, pool: db.pool, ...deps });
+  const app = buildApp({
+    config,
+    pool: db.pool,
+    // /ready probes the AI and engine services, which no integration suite runs.
+    // Default them to "up" so only the tests that care about readiness have to
+    // think about them; those pass their own readinessFetch below.
+    readinessFetch: stubReadinessFetch(),
+    ...deps,
+  });
   await app.ready();
   return {
     app,

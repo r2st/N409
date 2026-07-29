@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Button, ErrorNote, Field, TextInput } from '../../components/ui';
 import { Seo } from '../../components/Seo';
+import { siteConfig } from '../../lib/siteConfig';
 
 /** About / contact / legal pages (409.ai §22.7) — static content. */
 
@@ -181,6 +182,7 @@ function ContactForm() {
 }
 
 export function ContactPage() {
+  const { partnersEmail } = siteConfig();
   return (
     <Prose
       overline="Company"
@@ -193,8 +195,22 @@ export function ContactPage() {
       <div className="rounded-lg border border-paper-300 bg-paper-50 p-6 text-sm">
         <p className="text-ink-600">
           Existing client? Use the in-app support widget from your dashboard — it routes straight to
-          the team working on your valuation. For partnerships, reach us at{' '}
-          <span className="font-semibold text-ink-900">partners@n409.example</span>.
+          the team working on your valuation.
+          {/* Addresses are environment-configured; when none is set we don't
+              print a mailbox that would bounce (see lib/siteConfig.ts). */}
+          {partnersEmail && (
+            <>
+              {' '}
+              For partnerships, reach us at{' '}
+              <a
+                href={`mailto:${partnersEmail}`}
+                className="font-semibold break-words text-bond-600 hover:text-bond-700"
+              >
+                {partnersEmail}
+              </a>
+              .
+            </>
+          )}
         </p>
       </div>
       <p>
@@ -249,6 +265,7 @@ export function TermsPage() {
 }
 
 export function PrivacyPage() {
+  const { privacyEmail } = siteConfig();
   return (
     <Prose
       overline="Legal"
@@ -278,8 +295,28 @@ export function PrivacyPage() {
       <h2 className="font-display text-xl font-semibold text-ink-900">Retention &amp; access</h2>
       <p>
         Engagement records are retained to support the audit-defensibility of delivered reports. You
-        may request a copy or deletion of your personal data at any time via{' '}
-        <span className="font-semibold">privacy@n409.example</span>.
+        may request a copy or deletion of your personal data at any time
+        {privacyEmail ? (
+          <>
+            {' '}
+            via{' '}
+            <a
+              href={`mailto:${privacyEmail}`}
+              className="font-semibold break-words text-bond-600 hover:text-bond-700"
+            >
+              {privacyEmail}
+            </a>
+          </>
+        ) : (
+          <>
+            {' '}
+            through our{' '}
+            <Link to="/contact" className="font-semibold text-bond-600 hover:text-bond-700">
+              contact form
+            </Link>
+          </>
+        )}
+        .
       </p>
     </Prose>
   );

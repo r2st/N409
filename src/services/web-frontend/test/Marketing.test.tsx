@@ -64,7 +64,10 @@ describe('marketing data (§22)', () => {
 describe('landing page', () => {
   it('renders hero, CTA, and the product grid', () => {
     renderAt('/');
-    expect(screen.getByRole('link', { name: 'Start my valuation' })).toHaveAttribute('href', '/register');
+    // Hero and closing CTA now share one label; both must reach registration.
+    const startLinks = screen.getAllByRole('link', { name: 'Start my valuation' });
+    expect(startLinks.length).toBeGreaterThanOrEqual(2);
+    expect(startLinks.every((el) => el.getAttribute('href') === '/register')).toBe(true);
     expect(screen.getByText('Thirteen report types, one platform')).toBeInTheDocument();
     expect(screen.getAllByText('409A Valuation').length).toBeGreaterThan(0);
     // Accounting integrations strip (§23) + the partner-logo trust badges
@@ -182,9 +185,12 @@ describe('pricing page depth (gaps #31/#32/#33)', () => {
     renderAt('/pricing');
     expect(screen.getByText('Pricing & valuation questions')).toBeInTheDocument();
     expect(screen.getByText('Leverage our AI-powered valuation technology')).toBeInTheDocument();
-    // The firms tier CTA is a mailto (a second "Get in touch" links to /contact).
+    // With no partner address configured in this environment, the firms tier
+    // CTA routes through the contact form rather than a mailto that bounces.
+    // (MarketingExtras covers the configured branch.)
     const contactLinks = screen.getAllByRole('link', { name: 'Get in touch' });
-    expect(contactLinks.some((el) => el.getAttribute('href')?.startsWith('mailto:'))).toBe(true);
+    expect(contactLinks.length).toBeGreaterThan(0);
+    expect(contactLinks.every((el) => el.getAttribute('href') === '/contact')).toBe(true);
     expect(screen.getByText(`$${AUDIT_DEFENCE_RATE_USD}/hour`)).toBeInTheDocument();
   });
 });

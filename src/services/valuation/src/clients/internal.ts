@@ -32,6 +32,37 @@ export function internalAuthHeaders(): Record<string, string> {
   return token ? { 'x-internal-token': token } : {};
 }
 
+/**
+ * Readiness probe for an internal service (`/ready`), used by this service's own
+ * /ready. Throws with a short, human-readable reason so registerHealth can put
+ * it straight into the response body.
+ *
+ * Deliberately short-timeout, no retries and no body parsing: a readiness check
+ * must answer fast and must not itself become a way to hang the health endpoint.
+ * The upstream's 503 is honoured — a downstream that knows it is broken (e.g.
+ * the AI service with a dead OpenRouter key) makes us not-ready too, which is
+ * the whole point of probing past `SELECT 1`.
+ */
+export async function probeReady(
+  service: string,
+  baseUrl: string,
+  opts: { timeoutMs?: number; fetchFn?: typeof fetch } = {},
+): Promise<void> {
+  const url = `${baseUrl.replace(/\/$/, '')}/ready`;
+  const doFetch = opts.fetchFn ?? fetch;
+  let res: Response;
+  try {
+    res = await doFetch(url, {
+      headers: internalAuthHeaders(),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 3000),
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'unreachable';
+    throw new Error(`${service} unreachable at ${url}: ${reason}`);
+  }
+  if (!res.ok) throw new Error(`${service} is not ready (HTTP ${res.status})`);
+}
+
 export async function postJson<T>(
   service: string,
   url: string,

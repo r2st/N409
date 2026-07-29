@@ -8,15 +8,30 @@ import {
   STATS,
   formatUsd,
 } from '../../lib/marketing';
-import { BookACallSection, PartnerLogos, TestimonialsSection } from './MarketingSections';
+import {
+  BookACallSection,
+  PartnerLogos,
+  ProofSection,
+  TestimonialsSection,
+} from './MarketingSections';
 import { Seo } from '../../components/Seo';
-import { SITE_TAGLINE, organizationJsonLd } from '../../lib/seo';
+import { pageMeta } from '../../lib/pageMeta';
+
+/** Longest hero word — sizes the rotator slot so the headline never reflows. */
+const WIDEST_HERO_KIND = HERO_KINDS.reduce((a, b) => (b.length > a.length ? b : a));
 
 /** Public landing page (409.ai §22.3). */
 export function LandingPage() {
   const [heroIndex, setHeroIndex] = useState(0);
 
   useEffect(() => {
+    // Honour prefers-reduced-motion: the headline settles on "409A" — the term
+    // that carries the page's search intent anyway — instead of cycling.
+    const reduced =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) return;
     const t = setInterval(() => setHeroIndex((i) => (i + 1) % HERO_KINDS.length), 2600);
     return () => clearInterval(t);
   }, []);
@@ -25,27 +40,30 @@ export function LandingPage() {
 
   return (
     <div>
-      <Seo
-        title="N409"
-        description={`${SITE_TAGLINE} AI-assisted intake, a transparent valuation engine, and analyst-signed reports across 13 report types.`}
-        path="/"
-        jsonLd={organizationJsonLd()}
-      />
+      <Seo {...pageMeta('/')!} />
       {/* Hero */}
       <section className="ledger-grid relative overflow-hidden bg-ink-900 text-paper-50">
         <div className="mx-auto max-w-6xl px-5 py-24 lg:py-32">
           <div className="overline mb-6 text-brass-400">Independent · Defensible · Audit-ready</div>
           <h1 className="max-w-3xl font-display text-4xl leading-[1.1] font-medium sm:text-6xl">
             Easier{' '}
-            <span className="text-brass-300 underline decoration-bond-500 decoration-2 underline-offset-8">
-              {HERO_KINDS[heroIndex]}
+            {/* The rotating word sits in a slot sized to the longest option, so
+                swapping it never reflows the headline (cumulative layout shift
+                is a Core Web Vital and this is the LCP element). */}
+            <span className="relative inline-grid align-bottom">
+              <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                {WIDEST_HERO_KIND}
+              </span>
+              <span className="col-start-1 row-start-1 justify-self-start text-brass-300 underline decoration-bond-500 decoration-2 underline-offset-8">
+                {HERO_KINDS[heroIndex]}
+              </span>
             </span>
             <br />
             valuations.
           </h1>
           <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink-300">
-            Get your expert-reviewed, audit-defensible valuation with a first draft in 24 hours —
-            starting at {formatUsd(minPrice)}.
+            An independent, audit-defensible 409A valuation — first draft in 24 hours, signed by two
+            credentialed analysts, from {formatUsd(minPrice)} flat.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-4">
             <Link
@@ -58,9 +76,9 @@ export function LandingPage() {
               Not sure which report? Take the quiz →
             </Link>
           </div>
-          <div className="mt-6 flex gap-5 text-xs text-ink-400">
+          <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-ink-400">
             <span>✓ No credit card required</span>
-            <span>✓ No commitment</span>
+            <span>✓ No subscription — one flat price per report</span>
           </div>
         </div>
         <div className="pointer-events-none absolute -right-40 -bottom-40 h-[28rem] w-[28rem] rounded-full bg-bond-700/25 blur-3xl" />
@@ -180,8 +198,10 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Testimonials (gap #20) */}
+      {/* Verifiable proof — always shown. Testimonials render above it only
+          once we hold real, permissioned quotes (gap #20). */}
       <TestimonialsSection />
+      <ProofSection />
 
       {/* Book a call + demo video (gap #22) */}
       <BookACallSection />
@@ -189,16 +209,29 @@ export function LandingPage() {
       {/* CTA */}
       <section className="ledger-grid bg-ink-900">
         <div className="mx-auto max-w-6xl px-5 py-20 text-center">
-          <h2 className="font-display text-3xl font-semibold text-paper-50">Put AI into action</h2>
+          <h2 className="font-display text-3xl font-semibold text-paper-50">
+            Price your options with confidence
+          </h2>
+          {/* "Start for free" would read as though the report itself is free.
+              What is actually free is everything up to checkout. */}
           <p className="mx-auto mt-3 max-w-md text-sm text-ink-300">
-            Start your valuation for free. Receive a draft report in just 24 hours.
+            Set up your valuation in about 15 minutes and see a draft within 24 hours. You only pay
+            when you&rsquo;re ready to proceed.
           </p>
-          <Link
-            to="/register"
-            className="mt-7 inline-block rounded-md bg-bond-600 px-7 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
-          >
-            Start my valuation!
-          </Link>
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-4">
+            <Link
+              to="/register"
+              className="inline-block rounded-md bg-bond-600 px-7 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+            >
+              Start my valuation
+            </Link>
+            <Link
+              to="/pricing"
+              className="text-sm font-semibold text-paper-50 hover:text-brass-300"
+            >
+              See pricing →
+            </Link>
+          </div>
         </div>
       </section>
     </div>

@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
+import { newUlid } from '@n409/shared';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { createCalculation } from '../../src/repos/calculations.js';
+import { findValuationsByIds } from '../../src/repos/valuations.js';
 
 const dbUp = await isDbAvailable();
 
@@ -163,5 +165,140 @@ describe.skipIf(!dbUp)('feature 10 — valuation monitoring', () => {
       headers: authHeader(client.token),
     });
     expect(res.statusCode).toBe(403);
+  });
+});
+
+/**
+ * The dashboard and the scan used to call findValuationById once per enabled
+ * monitor, so the number of round trips before any real work grew linearly with
+ * the number of monitored companies. These tests pin the batched fetch by
+ * counting queries, not just by checking the output still looks right.
+ */
+describe.skipIf(!dbUp)('feature 10 — monitoring fetches valuations in one query', () => {
+  let ctx: TestApp;
+  let app: FastifyInstance;
+  let pool: pg.Pool;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+  const monitored: string[] = [];
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ AUTO_PIPELINE: 'off', EMAIL_MODE: 'off' });
+    app = ctx.app;
+    pool = ctx.pool;
+    ops = await seedUser(ctx, { roles: ['reviewer'] });
+    const client = await seedUser(ctx, { roles: ['valuation_user'] });
+
+    for (let i = 0; i < 5; i++) {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: `BatchCo ${i}` },
+      });
+      const id = created.json().valuation.id as string;
+      await createCalculation(
+        pool,
+        {
+          valuationId: id,
+          engineVersion: 't',
+          status: 'succeeded',
+          inputs: {},
+          results: {},
+          equityValue: 1,
+          fmvPerShare: 2,
+          createdBy: ops.id,
+        },
+        { actorType: 'human', actorId: ops.id },
+      );
+      await pool.query("UPDATE valuations SET state = 'published' WHERE id = $1", [id]);
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/monitor`,
+        headers: authHeader(ops.token),
+      });
+      monitored.push(id);
+    }
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  /** Runs `fn` with pool.query instrumented, returning every SQL string issued. */
+  const recordQueries = async (fn: () => Promise<unknown>): Promise<string[]> => {
+    const seen: string[] = [];
+    type QueryFn = (...args: unknown[]) => unknown;
+    const spied = pool as unknown as { query: QueryFn };
+    const original = spied.query.bind(pool) as QueryFn;
+    spied.query = (...args: unknown[]) => {
+      const [first] = args;
+      seen.push(typeof first === 'string' ? first : String((first as { text?: string })?.text ?? ''));
+      return original(...args);
+    };
+    try {
+      await fn();
+    } finally {
+      spied.query = original;
+    }
+    return seen;
+  };
+
+  const singleFetches = (queries: string[]) =>
+    queries.filter((q) => /SELECT \* FROM valuations WHERE id = \$1\s*$/.test(q.trim()));
+  const batchedFetches = (queries: string[]) =>
+    queries.filter((q) => /SELECT \* FROM valuations WHERE id = ANY\(\$1\)/.test(q));
+
+  it('loads every monitored valuation in one batched query on the dashboard', async () => {
+    const queries = await recordQueries(async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/monitors',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().monitors.length).toBeGreaterThanOrEqual(5);
+    });
+
+    expect(batchedFetches(queries)).toHaveLength(1);
+    expect(singleFetches(queries)).toHaveLength(0);
+  });
+
+  it('loads every monitored valuation in one batched query on a scan', async () => {
+    const queries = await recordQueries(async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/monitors/scan',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().scanned).toBeGreaterThanOrEqual(5);
+    });
+
+    expect(batchedFetches(queries)).toHaveLength(1);
+    expect(singleFetches(queries)).toHaveLength(0);
+  });
+
+  it('still reports each monitored company on the dashboard', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/monitors',
+      headers: authHeader(ops.token),
+    });
+    const ids = res.json().monitors.map((m: { valuation_id: string }) => m.valuation_id);
+    for (const id of monitored) expect(ids).toContain(id);
+  });
+
+  it('omits unknown ids from the batch rather than throwing', async () => {
+    // The callers skip monitors whose valuation is missing, so the map must
+    // simply not contain the id — this is what replaced a per-id null check.
+    const found = await findValuationsByIds(pool, [monitored[0]!, newUlid()]);
+    expect(found.size).toBe(1);
+    expect(found.get(monitored[0]!)?.id).toBe(monitored[0]);
+  });
+
+  it('deduplicates repeated ids and returns an empty map for no ids', async () => {
+    const found = await findValuationsByIds(pool, [monitored[0]!, monitored[0]!]);
+    expect(found.size).toBe(1);
+    expect((await findValuationsByIds(pool, [])).size).toBe(0);
   });
 });

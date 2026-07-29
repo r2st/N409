@@ -1,90 +1,148 @@
+import { Suspense, lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from './components/RequireAuth';
 import { RequireRole } from './components/RequireRole';
-import { AppLayout } from './components/AppLayout';
 import { useAuth } from './lib/auth';
 import { canManageUsers, isOps, isPartner } from './lib/rbac';
-import { LoginPage } from './pages/LoginPage';
-import { RegisterPage } from './pages/RegisterPage';
-import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
-import { ResetPasswordPage } from './pages/ResetPasswordPage';
-import { VerifyEmailPage } from './pages/VerifyEmailPage';
-import { AuditorPortalPage } from './pages/AuditorPortalPage';
-import { AcceptInvitePage } from './pages/AcceptInvitePage';
-import { GoogleCompletePage } from './pages/GoogleCompletePage';
-import { BoardSignPage } from './pages/BoardSignPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { PortfolioPage } from './pages/PortfolioPage';
-import { FundPortfolioPage } from './pages/FundPortfolioPage';
-import { DebtInstrumentsPage } from './pages/DebtInstrumentsPage';
-import { ValuationsPage } from './pages/ValuationsPage';
-import { NewValuationPage } from './pages/NewValuationPage';
-import { ValuationDetailPage } from './pages/ValuationDetailPage';
-import { ValuationWorkspace } from './pages/valuation/ValuationWorkspace';
-import {
-  AiTab,
-  CalculationsTab,
-  DocumentsTab,
-  FinancialModelTab,
-  ParamsTab,
-  TasksTab,
-} from './pages/valuation/PipelineTabs';
-import { WorkbookTab } from './pages/valuation/WorkbookTab';
-import { ScenariosTab } from './pages/valuation/ScenariosTab';
-import { BridgeTab } from './pages/valuation/BridgeTab';
-import { AnalyticsTab } from './pages/valuation/AnalyticsTab';
-import { GrantsTab } from './pages/valuation/GrantsTab';
-import { Asc718Tab } from './pages/valuation/Asc718Tab';
-import { IntakeTab } from './pages/valuation/IntakeTab';
-import { EngagementTab } from './pages/valuation/EngagementTab';
-import { EngagementsPage } from './pages/EngagementsPage';
-import { CapTableTab } from './pages/valuation/CapTableTab';
-import { MonitoringTab } from './pages/valuation/MonitoringTab';
-import { MonitorsPage } from './pages/MonitorsPage';
-import { OverwritesTab } from './pages/valuation/OverwritesTab';
-import { ReportTab } from './pages/valuation/ReportTab';
-import { ProgressTab } from './pages/valuation/ProgressTab';
-import { QaTab } from './pages/valuation/QaTab';
-import { HealthTab } from './pages/valuation/HealthTab';
-import { DecisionsTab } from './pages/valuation/DecisionsTab';
-import { OverwritesSchemaPage } from './pages/OverwritesSchemaPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { AdminSettingsPage } from './pages/AdminSettingsPage';
-import { AdminSsoPage } from './pages/AdminSsoPage';
-import { AdminRetentionPage } from './pages/AdminRetentionPage';
-import { AdminUsersPage } from './pages/AdminUsersPage';
-import { AdminPartnersPage } from './pages/AdminPartnersPage';
-import { PartnerDetailPage } from './pages/PartnerDetailPage';
-import { EmailOutboxPage } from './pages/EmailOutboxPage';
-import { PartnerPortalPage } from './pages/PartnerPortalPage';
-import { ApiDocsPage } from './pages/ApiDocsPage';
-import { PartnerLoginPage } from './pages/PartnerLoginPage';
-import { SearchPage } from './pages/SearchPage';
-import { NotificationsPage } from './pages/NotificationsPage';
-import { TemplatesPage } from './pages/TemplatesPage';
-import { SensitivityPage } from './pages/SensitivityPage';
-import { TasksPage } from './pages/TasksPage';
-import { BotPromptsPage } from './pages/BotPromptsPage';
-import { ActivityLogPage } from './pages/ActivityLogPage';
-import { HelpPage } from './pages/HelpPage';
-import { FeaturesPage } from './pages/FeaturesPage';
-import { AdminHelpPage } from './pages/AdminHelpPage';
-import { BillingPage } from './pages/BillingPage';
-import { SupportInboxPage } from './pages/SupportInboxPage';
-import { CommunicationsPage } from './pages/CommunicationsPage';
-import { CompanyTab } from './pages/valuation/CompanyTab';
-import { PackageTab } from './pages/valuation/PackageTab';
-import { OnboardingPage } from './pages/OnboardingPage';
-import { PaymentCancelPage, PaymentSuccessPage } from './pages/PaymentRedirectPages';
 import { MarketingFooter, MarketingHeader, MarketingLayout } from './components/MarketingLayout';
 import { LandingPage } from './pages/marketing/LandingPage';
-import { PricingPage } from './pages/marketing/PricingPage';
-import { ProductPage } from './pages/marketing/ProductPage';
-import { WhichValuationPage } from './pages/marketing/WhichValuationPage';
-import { ComparePage } from './pages/marketing/ComparePage';
-import { CompareHubPage } from './pages/marketing/CompareHubPage';
-import { AboutPage, ContactPage, PrivacyPage, TermsPage } from './pages/marketing/StaticPages';
-import { NotFoundPage } from './pages/NotFoundPage';
+
+/**
+ * Route-level code splitting.
+ *
+ * Every page used to be imported eagerly, producing a single ~1 MB chunk: a
+ * founder arriving on the marketing site downloaded the whole authenticated
+ * application — valuation workspace, admin consoles, charts, the rich-text
+ * editor — before the landing page painted. Everything below the marketing
+ * entry is now lazy, so the first visit pulls the shell plus the landing page
+ * and nothing else.
+ *
+ * The marketing shell and landing page stay eager on purpose: they are the LCP
+ * path for anonymous traffic, and putting them behind a second round trip would
+ * trade the bundle win straight back for latency.
+ *
+ * `lazy` needs a default export, so each import maps the named export across.
+ */
+const named = <T extends string>(
+  loader: () => Promise<Record<string, unknown>>,
+  name: T,
+): React.LazyExoticComponent<React.ComponentType<Record<string, never>>> =>
+  lazy(async () => ({
+    default: (await loader())[name] as React.ComponentType<Record<string, never>>,
+  }));
+
+// ── Marketing (secondary pages) ───────────────────────────────────────────────
+const PricingPage = named(() => import('./pages/marketing/PricingPage'), 'PricingPage');
+const ProductPage = named(() => import('./pages/marketing/ProductPage'), 'ProductPage');
+const WhichValuationPage = named(
+  () => import('./pages/marketing/WhichValuationPage'),
+  'WhichValuationPage',
+);
+const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
+const CompareHubPage = named(() => import('./pages/marketing/CompareHubPage'), 'CompareHubPage');
+const AboutPage = named(() => import('./pages/marketing/StaticPages'), 'AboutPage');
+const ContactPage = named(() => import('./pages/marketing/StaticPages'), 'ContactPage');
+const PrivacyPage = named(() => import('./pages/marketing/StaticPages'), 'PrivacyPage');
+const TermsPage = named(() => import('./pages/marketing/StaticPages'), 'TermsPage');
+const NotFoundPage = named(() => import('./pages/NotFoundPage'), 'NotFoundPage');
+
+// ── Authentication ────────────────────────────────────────────────────────────
+const LoginPage = named(() => import('./pages/LoginPage'), 'LoginPage');
+const RegisterPage = named(() => import('./pages/RegisterPage'), 'RegisterPage');
+const ForgotPasswordPage = named(() => import('./pages/ForgotPasswordPage'), 'ForgotPasswordPage');
+const ResetPasswordPage = named(() => import('./pages/ResetPasswordPage'), 'ResetPasswordPage');
+const VerifyEmailPage = named(() => import('./pages/VerifyEmailPage'), 'VerifyEmailPage');
+const AcceptInvitePage = named(() => import('./pages/AcceptInvitePage'), 'AcceptInvitePage');
+const GoogleCompletePage = named(() => import('./pages/GoogleCompletePage'), 'GoogleCompletePage');
+const AuditorPortalPage = named(() => import('./pages/AuditorPortalPage'), 'AuditorPortalPage');
+const BoardSignPage = named(() => import('./pages/BoardSignPage'), 'BoardSignPage');
+const PartnerLoginPage = named(() => import('./pages/PartnerLoginPage'), 'PartnerLoginPage');
+
+// ── Application shell + pages ─────────────────────────────────────────────────
+const AppLayout = named(() => import('./components/AppLayout'), 'AppLayout');
+const DashboardPage = named(() => import('./pages/DashboardPage'), 'DashboardPage');
+const PortfolioPage = named(() => import('./pages/PortfolioPage'), 'PortfolioPage');
+const FundPortfolioPage = named(() => import('./pages/FundPortfolioPage'), 'FundPortfolioPage');
+const DebtInstrumentsPage = named(() => import('./pages/DebtInstrumentsPage'), 'DebtInstrumentsPage');
+const ValuationsPage = named(() => import('./pages/ValuationsPage'), 'ValuationsPage');
+const NewValuationPage = named(() => import('./pages/NewValuationPage'), 'NewValuationPage');
+const ValuationDetailPage = named(() => import('./pages/ValuationDetailPage'), 'ValuationDetailPage');
+const ValuationWorkspace = named(
+  () => import('./pages/valuation/ValuationWorkspace'),
+  'ValuationWorkspace',
+);
+const AiTab = named(() => import('./pages/valuation/PipelineTabs'), 'AiTab');
+const CalculationsTab = named(() => import('./pages/valuation/PipelineTabs'), 'CalculationsTab');
+const DocumentsTab = named(() => import('./pages/valuation/PipelineTabs'), 'DocumentsTab');
+const FinancialModelTab = named(() => import('./pages/valuation/PipelineTabs'), 'FinancialModelTab');
+const ParamsTab = named(() => import('./pages/valuation/PipelineTabs'), 'ParamsTab');
+const TasksTab = named(() => import('./pages/valuation/PipelineTabs'), 'TasksTab');
+const WorkbookTab = named(() => import('./pages/valuation/WorkbookTab'), 'WorkbookTab');
+const ScenariosTab = named(() => import('./pages/valuation/ScenariosTab'), 'ScenariosTab');
+const BridgeTab = named(() => import('./pages/valuation/BridgeTab'), 'BridgeTab');
+const AnalyticsTab = named(() => import('./pages/valuation/AnalyticsTab'), 'AnalyticsTab');
+const GrantsTab = named(() => import('./pages/valuation/GrantsTab'), 'GrantsTab');
+const Asc718Tab = named(() => import('./pages/valuation/Asc718Tab'), 'Asc718Tab');
+const IntakeTab = named(() => import('./pages/valuation/IntakeTab'), 'IntakeTab');
+const EngagementTab = named(() => import('./pages/valuation/EngagementTab'), 'EngagementTab');
+const EngagementsPage = named(() => import('./pages/EngagementsPage'), 'EngagementsPage');
+const CapTableTab = named(() => import('./pages/valuation/CapTableTab'), 'CapTableTab');
+const MonitoringTab = named(() => import('./pages/valuation/MonitoringTab'), 'MonitoringTab');
+const MonitorsPage = named(() => import('./pages/MonitorsPage'), 'MonitorsPage');
+const OverwritesTab = named(() => import('./pages/valuation/OverwritesTab'), 'OverwritesTab');
+const ReportTab = named(() => import('./pages/valuation/ReportTab'), 'ReportTab');
+const ProgressTab = named(() => import('./pages/valuation/ProgressTab'), 'ProgressTab');
+const QaTab = named(() => import('./pages/valuation/QaTab'), 'QaTab');
+const HealthTab = named(() => import('./pages/valuation/HealthTab'), 'HealthTab');
+const DecisionsTab = named(() => import('./pages/valuation/DecisionsTab'), 'DecisionsTab');
+const CompanyTab = named(() => import('./pages/valuation/CompanyTab'), 'CompanyTab');
+const PackageTab = named(() => import('./pages/valuation/PackageTab'), 'PackageTab');
+const OverwritesSchemaPage = named(
+  () => import('./pages/OverwritesSchemaPage'),
+  'OverwritesSchemaPage',
+);
+const SettingsPage = named(() => import('./pages/SettingsPage'), 'SettingsPage');
+const AdminSettingsPage = named(() => import('./pages/AdminSettingsPage'), 'AdminSettingsPage');
+const AdminSsoPage = named(() => import('./pages/AdminSsoPage'), 'AdminSsoPage');
+const AdminRetentionPage = named(() => import('./pages/AdminRetentionPage'), 'AdminRetentionPage');
+const AdminUsersPage = named(() => import('./pages/AdminUsersPage'), 'AdminUsersPage');
+const AdminPartnersPage = named(() => import('./pages/AdminPartnersPage'), 'AdminPartnersPage');
+const PartnerDetailPage = named(() => import('./pages/PartnerDetailPage'), 'PartnerDetailPage');
+const EmailOutboxPage = named(() => import('./pages/EmailOutboxPage'), 'EmailOutboxPage');
+const PartnerPortalPage = named(() => import('./pages/PartnerPortalPage'), 'PartnerPortalPage');
+const ApiDocsPage = named(() => import('./pages/ApiDocsPage'), 'ApiDocsPage');
+const SearchPage = named(() => import('./pages/SearchPage'), 'SearchPage');
+const NotificationsPage = named(() => import('./pages/NotificationsPage'), 'NotificationsPage');
+const TemplatesPage = named(() => import('./pages/TemplatesPage'), 'TemplatesPage');
+const SensitivityPage = named(() => import('./pages/SensitivityPage'), 'SensitivityPage');
+const TasksPage = named(() => import('./pages/TasksPage'), 'TasksPage');
+const BotPromptsPage = named(() => import('./pages/BotPromptsPage'), 'BotPromptsPage');
+const ActivityLogPage = named(() => import('./pages/ActivityLogPage'), 'ActivityLogPage');
+const HelpPage = named(() => import('./pages/HelpPage'), 'HelpPage');
+const FeaturesPage = named(() => import('./pages/FeaturesPage'), 'FeaturesPage');
+const AdminHelpPage = named(() => import('./pages/AdminHelpPage'), 'AdminHelpPage');
+const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
+const SupportInboxPage = named(() => import('./pages/SupportInboxPage'), 'SupportInboxPage');
+const CommunicationsPage = named(() => import('./pages/CommunicationsPage'), 'CommunicationsPage');
+const OnboardingPage = named(() => import('./pages/OnboardingPage'), 'OnboardingPage');
+const PaymentSuccessPage = named(
+  () => import('./pages/PaymentRedirectPages'),
+  'PaymentSuccessPage',
+);
+const PaymentCancelPage = named(() => import('./pages/PaymentRedirectPages'), 'PaymentCancelPage');
+
+/** Shared full-page loader — used while auth resolves and while a chunk loads. */
+function PageLoader() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-paper-100">
+      <div
+        role="status"
+        aria-label="Loading"
+        className="h-8 w-8 animate-spin rounded-full border-2 border-ink-200 border-t-bond-600"
+      />
+    </div>
+  );
+}
 
 /** Role-aware landing: partners live in their portal, everyone else on /dashboard. */
 function RoleLanding() {
@@ -98,13 +156,7 @@ function RoleLanding() {
  */
 function HomeGate() {
   const { status } = useAuth();
-  if (status === 'loading') {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-paper-100">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-ink-200 border-t-bond-600" />
-      </div>
-    );
-  }
+  if (status === 'loading') return <PageLoader />;
   if (status === 'anonymous') {
     return (
       <div className="flex min-h-screen flex-col bg-paper-50">
@@ -121,117 +173,119 @@ function HomeGate() {
 
 export default function App() {
   return (
-    <Routes>
-      {/* Public marketing site (409.ai §22) */}
-      <Route path="/" element={<HomeGate />} />
-      <Route element={<MarketingLayout />}>
-        <Route path="/pricing" element={<PricingPage />} />
-        <Route path="/which-valuation" element={<WhichValuationPage />} />
-        <Route path="/products/:slug" element={<ProductPage />} />
-        {/* Hub route must precede the :slug catch-all (gap #30) */}
-        <Route path="/compare/409a-valuation-providers" element={<CompareHubPage />} />
-        <Route path="/compare/:slug" element={<ComparePage />} />
-        <Route path="/about" element={<AboutPage />} />
-        <Route path="/contact" element={<ContactPage />} />
-        <Route path="/terms-of-service" element={<TermsPage />} />
-        <Route path="/privacy-policy" element={<PrivacyPage />} />
-      </Route>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
-      <Route path="/verify-email" element={<VerifyEmailPage />} />
-      <Route path="/accept-invite" element={<AcceptInvitePage />} />
-      <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
-      {/* Public board-member resolution signing (feature 5) */}
-      <Route path="/board-sign" element={<BoardSignPage />} />
-      {/* Public external auditor portal (feature 8), token from link fragment */}
-      <Route path="/auditor" element={<AuditorPortalPage />} />
-      {/* White-label partner login (improvement 8) — public, branded per slug */}
-      <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
-      <Route
-        element={
-          <RequireAuth>
-            <AppLayout />
-          </RequireAuth>
-        }
-      >
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/valuations" element={<ValuationsPage />} />
-        <Route path="/portfolio" element={<PortfolioPage />} />
-        <Route path="/valuations/new" element={<NewValuationPage />} />
-        <Route path="/onboarding" element={<OnboardingPage />} />
-        <Route path="/payment/success" element={<PaymentSuccessPage />} />
-        <Route path="/payment/cancel" element={<PaymentCancelPage />} />
-        <Route path="/valuations/:id" element={<ValuationWorkspace />}>
-          <Route index element={<ValuationDetailPage />} />
-          <Route path="intake" element={<IntakeTab />} />
-          <Route path="company" element={<CompanyTab />} />
-          <Route path="documents" element={<DocumentsTab />} />
-          <Route path="cap-table" element={<CapTableTab />} />
-          <Route path="model" element={<FinancialModelTab />} />
-          <Route path="params" element={<ParamsTab />} />
-          <Route path="ai" element={<AiTab />} />
-          <Route path="tasks" element={<TasksTab />} />
-          <Route path="calculations" element={<CalculationsTab />} />
-          <Route path="progress" element={<ProgressTab />} />
-          <Route path="qa" element={<QaTab />} />
-          <Route path="health" element={<HealthTab />} />
-          <Route path="decisions" element={<DecisionsTab />} />
-          <Route path="scenarios" element={<ScenariosTab />} />
-          <Route path="bridge" element={<BridgeTab />} />
-          <Route path="analytics" element={<AnalyticsTab />} />
-          <Route path="workbook" element={<WorkbookTab />} />
-          <Route path="overwrites" element={<OverwritesTab />} />
-          <Route path="report" element={<ReportTab />} />
-          <Route path="grants" element={<GrantsTab />} />
-          <Route path="asc718" element={<Asc718Tab />} />
-          <Route path="monitoring" element={<MonitoringTab />} />
-          <Route path="engagement" element={<EngagementTab />} />
-          <Route path="package" element={<PackageTab />} />
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        {/* Public marketing site (409.ai §22) */}
+        <Route path="/" element={<HomeGate />} />
+        <Route element={<MarketingLayout />}>
+          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/which-valuation" element={<WhichValuationPage />} />
+          <Route path="/products/:slug" element={<ProductPage />} />
+          {/* Hub route must precede the :slug catch-all (gap #30) */}
+          <Route path="/compare/409a-valuation-providers" element={<CompareHubPage />} />
+          <Route path="/compare/:slug" element={<ComparePage />} />
+          <Route path="/about" element={<AboutPage />} />
+          <Route path="/contact" element={<ContactPage />} />
+          <Route path="/terms-of-service" element={<TermsPage />} />
+          <Route path="/privacy-policy" element={<PrivacyPage />} />
         </Route>
-        {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
-        <Route element={<RequireRole allow={isOps} />}>
-          <Route path="/funds" element={<FundPortfolioPage />} />
-          <Route path="/debt" element={<DebtInstrumentsPage />} />
-          <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
-          <Route path="/engagements" element={<EngagementsPage />} />
-          <Route path="/monitors" element={<MonitorsPage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/templates" element={<TemplatesPage />} />
-          <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />
-          <Route path="/admin/prompts" element={<BotPromptsPage />} />
-          <Route path="/admin/support" element={<SupportInboxPage />} />
-          <Route path="/admin/outbox" element={<EmailOutboxPage />} />
-          <Route path="/admin/communications" element={<CommunicationsPage />} />
-          <Route path="/admin/activity" element={<ActivityLogPage />} />
-          <Route path="/admin/help" element={<AdminHelpPage />} />
-          {/* Ops read the settings; the API rejects writes from non-admins. */}
-          <Route path="/admin/settings" element={<AdminSettingsPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
+        <Route path="/auth/google/complete" element={<GoogleCompletePage />} />
+        {/* Public board-member resolution signing (feature 5) */}
+        <Route path="/board-sign" element={<BoardSignPage />} />
+        {/* Public external auditor portal (feature 8), token from link fragment */}
+        <Route path="/auditor" element={<AuditorPortalPage />} />
+        {/* White-label partner login (improvement 8) — public, branded per slug */}
+        <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
+        <Route
+          element={
+            <RequireAuth>
+              <AppLayout />
+            </RequireAuth>
+          }
+        >
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/valuations" element={<ValuationsPage />} />
+          <Route path="/portfolio" element={<PortfolioPage />} />
+          <Route path="/valuations/new" element={<NewValuationPage />} />
+          <Route path="/onboarding" element={<OnboardingPage />} />
+          <Route path="/payment/success" element={<PaymentSuccessPage />} />
+          <Route path="/payment/cancel" element={<PaymentCancelPage />} />
+          <Route path="/valuations/:id" element={<ValuationWorkspace />}>
+            <Route index element={<ValuationDetailPage />} />
+            <Route path="intake" element={<IntakeTab />} />
+            <Route path="company" element={<CompanyTab />} />
+            <Route path="documents" element={<DocumentsTab />} />
+            <Route path="cap-table" element={<CapTableTab />} />
+            <Route path="model" element={<FinancialModelTab />} />
+            <Route path="params" element={<ParamsTab />} />
+            <Route path="ai" element={<AiTab />} />
+            <Route path="tasks" element={<TasksTab />} />
+            <Route path="calculations" element={<CalculationsTab />} />
+            <Route path="progress" element={<ProgressTab />} />
+            <Route path="qa" element={<QaTab />} />
+            <Route path="health" element={<HealthTab />} />
+            <Route path="decisions" element={<DecisionsTab />} />
+            <Route path="scenarios" element={<ScenariosTab />} />
+            <Route path="bridge" element={<BridgeTab />} />
+            <Route path="analytics" element={<AnalyticsTab />} />
+            <Route path="workbook" element={<WorkbookTab />} />
+            <Route path="overwrites" element={<OverwritesTab />} />
+            <Route path="report" element={<ReportTab />} />
+            <Route path="grants" element={<GrantsTab />} />
+            <Route path="asc718" element={<Asc718Tab />} />
+            <Route path="monitoring" element={<MonitoringTab />} />
+            <Route path="engagement" element={<EngagementTab />} />
+            <Route path="package" element={<PackageTab />} />
+          </Route>
+          {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
+          <Route element={<RequireRole allow={isOps} />}>
+            <Route path="/funds" element={<FundPortfolioPage />} />
+            <Route path="/debt" element={<DebtInstrumentsPage />} />
+            <Route path="/valuations/:id/sensitivity" element={<SensitivityPage />} />
+            <Route path="/engagements" element={<EngagementsPage />} />
+            <Route path="/monitors" element={<MonitorsPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/templates" element={<TemplatesPage />} />
+            <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />
+            <Route path="/admin/prompts" element={<BotPromptsPage />} />
+            <Route path="/admin/support" element={<SupportInboxPage />} />
+            <Route path="/admin/outbox" element={<EmailOutboxPage />} />
+            <Route path="/admin/communications" element={<CommunicationsPage />} />
+            <Route path="/admin/activity" element={<ActivityLogPage />} />
+            <Route path="/admin/help" element={<AdminHelpPage />} />
+            {/* Ops read the settings; the API rejects writes from non-admins. */}
+            <Route path="/admin/settings" element={<AdminSettingsPage />} />
+          </Route>
+          {/* User-admin surfaces */}
+          <Route element={<RequireRole allow={canManageUsers} />}>
+            <Route path="/admin/users" element={<AdminUsersPage />} />
+            <Route path="/admin/sso" element={<AdminSsoPage />} />
+            <Route path="/admin/retention" element={<AdminRetentionPage />} />
+            <Route path="/admin/partners" element={<AdminPartnersPage />} />
+            <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
+          </Route>
+          {/* Partner portal */}
+          <Route element={<RequireRole allow={isPartner} />}>
+            <Route path="/partner" element={<PartnerPortalPage />} />
+          </Route>
+          <Route path="/partner/api-docs" element={<ApiDocsPage />} />
+          <Route path="/search" element={<SearchPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/help" element={<HelpPage />} />
+          <Route path="/help/:slug" element={<HelpPage />} />
+          <Route path="/features" element={<FeaturesPage />} />
+          <Route path="/billing" element={<BillingPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
-        {/* User-admin surfaces */}
-        <Route element={<RequireRole allow={canManageUsers} />}>
-          <Route path="/admin/users" element={<AdminUsersPage />} />
-          <Route path="/admin/sso" element={<AdminSsoPage />} />
-          <Route path="/admin/retention" element={<AdminRetentionPage />} />
-          <Route path="/admin/partners" element={<AdminPartnersPage />} />
-          <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
-        </Route>
-        {/* Partner portal */}
-        <Route element={<RequireRole allow={isPartner} />}>
-          <Route path="/partner" element={<PartnerPortalPage />} />
-        </Route>
-        <Route path="/partner/api-docs" element={<ApiDocsPage />} />
-        <Route path="/search" element={<SearchPage />} />
-        <Route path="/notifications" element={<NotificationsPage />} />
-        <Route path="/help" element={<HelpPage />} />
-        <Route path="/help/:slug" element={<HelpPage />} />
-        <Route path="/features" element={<FeaturesPage />} />
-        <Route path="/billing" element={<BillingPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-      </Route>
-      {/* Real 404 for unknown URLs instead of a silent redirect home (F-1 P2). */}
-      <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+        {/* Real 404 for unknown URLs instead of a silent redirect home (F-1 P2). */}
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </Suspense>
   );
 }

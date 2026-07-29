@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { QUIZ_OPTIONS, formatUsd, productBySlug } from '../../lib/marketing';
 import { Seo } from '../../components/Seo';
+import { pageMeta } from '../../lib/pageMeta';
 
 /** "Which valuation?" guided quiz (409.ai §22.5). */
 export function WhichValuationPage() {
@@ -10,11 +11,7 @@ export function WhichValuationPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-5 py-16">
-      <Seo
-        title="Which valuation do you need?"
-        description="Answer a couple of quick questions and we'll point you at the right valuation report for your situation."
-        path="/which-valuation"
-      />
+      <Seo {...pageMeta('/which-valuation')!} />
       <div className="overline text-ink-400">Which valuation?</div>
       <h1 className="mt-2 font-display text-4xl font-semibold text-ink-900">
         What&rsquo;s driving the need for a valuation?

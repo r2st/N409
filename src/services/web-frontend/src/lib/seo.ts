@@ -8,13 +8,29 @@ import type { Product } from './marketing';
 
 export const SITE_NAME = 'N409';
 export const SITE_TAGLINE = 'Independent, defensible 409A and business valuations.';
-export const DEFAULT_OG_IMAGE = '/og-image.svg';
+
+/**
+ * Social preview image. This must be a raster format: Facebook, LinkedIn, X and
+ * Slack all refuse `image/svg+xml` for `og:image`, so pointing at the SVG meant
+ * every shared link rendered with no image at all. `og-image.svg` is kept as the
+ * editable source and rasterised to this PNG (see public/README.md).
+ */
+export const DEFAULT_OG_IMAGE = '/og-image.png';
+export const OG_IMAGE_WIDTH = 1200;
+export const OG_IMAGE_HEIGHT = 630;
 
 const FALLBACK_ORIGIN = 'https://www.n409.ai';
 
-/** Canonical origin with any trailing slash removed. */
+/**
+ * Canonical origin with any trailing slash removed.
+ *
+ * The default reads `import.meta.env` defensively: this module is also imported
+ * by the Node-side build plugin that prerenders each route's `<head>`, where
+ * `import.meta.env` does not exist. Callers there pass the origin explicitly,
+ * but the `?? {}` keeps an accidental bare call from throwing at build time.
+ */
 export function siteOrigin(
-  env: { VITE_SITE_URL?: string } = import.meta.env as { VITE_SITE_URL?: string },
+  env: { VITE_SITE_URL?: string } = (import.meta as { env?: { VITE_SITE_URL?: string } }).env ?? {},
 ): string {
   const raw = (env.VITE_SITE_URL ?? '').trim() || FALLBACK_ORIGIN;
   return raw.replace(/\/+$/, '');
@@ -68,6 +84,50 @@ export function productJsonLd(product: Product, origin: string = siteOrigin()): 
       availability: 'https://schema.org/InStock',
       url: `${origin}/products/${product.slug}`,
     },
+  };
+}
+
+/**
+ * WebSite schema. Names the site itself rather than the page, which is what lets
+ * a search engine attribute a result to the brand instead of a bare hostname.
+ *
+ * No `potentialAction`/SearchAction: there is no public site search to point one
+ * at, and declaring an endpoint that doesn't exist is worse than declaring none.
+ */
+export function websiteJsonLd(origin: string = siteOrigin()): JsonLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: SITE_NAME,
+    url: `${origin}/`,
+    description: SITE_TAGLINE,
+    inLanguage: 'en-US',
+    publisher: { '@type': 'Organization', name: SITE_NAME, url: `${origin}/` },
+  };
+}
+
+/** One step in a breadcrumb trail. `path` must be a page that really exists. */
+export interface Crumb {
+  name: string;
+  path: string;
+}
+
+/**
+ * BreadcrumbList schema. Google renders this in place of the raw URL in a
+ * result, so a deep page shows `n409.ai › Compare › N409 vs Carta` rather than
+ * the full path — and the trail must mirror real, crawlable ancestors, not an
+ * invented hierarchy.
+ */
+export function breadcrumbJsonLd(crumbs: Crumb[], origin: string = siteOrigin()): JsonLd {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: crumbs.map((crumb, index) => ({
+      '@type': 'ListItem',
+      position: index + 1,
+      name: crumb.name,
+      item: absoluteUrl(crumb.path, origin),
+    })),
   };
 }
 

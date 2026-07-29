@@ -82,6 +82,7 @@ import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
 import type { FixedWindowRateLimiter } from './plugins/rateLimit.js';
+import { probeReady } from './clients/internal.js';
 
 export interface AppDeps {
   config: Config;
@@ -102,6 +103,8 @@ export interface AppDeps {
   capTableSyncFetch?: FetchFn;
   /** injectable for tests — HRIS provider HTTP */
   hrisFetch?: FetchFn;
+  /** injectable for tests — /ready probes against the AI + engine services */
+  readinessFetch?: FetchFn;
 }
 
 /**
@@ -177,12 +180,19 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   registerProblemHandler(app);
+  // Readiness means "this service can actually do its job", and its job is to
+  // orchestrate the AI and engine services — a valuation cannot be calculated
+  // without the engine, and no pipeline runs without the AI service. Probing
+  // only Postgres reported ready while every calculation route was 502-ing.
+  // Each probe is short-timeout and unretried so /ready itself stays fast.
   registerHealth(app, {
     service: 'valuation',
     checks: {
       postgres: async () => {
         await pool.query('SELECT 1');
       },
+      ai: () => probeReady('ai', config.AI_URL, { fetchFn: deps.readinessFetch }),
+      engine: () => probeReady('engine', config.ENGINE_URL, { fetchFn: deps.readinessFetch }),
     },
   });
   // Auto-email transport; delivery status is tracked in email_outbox.

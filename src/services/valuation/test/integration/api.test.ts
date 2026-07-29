@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  isDbAvailable,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  stubReadinessFetch,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -235,14 +243,45 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
   });
 
   describe('observability (issue #4)', () => {
-    it('liveness and readiness (incl. postgres check) respond', async () => {
+    it('liveness and readiness (postgres + AI + engine) respond', async () => {
       const health = await ctx.app.inject({ method: 'GET', url: '/health' });
       expect(health.statusCode).toBe(200);
       expect(health.json().service).toBe('valuation');
 
       const ready = await ctx.app.inject({ method: 'GET', url: '/ready' });
       expect(ready.statusCode).toBe(200);
-      expect(ready.json().checks.postgres).toBe('ok');
+      expect(ready.json().checks).toMatchObject({ postgres: 'ok', ai: 'ok', engine: 'ok' });
+    });
+
+    it('is not ready when a downstream service is not ready', async () => {
+      // A valuation cannot be calculated without the engine and no pipeline runs
+      // without the AI service, so `SELECT 1` alone reported ready while every
+      // calculation route was 502-ing.
+      const down = await setupTestApp({}, { readinessFetch: stubReadinessFetch(503) });
+      try {
+        const ready = await down.app.inject({ method: 'GET', url: '/ready' });
+        expect(ready.statusCode).toBe(503);
+        expect(ready.json().status).toBe('unavailable');
+        expect(ready.json().checks.postgres).toBe('ok');
+        expect(ready.json().checks.ai).toContain('not ready');
+        expect(ready.json().checks.engine).toContain('not ready');
+      } finally {
+        await down.teardown();
+      }
+    });
+
+    it('is not ready when a downstream service is unreachable', async () => {
+      const unreachable = (async () => {
+        throw new Error('connect ECONNREFUSED');
+      }) as typeof fetch;
+      const down = await setupTestApp({}, { readinessFetch: unreachable });
+      try {
+        const ready = await down.app.inject({ method: 'GET', url: '/ready' });
+        expect(ready.statusCode).toBe(503);
+        expect(ready.json().checks.ai).toContain('unreachable');
+      } finally {
+        await down.teardown();
+      }
     });
   });
 });

@@ -3,7 +3,12 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { cloneValuation, findValuationById, type ValuationRow } from '../repos/valuations.js';
+import {
+  cloneValuation,
+  findValuationById,
+  findValuationsByIds,
+  type ValuationRow,
+} from '../repos/valuations.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findParams } from '../repos/params.js';
 import { findCapTable } from '../repos/capTables.js';
@@ -102,9 +107,14 @@ export function registerMonitoringRoutes(
     requireOps(principal);
     const now = new Date();
     const monitors = await listEnabledMonitors(deps.pool);
+    // One query for every monitored valuation instead of one per monitor.
+    const valuations = await findValuationsByIds(
+      deps.pool,
+      monitors.map((m) => m.valuation_id),
+    );
     const out = [];
     for (const m of monitors) {
-      const valuation = await findValuationById(deps.pool, m.valuation_id);
+      const valuation = valuations.get(m.valuation_id);
       if (!valuation) continue;
       const current = await buildSnapshot(deps.pool, valuation);
       const triggers = evaluateTriggers(m.baseline, current, now);
@@ -172,9 +182,13 @@ export function registerMonitoringRoutes(
     requireOps(principal);
     const now = new Date();
     const monitors = await listEnabledMonitors(deps.pool);
+    const valuations = await findValuationsByIds(
+      deps.pool,
+      monitors.map((m) => m.valuation_id),
+    );
     let alertsSent = 0;
     for (const m of monitors) {
-      const valuation = await findValuationById(deps.pool, m.valuation_id);
+      const valuation = valuations.get(m.valuation_id);
       if (!valuation) continue;
       const current = await buildSnapshot(deps.pool, valuation);
       const triggers = evaluateTriggers(m.baseline, current, now);

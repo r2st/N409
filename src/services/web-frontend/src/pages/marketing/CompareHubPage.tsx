@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { FOUNDER_QUESTIONS, PROVIDER_CATEGORIES } from '../../lib/marketing';
 import { Seo } from '../../components/Seo';
+import { pageMeta } from '../../lib/pageMeta';
 
 /**
  * Compare provider hub (409.ai, gap #30) — the overview page at
@@ -11,11 +12,7 @@ import { Seo } from '../../components/Seo';
 export function CompareHubPage() {
   return (
     <div>
-      <Seo
-        title="409A valuation providers compared"
-        description="A guide to the five kinds of 409A valuation provider — AI-native platforms, cap-table products, bundled providers, startup CPAs, and independent firms — and what founders should ask before choosing one."
-        path="/compare/409a-valuation-providers"
-      />
+      <Seo {...pageMeta('/compare/409a-valuation-providers')!} />
 
       <section className="mx-auto max-w-5xl px-5 py-16">
         <div className="overline text-ink-400">Compare</div>

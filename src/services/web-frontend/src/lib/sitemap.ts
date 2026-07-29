@@ -43,14 +43,50 @@ export function buildSitemapXml(
 }
 
 /**
- * Render `robots.txt` — allow everything and point crawlers (including AI
- * crawlers, which we welcome) at the sitemap. Mirrors 409.ai §24.
+ * Authenticated application surfaces. These are all SPA-fallback routes, so a
+ * crawler that reaches one gets the marketing shell back with a 200 — which is
+ * exactly how near-duplicate thin pages end up in the index competing with the
+ * pages we actually want ranked. Excluded explicitly.
+ */
+export const DISALLOWED_PATHS = [
+  '/dashboard',
+  '/valuations',
+  '/portfolio',
+  '/funds',
+  '/debt',
+  '/engagements',
+  '/monitors',
+  '/tasks',
+  '/templates',
+  '/schema/',
+  '/admin/',
+  '/partner/',
+  '/settings',
+  '/billing',
+  '/notifications',
+  '/search',
+  '/onboarding',
+  '/payment/',
+  '/auditor',
+  '/board-sign',
+  '/accept-invite',
+  '/verify-email',
+  '/reset-password',
+  '/forgot-password',
+  '/auth/',
+];
+
+/**
+ * Render `robots.txt` — allow the marketing site, exclude the authenticated
+ * app, and point crawlers (including AI crawlers, which we welcome) at the
+ * sitemap. Mirrors 409.ai §24.
  */
 export function buildRobotsTxt(baseUrl: string): string {
   const base = normalizeBase(baseUrl);
   return [
     'User-agent: *',
     'Allow: /',
+    ...DISALLOWED_PATHS.map((path) => `Disallow: ${path}`),
     '',
     `Sitemap: ${base}/sitemap.xml`,
     '',

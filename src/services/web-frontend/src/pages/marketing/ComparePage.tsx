@@ -1,6 +1,7 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { comparisonBySlug } from '../../lib/marketing';
 import { Seo } from '../../components/Seo';
+import { comparePageMeta } from '../../lib/pageMeta';
 
 /** Competitor comparison landing page (409.ai §22.6) — data-driven. */
 export function ComparePage() {
@@ -10,11 +11,7 @@ export function ComparePage() {
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-16">
-      <Seo
-        title={`N409 vs ${comparison.competitor}`}
-        description={comparison.summary}
-        path={`/compare/${comparison.slug}`}
-      />
+      <Seo {...comparePageMeta(comparison.slug)!} />
       <div className="overline text-ink-400">{comparison.category}</div>
       <h1 className="mt-2 font-display text-4xl font-semibold text-ink-900">
         N409 vs {comparison.competitor}

@@ -2,29 +2,26 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AUDIT_DEFENCE_RATE_USD, PRICING_FAQ, PRODUCTS, formatUsd, quote } from '../../lib/marketing';
 import { Seo } from '../../components/Seo';
-import { faqJsonLd } from '../../lib/seo';
+import { pageMeta } from '../../lib/pageMeta';
 import { FaqAccordion } from '../../components/FaqAccordion';
-
-/** Firms/partners contact address for the enterprise tier (gap #32). */
-const FIRMS_CONTACT_EMAIL = 'partners@n409.example';
+import { siteConfig } from '../../lib/siteConfig';
 
 /** Interactive pricing calculator + comparison table (409.ai §22.4). */
 export function PricingPage() {
   const [slug, setSlug] = useState(PRODUCTS[0]!.slug);
   const [express, setExpress] = useState(false);
   const [qsbsLetter, setQsbsLetter] = useState(false);
+  // Firms/partners address for the enterprise tier (gap #32). Unset in this
+  // environment → send the lead through the contact form rather than a mailto
+  // that bounces.
+  const { partnersEmail } = siteConfig();
 
   const product = PRODUCTS.find((p) => p.slug === slug) ?? PRODUCTS[0]!;
   const { totalCents, deliveryDays } = quote(product, { express, qsbsLetter });
 
   return (
     <div>
-      <Seo
-        title="Pricing"
-        description="Transparent, per-report valuation pricing — one flat price, no subscriptions. 409A from $1,190 with a 24-hour first draft and Express delivery available."
-        path="/pricing"
-        jsonLd={faqJsonLd(PRICING_FAQ)}
-      />
+      <Seo {...pageMeta('/pricing')!} />
       <section className="mx-auto max-w-6xl px-5 py-16">
         <div className="overline text-ink-400">Pricing</div>
         <h1 className="mt-2 font-display text-4xl font-semibold text-ink-900">
@@ -226,13 +223,27 @@ export function PricingPage() {
             </ul>
           </div>
           <div className="text-center lg:text-right">
-            <a
-              href={`mailto:${FIRMS_CONTACT_EMAIL}?subject=N409%20for%20firms`}
-              className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
-            >
-              Get in touch
-            </a>
-            <p className="mt-3 text-xs text-ink-400">{FIRMS_CONTACT_EMAIL}</p>
+            {partnersEmail ? (
+              <>
+                <a
+                  href={`mailto:${partnersEmail}?subject=N409%20for%20firms`}
+                  className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+                >
+                  Get in touch
+                </a>
+                <p className="mt-3 text-xs break-words text-ink-400">{partnersEmail}</p>
+              </>
+            ) : (
+              <>
+                <Link
+                  to="/contact"
+                  className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+                >
+                  Get in touch
+                </Link>
+                <p className="mt-3 text-xs text-ink-400">We reply within one business day.</p>
+              </>
+            )}
           </div>
         </div>
       </section>

@@ -2,7 +2,7 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import { PROCESS_STEPS, PRODUCTS, formatUsd, productBySlug, productContent } from '../../lib/marketing';
 import { BookACallSection } from './MarketingSections';
 import { Seo } from '../../components/Seo';
-import { productJsonLd } from '../../lib/seo';
+import { productPageMeta } from '../../lib/pageMeta';
 import { FaqAccordion } from '../../components/FaqAccordion';
 
 /**
@@ -25,13 +25,7 @@ export function ProductPage() {
 
   return (
     <div>
-      <Seo
-        title={product.name}
-        description={product.description}
-        path={`/products/${product.slug}`}
-        type="product"
-        jsonLd={productJsonLd(product)}
-      />
+      <Seo {...productPageMeta(product.slug)!} />
 
       {/* 1. Breadcrumb */}
       <nav aria-label="Breadcrumb" className="border-b border-paper-300 bg-paper-100">

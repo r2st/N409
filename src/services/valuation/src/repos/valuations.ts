@@ -96,6 +96,28 @@ export async function findValuationById(pool: pg.Pool, id: string): Promise<Valu
   return rows[0] ?? null;
 }
 
+/**
+ * Batch counterpart to findValuationById, keyed by id for O(1) lookup.
+ *
+ * The monitoring dashboard and scan iterate every enabled monitor; fetching each
+ * valuation individually meant one round trip per monitor before any of the real
+ * work started, and that cost grew linearly with the number of monitored
+ * companies. `= ANY($1)` collapses it to one query.
+ *
+ * Ids missing from the result are simply absent from the map — callers already
+ * skip monitors whose valuation has been deleted.
+ */
+export async function findValuationsByIds(
+  pool: pg.Pool,
+  ids: string[],
+): Promise<Map<string, ValuationRow>> {
+  if (ids.length === 0) return new Map();
+  const { rows } = await pool.query<ValuationRow>('SELECT * FROM valuations WHERE id = ANY($1)', [
+    [...new Set(ids)],
+  ]);
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
 export async function findValuationByNumber(
   pool: pg.Pool,
   number: number,

@@ -4,17 +4,36 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0B1220" />
+    <meta name="color-scheme" content="light" />
     <!--
-      Per-page <title>, description, Open Graph, Twitter Card, canonical, and
-      JSON-LD are managed at runtime by react-helmet-async via <Seo> (409.ai §24).
-      To avoid duplicate tags, none of those are hardcoded here — only the
-      app-shell fallbacks (title + theme-color + icon) remain.
+      Head metadata comes from two renderers (409.ai section 24):
+
+        * at build time, baked into each marketing route's own document by the
+          prerender plugin (src/lib/prerender.ts). This is what social crawlers
+          and link unfurlers read, since they never execute JavaScript.
+        * at runtime, applied by react-helmet-async via the Seo component once
+          the bundle boots. This is what a browser ends up with.
+
+      Both render from one builder (src/lib/headTags.ts), so they agree.
+
+      Everything between the two n409:head-fallback markers below is the shell
+      fallback: the prerenderer replaces that whole block with the route's real
+      metadata, so what remains here is only ever seen on an un-prerendered
+      route (the SPA fallback for the authenticated app, which robots.txt
+      excludes from crawling anyway). Do not add Open Graph tags here — they
+      would duplicate the prerendered ones.
     -->
+    <!--n409:head-fallback-start-->
+    <title>N409 · Valuations</title>
+    <meta
+      name="description"
+      content="Independent, defensible 409A and business valuations — AI-assisted intake, a transparent valuation engine, and analyst-signed reports."
+    />
+    <!--n409:head-fallback-end-->
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B1220'/%3E%3Cpath d='M9 22V10l8 8V10' stroke='%23C9A54A' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Ccircle cx='22.5' cy='20.5' r='2.6' fill='%2312936F'/%3E%3C/svg%3E"
     />
-    <title>N409 · Valuations</title>
   </head>
   <body>
     <div id="root"></div>

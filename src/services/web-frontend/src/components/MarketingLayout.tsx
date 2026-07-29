@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import { Wordmark } from './Logo';
-import { COMPARISONS, PRODUCTS, SOCIAL_LINKS } from '../lib/marketing';
+import { COMPARISONS, PRODUCTS } from '../lib/marketing';
+import { siteConfig } from '../lib/siteConfig';
 
 /** Brand glyph for a social link (gap #29). */
 function SocialIcon({ label }: { label: string }) {
@@ -72,8 +73,11 @@ export function MarketingHeader() {
             >
               Products ▾
             </button>
+            {/* The panel is capped to the viewport: at exactly the md
+                breakpoint (768px) a fixed 34rem panel centred on this button
+                clears the left edge by 4px, which is luck rather than layout. */}
             {productsOpen && (
-              <div className="absolute left-1/2 mt-0 w-[34rem] -translate-x-1/2 rounded-lg border border-paper-300 bg-white p-4 shadow-lift">
+              <div className="absolute left-1/2 mt-0 w-[34rem] max-w-[calc(100vw-2.5rem)] -translate-x-1/2 rounded-lg border border-paper-300 bg-white p-4 shadow-lift">
                 <ProductsMenu onNavigate={() => setProductsOpen(false)} />
               </div>
             )}
@@ -156,6 +160,7 @@ export function MarketingHeader() {
 
 export function MarketingFooter() {
   const half = Math.ceil(PRODUCTS.length / 2);
+  const { socialLinks } = siteConfig();
   return (
     <footer className="border-t border-ink-800 bg-ink-900 text-ink-300">
       <div className="mx-auto grid max-w-6xl gap-10 px-5 py-14 sm:grid-cols-2 lg:grid-cols-4">
@@ -224,22 +229,29 @@ export function MarketingFooter() {
       </div>
       <div className="border-t border-ink-800">
         <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-5 py-5 text-xs text-ink-400 sm:flex-row sm:justify-between">
-          <span>© 2026 N409 Valuations. All rights reserved.</span>
+          {/* Derived, not hardcoded — a stale copyright year is the classic
+              "nobody maintains this site" tell for a prospect. */}
+          <span>© {new Date().getFullYear()} N409 Valuations. All rights reserved.</span>
           <div className="flex items-center gap-4">
-            <nav className="flex items-center gap-3" aria-label="Social media">
-              {SOCIAL_LINKS.map((s) => (
-                <a
-                  key={s.label}
-                  href={s.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={s.label}
-                  className="text-ink-400 transition-colors hover:text-paper-50"
-                >
-                  <SocialIcon label={s.label} />
-                </a>
-              ))}
-            </nav>
+            {/* Omitted entirely when no profile URLs are configured (siteConfig)
+                — an icon linking to a profile that doesn't exist is worse than
+                no icon. */}
+            {socialLinks.length > 0 && (
+              <nav className="flex items-center gap-3" aria-label="Social media">
+                {socialLinks.map((s) => (
+                  <a
+                    key={s.label}
+                    href={s.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={s.label}
+                    className="text-ink-400 transition-colors hover:text-paper-50"
+                  >
+                    <SocialIcon label={s.label} />
+                  </a>
+                ))}
+              </nav>
+            )}
             <span className="font-mono">Independent · Defensible · Audit-ready</span>
           </div>
         </div>
