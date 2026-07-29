@@ -142,10 +142,12 @@ describe.skipIf(!dbUp)('feature 5 — board approval workflow', () => {
     });
     expect(dup.statusCode).toBe(409);
 
-    // Public: Alice can view the resolution her token grants.
+    // Public: Alice can view the resolution her token grants. POST, not a query
+    // string — the token must never reach an access log.
     const view = await app.inject({
-      method: 'GET',
-      url: `/api/v1/board/resolution?token=${encodeURIComponent(tokenA)}`,
+      method: 'POST',
+      url: '/api/v1/board/resolution',
+      payload: { token: tokenA },
     });
     expect(view.statusCode).toBe(200);
     expect(view.json().member.name).toBe('Alice Chair');
@@ -252,6 +254,25 @@ describe.skipIf(!dbUp)('feature 5 — board approval workflow', () => {
       method: 'POST',
       url: '/api/v1/board/sign',
       payload: { token: 'n409_brd_nope', decision: 'signed' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('no longer accepts the resolution token in the query string', async () => {
+    // The GET route is gone: a bearer token in a URL leaks into access logs,
+    // Referer headers and browser history.
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/board/resolution?token=n409_brd_anything',
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('404s a resolution request with no token in the body', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/board/resolution',
+      payload: {},
     });
     expect(res.statusCode).toBe(404);
   });

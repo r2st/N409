@@ -12,13 +12,20 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents import AGENT_PIPELINES
 from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
-from .openrouter import OpenRouterError, chat, configured_models, tokens_used
+from .openrouter import (
+    OpenRouterError,
+    chat,
+    configured_models,
+    tokens_used,
+    verify_api_key,
+)
 from .output_schema import validate_result
 from .pipelines import PIPELINES
 
@@ -35,6 +42,22 @@ _started = time.monotonic()
 _MAX_BODY_BYTES = max_body_bytes(32 * 1024 * 1024)
 
 configure_logging(SERVICE)
+_log = logging.getLogger(SERVICE)
+
+
+def require_verified_key() -> bool:
+    """Whether a bad OPENROUTER_API_KEY should abort startup outright.
+
+    Off by default so a momentary OpenRouter outage can't stop the service from
+    booting (it degrades instead: loud error log + /ready 503). Set
+    AI_REQUIRE_OPENROUTER_KEY=1 in environments that would rather crash-loop
+    than run without a working key.
+    """
+    return os.environ.get("AI_REQUIRE_OPENROUTER_KEY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 @asynccontextmanager
@@ -42,6 +65,24 @@ async def lifespan(_app: FastAPI):
     # Sync handlers (LLM calls block up to 90s) run in this pool; make its size
     # a deliberate, tunable number rather than the implicit default (audit B-2 P2).
     configure_threadpool(threadpool_size())
+
+    # Prove the key at boot rather than discovering it's dead on the first
+    # customer valuation. Never silent: either we crash, or we log an error and
+    # /ready reports 503 for as long as the key stays bad.
+    status = verify_api_key(force=True)
+    if status.ok:
+        _log.info(
+            "openrouter key verified",
+            extra={"event": "openrouter_key", "status": status.state},
+        )
+    else:
+        _log.error(
+            "openrouter key check failed: %s",
+            status.detail,
+            extra={"event": "openrouter_key", "status": status.state},
+        )
+        if require_verified_key():
+            raise RuntimeError(f"OpenRouter API key unusable: {status.detail}")
     yield
 
 
@@ -123,13 +164,24 @@ def health() -> dict:
 
 
 @app.get("/ready")
-def ready() -> dict:
+def ready() -> JSONResponse:
+    """Readiness = the key actually works, not merely that a string is set.
+
+    Result is memoised for KEY_CHECK_TTL_S inside verify_api_key, so frequent
+    probes cost nothing. Anything other than `valid` is a 503: without a working
+    key every pipeline this service exposes returns 503 anyway.
+    """
+    key = verify_api_key()
     checks = {
-        "openrouter_key": "configured" if os.environ.get("OPENROUTER_API_KEY") else "missing",
+        "openrouter_key": key.state,
+        "openrouter_key_detail": key.detail,
         "models": configured_models(),
         "tokens_used": tokens_used(),
     }
-    return {"status": "ready", "checks": checks}
+    return JSONResponse(
+        status_code=200 if key.ok else 503,
+        content={"status": "ready" if key.ok else "unavailable", "checks": checks},
+    )
 
 
 @app.get("/ai/v1/models")

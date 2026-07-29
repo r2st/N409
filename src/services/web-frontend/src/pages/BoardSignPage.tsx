@@ -53,7 +53,12 @@ export function BoardSignPage() {
       return;
     }
     try {
-      const res = await api<ResolutionView>(`/board/resolution?token=${encodeURIComponent(token)}`);
+      // POST, not a query string: the signing token is a bearer credential and
+      // must not end up in access logs, Referer headers or browser history.
+      const res = await api<ResolutionView>('/board/resolution', {
+        method: 'POST',
+        body: { token },
+      });
       setView(res);
       if (res.member.status !== 'pending') setDone(res.member.status);
     } catch (err) {

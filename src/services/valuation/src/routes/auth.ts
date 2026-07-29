@@ -123,6 +123,23 @@ function slidingWindowLimiter() {
 const HOUR_MS = 60 * 60 * 1000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 
+/**
+ * Throttles for the remaining unauthenticated auth routes (audit follow-up).
+ * Login and forgot-password were limited from the start; register, verify-email,
+ * reset-password and accept-invite were not, which left four ways to hammer the
+ * service from the open internet: bulk account creation, mailbox flooding, and —
+ * on the two token-redeeming routes — unbounded guessing of a reset/invite
+ * secret. All four are keyed per IP; register additionally per email so one
+ * address can't be re-registered in a loop.
+ *
+ * The numbers are set well above any human's plausible rate: a real person hits
+ * each of these once or twice, ever.
+ */
+const REGISTER_PER_IP = 10;
+const REGISTER_PER_EMAIL = 3;
+/** Token-redeeming and mail-triggering routes: per-IP ceiling per hour. */
+const TOKEN_REDEEM_PER_IP = 20;
+
 function toPublicUser(u: UserWithRoles) {
   return {
     id: u.id,
@@ -216,6 +233,16 @@ export function registerAuthRoutes(
     if (!parsed.success)
       throw problems.unprocessable('Invalid registration', { errors: parsed.error.issues });
     const { email, password, first_name, last_name } = parsed.data;
+
+    // Checked after parsing (so the key is a real address) but before the scrypt
+    // hash and the verification email — the two expensive parts of this route.
+    if (
+      !allow(`register-ip:${req.ip}`, REGISTER_PER_IP, HOUR_MS) ||
+      !allow(`register:${email.toLowerCase()}`, REGISTER_PER_EMAIL, HOUR_MS)
+    ) {
+      throw problems.tooManyRequests('Too many sign-up attempts — try again later');
+    }
+
     await assertPasswordLongEnough(password);
 
     if (await findUserByEmail(deps.pool, email)) {
@@ -411,6 +438,14 @@ export function registerAuthRoutes(
     const parsed = ResetPasswordBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+
+    // Bounds token guessing. The tokens are long random secrets, so this is a
+    // belt-and-braces limit — but an unbounded redeem endpoint also lets an
+    // attacker burn CPU on a scrypt hash per request.
+    if (!allow(`reset-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
+      throw problems.tooManyRequests('Too many reset attempts — try again later');
+    }
+
     await assertPasswordLongEnough(parsed.data.password);
 
     const digest = await hashPassword(parsed.data.password);
@@ -427,6 +462,10 @@ export function registerAuthRoutes(
     const parsed = VerifyEmailBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+
+    if (!allow(`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
+      throw problems.tooManyRequests('Too many verification attempts — try again later');
+    }
 
     const outcome = await verifyEmailWithToken(deps.pool, parsed.data.token);
     if (outcome === 'invalid')
@@ -488,6 +527,14 @@ export function registerAuthRoutes(
     const parsed = InviteTokenBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+
+    // Same token space as accept-invite below, and it answers "is this token
+    // real?" directly — limiting only the redeem route would leave the
+    // enumeration oracle wide open.
+    if (!allow(`invite-info-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
+      throw problems.tooManyRequests('Too many invitation lookups — try again later');
+    }
+
     const invitation = await findPendingInvitationByToken(deps.pool, parsed.data.token);
     if (!invitation)
       throw problems.badRequest('This invitation is invalid, expired, or has been revoked');
@@ -499,6 +546,12 @@ export function registerAuthRoutes(
     if (!parsed.success)
       throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
     const { token, password, first_name, last_name } = parsed.data;
+
+    // Accepting an invite mints an account, so an unbounded endpoint is both a
+    // token-guessing surface and a scrypt-CPU sink.
+    if (!allow(`invite-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
+      throw problems.tooManyRequests('Too many invitation attempts — try again later');
+    }
 
     const result = await acceptInvitation(deps.pool, {
       rawToken: token,

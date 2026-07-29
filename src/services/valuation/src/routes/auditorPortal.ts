@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
+import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
@@ -32,10 +33,20 @@ const CreateBody = z.object({
 });
 const RedeemBody = z.object({ token: z.string().min(1) });
 
+/**
+ * The portal redeem route authenticates with nothing but the link's token, so
+ * an unlimited endpoint is an oracle for guessing one — and a hit returns an
+ * entire client valuation. 30 per IP per 10 minutes: an auditor reloads the
+ * page a handful of times, an enumeration run does not.
+ */
+const PORTAL_RATE_LIMIT = 30;
+const PORTAL_RATE_WINDOW_MS = 10 * 60 * 1000;
+
 export function registerAuditorPortalRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; publicBaseUrl: string },
+  deps: { pool: pg.Pool; publicBaseUrl: string; limiter?: FixedWindowRateLimiter },
 ): void {
+  const limiter = deps.limiter ?? new FixedWindowRateLimiter(PORTAL_RATE_LIMIT, PORTAL_RATE_WINDOW_MS);
   const loadManageable = async (principal: Principal, id: string) => {
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
@@ -88,7 +99,12 @@ export function registerAuditorPortalRoutes(
   // ── Public portal: token-authenticated, read-only, single valuation ──────
   // POST so the token stays out of URLs/server logs (the SPA reads it from the
   // link fragment and posts it here).
-  app.post('/api/v1/auditor/portal', async (req) => {
+  app.post('/api/v1/auditor/portal', async (req, reply) => {
+    const { allowed, resetAt } = limiter.check(req.ip);
+    if (!allowed) {
+      void reply.header('retry-after', Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)));
+      throw problems.tooManyRequests('Too many requests — please try again later');
+    }
     const parsed = RedeemBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
     const access = await redeemAuditorToken(deps.pool, parsed.data.token);

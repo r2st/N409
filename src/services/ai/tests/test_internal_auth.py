@@ -23,9 +23,12 @@ def client():
 
 def test_public_paths_never_require_the_token(monkeypatch, client):
     monkeypatch.setenv(INTERNAL_TOKEN_ENV, TOKEN)
-    for path in ("/", "/health", "/ready", "/openapi.json"):
+    for path in ("/", "/health", "/openapi.json"):
         res = client.get(path)
         assert res.status_code == 200, f"{path} -> {res.status_code}"
+    # /ready is public too, but its own status depends on the OpenRouter key —
+    # what matters here is that the token gate let it through rather than 401ing.
+    assert client.get("/ready").status_code in (200, 503)
 
 
 def test_protected_route_rejects_missing_token(monkeypatch, client):

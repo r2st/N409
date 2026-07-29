@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { findUserByEmail, findUserById, createProvisionedUser, setUserActive } from '../repos/users.js';
 import { getSamlConfig, verifyScimToken } from '../repos/ssoConfig.js';
+import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
 import {
@@ -20,8 +21,43 @@ import {
  * users under /scim/v2/Users. Deactivation is a soft delete; reactivation
  * clears it. Only the User resource is supported (no Groups).
  */
-export function registerScimRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+
+/**
+ * Per-IP throttle for /scim/v2/*. These routes face the open internet with only
+ * a bearer token in front of them, and every request costs a DB round trip to
+ * verify that token — so an unlimited endpoint is both a token-guessing surface
+ * and a cheap way to saturate the pool. Sized for a real IdP: a full resync of a
+ * few hundred users fits comfortably inside one window.
+ */
+const SCIM_RATE_LIMIT = 600;
+const SCIM_RATE_WINDOW_MS = 5 * 60 * 1000;
+
+export function registerScimRoutes(
+  app: FastifyInstance,
+  deps: { pool: pg.Pool; limiter?: FixedWindowRateLimiter },
+): void {
   const CT = 'application/scim+json';
+  const limiter = deps.limiter ?? new FixedWindowRateLimiter(SCIM_RATE_LIMIT, SCIM_RATE_WINDOW_MS);
+
+  /**
+   * onRequest so the limit is charged before the token lookup — the whole point
+   * is to keep a flood off the database. Replies in SCIM's own error shape so an
+   * IdP surfaces something intelligible rather than a parse failure.
+   */
+  const rateLimit = async (req: FastifyRequest, reply: FastifyReply) => {
+    const { allowed, limit, remaining, resetAt } = limiter.check(`scim:${req.ip}`);
+    void reply.header('x-ratelimit-limit', limit);
+    void reply.header('x-ratelimit-remaining', remaining);
+    if (!allowed) {
+      void reply.header('retry-after', Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)));
+      return reply
+        .status(429)
+        .header('content-type', CT)
+        .send(scimError(429, 'Too many SCIM requests — slow down and retry'));
+    }
+  };
+  /** Route options shared by every /scim/v2/* route. */
+  const limited = { onRequest: rateLimit };
 
   const requireToken = async (req: FastifyRequest, reply: FastifyReply): Promise<boolean> => {
     const header = req.headers.authorization;
@@ -39,7 +75,7 @@ export function registerScimRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     return (ROLE_KEYS as readonly string[]).includes(role) ? (role as RoleKey) : 'valuation_user';
   };
 
-  app.get('/scim/v2/ServiceProviderConfig', async (_req, reply) =>
+  app.get('/scim/v2/ServiceProviderConfig', limited, async (_req, reply) =>
     reply.header('content-type', CT).send({
       schemas: ['urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig'],
       patch: { supported: true },
@@ -51,7 +87,7 @@ export function registerScimRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     }),
   );
 
-  app.get('/scim/v2/Users', async (req, reply) => {
+  app.get('/scim/v2/Users', limited, async (req, reply) => {
     if (!(await requireToken(req, reply))) return;
     const filter = parseUserNameFilter((req.query as { filter?: string }).filter);
     if (filter) {
@@ -67,7 +103,7 @@ export function registerScimRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     return reply.header('content-type', CT).send(scimList(rows.map(toScimUser)));
   });
 
-  app.get('/scim/v2/Users/:id', async (req, reply) => {
+  app.get('/scim/v2/Users/:id', limited, async (req, reply) => {
     if (!(await requireToken(req, reply))) return;
     const { id } = req.params as { id: string };
     const user = await findUserById(deps.pool, id);
@@ -75,7 +111,7 @@ export function registerScimRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     return reply.header('content-type', CT).send(toScimUser(user as unknown as ScimUserRow));
   });
 
-  app.post('/scim/v2/Users', async (req, reply) => {
+  app.post('/scim/v2/Users', limited, async (req, reply) => {
     if (!(await requireToken(req, reply))) return;
     const parsed = parseScimUser(req.body);
     if (!parsed) return reply.status(400).header('content-type', CT).send(scimError(400, 'A userName / email is required'));
@@ -100,7 +136,7 @@ export function registerScimRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   });
 
   // PATCH — the common path is toggling `active` (deprovision / reactivate).
-  app.patch('/scim/v2/Users/:id', async (req, reply) => {
+  app.patch('/scim/v2/Users/:id', limited, async (req, reply) => {
     if (!(await requireToken(req, reply))) return;
     const { id } = req.params as { id: string };
     const user = await findUserById(deps.pool, id);
@@ -112,7 +148,7 @@ export function registerScimRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   });
 
   // DELETE — SCIM deprovision. Soft delete so history + audit trail survive.
-  app.delete('/scim/v2/Users/:id', async (req, reply) => {
+  app.delete('/scim/v2/Users/:id', limited, async (req, reply) => {
     if (!(await requireToken(req, reply))) return;
     const { id } = req.params as { id: string };
     const user = await findUserById(deps.pool, id);

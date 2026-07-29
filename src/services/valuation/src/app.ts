@@ -90,6 +90,12 @@ export interface AppDeps {
   google?: GoogleOidc;
   /** injectable for tests — partner API per-key rate limiter */
   partnerApiLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests — per-IP limiter for the token-only board routes */
+  boardPublicLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests — per-IP limiter for the auditor portal redeem route */
+  auditorPortalLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests — per-IP limiter for /scim/v2/* */
+  scimLimiter?: FixedWindowRateLimiter;
   /** injectable for tests — accounting provider HTTP */
   accountingFetch?: FetchFn;
   /** injectable for tests — cap-table sync provider HTTP */
@@ -239,10 +245,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerBridgeRoutes(app, { pool });
   registerAnalyticsRoutes(app, { pool });
   registerOrganizationRoutes(app, { pool });
-  registerAuditorPortalRoutes(app, { pool, publicBaseUrl: config.PUBLIC_BASE_URL });
+  registerAuditorPortalRoutes(app, {
+    pool,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+    limiter: deps.auditorPortalLimiter,
+  });
   // Feature 9 — enterprise SSO: SAML 2.0 SP + SCIM 2.0 provisioning
   registerSamlRoutes(app, { pool, jwt, publicBaseUrl: config.PUBLIC_BASE_URL, cookie: sessionCookie });
-  registerScimRoutes(app, { pool });
+  registerScimRoutes(app, { pool, limiter: deps.scimLimiter });
   registerAdminSsoRoutes(app, { pool });
   // Feature 10 — data retention + legal hold administration
   registerRetentionRoutes(app, { pool });
@@ -323,6 +333,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     pool,
     transport,
     publicBaseUrl: config.PUBLIC_BASE_URL,
+    limiter: deps.boardPublicLimiter,
   });
   // Feature 6 — grant management (option grants at the adopted 409A FMV)
   registerGrantRoutes(app, { pool });

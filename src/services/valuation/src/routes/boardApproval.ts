@@ -1,7 +1,8 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
+import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
@@ -57,6 +58,17 @@ const SignBody = z.object({
   comment: z.string().max(2000).nullable().optional(),
 });
 
+const ResolutionBody = z.object({ token: z.string().min(1).max(200) });
+
+/**
+ * The two public routes below authenticate with nothing but a sign-off token,
+ * so without a limit they are an unbounded oracle for guessing one. 30 requests
+ * per IP per 10 minutes is far more than a board member signing a document
+ * needs, and useless for a search of the token space.
+ */
+const BOARD_PUBLIC_RATE_LIMIT = 30;
+const BOARD_PUBLIC_RATE_WINDOW_MS = 10 * 60 * 1000;
+
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Board approval is operations-only');
 }
@@ -90,9 +102,25 @@ async function resolutionResponse(pool: pg.Pool, resolution: BoardResolutionRow)
 
 export function registerBoardApprovalRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; transport?: EmailTransport; publicBaseUrl?: string },
+  deps: {
+    pool: pg.Pool;
+    transport?: EmailTransport;
+    publicBaseUrl?: string;
+    limiter?: FixedWindowRateLimiter;
+  },
 ): void {
   const baseUrl = (deps.publicBaseUrl ?? 'http://localhost:3000').replace(/\/$/, '');
+  const limiter =
+    deps.limiter ?? new FixedWindowRateLimiter(BOARD_PUBLIC_RATE_LIMIT, BOARD_PUBLIC_RATE_WINDOW_MS);
+
+  /** Per-IP throttle for the token-only public routes. */
+  const throttlePublic = (req: FastifyRequest, reply: FastifyReply): void => {
+    const { allowed, resetAt } = limiter.check(req.ip);
+    if (!allowed) {
+      void reply.header('retry-after', Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)));
+      throw problems.tooManyRequests('Too many requests — please try again later');
+    }
+  };
 
   // Current resolution + member sign-off status (ops).
   app.get('/api/v1/valuations/:id/board', { preHandler: app.authenticate }, async (req) => {
@@ -260,10 +288,15 @@ export function registerBoardApprovalRoutes(
   );
 
   // Public: fetch the resolution a token grants access to (for the signing page).
-  app.get('/api/v1/board/resolution', async (req) => {
-    const { token } = req.query as { token?: string };
-    if (!token) throw problems.notFound();
-    const member = await findSignoffByTokenHash(deps.pool, hashToken(token));
+  // POST so the token stays out of URLs, and therefore out of access logs,
+  // Referer headers and browser history — the same reason /auditor/portal is a
+  // POST. A signing token is a bearer credential; a query string is not a
+  // private channel for one.
+  app.post('/api/v1/board/resolution', async (req, reply) => {
+    throttlePublic(req, reply);
+    const parsed = ResolutionBody.safeParse(req.body);
+    if (!parsed.success) throw problems.notFound();
+    const member = await findSignoffByTokenHash(deps.pool, hashToken(parsed.data.token));
     if (!member) throw problems.notFound();
     const resolution = await findResolutionByValuation(deps.pool, member.valuation_id);
     if (!resolution) throw problems.notFound();
@@ -280,7 +313,8 @@ export function registerBoardApprovalRoutes(
   });
 
   // Public: a board member records their decision via their token.
-  app.post('/api/v1/board/sign', async (req) => {
+  app.post('/api/v1/board/sign', async (req, reply) => {
+    throttlePublic(req, reply);
     const parsed = SignBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid sign-off', { errors: parsed.error.issues });
     const member = await findSignoffByTokenHash(deps.pool, hashToken(parsed.data.token));

@@ -3,5 +3,10 @@ export { startTelemetry, type TelemetryHandle } from './otel.js';
 export { createHttpMetrics, registerGauge, routeLabel, statusClass, type HttpMetrics } from './metrics.js';
 export { ApiProblem, problems, registerProblemHandler, scrubSensitive, scrubError } from './problem.js';
 export { registerHealth, type ReadinessCheck } from './health.js';
+export {
+  installCrashHandlers,
+  type CrashHandlerLogger,
+  type CrashHandlerOptions,
+} from './crash.js';
 export { newUlid, isUlid } from './ids.js';
 export { TtlCache } from './cache.js';

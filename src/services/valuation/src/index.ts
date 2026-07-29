@@ -1,4 +1,4 @@
-import { startTelemetry, createHttpMetrics, registerGauge } from '@n409/shared';
+import { startTelemetry, createHttpMetrics, registerGauge, installCrashHandlers } from '@n409/shared';
 
 // OTel first so http/pg get instrumented before anything imports them (issue #4).
 const telemetry = startTelemetry('valuation');
@@ -17,6 +17,19 @@ const { autoPipelineConcurrency } = await import('./pipeline/autoPipeline.js');
 const config = loadConfig();
 const pool = createPool(config.DATABASE_URL);
 const app = buildApp({ config, pool });
+
+// A stray rejection in any of the background timers below (auto-emails, the
+// pipeline reaper, the cap-table/HRIS scans, retention) would otherwise kill the
+// process with nothing but a bare stack on stderr. Log it through pino first,
+// then exit so systemd restarts us.
+installCrashHandlers(app.log, {
+  service: 'valuation',
+  onShutdown: async () => {
+    await app.close();
+    await pool.end();
+    await telemetry.shutdown();
+  },
+});
 
 // RED metrics (audit B-3 §metrics): request rate/latency/errors by route, plus
 // DB-pool and auto-pipeline saturation gauges. No-ops without an OTLP endpoint.

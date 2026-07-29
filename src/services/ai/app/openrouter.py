@@ -18,6 +18,16 @@ from dataclasses import dataclass
 import httpx
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# Key introspection endpoint. Cheapest possible live proof that the configured
+# key is real: no model is invoked, so it costs nothing and burns no quota.
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+# Every OpenRouter key carries this prefix. A key that doesn't is a copy/paste
+# of some *other* provider's secret — catch it before spending a round trip.
+KEY_PREFIX = "sk-or-"
+KEY_CHECK_TIMEOUT_S = 10.0
+# /ready is polled by systemd/uptime checks; re-probing OpenRouter on every hit
+# would be both slow and rude. A minute of staleness is fine for readiness.
+KEY_CHECK_TTL_S = 60.0
 DEFAULT_MODELS = [
     "openai/gpt-oss-20b:free",
     "meta-llama/llama-3.3-70b-instruct:free",
@@ -140,6 +150,121 @@ def _headers() -> dict[str, str]:
         "HTTP-Referer": "https://n409.internal",
         "X-Title": "N409 valuation platform",
     }
+
+
+# ── API-key verification ─────────────────────────────────────────────────────
+#
+# A non-empty OPENROUTER_API_KEY used to be the whole readiness story, so a
+# revoked, truncated or wrong-provider key read as "configured" and /ready
+# returned 200 — the service only failed once a real valuation reached it, as a
+# 503 in front of a paying customer. Boot and /ready now prove the key instead
+# of assuming it: prefix check first (free), then one live introspection call.
+
+
+@dataclass(frozen=True)
+class KeyStatus:
+    """Outcome of verifying OPENROUTER_API_KEY.
+
+    ``state`` is one of:
+      ``valid``       — OpenRouter accepted the key.
+      ``missing``     — OPENROUTER_API_KEY is unset/empty.
+      ``malformed``   — set, but not an OpenRouter key (wrong prefix).
+      ``invalid``     — OpenRouter rejected it (revoked, typo'd, disabled).
+      ``unreachable`` — OpenRouter could not be asked. The key may be fine, but
+                        nothing this service does will work until it answers,
+                        so readiness treats it as not-ready either way.
+    """
+
+    state: str
+    detail: str
+
+    @property
+    def ok(self) -> bool:
+        return self.state == "valid"
+
+
+_key_lock = threading.Lock()
+# (key, checked_at_monotonic, status) for the most recently verified key.
+_key_cache: tuple[str, float, KeyStatus] | None = None
+
+
+def reset_key_cache() -> None:
+    """Drop the cached verification (used by tests and by boot's forced check)."""
+    global _key_cache
+    with _key_lock:
+        _key_cache = None
+
+
+def _cached_key_status(key: str) -> KeyStatus | None:
+    with _key_lock:
+        if (
+            _key_cache is not None
+            and _key_cache[0] == key
+            and time.monotonic() - _key_cache[1] < KEY_CHECK_TTL_S
+        ):
+            return _key_cache[2]
+    return None
+
+
+def _cache_key_status(key: str, status: KeyStatus) -> None:
+    global _key_cache
+    with _key_lock:
+        _key_cache = (key, time.monotonic(), status)
+
+
+def _probe_key(key: str, client: httpx.Client | None = None) -> KeyStatus:
+    """One cheap live call to OpenRouter's key-introspection endpoint."""
+    owns_client = client is None
+    http = client or httpx.Client(timeout=KEY_CHECK_TIMEOUT_S)
+    try:
+        try:
+            resp = http.get(OPENROUTER_KEY_URL, headers={"Authorization": f"Bearer {key}"})
+        except httpx.HTTPError as exc:
+            return KeyStatus("unreachable", f"could not reach OpenRouter: {exc}")
+        if resp.status_code in (401, 403):
+            return KeyStatus(
+                "invalid",
+                f"OpenRouter rejected OPENROUTER_API_KEY (HTTP {resp.status_code})",
+            )
+        if resp.status_code != 200:
+            return KeyStatus(
+                "unreachable",
+                f"unexpected HTTP {resp.status_code} from OpenRouter key endpoint",
+            )
+        try:
+            data = resp.json().get("data") or {}
+        except ValueError:
+            data = {}
+        label = data.get("label") or "unlabelled"
+        return KeyStatus("valid", f"OpenRouter accepted key '{label}'")
+    finally:
+        if owns_client:
+            http.close()
+
+
+def verify_api_key(
+    *, client: httpx.Client | None = None, force: bool = False
+) -> KeyStatus:
+    """Verify OPENROUTER_API_KEY, memoising the live result for KEY_CHECK_TTL_S.
+
+    ``force`` skips the cache (boot always wants a fresh answer).
+    """
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        return KeyStatus("missing", "OPENROUTER_API_KEY is not set")
+    if not key.startswith(KEY_PREFIX):
+        return KeyStatus(
+            "malformed",
+            f"OPENROUTER_API_KEY does not start with '{KEY_PREFIX}' — "
+            "that is not an OpenRouter key",
+        )
+    if not force:
+        cached = _cached_key_status(key)
+        if cached is not None:
+            return cached
+    status = _probe_key(key, client)
+    _cache_key_status(key, status)
+    return status
 
 
 def _backoff_sleep(attempt: int) -> None:
