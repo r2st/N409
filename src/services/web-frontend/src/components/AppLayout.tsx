@@ -9,6 +9,7 @@ import { Wordmark } from './Logo';
 import { HelpWidget } from './HelpWidget';
 import { ViewModeToggle } from './ViewModeToggle';
 import { ThemeToggle } from './ThemeToggle';
+import { CommandPalette, PaletteTrigger } from './CommandPalette';
 
 function NavItem({
   to,
@@ -249,6 +250,7 @@ export function AppLayout() {
     // sidebar and pushes the user card below the viewport (bottom items hidden).
     <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
       <ViewModeToggle onNavigate={close} />
+      <PaletteTrigger onNavigate={close} />
       <div className="overline mt-3 mb-2 px-3 text-chrome-faint/80">Workspace</div>
       <NavItem to="/dashboard" label="Dashboard" icon={icons.dashboard} onNavigate={close} />
       <NavItem
@@ -386,6 +388,7 @@ export function AppLayout() {
         </div>
       </main>
 
+      <CommandPalette />
       <HelpWidget />
     </div>
   );
