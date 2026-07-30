@@ -1,4 +1,4 @@
-import { ApiProblem, problems } from '@n409/shared';
+import { ApiProblem, probeReady as sharedProbeReady, problems } from '@n409/shared';
 
 /**
  * Thin JSON client for the internal AI / engine services. Failures surface as
@@ -34,33 +34,19 @@ export function internalAuthHeaders(): Record<string, string> {
 
 /**
  * Readiness probe for an internal service (`/ready`), used by this service's own
- * /ready. Throws with a short, human-readable reason so registerHealth can put
- * it straight into the response body.
+ * /ready. The mechanics live in @n409/shared (the web/BFF needs the same probe
+ * for its own readiness); this wrapper only adds the internal shared secret.
  *
- * Deliberately short-timeout, no retries and no body parsing: a readiness check
- * must answer fast and must not itself become a way to hang the health endpoint.
- * The upstream's 503 is honoured — a downstream that knows it is broken (e.g.
- * the AI service with a dead OpenRouter key) makes us not-ready too, which is
- * the whole point of probing past `SELECT 1`.
+ * The AI/engine services leave /ready outside the token check, so the header is
+ * strictly belt-and-braces — but it costs nothing and keeps a future decision to
+ * protect /ready from silently making us permanently not-ready.
  */
 export async function probeReady(
   service: string,
   baseUrl: string,
   opts: { timeoutMs?: number; fetchFn?: typeof fetch } = {},
 ): Promise<void> {
-  const url = `${baseUrl.replace(/\/$/, '')}/ready`;
-  const doFetch = opts.fetchFn ?? fetch;
-  let res: Response;
-  try {
-    res = await doFetch(url, {
-      headers: internalAuthHeaders(),
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 3000),
-    });
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : 'unreachable';
-    throw new Error(`${service} unreachable at ${url}: ${reason}`);
-  }
-  if (!res.ok) throw new Error(`${service} is not ready (HTTP ${res.status})`);
+  return sharedProbeReady(service, baseUrl, { ...opts, headers: internalAuthHeaders() });
 }
 
 export async function postJson<T>(
