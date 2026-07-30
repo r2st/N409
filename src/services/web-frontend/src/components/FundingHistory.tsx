@@ -106,7 +106,7 @@ export function FundingHistory({
   };
 
   return (
-    <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-5 text-ink-400">Funding & transaction history</h2>
       {error && <div className="mb-4"><ErrorNote>{error}</ErrorNote></div>}
 

@@ -72,7 +72,7 @@ export function SupportInboxPage() {
             className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               scope === s
                 ? 'bg-ink-900 text-paper-50'
-                : 'border border-ink-200 bg-white text-ink-600 hover:border-ink-400'
+                : 'border border-ink-200 bg-surface text-ink-600 hover:border-ink-400'
             }`}
           >
             {s[0]!.toUpperCase() + s.slice(1)}
@@ -95,7 +95,7 @@ export function SupportInboxPage() {
           </EmptyState>
         )}
         {messages.map((m) => (
-          <article key={m.id} className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+          <article key={m.id} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-sm font-semibold text-ink-900">{m.subject}</h2>
               <span

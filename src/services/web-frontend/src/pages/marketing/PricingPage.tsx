@@ -34,13 +34,13 @@ export function PricingPage() {
 
         <div className="mt-10 grid gap-8 lg:grid-cols-2">
           {/* Calculator */}
-          <div className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <div className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <label className="block">
               <span className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">Report type</span>
               <select
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
-                className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 focus:border-bond-600 focus:outline-none"
+                className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 focus:border-bond-600 focus:outline-none"
               >
                 {PRODUCTS.map((p) => (
                   <option key={p.slug} value={p.slug}>
@@ -99,7 +99,7 @@ export function PricingPage() {
               </div>
               <Link
                 to="/register"
-                className="rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-white shadow-card transition-colors hover:bg-bond-700"
+                className="rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700"
               >
                 Get the report
               </Link>
@@ -135,7 +135,7 @@ export function PricingPage() {
       </section>
 
       {/* Comparison table */}
-      <section className="border-t border-paper-300 bg-white">
+      <section className="border-t border-paper-300 bg-surface">
         <div className="mx-auto max-w-6xl px-5 py-16">
           <h2 className="font-display text-3xl font-semibold text-ink-900">
             Faster, clearer, and built for founders
@@ -182,7 +182,7 @@ export function PricingPage() {
                     'Often unavailable',
                   ],
                 ].map(([feature, us, firm, provider]) => (
-                  <tr key={feature} className="border-b border-paper-200 bg-white last:border-0">
+                  <tr key={feature} className="border-b border-paper-200 bg-surface last:border-0">
                     <td className="px-5 py-3 font-semibold text-ink-800">{feature}</td>
                     <td className="px-4 py-3 font-medium text-bond-700">{us}</td>
                     <td className="px-4 py-3 text-ink-600">{firm}</td>
@@ -197,18 +197,18 @@ export function PricingPage() {
 
       {/* Firms / partners tier (gap #32) */}
       <section className="mx-auto max-w-6xl px-5 pb-16">
-        <div className="grid items-center gap-8 rounded-lg border border-ink-800 bg-ink-900 p-8 text-paper-50 lg:grid-cols-[1.5fr_1fr]">
+        <div className="grid items-center gap-8 rounded-lg border border-chrome-800 bg-chrome-900 p-8 text-chrome-fg lg:grid-cols-[1.5fr_1fr]">
           <div>
             <div className="overline text-brass-400">For firms &amp; partners</div>
             <h2 className="mt-2 font-display text-2xl font-semibold">
               Leverage our AI-powered valuation technology
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink-300">
+            <p className="mt-3 max-w-xl text-sm leading-relaxed text-chrome-dim">
               Accounting firms, fund administrators, and advisors run valuations at scale on N409 — with
               white-label reports, a partner API, and volume pricing. Tell us about your book of business and
               we’ll put together a plan.
             </p>
-            <ul className="mt-5 grid gap-2 text-sm text-ink-300 sm:grid-cols-2">
+            <ul className="mt-5 grid gap-2 text-sm text-chrome-dim sm:grid-cols-2">
               {[
                 'White-label reports and client portal',
                 'Partner API and bulk intake',
@@ -227,17 +227,17 @@ export function PricingPage() {
               <>
                 <a
                   href={`mailto:${partnersEmail}?subject=N409%20for%20firms`}
-                  className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+                  className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
                 >
                   Get in touch
                 </a>
-                <p className="mt-3 text-xs break-words text-ink-400">{partnersEmail}</p>
+                <p className="mt-3 text-xs break-words text-chrome-faint">{partnersEmail}</p>
               </>
             ) : (
               <>
                 <Link
                   to="/contact"
-                  className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+                  className="inline-block rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
                 >
                   Get in touch
                 </Link>

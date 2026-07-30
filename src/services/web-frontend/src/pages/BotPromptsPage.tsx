@@ -220,7 +220,7 @@ function PromptCard({
   };
 
   return (
-    <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <div className="flex flex-wrap items-baseline gap-2">
         <h2 className="font-display text-lg font-semibold text-ink-900">{prompt.label}</h2>
         <span className="font-mono text-xs text-ink-400">{prompt.pipeline}</span>

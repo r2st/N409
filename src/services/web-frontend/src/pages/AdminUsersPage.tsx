@@ -431,7 +431,7 @@ export function AdminUsersPage() {
 
       {/* Create / edit panel */}
       {editor && (
-        <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-5 text-ink-400">
             {editor.mode === 'invite'
               ? 'Invite user'
@@ -532,7 +532,7 @@ export function AdminUsersPage() {
 
       {/* Invitations (feature #9) */}
       {invitations.length > 0 && (
-        <section className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <section className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <h2 className="overline border-b border-paper-300 px-5 py-3 text-ink-400">Invitations</h2>
           <table className="w-full min-w-[640px] text-sm" aria-label="Invitations">
             <tbody>
@@ -605,7 +605,7 @@ export function AdminUsersPage() {
       )}
 
       {data && data.users.length > 0 && (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-paper-300 text-left">
@@ -638,7 +638,7 @@ export function AdminUsersPage() {
                       {u.roles.map((r) => (
                         <span
                           key={r}
-                          className="rounded border border-ink-200 bg-white px-1.5 py-0.5 font-mono text-[0.65rem] font-semibold text-ink-700"
+                          className="rounded border border-ink-200 bg-surface px-1.5 py-0.5 font-mono text-[0.65rem] font-semibold text-ink-700"
                         >
                           {r}
                         </span>

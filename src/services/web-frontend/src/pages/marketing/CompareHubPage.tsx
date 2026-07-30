@@ -27,7 +27,7 @@ export function CompareHubPage() {
         {/* Categories */}
         <div className="mt-10 space-y-4">
           {PROVIDER_CATEGORIES.map((cat) => (
-            <div key={cat.title} className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+            <div key={cat.title} className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <h2 className="font-display text-lg font-semibold text-ink-900">{cat.title}</h2>
                 <div className="flex flex-wrap gap-2">
@@ -61,7 +61,7 @@ export function CompareHubPage() {
       </section>
 
       {/* What founders should ask */}
-      <section className="border-t border-paper-300 bg-white">
+      <section className="border-t border-paper-300 bg-surface">
         <div className="mx-auto max-w-5xl px-5 py-16">
           <div className="overline text-brass-600">Before you choose</div>
           <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">
@@ -79,23 +79,23 @@ export function CompareHubPage() {
       </section>
 
       {/* CTA */}
-      <section className="ledger-grid border-t border-ink-800 bg-ink-900 text-paper-50">
+      <section className="ledger-grid border-t border-chrome-800 bg-chrome-900 text-chrome-fg">
         <div className="mx-auto max-w-4xl px-5 py-16 text-center">
           <h2 className="font-display text-3xl font-semibold">See how N409 stacks up</h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-ink-300">
+          <p className="mx-auto mt-3 max-w-xl text-sm text-chrome-dim">
             AI-assisted intake, a transparent engine, credentialed analyst review, and per-report pricing
             across 13 report types.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
               to="/register"
-              className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+              className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
             >
               Start my valuation
             </Link>
             <Link
               to="/pricing"
-              className="rounded-md border border-ink-600 px-6 py-3 text-sm font-semibold text-paper-50 transition-colors hover:border-ink-400"
+              className="rounded-md border border-chrome-600 px-6 py-3 text-sm font-semibold text-chrome-fg transition-colors hover:border-chrome-faint"
             >
               See pricing
             </Link>

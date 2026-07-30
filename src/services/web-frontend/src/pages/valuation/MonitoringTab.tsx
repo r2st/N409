@@ -101,7 +101,7 @@ export function MonitoringTab() {
       {error && <ErrorNote>{error}</ErrorNote>}
 
       {!monitored ? (
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="font-display text-lg font-semibold text-ink-900">Monitoring</h2>
           <p className="mt-2 mb-4 text-sm text-ink-500">
             Track this valuation for events that suggest a fresh 409A is due — a new funding round,
@@ -119,7 +119,7 @@ export function MonitoringTab() {
         </section>
       ) : (
         <>
-          <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="font-display text-lg font-semibold text-ink-900">Monitoring</h2>
               <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${MONITOR_TONE[data.status]}`}>
@@ -169,7 +169,7 @@ export function MonitoringTab() {
           </section>
 
           {data.current && data.monitor && (
-            <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+            <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
               <h3 className="overline mb-3 text-ink-400">Baseline vs current</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">

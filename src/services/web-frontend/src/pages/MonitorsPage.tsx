@@ -58,7 +58,7 @@ export function MonitorsPage() {
             <Link
               key={m.valuation_id}
               to={`/valuations/${m.valuation_id}/monitoring`}
-              className="block rounded-lg border border-paper-300 bg-white p-4 shadow-card hover:border-ink-300"
+              className="block rounded-lg border border-paper-300 bg-surface p-4 shadow-card hover:border-ink-300"
             >
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-semibold text-ink-900">{m.company_name}</span>

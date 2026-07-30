@@ -60,7 +60,7 @@ export function RichTextEditor({
   };
 
   return (
-    <div className={`rounded-md border border-ink-200 bg-white ${disabled ? 'opacity-60' : ''}`}>
+    <div className={`rounded-md border border-ink-200 bg-surface ${disabled ? 'opacity-60' : ''}`}>
       <div className="flex flex-wrap gap-1 border-b border-paper-300 px-2 py-1.5">
         {TOOLS.map((tool) => (
           <button

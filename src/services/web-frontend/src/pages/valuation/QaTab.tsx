@@ -136,7 +136,7 @@ export function QaTab() {
           Run the checks to review the latest calculation for reasonableness before delivery.
         </EmptyState>
       ) : (
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <h2 className="overline text-ink-400">Latest review</h2>
             <StatusPill status={latest.status} />
@@ -174,7 +174,7 @@ export function QaTab() {
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold text-ink-900">AI reviewer</h3>
                 {latest.ai_model && (
-                  <span className="rounded border border-ink-200 bg-white px-1.5 py-0.5 font-mono text-[11px] text-ink-500">
+                  <span className="rounded border border-ink-200 bg-surface px-1.5 py-0.5 font-mono text-[11px] text-ink-500">
                     {latest.ai_model}
                   </span>
                 )}
@@ -205,7 +205,7 @@ export function QaTab() {
             {data.reviews.slice(1).map((review) => (
               <li
                 key={review.id}
-                className="flex items-center gap-3 rounded-md border border-paper-300 bg-white px-3.5 py-2 text-sm"
+                className="flex items-center gap-3 rounded-md border border-paper-300 bg-surface px-3.5 py-2 text-sm"
               >
                 <StatusPill status={review.status} />
                 <span className="text-ink-600">

@@ -85,7 +85,7 @@ function FeatureCard({ categoryId }: { categoryId: string }) {
   if (!cat) return null;
   const primary = primaryArticleForCategory(categoryId);
   return (
-    <div className="flex flex-col rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+    <div className="flex flex-col rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="text-2xl" aria-hidden>
         {EMOJI[categoryId] ?? '•'}
       </div>

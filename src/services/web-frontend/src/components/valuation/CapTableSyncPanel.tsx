@@ -133,7 +133,7 @@ export function CapTableSyncPanel({
   if (!providers) return <Spinner />;
 
   return (
-    <section className="space-y-4 rounded-lg border border-paper-300 bg-white p-6 shadow-card" data-testid="cap-table-sync">
+    <section className="space-y-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card" data-testid="cap-table-sync">
       <div>
         <h3 className="overline text-ink-400">Live sync</h3>
         <p className="mt-1 text-sm text-ink-400">
@@ -209,7 +209,7 @@ export function CapTableSyncPanel({
             {pending.outcome.diff.changed} changed · {pending.outcome.diff.added} added ·{' '}
             {pending.outcome.diff.removed} removed vs. the cap table on file.
           </p>
-          <div className="mt-3 max-h-64 overflow-y-auto rounded border border-amber-200 bg-white">
+          <div className="mt-3 max-h-64 overflow-y-auto rounded border border-amber-200 bg-surface">
             <table className="w-full text-sm">
               <tbody>
                 {pending.outcome.diff.conflicts.map((c) => (

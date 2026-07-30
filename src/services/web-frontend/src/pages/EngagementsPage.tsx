@@ -93,7 +93,7 @@ export function EngagementsPage() {
                     <Link
                       key={e.valuation_id}
                       to={`/valuations/${e.valuation_id}/engagement`}
-                      className="block rounded-lg border border-paper-300 bg-white p-3 shadow-card hover:border-ink-300"
+                      className="block rounded-lg border border-paper-300 bg-surface p-3 shadow-card hover:border-ink-300"
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="truncate font-semibold text-ink-900">{e.company_name}</span>

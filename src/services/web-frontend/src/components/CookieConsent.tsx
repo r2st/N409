@@ -24,7 +24,7 @@ export function CookieConsent(): React.JSX.Element | null {
       aria-label="Cookie consent"
       aria-describedby={descId}
       tabIndex={-1}
-      className="fixed inset-x-0 bottom-0 z-50 border-t border-paper-300 bg-white/95 backdrop-blur focus:outline-none"
+      className="fixed inset-x-0 bottom-0 z-50 border-t border-paper-300 bg-surface/95 backdrop-blur focus:outline-none"
     >
       <div className="mx-auto flex max-w-6xl flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <p id={descId} className="max-w-2xl text-sm leading-relaxed text-ink-700">
@@ -46,7 +46,7 @@ export function CookieConsent(): React.JSX.Element | null {
           <button
             type="button"
             onClick={accept}
-            className="cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+            className="cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
           >
             Accept
           </button>

@@ -159,7 +159,7 @@ export function ValuationDetailPage() {
         <AuditorAccessPanel valuationId={valuation.id} />
 
         {/* Facts */}
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-5 text-ink-400">Engagement details</h2>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
             <Meta label="Service" value={valuation.service_name} />
@@ -218,7 +218,7 @@ export function ValuationDetailPage() {
 
         {/* Edit — only fields this role may patch */}
         {canEdit && (
-          <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <h2 className="overline mb-5 text-ink-400">Edit</h2>
             <form onSubmit={save} className="space-y-5">
               {saveError && <ErrorNote>{saveError}</ErrorNote>}

@@ -162,7 +162,7 @@ export function IntakeTab() {
         {error && <ErrorNote>{error}</ErrorNote>}
 
         {section && (
-          <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <div className="mb-1 flex items-center justify-between">
               <h2 className="font-display text-lg font-semibold text-ink-900">{section.title}</h2>
               <span className="text-xs text-ink-400">
@@ -181,7 +181,7 @@ export function IntakeTab() {
                         value={fieldValue(answers, f.key)}
                         onChange={(e) => setField(f.key, e.target.value)}
                         rows={3}
-                        className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none disabled:bg-paper-100"
+                        className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none disabled:bg-paper-100"
                       />
                     ) : f.type === 'boolean' ? (
                       <Select
@@ -265,7 +265,7 @@ export function IntakeTab() {
 
       {/* Progress + document checklist */}
       <aside className="space-y-5">
-        <div className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+        <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
           <h3 className="overline mb-3 text-ink-400">Progress</h3>
           <div className="mb-1 flex items-baseline justify-between">
             <span className="font-display text-2xl font-semibold text-ink-900">
@@ -293,7 +293,7 @@ export function IntakeTab() {
           </ul>
         </div>
 
-        <div className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+        <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
           <h3 className="overline mb-3 text-ink-400">Documents still needed</h3>
           {data.missing_documents.length === 0 ? (
             <EmptyState title="All set">All required documents are in.</EmptyState>

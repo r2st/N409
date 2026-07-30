@@ -136,7 +136,7 @@ export function HealthTab() {
           Run the checks to verify methodology, assumptions, completeness, math, and dates before finalizing.
         </EmptyState>
       ) : (
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <h2 className="overline text-ink-400">Latest run</h2>
             <SeverityPill severity={latest.severity} />
@@ -182,7 +182,7 @@ export function HealthTab() {
             {data.health_checks.slice(1).map((run) => (
               <li
                 key={run.id}
-                className="flex items-center gap-3 rounded-md border border-paper-300 bg-white px-3.5 py-2 text-sm"
+                className="flex items-center gap-3 rounded-md border border-paper-300 bg-surface px-3.5 py-2 text-sm"
               >
                 <SeverityPill severity={run.severity} />
                 <span className="text-ink-600">

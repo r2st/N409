@@ -128,7 +128,7 @@ export function BridgeTab() {
 
       {data && (
         <div className="space-y-6" data-testid="bridge-result">
-          <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+          <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
             <Metric label={`From (${data.from.number})`} value={money(data.bridge.from_fmv)} />
             <Metric label={`To (${data.to.number})`} value={money(data.bridge.to_fmv)} />
             <Metric
@@ -159,7 +159,7 @@ export function BridgeTab() {
             </p>
           )}
 
-          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[420px] text-sm">
               <thead>
                 <tr className="border-b border-paper-300 text-left">

@@ -135,7 +135,7 @@ export function ModelSensitivityPanel({
                 return (
                   <div key={table.parameter}>
                     <h3 className="mb-2 font-display text-base font-semibold text-ink-900">{meta.label}</h3>
-                    <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+                    <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-paper-300 text-xs text-ink-400">

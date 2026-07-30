@@ -118,7 +118,7 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
   if (!payments || payments.length === 0) return null;
 
   return (
-    <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-4 text-ink-400">Payment history</h2>
       <table className="w-full text-left text-sm">
         <thead>

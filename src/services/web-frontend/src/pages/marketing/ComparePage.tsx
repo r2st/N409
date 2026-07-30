@@ -29,7 +29,7 @@ export function ComparePage() {
           </thead>
           <tbody>
             {comparison.rows.map((row) => (
-              <tr key={row.dimension} className="border-b border-paper-200 bg-white last:border-0">
+              <tr key={row.dimension} className="border-b border-paper-200 bg-surface last:border-0">
                 <td className="px-5 py-3.5 font-semibold text-ink-800">{row.dimension}</td>
                 <td className="px-4 py-3.5 font-medium text-bond-700">{row.us}</td>
                 <td className="px-4 py-3.5 text-ink-600">{row.them}</td>
@@ -42,7 +42,7 @@ export function ComparePage() {
       <div className="mt-10 flex flex-wrap items-center gap-4">
         <Link
           to="/register"
-          className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-card transition-colors hover:bg-bond-700"
+          className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700"
         >
           Start my valuation
         </Link>

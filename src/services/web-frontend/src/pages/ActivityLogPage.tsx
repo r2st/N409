@@ -227,7 +227,7 @@ export function ActivityLogPage() {
       )}
 
       {events.length > 0 && (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[860px] text-sm" aria-label="Activity log">
             <thead>
               <tr className="border-b border-paper-300 text-left">

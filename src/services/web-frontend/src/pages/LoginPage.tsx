@@ -11,7 +11,7 @@ function GoogleButton() {
   return (
     <a
       href="/api/v1/auth/google"
-      className="flex w-full items-center justify-center gap-2.5 rounded-md border border-ink-200 bg-white px-4 py-2 text-sm font-semibold text-ink-800 transition-colors hover:border-ink-400 hover:bg-paper-50"
+      className="flex w-full items-center justify-center gap-2.5 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm font-semibold text-ink-800 transition-colors hover:border-ink-400 hover:bg-paper-50"
     >
       <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden="true">
         <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.2C12.4 13.5 17.7 9.5 24 9.5z" />
@@ -184,7 +184,7 @@ export function LoginPage() {
           {providers?.saml && (
             <a
               href="/api/v1/auth/saml/login"
-              className="mt-3 flex w-full items-center justify-center gap-2.5 rounded-md border border-ink-200 bg-white px-4 py-2 text-sm font-semibold text-ink-800 transition-colors hover:border-ink-400 hover:bg-paper-50"
+              className="mt-3 flex w-full items-center justify-center gap-2.5 rounded-md border border-ink-200 bg-surface px-4 py-2 text-sm font-semibold text-ink-800 transition-colors hover:border-ink-400 hover:bg-paper-50"
             >
               Sign in with SSO
             </a>

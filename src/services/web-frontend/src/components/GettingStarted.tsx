@@ -119,7 +119,7 @@ export function GettingStarted() {
   return (
     <section
       aria-labelledby="getting-started-heading"
-      className="mb-8 rounded-xl border border-paper-300 bg-white p-6 shadow-card"
+      className="mb-8 rounded-xl border border-paper-300 bg-surface p-6 shadow-card"
     >
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -163,7 +163,7 @@ export function GettingStarted() {
                 onClick={() => toggle(step.id)}
                 className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs font-bold transition-colors ${
                   isDone
-                    ? 'border-bond-600 bg-bond-600 text-white'
+                    ? 'border-bond-600 bg-bond-600 text-bond-fg'
                     : 'border-ink-300 text-transparent hover:border-bond-500'
                 }`}
               >

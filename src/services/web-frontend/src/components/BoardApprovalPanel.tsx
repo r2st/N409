@@ -139,7 +139,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
   const members = data?.members ?? [];
 
   return (
-    <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <h2 className="overline text-ink-400">Board approval</h2>
         {resolution && (
@@ -192,7 +192,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
                 View resolution text
               </summary>
               <div
-                className="prose-resolution mt-3 max-h-72 overflow-y-auto rounded border border-paper-200 bg-white p-4 text-sm text-ink-800 [&_h1]:mb-2 [&_h1]:font-display [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1 [&_h2]:font-semibold [&_p]:mb-2"
+                className="prose-resolution mt-3 max-h-72 overflow-y-auto rounded border border-paper-200 bg-surface p-4 text-sm text-ink-800 [&_h1]:mb-2 [&_h1]:font-display [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1 [&_h2]:font-semibold [&_p]:mb-2"
                 // Body is analyst-authored and HTML-escaped server-side.
                 dangerouslySetInnerHTML={{ __html: resolution.body_html }}
               />

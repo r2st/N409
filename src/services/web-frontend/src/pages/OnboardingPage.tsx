@@ -33,9 +33,9 @@ function Stepper({ current }: { current: number }) {
           <span
             className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
               i < current
-                ? 'bg-bond-600 text-white'
+                ? 'bg-bond-600 text-bond-fg'
                 : i === current
-                  ? 'bg-ink-900 text-white'
+                  ? 'bg-ink-900 text-paper-50'
                   : 'bg-paper-200 text-ink-400'
             }`}
           >
@@ -156,7 +156,7 @@ export function OnboardingPage() {
       {step === 0 && (
         <form
           onSubmit={createValuation}
-          className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-white p-6 shadow-card"
+          className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
         >
           <Field label="Company legal name">
             <TextInput
@@ -196,7 +196,7 @@ export function OnboardingPage() {
       )}
 
       {step === 1 && valuation && (
-        <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <p className="text-sm text-ink-800">
             Your {KIND_LABELS[valuation.kind]} request for{' '}
             <span className="font-semibold">{valuation.company_name}</span> is in. Pay now to move it
@@ -226,7 +226,7 @@ export function OnboardingPage() {
       )}
 
       {step === 2 && valuation && (
-        <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           {paymentNote && (
             <p className="rounded-md border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-sm text-sky-900">
               {paymentNote}
@@ -261,7 +261,7 @@ export function OnboardingPage() {
                 </Select>
               </Field>
             </div>
-            <label className="inline-flex cursor-pointer items-center rounded-md border border-ink-300 bg-white px-4 py-2 text-sm font-semibold text-ink-800 shadow-sm hover:border-bond-600">
+            <label className="inline-flex cursor-pointer items-center rounded-md border border-ink-300 bg-surface px-4 py-2 text-sm font-semibold text-ink-800 shadow-sm hover:border-bond-600">
               {busy ? 'Uploading…' : 'Choose files…'}
               <input
                 type="file"
@@ -281,7 +281,7 @@ export function OnboardingPage() {
       )}
 
       {step === 3 && valuation && (
-        <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-white p-6 text-center shadow-card">
+        <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-surface p-6 text-center shadow-card">
           <div className="text-4xl">🎉</div>
           <h2 className="font-display text-2xl font-semibold text-ink-900">
             Your request is in, {valuation.company_name}

@@ -61,7 +61,7 @@ function Node({
   return (
     <details
       open={defaultOpen}
-      className="group rounded-lg border border-paper-300 bg-white shadow-card"
+      className="group rounded-lg border border-paper-300 bg-surface shadow-card"
     >
       <summary className="flex cursor-pointer items-center gap-3 px-5 py-3.5 select-none">
         <svg

@@ -42,7 +42,7 @@ export function LandingPage() {
     <div>
       <Seo {...pageMeta('/')!} />
       {/* Hero */}
-      <section className="ledger-grid relative overflow-hidden bg-ink-900 text-paper-50">
+      <section className="ledger-grid relative overflow-hidden bg-chrome-900 text-chrome-fg">
         <div className="mx-auto max-w-6xl px-5 py-24 lg:py-32">
           <div className="overline mb-6 text-brass-400">Independent · Defensible · Audit-ready</div>
           <h1 className="max-w-3xl font-display text-4xl leading-[1.1] font-medium sm:text-6xl">
@@ -61,22 +61,22 @@ export function LandingPage() {
             <br />
             valuations.
           </h1>
-          <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink-300">
+          <p className="mt-7 max-w-xl text-lg leading-relaxed text-chrome-dim">
             An independent, audit-defensible 409A valuation — first draft in 24 hours, signed by two
             credentialed analysts, from {formatUsd(minPrice)} flat.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-4">
             <Link
               to="/register"
-              className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+              className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
             >
               Start my valuation
             </Link>
-            <Link to="/which-valuation" className="text-sm font-semibold text-paper-50 hover:text-brass-300">
+            <Link to="/which-valuation" className="text-sm font-semibold text-chrome-fg hover:text-brass-300">
               Not sure which report? Take the quiz →
             </Link>
           </div>
-          <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-ink-400">
+          <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-chrome-faint">
             <span>✓ No credit card required</span>
             <span>✓ No subscription — one flat price per report</span>
           </div>
@@ -131,7 +131,7 @@ export function LandingPage() {
       </section>
 
       {/* How it works */}
-      <section className="border-y border-paper-300 bg-white">
+      <section className="border-y border-paper-300 bg-surface">
         <div className="mx-auto max-w-6xl px-5 py-20">
           <div className="overline text-ink-400">How it works</div>
           <h2 className="mt-2 font-display text-3xl font-semibold text-ink-900">Three simple steps</h2>
@@ -161,7 +161,7 @@ export function LandingPage() {
           {ACCOUNTING_PROVIDERS.map((name) => (
             <span
               key={name}
-              className="rounded-full border border-paper-300 bg-white px-5 py-2.5 text-sm font-semibold text-ink-700 shadow-card"
+              className="rounded-full border border-paper-300 bg-surface px-5 py-2.5 text-sm font-semibold text-ink-700 shadow-card"
             >
               {name}
             </span>
@@ -170,7 +170,7 @@ export function LandingPage() {
       </section>
 
       {/* Products strip */}
-      <section className="border-y border-paper-300 bg-white">
+      <section className="border-y border-paper-300 bg-surface">
         <div className="mx-auto max-w-6xl px-5 py-20">
           <div className="overline text-ink-400">Products</div>
           <h2 className="mt-2 font-display text-3xl font-semibold text-ink-900">
@@ -207,27 +207,27 @@ export function LandingPage() {
       <BookACallSection />
 
       {/* CTA */}
-      <section className="ledger-grid bg-ink-900">
+      <section className="ledger-grid bg-chrome-900">
         <div className="mx-auto max-w-6xl px-5 py-20 text-center">
-          <h2 className="font-display text-3xl font-semibold text-paper-50">
+          <h2 className="font-display text-3xl font-semibold text-chrome-fg">
             Price your options with confidence
           </h2>
           {/* "Start for free" would read as though the report itself is free.
               What is actually free is everything up to checkout. */}
-          <p className="mx-auto mt-3 max-w-md text-sm text-ink-300">
+          <p className="mx-auto mt-3 max-w-md text-sm text-chrome-dim">
             Set up your valuation in about 15 minutes and see a draft within 24 hours. You only pay
             when you&rsquo;re ready to proceed.
           </p>
           <div className="mt-7 flex flex-wrap items-center justify-center gap-4">
             <Link
               to="/register"
-              className="inline-block rounded-md bg-bond-600 px-7 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+              className="inline-block rounded-md bg-bond-600 px-7 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
             >
               Start my valuation
             </Link>
             <Link
               to="/pricing"
-              className="text-sm font-semibold text-paper-50 hover:text-brass-300"
+              className="text-sm font-semibold text-chrome-fg hover:text-brass-300"
             >
               See pricing →
             </Link>

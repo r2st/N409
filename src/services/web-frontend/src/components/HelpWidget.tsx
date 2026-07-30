@@ -191,17 +191,17 @@ export function HelpWidget() {
           aria-modal="true"
           aria-label="Help & support"
           tabIndex={-1}
-          className="fixed right-4 bottom-20 z-50 flex max-h-[70vh] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-paper-300 bg-white shadow-lift focus:outline-none"
+          className="fixed right-4 bottom-20 z-50 flex max-h-[70vh] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-paper-300 bg-surface shadow-lift focus:outline-none"
         >
-          <div className="bg-ink-900 px-5 py-4">
+          <div className="bg-chrome-900 px-5 py-4">
             <div className="flex items-center justify-between">
-              <h2 className="font-display text-lg font-semibold text-paper-50">
+              <h2 className="font-display text-lg font-semibold text-chrome-fg">
                 {view === 'contact' ? 'Contact support' : view === 'sent' ? 'Message sent' : 'Help & support'}
               </h2>
               <button
                 aria-label="Close help"
                 onClick={() => setOpen(false)}
-                className="rounded-md p-1 text-ink-300 hover:bg-ink-800 hover:text-paper-50"
+                className="rounded-md p-1 text-chrome-dim hover:bg-chrome-800 hover:text-chrome-fg"
               >
                 <svg
                   width="16"
@@ -217,7 +217,7 @@ export function HelpWidget() {
             </div>
             {view === 'topics' && (
               <input
-                className="mt-3 w-full rounded-md border border-ink-700 bg-ink-800 px-3 py-2 text-sm text-paper-50 placeholder:text-ink-400 focus:border-brass-400 focus:outline-none"
+                className="mt-3 w-full rounded-md border border-chrome-700 bg-chrome-800 px-3 py-2 text-sm text-chrome-fg placeholder:text-chrome-faint focus:border-brass-400 focus:outline-none"
                 placeholder="Search help topics…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -314,7 +314,7 @@ export function HelpWidget() {
       <button
         aria-label={open ? 'Close help' : 'Open help'}
         onClick={() => setOpen((v) => !v)}
-        className="fixed right-4 bottom-4 z-50 flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-ink-900 text-paper-50 shadow-lift transition-transform hover:scale-105"
+        className="fixed right-4 bottom-4 z-50 flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-chrome-900 text-chrome-fg shadow-lift transition-transform hover:scale-105"
       >
         {open ? (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

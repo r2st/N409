@@ -80,7 +80,7 @@ export function AnalyticsTab() {
         <LineChart title="Revenue multiple" points={points('market_multiple')} format={mult} color="#b98d4f" />
       </div>
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h3 className="overline mb-3 text-ink-400">Comparable-company benchmark</h3>
         {benchmark.count === 0 ? (
           <p className="text-sm text-ink-400">

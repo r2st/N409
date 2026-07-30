@@ -194,7 +194,7 @@ export function Asc718Tab() {
       </header>
 
       {/* Company type toggle */}
-      <div className="rounded-lg border border-paper-200 bg-white p-4">
+      <div className="rounded-lg border border-paper-200 bg-surface p-4">
         <div className="flex flex-wrap items-end gap-4">
           <Field label="Company type">
             <Select value={companyType} onChange={(e) => setCompanyType(e.target.value as CompanyType)}>
@@ -225,7 +225,7 @@ export function Asc718Tab() {
       </div>
 
       {/* Defaults */}
-      <div className="rounded-lg border border-paper-200 bg-white p-4">
+      <div className="rounded-lg border border-paper-200 bg-surface p-4">
         <h3 className="mb-3 text-sm font-semibold text-ink-700">Default assumptions</h3>
         <div className="flex flex-wrap gap-4">
           <Field label={companyType === 'public' ? 'Underlying (blank → market price)' : 'Underlying (blank → 409A FMV)'}>
@@ -273,7 +273,7 @@ function ArrayHeader({ title, onAdd, addLabel }: { title: string; onAdd?: () => 
 function OptionSection({ options, setOptions }: { options: (typeof emptyOption)[]; setOptions: (v: (typeof emptyOption)[]) => void }) {
   const upd = (i: number, k: keyof typeof emptyOption, v: string) => setOptions(options.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
   return (
-    <div className="rounded-lg border border-paper-200 bg-white p-4">
+    <div className="rounded-lg border border-paper-200 bg-surface p-4">
       <ArrayHeader title="Option grants" onAdd={() => setOptions([...options, { ...emptyOption }])} addLabel="Add grant" />
       {options.length === 0 && <p className="text-sm text-ink-400">No option grants.</p>}
       <div className="space-y-3">
@@ -300,7 +300,7 @@ function OptionSection({ options, setOptions }: { options: (typeof emptyOption)[
 function EsppSection({ espps, setEspps, disabled }: { espps: (typeof emptyEspp)[]; setEspps: (v: (typeof emptyEspp)[]) => void; disabled: boolean }) {
   const upd = (i: number, k: keyof typeof emptyEspp, v: string) => setEspps(espps.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
   return (
-    <div className="rounded-lg border border-paper-200 bg-white p-4">
+    <div className="rounded-lg border border-paper-200 bg-surface p-4">
       <ArrayHeader title="ESPP (public)" onAdd={disabled ? undefined : () => setEspps([...espps, { ...emptyEspp }])} addLabel="Add ESPP" />
       {disabled ? (
         <p className="text-sm text-ink-400">ESPP valuation is a public-company award. Switch company type to Public.</p>
@@ -328,7 +328,7 @@ function EsppSection({ espps, setEspps, disabled }: { espps: (typeof emptyEspp)[
 function RsuSection({ rsus, setRsus, disabled }: { rsus: (typeof emptyRsu)[]; setRsus: (v: (typeof emptyRsu)[]) => void; disabled: boolean }) {
   const upd = (i: number, k: keyof typeof emptyRsu, v: string) => setRsus(rsus.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
   return (
-    <div className="rounded-lg border border-paper-200 bg-white p-4">
+    <div className="rounded-lg border border-paper-200 bg-surface p-4">
       <ArrayHeader title="RSUs (public)" onAdd={disabled ? undefined : () => setRsus([...rsus, { ...emptyRsu }])} addLabel="Add RSU" />
       {disabled ? (
         <p className="text-sm text-ink-400">RSU valuation is a public-company award. Switch company type to Public.</p>
@@ -376,7 +376,7 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
     <div className="space-y-5 rounded-lg border border-paper-300 bg-paper-50 p-5">
       <h3 className="text-base font-semibold text-ink-800">Results</h3>
       {result.market && (
-        <div className="rounded-md border border-paper-200 bg-white p-3 text-sm">
+        <div className="rounded-md border border-paper-200 bg-surface p-3 text-sm">
           <span className="font-semibold">{result.market.ticker}</span> — underlying{' '}
           {result.market.underlying != null ? formatMoney(result.market.underlying, currency) : '—'}, historical vol{' '}
           {result.market.volatility != null ? `${(result.market.volatility * 100).toFixed(1)}%` : '—'}{' '}

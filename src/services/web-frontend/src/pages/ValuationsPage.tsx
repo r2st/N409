@@ -539,7 +539,7 @@ export function ValuationsPage() {
             <li key={v.id}>
               <div
                 onClick={() => navigate(`/valuations/${v.id}`)}
-                className="cursor-pointer rounded-lg border border-paper-300 bg-white p-4 shadow-card transition-shadow active:shadow-lift"
+                className="cursor-pointer rounded-lg border border-paper-300 bg-surface p-4 shadow-card transition-shadow active:shadow-lift"
               >
                 <div className="flex items-start gap-3">
                   {ops && (
@@ -593,7 +593,7 @@ export function ValuationsPage() {
       )}
 
       {data && data.valuations.length > 0 && (
-        <div className="mt-6 hidden overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card md:block">
+        <div className="mt-6 hidden overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card md:block">
           <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-paper-300 text-left">

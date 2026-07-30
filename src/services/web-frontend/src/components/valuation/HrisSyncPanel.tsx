@@ -103,7 +103,7 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
   if (!providers) return <Spinner />;
 
   return (
-    <section className="space-y-3 rounded-lg border border-paper-300 bg-white p-6 shadow-card" data-testid="hris-sync">
+    <section className="space-y-3 rounded-lg border border-paper-300 bg-surface p-6 shadow-card" data-testid="hris-sync">
       <div>
         <h3 className="overline text-ink-400">HRIS / payroll sync</h3>
         <p className="mt-1 text-sm text-ink-400">

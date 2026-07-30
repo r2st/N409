@@ -73,7 +73,7 @@ export function EmailOutboxPage() {
             className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               scope === s
                 ? 'bg-ink-900 text-paper-50'
-                : 'border border-ink-200 bg-white text-ink-600 hover:border-ink-400'
+                : 'border border-ink-200 bg-surface text-ink-600 hover:border-ink-400'
             }`}
           >
             {s[0]!.toUpperCase() + s.slice(1)}
@@ -94,7 +94,7 @@ export function EmailOutboxPage() {
           </EmptyState>
         </div>
       ) : (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[860px] text-sm" aria-label="Email outbox">
             <thead>
               <tr className="border-b border-paper-300 text-left">

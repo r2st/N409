@@ -121,7 +121,7 @@ function TemplateEditor({
   };
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+    <form onSubmit={(e) => void submit(e)} className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Key" hint="Matches a workflow templateKey to override built-in content">
           <TextInput
@@ -248,7 +248,7 @@ function TemplatesTab() {
           <EmptyState title="No templates yet" />
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[760px] text-sm" aria-label="Communication templates">
             <thead>
               <tr className="border-b border-paper-300 text-left">
@@ -353,7 +353,7 @@ function AutoEmailEditor({
   };
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+    <form onSubmit={(e) => void submit(e)} className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="grid gap-4 sm:grid-cols-3">
         <Field label="Name">
           <TextInput
@@ -532,7 +532,7 @@ function AutoEmailsTab() {
           <EmptyState title="No auto email campaigns" />
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[820px] text-sm" aria-label="Auto email campaigns">
             <thead>
               <tr className="border-b border-paper-300 text-left">
@@ -616,7 +616,7 @@ export function CommunicationsPage() {
             className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               tab === value
                 ? 'bg-ink-900 text-paper-50'
-                : 'border border-ink-200 bg-white text-ink-600 hover:border-ink-400'
+                : 'border border-ink-200 bg-surface text-ink-600 hover:border-ink-400'
             }`}
           >
             {label}

@@ -56,7 +56,7 @@ export function WorkflowActions({
   };
 
   return (
-    <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-5 text-ink-400">Workflow</h2>
       {error && <div className="mb-4"><ErrorNote>{error}</ErrorNote></div>}
       <div className="flex flex-wrap items-center gap-3">

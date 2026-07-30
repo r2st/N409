@@ -259,7 +259,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         </div>
       )}
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-5 flex items-baseline justify-between">
           <h3 className="overline flex items-center gap-1.5 text-ink-400">
             Approach weights
@@ -308,7 +308,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         {weightsIssue && <p className="mt-3 text-sm font-medium text-red-600">{weightsIssue}</p>}
       </section>
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h3 className="overline mb-5 flex items-center gap-1.5 text-ink-400">
           Allocation method
           <HelpIcon article="methodology-overview" />
@@ -379,7 +379,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       </section>
 
       {(isPwerm || isHybrid) && (
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card" data-testid="pwerm-scenarios">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card" data-testid="pwerm-scenarios">
           <div className="mb-4 flex items-baseline justify-between">
             <h3 className="overline text-ink-400">
               {isHybrid ? 'Hybrid — near-term exit scenarios (PWERM leg)' : 'PWERM exit scenarios'}
@@ -477,7 +477,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         </section>
       )}
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h3 className="overline mb-5 text-ink-400">Discounts</h3>
         <div className="grid gap-5 sm:grid-cols-3">
           <Field
@@ -527,7 +527,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         </div>
       </section>
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h3 className="overline mb-5 text-ink-400">Company profile</h3>
         <div className="grid gap-5 sm:grid-cols-3">
           <Field label="Revenue status">
@@ -609,7 +609,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             rows={3}
             maxLength={20000}
             placeholder="One paragraph on what the company does — feeds the comparables pipeline."
-            className="mt-1 w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
+            className="mt-1 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
           />
         </Field>
       </section>

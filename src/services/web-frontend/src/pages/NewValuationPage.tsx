@@ -85,7 +85,7 @@ export function NewValuationPage() {
                 className={`cursor-pointer rounded-lg border p-4 text-left transition-all ${
                   kind === k
                     ? 'border-bond-600 bg-bond-50 ring-2 ring-bond-600/25'
-                    : 'border-paper-300 bg-white hover:border-ink-300'
+                    : 'border-paper-300 bg-surface hover:border-ink-300'
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -93,7 +93,7 @@ export function NewValuationPage() {
                     {KIND_LABELS[k]}
                   </span>
                   {kind === k && (
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-bond-600 text-white">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-bond-600 text-bond-fg">
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                         <path d="M5 13l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>

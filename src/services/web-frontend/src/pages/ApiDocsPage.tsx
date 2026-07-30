@@ -81,7 +81,7 @@ export function ApiDocsPage() {
 
       {docs && (
         <>
-          <section className="mt-8 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <section className="mt-8 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <h2 className="overline mb-2 text-ink-400">Authentication</h2>
             <p className="text-sm text-ink-600">
               Send an API key with every request:{' '}
@@ -109,7 +109,7 @@ export function ApiDocsPage() {
             {docs.endpoints.map((ep) => (
               <section
                 key={`${ep.method} ${ep.path}`}
-                className="rounded-lg border border-paper-300 bg-white p-5 shadow-card"
+                className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <MethodChip method={ep.method} />

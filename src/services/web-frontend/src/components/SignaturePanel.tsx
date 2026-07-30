@@ -111,7 +111,7 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
   );
 
   return (
-    <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <div className="mb-2 flex flex-wrap items-center gap-3">
         <h2 className="overline text-ink-400">Signatures</h2>
         {main ? (

@@ -43,8 +43,8 @@ function BrandingPreview({
           <div className="font-display text-sm font-semibold text-ink-900">{name}</div>
           <div className="mt-0.5 text-[0.65rem] text-ink-400">Sign in to the {name} valuations portal.</div>
           <div className="mt-3 w-full space-y-1.5">
-            <div className="h-6 rounded border border-paper-300 bg-white" />
-            <div className="h-6 rounded border border-paper-300 bg-white" />
+            <div className="h-6 rounded border border-paper-300 bg-surface" />
+            <div className="h-6 rounded border border-paper-300 bg-surface" />
             <div
               className="flex h-6 items-center justify-center rounded text-[0.65rem] font-semibold text-white"
               style={{ backgroundColor: accent }}
@@ -241,7 +241,7 @@ export function PartnerDetailPage() {
             No users yet — invite one from the users console with this partner selected.
           </p>
         ) : (
-          <div className="mt-3 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+          <div className="mt-3 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[560px] text-sm" aria-label="Partner users">
               <tbody>
                 {partner.users.map((u) => (
@@ -255,7 +255,7 @@ export function PartnerDetailPage() {
                         {u.roles.map((r) => (
                           <span
                             key={r}
-                            className="rounded border border-ink-200 bg-white px-1.5 py-0.5 font-mono text-[0.65rem] font-semibold text-ink-700"
+                            className="rounded border border-ink-200 bg-surface px-1.5 py-0.5 font-mono text-[0.65rem] font-semibold text-ink-700"
                           >
                             {r}
                           </span>
@@ -280,7 +280,7 @@ export function PartnerDetailPage() {
       </section>
 
       {/* White-label branding: portal, login page, and report PDFs (improvement 8) */}
-      <section className="mt-10 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-1 text-ink-400">White-label branding</h2>
         <p className="text-sm text-ink-400">
           Used on this partner&rsquo;s portal, their branded login page, and the cover of their
@@ -323,7 +323,7 @@ export function PartnerDetailPage() {
       </section>
 
       {/* Per-partner workflow email templates (improvement 8) */}
-      <section className="mt-10 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-1 text-ink-400">Email templates</h2>
         <p className="text-sm text-ink-400">
           Override the workflow emails sent for this partner&rsquo;s engagements. Leave a template
@@ -376,7 +376,7 @@ export function PartnerDetailPage() {
                     value={t.body}
                     onChange={(e) => set('body', e.target.value)}
                     rows={3}
-                    className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
+                    className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
                   />
                 </div>
               </div>

@@ -188,7 +188,7 @@ export function OverwritesTab() {
       {schema.categories.map((category) => {
         const fields = schema.fields.filter((f) => f.category === category.key);
         return (
-          <section key={category.key} className="rounded-lg border border-paper-300 bg-white shadow-card">
+          <section key={category.key} className="rounded-lg border border-paper-300 bg-surface shadow-card">
             <h2 className="flex items-baseline justify-between border-b border-paper-300 px-5 py-3.5">
               <span className="font-display text-base font-semibold text-ink-900">
                 {OVERWRITE_CATEGORY_LABELS[category.key] ?? category.key}

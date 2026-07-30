@@ -96,7 +96,7 @@ export function SubscriptionSection() {
       {error && <div className="mt-3"><ErrorNote>{error}</ErrorNote></div>}
 
       {mine.subscription ? (
-        <div className="mt-4 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <div className="mt-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="flex flex-wrap items-center gap-3">
             <span className="font-semibold text-ink-900">{mine.plan?.name ?? mine.subscription.plan_tier}</span>
             <span className="rounded-full bg-bond-50 px-2.5 py-0.5 text-xs font-semibold text-bond-700">
@@ -121,7 +121,7 @@ export function SubscriptionSection() {
       ) : (
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
           {plans.map((p) => (
-            <div key={p.tier} className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+            <div key={p.tier} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
               <div className="font-semibold text-ink-900">{p.name}</div>
               <div className="tnum mt-2 font-display text-2xl font-semibold text-ink-900">
                 {money(p.price_cents, p.currency)}
@@ -143,7 +143,7 @@ export function SubscriptionSection() {
       {mine.invoices.length > 0 && (
         <div className="mt-6">
           <h3 className="overline mb-2 text-ink-400">Invoices</h3>
-          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[480px] text-sm">
               <tbody>
                 {mine.invoices.map((inv) => (
@@ -195,12 +195,12 @@ function AdminBillingDashboard() {
   return (
     <div className="mt-10" data-testid="admin-billing">
       <h3 className="font-display text-lg font-semibold text-ink-900">Billing dashboard (ops)</h3>
-      <div className="mt-3 flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <div className="mt-3 flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <Metric label="Active subscriptions" value={String(data.summary.active)} />
         <Metric label="MRR" value={money(data.summary.mrr_cents)} />
         <Metric label="Collected" value={money(data.summary.collected_cents)} />
       </div>
-      <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+      <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm">
           <thead>
             <tr className="border-b border-paper-300 text-left">

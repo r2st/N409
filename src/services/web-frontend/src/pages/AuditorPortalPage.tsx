@@ -82,7 +82,7 @@ export function AuditorPortalPage() {
       <p className="mt-1 text-xs text-ink-400">Access expires {new Date(bundle.access_expires_at).toLocaleDateString()}</p>
 
       {bundle.conclusion && (
-        <section className="mt-6 flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="mt-6 flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <Metric label="Concluded FMV / share" value={bundle.conclusion.fmv_per_share ?? '—'} currency={bundle.valuation.currency} />
           <Metric label="Equity value" value={bundle.conclusion.equity_value ?? '—'} currency={bundle.valuation.currency} />
           <Metric label="Engine version" value={bundle.conclusion.engine_version} />
@@ -161,7 +161,7 @@ function Metric({ label, value, currency }: { label: string; value: string; curr
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-4 text-ink-400">{title}</h2>
       {children}
     </section>

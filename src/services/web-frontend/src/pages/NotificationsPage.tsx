@@ -76,7 +76,7 @@ export function NotificationsPage() {
             <li
               key={n.id}
               className={`rounded-lg border p-4 shadow-card transition-colors ${
-                n.read_at ? 'border-paper-300 bg-white' : 'border-bond-200 bg-bond-50/50'
+                n.read_at ? 'border-paper-300 bg-surface' : 'border-bond-200 bg-bond-50/50'
               }`}
             >
               <div className="flex items-start justify-between gap-4">

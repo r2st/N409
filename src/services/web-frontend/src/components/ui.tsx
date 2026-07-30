@@ -19,11 +19,11 @@ import type { ValuationKind, ValuationState } from '../lib/types';
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 const buttonStyles: Record<ButtonVariant, string> = {
-  primary: 'bg-bond-600 text-white hover:bg-bond-700 active:bg-bond-800 shadow-card disabled:bg-ink-300',
+  primary: 'bg-bond-600 text-bond-fg hover:bg-bond-700 active:bg-bond-800 shadow-card disabled:bg-ink-300',
   secondary:
-    'border border-ink-200 bg-white text-ink-800 hover:border-ink-400 hover:bg-paper-50 disabled:text-ink-300',
+    'border border-ink-200 bg-surface text-ink-800 hover:border-ink-400 hover:bg-paper-50 disabled:text-ink-300',
   ghost: 'text-ink-600 hover:bg-paper-200 hover:text-ink-900',
-  danger: 'border border-red-200 bg-white text-red-700 hover:bg-red-50',
+  danger: 'border border-red-200 bg-surface text-red-700 hover:bg-red-50',
 };
 
 export function Button({
@@ -80,7 +80,7 @@ export function InfoTooltip({
         <span
           role="tooltip"
           id={id}
-          className="absolute bottom-full left-1/2 z-50 mb-1.5 w-56 -translate-x-1/2 rounded-md bg-ink-900 px-3 py-2 text-xs leading-snug font-normal text-paper-50 shadow-lift"
+          className="absolute bottom-full left-1/2 z-50 mb-1.5 w-56 -translate-x-1/2 rounded-md bg-chrome-900 px-3 py-2 text-xs leading-snug font-normal text-chrome-fg shadow-lift"
         >
           {text}
         </span>
@@ -145,7 +145,7 @@ export function Field({
 }
 
 export const inputClass =
-  'w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none';
+  'w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none';
 
 export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={`${inputClass} ${props.className ?? ''}`} />;
@@ -176,7 +176,7 @@ export function StateBadge({ state }: { state: ValuationState }) {
 
 export function KindBadge({ kind }: { kind: ValuationKind }) {
   return (
-    <span className="inline-flex items-center rounded border border-ink-200 bg-white px-2 py-0.5 font-mono text-[0.7rem] font-semibold tracking-wide text-ink-700 uppercase">
+    <span className="inline-flex items-center rounded border border-ink-200 bg-surface px-2 py-0.5 font-mono text-[0.7rem] font-semibold tracking-wide text-ink-700 uppercase">
       {KIND_LABELS[kind] ?? kind}
     </span>
   );
@@ -192,7 +192,7 @@ export function StatCard({
   accent?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+    <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="overline text-ink-400">{label}</div>
       <div
         className={`tnum mt-2 font-display text-3xl font-semibold ${accent ? 'text-bond-600' : 'text-ink-900'}`}
@@ -322,7 +322,7 @@ export function Modal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-chrome-950/60 p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -333,7 +333,7 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={labelledBy ?? (title ? titleId : undefined)}
         tabIndex={-1}
-        className={`max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-paper-300 bg-white shadow-lift focus:outline-none ${className}`}
+        className={`max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl border border-paper-300 bg-surface shadow-lift focus:outline-none ${className}`}
       >
         {title && (
           <h2
@@ -485,7 +485,7 @@ export function Pagination({
 const toastTone = {
   success: 'border-bond-200 bg-bond-50 text-bond-800',
   error: 'border-red-200 bg-red-50 text-red-800',
-  info: 'border-ink-200 bg-white text-ink-800',
+  info: 'border-ink-200 bg-surface text-ink-800',
 } as const;
 
 /**

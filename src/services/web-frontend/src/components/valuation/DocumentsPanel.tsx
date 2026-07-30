@@ -142,7 +142,7 @@ export function DocumentsPanel({ valuationId }: { valuationId: string }) {
       )}
 
       {documents && documents.length > 0 && (
-        <ul className="divide-y divide-paper-300 rounded-lg border border-paper-300 bg-white shadow-card">
+        <ul className="divide-y divide-paper-300 rounded-lg border border-paper-300 bg-surface shadow-card">
           {documents.map((doc) => (
             <li key={doc.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">

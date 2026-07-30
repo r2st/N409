@@ -96,7 +96,7 @@ export function TemplatesPage() {
       {actionError && <div className="mt-4"><ErrorNote>{actionError}</ErrorNote></div>}
 
       {creating && (
-        <form onSubmit={create} className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <form onSubmit={create} className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="Template name" hint="Reusing a name mints its next version (e.g. 409a → 409a.v2).">
               <TextInput
@@ -129,7 +129,7 @@ export function TemplatesPage() {
                 value={form.body}
                 onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
                 rows={8}
-                className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 font-mono text-xs text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
+                className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
               />
             </Field>
           </div>
@@ -148,7 +148,7 @@ export function TemplatesPage() {
       {names.map((name) => (
         <section key={name} className="mt-8">
           <h2 className="overline mb-3 text-ink-400">{name}</h2>
-          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[640px] text-sm">
               <tbody>
                 {templates
@@ -200,7 +200,7 @@ export function TemplatesPage() {
                               value={editing.body}
                               onChange={(e) => setEditing({ id: t.id, body: e.target.value })}
                               rows={10}
-                              className="w-full min-w-96 rounded-md border border-ink-200 bg-white px-3 py-2 font-mono text-xs text-ink-900 focus:border-bond-600 focus:outline-none"
+                              className="w-full min-w-96 rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 focus:border-bond-600 focus:outline-none"
                             />
                             <Button
                               disabled={busy}

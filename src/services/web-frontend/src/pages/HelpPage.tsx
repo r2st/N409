@@ -323,7 +323,7 @@ export function HelpPage() {
               {visibleSections.map((section) => (
                 <section key={section.id}>
                   <h2 className="overline mb-3 text-ink-400">{section.label}</h2>
-                  <ul className="divide-y divide-paper-200 rounded-lg border border-paper-300 bg-white shadow-card">
+                  <ul className="divide-y divide-paper-200 rounded-lg border border-paper-300 bg-surface shadow-card">
                     {section.items.map((a) => (
                       <li key={a.slug}>
                         <Link

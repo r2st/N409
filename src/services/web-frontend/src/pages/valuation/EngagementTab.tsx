@@ -109,7 +109,7 @@ export function EngagementTab() {
     <div className="max-w-3xl space-y-6">
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <h2 className="font-display text-lg font-semibold text-ink-900">
             Stage: {sla.label}
@@ -163,7 +163,7 @@ export function EngagementTab() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h3 className="overline mb-3 text-ink-400">Stage timing (expected vs actual)</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -199,7 +199,7 @@ export function EngagementTab() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h3 className="overline mb-3 text-ink-400">Activity feed</h3>
         <ul className="space-y-1.5 text-sm">
           {view.activity.slice(0, 15).map((a) => (

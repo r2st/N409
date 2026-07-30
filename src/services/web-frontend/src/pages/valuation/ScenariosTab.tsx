@@ -298,7 +298,7 @@ export function ScenariosTab() {
       {previewError && <ErrorNote>{previewError}</ErrorNote>}
       {computing && <p className="text-xs text-ink-400">Recomputing…</p>}
 
-      <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="overline text-ink-400">Adjust assumptions</h2>
           <button
@@ -388,7 +388,7 @@ export function ScenariosTab() {
       </section>
 
       {saved && saved.scenarios.length > 0 && (
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="overline text-ink-400">Scenario comparison</h2>
             <span className="text-xs text-ink-400">

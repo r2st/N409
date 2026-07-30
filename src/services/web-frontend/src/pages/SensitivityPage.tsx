@@ -55,7 +55,7 @@ function AxisTableView({
   return (
     <div>
       <h2 className="mb-2 font-display text-lg font-semibold text-ink-900">{title}</h2>
-      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm">
           <thead>
             <tr className="border-b border-paper-300">
@@ -159,7 +159,7 @@ export function SensitivityPage() {
         <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Sensitivity dashboard</h1>
       </div>
 
-      <form onSubmit={run} className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <form onSubmit={run} className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         {error && <div className="mb-5"><ErrorNote>{error}</ErrorNote></div>}
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Equity value ($)">

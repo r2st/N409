@@ -117,7 +117,7 @@ export function PortfolioPage() {
 
       {error && <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>}
 
-      <form onSubmit={create} className="mt-6 flex flex-wrap items-end gap-3 rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+      <form onSubmit={create} className="mt-6 flex flex-wrap items-end gap-3 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
         <Field label="New organization">
           <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Holdings" />
         </Field>
@@ -157,7 +157,7 @@ export function PortfolioPage() {
 
           {detail && (
             <div className="mt-6 space-y-6">
-              <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+              <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
                 <Metric label="Entities" value={String(detail.consolidated.entity_count)} />
                 <Metric label="Valued" value={String(detail.consolidated.valued_count)} />
                 <Metric
@@ -172,7 +172,7 @@ export function PortfolioPage() {
                 <Metric label="Type" value={ENTITY_LABELS[detail.organization.entity_type] ?? detail.organization.entity_type} />
               </div>
 
-              <section className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+              <section className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                 <table className="w-full min-w-[640px] text-sm">
                   <thead>
                     <tr className="border-b border-paper-300 text-left">

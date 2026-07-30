@@ -141,7 +141,7 @@ export function PartnerPortalPage() {
                 <li key={v.id}>
                   <Link
                     to={`/valuations/${v.id}`}
-                    className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-paper-300 bg-white px-5 py-4 shadow-card transition-shadow hover:shadow-lift"
+                    className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-paper-300 bg-surface px-5 py-4 shadow-card transition-shadow hover:shadow-lift"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-display text-[1.05rem] font-semibold text-ink-900">
@@ -161,7 +161,7 @@ export function PartnerPortalPage() {
 
       {/* API tokens — partner org admins only */}
       {canMint && partnerId && (
-        <section className="mt-10 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="mb-1 flex items-center justify-between">
             <h2 className="overline text-ink-400">API tokens</h2>
             <Link to="/partner/api-docs" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
@@ -182,7 +182,7 @@ export function PartnerPortalPage() {
               <div className="font-semibold">Token “{minted.name}” created — copy it now.</div>
               <div className="mt-1 text-xs">This secret is shown once and cannot be retrieved again.</div>
               <div className="mt-2 flex items-center gap-2">
-                <code className="tnum break-all rounded bg-white px-2 py-1 font-mono text-xs text-ink-800 ring-1 ring-bond-200">
+                <code className="tnum break-all rounded bg-surface px-2 py-1 font-mono text-xs text-ink-800 ring-1 ring-bond-200">
                   {minted.secret}
                 </code>
                 <Button

@@ -130,7 +130,7 @@ export function FundPortfolioPage() {
       {error && <ErrorNote>{error}</ErrorNote>}
 
       {showCreate && (
-        <form onSubmit={create} className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-white p-4">
+        <form onSubmit={create} className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-surface p-4">
           <Field label="Fund name"><TextInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></Field>
           <Field label="Type">
             <Select value={form.fund_type} onChange={(e) => setForm({ ...form, fund_type: e.target.value })}>
@@ -239,7 +239,7 @@ function FundDetailView({ fundId }: { fundId: string }) {
 
       {/* ASC 820 hierarchy disclosure */}
       {nav && (
-        <div className="rounded-lg border border-paper-200 bg-white p-4">
+        <div className="rounded-lg border border-paper-200 bg-surface p-4">
           <h3 className="mb-2 text-sm font-semibold text-ink-700">ASC 820 fair-value hierarchy</h3>
           <table className="w-full text-sm">
             <thead><tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500"><th className="py-1.5">Level 1 (quoted)</th><th className="py-1.5">Level 2 (observable)</th><th className="py-1.5">Level 3 (unobservable)</th></tr></thead>
@@ -249,7 +249,7 @@ function FundDetailView({ fundId }: { fundId: string }) {
       )}
 
       {/* Positions */}
-      <div className="rounded-lg border border-paper-200 bg-white p-4">
+      <div className="rounded-lg border border-paper-200 bg-surface p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-ink-700">Positions</h3>
           <Button variant="secondary" onClick={() => setShowPos((s) => !s)}>{showPos ? 'Cancel' : 'Add position'}</Button>
@@ -412,7 +412,7 @@ function WaterfallCard({ fundId, lpTerms, currency, onSaved }: { fundId: string;
   };
 
   return (
-    <div className="rounded-lg border border-paper-200 bg-white p-4">
+    <div className="rounded-lg border border-paper-200 bg-surface p-4">
       <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-ink-700">
         LP waterfall calculator
         <InfoTooltip
@@ -447,7 +447,7 @@ function WaterfallCard({ fundId, lpTerms, currency, onSaved }: { fundId: string;
 
 function SummaryCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className={`rounded-lg border p-3 ${accent ? 'border-bond-200 bg-bond-50' : 'border-paper-200 bg-white'}`}>
+    <div className={`rounded-lg border p-3 ${accent ? 'border-bond-200 bg-bond-50' : 'border-paper-200 bg-surface'}`}>
       <div className="overline text-ink-400">{label}</div>
       <div className={`tnum mt-1 text-lg font-semibold ${accent ? 'text-bond-700' : 'text-ink-800'}`}>{value}</div>
     </div>

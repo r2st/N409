@@ -129,7 +129,7 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
         {providers.map((p) => {
           const connected = p.connection && p.connection.status !== 'revoked';
           return (
-            <div key={p.provider} className="rounded-lg border border-paper-300 bg-white p-4 shadow-card">
+            <div key={p.provider} className="rounded-lg border border-paper-300 bg-surface p-4 shadow-card">
               <div className="flex items-center justify-between">
                 <span className="font-display text-sm font-semibold text-ink-900">{p.label}</span>
                 {connected ? (

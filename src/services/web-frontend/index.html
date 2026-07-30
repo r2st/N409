@@ -6,6 +6,29 @@
     <meta name="theme-color" content="#0B1220" />
     <meta name="color-scheme" content="light" />
     <!--
+      Resolve the theme before first paint, otherwise a dark-mode user sees a
+      white flash while the bundle boots. This has to be inline and synchronous
+      in <head> for that reason, so it deliberately duplicates the storage key
+      and the resolution rule from src/lib/theme.ts — keep the two in step.
+    -->
+    <script>
+      (function () {
+        try {
+          var c = localStorage.getItem('n409.theme');
+          if (c !== 'light' && c !== 'dark') {
+            c = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          document.documentElement.setAttribute('data-theme', c);
+          if (c === 'dark') {
+            document.querySelector('meta[name="theme-color"]').content = '#0a0e16';
+            document.querySelector('meta[name="color-scheme"]').content = 'dark';
+          }
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
+    <!--
       Head metadata comes from two renderers (409.ai section 24):
 
         * at build time, baked into each marketing route's own document by the

@@ -69,7 +69,7 @@ export function SearchPage() {
             {results.valuations.length === 0 ? (
               <p className="text-sm text-ink-400">No matching valuations.</p>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+              <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                 <table className="w-full min-w-[560px] text-sm">
                   <tbody>
                     {results.valuations.map((v) => (
@@ -97,7 +97,7 @@ export function SearchPage() {
               {results.users.length === 0 ? (
                 <p className="text-sm text-ink-400">No matching users.</p>
               ) : (
-                <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+                <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                   <table className="w-full min-w-[480px] text-sm">
                     <tbody>
                       {results.users.map((u) => (

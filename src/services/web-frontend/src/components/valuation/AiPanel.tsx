@@ -178,7 +178,7 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {AI_PIPELINES.map((pipeline) => (
-          <div key={pipeline} className="flex flex-col rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+          <div key={pipeline} className="flex flex-col rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
             <h3 className="text-sm font-semibold text-ink-900">{AI_PIPELINE_META[pipeline].label}</h3>
             <p className="mt-1 flex-1 text-xs text-ink-500">{AI_PIPELINE_META[pipeline].description}</p>
             <Button
@@ -226,7 +226,7 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
       {jobs && jobs.length > 0 && (
         <ol className="space-y-4">
           {jobs.map((job) => (
-            <li key={job.id} className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+            <li key={job.id} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold text-ink-900">
                   {AI_PIPELINE_META[job.pipeline]?.label ?? job.pipeline}

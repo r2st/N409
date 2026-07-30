@@ -99,7 +99,7 @@ export function AdminPartnersPage() {
 
       {creating && (
         <form
-          className="mt-6 flex flex-wrap items-end gap-3 rounded-lg border border-paper-300 bg-white px-5 py-4 shadow-card"
+          className="mt-6 flex flex-wrap items-end gap-3 rounded-lg border border-paper-300 bg-surface px-5 py-4 shadow-card"
           onSubmit={(e) => {
             e.preventDefault();
             void create();
@@ -155,7 +155,7 @@ export function AdminPartnersPage() {
           </EmptyState>
         </div>
       ) : (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[640px] text-sm" aria-label="Partners">
             <thead>
               <tr className="border-b border-paper-300 text-left">

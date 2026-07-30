@@ -54,7 +54,7 @@ export function OrgAssignmentCard({ valuationId }: { valuationId: string }) {
   };
 
   return (
-    <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-4 text-ink-400">Portfolio</h2>
       {orgs.length === 0 ? (
         <p className="text-sm text-ink-400">

@@ -7,7 +7,7 @@ import type { FaqItem } from '../lib/marketing';
  */
 export function FaqAccordion({ items }: { items: FaqItem[] }) {
   return (
-    <div className="divide-y divide-paper-300 overflow-hidden rounded-lg border border-paper-300 bg-white shadow-card">
+    <div className="divide-y divide-paper-300 overflow-hidden rounded-lg border border-paper-300 bg-surface shadow-card">
       {items.map((item) => (
         <details key={item.q} className="group">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 text-sm font-semibold text-ink-900 hover:bg-paper-50">

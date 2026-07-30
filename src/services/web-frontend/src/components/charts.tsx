@@ -32,18 +32,21 @@ export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells
   const maxAbs = Math.max(0.0001, ...deltas);
 
   const shade = (delta: number | null): { background: string; color: string } => {
-    if (delta === null) return { background: '#f3f4f6', color: '#9ca3af' };
+    if (delta === null) return { background: 'var(--color-paper-200)', color: 'var(--color-ink-300)' };
     const intensity = Math.min(1, Math.abs(delta) / maxAbs);
     const alpha = 0.12 + intensity * 0.6;
     // bond green above base, brick red below.
     const rgb = delta >= 0 ? '47, 125, 91' : '160, 82, 82';
-    return { background: `rgba(${rgb}, ${alpha})`, color: intensity > 0.6 ? '#fff' : '#1f2937' };
+    return {
+      background: `rgba(${rgb}, ${alpha})`,
+      color: intensity > 0.6 ? '#fff' : 'var(--color-ink-900)',
+    };
   };
 
   return (
     <div>
       <h2 className="mb-2 font-display text-lg font-semibold text-ink-900">{title}</h2>
-      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[560px] text-sm" role="table">
           <thead>
             <tr className="border-b border-paper-300">
@@ -128,11 +131,11 @@ export function WaterfallChart({
   const color = (kind: string) => (kind === 'total' ? '#3b5b7d' : kind === 'up' ? '#2f7d5b' : '#a05252');
 
   return (
-    <div className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+    <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="overline text-ink-400">{title}</div>
       <svg viewBox="0 0 100 118" className="mt-4 w-full" role="img" aria-label={title} preserveAspectRatio="none">
         {/* zero baseline */}
-        <line x1="0" x2="100" y1={y(0)} y2={y(0)} stroke="#d9d2c4" strokeWidth="0.4" />
+        <line x1="0" x2="100" y1={y(0)} y2={y(0)} stroke="var(--color-paper-300)" strokeWidth="0.4" />
         {bars.map((b, i) => {
           const x = i * W + W * 0.15;
           const w = W * 0.7;
@@ -215,7 +218,7 @@ export function LineChart({
   if (current.length) segments.push(current.join(' '));
 
   return (
-    <div className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+    <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="flex items-baseline justify-between">
         <div className="overline text-ink-400">{title}</div>
         {hasData && (
@@ -226,7 +229,7 @@ export function LineChart({
         <p className="mt-4 text-sm text-ink-400">Not enough data yet.</p>
       ) : (
         <svg viewBox="0 0 100 66" className="mt-3 w-full" role="img" aria-label={title} preserveAspectRatio="none">
-          <line x1="0" x2="100" y1={y(lo)} y2={y(lo)} stroke="#eee9df" strokeWidth="0.3" />
+          <line x1="0" x2="100" y1={y(lo)} y2={y(lo)} stroke="var(--color-paper-300)" strokeWidth="0.3" />
           {segments.map((pts, i) => (
             <polyline key={i} points={pts} fill="none" stroke={color} strokeWidth="0.8" strokeLinejoin="round" />
           ))}
@@ -250,14 +253,14 @@ export function DonutChart({ title, slices }: { title: string; slices: PieSlice[
   let offset = 25; // start at 12 o'clock
 
   return (
-    <div className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+    <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="overline text-ink-400">{title}</div>
       {total === 0 ? (
         <p className="mt-4 text-sm text-ink-400">No data in this range.</p>
       ) : (
         <div className="mt-4 flex items-center gap-5">
           <svg viewBox="0 0 42 42" className="h-28 w-28 shrink-0" role="img" aria-label={title}>
-            <circle cx="21" cy="21" r={r} fill="none" stroke="#eee9df" strokeWidth="7" />
+            <circle cx="21" cy="21" r={r} fill="none" stroke="var(--color-paper-300)" strokeWidth="7" />
             {shown.map((s, i) => {
               const pct = (s.value / total) * 100;
               const el = (

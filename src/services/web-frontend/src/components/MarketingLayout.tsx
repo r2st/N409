@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, Outlet } from 'react-router-dom';
+import { ThemeToggleButton } from './ThemeToggle';
 import { Wordmark } from './Logo';
 import { COMPARISONS, PRODUCTS } from '../lib/marketing';
 import { siteConfig } from '../lib/siteConfig';
@@ -77,7 +78,7 @@ export function MarketingHeader() {
                 breakpoint (768px) a fixed 34rem panel centred on this button
                 clears the left edge by 4px, which is luck rather than layout. */}
             {productsOpen && (
-              <div className="absolute left-1/2 mt-0 w-[34rem] max-w-[calc(100vw-2.5rem)] -translate-x-1/2 rounded-lg border border-paper-300 bg-white p-4 shadow-lift">
+              <div className="absolute left-1/2 mt-0 w-[34rem] max-w-[calc(100vw-2.5rem)] -translate-x-1/2 rounded-lg border border-paper-300 bg-surface p-4 shadow-lift">
                 <ProductsMenu onNavigate={() => setProductsOpen(false)} />
               </div>
             )}
@@ -97,19 +98,22 @@ export function MarketingHeader() {
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
+          <ThemeToggleButton />
           <Link to="/login" className="text-sm font-semibold text-ink-700 hover:text-ink-900">
             Log in
           </Link>
           <Link
             to="/register"
-            className="rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-white shadow-card transition-colors hover:bg-bond-700"
+            className="rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700"
           >
             Start valuation
           </Link>
         </div>
 
+        <div className="flex items-center md:hidden">
+          <ThemeToggleButton />
         <button
-          className="cursor-pointer rounded-md p-2 text-ink-700 md:hidden"
+          className="cursor-pointer rounded-md p-2 text-ink-700"
           aria-label="Toggle menu"
           onClick={() => setMobileOpen((v) => !v)}
         >
@@ -117,10 +121,11 @@ export function MarketingHeader() {
             <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
           </svg>
         </button>
+        </div>
       </div>
 
       {mobileOpen && (
-        <div className="border-t border-paper-300 bg-white px-5 py-4 md:hidden">
+        <div className="border-t border-paper-300 bg-surface px-5 py-4 md:hidden">
           <ProductsMenu onNavigate={() => setMobileOpen(false)} />
           <div className="mt-3 flex flex-col gap-2 border-t border-paper-200 pt-3">
             <Link
@@ -147,7 +152,7 @@ export function MarketingHeader() {
             <Link
               to="/register"
               onClick={() => setMobileOpen(false)}
-              className="rounded-md bg-bond-600 px-4 py-2 text-center text-sm font-semibold text-white"
+              className="rounded-md bg-bond-600 px-4 py-2 text-center text-sm font-semibold text-bond-fg"
             >
               Start valuation
             </Link>
@@ -162,13 +167,13 @@ export function MarketingFooter() {
   const half = Math.ceil(PRODUCTS.length / 2);
   const { socialLinks } = siteConfig();
   return (
-    <footer className="border-t border-ink-800 bg-ink-900 text-ink-300">
+    <footer className="border-t border-chrome-800 bg-chrome-900 text-chrome-dim">
       <div className="mx-auto grid max-w-6xl gap-10 px-5 py-14 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <div className="overline mb-4 text-brass-400">Products</div>
           <div className="grid grid-cols-1 gap-1.5 text-sm">
             {PRODUCTS.slice(0, half).map((p) => (
-              <Link key={p.slug} to={`/products/${p.slug}`} className="hover:text-paper-50">
+              <Link key={p.slug} to={`/products/${p.slug}`} className="hover:text-chrome-fg">
                 {p.name}
               </Link>
             ))}
@@ -178,7 +183,7 @@ export function MarketingFooter() {
           <div className="overline mb-4 text-brass-400">More products</div>
           <div className="grid grid-cols-1 gap-1.5 text-sm">
             {PRODUCTS.slice(half).map((p) => (
-              <Link key={p.slug} to={`/products/${p.slug}`} className="hover:text-paper-50">
+              <Link key={p.slug} to={`/products/${p.slug}`} className="hover:text-chrome-fg">
                 {p.name}
               </Link>
             ))}
@@ -187,11 +192,11 @@ export function MarketingFooter() {
         <div>
           <div className="overline mb-4 text-brass-400">Compare</div>
           <div className="grid grid-cols-1 gap-1.5 text-sm">
-            <Link to="/compare/409a-valuation-providers" className="font-semibold hover:text-paper-50">
+            <Link to="/compare/409a-valuation-providers" className="font-semibold hover:text-chrome-fg">
               All providers
             </Link>
             {COMPARISONS.map((c) => (
-              <Link key={c.slug} to={`/compare/${c.slug}`} className="hover:text-paper-50">
+              <Link key={c.slug} to={`/compare/${c.slug}`} className="hover:text-chrome-fg">
                 N409 vs {c.competitor}
               </Link>
             ))}
@@ -200,35 +205,35 @@ export function MarketingFooter() {
         <div>
           <div className="overline mb-4 text-brass-400">Company</div>
           <div className="grid grid-cols-1 gap-1.5 text-sm">
-            <Link to="/" className="hover:text-paper-50">
+            <Link to="/" className="hover:text-chrome-fg">
               Home
             </Link>
-            <Link to="/about" className="hover:text-paper-50">
+            <Link to="/about" className="hover:text-chrome-fg">
               About
             </Link>
-            <Link to="/which-valuation" className="hover:text-paper-50">
+            <Link to="/which-valuation" className="hover:text-chrome-fg">
               Which valuation?
             </Link>
-            <Link to="/pricing" className="hover:text-paper-50">
+            <Link to="/pricing" className="hover:text-chrome-fg">
               Pricing
             </Link>
-            <Link to="/contact" className="hover:text-paper-50">
+            <Link to="/contact" className="hover:text-chrome-fg">
               Contact us
             </Link>
           </div>
           <div className="overline mt-8 mb-4 text-brass-400">Legal</div>
           <div className="grid grid-cols-1 gap-1.5 text-sm">
-            <Link to="/terms-of-service" className="hover:text-paper-50">
+            <Link to="/terms-of-service" className="hover:text-chrome-fg">
               Terms of service
             </Link>
-            <Link to="/privacy-policy" className="hover:text-paper-50">
+            <Link to="/privacy-policy" className="hover:text-chrome-fg">
               Privacy policy
             </Link>
           </div>
         </div>
       </div>
-      <div className="border-t border-ink-800">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-5 py-5 text-xs text-ink-400 sm:flex-row sm:justify-between">
+      <div className="border-t border-chrome-800">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-5 py-5 text-xs text-chrome-faint sm:flex-row sm:justify-between">
           {/* Derived, not hardcoded — a stale copyright year is the classic
               "nobody maintains this site" tell for a prospect. */}
           <span>© {new Date().getFullYear()} N409 Valuations. All rights reserved.</span>
@@ -245,7 +250,7 @@ export function MarketingFooter() {
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label={s.label}
-                    className="text-ink-400 transition-colors hover:text-paper-50"
+                    className="text-chrome-faint transition-colors hover:text-chrome-fg"
                   >
                     <SocialIcon label={s.label} />
                   </a>

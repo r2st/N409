@@ -67,7 +67,7 @@ export function PartnerLoginPage() {
         {!branding ? (
           <Spinner />
         ) : (
-          <div className="rounded-xl border border-paper-300 bg-white p-8 shadow-card">
+          <div className="rounded-xl border border-paper-300 bg-surface p-8 shadow-card">
             {/* Brand accent band */}
             <div
               aria-hidden

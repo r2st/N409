@@ -18,7 +18,7 @@ import { siteConfig } from '../../lib/siteConfig';
 /** Neutral wordmark badge — we don't ship trademarked vendor logos (gap #21). */
 function PartnerBadge({ name, accent }: { name: string; accent: string }) {
   return (
-    <div className="flex h-12 items-center justify-center rounded-lg border border-paper-300 bg-white px-4 shadow-card sm:px-6">
+    <div className="flex h-12 items-center justify-center rounded-lg border border-paper-300 bg-surface px-4 shadow-card sm:px-6">
       <span className={`font-display text-lg font-semibold tracking-tight ${accent}`}>{name}</span>
     </div>
   );
@@ -53,7 +53,7 @@ export function PartnerLogos() {
  */
 export function ProofSection() {
   return (
-    <section className="border-y border-paper-300 bg-white">
+    <section className="border-y border-paper-300 bg-surface">
       <div className="mx-auto max-w-6xl px-5 py-20">
         <div className="overline text-ink-400">What you actually receive</div>
         <h2 className="mt-2 max-w-2xl font-display text-3xl font-semibold text-ink-900">
@@ -93,7 +93,7 @@ export function TestimonialsSection() {
   if (!active) return null;
 
   return (
-    <section className="border-y border-paper-300 bg-white">
+    <section className="border-y border-paper-300 bg-surface">
       <div className="mx-auto max-w-4xl px-5 py-20">
         <div className="overline text-center text-ink-400">Hear it from our customers</div>
         <h2 className="mt-2 text-center font-display text-3xl font-semibold text-ink-900">
@@ -111,7 +111,7 @@ export function TestimonialsSection() {
           <figcaption className="mt-8 flex items-center gap-4">
             <div
               aria-hidden="true"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-ink-900 font-display text-sm font-semibold text-brass-300"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-chrome-900 font-display text-sm font-semibold text-brass-300"
             >
               {active.monogram}
             </div>
@@ -129,7 +129,7 @@ export function TestimonialsSection() {
             type="button"
             onClick={() => go(-1)}
             aria-label="Previous testimonial"
-            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white text-ink-700 transition-colors hover:border-ink-400 hover:text-ink-900"
+            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-surface text-ink-700 transition-colors hover:border-ink-400 hover:text-ink-900"
           >
             <span aria-hidden="true">‹</span>
           </button>
@@ -152,7 +152,7 @@ export function TestimonialsSection() {
             type="button"
             onClick={() => go(1)}
             aria-label="Next testimonial"
-            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white text-ink-700 transition-colors hover:border-ink-400 hover:text-ink-900"
+            className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-surface text-ink-700 transition-colors hover:border-ink-400 hover:text-ink-900"
           >
             <span aria-hidden="true">›</span>
           </button>
@@ -181,14 +181,14 @@ export function BookACallSection() {
       href={calendlyUrl}
       target="_blank"
       rel="noopener noreferrer"
-      className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+      className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
     >
       Book a call
     </a>
   ) : (
     <Link
       to="/contact"
-      className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+      className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
     >
       Talk to an analyst
     </Link>
@@ -226,7 +226,7 @@ export function BookACallSection() {
         </div>
 
         {demoVideoUrl && (
-          <div className="overflow-hidden rounded-xl border border-paper-300 bg-ink-900 shadow-lift">
+          <div className="overflow-hidden rounded-xl border border-paper-300 bg-chrome-900 shadow-lift">
             <div className="relative aspect-video">
               {videoLoaded ? (
                 <iframe
@@ -243,7 +243,7 @@ export function BookACallSection() {
                   aria-label="Play the N409 product demo"
                   className="ledger-grid group absolute inset-0 flex cursor-pointer items-center justify-center"
                 >
-                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/90 text-ink-900 shadow-lift transition-transform group-hover:scale-110">
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-chrome-fg text-chrome-900 shadow-lift transition-transform group-hover:scale-110">
                     <span aria-hidden="true" className="ml-1 text-2xl">
                       ▸
                     </span>

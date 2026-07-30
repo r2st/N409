@@ -267,7 +267,7 @@ export function CapTableTab() {
       {error && <ErrorNote>{error}</ErrorNote>}
 
       {importing && (
-        <section className="space-y-4 rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+        <section className="space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Source format">
               <Select
@@ -296,7 +296,7 @@ export function CapTableTab() {
               onChange={(e) => setCsv(e.target.value)}
               rows={6}
               placeholder="class,shares,price&#10;Common Stock,8000000,0.10"
-              className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 font-mono text-xs text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
+              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
             />
           </Field>
 
@@ -355,7 +355,7 @@ export function CapTableTab() {
         </EmptyState>
       ) : (
         stored && (
-          <section className="space-y-4 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <section className="space-y-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <div className="flex flex-wrap items-center gap-3">
               <h3 className="overline text-ink-400">Current cap table</h3>
               <span className="text-xs text-ink-400">

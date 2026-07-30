@@ -8,6 +8,7 @@ import { displayName, initials } from '../lib/format';
 import { Wordmark } from './Logo';
 import { HelpWidget } from './HelpWidget';
 import { ViewModeToggle } from './ViewModeToggle';
+import { ThemeToggle } from './ThemeToggle';
 
 function NavItem({
   to,
@@ -30,15 +31,15 @@ function NavItem({
       className={({ isActive }) =>
         `group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
           isActive
-            ? 'bg-ink-800 text-paper-50 shadow-[inset_2px_0_0_var(--color-brass-400)]'
-            : 'text-ink-300 hover:bg-ink-800/60 hover:text-paper-50'
+            ? 'bg-chrome-800 text-chrome-fg shadow-[inset_2px_0_0_var(--color-brass-400)]'
+            : 'text-chrome-dim hover:bg-chrome-800/60 hover:text-chrome-fg'
         }`
       }
     >
-      <span className="text-ink-400 group-hover:text-brass-300">{icon}</span>
+      <span className="text-chrome-faint group-hover:text-brass-300">{icon}</span>
       {label}
       {badge !== undefined && badge > 0 && (
-        <span className="tnum ml-auto rounded-full bg-brass-400 px-1.5 py-0.5 text-[0.65rem] font-bold text-ink-900">
+        <span className="tnum ml-auto rounded-full bg-brass-400 px-1.5 py-0.5 text-[0.65rem] font-bold text-chrome-900">
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -64,7 +65,7 @@ function NavGroup({ label, children }: { label: string; children: ReactNode }) {
       <button
         onClick={toggle}
         aria-expanded={open}
-        className="overline mt-6 mb-2 flex w-full cursor-pointer items-center justify-between px-3 text-left text-ink-400/80 hover:text-ink-300"
+        className="overline mt-6 mb-2 flex w-full cursor-pointer items-center justify-between px-3 text-left text-chrome-faint/80 hover:text-chrome-dim"
       >
         {label}
         <svg
@@ -248,7 +249,7 @@ export function AppLayout() {
     // sidebar and pushes the user card below the viewport (bottom items hidden).
     <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
       <ViewModeToggle onNavigate={close} />
-      <div className="overline mt-3 mb-2 px-3 text-ink-400/80">Workspace</div>
+      <div className="overline mt-3 mb-2 px-3 text-chrome-faint/80">Workspace</div>
       <NavItem to="/dashboard" label="Dashboard" icon={icons.dashboard} onNavigate={close} />
       <NavItem
         to="/valuations"
@@ -301,7 +302,7 @@ export function AppLayout() {
           <NavItem to="/admin/partners" label="Partners" icon={icons.partner} onNavigate={close} />
         </NavGroup>
       )}
-      <div className="overline mt-6 mb-2 px-3 text-ink-400/80">Account</div>
+      <div className="overline mt-6 mb-2 px-3 text-chrome-faint/80">Account</div>
       <NavItem to="/billing" label="Billing" icon={icons.billing} onNavigate={close} />
       <NavItem to="/settings" label="Settings" icon={icons.settings} onNavigate={close} />
       <NavItem to="/features" label="Features" icon={icons.features} onNavigate={close} />
@@ -309,15 +310,23 @@ export function AppLayout() {
     </nav>
   );
 
+  // Pinned below the scrolling nav so the control is reachable without
+  // scrolling to the bottom of a long ops sidebar, and visible signed-out too.
+  const themeRow = (
+    <div className="px-3 pt-3">
+      <ThemeToggle variant="chrome" />
+    </div>
+  );
+
   const userCard = user && (
-    <div className="border-t border-ink-800 px-4 py-4">
+    <div className="border-t border-chrome-800 px-4 py-4">
       <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-bond-700 text-xs font-bold text-paper-50">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-bond-700 text-xs font-bold text-chrome-fg">
           {initials(user)}
         </div>
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-paper-50">{displayName(user)}</div>
-          <div className="truncate text-xs text-ink-400">
+          <div className="truncate text-sm font-semibold text-chrome-fg">{displayName(user)}</div>
+          <div className="truncate text-xs text-chrome-faint">
             {roleTag} · {scopeLabel(eff).split(' (')[0]}
           </div>
         </div>
@@ -327,7 +336,7 @@ export function AppLayout() {
           logout();
           navigate('/login');
         }}
-        className="mt-3 w-full cursor-pointer rounded-md border border-ink-700 px-3 py-1.5 text-xs font-semibold text-ink-300 transition-colors hover:border-ink-600 hover:text-paper-50"
+        className="mt-3 w-full cursor-pointer rounded-md border border-chrome-700 px-3 py-1.5 text-xs font-semibold text-chrome-dim transition-colors hover:border-chrome-600 hover:text-chrome-fg"
       >
         Sign out
       </button>
@@ -337,21 +346,22 @@ export function AppLayout() {
   return (
     <div className="min-h-screen bg-paper-100 lg:flex">
       {/* Desktop sidebar */}
-      <aside className="ledger-grid fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-ink-900 lg:flex">
+      <aside className="ledger-grid fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-chrome-900 lg:flex">
         <div className="px-6 py-6">
           <Wordmark light />
         </div>
         {nav}
+        {themeRow}
         {userCard}
       </aside>
 
       {/* Mobile top bar + drawer */}
-      <div className="sticky top-0 z-30 flex items-center justify-between bg-ink-900 px-4 py-3 lg:hidden">
+      <div className="sticky top-0 z-30 flex items-center justify-between bg-chrome-900 px-4 py-3 lg:hidden">
         <Wordmark light />
         <button
           aria-label="Toggle navigation"
           onClick={() => setMenuOpen((v) => !v)}
-          className="rounded-md p-2 text-paper-50 hover:bg-ink-800"
+          className="rounded-md p-2 text-chrome-fg hover:bg-chrome-800"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             {menuOpen ? (
@@ -363,8 +373,9 @@ export function AppLayout() {
         </button>
       </div>
       {menuOpen && (
-        <div className="ledger-grid fixed inset-x-0 top-[52px] z-20 flex max-h-[calc(100dvh-52px)] flex-col overflow-y-auto bg-ink-900 pb-2 shadow-lift lg:hidden">
+        <div className="ledger-grid fixed inset-x-0 top-[52px] z-20 flex max-h-[calc(100dvh-52px)] flex-col overflow-y-auto bg-chrome-900 pb-2 shadow-lift lg:hidden">
           {nav}
+          {themeRow}
           {userCard}
         </div>
       )}

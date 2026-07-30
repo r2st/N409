@@ -108,7 +108,7 @@ export function DecisionsTab() {
               <li
                 key={entry.id}
                 className={`rounded-lg border p-4 ${
-                  entry.superseded ? 'border-paper-300 bg-paper-100 opacity-70' : 'border-paper-300 bg-white shadow-card'
+                  entry.superseded ? 'border-paper-300 bg-paper-100 opacity-70' : 'border-paper-300 bg-surface shadow-card'
                 }`}
               >
                 <div className="flex flex-wrap items-center gap-2">
@@ -142,7 +142,7 @@ export function DecisionsTab() {
         <h2 className="overline mb-4 text-ink-400">Record a decision</h2>
         <form
           onSubmit={(e) => void submit(e)}
-          className="space-y-4 rounded-lg border border-paper-300 bg-white p-5 shadow-card"
+          className="space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
         >
           <Field label="Category">
             <Select value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -162,7 +162,7 @@ export function DecisionsTab() {
               onChange={(e) => setRationale(e.target.value)}
               required
               rows={4}
-              className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-1 focus:ring-bond-500 focus:outline-none"
+              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-1 focus:ring-bond-500 focus:outline-none"
               aria-label="Rationale"
             />
           </Field>

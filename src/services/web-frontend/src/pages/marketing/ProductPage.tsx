@@ -45,48 +45,48 @@ export function ProductPage() {
       </nav>
 
       {/* 2. Hero */}
-      <section className="ledger-grid bg-ink-900 text-paper-50">
+      <section className="ledger-grid bg-chrome-900 text-chrome-fg">
         <div className="mx-auto grid max-w-6xl gap-10 px-5 py-20 lg:grid-cols-[1.3fr_1fr] lg:items-center">
           <div>
             <div className="overline mb-4 text-brass-400">{product.audience}</div>
             <h1 className="max-w-2xl font-display text-4xl leading-tight font-medium sm:text-5xl">
               {product.name}
             </h1>
-            <p className="mt-5 max-w-xl text-lg text-ink-300">{content?.heroSubhead ?? product.tagline}</p>
+            <p className="mt-5 max-w-xl text-lg text-chrome-dim">{content?.heroSubhead ?? product.tagline}</p>
             <div className="mt-8 flex flex-wrap items-center gap-5">
               <Link
                 to="/register"
-                className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+                className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
               >
                 {ctaLabel}
               </Link>
-              <span className="tnum text-sm text-ink-300">
-                from <span className="font-semibold text-paper-50">{formatUsd(product.priceCents)}</span> ·{' '}
+              <span className="tnum text-sm text-chrome-dim">
+                from <span className="font-semibold text-chrome-fg">{formatUsd(product.priceCents)}</span> ·{' '}
                 {product.deliveryDays} business days
               </span>
             </div>
           </div>
           {/* Report card mockup */}
-          <div className="rounded-lg border border-ink-700 bg-ink-800/60 p-6 shadow-lift">
-            <div className="flex items-center justify-between border-b border-ink-700 pb-3">
+          <div className="rounded-lg border border-chrome-700 bg-chrome-800/60 p-6 shadow-lift">
+            <div className="flex items-center justify-between border-b border-chrome-700 pb-3">
               <span className="overline text-brass-400">{product.short}</span>
               <span className="rounded-full bg-bond-600/20 px-2.5 py-1 text-xs font-semibold text-bond-400">
                 Signed
               </span>
             </div>
             <div className="mt-4 space-y-2.5" aria-hidden="true">
-              <div className="h-2.5 w-3/4 rounded bg-ink-700" />
-              <div className="h-2.5 w-full rounded bg-ink-700" />
-              <div className="h-2.5 w-5/6 rounded bg-ink-700" />
+              <div className="h-2.5 w-3/4 rounded bg-chrome-700" />
+              <div className="h-2.5 w-full rounded bg-chrome-700" />
+              <div className="h-2.5 w-5/6 rounded bg-chrome-700" />
             </div>
             <dl className="mt-5 grid grid-cols-2 gap-3 text-sm">
               <div>
-                <dt className="text-ink-400">First draft</dt>
-                <dd className="font-semibold text-paper-50">24 hours</dd>
+                <dt className="text-chrome-faint">First draft</dt>
+                <dd className="font-semibold text-chrome-fg">24 hours</dd>
               </div>
               <div>
-                <dt className="text-ink-400">Methodology</dt>
-                <dd className="font-semibold text-paper-50">Multi-approach</dd>
+                <dt className="text-chrome-faint">Methodology</dt>
+                <dd className="font-semibold text-chrome-fg">Multi-approach</dd>
               </div>
             </dl>
           </div>
@@ -132,7 +132,7 @@ export function ProductPage() {
 
       {/* 4. Solution */}
       {content && (
-        <section className="border-t border-paper-300 bg-white">
+        <section className="border-t border-paper-300 bg-surface">
           <div className="mx-auto max-w-6xl px-5 py-16">
             <div className="overline text-brass-600">The solution</div>
             <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">{product.tagline}</h2>
@@ -156,7 +156,7 @@ export function ProductPage() {
         </h2>
         <div className="mt-8 grid gap-6 sm:grid-cols-3">
           {PROCESS_STEPS.map((s) => (
-            <div key={s.step} className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+            <div key={s.step} className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
               <div className="tnum font-display text-3xl font-semibold text-bond-600">{s.step}</div>
               <h3 className="mt-3 font-display text-base font-semibold text-ink-900">{s.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-ink-600">{s.body}</p>
@@ -166,7 +166,7 @@ export function ProductPage() {
       </section>
 
       {/* 6. Included */}
-      <section className="border-t border-paper-300 bg-white">
+      <section className="border-t border-paper-300 bg-surface">
         <div className="mx-auto max-w-6xl px-5 py-16">
           <div className="grid gap-10 lg:grid-cols-[1fr_1.2fr]">
             <div>
@@ -216,7 +216,7 @@ export function ProductPage() {
       )}
 
       {/* 8. Bottom CTA + disclaimer */}
-      <section className="ledger-grid border-t border-ink-800 bg-ink-900 text-paper-50">
+      <section className="ledger-grid border-t border-chrome-800 bg-chrome-900 text-chrome-fg">
         <div className="mx-auto max-w-4xl px-5 py-16 text-center">
           <h2 className="font-display text-3xl font-semibold">
             {content?.ctaHeadline ?? `Get your ${product.name} started`}
@@ -224,19 +224,19 @@ export function ProductPage() {
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
             <Link
               to="/register"
-              className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-bond-700"
+              className="rounded-md bg-bond-600 px-6 py-3 text-sm font-semibold text-bond-fg shadow-lift transition-colors hover:bg-bond-700"
             >
               {ctaLabel}
             </Link>
             <Link
               to="/pricing"
-              className="rounded-md border border-ink-600 px-6 py-3 text-sm font-semibold text-paper-50 transition-colors hover:border-ink-400"
+              className="rounded-md border border-chrome-600 px-6 py-3 text-sm font-semibold text-chrome-fg transition-colors hover:border-chrome-faint"
             >
               See pricing
             </Link>
           </div>
           {content && (
-            <p className="mx-auto mt-8 max-w-2xl text-xs leading-relaxed text-ink-400">
+            <p className="mx-auto mt-8 max-w-2xl text-xs leading-relaxed text-chrome-faint">
               {content.disclaimer}
             </p>
           )}
@@ -247,7 +247,7 @@ export function ProductPage() {
       <BookACallSection />
 
       {/* Related products */}
-      <section className="border-t border-paper-300 bg-white">
+      <section className="border-t border-paper-300 bg-surface">
         <div className="mx-auto max-w-6xl px-5 py-14">
           <div className="overline text-ink-400">Related products</div>
           <div className="mt-5 grid gap-4 sm:grid-cols-3">

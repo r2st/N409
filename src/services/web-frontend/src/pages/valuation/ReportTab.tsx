@@ -149,7 +149,7 @@ export function ReportTab() {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-ink-400">
-            <span className="rounded border border-ink-200 bg-white px-2 py-0.5 font-mono font-semibold text-ink-700">
+            <span className="rounded border border-ink-200 bg-surface px-2 py-0.5 font-mono font-semibold text-ink-700">
               {report.template_version}
             </span>
             <span>v{report.current_version}</span>
@@ -201,7 +201,7 @@ export function ReportTab() {
         )}
 
         {content.sections.map((section, index) => (
-          <section key={section.key} className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+          <section key={section.key} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
             {ops ? (
               <>
                 <TextInput
@@ -238,7 +238,7 @@ export function ReportTab() {
                 className={`rounded-md border px-3.5 py-2.5 text-sm ${
                   v.version === report.current_version
                     ? 'border-bond-200 bg-bond-50'
-                    : 'border-paper-300 bg-white'
+                    : 'border-paper-300 bg-surface'
                 }`}
               >
                 <div className="flex items-center justify-between">

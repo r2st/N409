@@ -144,7 +144,7 @@ export function AdminHelpPage() {
       </div>
 
       {editor && (
-        <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-5 text-ink-400">
             {editor.id ? `Edit "${editor.title}"` : 'New article'}
           </h2>
@@ -228,7 +228,7 @@ export function AdminHelpPage() {
       )}
 
       {articles.length > 0 && (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+        <div className="mt-6 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
           <table className="w-full min-w-[720px] text-sm" aria-label="Help articles">
             <thead>
               <tr className="border-b border-paper-300 text-left">

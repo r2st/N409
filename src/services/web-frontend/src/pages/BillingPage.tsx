@@ -84,7 +84,7 @@ export function BillingPage() {
       {billing.unpaid_valuations.length > 0 && (
         <section className="mt-8">
           <h2 className="overline mb-3 text-ink-400">Unpaid engagements</h2>
-          <ul className="divide-y divide-paper-200 rounded-lg border border-paper-300 bg-white shadow-card">
+          <ul className="divide-y divide-paper-200 rounded-lg border border-paper-300 bg-surface shadow-card">
             {billing.unpaid_valuations.map((v) => (
               <li key={v.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
                 <KindBadge kind={v.kind as ValuationKind} />
@@ -97,7 +97,7 @@ export function BillingPage() {
                 </div>
                 <Link
                   to={`/valuations/${v.id}`}
-                  className="rounded-md bg-bond-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-bond-700"
+                  className="rounded-md bg-bond-600 px-3.5 py-1.5 text-xs font-semibold text-bond-fg hover:bg-bond-700"
                 >
                   Pay now →
                 </Link>
@@ -114,7 +114,7 @@ export function BillingPage() {
             Payments appear here as soon as a checkout completes.
           </EmptyState>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+          <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
             <table className="w-full min-w-[720px] text-sm" aria-label="Payment history">
               <thead>
                 <tr className="border-b border-paper-300 text-left">

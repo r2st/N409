@@ -98,7 +98,7 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
     <div className="space-y-6">
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <form onSubmit={create} className="rounded-lg border border-paper-300 bg-white p-5 shadow-card">
+      <form onSubmit={create} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
         <h3 className="overline mb-4 text-ink-400">New review task</h3>
         <div className="grid gap-4 sm:grid-cols-[1fr_11rem_7rem_auto]">
           <Field label="Title">
@@ -154,7 +154,7 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
       )}
 
       {tasks && tasks.length > 0 && (
-        <ul className="divide-y divide-paper-300 rounded-lg border border-paper-300 bg-white shadow-card">
+        <ul className="divide-y divide-paper-300 rounded-lg border border-paper-300 bg-surface shadow-card">
           {tasks.map((task) => (
             <li key={task.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">

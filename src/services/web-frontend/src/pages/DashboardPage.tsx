@@ -147,7 +147,7 @@ export function DashboardPage() {
               </div>
 
               {analytics.by_kind.length > 0 && (
-                <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+                <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                   <table className="w-full min-w-[560px] text-sm" aria-label="Product pivot">
                     <thead>
                       <tr className="border-b border-paper-300 text-left">
@@ -211,7 +211,7 @@ export function DashboardPage() {
 
               {/* Per-state detail — surfaces the states the grouped pivot hides. */}
               {Object.keys(analytics.by_state).length > 0 && (
-                <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+                <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                   <table className="w-full min-w-[360px] text-sm" aria-label="State detail">
                     <thead>
                       <tr className="border-b border-paper-300 text-left">
@@ -261,7 +261,7 @@ export function DashboardPage() {
                 <li key={v.id}>
                   <Link
                     to={`/valuations/${v.id}`}
-                    className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-paper-300 bg-white px-5 py-4 shadow-card transition-shadow hover:shadow-lift"
+                    className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-paper-300 bg-surface px-5 py-4 shadow-card transition-shadow hover:shadow-lift"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-display text-[1.05rem] font-semibold text-ink-900">

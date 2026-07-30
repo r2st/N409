@@ -18,7 +18,7 @@ const MAX_POLLS = 15; // ~30s before we stop and reassure instead
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-xl">
-      <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-white p-8 text-center shadow-card">
+      <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-surface p-8 text-center shadow-card">
         {children}
       </div>
     </div>

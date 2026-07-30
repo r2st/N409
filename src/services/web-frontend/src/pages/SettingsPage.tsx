@@ -10,10 +10,11 @@ import type { ApiToken, User } from '../lib/types';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { PhoneInput } from '../components/PhoneInput';
 import { MfaCard } from '../components/MfaCard';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 function Card({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-1 text-ink-400">{title}</h2>
       {description && <p className="mb-4 text-sm text-ink-400">{description}</p>}
       <div className={description ? '' : 'mt-4'}>{children}</div>
@@ -431,7 +432,7 @@ function ApiTokensCard() {
           <p className="text-sm font-semibold text-amber-900">
             Copy “{minted.name}” now — it won't be shown again.
           </p>
-          <code className="mt-2 block overflow-x-auto rounded bg-white px-3 py-2 font-mono text-xs text-ink-900">
+          <code className="mt-2 block overflow-x-auto rounded bg-surface px-3 py-2 font-mono text-xs text-ink-900">
             {minted.secret}
           </code>
         </div>
@@ -630,7 +631,7 @@ export function SettingsPage() {
       </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Settings</h1>
 
-      <section className="mt-8 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="mt-8 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="flex items-center gap-4">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bond-700 text-lg font-bold text-paper-50">
             {initials(user)}
@@ -666,7 +667,7 @@ export function SettingsPage() {
         </dl>
       </section>
 
-      <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-4 text-ink-400">Roles</h2>
         <div className="flex flex-wrap gap-2">
           {user.roles.map((r) => (
@@ -685,6 +686,13 @@ export function SettingsPage() {
           </p>
         )}
       </section>
+
+      <Card
+        title="Appearance"
+        description="System follows your operating system's light/dark setting. The choice is stored on this device."
+      >
+        <ThemeToggle />
+      </Card>
 
       <ProfileCard />
       {/* Google owns the email on an SSO account, and there's no password to

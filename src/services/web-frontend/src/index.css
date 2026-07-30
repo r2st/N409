@@ -42,13 +42,161 @@
   --color-bond-700: #0a5f48;
   --color-bond-800: #084a39;
 
+  /*
+   * Foreground for anything sitting on a filled bond swatch (primary buttons,
+   * step pips, "done" ticks). It cannot be a literal `text-white`, because the
+   * bond ramp moves *up* in dark mode so the accent lifts off a dark ground —
+   * white on #43cca0 is unreadable. This token inverts with it.
+   */
+  --color-bond-fg: #ffffff;
+
   /* brass — sparing premium detail */
   --color-brass-300: #dfc98c;
   --color-brass-400: #c9a54a;
   --color-brass-500: #b08d35;
 
+  /*
+   * chrome — the brand furniture that is dark in BOTH themes: the app sidebar,
+   * the auth panel, marketing hero bands, tooltips and modal scrims.
+   *
+   * This family exists because `ink` and `paper` are used in two opposite roles.
+   * `text-ink-900` is dark text on a light surface, while `bg-ink-900` with
+   * `text-paper-50` is a dark surface with light text. Dark mode inverts both
+   * scales, which is correct for the first role and exactly wrong for the
+   * second — the sidebar would turn white and its labels would vanish. Chrome
+   * holds the second role and never inverts, so the two can move independently.
+   */
+  --color-chrome-950: #070b14;
+  --color-chrome-900: #0b1220;
+  --color-chrome-800: #131c30;
+  --color-chrome-700: #1e2a45;
+  --color-chrome-600: #2c3b5e;
+  /* Foreground pair for anything sitting on chrome. */
+  --color-chrome-fg: #faf9f6;
+  --color-chrome-dim: #8b97b3;
+  --color-chrome-faint: #5d6c8f;
+
+  /*
+   * surface — the card plane. Was a literal `bg-white`, which cannot follow a
+   * theme; `text-white` still means white, because it sits on the bond and
+   * chrome fills that stay dark in both themes.
+   */
+  --color-surface: #ffffff;
+
   --shadow-card: 0 1px 2px rgb(11 18 32 / 0.05), 0 1px 3px rgb(11 18 32 / 0.06);
   --shadow-lift: 0 4px 12px rgb(11 18 32 / 0.08), 0 1px 3px rgb(11 18 32 / 0.06);
+}
+
+/* Lets components opt into `dark:` for the rare case a token swap cannot express. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * Dark theme (feature-improvements §2 "Dark mode"): analysts sit in the
+ * workbook all day.
+ *
+ * Implemented by re-pointing the design tokens rather than by adding `dark:`
+ * variants to 46 pages — the palette is already used semantically (paper for
+ * surfaces, ink for text), so inverting the two scales carries the whole app
+ * over and keeps one source of truth for the theme. `data-theme` is set on
+ * <html> before first paint by the inline script in index.html, so there is no
+ * light flash, and the resolved value comes from the user's explicit choice or
+ * `prefers-color-scheme` (see lib/theme.ts).
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* paper → the dark surface ramp, lightest last so "50 is subtlest" still holds */
+  --color-paper-50: #131a27;
+  --color-paper-100: #0a0e16;
+  --color-paper-200: #1a2231;
+  --color-paper-300: #29334a;
+
+  /* ink → light text; the ordering still reads "900 is strongest" */
+  --color-ink-950: #ffffff;
+  --color-ink-900: #eef1f7;
+  --color-ink-800: #dfe4ee;
+  --color-ink-700: #c8cfdd;
+  --color-ink-600: #aab3c6;
+  --color-ink-400: #8b95ad;
+  --color-ink-300: #6f7a93;
+  --color-ink-200: #55607a;
+
+  --color-surface: #111825;
+
+  /* The accent has to lift off a dark ground, so it moves up the ramp. */
+  --color-bond-50: #0d251d;
+  --color-bond-100: #10382a;
+  --color-bond-200: #1a5741;
+  --color-bond-500: #2fbc90;
+  --color-bond-600: #43cca0;
+  --color-bond-700: #6bdcb6;
+  --color-bond-800: #99e9cd;
+  --color-bond-fg: #04140e;
+
+  /*
+   * Status colours come from the Tailwind default palette and follow one
+   * pattern everywhere: a -50 tint for the panel, -200 for its border or ring,
+   * and -600/-900 for the text. Re-pointing those steps fixes every callsite at
+   * once — dark text on a dark tint is the failure mode that would otherwise
+   * make warning and error panels unreadable.
+   */
+  --color-red-50: #2a1215;
+  --color-red-100: #3a181c;
+  --color-red-200: #5e2429;
+  --color-red-500: #f2555f;
+  --color-red-600: #ff8189;
+  --color-red-700: #ff9ba1;
+  --color-red-800: #ffb4b9;
+
+  --color-amber-50: #2a2008;
+  --color-amber-100: #3a2c0b;
+  --color-amber-200: #5e4712;
+  --color-amber-300: #7a5d18;
+  --color-amber-400: #d9a520;
+  --color-amber-500: #e6b32e;
+  --color-amber-700: #f3c85c;
+  --color-amber-800: #f7d98b;
+  --color-amber-900: #fae7b4;
+
+  --color-emerald-50: #06241a;
+  --color-emerald-200: #14543c;
+  --color-emerald-500: #2fbc90;
+  --color-emerald-700: #5ed7ac;
+  --color-emerald-800: #8ee6c6;
+
+  --color-sky-50: #0a1f2e;
+  --color-sky-100: #0e2b3f;
+  --color-sky-200: #17496a;
+  --color-sky-700: #63c0ee;
+  --color-sky-800: #8fd3f4;
+  --color-sky-900: #b7e4f8;
+
+  --color-violet-50: #1d1533;
+  --color-violet-200: #3b2b66;
+  --color-violet-800: #c1abf5;
+  --color-violet-900: #d6c8f9;
+
+  /*
+   * The accounting-partner wordmarks (marketing.ts PARTNER_LOGOS) are tinted to
+   * approximate each vendor's brand colour and are the only users of these
+   * steps. At -600 they sit at roughly 2:1 on a dark card, so they move to
+   * their -400 equivalents; the hue survives, the legibility comes back.
+   */
+  --color-sky-600: #38bdf8;
+  --color-emerald-600: #34d399;
+  --color-indigo-600: #818cf8;
+  --color-teal-600: #2dd4bf;
+  --color-cyan-600: #22d3ee;
+
+  --color-slate-50: #131a27;
+  --color-slate-300: #29334a;
+  --color-slate-600: #aab3c6;
+  --color-slate-700: #c8cfdd;
+  --color-slate-900: #eef1f7;
+
+  /* A 5%-black shadow is invisible on a dark ground; depth needs real black. */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
+  --shadow-lift: 0 4px 14px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.35);
 }
 
 html {

@@ -75,7 +75,7 @@ export function OverwritesSchemaPage() {
         />
       </div>
 
-      <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+      <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[52rem] border-collapse text-sm">
           <thead>
             <tr className="border-b border-paper-300 bg-paper-50 text-left text-xs font-semibold tracking-wide text-ink-400 uppercase">

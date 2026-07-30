@@ -51,16 +51,16 @@ function StageStepper({ stages }: { stages: ProgressStage[] }) {
               ? 'border-bond-300 bg-bond-50'
               : stage.status === 'done'
                 ? 'border-emerald-200 bg-emerald-50/60'
-                : 'border-paper-300 bg-white'
+                : 'border-paper-300 bg-surface'
           }`}
         >
           <div className="flex items-center gap-2">
             <span
               className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${
                 stage.status === 'done'
-                  ? 'bg-emerald-500 text-white'
+                  ? 'bg-emerald-500 text-bond-fg'
                   : stage.status === 'current'
-                    ? 'bg-bond-600 text-white'
+                    ? 'bg-bond-600 text-bond-fg'
                     : 'bg-paper-200 text-ink-400'
               }`}
             >
@@ -120,7 +120,7 @@ export function ProgressTab() {
       <StageStepper stages={progress.stages} />
 
       <div className="grid gap-8 lg:grid-cols-2">
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-4 text-ink-400">Document checklist</h2>
           <ul className="space-y-2.5">
             {progress.checklist.map((item) => (
@@ -128,7 +128,7 @@ export function ProgressTab() {
                 <span
                   aria-hidden
                   className={`flex h-4.5 w-4.5 items-center justify-center rounded-full text-[10px] font-bold ${
-                    item.uploaded ? 'bg-emerald-500 text-white' : 'bg-paper-200 text-ink-400'
+                    item.uploaded ? 'bg-emerald-500 text-bond-fg' : 'bg-paper-200 text-ink-400'
                   }`}
                 >
                   {item.uploaded ? '✓' : '·'}
@@ -154,14 +154,14 @@ export function ProgressTab() {
                   getToken(),
                 ).catch(() => {})
               }
-              className="mt-5 inline-block cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-white hover:bg-bond-700"
+              className="mt-5 inline-block cursor-pointer rounded-md bg-bond-600 px-4 py-2 text-sm font-semibold text-bond-fg hover:bg-bond-700"
             >
               Download your report
             </button>
           )}
         </section>
 
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-4 text-ink-400">Timeline</h2>
           {progress.timeline.length === 0 && <p className="text-sm text-ink-400">Nothing yet.</p>}
           <ol className="space-y-3">

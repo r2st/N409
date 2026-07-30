@@ -30,7 +30,7 @@ export function WhichValuationPage() {
               className={`cursor-pointer rounded-lg border p-4 text-left transition-colors ${
                 active
                   ? 'border-bond-600 bg-bond-50 ring-2 ring-bond-600/20'
-                  : 'border-paper-300 bg-white hover:border-ink-300'
+                  : 'border-paper-300 bg-surface hover:border-ink-300'
               }`}
             >
               <span className="block text-sm font-semibold text-ink-900">{option.label}</span>
@@ -41,14 +41,14 @@ export function WhichValuationPage() {
       </div>
 
       {product && (
-        <div className="mt-10 rounded-lg border border-bond-200 bg-white p-6 shadow-lift" data-testid="quiz-result">
+        <div className="mt-10 rounded-lg border border-bond-200 bg-surface p-6 shadow-lift" data-testid="quiz-result">
           <div className="overline text-bond-700">Our recommendation</div>
           <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">{product.name}</h2>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink-600">{product.description}</p>
           <div className="mt-5 flex flex-wrap items-center gap-4">
             <Link
               to="/register"
-              className="rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-white shadow-card transition-colors hover:bg-bond-700"
+              className="rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700"
             >
               Start my {product.short} valuation
             </Link>

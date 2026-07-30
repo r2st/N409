@@ -75,7 +75,7 @@ export function MfaCard() {
 
   if (!status) {
     return (
-      <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-4 text-ink-400">Two-factor authentication</h2>
         <Spinner />
       </section>
@@ -155,7 +155,7 @@ export function MfaCard() {
   };
 
   return (
-    <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+    <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <div className="mb-1 flex items-center justify-between">
         <h2 className="overline text-ink-400">Two-factor authentication</h2>
         <span

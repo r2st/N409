@@ -45,7 +45,7 @@ export function HelpIcon({
       {open &&
         createPortal(
           <div
-            className="fixed inset-0 z-50 flex justify-end bg-ink-900/40"
+            className="fixed inset-0 z-50 flex justify-end bg-chrome-950/60"
             onMouseDown={(e) => {
               if (e.target === e.currentTarget) close();
             }}
@@ -56,7 +56,7 @@ export function HelpIcon({
               aria-modal="true"
               aria-label={`Help — ${title}`}
               tabIndex={-1}
-              className="flex h-full w-[min(28rem,100vw)] flex-col bg-white shadow-lift focus:outline-none"
+              className="flex h-full w-[min(28rem,100vw)] flex-col bg-surface shadow-lift focus:outline-none"
             >
               <div className="flex items-start justify-between gap-4 border-b border-paper-200 px-5 py-4">
                 <div className="min-w-0">

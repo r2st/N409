@@ -199,7 +199,7 @@ function modelProblem(form: FormState): string | null {
   return null;
 }
 
-const cardClass = 'rounded-lg border border-paper-300 bg-white p-6 shadow-card';
+const cardClass = 'rounded-lg border border-paper-300 bg-surface p-6 shadow-card';
 const headingClass = 'overline mb-5 text-ink-400';
 
 export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: string; readOnly: boolean }) {

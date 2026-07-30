@@ -117,7 +117,7 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
                     : `The ${label} approach has no weight in the latest run`
                 }
                 onClick={() => void run(approach)}
-                className="cursor-pointer rounded-full border border-ink-200 bg-white px-3 py-1 text-xs font-semibold text-ink-700 transition-colors hover:border-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="cursor-pointer rounded-full border border-ink-200 bg-surface px-3 py-1 text-xs font-semibold text-ink-700 transition-colors hover:border-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {busy === approach ? 'Recomputing…' : `↻ ${label}`}
               </button>
@@ -137,7 +137,7 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
             />
           </div>
 
-          <section className="overflow-x-auto rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+          <section className="overflow-x-auto rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <h3 className="overline mb-4 text-ink-400">Approach breakdown</h3>
             <table className="w-full text-sm">
               <thead>
@@ -185,7 +185,7 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
       {calculations && calculations.length > 0 && (
         <section>
           <h3 className="overline mb-3 text-ink-400">History</h3>
-          <ul className="divide-y divide-paper-300 rounded-lg border border-paper-300 bg-white shadow-card">
+          <ul className="divide-y divide-paper-300 rounded-lg border border-paper-300 bg-surface shadow-card">
             {calculations.map((calc) => (
               <li key={calc.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
                 <span

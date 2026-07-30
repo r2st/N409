@@ -156,7 +156,7 @@ export function DebtInstrumentsPage() {
       {error && <ErrorNote>{error}</ErrorNote>}
 
       {showNew && (
-        <form onSubmit={create} className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-white p-4">
+        <form onSubmit={create} className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-surface p-4">
           <Field label="Name"><TextInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></Field>
           <Field label="Type">
             <Select value={form.instrument_type} onChange={(e) => setForm({ ...form, instrument_type: e.target.value as InstrumentType })}>
@@ -289,7 +289,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
       {error && <ErrorNote>{error}</ErrorNote>}
 
       {/* Parameters */}
-      <div className="rounded-lg border border-paper-200 bg-white p-4">
+      <div className="rounded-lg border border-paper-200 bg-surface p-4">
         <h3 className="mb-3 text-sm font-semibold text-ink-700">{TYPE_LABELS[instrument.instrument_type]} parameters</h3>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {PARAM_FIELDS[instrument.instrument_type].map((f) => (
@@ -321,7 +321,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
 
       {/* Sensitivity table */}
       {sensitivity && (
-        <div className="rounded-lg border border-paper-200 bg-white p-4">
+        <div className="rounded-lg border border-paper-200 bg-surface p-4">
           <h3 className="mb-2 text-sm font-semibold text-ink-700">Sensitivity</h3>
           <table className="w-full text-sm">
             <thead><tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500"><th className="py-1.5">Shift</th><th className="py-1.5">Fair value</th></tr></thead>
@@ -339,7 +339,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
 
       {/* Valuation history */}
       {valuations.length > 0 && (
-        <div className="rounded-lg border border-paper-200 bg-white p-4">
+        <div className="rounded-lg border border-paper-200 bg-surface p-4">
           <h3 className="mb-2 text-sm font-semibold text-ink-700">Valuation history</h3>
           <table className="w-full text-sm">
             <thead><tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500"><th className="py-1.5">Date</th><th className="py-1.5">Fair value</th></tr></thead>
@@ -442,7 +442,7 @@ function CreditTermsCard({ instrumentId, terms, onSaved }: { instrumentId: strin
   };
 
   return (
-    <div className="rounded-lg border border-paper-200 bg-white p-4">
+    <div className="rounded-lg border border-paper-200 bg-surface p-4">
       <h3 className="mb-3 text-sm font-semibold text-ink-700">Credit terms</h3>
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -465,7 +465,7 @@ function CreditTermsCard({ instrumentId, terms, onSaved }: { instrumentId: strin
 
 function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className={`rounded-lg border p-3 ${accent ? 'border-bond-200 bg-bond-50' : 'border-paper-200 bg-white'}`}>
+    <div className={`rounded-lg border p-3 ${accent ? 'border-bond-200 bg-bond-50' : 'border-paper-200 bg-surface'}`}>
       <div className="overline text-ink-400">{label}</div>
       <div className={`tnum mt-1 text-base font-semibold ${accent ? 'text-bond-700' : 'text-ink-800'}`}>{value}</div>
     </div>

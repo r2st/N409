@@ -120,7 +120,7 @@ export function WorkbookTab() {
               onClick={() => setActiveSheet(s.key)}
               className={`cursor-pointer rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
                 s.key === activeSheet
-                  ? 'bg-white text-ink-900 shadow-card'
+                  ? 'bg-surface text-ink-900 shadow-card'
                   : 'text-ink-400 hover:text-ink-700'
               }`}
             >
@@ -147,7 +147,7 @@ export function WorkbookTab() {
       {error && <ErrorNote>{error}</ErrorNote>}
       <p className="text-sm text-ink-400">{sheet.description}</p>
 
-      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-white shadow-card">
+      <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
         <table className="w-full min-w-[40rem] border-collapse text-sm">
           <thead>
             <tr className="border-b border-paper-300 bg-paper-50">

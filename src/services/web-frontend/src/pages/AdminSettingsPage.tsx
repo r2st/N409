@@ -125,7 +125,7 @@ export function AdminSettingsPage() {
           </div>
         )}
 
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-4 text-ink-400">Access</h2>
           <div className="space-y-5">
             {TOGGLES.map((knob) => (
@@ -153,7 +153,7 @@ export function AdminSettingsPage() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-4 text-ink-400">Defaults</h2>
           <div className="space-y-5">
             {NUMBERS.map((knob) => (

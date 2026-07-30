@@ -274,7 +274,7 @@ export function GrantsTab() {
       {ops && <HrisSyncPanel valuationId={valuation.id} onImported={load} />}
 
       {ops && showForm && (
-        <form onSubmit={create} className="grid gap-4 rounded-lg border border-paper-300 bg-white p-5 shadow-card sm:grid-cols-2">
+        <form onSubmit={create} className="grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-2">
           <Field label="Grantee name">
             <TextInput value={form.grantee_name} onChange={(e) => setForm((f) => ({ ...f, grantee_name: e.target.value }))} required maxLength={200} />
           </Field>
@@ -325,7 +325,7 @@ export function GrantsTab() {
           {grants.map((g) => (
             <li
               key={g.id}
-              className={`rounded-lg border border-paper-300 bg-white p-5 shadow-card ${g.status === 'cancelled' ? 'opacity-60' : ''}`}
+              className={`rounded-lg border border-paper-300 bg-surface p-5 shadow-card ${g.status === 'cancelled' ? 'opacity-60' : ''}`}
             >
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <div className="min-w-[10rem]">

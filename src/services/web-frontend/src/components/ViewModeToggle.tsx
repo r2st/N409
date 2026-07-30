@@ -49,11 +49,11 @@ export function ViewModeToggle({ onNavigate }: { onNavigate?: () => void }) {
         onClick={toggle}
         className={`flex w-full cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors ${
           normal
-            ? 'border-brass-400 bg-ink-800/60 text-paper-50'
-            : 'border-ink-700 bg-ink-800/40 text-ink-300 hover:border-ink-600 hover:text-paper-50'
+            ? 'border-brass-400 bg-chrome-800/60 text-chrome-fg'
+            : 'border-chrome-700 bg-chrome-800/40 text-chrome-dim hover:border-chrome-600 hover:text-chrome-fg'
         }`}
       >
-        <span className={normal ? 'text-brass-300' : 'text-ink-400'} aria-hidden>
+        <span className={normal ? 'text-brass-300' : 'text-chrome-faint'} aria-hidden>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" strokeLinejoin="round" />
             <circle cx="12" cy="12" r="3" />
@@ -65,12 +65,12 @@ export function ViewModeToggle({ onNavigate }: { onNavigate?: () => void }) {
         {/* Toggle switch — on = normal/user view. */}
         <span
           className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
-            normal ? 'bg-brass-400' : 'bg-ink-600'
+            normal ? 'bg-brass-400' : 'bg-chrome-600'
           }`}
           aria-hidden
         >
           <span
-            className={`inline-block h-3 w-3 transform rounded-full bg-paper-50 transition-transform ${
+            className={`inline-block h-3 w-3 transform rounded-full bg-chrome-fg transition-transform ${
               normal ? 'translate-x-3.5' : 'translate-x-0.5'
             }`}
           />

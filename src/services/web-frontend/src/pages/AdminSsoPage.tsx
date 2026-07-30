@@ -119,7 +119,7 @@ export function AdminSsoPage() {
 
       {error && <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>}
 
-      <form onSubmit={save} className="mt-6 space-y-4 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <form onSubmit={save} className="mt-6 space-y-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="flex items-center justify-between">
           <h2 className="overline text-ink-400">SAML 2.0 identity provider</h2>
           <label className="flex items-center gap-2 text-sm text-ink-600">
@@ -159,7 +159,7 @@ export function AdminSsoPage() {
         </div>
       </form>
 
-      <section className="mt-6 rounded-lg border border-paper-300 bg-white p-6 shadow-card">
+      <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="flex items-center justify-between">
           <h2 className="overline text-ink-400">SCIM provisioning tokens</h2>
           <Button variant="secondary" onClick={mintToken}>
@@ -169,7 +169,7 @@ export function AdminSsoPage() {
         {minted && (
           <div className="mt-3 rounded-md border border-bond-200 bg-bond-50 p-4">
             <p className="text-sm font-semibold text-bond-800">Copy this SCIM token now — it won't be shown again:</p>
-            <code className="mt-2 block overflow-x-auto rounded bg-white px-3 py-2 font-mono text-xs text-ink-700">
+            <code className="mt-2 block overflow-x-auto rounded bg-surface px-3 py-2 font-mono text-xs text-ink-700">
               {minted}
             </code>
             <p className="mt-2 text-xs text-ink-400">
