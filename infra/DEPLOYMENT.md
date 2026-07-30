@@ -57,10 +57,34 @@ NODE_ENV=production
 INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>   # valuation ⇄ ai/engine
 DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
 PUBLIC_BASE_URL=https://n409.aiknol.com         # emailed links (reset, board sign)
-EMAIL_MODE=sendgrid                             # + SENDGRID_API_KEY
 BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the deploy
 # On the ai unit (set in the unit file, not .env): APP_ENV=production
 ```
+
+### Email delivery
+
+`EMAIL_MODE` accepts only `smtp` | `log` | `off` (`config.ts`) — there is no
+`sendgrid` mode, and no code reads `SENDGRID_API_KEY`. SendGrid is used as a
+plain SMTP relay, which is why the only email transport in
+`buildEmailTransports` is `smtpTransport`:
+
+```
+EMAIL_MODE=smtp
+SMTP_HOST=smtp.sendgrid.net
+SMTP_PORT=587
+SMTP_USER=apikey                                # literal string, not the key
+SMTP_PASS=<SendGrid API key, SG.…>              # the key goes here
+SMTP_FROM=N409 Valuations <no-reply@n409.aiknol.com>
+```
+
+Two failure modes that look like "email is broken" but are config, not code:
+
+- `EMAIL_MODE=smtp` with `SMTP_HOST` unset silently **falls back to the log
+  transport** (it warns once at boot). Outbox rows still go to `sent`, so
+  nothing surfaces as an error — grep the boot log for that warning.
+- `SMTP_FROM` must be a sender identity **verified in SendGrid** (single sender
+  or an authenticated domain). The `no-reply@n409.local` default is not, and
+  SendGrid rejects unverified senders with a 403 at send time, not at boot.
 
 > The Node services bind **127.0.0.1** unless `HOST` says otherwise
 > (`shared/listen.ts`), matching the Python units. Do not set `HOST` on this
