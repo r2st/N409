@@ -37,6 +37,11 @@ services:
     environment:
       DATABASE_URL: postgres://n409:n409_dev@postgres:5432/n409_dev
       JWT_SECRET: dev-only-secret-change-me-0123456789abcdef
+      # Containers must bind their own interface, not loopback: Docker publishes
+      # a port by reaching the container's eth0, so 127.0.0.1 inside the
+      # container is unreachable from the host. The services default to loopback
+      # (shared/listen.ts) precisely so this has to be opted into.
+      HOST: '0.0.0.0'
       PORT: '3001'
       LOG_LEVEL: info
       AI_URL: http://ai:3002
@@ -71,8 +76,14 @@ services:
       dockerfile: src/services/web/Dockerfile
     restart: unless-stopped
     environment:
+      HOST: '0.0.0.0'
       PORT: '3000'
-      VALUATION_SERVICE_URL: http://valuation:3001
+      VALUATION_URL: http://valuation:3001
+      AI_URL: http://ai:3002
+      ENGINE_URL: http://engine-wrapper:3003
+      # /ready checks Postgres directly so a DB outage is attributable at the
+      # edge rather than only as three simultaneous upstream failures.
+      DATABASE_URL: postgres://n409:n409_dev@postgres:5432/n409_dev
     ports:
       - '3000:3000'
     healthcheck:
@@ -166,6 +177,9 @@ services:
     restart: unless-stopped
     # Internal service — no host port (audit I-1 P3).
     environment:
+      # Reachable on the compose network only (`expose`, not `ports`), which
+      # still needs the container's own interface rather than loopback.
+      HOST: '0.0.0.0'
       PORT: '3004'
     expose:
       - '3004'

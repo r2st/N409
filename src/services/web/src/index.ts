@@ -1,4 +1,4 @@
-import { installCrashHandlers, startTelemetry } from '@n409/shared';
+import { installCrashHandlers, listenHost, startTelemetry } from '@n409/shared';
 
 const telemetry = startTelemetry('web');
 const { buildApp } = await import('./app.js');
@@ -16,7 +16,7 @@ installCrashHandlers(app.log, {
   },
 });
 
-await app.listen({ port: Number(process.env.PORT ?? 3000), host: '0.0.0.0' });
+await app.listen({ port: Number(process.env.PORT ?? 3000), host: listenHost() });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
