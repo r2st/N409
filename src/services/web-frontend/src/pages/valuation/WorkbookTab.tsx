@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, apiDownload, ApiError } from '../../lib/api';
 import { formatWorkbookValue, type WorkbookSheet } from '../../lib/m2';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, ErrorNote, Spinner } from '../../components/ui';
@@ -20,6 +20,7 @@ export function WorkbookTab() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -40,6 +41,23 @@ export function WorkbookTab() {
 
   if (error && !sheets) return <ErrorNote>{error}</ErrorNote>;
   if (!sheets || !sheet) return <Spinner />;
+
+  /**
+   * The auditor workbook: model sheets plus cap table, waterfall and grants, with
+   * live formulas. Unsaved cells are deliberately not included — the export must
+   * match what the file of record says.
+   */
+  const downloadXlsx = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      await apiDownload(`/valuations/${valuation.id}/workbook.xlsx`, `workbook-${valuation.number}.xlsx`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not export the workbook.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const setDraft = (key: CellKey, raw: string, original: number | null) => {
     setDrafts((prev) => {
@@ -101,7 +119,9 @@ export function WorkbookTab() {
               type="button"
               onClick={() => setActiveSheet(s.key)}
               className={`cursor-pointer rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
-                s.key === activeSheet ? 'bg-white text-ink-900 shadow-card' : 'text-ink-400 hover:text-ink-700'
+                s.key === activeSheet
+                  ? 'bg-white text-ink-900 shadow-card'
+                  : 'text-ink-400 hover:text-ink-700'
               }`}
             >
               {s.label}
@@ -115,6 +135,9 @@ export function WorkbookTab() {
               {drafts.size} unsaved {drafts.size === 1 ? 'cell' : 'cells'}
             </span>
           )}
+          <Button variant="secondary" onClick={() => void downloadXlsx()} disabled={exporting}>
+            {exporting ? 'Preparing…' : 'Export Excel'}
+          </Button>
           <Button onClick={() => void save()} disabled={!dirty || busy}>
             {busy ? 'Saving…' : 'Save workbook'}
           </Button>
@@ -143,7 +166,10 @@ export function WorkbookTab() {
           </thead>
           <tbody>
             {sheet.rows.map((row) => (
-              <tr key={row.key} className={`border-b border-paper-200 ${row.kind === 'derived' ? 'bg-paper-50' : ''}`}>
+              <tr
+                key={row.key}
+                className={`border-b border-paper-200 ${row.kind === 'derived' ? 'bg-paper-50' : ''}`}
+              >
                 <td
                   className={`px-4 py-2 ${row.kind === 'derived' ? 'font-semibold text-ink-700' : 'text-ink-800'}`}
                 >
@@ -158,7 +184,10 @@ export function WorkbookTab() {
                   const key = cellKey(sheet.key, row.key, cell.column_key);
                   if (row.kind === 'derived') {
                     return (
-                      <td key={cell.column_key} className="tnum px-3 py-2 text-right font-medium text-ink-700">
+                      <td
+                        key={cell.column_key}
+                        className="tnum px-3 py-2 text-right font-medium text-ink-700"
+                      >
                         {formatWorkbookValue(cell.value, row.format)}
                       </td>
                     );
@@ -174,7 +203,9 @@ export function WorkbookTab() {
                         value={display}
                         onChange={(e) => setDraft(key, e.target.value, cell.value)}
                         className={`tnum w-full rounded border px-2 py-1.5 text-right text-sm focus:border-bond-600 focus:ring-1 focus:ring-bond-600/30 focus:outline-none ${
-                          draft !== undefined ? 'border-amber-300 bg-amber-50' : 'border-transparent bg-transparent hover:border-ink-200'
+                          draft !== undefined
+                            ? 'border-amber-300 bg-amber-50'
+                            : 'border-transparent bg-transparent hover:border-ink-200'
                         }`}
                       />
                     </td>
@@ -186,8 +217,8 @@ export function WorkbookTab() {
         </table>
       </div>
       <p className="text-xs text-ink-400">
-        Rows marked <span className="font-semibold">calc</span> are derived and recompute on save. Clear a cell
-        to remove its value.
+        Rows marked <span className="font-semibold">calc</span> are derived and recompute on save. Clear a
+        cell to remove its value.
       </p>
     </div>
   );

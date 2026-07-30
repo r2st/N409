@@ -18,6 +18,17 @@ export interface ComputeCtx {
   prev: (rowKey: string) => number | null;
 }
 
+/**
+ * A1 references for the XLSX export, so a derived row can be delivered as a
+ * live spreadsheet formula rather than a frozen number.
+ */
+export interface FormulaCtx {
+  /** Reference to another row of this sheet in the current column. */
+  cell: (rowKey: string) => string;
+  /** Reference in the previous column; null in the first column. */
+  prev: (rowKey: string) => string | null;
+}
+
 export interface WorkbookRowDef {
   key: string;
   label: string;
@@ -25,6 +36,13 @@ export interface WorkbookRowDef {
   format: WorkbookFormat;
   /** Formula for derived rows; null result means "not computable yet". */
   compute?: (ctx: ComputeCtx) => number | null;
+  /**
+   * The same rule as `compute`, expressed as an Excel formula for the XLSX
+   * export. Returning null means "no formula in this column" — a year-over-year
+   * row has nothing to reference in the first period — and the export falls
+   * back to the statically computed value.
+   */
+  excel?: (ctx: FormulaCtx) => string | null;
 }
 
 export interface WorkbookSheetDef {
@@ -55,11 +73,11 @@ const derived = (
   label: string,
   format: WorkbookFormat,
   compute: (ctx: ComputeCtx) => number | null,
-): WorkbookRowDef => ({ key, label, kind: 'derived', format, compute });
+  excel?: (ctx: FormulaCtx) => string | null,
+): WorkbookRowDef => ({ key, label, kind: 'derived', format, compute, excel });
 
 /** a - b, null-propagating (any missing operand → not computable). */
-const sub = (a: number | null, b: number | null): number | null =>
-  a === null || b === null ? null : a - b;
+const sub = (a: number | null, b: number | null): number | null => (a === null || b === null ? null : a - b);
 
 const sum = (...xs: Array<number | null>): number | null =>
   xs.some((x) => x === null) ? null : xs.reduce<number>((acc, x) => acc + (x as number), 0);
@@ -67,6 +85,31 @@ const sum = (...xs: Array<number | null>): number | null =>
 /** a / b as a fraction; null when either side is missing or b is 0. */
 const ratio = (a: number | null, b: number | null): number | null =>
   a === null || b === null || b === 0 ? null : a / b;
+
+/*
+ * Excel counterparts of the three helpers above. The COUNT guard is what makes
+ * them equivalent: a blank cell is 0 to Excel arithmetic, so `=B2-B3` on an
+ * empty model would report a confident zero where the model says "not
+ * computable yet". COUNT only counts numbers, so a guarded row that yields ""
+ * propagates emptiness through every row that references it, exactly as the
+ * null-propagating TypeScript does.
+ */
+
+/** first - rest…, blank unless every operand is a number. */
+const xMinus = (first: string, ...rest: string[]): string => {
+  const all = [first, ...rest].join(',');
+  return `IF(COUNT(${all})<${rest.length + 1},"",${first}-${rest.join('-')})`;
+};
+
+const xSum = (...refs: string[]): string =>
+  `IF(COUNT(${refs.join(',')})<${refs.length},"",SUM(${refs.join(',')}))`;
+
+/** a / b, blank when either side is missing or the denominator is 0. */
+const xRatio = (a: string, b: string): string => `IF(OR(COUNT(${a},${b})<2,${b}=0),"",${a}/${b})`;
+
+/** (cur - prior) / prior — the growth form of xRatio. */
+const xGrowth = (cur: string, prior: string): string =>
+  `IF(OR(COUNT(${cur},${prior})<2,${prior}=0),"",(${cur}-${prior})/${prior})`;
 
 export const WORKBOOK_SHEETS: readonly WorkbookSheetDef[] = [
   {
@@ -77,42 +120,86 @@ export const WORKBOOK_SHEETS: readonly WorkbookSheetDef[] = [
     rows: [
       input('revenue', 'Revenue'),
       input('cogs', 'Cost of goods sold'),
-      derived('gross_profit', 'Gross profit', 'currency', (c) => sub(c.value('revenue'), c.value('cogs'))),
-      derived('gross_margin', 'Gross margin', 'percent', (c) =>
-        ratio(sub(c.value('revenue'), c.value('cogs')), c.value('revenue')),
+      derived(
+        'gross_profit',
+        'Gross profit',
+        'currency',
+        (c) => sub(c.value('revenue'), c.value('cogs')),
+        (x) => xMinus(x.cell('revenue'), x.cell('cogs')),
+      ),
+      derived(
+        'gross_margin',
+        'Gross margin',
+        'percent',
+        (c) => ratio(sub(c.value('revenue'), c.value('cogs')), c.value('revenue')),
+        // The exported formula chains off the gross-profit row rather than
+        // repeating the subtraction: same arithmetic, and an auditor tracing the
+        // sheet sees one dependency instead of a re-derivation.
+        (x) => xRatio(x.cell('gross_profit'), x.cell('revenue')),
       ),
       input('operating_expenses', 'Operating expenses'),
-      derived('ebitda', 'EBITDA', 'currency', (c) =>
-        sub(sub(c.value('revenue'), c.value('cogs')), c.value('operating_expenses')),
+      derived(
+        'ebitda',
+        'EBITDA',
+        'currency',
+        (c) => sub(sub(c.value('revenue'), c.value('cogs')), c.value('operating_expenses')),
+        (x) => xMinus(x.cell('gross_profit'), x.cell('operating_expenses')),
       ),
-      derived('ebitda_margin', 'EBITDA margin', 'percent', (c) =>
-        ratio(sub(sub(c.value('revenue'), c.value('cogs')), c.value('operating_expenses')), c.value('revenue')),
+      derived(
+        'ebitda_margin',
+        'EBITDA margin',
+        'percent',
+        (c) =>
+          ratio(
+            sub(sub(c.value('revenue'), c.value('cogs')), c.value('operating_expenses')),
+            c.value('revenue'),
+          ),
+        (x) => xRatio(x.cell('ebitda'), x.cell('revenue')),
       ),
       input('depreciation_amortization', 'Depreciation & amortization'),
-      derived('ebit', 'EBIT', 'currency', (c) =>
-        sub(
-          sub(sub(c.value('revenue'), c.value('cogs')), c.value('operating_expenses')),
-          c.value('depreciation_amortization'),
-        ),
+      derived(
+        'ebit',
+        'EBIT',
+        'currency',
+        (c) =>
+          sub(
+            sub(sub(c.value('revenue'), c.value('cogs')), c.value('operating_expenses')),
+            c.value('depreciation_amortization'),
+          ),
+        (x) => xMinus(x.cell('ebitda'), x.cell('depreciation_amortization')),
       ),
       input('interest_expense', 'Interest expense'),
       input('taxes', 'Taxes'),
-      derived('net_income', 'Net income', 'currency', (c) =>
-        sub(
+      derived(
+        'net_income',
+        'Net income',
+        'currency',
+        (c) =>
           sub(
             sub(
-              sub(sub(c.value('revenue'), c.value('cogs')), c.value('operating_expenses')),
-              c.value('depreciation_amortization'),
+              sub(
+                sub(sub(c.value('revenue'), c.value('cogs')), c.value('operating_expenses')),
+                c.value('depreciation_amortization'),
+              ),
+              c.value('interest_expense'),
             ),
-            c.value('interest_expense'),
+            c.value('taxes'),
           ),
-          c.value('taxes'),
-        ),
+        (x) => xMinus(x.cell('ebit'), x.cell('interest_expense'), x.cell('taxes')),
       ),
-      derived('revenue_growth', 'Revenue growth (YoY)', 'percent', (c) => {
-        const prev = c.prev('revenue');
-        return ratio(sub(c.value('revenue'), prev), prev);
-      }),
+      derived(
+        'revenue_growth',
+        'Revenue growth (YoY)',
+        'percent',
+        (c) => {
+          const prev = c.prev('revenue');
+          return ratio(sub(c.value('revenue'), prev), prev);
+        },
+        (x) => {
+          const prior = x.prev('revenue');
+          return prior === null ? null : xGrowth(x.cell('revenue'), prior);
+        },
+      ),
     ],
   },
   {
@@ -125,40 +212,100 @@ export const WORKBOOK_SHEETS: readonly WorkbookSheetDef[] = [
       input('accounts_receivable', 'Accounts receivable'),
       input('inventory', 'Inventory'),
       input('other_current_assets', 'Other current assets'),
-      derived('total_current_assets', 'Total current assets', 'currency', (c) =>
-        sum(c.value('cash'), c.value('accounts_receivable'), c.value('inventory'), c.value('other_current_assets')),
+      derived(
+        'total_current_assets',
+        'Total current assets',
+        'currency',
+        (c) =>
+          sum(
+            c.value('cash'),
+            c.value('accounts_receivable'),
+            c.value('inventory'),
+            c.value('other_current_assets'),
+          ),
+        (x) =>
+          xSum(
+            x.cell('cash'),
+            x.cell('accounts_receivable'),
+            x.cell('inventory'),
+            x.cell('other_current_assets'),
+          ),
       ),
       input('ppe_net', 'PP&E (net)'),
       input('intangibles', 'Intangible assets'),
       input('other_long_term_assets', 'Other long-term assets'),
-      derived('total_assets', 'Total assets', 'currency', (c) =>
-        sum(
-          sum(c.value('cash'), c.value('accounts_receivable'), c.value('inventory'), c.value('other_current_assets')),
-          c.value('ppe_net'),
-          c.value('intangibles'),
-          c.value('other_long_term_assets'),
-        ),
+      derived(
+        'total_assets',
+        'Total assets',
+        'currency',
+        (c) =>
+          sum(
+            sum(
+              c.value('cash'),
+              c.value('accounts_receivable'),
+              c.value('inventory'),
+              c.value('other_current_assets'),
+            ),
+            c.value('ppe_net'),
+            c.value('intangibles'),
+            c.value('other_long_term_assets'),
+          ),
+        (x) =>
+          xSum(
+            x.cell('total_current_assets'),
+            x.cell('ppe_net'),
+            x.cell('intangibles'),
+            x.cell('other_long_term_assets'),
+          ),
       ),
       input('accounts_payable', 'Accounts payable'),
       input('short_term_debt', 'Short-term debt'),
       input('other_current_liabilities', 'Other current liabilities'),
-      derived('total_current_liabilities', 'Total current liabilities', 'currency', (c) =>
-        sum(c.value('accounts_payable'), c.value('short_term_debt'), c.value('other_current_liabilities')),
+      derived(
+        'total_current_liabilities',
+        'Total current liabilities',
+        'currency',
+        (c) =>
+          sum(c.value('accounts_payable'), c.value('short_term_debt'), c.value('other_current_liabilities')),
+        (x) =>
+          xSum(x.cell('accounts_payable'), x.cell('short_term_debt'), x.cell('other_current_liabilities')),
       ),
       input('long_term_debt', 'Long-term debt'),
       input('other_long_term_liabilities', 'Other long-term liabilities'),
-      derived('total_liabilities', 'Total liabilities', 'currency', (c) =>
-        sum(
-          sum(c.value('accounts_payable'), c.value('short_term_debt'), c.value('other_current_liabilities')),
-          c.value('long_term_debt'),
-          c.value('other_long_term_liabilities'),
-        ),
+      derived(
+        'total_liabilities',
+        'Total liabilities',
+        'currency',
+        (c) =>
+          sum(
+            sum(
+              c.value('accounts_payable'),
+              c.value('short_term_debt'),
+              c.value('other_current_liabilities'),
+            ),
+            c.value('long_term_debt'),
+            c.value('other_long_term_liabilities'),
+          ),
+        (x) =>
+          xSum(
+            x.cell('total_current_liabilities'),
+            x.cell('long_term_debt'),
+            x.cell('other_long_term_liabilities'),
+          ),
       ),
-      derived('shareholders_equity', 'Shareholders’ equity', 'currency', (c) =>
-        sub(c.value('total_assets'), c.value('total_liabilities')),
+      derived(
+        'shareholders_equity',
+        'Shareholders’ equity',
+        'currency',
+        (c) => sub(c.value('total_assets'), c.value('total_liabilities')),
+        (x) => xMinus(x.cell('total_assets'), x.cell('total_liabilities')),
       ),
-      derived('working_capital', 'Working capital', 'currency', (c) =>
-        sub(c.value('total_current_assets'), c.value('total_current_liabilities')),
+      derived(
+        'working_capital',
+        'Working capital',
+        'currency',
+        (c) => sub(c.value('total_current_assets'), c.value('total_current_liabilities')),
+        (x) => xMinus(x.cell('total_current_assets'), x.cell('total_current_liabilities')),
       ),
     ],
   },

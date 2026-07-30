@@ -3,15 +3,34 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, apiDownload, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
-import { displayName, formatDate, GROUP_LABELS, KIND_LABELS, SOURCE_LABELS, STATE_LABELS } from '../lib/format';
+import {
+  displayName,
+  formatDate,
+  GROUP_LABELS,
+  KIND_LABELS,
+  SOURCE_LABELS,
+  STATE_LABELS,
+} from '../lib/format';
 import { parseSortParam, serializeSort, sortIndicator, toggleSort } from '../lib/sort';
 import type { SortableColumn } from '../lib/sort';
 import { STATE_GROUPS, VALUATION_KINDS, VALUATION_STATES } from '../lib/types';
 import type { BulkResult, Partner, UserOption, ValuationCounts, ValuationList } from '../lib/types';
-import { Button, EmptyState, ErrorNote, KindBadge, Select, Spinner, StateBadge, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  KindBadge,
+  Select,
+  Spinner,
+  StateBadge,
+  TextInput,
+} from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
 
 const PER_PAGE = 25;
+
+/** csv for data pipelines, pdf to circulate, xlsx for auditors who need to foot it. */
+type ExportFormat = 'csv' | 'pdf' | 'xlsx';
 
 /** Query params that drive the list (M3) — kept in the URL so views are shareable. */
 const FILTER_KEYS = [
@@ -190,7 +209,7 @@ export function ValuationsPage() {
     }
   };
 
-  const exportAs = async (format: 'csv' | 'pdf') => {
+  const exportAs = async (format: ExportFormat) => {
     setExportError(null);
     try {
       const q = new URLSearchParams(filterQuery);
@@ -204,7 +223,7 @@ export function ValuationsPage() {
   };
 
   // Bulk export (improvement 5): download summaries of exactly the checked rows.
-  const exportSelected = async (format: 'csv' | 'pdf') => {
+  const exportSelected = async (format: ExportFormat) => {
     setBulkNote(null);
     try {
       const q = new URLSearchParams({ ids: [...selected].join(','), format });
@@ -241,6 +260,9 @@ export function ValuationsPage() {
           </Button>
           <Button variant="secondary" onClick={() => void exportAs('pdf')}>
             Export PDF
+          </Button>
+          <Button variant="secondary" onClick={() => void exportAs('xlsx')}>
+            Export Excel
           </Button>
           <Button onClick={() => navigate('/valuations/new')}>+ New valuation</Button>
         </div>
@@ -421,8 +443,16 @@ export function ValuationsPage() {
         <button type="submit" hidden />
       </form>
 
-      {exportError && <div className="mt-4"><ErrorNote>{exportError}</ErrorNote></div>}
-      {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
+      {exportError && (
+        <div className="mt-4">
+          <ErrorNote>{exportError}</ErrorNote>
+        </div>
+      )}
+      {error && (
+        <div className="mt-6">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {!data && !error && <Spinner />}
 
       {/* M4 — bulk action bar (ops) */}
@@ -477,6 +507,9 @@ export function ValuationsPage() {
           </Button>
           <Button variant="secondary" onClick={() => void exportSelected('pdf')}>
             Export selected PDF
+          </Button>
+          <Button variant="secondary" onClick={() => void exportSelected('xlsx')}>
+            Export selected Excel
           </Button>
           <Button variant="ghost" onClick={() => setSelected(new Set())}>
             Clear
@@ -588,7 +621,9 @@ export function ValuationsPage() {
                 <SortableTh column="state" label="State" sortParam={sortParam} onSort={onSort} />
                 <SortableTh column="created_at" label="Created" sortParam={sortParam} onSort={onSort} />
                 <SortableTh column="due_date" label="Due" sortParam={sortParam} onSort={onSort} />
-                {ops && <SortableTh column="paid_status" label="Paid" sortParam={sortParam} onSort={onSort} />}
+                {ops && (
+                  <SortableTh column="paid_status" label="Paid" sortParam={sortParam} onSort={onSort} />
+                )}
                 <th className="overline px-4 py-3 font-semibold text-ink-400" aria-label="Quick actions" />
               </tr>
             </thead>
@@ -631,8 +666,12 @@ export function ValuationsPage() {
                       <div className="mt-0.5 text-xs font-medium text-amber-700">Waiting on client</div>
                     )}
                   </td>
-                  <td className="px-5 py-3.5"><KindBadge kind={v.kind} /></td>
-                  <td className="px-5 py-3.5"><StateBadge state={v.state} /></td>
+                  <td className="px-5 py-3.5">
+                    <KindBadge kind={v.kind} />
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <StateBadge state={v.state} />
+                  </td>
                   <td className="tnum px-5 py-3.5 text-ink-600">{formatDate(v.created_at)}</td>
                   <td className="tnum px-5 py-3.5 text-ink-600">{formatDate(v.due_date)}</td>
                   {ops && (
