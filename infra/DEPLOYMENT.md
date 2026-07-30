@@ -56,8 +56,16 @@ work adds:
 NODE_ENV=production
 INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>   # valuation ⇄ ai/engine
 DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
+PUBLIC_BASE_URL=https://n409.aiknol.com         # emailed links (reset, board sign)
+EMAIL_MODE=sendgrid                             # + SENDGRID_API_KEY
+BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the deploy
 # On the ai unit (set in the unit file, not .env): APP_ENV=production
 ```
+
+> The Node services bind **127.0.0.1** unless `HOST` says otherwise
+> (`shared/listen.ts`), matching the Python units. Do not set `HOST` on this
+> host — Caddy reaches web over loopback. `HOST=0.0.0.0` is for containers only,
+> where Docker cannot publish a loopback-bound port.
 
 > `JWT_SECRET` must be a unique random value — the config layer refuses to boot
 > in production with a known example or low-entropy secret.
@@ -72,11 +80,27 @@ DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
    gitignored, so a skipped build is a silent no-op that keeps old code live).
    When a Python service's `requirements.txt` changed:
    `.venv/bin/pip install -r requirements.txt`.
-3. `systemctl restart 'n409-*'` (restart `n409-valuation` first — migrations run
+3. **Record what was built** — immediately after a successful build, and only
+   after, so the file always names code that actually compiled:
+
+   ```
+   git -C /opt/N409 rev-parse HEAD > /opt/N409/BUILD_SHA
+   chown n409:n409 /opt/N409/BUILD_SHA
+   ```
+
+   `/health` reports this as `build_sha`, which is the only way to tell from
+   outside the box which commit is live (step 2 is the step that gets skipped,
+   and `git rev-parse` alone only proves what was *fetched*). `BUILD_SHA_FILE`
+   in `.env` points the services at it. A deploy that skips this reports
+   `"build_sha":"unknown"` rather than a stale value.
+4. `systemctl restart 'n409-*'` (restart `n409-valuation` first — migrations run
    on its boot).
-4. Verify: all five `/health` (engine-wrapper: `/engine/v1/health`) return 200,
-   and 3001–3004 are **not** reachable from off-host (`nc -z <public-ip> 3002`
-   must fail).
+5. Verify: all five `/health` (engine-wrapper: `/engine/v1/health`) return 200,
+   `curl -s localhost:3000/health | jq -r .build_sha` matches the commit you
+   deployed, `curl -s localhost:3000/ready` is 200 with all four checks `ok`,
+   and 3000–3004 are **not** reachable from off-host (`nc -z <public-ip> 3002`
+   must fail — the services now bind loopback, so this holds even if ufw is
+   misconfigured).
 
 ## Service user (audit P1-1)
 
