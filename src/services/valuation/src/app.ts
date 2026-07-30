@@ -7,6 +7,7 @@ import { createLogger, registerHealth, registerProblemHandler } from '@n409/shar
 import type { Config } from './config.js';
 import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
+import { registerParamValidation } from './plugins/params.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerMfaRoutes } from './routes/mfa.js';
@@ -180,6 +181,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   registerProblemHandler(app);
+  // Every route below reads its ids via `req.params as …`, a cast Fastify never
+  // checks. Validated here, once, so a malformed id is turned away before any
+  // handler, repo or SQL sees it — including on the public token-authenticated
+  // routes, where a 500 from the `ulid` domain would otherwise be an oracle.
+  registerParamValidation(app);
   // Readiness means "this service can actually do its job", and its job is to
   // orchestrate the AI and engine services — a valuation cannot be calculated
   // without the engine, and no pipeline runs without the AI service. Probing
