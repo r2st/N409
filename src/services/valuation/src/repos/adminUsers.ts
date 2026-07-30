@@ -80,6 +80,25 @@ export interface AdminUserPatch {
   roles?: RoleKey[];
 }
 
+/**
+ * Columns an admin may patch, mirroring OWN_PROFILE_COLUMNS in repos/users.ts.
+ * The keys of this patch become raw SQL identifiers, so — as there — the
+ * allow-list is repeated at the point of interpolation instead of being trusted
+ * from whatever the route's parsed body happened to contain. A future schema
+ * change to AdminUserPatch, or a route that forwards an unvalidated object,
+ * then cannot reach `password_digest`, `session_epoch` or `deleted_at`.
+ */
+const ADMIN_PATCH_COLUMNS: ReadonlySet<string> = new Set([
+  'first_name',
+  'last_name',
+  'email',
+  'phone',
+  'job_title',
+  'company_name',
+  'verified',
+  'partner_id',
+]);
+
 /** Field patch + full role replacement in one transaction. */
 export async function adminPatchUser(
   pool: pg.Pool,
@@ -88,7 +107,9 @@ export async function adminPatchUser(
 ): Promise<void> {
   await withTransaction(pool, async (client) => {
     const { roles, ...fields } = patch;
-    const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
+    const entries = Object.entries(fields).filter(
+      ([k, v]) => v !== undefined && ADMIN_PATCH_COLUMNS.has(k),
+    );
     if (entries.length > 0) {
       const sets = entries.map(([k], i) => `${k} = $${i + 1}`);
       await client.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${entries.length + 1}`, [
