@@ -38,6 +38,7 @@ import {
   type UserWithRoles,
 } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { SlidingWindowRateLimiter } from '../plugins/rateLimit.js';
 import { findUserById } from '../repos/users.js';
 import { createPasswordResetToken, resetPasswordWithToken } from '../repos/passwordResets.js';
 import {
@@ -98,26 +99,18 @@ const AcceptInviteBody = z.object({
 });
 
 /**
- * In-memory sliding-window limiter for the forgot-password endpoint —
+ * In-memory sliding-window limiter for the unauthenticated auth routes —
  * per-instance state is fine here: the worst case after a restart is a few
  * extra reset emails, and anything sturdier needs shared storage we don't
  * have a second use for.
+ *
+ * The eviction policy lives with the limiter (plugins/rateLimit.ts); it matters
+ * because every key here embeds a request-supplied IP or email address.
  */
 function slidingWindowLimiter() {
-  const hits = new Map<string, number[]>();
-  return (key: string, limit: number, windowMs: number, opts?: { peek?: boolean }): boolean => {
-    const now = Date.now();
-    const recent = (hits.get(key) ?? []).filter((t) => now - t < windowMs);
-    if (recent.length >= limit) {
-      hits.set(key, recent);
-      return false;
-    }
-    // peek: report headroom without consuming it — the caller records a hit
-    // itself (e.g. only on a *failed* login) so success doesn't count.
-    if (!opts?.peek) recent.push(now);
-    hits.set(key, recent);
-    return true;
-  };
+  const limiter = new SlidingWindowRateLimiter();
+  return (key: string, limit: number, windowMs: number, opts?: { peek?: boolean }): boolean =>
+    limiter.allow(key, limit, windowMs, opts);
 }
 
 const HOUR_MS = 60 * 60 * 1000;
