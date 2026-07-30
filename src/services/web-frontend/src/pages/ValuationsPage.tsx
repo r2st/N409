@@ -26,6 +26,7 @@ import {
   TextInput,
 } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
+import { SavedViews } from '../components/SavedViews';
 
 const PER_PAGE = 25;
 
@@ -299,6 +300,10 @@ export function ValuationsPage() {
           );
         })}
       </div>
+
+      {/* Saved views (feature-improvements §2) — sits above the filter bar
+          because applying one rewrites everything below it. */}
+      <SavedViews />
 
       {/* Filter bar (M3 feature 15) */}
       <form

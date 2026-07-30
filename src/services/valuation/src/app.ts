@@ -24,6 +24,7 @@ import { registerTemplateRoutes } from './routes/templates.js';
 import { registerNotificationRoutes } from './routes/notifications.js';
 import { registerTransactionRoutes } from './routes/transactions.js';
 import { registerSearchRoutes } from './routes/search.js';
+import { registerSavedViewRoutes } from './routes/savedViews.js';
 import { registerExportRoutes } from './routes/exports.js';
 import { registerSensitivityRoutes } from './routes/sensitivity.js';
 import { logTransport, type EmailTransport } from './hooks/stateChange.js';
@@ -302,6 +303,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerNotificationRoutes(app, { pool });
   registerTransactionRoutes(app, { pool });
   registerSearchRoutes(app, { pool });
+  registerSavedViewRoutes(app, { pool });
   registerExportRoutes(app, { pool });
   registerSensitivityRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerAsc718Routes(app, { pool, engineUrl: config.ENGINE_URL });

@@ -383,6 +383,21 @@ export interface ValuationTransaction {
   notes: string | null;
 }
 
+/** A saved worklist view (feature-improvements §2). */
+export interface SavedView {
+  id: string;
+  name: string;
+  /** The list's query string, without pagination. */
+  query: string;
+  visibility: 'private' | 'shared';
+  is_default: boolean;
+  /** False for a view someone else shared — it is read-only to this viewer. */
+  is_owner: boolean;
+  owner_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SearchResults {
   valuations: Array<{
     id: string;
