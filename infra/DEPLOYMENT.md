@@ -96,10 +96,21 @@ Two failure modes that look like "email is broken" but are config, not code:
 
 ## Deploy procedure
 
-1. Build locally and push the tree to `/opt/N409` (rsync excluding
-   `node_modules dist keys .env* .venv __pycache__ *.tsbuildinfo`, or
-   `git fetch + reset --hard origin/main` with a PAT — the server is a real git
-   checkout).
+1. Push the tree to `/opt/N409`. The host has **no GitHub credentials**, so
+   `git fetch` there fails with `could not read Username` — pushing from the
+   local checkout is the only path that works:
+
+   ```
+   git archive --format=tar.gz -o /tmp/n409.tar.gz HEAD
+   scp /tmp/n409.tar.gz root@<host>:/root/
+   ssh root@<host> 'cd /opt/N409 && tar -xzf /root/n409.tar.gz'
+   ```
+
+   `git archive` carries only tracked files at HEAD, so `.env`, `keys/`,
+   `node_modules/`, `dist/` and the `.venv`s are left alone. It also never
+   **deletes**, so when a commit removed a tracked file, remove it by hand
+   (`git diff --diff-filter=D --name-only <deployed>..HEAD`). rsync works too,
+   excluding `node_modules dist keys .env* .venv __pycache__ *.tsbuildinfo`.
 2. On the server: `npm ci && npm run build` (**mandatory** — `dist/` is
    gitignored, so a skipped build is a silent no-op that keeps old code live).
    When a Python service's `requirements.txt` changed:
@@ -108,9 +119,18 @@ Two failure modes that look like "email is broken" but are config, not code:
    after, so the file always names code that actually compiled:
 
    ```
-   git -C /opt/N409 rev-parse HEAD > /opt/N409/BUILD_SHA
-   chown n409:n409 /opt/N409/BUILD_SHA
+   git rev-parse HEAD                     # in the LOCAL checkout you archived
+   ssh root@<host> 'cat > /opt/N409/BUILD_SHA && chown n409:n409 /opt/N409/BUILD_SHA'
    ```
+
+   Take the SHA from the **local** checkout. Do not run
+   `git -C /opt/N409 rev-parse HEAD` on the server: a `git archive` deploy
+   updates the working tree without moving the server's `HEAD`, so that command
+   reports whatever commit was last actually checked out there — writing a
+   confidently wrong SHA, which is worse than the `unknown` this file exists to
+   replace. (A side effect of the same thing: `git status` on the host lists
+   hundreds of modified files and its `HEAD` is meaningless as a version
+   marker.)
 
    `/health` reports this as `build_sha`, which is the only way to tell from
    outside the box which commit is live (step 2 is the step that gets skipped,
