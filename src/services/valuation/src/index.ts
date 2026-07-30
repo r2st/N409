@@ -1,4 +1,10 @@
-import { startTelemetry, createHttpMetrics, registerGauge, installCrashHandlers } from '@n409/shared';
+import {
+  startTelemetry,
+  createHttpMetrics,
+  registerGauge,
+  installCrashHandlers,
+  listenHost,
+} from '@n409/shared';
 
 // OTel first so http/pg get instrumented before anything imports them (issue #4).
 const telemetry = startTelemetry('valuation');
@@ -70,7 +76,7 @@ registerGauge(
 );
 
 await migrate(pool, { log: (msg) => app.log.info({ migration: msg }, 'migration applied') });
-await app.listen({ port: config.PORT, host: '0.0.0.0' });
+await app.listen({ port: config.PORT, host: listenHost() });
 app.log.info({ port: config.PORT }, 'valuation service listening');
 
 // Drip campaign scan (§15.6) — overlapping runs are prevented by the flag;
