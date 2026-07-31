@@ -17,17 +17,20 @@ const IV_LEN = 12;
 const TAG_LEN = 16;
 
 let cachedKey: Buffer | null | undefined;
+let cachedRaw: string | undefined;
 
 /** Resolve the 32-byte key from hex or base64 env, memoized. Returns null when unset. */
 export function documentKey(env: NodeJS.ProcessEnv = process.env): Buffer | null {
-  // Re-read if the env var changed (tests toggle it); cache the common case.
   const raw = env.DOCUMENTS_ENCRYPTION_KEY;
   if (!raw) {
     cachedKey = null;
+    cachedRaw = undefined;
     return null;
   }
-  if (cachedKey && cachedKey.length === 32 && cachedKey.equals(parseKey(raw))) return cachedKey;
+  // Only re-parse when the env value actually changed.
+  if (cachedKey && cachedRaw === raw) return cachedKey;
   cachedKey = parseKey(raw);
+  cachedRaw = raw;
   return cachedKey;
 }
 

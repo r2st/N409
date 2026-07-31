@@ -73,4 +73,13 @@ describe('documentEncryption', () => {
     const truncated = blob.subarray(0, 15);
     expect(() => decryptDocument(truncated, KEY)).toThrow(/truncated/i);
   });
+
+  it('documentKey returns the same Buffer when the env value is unchanged', () => {
+    const hex = KEY.toString('hex');
+    const env = { DOCUMENTS_ENCRYPTION_KEY: hex } as unknown as NodeJS.ProcessEnv;
+    const a = documentKey(env);
+    const b = documentKey(env);
+    // Same object reference (cached), not just equal bytes
+    expect(a).toBe(b);
+  });
 });
