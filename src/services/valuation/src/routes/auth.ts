@@ -10,12 +10,14 @@ import {
   signSession,
   verifyMfaChallenge,
   verifyOidcState,
+  verifySession,
   type JwtConfig,
 } from '../auth/jwt.js';
 import {
   clearSessionCookie,
-  setDeviceCookie,
   setSessionCookie,
+  setDeviceCookie,
+  SESSION_COOKIE,
   DEVICE_COOKIE,
   DEVICE_TRUST_DAYS,
   type SessionCookieConfig,
@@ -343,8 +345,22 @@ export function registerAuthRoutes(
 
   // Clears the session cookie (audit F-2). Public + idempotent: logging out
   // must work even with an already-expired or missing session.
-  app.post('/api/v1/auth/logout', async (_req, reply) => {
+  app.post('/api/v1/auth/logout', async (req, reply) => {
     if (deps.cookie) clearSessionCookie(reply, deps.cookie);
+    // Bump session_epoch so outstanding JWTs for this user are immediately
+    // invalidated, not just the one in the cleared cookie. The endpoint is
+    // public (must work with an expired/missing token), so parse best-effort.
+    try {
+      const header = req.headers.authorization;
+      const bearer =
+        (header?.startsWith('Bearer ') ? header.slice(7).trim() : '') ||
+        req.cookies?.[SESSION_COOKIE] ||
+        '';
+      if (bearer && !bearer.startsWith('n409_pat_')) {
+        const claims = await verifySession(bearer, deps.jwt);
+        await bumpSessionEpoch(deps.pool, claims.sub);
+      }
+    } catch { /* expired / missing / invalid — cookie is still cleared */ }
     return reply.status(200).send({ message: 'Signed out.' });
   });
 
