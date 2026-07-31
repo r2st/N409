@@ -39,6 +39,12 @@ describe('MIME message builder', () => {
     expect(bareAddress('N409 Valuations <no-reply@n409.local>')).toBe('no-reply@n409.local');
     expect(bareAddress('plain@host.tld')).toBe('plain@host.tld');
   });
+
+  it('strips CRLF from addresses to prevent SMTP command injection', () => {
+    expect(bareAddress('user@evil.com\r\nRCPT TO:<victim@target.com')).not.toContain('\n');
+    expect(bareAddress('user@evil.com\r\nRCPT TO:<victim@target.com')).not.toContain('\r');
+    expect(bareAddress('injected\n@host.tld')).toBe('injected@host.tld');
+  });
 });
 
 describe('SMTP client against a fake server', () => {

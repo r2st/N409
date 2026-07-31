@@ -53,7 +53,8 @@ export function buildMimeMessage(args: {
 /** Bare address out of "Display Name <user@host>". */
 export function bareAddress(from: string): string {
   const match = from.match(/<([^>]+)>/);
-  return (match ? match[1]! : from).trim();
+  // Strip CR/LF to prevent SMTP command injection via crafted addresses.
+  return (match ? match[1]! : from).trim().replace(/[\r\n]/g, '');
 }
 
 class SmtpError extends Error {}
