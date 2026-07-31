@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateWeights } from '../../src/routes/params.js';
 import { deepMerge } from '../../src/routes/calculations.js';
-import { safeFilename } from '../../src/routes/documents.js';
+import { safeFilename, contentDisposition } from '../../src/routes/documents.js';
 
 describe('validateWeights', () => {
   const empty = { weight_asset: null, weight_opm: null, weight_income: null, weight_market: null };
@@ -83,5 +83,31 @@ describe('safeFilename', () => {
 
   it('never returns an empty name', () => {
     expect(safeFilename('///')).toBe('upload');
+  });
+});
+
+describe('contentDisposition', () => {
+  it('produces ASCII-safe filename and RFC 5987 filename*', () => {
+    const val = contentDisposition('report.pdf');
+    expect(val).toContain('filename="report.pdf"');
+    expect(val).toContain("filename*=UTF-8''report.pdf");
+    expect(val).toMatch(/^attachment;/);
+  });
+
+  it('percent-encodes non-ASCII characters in filename*', () => {
+    const val = contentDisposition('\u00fc\u00e9port.pdf');
+    // ASCII fallback replaces non-ASCII with _
+    expect(val).toContain('filename="_');
+    // UTF-8 version encodes the multi-byte chars
+    expect(val).toContain("filename*=UTF-8''%C3%BC%C3%A9port.pdf");
+  });
+
+  it('strips quotes from the ASCII fallback', () => {
+    const val = contentDisposition('file"name.pdf');
+    expect(val).toContain('filename="filename.pdf"');
+  });
+
+  it('respects the disposition parameter', () => {
+    expect(contentDisposition('x.pdf', 'inline')).toMatch(/^inline;/);
   });
 });

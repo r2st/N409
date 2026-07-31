@@ -69,6 +69,32 @@ export function safeFilename(name: string): string {
 }
 
 /**
+ * RFC 6266 Content-Disposition header value. Provides an ASCII-safe
+ * ``filename`` for legacy clients and ``filename*`` with UTF-8 percent-
+ * encoding for modern ones that understand RFC 5987.
+ */
+export function contentDisposition(name: string, disposition: 'attachment' | 'inline' = 'attachment'): string {
+  // ASCII-only fallback: drop non-ASCII and quotes.
+  const ascii = name.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
+  // RFC 5987 encoding: percent-encode everything outside unreserved chars.
+  const encoded = [...name]
+    .map(ch => {
+      const code = ch.charCodeAt(0);
+      if (
+        (code >= 0x30 && code <= 0x39) || // 0-9
+        (code >= 0x41 && code <= 0x5A) || // A-Z
+        (code >= 0x61 && code <= 0x7A) || // a-z
+        ch === '-' || ch === '.' || ch === '_' || ch === '~'
+      ) return ch;
+      return [...new TextEncoder().encode(ch)]
+        .map(b => '%' + b.toString(16).toUpperCase().padStart(2, '0'))
+        .join('');
+    })
+    .join('');
+  return `${disposition}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+/**
  * Writes the blob to disk and records the document row + event. Shared by the
  * session upload route below and the partner API (improvement 6).
  */
@@ -198,7 +224,7 @@ export function registerDocumentRoutes(
       // inline (audit B-1 P1); attachment already forces a download.
       return reply
         .header('content-type', doc.content_type)
-        .header('content-disposition', `attachment; filename="${doc.filename.replace(/"/g, '')}"`)
+        .header('content-disposition', contentDisposition(doc.filename))
         .header('x-content-type-options', 'nosniff')
         .send(plain);
     },
