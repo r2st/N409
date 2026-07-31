@@ -68,3 +68,51 @@ describe('session JWTs (issue #3)', () => {
     await expect(verifyOidcState(session, cfg)).rejects.toThrow();
   });
 });
+
+describe('session JWT purpose claim (token confusion prevention)', () => {
+  it('rejects an MFA challenge token used as a session token', async () => {
+    // MFA tokens carry purpose: 'mfa-challenge' — they must not authenticate a session
+    const mfaToken = await new SignJWT({ purpose: 'mfa-challenge' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('01ABC')
+      .setIssuer(cfg.issuer)
+      .setIssuedAt()
+      .setExpirationTime('5m')
+      .sign(new TextEncoder().encode(cfg.secret));
+    await expect(verifySession(mfaToken, cfg)).rejects.toThrow('wrong token purpose');
+  });
+
+  it('rejects an OIDC state token used as a session token', async () => {
+    const oidcToken = await new SignJWT({ purpose: 'oidc-state' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('01ABC')
+      .setIssuer(cfg.issuer)
+      .setIssuedAt()
+      .setExpirationTime('10m')
+      .sign(new TextEncoder().encode(cfg.secret));
+    await expect(verifySession(oidcToken, cfg)).rejects.toThrow('wrong token purpose');
+  });
+
+  it('rejects an accounting state token used as a session token', async () => {
+    const acctToken = await new SignJWT({ purpose: 'accounting-state', v: '01V', p: 'qbo' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('01ABC')
+      .setIssuer(cfg.issuer)
+      .setIssuedAt()
+      .setExpirationTime('30m')
+      .sign(new TextEncoder().encode(cfg.secret));
+    await expect(verifySession(acctToken, cfg)).rejects.toThrow('wrong token purpose');
+  });
+
+  it('still accepts legacy tokens without a purpose claim (backward compat)', async () => {
+    const legacy = await new SignJWT({ roles: ['admin'], partner_id: null })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('01ABC')
+      .setIssuer(cfg.issuer)
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(new TextEncoder().encode(cfg.secret));
+    const result = await verifySession(legacy, cfg);
+    expect(result.sub).toBe('01ABC');
+  });
+});

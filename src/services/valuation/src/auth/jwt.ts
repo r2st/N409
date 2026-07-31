@@ -26,6 +26,7 @@ function key(secret: string): Uint8Array {
 
 export async function signSession(claims: SessionClaims, cfg: JwtConfig): Promise<string> {
   return new SignJWT({
+    purpose: 'session',
     roles: claims.roles,
     partner_id: claims.partner_id,
     session_epoch: claims.session_epoch,
@@ -41,6 +42,7 @@ export async function signSession(claims: SessionClaims, cfg: JwtConfig): Promis
 export async function verifySession(token: string, cfg: JwtConfig): Promise<SessionClaims> {
   const { payload } = await jwtVerify(token, key(cfg.secret), { issuer: cfg.issuer });
   if (typeof payload.sub !== 'string') throw new Error('missing sub');
+  if (payload.purpose !== 'session' && payload.purpose !== undefined) throw new Error('wrong token purpose');
   return {
     sub: payload.sub,
     roles: (payload.roles as RoleKey[]) ?? [],
@@ -76,7 +78,8 @@ export async function verifyMfaChallenge(token: string, cfg: JwtConfig): Promise
 
 /** Short-lived signed state for the OIDC redirect round-trip (CSRF protection). */
 export async function signOidcState(cfg: JwtConfig): Promise<string> {
-  return new SignJWT({ purpose: 'oidc-state' })
+  return new SignJWT({
+    purpose: 'oidc-state' })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuer(cfg.issuer)
     .setIssuedAt()
@@ -100,7 +103,8 @@ export interface AccountingState {
 }
 
 export async function signAccountingState(s: AccountingState, cfg: JwtConfig): Promise<string> {
-  return new SignJWT({ purpose: 'accounting-state', v: s.valuationId, p: s.provider })
+  return new SignJWT({
+    purpose: 'accounting-state', v: s.valuationId, p: s.provider })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(s.userId)
     .setIssuer(cfg.issuer)
