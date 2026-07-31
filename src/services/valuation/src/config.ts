@@ -90,6 +90,11 @@ const Env = z.object({
   // limiters). 0 disables. Only enforced in production — see buildApp.
   SESSION_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(0).default(300),
   SESSION_RATE_LIMIT_ORG_PER_MIN: z.coerce.number().int().min(0).default(1500),
+  // Per-user budget, in cost units per minute, for the expensive routes
+  // classified in domain/requestCost.ts (renders, exports, engine runs, AI
+  // jobs). Roughly: 20 PDF renders, 8 evidence bundles or 8 AI jobs a minute.
+  // 0 disables. Production-only, like the counters above.
+  HEAVY_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(0).default(200),
 });
 
 export type Config = z.infer<typeof Env>;

@@ -20,7 +20,7 @@ import { findValuationById } from '../repos/valuations.js';
 import { listDocuments } from '../repos/documents.js';
 import { latestSucceededJob } from '../repos/aiJobs.js';
 import { findReportByValuation } from '../repos/reports.js';
-import { listEvents } from '../events/record.js';
+import { latestEventAt, listEvents } from '../events/record.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -41,9 +41,16 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       : null;
     if (!valuation || !ref || !canReadValuation(principal, ref)) throw problems.notFound();
 
-    const [documents, events, report, explainJob] = await Promise.all([
+    // Only the event types this view actually renders — the stage stepper reads
+    // state_changed, the timeline reads the client-safe catalog. A long-running
+    // valuation's full spine is thousands of rows we would immediately discard.
+    const relevantTypes = [
+      ...new Set(['state_changed', ...Object.keys(CLIENT_TIMELINE_EVENTS)]),
+    ];
+    const [documents, events, lastActivityAt, report, explainJob] = await Promise.all([
       listDocuments(deps.pool, valuation.id),
-      listEvents(deps.pool, valuation.id),
+      listEvents(deps.pool, valuation.id, { types: relevantTypes }),
+      latestEventAt(deps.pool, valuation.id),
       findReportByValuation(deps.pool, valuation.id),
       latestSucceededJob(deps.pool, valuation.id, 'explain'),
     ]);
@@ -116,7 +123,6 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const reportVisible = canReadReport(principal, ref);
     const reportAvailable = reportVisible && report !== null && report.current_version > 0;
     const missingDocuments = checklist.filter((item) => !item.uploaded).length;
-    const lastActivityAt = events.length > 0 ? events[events.length - 1]!.occurred_at : null;
 
     return {
       state: valuation.state,

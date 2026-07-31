@@ -7,7 +7,8 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { findUserById } from '../repos/users.js';
 import { resolveApiToken, TOKEN_SCHEME } from '../repos/apiTokens.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
-import type { FixedWindowRateLimiter } from './rateLimit.js';
+import { costOfRequest } from '../domain/requestCost.js';
+import type { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './rateLimit.js';
 
 /** How the request authenticated — the partner API accepts api_token only. */
 export interface ApiTokenContext {
@@ -57,6 +58,34 @@ function applyLimiter(
 }
 
 /**
+ * Charges an expensive request against the per-user cost budget. Ordinary
+ * requests cost nothing and never touch the limiter, so the headers only appear
+ * on the routes the budget actually governs.
+ */
+function applyCostLimiter(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  limiter: WeightedWindowRateLimiter | undefined,
+  key: string,
+): void {
+  if (!limiter) return;
+  const cost = costOfRequest(req.method, req.url);
+  if (cost <= 0) return;
+
+  const result = limiter.consume(key, cost);
+  void reply.header('x-ratelimit-limit-cost', result.limit);
+  void reply.header('x-ratelimit-remaining-cost', result.remaining);
+  void reply.header('x-ratelimit-reset-cost', Math.ceil(result.resetAt / 1000));
+  if (!result.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
+    throw problems.tooManyRequests(
+      `Budget for expensive operations (${result.limit} cost units per minute) exhausted — retry in ${retryAfter}s`,
+      retryAfter,
+    );
+  }
+}
+
+/**
  * Bearer authentication: session JWTs, or API tokens (`n409_pat_…`, M3) which
  * act as the user that created them. Roles/partner are re-read from the DB on
  * every request so a role change or removal takes effect immediately, not at
@@ -72,6 +101,8 @@ export function registerAuth(
     sessionLimiter?: FixedWindowRateLimiter;
     /** Per-organisation (partner) throttle, checked alongside sessionLimiter. */
     sessionOrgLimiter?: FixedWindowRateLimiter;
+    /** Per-user cost budget for renders, exports, engine runs and AI jobs. */
+    costLimiter?: WeightedWindowRateLimiter;
   },
 ): void {
   app.decorateRequest('principal', null);
@@ -124,6 +155,7 @@ export function registerAuth(
     if (req.principal.partnerId) {
       applyLimiter(reply, deps.sessionOrgLimiter, req.principal.partnerId, 'org');
     }
+    applyCostLimiter(req, reply, deps.costLimiter, req.principal.id);
 
     // Maintenance mode: ops keep working, everyone else gets a read-only
     // platform. Sign-in and password reset live on unauthenticated routes and

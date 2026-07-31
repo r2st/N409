@@ -52,6 +52,67 @@ export class FixedWindowRateLimiter {
 }
 
 /**
+ * Fixed-window limiter over a *cost budget* rather than a request count, for
+ * the expensive routes classified in domain/requestCost.ts. One PDF render can
+ * cost as much as thirty list calls, so charging both a single "request" lets a
+ * user stay inside the session limit while still saturating the box.
+ *
+ * A request whose cost exceeds the whole budget is still admitted once per
+ * window — otherwise raising a route's cost past the budget would silently take
+ * the route offline, which is a worse failure than letting one through.
+ */
+export class WeightedWindowRateLimiter {
+  private windows = new Map<string, { start: number; spent: number }>();
+
+  constructor(
+    /** Cost units available per window. */
+    readonly budget: number,
+    readonly windowMs: number,
+  ) {}
+
+  /** Charge `cost` units to `key`. `remaining` is budget left, not requests. */
+  consume(key: string, cost: number, now: number = Date.now()): RateLimitResult {
+    const window = this.windows.get(key);
+    if (!window || now - window.start >= this.windowMs) {
+      this.windows.set(key, { start: now, spent: cost });
+      this.sweep(now);
+      return {
+        allowed: true,
+        limit: this.budget,
+        remaining: Math.max(0, this.budget - cost),
+        resetAt: now + this.windowMs,
+      };
+    }
+
+    const resetAt = window.start + this.windowMs;
+    if (window.spent + cost > this.budget) {
+      return { allowed: false, limit: this.budget, remaining: Math.max(0, this.budget - window.spent), resetAt };
+    }
+    window.spent += cost;
+    return {
+      allowed: true,
+      limit: this.budget,
+      remaining: Math.max(0, this.budget - window.spent),
+      resetAt,
+    };
+  }
+
+  /** Units already spent in the current window — for tests and diagnostics. */
+  spent(key: string, now: number = Date.now()): number {
+    const window = this.windows.get(key);
+    if (!window || now - window.start >= this.windowMs) return 0;
+    return window.spent;
+  }
+
+  private sweep(now: number): void {
+    if (this.windows.size < 10_000) return;
+    for (const [key, window] of this.windows) {
+      if (now - window.start >= this.windowMs) this.windows.delete(key);
+    }
+  }
+}
+
+/**
  * Sliding-window limiter for the unauthenticated auth routes. Unlike
  * FixedWindowRateLimiter the limit and window are supplied per call, because a
  * single instance backs a dozen different throttles (per-IP register, per-email

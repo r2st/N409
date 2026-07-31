@@ -37,6 +37,7 @@ describe.skipIf(!dbUp)('valuation audit trail', () => {
     summary: Record<string, unknown>;
     total: number;
     includes_internal: boolean;
+    truncated: boolean;
   }> => {
     const res = await ctx.app.inject({
       method: 'GET',
@@ -154,6 +155,10 @@ describe.skipIf(!dbUp)('valuation audit trail', () => {
     expect(firstPage.total).toBe(all.total);
     expect(firstPage.entries).toHaveLength(1);
     expect(secondPage.entries[0]!.type).not.toBe(firstPage.entries[0]!.type);
+  });
+
+  it('reports that nothing was truncated for a short trail', async () => {
+    expect((await trail(ops.token)).truncated).toBe(false);
   });
 
   it('rejects an unknown category', async () => {

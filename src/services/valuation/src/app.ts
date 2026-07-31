@@ -84,7 +84,7 @@ import { registerAuditTrailRoutes } from './routes/auditTrail.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
-import { FixedWindowRateLimiter } from './plugins/rateLimit.js';
+import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
 import { probeReady } from './clients/internal.js';
 
 export interface AppDeps {
@@ -104,6 +104,8 @@ export interface AppDeps {
   sessionLimiter?: FixedWindowRateLimiter;
   /** injectable for tests/prod — per-partner throttle alongside sessionLimiter */
   sessionOrgLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests/prod — per-user cost budget for expensive routes */
+  costLimiter?: WeightedWindowRateLimiter;
   /** injectable for tests — accounting provider HTTP */
   accountingFetch?: FetchFn;
   /** injectable for tests — cap-table sync provider HTTP */
@@ -236,7 +238,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     (config.NODE_ENV === 'production' && config.SESSION_RATE_LIMIT_ORG_PER_MIN > 0
       ? new FixedWindowRateLimiter(config.SESSION_RATE_LIMIT_ORG_PER_MIN, 60_000)
       : undefined);
-  registerAuth(app, { pool, jwt, settings, sessionLimiter, sessionOrgLimiter });
+  // Cost budget for renders/exports/engine runs/AI jobs — see
+  // domain/requestCost.ts. Same production-only default as the counters above.
+  const costLimiter =
+    deps.costLimiter ??
+    (config.NODE_ENV === 'production' && config.HEAVY_RATE_LIMIT_PER_MIN > 0
+      ? new WeightedWindowRateLimiter(config.HEAVY_RATE_LIMIT_PER_MIN, 60_000)
+      : undefined);
+  registerAuth(app, { pool, jwt, settings, sessionLimiter, sessionOrgLimiter, costLimiter });
   registerAuthRoutes(app, {
     pool,
     jwt,

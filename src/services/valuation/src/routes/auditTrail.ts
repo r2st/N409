@@ -11,7 +11,7 @@ import {
   filterAuditEntries,
   summarizeAuditTrail,
 } from '../domain/auditTrail.js';
-import { listEvents } from '../events/record.js';
+import { listEvents, type EventQuery } from '../events/record.js';
 import { findValuationById } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -40,9 +40,22 @@ const ListQuery = z.object({
 
 const HistoryQuery = z.object({ field: z.string().min(1).max(120) });
 
+/**
+ * Hard ceiling on how much of the spine one request enriches. A valuation that
+ * has been rolled forward for years accumulates a lot of events, and enriching
+ * all of them allocates a payload-sized object per row. We keep the newest
+ * MAX_TRAIL_EVENTS and say so in the response rather than silently truncating.
+ */
+export const MAX_TRAIL_EVENTS = 5_000;
+
 export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
-  /** Load the valuation, enforce read access, and enrich its whole event spine. */
-  async function loadTrail(req: FastifyRequest) {
+  /**
+   * Load the valuation, enforce read access, and enrich the slice of its event
+   * spine the query asks for. The predicates that map to columns (type, actor
+   * type, date window) are pushed into SQL; category, severity and changed
+   * field are catalog-derived and can only be applied after enrichment.
+   */
+  async function loadTrail(req: FastifyRequest, query: EventQuery = {}) {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
@@ -51,8 +64,16 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
     const ref = { userId: valuation.user_id, partnerId: valuation.partner_id };
     if (!canReadValuation(principal, ref)) throw problems.notFound();
 
-    const events = await listEvents(deps.pool, valuation.id);
-    return { entries: events.map(describeEvent), includeInternal: isOps(principal) };
+    const events = await listEvents(deps.pool, valuation.id, {
+      ...query,
+      limit: query.limit ?? MAX_TRAIL_EVENTS + 1,
+    });
+    const truncated = events.length > MAX_TRAIL_EVENTS;
+    return {
+      entries: events.slice(-MAX_TRAIL_EVENTS).map(describeEvent),
+      includeInternal: isOps(principal),
+      truncated,
+    };
   }
 
   app.get('/api/v1/valuations/:id/audit-trail', { preHandler: app.authenticate }, async (req) => {
@@ -60,7 +81,12 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
     const q = parsed.data;
 
-    const { entries, includeInternal } = await loadTrail(req);
+    const { entries, includeInternal, truncated } = await loadTrail(req, {
+      types: q.type ? [q.type] : undefined,
+      actorType: q.actor_type,
+      from: q.from,
+      to: q.to,
+    });
     const matched = filterAuditEntries(entries, {
       category: q.category,
       severity: q.severity,
@@ -80,6 +106,8 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
       per_page: q.per_page,
       total: matched.length,
       includes_internal: includeInternal,
+      /** True when older events exist beyond MAX_TRAIL_EVENTS and were not read. */
+      truncated,
     };
   });
 
