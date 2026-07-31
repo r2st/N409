@@ -71,6 +71,30 @@ describe.skipIf(!dbUp)('activity audit log', () => {
     expect(created!.actor_email).toBe(client.email);
   });
 
+  it('returns only that valuation\'s events when filtering by valuation', async () => {
+    const res = await listEvents(`valuation_id=${valuationId}`);
+    const events = res.json().events as EventJson[];
+    expect(events.length).toBeGreaterThan(0);
+    // An admin event can never match a valuation filter: admin_events is keyed
+    // by subject (user, partner, prompt), never by valuation.
+    expect(events.every((e) => e.scope === 'valuation')).toBe(true);
+    expect(events.every((e) => e.subject_id === valuationId)).toBe(true);
+  });
+
+  it('finds nothing for a valuation that does not exist', async () => {
+    const res = await listEvents('valuation_id=01JXXXXXXXXXXXXXXXXXXXXXXX');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().events).toEqual([]);
+    expect(res.json().total).toBe(0);
+  });
+
+  it('finds nothing for admin scope combined with a valuation filter', async () => {
+    const res = await listEvents(`scope=admin&valuation_id=${valuationId}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json().events).toEqual([]);
+    expect(res.json().total).toBe(0);
+  });
+
   it('events admin console actions: user create/update/deactivate/restore', async () => {
     const createRes = await ctx.app.inject({
       method: 'POST',
