@@ -18,6 +18,7 @@ import { HelpIcon } from '../../components/HelpIcon';
 export const TAB_HELP: Record<string, string> = {
   '': 'valuations-overview',
   progress: 'engagement-overview',
+  'audit-trail': 'valuations-overview',
   intake: 'creating-a-valuation',
   company: 'comparables-overview',
   documents: 'financial-data-overview',
@@ -200,6 +201,7 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/asc718`} label="ASC 718" />}
         {ops && <Tab to={`${base}/monitoring`} label="Monitoring" />}
         {ops && <Tab to={`${base}/package`} label="Package" />}
+        <Tab to={`${base}/audit-trail`} label="Change History" />
       </nav>
 
       <div className="mt-8">

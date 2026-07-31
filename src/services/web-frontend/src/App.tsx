@@ -92,6 +92,7 @@ const MonitorsPage = named(() => import('./pages/MonitorsPage'), 'MonitorsPage')
 const OverwritesTab = named(() => import('./pages/valuation/OverwritesTab'), 'OverwritesTab');
 const ReportTab = named(() => import('./pages/valuation/ReportTab'), 'ReportTab');
 const ProgressTab = named(() => import('./pages/valuation/ProgressTab'), 'ProgressTab');
+const AuditTrailTab = named(() => import('./pages/valuation/AuditTrailTab'), 'AuditTrailTab');
 const QaTab = named(() => import('./pages/valuation/QaTab'), 'QaTab');
 const HealthTab = named(() => import('./pages/valuation/HealthTab'), 'HealthTab');
 const DecisionsTab = named(() => import('./pages/valuation/DecisionsTab'), 'DecisionsTab');
@@ -228,6 +229,7 @@ export default function App() {
             <Route path="tasks" element={<TasksTab />} />
             <Route path="calculations" element={<CalculationsTab />} />
             <Route path="progress" element={<ProgressTab />} />
+            <Route path="audit-trail" element={<AuditTrailTab />} />
             <Route path="qa" element={<QaTab />} />
             <Route path="health" element={<HealthTab />} />
             <Route path="decisions" element={<DecisionsTab />} />
