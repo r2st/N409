@@ -106,9 +106,14 @@ export interface ReportTemplate {
 
 const P = (text: string) => `<p>${text}</p>`;
 
-/** The 409A deliverable skeleton, modelled on the production 409a.v53 layout. */
+/**
+ * The 409A deliverable skeleton, modelled on the production 409a layout.
+ * v54 adds the sections a reviewing auditor expects to find and the earlier
+ * skeleton omitted: standard/premise of value, sources of information, the
+ * §409A safe-harbor statement and the appraiser certification.
+ */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v53',
+  version: '409a.v54',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -118,6 +123,35 @@ const TEMPLATE_409A: ReportTemplate = {
         P(
           'This report presents our determination of the fair market value of the common stock of <strong>{{company_name}}</strong> as of {{date}}, prepared for purposes of Section 409A of the Internal Revenue Code and ASC 718.',
         ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'standard_of_value',
+      heading: 'Standard & Premise of Value',
+      html:
+        P(
+          'The standard of value applied is <strong>fair market value</strong>, defined in Revenue Ruling 59-60 as the price at which the property would change hands between a willing buyer and a willing seller, neither being under any compulsion to buy or sell and both having reasonable knowledge of the relevant facts.',
+        ) +
+        P(
+          'The premise of value is <strong>going concern</strong> — {{company_name}} is assumed to continue operating as an ongoing business enterprise rather than being liquidated.',
+        ),
+    },
+    {
+      key: 'sources_of_information',
+      heading: 'Sources of Information',
+      html:
+        P('Our analysis relied on the following information provided by management and on public data:') +
+        '<ul>' +
+        '<li>Capitalization table as of the valuation date</li>' +
+        '<li>Historical financial statements (income statement, balance sheet)</li>' +
+        '<li>Management financial projections</li>' +
+        '<li>Articles of incorporation and amendments, including preferred stock rights</li>' +
+        '<li>Stock option plan and outstanding grant records</li>' +
+        '<li>Financing documents for the most recent round</li>' +
+        '<li>Guideline public company and transaction data</li>' +
+        '</ul>' +
+        P(
+          'Information supplied by management has been accepted as accurate without independent verification or audit.',
+        ),
     },
     {
       key: 'company_overview',
@@ -191,6 +225,30 @@ const TEMPLATE_409A: ReportTemplate = {
       html: P(
         'This report is valid only for the stated purpose and date, and relies on information provided by management, which we have not audited.',
       ),
+    },
+    {
+      key: 'safe_harbor',
+      heading: 'Section 409A Safe Harbor',
+      html:
+        P(
+          'Treasury Regulation §1.409A-1(b)(5)(iv)(B)(1) presumes a valuation to be reasonable where it is determined by the application of a reasonable valuation method by a qualified independent appraiser, as of a date no more than 12 months before the relevant option grant, and where no material event has occurred since that date.',
+        ) +
+        P(
+          'This valuation is intended to satisfy that independent-appraisal presumption. The presumption may be rebutted by the Internal Revenue Service only on a showing that the valuation was grossly unreasonable.',
+        ),
+    },
+    {
+      key: 'certification',
+      heading: 'Appraiser Certification',
+      html:
+        P('We certify that, to the best of our knowledge and belief:') +
+        '<ul>' +
+        '<li>The statements of fact in this report are true and correct.</li>' +
+        '<li>The analyses, opinions and conclusions are limited only by the assumptions and limiting conditions stated, and are our personal, impartial and unbiased professional analyses.</li>' +
+        '<li>We have no present or prospective interest in {{company_name}} and no personal interest with respect to the parties involved.</li>' +
+        '<li>Our compensation is not contingent on the reporting of a predetermined value, on the amount of the value opinion, or on the occurrence of any subsequent event.</li>' +
+        '<li>No one provided significant professional assistance to the persons signing this report except as disclosed herein.</li>' +
+        '</ul>',
     },
   ],
 };

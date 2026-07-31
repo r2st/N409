@@ -28,7 +28,21 @@ export interface ReportPdfInput {
     /** PNG or JPEG bytes; anything unrenderable is skipped silently. */
     logo?: Buffer | null;
   };
+  /**
+   * Contents page with real page numbers. Defaults on once a report is long
+   * enough to need one (see TOC_MIN_SECTIONS); pass false to force it off.
+   */
+  include_toc?: boolean;
+  /**
+   * Footer confidentiality marker. Defaults to 'Confidential' — a 409A report
+   * is a private company's most sensitive document and every page should say
+   * so. Pass null to omit it.
+   */
+  confidentiality?: string | null;
 }
+
+/** Reports shorter than this render without a contents page. */
+export const TOC_MIN_SECTIONS = 4;
 
 export interface RenderOptions {
   /** disable stream compression so tests can assert on embedded text */
@@ -352,11 +366,22 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     doc.moveDown(0.3);
   }
 
+  // Contents. The page is reserved here and filled in at the end, once the
+  // section start pages are known — pdfkit cannot insert a page after the fact.
+  const wantsToc = input.include_toc ?? input.sections.length >= TOC_MIN_SECTIONS;
+  let tocPageIndex: number | null = null;
+  if (wantsToc && input.sections.length > 0) {
+    doc.addPage();
+    tocPageIndex = currentPageIndex(doc);
+  }
+
   // Sections
+  const sectionStartPages: number[] = [];
   input.sections.forEach((section, idx) => {
     if (idx === 0) doc.addPage();
     else doc.moveDown(1.5);
     ensureRoom(doc, 80);
+    sectionStartPages.push(currentPageIndex(doc));
     doc
       .font(FONTS.bold)
       .fontSize(16)
@@ -368,17 +393,37 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     }
   });
 
-  // Footer page numbers
   const range = doc.bufferedPageRange();
+
+  if (tocPageIndex !== null) {
+    doc.switchToPage(tocPageIndex);
+    doc.x = doc.page.margins.left;
+    doc.y = doc.page.margins.top;
+    renderTableOfContents(
+      doc,
+      input.sections.map((section, idx) => ({
+        heading: section.heading,
+        page: sectionStartPages[idx]! - range.start + 1,
+      })),
+      usable,
+    );
+  }
+
+  // Footer: identity, confidentiality marker and page numbers on every page.
+  const confidentiality =
+    input.confidentiality === null ? null : (input.confidentiality ?? 'Confidential');
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
     const bottom = doc.page.margins.bottom;
     doc.page.margins.bottom = 0; // allow writing inside the reserved margin
+    const parts = [`${input.company_name} — ${input.title}`];
+    if (confidentiality) parts.push(confidentiality);
+    parts.push(`Page ${i - range.start + 1} of ${range.count}`);
     doc
       .font(FONTS.regular)
       .fontSize(8)
       .fillColor('#888888')
-      .text(`${input.company_name} — ${input.title} · Page ${i + 1} of ${range.count}`, doc.page.margins.left, doc.page.height - 46, {
+      .text(parts.join(' · '), doc.page.margins.left, doc.page.height - 46, {
         width: usable,
         align: 'center',
         lineBreak: false,
@@ -392,6 +437,59 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
 
 function ensureRoom(doc: PDFKit.PDFDocument, needed: number): void {
   if (doc.y + needed > doc.page.height - doc.page.margins.bottom) doc.addPage();
+}
+
+/** Zero-based index of the page currently being written. */
+function currentPageIndex(doc: PDFKit.PDFDocument): number {
+  const range = doc.bufferedPageRange();
+  return range.start + range.count - 1;
+}
+
+export interface TocEntry {
+  heading: string;
+  /** 1-based page number as stamped in the footer. */
+  page: number;
+}
+
+/**
+ * Contents page: numbered headings with a dot leader out to the page number.
+ * The leader is sized from the measured text so it lands flush against the
+ * number instead of wrapping.
+ */
+function renderTableOfContents(
+  doc: PDFKit.PDFDocument,
+  entries: readonly TocEntry[],
+  usable: number,
+): void {
+  doc.font(FONTS.bold).fontSize(16).fillColor('#111111').text('Table of Contents');
+  doc.moveDown(1);
+
+  const left = doc.page.margins.left;
+  const numberWidth = 34;
+  entries.forEach((entry, idx) => {
+    ensureRoom(doc, 22);
+    const label = `${idx + 1}. ${entry.heading}`;
+    const page = String(entry.page);
+    const y = doc.y;
+
+    doc.font(FONTS.regular).fontSize(11).fillColor('#222222');
+    const labelWidth = doc.widthOfString(label);
+    doc.text(label, left, y, { width: usable - numberWidth, lineBreak: false });
+
+    const leaderStart = left + labelWidth + 4;
+    const leaderEnd = left + usable - numberWidth - 4;
+    if (leaderEnd > leaderStart) {
+      const dotWidth = doc.widthOfString('.');
+      const dots = '.'.repeat(Math.max(0, Math.floor((leaderEnd - leaderStart) / dotWidth)));
+      doc.fillColor('#bbbbbb').text(dots, leaderStart, y, { lineBreak: false });
+    }
+
+    doc
+      .fillColor('#222222')
+      .text(page, left + usable - numberWidth, y, { width: numberWidth, align: 'right', lineBreak: false });
+    doc.y = y + 18;
+    doc.x = left;
+  });
 }
 
 function renderRuns(doc: PDFKit.PDFDocument, runs: Run[], opts: { indent?: number; width: number }): void {

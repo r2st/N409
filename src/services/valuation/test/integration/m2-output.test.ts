@@ -310,11 +310,11 @@ describe.skipIf(!dbUp)('M2 — output & delivery (overwrites, workbook, reports)
   });
 
   describe('reports', () => {
-    it('creates the report from the 409a.v53 template on first ops access', async () => {
+    it('creates the report from the current 409a template on first ops access', async () => {
       const res = await opsGet(`/api/v1/valuations/${valuationId}/report`);
       expect(res.statusCode).toBe(200);
       const { report, version } = res.json();
-      expect(report.template_version).toBe('409a.v53');
+      expect(report.template_version).toBe('409a.v54');
       expect(report.status).toBe('draft');
       expect(report.current_version).toBe(1);
       expect(version.version).toBe(1);

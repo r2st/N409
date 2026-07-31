@@ -7,7 +7,7 @@ import { VALUATION_KINDS } from '../lib/types';
 import type { ReportTemplate } from '../lib/types';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 
-/** Report template management (M4) — versioned templates like 409a.v53. Ops only. */
+/** Report template management (M4) — versioned templates like 409a.v54. Ops only. */
 
 function StatusPill({ status }: { status: ReportTemplate['status'] }) {
   const styles = {

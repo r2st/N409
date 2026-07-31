@@ -36,4 +36,36 @@ describe('report service', () => {
     expect(res.statusCode).toBe(422);
     expect(res.headers['content-type']).toContain('application/problem+json');
   });
+
+  it('accepts the contents-page and confidentiality options', async () => {
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/render/v1/pdf',
+      payload: {
+        title: 'Valuation Report',
+        company_name: 'Acme',
+        sections: [{ heading: 'Introduction', html: '<p>Hello.</p>' }],
+        include_toc: true,
+        confidentiality: null,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('rejects a non-boolean include_toc', async () => {
+    const app = buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/render/v1/pdf',
+      payload: {
+        title: 'Valuation Report',
+        company_name: 'Acme',
+        sections: [{ heading: 'Introduction', html: '<p>Hello.</p>' }],
+        include_toc: 'yes',
+      },
+    });
+    expect(res.statusCode).toBe(422);
+  });
 });

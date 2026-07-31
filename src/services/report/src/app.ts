@@ -26,6 +26,8 @@ const RenderBody = z.object({
     )
     .min(1)
     .max(100),
+  include_toc: z.boolean().optional(),
+  confidentiality: z.string().max(120).nullable().optional(),
 });
 
 export function buildApp(): FastifyInstance {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { decodeEntities, htmlToBlocks, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
+import {
+  TOC_MIN_SECTIONS,
+  decodeEntities,
+  htmlToBlocks,
+  renderReportPdf,
+  type ReportPdfInput,
+} from '../src/pdf.js';
 
 const SAMPLE: ReportPdfInput = {
   title: 'IRC 409A Valuation Report',
@@ -140,5 +146,100 @@ describe('renderReportPdf', () => {
     expect(extractText(pdf)).toContain('Page 1 of');
     // more than one page object
     expect((pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length).toBeGreaterThan(2);
+  });
+});
+
+describe('table of contents', () => {
+  const withSections = (count: number): ReportPdfInput => ({
+    ...SAMPLE,
+    sections: Array.from({ length: count }, (_, i) => ({
+      heading: `Chapter ${i + 1}`,
+      html: `<p>${'Body text. '.repeat(40)}</p>`,
+    })),
+  });
+
+  it('is omitted for a report too short to need one', async () => {
+    const short = withSections(TOC_MIN_SECTIONS - 1);
+    const text = extractText(await renderReportPdf(short, { compress: false }));
+    expect(text).not.toContain('Table of Contents');
+  });
+
+  it('is included once the report is long enough', async () => {
+    const text = extractText(
+      await renderReportPdf(withSections(TOC_MIN_SECTIONS), { compress: false }),
+    );
+    expect(text).toContain('Table of Contents');
+    expect(text).toContain('1. Chapter 1');
+    expect(text).toContain(`${TOC_MIN_SECTIONS}. Chapter ${TOC_MIN_SECTIONS}`);
+  });
+
+  it('can be forced on for a short report', async () => {
+    const text = extractText(
+      await renderReportPdf({ ...withSections(2), include_toc: true }, { compress: false }),
+    );
+    expect(text).toContain('Table of Contents');
+  });
+
+  it('can be forced off for a long report', async () => {
+    const text = extractText(
+      await renderReportPdf({ ...withSections(10), include_toc: false }, { compress: false }),
+    );
+    expect(text).not.toContain('Table of Contents');
+  });
+
+  it('shifts the body one page later to make room for it', async () => {
+    const pageCount = (pdf: Buffer) =>
+      (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
+    const input = withSections(6);
+    const without = await renderReportPdf({ ...input, include_toc: false }, { compress: false });
+    const withToc = await renderReportPdf({ ...input, include_toc: true }, { compress: false });
+    expect(pageCount(withToc)).toBe(pageCount(without) + 1);
+  });
+
+  it('is skipped entirely when there are no sections', async () => {
+    const text = extractText(
+      await renderReportPdf({ ...SAMPLE, sections: [], include_toc: true }, { compress: false }),
+    );
+    expect(text).not.toContain('Table of Contents');
+    expect(text).toContain('Page 1 of 1');
+  });
+
+  it('numbers the last entry with a page that exists', async () => {
+    const input = withSections(8);
+    const pdf = await renderReportPdf(input, { compress: false });
+    const text = extractText(pdf);
+    const total = Number(/Page 1 of (\d+)/.exec(text)![1]);
+    // Every section starts on a real page: cover + toc = 2, body fills the rest.
+    expect(total).toBeGreaterThanOrEqual(3);
+    // The last TOC entry cannot point past the end of the document.
+    const entry = new RegExp(`8\\. Chapter 8[.\\s]*?(\\d+)`).exec(text);
+    expect(entry).not.toBeNull();
+    expect(Number(entry![1])).toBeLessThanOrEqual(total);
+  });
+});
+
+describe('footer', () => {
+  it('stamps a confidentiality marker by default', async () => {
+    const text = extractText(await renderReportPdf(SAMPLE, { compress: false }));
+    expect(text).toContain('Confidential');
+    expect(text).toContain('Page 1 of');
+  });
+
+  it('accepts a custom marker', async () => {
+    const text = extractText(
+      await renderReportPdf(
+        { ...SAMPLE, confidentiality: 'Privileged & Confidential' },
+        { compress: false },
+      ),
+    );
+    expect(text).toContain('Privileged & Confidential');
+  });
+
+  it('omits the marker when explicitly set to null', async () => {
+    const text = extractText(
+      await renderReportPdf({ ...SAMPLE, confidentiality: null }, { compress: false }),
+    );
+    expect(text).not.toContain('Confidential');
+    expect(text).toContain('Page 1 of');
   });
 });

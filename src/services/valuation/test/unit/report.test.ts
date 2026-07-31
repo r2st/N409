@@ -46,15 +46,76 @@ describe('sanitizeHtml', () => {
 });
 
 describe('report templates', () => {
-  it('registers the 409a.v53 and generic templates', () => {
-    expect(REPORT_TEMPLATES.has('409a.v53')).toBe(true);
+  it('registers the 409a.v54 and generic templates', () => {
+    expect(REPORT_TEMPLATES.has('409a.v54')).toBe(true);
     expect(REPORT_TEMPLATES.has('generic.v1')).toBe(true);
   });
 
-  it('selects 409a.v53 for 409a and generic for every other kind', () => {
-    expect(templateForKind('409a').version).toBe('409a.v53');
+  it('selects 409a.v54 for 409a and generic for every other kind', () => {
+    expect(templateForKind('409a').version).toBe('409a.v54');
     expect(templateForKind('gifts').version).toBe('generic.v1');
     expect(templateForKind('718').version).toBe('generic.v1');
+  });
+
+  it('keys the registry by each template\'s own version', () => {
+    for (const [version, template] of REPORT_TEMPLATES) {
+      expect(template.version).toBe(version);
+    }
+  });
+
+  it('gives every section a unique key and a heading', () => {
+    for (const template of REPORT_TEMPLATES.values()) {
+      const keys = template.sections.map((s) => s.key);
+      expect(new Set(keys).size, template.version).toBe(keys.length);
+      for (const section of template.sections) {
+        expect(section.heading.length, section.key).toBeGreaterThan(0);
+        expect(section.html.length, section.key).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('carries the sections an auditor reviewing a 409A expects to find', () => {
+    const content = instantiateTemplate(templateForKind('409a'), {
+      company_name: 'Acme',
+      kind: '409a',
+      valuation_ref: 'ref',
+      date: '2026-07-06',
+      currency: 'USD',
+    });
+    const byKey = new Map(content.sections.map((s) => [s.key, s]));
+    for (const key of [
+      'standard_of_value',
+      'sources_of_information',
+      'methodology',
+      'conclusion',
+      'limiting_conditions',
+      'safe_harbor',
+      'certification',
+    ]) {
+      expect(byKey.has(key), key).toBe(true);
+    }
+
+    // Rev. Rul. 59-60 fair market value and the going-concern premise.
+    expect(byKey.get('standard_of_value')!.html).toMatch(/59-60/);
+    expect(byKey.get('standard_of_value')!.html).toMatch(/going concern/i);
+
+    // The safe harbor rests on the independent-appraiser presumption.
+    expect(byKey.get('safe_harbor')!.html).toMatch(/1\.409A-1\(b\)\(5\)\(iv\)\(B\)\(1\)/);
+    expect(byKey.get('safe_harbor')!.html).toMatch(/12 months/);
+
+    // Certification must disclaim a contingent fee and any interest in the company.
+    expect(byKey.get('certification')!.html).toMatch(/contingent/i);
+    expect(byKey.get('certification')!.html).toContain('Acme');
+  });
+
+  it('orders the 409A skeleton so conclusions follow the analysis', () => {
+    const keys = templateForKind('409a').sections.map((s) => s.key);
+    const at = (key: string) => keys.indexOf(key);
+    expect(at('introduction')).toBe(0);
+    expect(at('sources_of_information')).toBeLessThan(at('financial_analysis'));
+    expect(at('methodology')).toBeLessThan(at('conclusion'));
+    expect(at('conclusion')).toBeLessThan(at('safe_harbor'));
+    expect(at('certification')).toBe(keys.length - 1);
   });
 
   it('instantiates with placeholders resolved', () => {
