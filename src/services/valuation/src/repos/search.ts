@@ -9,6 +9,11 @@ import type { ValuationRow } from './valuations.js';
  * User search is ops-only and lives beside it so the route returns one shape.
  */
 
+/** Escape LIKE/ILIKE wildcards so user input is matched literally. */
+export function escapeLike(s: string): string {
+  return s.replace(/[%_\\]/g, '\\$&');
+}
+
 export interface UserSearchHit {
   id: string;
   email: string;
@@ -35,9 +40,10 @@ export async function searchValuations(
   if (scope.kind === 'own') add('user_id = ?', scope.userId);
 
   const matches: string[] = [];
-  params.push(`%${q}%`);
+  const escaped = escapeLike(q);
+  params.push(`%${escaped}%`);
   matches.push(`company_name ILIKE $${params.length}`);
-  params.push(`%${q}%`);
+  params.push(`%${escaped}%`);
   matches.push(`service_name ILIKE $${params.length}`);
   if (/^\d+$/.test(q)) {
     params.push(q);
@@ -65,7 +71,7 @@ export async function searchUsers(pool: pg.Pool, q: string, limit = 10): Promise
         OR (coalesce(first_name, '') || ' ' || coalesce(last_name, '')) ILIKE $1
         ${isUlid(q.toUpperCase()) ? 'OR id = $3' : ''}
      ORDER BY created_at DESC LIMIT $2`,
-    isUlid(q.toUpperCase()) ? [`%${q}%`, limit, q.toUpperCase()] : [`%${q}%`, limit],
+    isUlid(q.toUpperCase()) ? [`%${escapeLike(q)}%`, limit, q.toUpperCase()] : [`%${escapeLike(q)}%`, limit],
   );
   return rows;
 }

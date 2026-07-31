@@ -29,6 +29,11 @@ describe('csvEscape', () => {
     expect(csvEscape('+1234')).toBe("'+1234");
     expect(csvEscape('@cmd')).toBe("'@cmd");
   });
+
+  it('guards against tab-prefixed formula injection (OWASP CSV)', () => {
+    expect(csvEscape('\t=SUM(A1)')).toBe("'\t=SUM(A1)");
+    expect(csvEscape('\t+cmd|...')).toBe("'\t+cmd|...");
+  });
 });
 
 describe('toCsv', () => {

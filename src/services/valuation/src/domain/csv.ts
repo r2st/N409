@@ -9,8 +9,8 @@ export function csvEscape(value: unknown): string {
   if (value instanceof Date) s = value.toISOString();
   else if (Array.isArray(value)) s = value.join(';');
   else s = String(value);
-  // Excel formula-injection guard for cells starting with = + - @
-  if (/^[=+\-@]/.test(s)) s = `'${s}`;
+  // Excel formula-injection guard for cells starting with = + - @ \t (OWASP CSV Injection)
+  if (/^[=+\-@\t]/.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

@@ -1,0 +1,10 @@
+f4d21c401aa788f9a1bba9fe6e60000d4557804b
+# N409 deployed revision
+# commit:    f4d21c401aa788f9a1bba9fe6e60000d4557804b
+# subject:   perf(web): asset caching, batched monitor fetch, real readiness, richer JSON-LD
+# previous:  d6ce632 (fix(audit): P2 remediation)
+# includes:  6c0698c fix(security): verify OpenRouter key, rate-limit public routes, handle crashes
+# deployed:  2026-07-29T23:41:03Z (UTC)
+# method:    git archive + scp + tar extract, npm run build on host
+# note:      package-lock.json intentionally NOT overwritten (host lock retains
+#            linux-specific optional deps); the two commits change no dependencies.
