@@ -212,12 +212,20 @@ export function registerAuthRoutes(
    * can only tighten it. Checked at the point of use rather than baked into
    * the zod schema so a settings change takes effect without a restart.
    */
-  const assertPasswordLongEnough = async (password: string) => {
+  const assertPasswordStrong = async (password: string) => {
     const min = (await deps.settings?.get('password_min_length')) ?? 10;
     if (password.length < min)
       throw problems.unprocessable(`Password must be at least ${min} characters`, {
         errors: [{ path: ['password'] }],
       });
+    // Basic complexity: require at least one letter and one digit so passwords
+    // like "1234567890" or "aaaaaaaaaa" are rejected. Full entropy scoring is
+    // overkill for a B2B SaaS, but this catches the low-hanging fruit.
+    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password))
+      throw problems.unprocessable(
+        'Password must contain at least one letter and one number',
+        { errors: [{ path: ['password'] }] },
+      );
   };
 
   app.post('/api/v1/auth/register', async (req, reply) => {
@@ -238,14 +246,19 @@ export function registerAuthRoutes(
       throw problems.tooManyRequests('Too many sign-up attempts — try again later');
     }
 
-    await assertPasswordLongEnough(password);
+    await assertPasswordStrong(password);
+
+    // Hash the password *before* the duplicate check so the response time is
+    // constant regardless of whether the email already exists (audit: account
+    // enumeration via timing side-channel).
+    const digest = await hashPassword(password);
 
     if (await findUserByEmail(deps.pool, email)) {
       throw problems.conflict('An account with this email already exists');
     }
     const user = await createUser(deps.pool, {
       email,
-      passwordDigest: await hashPassword(password),
+      passwordDigest: digest,
       firstName: first_name,
       lastName: last_name,
       roles: ['valuation_user'],
@@ -455,7 +468,7 @@ export function registerAuthRoutes(
       throw problems.tooManyRequests('Too many reset attempts — try again later');
     }
 
-    await assertPasswordLongEnough(parsed.data.password);
+    await assertPasswordStrong(parsed.data.password);
 
     const digest = await hashPassword(parsed.data.password);
     const ok = await resetPasswordWithToken(deps.pool, parsed.data.token, digest);
@@ -508,7 +521,7 @@ export function registerAuthRoutes(
     const parsed = ChangePasswordBody.safeParse(req.body);
     if (!parsed.success)
       throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
-    await assertPasswordLongEnough(parsed.data.new_password);
+    await assertPasswordStrong(parsed.data.new_password);
 
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();
