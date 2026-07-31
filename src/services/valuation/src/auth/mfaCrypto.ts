@@ -36,7 +36,17 @@ function isEncrypted(blob: Buffer): boolean {
 
 /** Encrypt a base32 TOTP secret for storage; returns base64 of the envelope. */
 export function encryptSecret(secretBase32: string, key: Buffer | null = mfaKey()): string {
-  if (!key) return secretBase32; // dev/test: store plaintext, no MAGIC prefix
+  if (!key) {
+    // In production, storing TOTP secrets in plaintext is a data-breach risk.
+    // Fail fast rather than silently degrading to unencrypted storage.
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MFA_ENCRYPTION_KEY (or DOCUMENTS_ENCRYPTION_KEY) must be set in production — ' +
+        'refusing to store TOTP secrets in plaintext.',
+      );
+    }
+    return secretBase32; // dev/test: store plaintext, no MAGIC prefix
+  }
   const iv = randomBytes(IV_LEN);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   const ct = Buffer.concat([cipher.update(secretBase32, 'utf8'), cipher.final()]);

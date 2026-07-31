@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   base32Decode,
   base32Encode,
@@ -110,10 +110,22 @@ describe('secret encryption', () => {
     expect(decryptSecret(enc, KEY)).toBe(secret);
   });
 
-  it('stores plaintext when no key is configured (dev/test)', () => {
+  it('stores plaintext when no key is configured in dev/test', () => {
     const secret = generateTotpSecret();
     expect(encryptSecret(secret, null)).toBe(secret);
     expect(decryptSecret(secret, null)).toBe(secret);
+  });
+
+  it('throws in production when no encryption key is configured', () => {
+    const orig = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      expect(() => encryptSecret(generateTotpSecret(), null)).toThrow(
+        /must be set in production/,
+      );
+    } finally {
+      process.env.NODE_ENV = orig;
+    }
   });
 
   it('fails to decrypt with the wrong key', () => {
