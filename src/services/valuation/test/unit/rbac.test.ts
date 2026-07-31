@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   canCreateValuation,
+  canEditWorkingData,
   canManageUsers,
+  canReadReport,
   canReadValuation,
+  isOps,
   patchableFields,
   valuationScope,
   type Principal,
@@ -89,5 +92,42 @@ describe('misc capabilities', () => {
     expect(canManageUsers(admin)).toBe(true);
     expect(canManageUsers(ops)).toBe(false);
     expect(canManageUsers(client)).toBe(false);
+  });
+
+  it('isOps matches ops-level roles only', () => {
+    expect(isOps(ops)).toBe(true);
+    expect(isOps(admin)).toBe(true);
+    expect(isOps(partner)).toBe(false);
+    expect(isOps(client)).toBe(false);
+    expect(isOps(ignored)).toBe(false);
+  });
+
+  it('canEditWorkingData is ops-only', () => {
+    expect(canEditWorkingData(ops)).toBe(true);
+    expect(canEditWorkingData(admin)).toBe(true);
+    expect(canEditWorkingData(partner)).toBe(false);
+    expect(canEditWorkingData(client)).toBe(false);
+  });
+});
+
+describe('canReadReport', () => {
+  const drafted = { ...ownValuation, state: 'drafted' };
+  const published = { ...ownValuation, state: 'published' };
+  const inProgress = { ...ownValuation, state: 'in_progress' };
+
+  it('ops can read the report in any state', () => {
+    expect(canReadReport(ops, inProgress)).toBe(true);
+    expect(canReadReport(ops, drafted)).toBe(true);
+  });
+
+  it('owner can read once drafted or published, not before', () => {
+    expect(canReadReport(client, drafted)).toBe(true);
+    expect(canReadReport(client, published)).toBe(true);
+    expect(canReadReport(client, inProgress)).toBe(false);
+  });
+
+  it('non-owner cannot read even in a visible state', () => {
+    const otherDrafted = { ...otherValuation, state: 'drafted' };
+    expect(canReadReport(client, otherDrafted)).toBe(false);
   });
 });
