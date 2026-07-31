@@ -17,6 +17,7 @@ import { listDocuments } from '../repos/documents.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
 import { MAX_DOCUMENT_BYTES, storeDocument } from './documents.js';
+import { checkUploadType } from '../documents/fileType.js';
 import type { EventActor } from '../events/record.js';
 
 /**
@@ -297,17 +298,25 @@ export function registerPartnerApiRoutes(
       if (!parsed.success)
         throw problems.unprocessable('Invalid upload', { errors: parsed.error.issues });
 
-      let buffer: Buffer;
-      try {
-        buffer = Buffer.from(parsed.data.content_base64, 'base64');
-      } catch {
+      // Validate base64 encoding — Buffer.from silently skips invalid chars
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(parsed.data.content_base64)) {
         throw problems.unprocessable('content_base64 is not valid base64');
       }
+      const buffer = Buffer.from(parsed.data.content_base64, 'base64');
       if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
       if (buffer.length > MAX_DOCUMENT_BYTES) {
         throw problems.unprocessable(
           `File exceeds the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`,
         );
+      }
+
+      // File type validation — same as the session upload route (audit B-1 P2)
+      const typeCheck = checkUploadType(parsed.data.filename, buffer);
+      if (!typeCheck.ok) {
+        throw problems.unprocessable(`Rejected upload: ${typeCheck.reason}`, {
+          filename: parsed.data.filename,
+          sniffed: typeCheck.sniffed,
+        });
       }
 
       const document = await storeDocument(
