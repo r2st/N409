@@ -49,6 +49,7 @@ import {
 } from '../repos/emailVerifications.js';
 import { acceptInvitation, findPendingInvitationByToken } from '../repos/invitations.js';
 import { getSamlConfig } from '../repos/ssoConfig.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { emailVerificationEmail, passwordResetEmail } from '../domain/emailWorkflows.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
@@ -311,6 +312,14 @@ export function registerAuthRoutes(
         };
       }
     }
+    await recordAdminEvent(deps.pool, {
+      type: 'user_login',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      payload: { method: 'password' },
+    });
     return { user: toPublicUser(user), token: await issueSession(reply, user) };
   });
 
@@ -353,6 +362,14 @@ export function registerAuthRoutes(
       await trustDevice(deps.pool, user.id, raw, expires);
       if (deps.cookie) setDeviceCookie(reply, raw, deps.cookie.secure);
     }
+    await recordAdminEvent(deps.pool, {
+      type: 'user_login',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      payload: { method: 'password', mfa: true },
+    });
     return { user: toPublicUser(user), token: await issueSession(reply, user) };
   });
 
@@ -408,6 +425,14 @@ export function registerAuthRoutes(
     if (!identity.emailVerified) throw problems.unauthorized('Google account email is not verified');
 
     const user = await upsertGoogleUser(deps.pool, identity);
+    await recordAdminEvent(deps.pool, {
+      type: 'user_login',
+      actor: { actorType: 'human', actorId: user.id },
+      subjectType: 'user',
+      subjectId: user.id,
+      subjectLabel: user.email,
+      payload: { method: 'google' },
+    });
     const token = await issueSession(reply, user);
     // Browsers land here from Google's redirect — hand the token to the SPA.
     // API callers (no text/html Accept) keep the JSON contract.
