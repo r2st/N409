@@ -51,6 +51,13 @@ export function encryptDocument(plain: Buffer, key: Buffer): Buffer {
 }
 
 export function decryptDocument(blob: Buffer, key: Buffer): Buffer {
+  const minLen = MAGIC.length + IV_LEN + TAG_LEN + 1; // at least 1 byte of ciphertext
+  if (blob.length < minLen) {
+    throw new Error(
+      'Encrypted document is truncated (' +
+        `${blob.length} bytes, need at least ${minLen})`,
+    );
+  }
   const iv = blob.subarray(MAGIC.length, MAGIC.length + IV_LEN);
   const tag = blob.subarray(MAGIC.length + IV_LEN, MAGIC.length + IV_LEN + TAG_LEN);
   const ct = blob.subarray(MAGIC.length + IV_LEN + TAG_LEN);

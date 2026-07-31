@@ -66,4 +66,11 @@ describe('documentEncryption', () => {
     const blob = encryptDocument(Buffer.from('x'), KEY);
     expect(() => decodeFromStorage(blob, null)).toThrow(/not set/);
   });
+
+  it('rejects a truncated encrypted blob with a clear message', () => {
+    const blob = encryptDocument(Buffer.from('valid content'), KEY);
+    // Truncate to just the magic bytes + partial IV
+    const truncated = blob.subarray(0, 15);
+    expect(() => decryptDocument(truncated, KEY)).toThrow(/truncated/i);
+  });
 });
