@@ -85,6 +85,11 @@ const Env = z.object({
   GUSTO_CLIENT_SECRET: z.string().optional(),
   DEEL_CLIENT_ID: z.string().optional(),
   DEEL_CLIENT_SECRET: z.string().optional(),
+  // General per-user / per-org request throttling on the authenticated API
+  // surface (improvement 5 — beyond the existing per-endpoint auth/partner
+  // limiters). 0 disables. Only enforced in production — see buildApp.
+  SESSION_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(0).default(300),
+  SESSION_RATE_LIMIT_ORG_PER_MIN: z.coerce.number().int().min(0).default(1500),
 });
 
 export type Config = z.infer<typeof Env>;

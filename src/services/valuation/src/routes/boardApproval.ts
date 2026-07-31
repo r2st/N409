@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -114,11 +114,13 @@ export function registerBoardApprovalRoutes(
     deps.limiter ?? new FixedWindowRateLimiter(BOARD_PUBLIC_RATE_LIMIT, BOARD_PUBLIC_RATE_WINDOW_MS);
 
   /** Per-IP throttle for the token-only public routes. */
-  const throttlePublic = (req: FastifyRequest, reply: FastifyReply): void => {
+  const throttlePublic = (req: FastifyRequest): void => {
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
-      void reply.header('retry-after', Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)));
-      throw problems.tooManyRequests('Too many requests — please try again later');
+      throw problems.tooManyRequests(
+        'Too many requests — please try again later',
+        Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
+      );
     }
   };
 
@@ -292,8 +294,8 @@ export function registerBoardApprovalRoutes(
   // Referer headers and browser history — the same reason /auditor/portal is a
   // POST. A signing token is a bearer credential; a query string is not a
   // private channel for one.
-  app.post('/api/v1/board/resolution', async (req, reply) => {
-    throttlePublic(req, reply);
+  app.post('/api/v1/board/resolution', async (req) => {
+    throttlePublic(req);
     const parsed = ResolutionBody.safeParse(req.body);
     if (!parsed.success) throw problems.notFound();
     const member = await findSignoffByTokenHash(deps.pool, hashToken(parsed.data.token));
@@ -313,8 +315,8 @@ export function registerBoardApprovalRoutes(
   });
 
   // Public: a board member records their decision via their token.
-  app.post('/api/v1/board/sign', async (req, reply) => {
-    throttlePublic(req, reply);
+  app.post('/api/v1/board/sign', async (req) => {
+    throttlePublic(req);
     const parsed = SignBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid sign-off', { errors: parsed.error.issues });
     const member = await findSignoffByTokenHash(deps.pool, hashToken(parsed.data.token));

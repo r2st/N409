@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { scrubError, scrubSensitive } from '../src/problem.js';
+import Fastify from 'fastify';
+import { ApiProblem, problems, registerProblemHandler, scrubError, scrubSensitive } from '../src/problem.js';
 
 describe('scrubSensitive', () => {
   it('masks credentials in a connection string but keeps scheme/host', () => {
@@ -46,5 +47,60 @@ describe('scrubError', () => {
 
   it('handles non-Error throwables', () => {
     expect(scrubError('boom sk-ABCDEF0123456789abcdef')).toEqual({ message: 'boom [REDACTED-KEY]' });
+  });
+});
+
+describe('problems.tooManyRequests', () => {
+  it('omits retry_after_seconds when no retry hint is given', () => {
+    const err = problems.tooManyRequests('slow down');
+    expect(err.retryAfterSeconds).toBeUndefined();
+    expect(err.toBody()).not.toHaveProperty('retry_after_seconds');
+  });
+
+  it('carries a retry hint through to the problem body', () => {
+    const err = problems.tooManyRequests('slow down', 42);
+    expect(err.retryAfterSeconds).toBe(42);
+    expect(err.toBody()).toMatchObject({ retry_after_seconds: 42 });
+  });
+});
+
+describe('registerProblemHandler', () => {
+  /** Every rate-limited route throws tooManyRequests(detail, seconds) instead
+   *  of setting the header itself — this is the one place that plumbing runs,
+   *  so every 429 across the platform reports retry-after consistently. */
+  it('sets a retry-after header from ApiProblem.retryAfterSeconds', async () => {
+    const app = Fastify();
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw problems.tooManyRequests('too fast', 17);
+    });
+    const res = await app.inject({ method: 'GET', url: '/boom' });
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['retry-after']).toBe('17');
+    expect(res.json().retry_after_seconds).toBe(17);
+    await app.close();
+  });
+
+  it('does not set retry-after when the problem carries no retry hint', async () => {
+    const app = Fastify();
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw problems.notFound('gone');
+    });
+    const res = await app.inject({ method: 'GET', url: '/boom' });
+    expect(res.statusCode).toBe(404);
+    expect(res.headers['retry-after']).toBeUndefined();
+    await app.close();
+  });
+
+  it('renders a generic ApiProblem as application/problem+json', async () => {
+    const app = Fastify();
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw new ApiProblem({ status: 418, title: "I'm a teapot" });
+    });
+    const res = await app.inject({ method: 'GET', url: '/boom' });
+    expect(res.statusCode).toBe(418);
+    expect(res.headers['content-type']).toContain('application/problem+json');
   });
 });

@@ -125,9 +125,9 @@ export function registerPartnerApiRoutes(
     void reply.header('x-ratelimit-remaining', result.remaining);
     void reply.header('x-ratelimit-reset', Math.ceil(result.resetAt / 1000));
     if (!result.allowed) {
-      void reply.header('retry-after', Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000)));
       throw problems.tooManyRequests(
         `Rate limit of ${result.limit} requests per ${PARTNER_API_RATE_WINDOW_MS / 1000}s exceeded for this API key`,
+        Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000)),
       );
     }
   };

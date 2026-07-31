@@ -48,8 +48,10 @@ export function registerContactRoutes(
   app.post('/api/v1/contact', async (req, reply) => {
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
-      reply.header('retry-after', Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)));
-      throw problems.tooManyRequests('Too many messages — please try again later');
+      throw problems.tooManyRequests(
+        'Too many messages — please try again later',
+        Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
+      );
     }
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success)

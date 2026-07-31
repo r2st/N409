@@ -83,7 +83,7 @@ import { registerProgressRoutes } from './routes/progress.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
-import type { FixedWindowRateLimiter } from './plugins/rateLimit.js';
+import { FixedWindowRateLimiter } from './plugins/rateLimit.js';
 import { probeReady } from './clients/internal.js';
 
 export interface AppDeps {
@@ -99,6 +99,10 @@ export interface AppDeps {
   auditorPortalLimiter?: FixedWindowRateLimiter;
   /** injectable for tests — per-IP limiter for /scim/v2/* */
   scimLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests/prod — per-user throttle across the whole authenticated API */
+  sessionLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests/prod — per-partner throttle alongside sessionLimiter */
+  sessionOrgLimiter?: FixedWindowRateLimiter;
   /** injectable for tests — accounting provider HTTP */
   accountingFetch?: FetchFn;
   /** injectable for tests — cap-table sync provider HTTP */
@@ -216,7 +220,22 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   void app.register(cookie);
   // Secure cookies over HTTPS in production; plain http in dev/test.
   const sessionCookie = { secure: config.NODE_ENV === 'production', ttlSeconds: config.JWT_TTL_SECONDS };
-  registerAuth(app, { pool, jwt, settings });
+  // Per-user/-org throttling only defaults on in production: integration
+  // suites replay hundreds of sequential requests against one seeded user
+  // within seconds, which a per-minute window would misfire on, the same
+  // reasoning that keeps sessionCookie.secure off outside production. A test
+  // that wants to exercise the throttle passes its own limiter via deps.
+  const sessionLimiter =
+    deps.sessionLimiter ??
+    (config.NODE_ENV === 'production' && config.SESSION_RATE_LIMIT_PER_MIN > 0
+      ? new FixedWindowRateLimiter(config.SESSION_RATE_LIMIT_PER_MIN, 60_000)
+      : undefined);
+  const sessionOrgLimiter =
+    deps.sessionOrgLimiter ??
+    (config.NODE_ENV === 'production' && config.SESSION_RATE_LIMIT_ORG_PER_MIN > 0
+      ? new FixedWindowRateLimiter(config.SESSION_RATE_LIMIT_ORG_PER_MIN, 60_000)
+      : undefined);
+  registerAuth(app, { pool, jwt, settings, sessionLimiter, sessionOrgLimiter });
   registerAuthRoutes(app, {
     pool,
     jwt,

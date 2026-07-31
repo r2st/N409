@@ -48,6 +48,10 @@ export class ApiProblem extends Error {
   readonly title: string;
   readonly detail?: string;
   readonly extensions?: Record<string, unknown>;
+  /** Seconds until the caller should retry — set on 429s so the error handler
+   *  can emit a `retry-after` header without every rate-limited route
+   *  repeating that plumbing. */
+  readonly retryAfterSeconds?: number;
 
   constructor(args: {
     status: number;
@@ -55,6 +59,7 @@ export class ApiProblem extends Error {
     type?: string;
     detail?: string;
     extensions?: Record<string, unknown>;
+    retryAfterSeconds?: number;
   }) {
     super(args.detail ?? args.title);
     this.status = args.status;
@@ -62,6 +67,7 @@ export class ApiProblem extends Error {
     this.type = args.type ?? 'about:blank';
     this.detail = args.detail;
     this.extensions = args.extensions;
+    this.retryAfterSeconds = args.retryAfterSeconds;
   }
 
   toBody(instance?: string): Record<string, unknown> {
@@ -71,6 +77,7 @@ export class ApiProblem extends Error {
       status: this.status,
       ...(this.detail ? { detail: this.detail } : {}),
       ...(instance ? { instance } : {}),
+      ...(this.retryAfterSeconds !== undefined ? { retry_after_seconds: this.retryAfterSeconds } : {}),
       ...this.extensions,
     };
   }
@@ -101,12 +108,13 @@ export const problems = {
       detail,
       extensions,
     }),
-  tooManyRequests: (detail = 'Too many requests — try again later') =>
+  tooManyRequests: (detail = 'Too many requests — try again later', retryAfterSeconds?: number) =>
     new ApiProblem({
       status: 429,
       title: 'Too Many Requests',
       type: 'urn:n409:problem:rate-limited',
       detail,
+      retryAfterSeconds,
     }),
   serviceUnavailable: (detail = 'Service temporarily unavailable') =>
     new ApiProblem({
@@ -124,6 +132,9 @@ export const problems = {
 export function registerProblemHandler(app: FastifyInstance): void {
   app.setErrorHandler((err: unknown, req: FastifyRequest, reply: FastifyReply) => {
     if (err instanceof ApiProblem) {
+      if (err.retryAfterSeconds !== undefined) {
+        void reply.header('retry-after', String(err.retryAfterSeconds));
+      }
       return reply.status(err.status).type('application/problem+json').send(err.toBody(req.url));
     }
     const fastifyErr = err as { statusCode?: number; message?: string };

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isUlid, problems, TtlCache } from '@n409/shared';
 import { canCreateValuation, canReadValuation, isOps, valuationScope } from '../auth/rbac.js';
 import { stateGroupOf, STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import {
@@ -16,19 +16,39 @@ import { VALUATION_KINDS } from '../domain/valuation.js';
 
 const DateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 
+// Both endpoints below are hit on every worklist/dashboard page load — often
+// several times a minute per ops user — and re-scan/aggregate the whole
+// valuations table for their scope on every call. Neither result needs to be
+// exact to the second (a state flip lagging behind by a few seconds on a tab
+// counter is harmless), so a short TTL cache trades that staleness for
+// cutting the aggregate query rate roughly 1:1 with page views instead of
+// 1:1 with requests. No manual invalidation: writes happen from dozens of
+// route files (workflow transitions, bulk actions, clone, …) and re-deriving
+// "which caches does this write affect" everywhere isn't worth it when the
+// TTL alone already bounds staleness. See @n409/shared's TtlCache for the
+// same trade-off already made for help articles.
+const COUNTS_CACHE_TTL_MS = 15_000;
+const DASHBOARD_CACHE_TTL_MS = 20_000;
+
 /**
  * M3 operations surface: tab counts (feature 15), CSV export (16), dashboard
  * analytics (17), clone / roll-forward (18).
  */
 export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+  const countsCache = new TtlCache<Record<StateGroup | 'all', number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
+  const dashboardCache = new TtlCache<Awaited<ReturnType<typeof dashboardStats>>>({
+    ttlMs: DASHBOARD_CACHE_TTL_MS,
+  });
+
   app.get('/api/v1/valuations/counts', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ValuationFilterQuery.safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
-    const counts = await countValuationsByGroup(
-      deps.pool,
-      valuationScope(principal),
-      toRepoFilters(parsed.data),
+    const scope = valuationScope(principal);
+    const filters = toRepoFilters(parsed.data);
+    const key = JSON.stringify({ scope, filters });
+    const counts = await countsCache.getOrLoad(key, () =>
+      countValuationsByGroup(deps.pool, scope, filters),
     );
     return { counts };
   });
@@ -47,10 +67,12 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
       .safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
 
-    const rows = await dashboardStats(deps.pool, valuationScope(principal), {
-      createdFrom: parsed.data.created_from,
-      createdTo: parsed.data.created_to,
-    });
+    const scope = valuationScope(principal);
+    const dashboardFilters = { createdFrom: parsed.data.created_from, createdTo: parsed.data.created_to };
+    const key = JSON.stringify({ scope, dashboardFilters });
+    const rows = await dashboardCache.getOrLoad(key, () =>
+      dashboardStats(deps.pool, scope, dashboardFilters),
+    );
 
     const emptyGroups = () =>
       Object.fromEntries(STATE_GROUP_KEYS.map((g) => [g, 0])) as Record<StateGroup, number>;

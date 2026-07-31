@@ -99,11 +99,13 @@ export function registerAuditorPortalRoutes(
   // ── Public portal: token-authenticated, read-only, single valuation ──────
   // POST so the token stays out of URLs/server logs (the SPA reads it from the
   // link fragment and posts it here).
-  app.post('/api/v1/auditor/portal', async (req, reply) => {
+  app.post('/api/v1/auditor/portal', async (req) => {
     const { allowed, resetAt } = limiter.check(req.ip);
     if (!allowed) {
-      void reply.header('retry-after', Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)));
-      throw problems.tooManyRequests('Too many requests — please try again later');
+      throw problems.tooManyRequests(
+        'Too many requests — please try again later',
+        Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
+      );
     }
     const parsed = RedeemBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
