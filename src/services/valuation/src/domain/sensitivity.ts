@@ -68,6 +68,7 @@ export function blackScholesCall(
 
 /** Per-common-share FMV in cents: OPM call value spread over common, less DLOM. */
 export function opmFmvPerShareCents(inputs: OpmInputs): number {
+  if (inputs.commonShares <= 0) return 0;
   const call = blackScholesCall(
     inputs.equityValueCents,
     inputs.strikeCents,
@@ -76,7 +77,8 @@ export function opmFmvPerShareCents(inputs: OpmInputs): number {
     inputs.riskFreeRate,
   );
   const perShare = call / inputs.commonShares;
-  return perShare * (1 - inputs.dlom);
+  const dlomClamped = Math.max(0, Math.min(inputs.dlom, 0.99));
+  return perShare * (1 - dlomClamped);
 }
 
 export interface SensitivityCell {
