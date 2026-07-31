@@ -26,6 +26,7 @@ import { findPartnerById } from '../repos/adminUsers.js';
 import { fetchPartnerLogo } from '../clients/partnerLogo.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { contentDisposition } from './documents.js';
 import type { Principal } from '../auth/rbac.js';
 
 const SectionSchema = z
@@ -288,10 +289,10 @@ export function registerReportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
         source: 'report.pdf',
       }));
 
-    const filename = `${valuation.company_name.replace(/[^\w.-]+/g, '_')}_${valuation.kind}_v${version.version}.pdf`;
+    const filename = `${valuation.company_name}_${valuation.kind}_v${version.version}.pdf`;
     return reply
       .type('application/pdf')
-      .header('content-disposition', `inline; filename="${filename}"`)
+      .header('content-disposition', contentDisposition(filename, 'inline'))
       .send(pdf);
   });
 }
