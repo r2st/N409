@@ -44,7 +44,10 @@ export function readBuildInfo(
   const fromEnv = env.BUILD_SHA?.trim();
   if (fromEnv && SHA_RE.test(fromEnv)) return { sha: fromEnv.toLowerCase(), source: 'env' };
 
-  const candidates = [env.BUILD_SHA_FILE?.trim(), opts.defaultFile ?? defaultBuildShaPath()];
+  const candidates = [
+    env.BUILD_SHA_FILE?.trim(),
+    'defaultFile' in opts ? opts.defaultFile : defaultBuildShaPath(),
+  ];
   for (const file of candidates) {
     if (!file) continue;
     try {
