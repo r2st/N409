@@ -9,6 +9,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from typing import Literal
 from pydantic import BaseModel, Field
 
 from .engine.approaches import EngineInputError
@@ -169,7 +170,7 @@ class RatingSpreadRequest(BaseModel):
 
 
 class MarketFeedRequest(BaseModel):
-    kind: str  # "prices" | "financials" | "multiples"
+    kind: Literal["prices", "financials", "multiples"]
     ticker: str | None = None
     tickers: list | None = None
     start: str | None = None
@@ -438,4 +439,4 @@ def market_feed(request: MarketFeedRequest) -> dict:
         return _market_feed.get_company_multiples(
             request.tickers, request.metrics, request.date, fallback=request.fallback
         )
-    raise HTTPException(status_code=422, detail="kind must be 'prices', 'financials' or 'multiples'")
+    raise AssertionError(f"unreachable: kind={request.kind!r}")  # Pydantic Literal covers this
