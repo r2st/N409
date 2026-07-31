@@ -34,6 +34,7 @@ export async function signSession(claims: SessionClaims, cfg: JwtConfig): Promis
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)
     .setIssuer(cfg.issuer)
+    .setAudience('n409-valuation')
     .setIssuedAt()
     .setExpirationTime(`${cfg.ttlSeconds}s`)
     .sign(key(cfg.secret));
@@ -43,6 +44,11 @@ export async function verifySession(token: string, cfg: JwtConfig): Promise<Sess
   const { payload } = await jwtVerify(token, key(cfg.secret), { issuer: cfg.issuer });
   if (typeof payload.sub !== 'string') throw new Error('missing sub');
   if (payload.purpose !== 'session' && payload.purpose !== undefined) throw new Error('wrong token purpose');
+  // Reject tokens minted for a different audience; accept legacy tokens
+  // (aud === undefined) so the deploy doesn't sign everyone out.
+  if (payload.aud !== undefined && payload.aud !== 'n409-valuation') {
+    throw new Error('wrong audience');
+  }
   return {
     sub: payload.sub,
     roles: (payload.roles as RoleKey[]) ?? [],

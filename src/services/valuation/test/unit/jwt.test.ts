@@ -115,4 +115,16 @@ describe('session JWT purpose claim (token confusion prevention)', () => {
     const result = await verifySession(legacy, cfg);
     expect(result.sub).toBe('01ABC');
   });
+
+  it('rejects a token minted for a different audience', async () => {
+    const wrongAud = await new SignJWT({ purpose: 'session', roles: [], partner_id: null, session_epoch: 0 })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('01ABC')
+      .setIssuer(cfg.issuer)
+      .setAudience('some-other-service')
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(new TextEncoder().encode(cfg.secret));
+    await expect(verifySession(wrongAud, cfg)).rejects.toThrow('wrong audience');
+  });
 });
