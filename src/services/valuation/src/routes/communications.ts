@@ -24,6 +24,7 @@ import {
   updateCommunicationTemplate,
 } from '../repos/communications.js';
 import { runDueAutoEmails } from '../hooks/autoEmails.js';
+import { retryFailedEmails } from '../hooks/emailRetry.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -287,6 +288,19 @@ export function registerCommunicationRoutes(
   app.post('/api/v1/admin/auto-emails/run', { preHandler: app.authenticate }, async (req) => {
     requireOps(req);
     const result = await runDueAutoEmails({
+      pool: deps.pool,
+      transport: deps.transport,
+      smsTransport: deps.smsTransport,
+      log: req.log,
+    });
+    return result;
+  });
+
+  // On-demand retry of 'failed' outbox rows — same code path the retry
+  // sweep runs (index.ts).
+  app.post('/api/v1/admin/outbox/retry', { preHandler: app.authenticate }, async (req) => {
+    requireOps(req);
+    const result = await retryFailedEmails({
       pool: deps.pool,
       transport: deps.transport,
       smsTransport: deps.smsTransport,

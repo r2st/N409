@@ -67,7 +67,7 @@ export async function markEmail(
 
 export async function listOutbox(
   pool: pg.Pool,
-  filters: { status?: EmailStatus; valuationId?: string; limit?: number } = {},
+  filters: { status?: EmailStatus; valuationId?: string; maxAttempts?: number; limit?: number } = {},
 ): Promise<EmailOutboxRow[]> {
   const where: string[] = [];
   const params: unknown[] = [];
@@ -78,6 +78,10 @@ export async function listOutbox(
   if (filters.valuationId) {
     params.push(filters.valuationId);
     where.push(`valuation_id = $${params.length}`);
+  }
+  if (filters.maxAttempts !== undefined) {
+    params.push(filters.maxAttempts);
+    where.push(`attempts < $${params.length}`);
   }
   params.push(Math.min(filters.limit ?? 100, 500));
   const { rows } = await pool.query<EmailOutboxRow>(

@@ -48,6 +48,12 @@ const Env = z.object({
   // Drip campaign scan interval in minutes; 0 disables the interval (the
   // POST /admin/auto-emails/run endpoint still works).
   AUTO_EMAIL_SCAN_MINUTES: z.coerce.number().int().min(0).default(15),
+  // Outbox rows left 'failed' by a transient transport error (SMTP hiccup,
+  // connection refused) otherwise sit forever — nothing else revisits them.
+  // 0 disables the sweep. Rows that have failed EMAIL_RETRY_MAX_ATTEMPTS
+  // times are left alone (treated as a real, non-transient failure).
+  EMAIL_RETRY_SCAN_MINUTES: z.coerce.number().int().min(0).default(30),
+  EMAIL_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(5),
   // Stripe payment processing (remaining-gaps §3 #1). Routes 503 when unset.
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),

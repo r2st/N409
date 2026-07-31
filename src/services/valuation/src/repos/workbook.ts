@@ -43,23 +43,46 @@ export async function patchWorkbookCells(
   actor: EventActor,
 ): Promise<void> {
   if (cells.length === 0) return;
+  // Dedupe by cell ref, keeping the last occurrence — matches the old
+  // sequential loop's last-write-wins behavior for a request that repeats a
+  // ref (also required: a batched INSERT..ON CONFLICT errors if the same
+  // conflict key appears twice in one statement).
+  const lastByRef = new Map<string, WorkbookPatchCell>();
+  for (const cell of cells) lastByRef.set(`${cell.sheet}|${cell.row_key}|${cell.column_key}`, cell);
+  const deduped = [...lastByRef.values()];
+  const clears = deduped.filter((c) => c.value === null);
+  const writes = deduped.filter((c) => c.value !== null);
   await withTransaction(pool, async (client) => {
-    for (const cell of cells) {
-      if (cell.value === null) {
-        await client.query(
-          `DELETE FROM workbook_cells
-           WHERE valuation_id = $1 AND sheet = $2 AND row_key = $3 AND column_key = $4`,
-          [valuationId, cell.sheet, cell.row_key, cell.column_key],
-        );
-      } else {
-        await client.query(
-          `INSERT INTO workbook_cells (valuation_id, sheet, row_key, column_key, value, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (valuation_id, sheet, row_key, column_key)
-           DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-          [valuationId, cell.sheet, cell.row_key, cell.column_key, cell.value, actor.actorId ?? null],
-        );
-      }
+    // A route caps a single request at 500 cells (a bulk paste), which used
+    // to mean up to 500 round trips here — one DELETE/INSERT per cell. Both
+    // arms are batched into a single statement over unnest() arrays instead.
+    if (clears.length > 0) {
+      await client.query(
+        `DELETE FROM workbook_cells
+         WHERE valuation_id = $1
+           AND (sheet, row_key, column_key) IN (
+             SELECT * FROM unnest($2::text[], $3::text[], $4::text[])
+           )`,
+        [valuationId, clears.map((c) => c.sheet), clears.map((c) => c.row_key), clears.map((c) => c.column_key)],
+      );
+    }
+    if (writes.length > 0) {
+      await client.query(
+        `INSERT INTO workbook_cells (valuation_id, sheet, row_key, column_key, value, updated_by)
+         SELECT $1, sheet, row_key, column_key, value, $6
+         FROM unnest($2::text[], $3::text[], $4::text[], $5::numeric[])
+           AS t(sheet, row_key, column_key, value)
+         ON CONFLICT (valuation_id, sheet, row_key, column_key)
+         DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+        [
+          valuationId,
+          writes.map((c) => c.sheet),
+          writes.map((c) => c.row_key),
+          writes.map((c) => c.column_key),
+          writes.map((c) => c.value),
+          actor.actorId ?? null,
+        ],
+      );
     }
     await recordEvent(client, {
       valuationId,

@@ -214,6 +214,85 @@ describe.skipIf(!dbUp)('M2 — output & delivery (overwrites, workbook, reports)
       expect(res.statusCode).toBe(422);
     });
 
+    it('applies a large batch of writes and clears in one request', async () => {
+      // Exercises the batched (unnest-based) INSERT/DELETE path in
+      // patchWorkbookCells, not just a handful of cells at a time.
+      const writeCells = ['fy_minus_2', 'fy_minus_1', 'fy_current'].map((col) => ({
+        sheet: 'income_statement',
+        row_key: 'operating_expenses',
+        column_key: col,
+        value: 111,
+      }));
+      const res = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${valuationId}/workbook`,
+        headers: authHeader(ops.token),
+        payload: { cells: writeCells },
+      });
+      expect(res.statusCode).toBe(200);
+      const rows = await ctx.pool.query(
+        `SELECT column_key, value FROM workbook_cells
+         WHERE valuation_id = $1 AND sheet = 'income_statement' AND row_key = 'operating_expenses'
+         ORDER BY column_key`,
+        [valuationId],
+      );
+      expect(rows.rows.map((r: { value: string }) => Number(r.value))).toEqual([111, 111, 111]);
+
+      const cleared = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${valuationId}/workbook`,
+        headers: authHeader(ops.token),
+        payload: { cells: writeCells.map((c) => ({ ...c, value: null })) },
+      });
+      expect(cleared.statusCode).toBe(200);
+      const afterClear = await ctx.pool.query(
+        `SELECT count(*)::int AS n FROM workbook_cells
+         WHERE valuation_id = $1 AND sheet = 'income_statement' AND row_key = 'operating_expenses'`,
+        [valuationId],
+      );
+      expect(afterClear.rows[0].n).toBe(0);
+    });
+
+    it('last write wins when the same cell ref repeats within one request', async () => {
+      const res = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${valuationId}/workbook`,
+        headers: authHeader(ops.token),
+        payload: {
+          cells: [
+            { sheet: 'income_statement', row_key: 'taxes', column_key: 'fy_current', value: 10 },
+            { sheet: 'income_statement', row_key: 'taxes', column_key: 'fy_current', value: 20 },
+          ],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const row = await ctx.pool.query(
+        `SELECT value FROM workbook_cells
+         WHERE valuation_id = $1 AND sheet = 'income_statement' AND row_key = 'taxes' AND column_key = 'fy_current'`,
+        [valuationId],
+      );
+      expect(Number(row.rows[0].value)).toBe(20);
+
+      const clearAfterWrite = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${valuationId}/workbook`,
+        headers: authHeader(ops.token),
+        payload: {
+          cells: [
+            { sheet: 'income_statement', row_key: 'taxes', column_key: 'fy_current', value: 30 },
+            { sheet: 'income_statement', row_key: 'taxes', column_key: 'fy_current', value: null },
+          ],
+        },
+      });
+      expect(clearAfterWrite.statusCode).toBe(200);
+      const afterClear = await ctx.pool.query(
+        `SELECT count(*)::int AS n FROM workbook_cells
+         WHERE valuation_id = $1 AND sheet = 'income_statement' AND row_key = 'taxes' AND column_key = 'fy_current'`,
+        [valuationId],
+      );
+      expect(afterClear.rows[0].n).toBe(0);
+    });
+
     it('records a workbook_updated audit event', async () => {
       const events = await opsGet(`/api/v1/valuations/${valuationId}/events`);
       const types = (events.json().events as Array<{ type: string }>).map((e) => e.type);

@@ -14,6 +14,7 @@ const { createPool } = await import('./db/pool.js');
 const { migrate } = await import('./db/migrate.js');
 const { buildApp, buildEmailTransports } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
+const { retryFailedEmails } = await import('./hooks/emailRetry.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
 const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
 const { runRetentionSweep } = await import('./routes/retention.js');
@@ -79,16 +80,17 @@ await migrate(pool, { log: (msg) => app.log.info({ migration: msg }, 'migration 
 await app.listen({ port: config.PORT, host: listenHost() });
 app.log.info({ port: config.PORT }, 'valuation service listening');
 
+const emailTransports = buildEmailTransports(config, app.log);
+
 // Drip campaign scan (§15.6) — overlapping runs are prevented by the flag;
 // a failed scan logs and waits for the next tick.
 let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
-  const transports = buildEmailTransports(config, app.log);
   let scanning = false;
   autoEmailTimer = setInterval(() => {
     if (scanning) return;
     scanning = true;
-    runDueAutoEmails({ pool, ...transports, log: app.log })
+    runDueAutoEmails({ pool, ...emailTransports, log: app.log })
       .then((r) => {
         if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
       })
@@ -97,6 +99,25 @@ if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
         scanning = false;
       });
   }, config.AUTO_EMAIL_SCAN_MINUTES * 60_000);
+}
+
+// Failed-outbox retry sweep: transient SMTP failures otherwise sit as
+// 'failed' forever with nothing else revisiting them (see hooks/emailRetry.ts).
+let emailRetryTimer: NodeJS.Timeout | undefined;
+if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
+  let retrying = false;
+  emailRetryTimer = setInterval(() => {
+    if (retrying) return;
+    retrying = true;
+    retryFailedEmails({ pool, ...emailTransports, log: app.log, maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS })
+      .then((r) => {
+        if (r.attempted > 0) app.log.info(r, 'email retry sweep');
+      })
+      .catch((err) => app.log.error({ err }, 'email retry sweep failed'))
+      .finally(() => {
+        retrying = false;
+      });
+  }, config.EMAIL_RETRY_SCAN_MINUTES * 60_000);
 }
 
 // Auto-pipeline reaper (B-3 §auto-pipeline): sweep runs orphaned by a restart or
@@ -186,6 +207,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     void (async () => {
       app.log.info({ signal }, 'shutting down');
       if (autoEmailTimer) clearInterval(autoEmailTimer);
+      if (emailRetryTimer) clearInterval(emailRetryTimer);
       if (reaperTimer) clearInterval(reaperTimer);
       if (capTableSyncTimer) clearInterval(capTableSyncTimer);
       if (hrisSyncTimer) clearInterval(hrisSyncTimer);
