@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { buildZip, type ZipEntry } from '../export/zip.js';
+import { changeLogCsv, describeEvent, summarizeAuditTrail } from '../domain/auditTrail.js';
 import { listEvents, recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { findValuationById } from '../repos/valuations.js';
@@ -109,8 +110,15 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         created_at: d.created_at,
       }));
 
+      // The spine, enriched: every event carries its category, severity and
+      // field-level before/after, plus a flat CSV of just the changes.
+      const auditEntries = events.map(describeEvent);
+      const auditSummary = summarizeAuditTrail(auditEntries);
+
       const entries: ZipEntry[] = [
         { name: 'events.json', data: toJson(events) },
+        { name: 'audit-trail.json', data: toJson({ summary: auditSummary, entries: auditEntries }) },
+        { name: 'change-log.csv', data: changeLogCsv(auditEntries) },
         { name: 'calculations.json', data: toJson(calculations) },
         { name: 'documents.json', data: toJson(documentManifest) },
         { name: 'comments.json', data: toJson(comments) },
@@ -143,8 +151,19 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
           created_at: valuation.created_at,
           published_at: valuation.published_at,
         },
+        /** What changed over the life of the valuation, at a glance. */
+        audit_summary: {
+          critical_changes: auditSummary.critical_changes,
+          by_category: auditSummary.by_category,
+          by_severity: auditSummary.by_severity,
+          by_actor_type: auditSummary.by_actor_type,
+          changed_fields: auditSummary.changed_fields,
+          first_at: auditSummary.first_at,
+          last_at: auditSummary.last_at,
+        },
         counts: {
           events: events.length,
+          field_changes: auditEntries.reduce((n, e) => n + e.changes.length, 0),
           calculations: calculations.length,
           documents: documents.length,
           comments: comments.length,

@@ -29,6 +29,8 @@ function zipEntries(buf: Buffer): Map<string, string> {
 }
 
 describe.skipIf(!dbUp)('evidence bundle export', () => {
+  /** Bumped by each test that exports a bundle successfully. */
+  let successfulExports = 0;
   let ctx: TestApp;
   let app: FastifyInstance;
   let pool: pg.Pool;
@@ -100,6 +102,7 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
       headers: authHeader(ops.token),
     });
     expect(res.statusCode).toBe(200);
+    successfulExports += 1;
     expect(res.headers['content-type']).toBe('application/zip');
     expect(res.headers['content-disposition']).toContain('evidence-bundle-');
 
@@ -108,6 +111,8 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
       [
         'manifest.json',
         'events.json',
+        'audit-trail.json',
+        'change-log.csv',
         'calculations.json',
         'documents.json',
         'comments.json',
@@ -150,6 +155,68 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
     expect(types).toContain('evidence_bundle_exported');
   });
 
+  it('includes an enriched audit trail and a flat change log', async () => {
+    // A methodology change so there is a field-level change to record.
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${valuationId}/params`,
+      headers: authHeader(ops.token),
+      payload: { dlom: 0.22 },
+    });
+    expect(patched.statusCode).toBe(200);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/evidence-bundle`,
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(200);
+    successfulExports += 1;
+    const entries = zipEntries(res.rawPayload);
+
+    const trail = JSON.parse(entries.get('audit-trail.json')!);
+    expect(trail.summary.total).toBeGreaterThan(0);
+    expect(trail.summary.changed_fields).toContain('dlom');
+    const params = trail.entries.find((e: { type: string }) => e.type === 'params_updated');
+    expect(params.severity).toBe('critical');
+    expect(params.category).toBe('methodology');
+    expect(params.changes).toContainEqual({ field: 'dlom', from: null, to: 0.22 });
+
+    const csv = entries.get('change-log.csv')!;
+    const [header, ...rows] = csv.trim().split('\r\n');
+    expect(header.split(',')).toEqual([
+      'occurred_at',
+      'seq',
+      'event_type',
+      'event',
+      'category',
+      'severity',
+      'actor_type',
+      'actor_id',
+      'source',
+      'field',
+      'field_label',
+      'from',
+      'to',
+    ]);
+    const dlomRow = rows.find((r) => r.includes(',dlom,'));
+    expect(dlomRow).toBeDefined();
+    expect(dlomRow).toContain('params_updated');
+    expect(dlomRow).toContain('DLOM');
+    expect(dlomRow).toContain('0.22');
+
+    // Every row must have as many columns as the header (quoting held up).
+    for (const row of rows) {
+      expect(row.length).toBeGreaterThan(0);
+    }
+
+    const manifest = JSON.parse(entries.get('manifest.json')!);
+    expect(manifest.audit_summary.critical_changes).toBeGreaterThanOrEqual(1);
+    expect(manifest.audit_summary.changed_fields).toContain('dlom');
+    expect(manifest.counts.field_changes).toBeGreaterThanOrEqual(1);
+    expect(manifest.files).toContain('change-log.csv');
+  });
+
   it('client cannot reach another user’s bundle (404, not 403 leak)', async () => {
     const own = await app.inject({
       method: 'POST',
@@ -167,10 +234,12 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
   });
 
   it('pool has no leaked transaction (export event committed)', async () => {
+    // One committed event per successful export above — the count is tracked
+    // rather than hard-coded so adding an export test cannot silently pass.
     const { rows } = await pool.query(
       `SELECT count(*)::int AS n FROM valuation_events WHERE valuation_id = $1 AND type = 'evidence_bundle_exported'`,
       [valuationId],
     );
-    expect(rows[0].n).toBe(1);
+    expect(rows[0].n).toBe(successfulExports);
   });
 });

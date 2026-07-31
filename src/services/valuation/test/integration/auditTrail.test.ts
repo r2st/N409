@@ -196,6 +196,46 @@ describe.skipIf(!dbUp)('valuation audit trail', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  describe('CSV change log', () => {
+    it('serves a flat change log an auditor can open in Excel', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/audit-trail.csv`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.headers['content-disposition']).toContain('attachment');
+
+      const [header, ...rows] = res.body.trim().split('\r\n');
+      expect(header).toContain('field_label');
+      const dlom = rows.find((r) => r.includes(',dlom,'));
+      expect(dlom).toBeDefined();
+      expect(dlom).toContain('DLOM');
+    });
+
+    it('excludes internal changes from a client download', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/audit-trail.csv`,
+        headers: authHeader(client.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).not.toContain(',dlom,');
+      // The client-visible state change is still there.
+      expect(res.body).toContain('state_changed');
+    });
+
+    it('404s for a principal who cannot read the valuation', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/audit-trail.csv`,
+        headers: authHeader(outsider.token),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
   describe('field history', () => {
     it('returns every recorded change to one field', async () => {
       const res = await ctx.app.inject({

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, getToken } from '../../lib/api';
+import { downloadPdf } from '../../lib/m2';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { ErrorNote, Spinner } from '../../components/ui';
@@ -217,6 +218,19 @@ export function AuditTrailTab() {
             ))}
           </select>
         </label>
+        <button
+          type="button"
+          onClick={() =>
+            void downloadPdf(
+              `/valuations/${valuation.id}/audit-trail.csv`,
+              `change-log-${valuation.company_name.replace(/[^\w.-]+/g, '_')}.csv`,
+              getToken(),
+            ).catch(() => {})
+          }
+          className="ml-auto cursor-pointer rounded-md border border-paper-300 px-3 py-1.5 text-sm font-semibold text-ink-700 hover:bg-paper-100"
+        >
+          Download change log (CSV)
+        </button>
       </div>
 
       {data.entries.length === 0 ? (

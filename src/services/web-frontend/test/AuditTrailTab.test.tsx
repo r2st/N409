@@ -80,7 +80,7 @@ const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /** Every URL fetch has been called with, in order. */
-const requestedUrls = (spy: ReturnType<typeof vi.spyOn>) =>
+const requestedUrls = (spy: { mock: { calls: unknown[][] } }) =>
   spy.mock.calls.map((call) => String(call[0]));
 
 describe('AuditTrailTab', () => {
@@ -215,5 +215,14 @@ describe('AuditTrailTab', () => {
     );
     renderTab();
     expect(await screen.findByText(/Not Found/)).toBeInTheDocument();
+  });
+
+  it('offers a CSV download of the change log', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(RESPONSE));
+    renderTab();
+    await screen.findByTestId('audit-entries');
+    expect(
+      screen.getByRole('button', { name: /Download change log/ }),
+    ).toBeInTheDocument();
   });
 });

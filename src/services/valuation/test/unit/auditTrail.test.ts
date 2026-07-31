@@ -3,6 +3,7 @@ import {
   EVENT_CATALOG,
   EVENT_CATEGORIES,
   EVENT_SEVERITIES,
+  changeLogCsv,
   describeEvent,
   describeEventType,
   diffRecords,
@@ -417,5 +418,83 @@ describe('fieldHistory', () => {
 
   it('carries the originating event type', () => {
     expect(fieldHistory(TRAIL, 'dlom')[0]!.type).toBe('params_updated');
+  });
+});
+
+describe('changeLogCsv', () => {
+  const header =
+    'occurred_at,seq,event_type,event,category,severity,actor_type,actor_id,source,field,field_label,from,to';
+
+  it('emits a header even with no entries', () => {
+    expect(changeLogCsv([]).trim()).toBe(header);
+  });
+
+  it('writes one row per changed field, not per event', () => {
+    const multi = describeEvent(
+      event({
+        type: 'params_updated',
+        payload: {
+          changes: { dlom: { from: '0.20', to: '0.22' }, dloc: { from: null, to: '0.05' } },
+        },
+      }),
+    );
+    const rows = changeLogCsv([multi]).trim().split('\r\n');
+    expect(rows).toHaveLength(3); // header + two changes
+    expect(rows[1]).toContain('dlom');
+    expect(rows[2]).toContain('dloc');
+  });
+
+  it('skips events that changed nothing', () => {
+    const noChange = describeEvent(event({ type: 'ai_job_completed', payload: { pipeline: 'qa' } }));
+    expect(changeLogCsv([noChange]).trim()).toBe(header);
+  });
+
+  it('carries the catalog metadata onto every row', () => {
+    const row = changeLogCsv(TRAIL).trim().split('\r\n')[1]!;
+    expect(row).toContain('params_updated');
+    expect(row).toContain('methodology');
+    expect(row).toContain('critical');
+  });
+
+  it('includes both the raw field and its human label', () => {
+    const row = changeLogCsv(TRAIL)
+      .trim()
+      .split('\r\n')
+      .find((r) => r.includes(',dlom,'))!;
+    expect(row).toContain(',dlom,');
+    expect(row).toContain('DLOM');
+  });
+
+  it('renders an absent previous value as a dash rather than blank', () => {
+    const first = describeEvent(
+      event({ type: 'params_updated', payload: { changes: { dlom: { from: null, to: '0.22' } } } }),
+    );
+    expect(changeLogCsv([first])).toContain('—');
+  });
+
+  it('quotes a value containing a comma so columns do not shift', () => {
+    const comma = describeEvent(
+      event({
+        type: 'valuation_updated',
+        payload: { changes: { company_name: { from: 'Acme', to: 'Acme, Inc.' } } },
+      }),
+    );
+    expect(changeLogCsv([comma])).toContain('"Acme, Inc."');
+  });
+
+  it('neutralises a value that would be read as a spreadsheet formula', () => {
+    const formula = describeEvent(
+      event({
+        type: 'valuation_updated',
+        payload: { changes: { company_name: { from: 'Acme', to: '=cmd|calc' } } },
+      }),
+    );
+    const csv = changeLogCsv([formula]);
+    expect(csv).not.toMatch(/,=cmd/);
+    expect(csv).toContain("'=cmd");
+  });
+
+  it('emits CRLF line endings per RFC 4180', () => {
+    expect(changeLogCsv(TRAIL)).toContain('\r\n');
   });
 });

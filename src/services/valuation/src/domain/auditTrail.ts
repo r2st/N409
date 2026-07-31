@@ -1,3 +1,5 @@
+import { toCsv } from '../export/csv.js';
+
 /**
  * Audit-trail enrichment over the raw `valuation_events` spine.
  *
@@ -398,4 +400,48 @@ export function fieldHistory(
     }
   }
   return history.sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+/**
+ * Flat change log: one row per field that moved, across the whole spine.
+ * events.json is the authoritative record but it is nested JSON; an auditor
+ * scanning for "when did the DLOM change and who signed off?" wants a table
+ * they can open in Excel and sort. Same data, readable shape.
+ */
+export function changeLogCsv(entries: readonly AuditEntry[]): string {
+  const rows = entries.flatMap((entry) =>
+    entry.changes.map((change) => [
+      entry.occurred_at,
+      entry.seq,
+      entry.type,
+      entry.label,
+      entry.category,
+      entry.severity,
+      entry.actor_type,
+      entry.actor_id ?? '',
+      entry.source ?? '',
+      change.field,
+      humanizeField(change.field),
+      formatAuditValue(change.from),
+      formatAuditValue(change.to),
+    ]),
+  );
+  return toCsv(
+    [
+      'occurred_at',
+      'seq',
+      'event_type',
+      'event',
+      'category',
+      'severity',
+      'actor_type',
+      'actor_id',
+      'source',
+      'field',
+      'field_label',
+      'from',
+      'to',
+    ],
+    rows,
+  );
 }
