@@ -102,7 +102,11 @@ async function postJsonOnce<T>(
     }
     throw new InternalServiceError(service, res.status, detail);
   }
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new InternalServiceError(service, res.status, 'invalid JSON in response body');
+  }
 }
 
 /** Converts an InternalServiceError to the client-facing ApiProblem. */
