@@ -7,6 +7,12 @@ import {
   HALTED_STATES,
   PROGRESS_STAGES,
   REQUIRED_DOCUMENT_KINDS,
+  TYPICAL_STAGE_DAYS,
+  daysBetween,
+  estimatedDeliveryAt,
+  nextClientAction,
+  percentComplete,
+  stageDurations,
   stageIndexOf,
 } from '../domain/progress.js';
 import type { ValuationState } from '../domain/valuation.js';
@@ -54,6 +60,8 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       const idx = to ? stageIndexOf(to as ValuationState) : -1;
       if (idx >= 0 && !enteredAt.has(idx)) enteredAt.set(idx, event.occurred_at);
     }
+    const now = new Date();
+    const durations = stageDurations(enteredAt, now);
     const stages = PROGRESS_STAGES.map((stage, idx) => ({
       key: stage.key,
       label: stage.label,
@@ -66,6 +74,8 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
             ? 'current'
             : 'upcoming',
       entered_at: enteredAt.get(idx)?.toISOString() ?? null,
+      duration_days: durations[idx] ?? null,
+      typical_days: TYPICAL_STAGE_DAYS[stage.key],
     }));
 
     // ── Document checklist ──────────────────────────────────────────────────
@@ -104,16 +114,35 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       .reverse();
 
     const reportVisible = canReadReport(principal, ref);
+    const reportAvailable = reportVisible && report !== null && report.current_version > 0;
+    const missingDocuments = checklist.filter((item) => !item.uploaded).length;
+    const lastActivityAt = events.length > 0 ? events[events.length - 1]!.occurred_at : null;
+
     return {
       state: valuation.state,
       halted,
       waiting_on_client: valuation.waiting_on_client,
+      percent_complete: percentComplete({
+        stageIndex: currentIndex,
+        documentsUploaded: REQUIRED_DOCUMENT_KINDS.length - missingDocuments,
+        documentsRequired: REQUIRED_DOCUMENT_KINDS.length,
+      }),
+      next_action: nextClientAction({
+        halted,
+        stageIndex: currentIndex,
+        waitingOnClient: valuation.waiting_on_client,
+        missingDocuments,
+        reportAvailable,
+      }),
+      estimated_delivery_at:
+        estimatedDeliveryAt({ stageIndex: currentIndex, halted, now })?.toISOString() ?? null,
+      days_in_progress: daysBetween(valuation.created_at, now),
+      last_activity_at: lastActivityAt?.toISOString() ?? null,
       stages,
       checklist,
       documents_uploaded: documents.length,
-      report: {
-        available: reportVisible && report !== null && report.current_version > 0,
-      },
+      documents_missing: missingDocuments,
+      report: { available: reportAvailable },
       explanation: { available: reportVisible && explainJob !== null },
       timeline,
     };

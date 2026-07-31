@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   PROGRESS_STAGES,
   HALTED_STATES,
+  STAGE_START_PERCENT,
+  TYPICAL_STAGE_DAYS,
   stageIndexOf,
   REQUIRED_DOCUMENT_KINDS,
   CLIENT_TIMELINE_EVENTS,
+  daysBetween,
+  estimatedDeliveryAt,
+  nextClientAction,
+  percentComplete,
+  stageDurations,
 } from '../../src/domain/progress.js';
 import { VALUATION_STATES } from '../../src/domain/valuation.js';
 
@@ -111,5 +118,253 @@ describe('CLIENT_TIMELINE_EVENTS', () => {
   it('maps event types to human-readable labels', () => {
     expect(CLIENT_TIMELINE_EVENTS['valuation_created']).toBe('Valuation created');
     expect(CLIENT_TIMELINE_EVENTS['document_uploaded']).toBe('Document uploaded');
+  });
+});
+
+const REQUIRED = REQUIRED_DOCUMENT_KINDS.length;
+
+describe('STAGE_START_PERCENT', () => {
+  it('covers every stage', () => {
+    for (const stage of PROGRESS_STAGES) {
+      expect(STAGE_START_PERCENT[stage.key]).toBeTypeOf('number');
+    }
+  });
+
+  it('increases monotonically and ends at 100', () => {
+    const values = PROGRESS_STAGES.map((s) => STAGE_START_PERCENT[s.key]);
+    for (let i = 1; i < values.length; i += 1) {
+      expect(values[i]!).toBeGreaterThan(values[i - 1]!);
+    }
+    expect(values.at(-1)).toBe(100);
+  });
+});
+
+describe('TYPICAL_STAGE_DAYS', () => {
+  it('covers every stage with a non-negative estimate', () => {
+    for (const stage of PROGRESS_STAGES) {
+      expect(TYPICAL_STAGE_DAYS[stage.key]).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('costs nothing once delivered', () => {
+    expect(TYPICAL_STAGE_DAYS.delivered).toBe(0);
+  });
+});
+
+describe('percentComplete', () => {
+  it('is 0 for halted valuations', () => {
+    expect(
+      percentComplete({ stageIndex: -1, documentsUploaded: 3, documentsRequired: REQUIRED }),
+    ).toBe(0);
+  });
+
+  it('reports the stage entry percentage outside document collection', () => {
+    expect(
+      percentComplete({ stageIndex: 0, documentsUploaded: 0, documentsRequired: REQUIRED }),
+    ).toBe(STAGE_START_PERCENT.setup);
+    expect(
+      percentComplete({ stageIndex: 2, documentsUploaded: 0, documentsRequired: REQUIRED }),
+    ).toBe(STAGE_START_PERCENT.analysis);
+    expect(
+      percentComplete({ stageIndex: 4, documentsUploaded: 0, documentsRequired: REQUIRED }),
+    ).toBe(100);
+  });
+
+  it('fills the documents stage from the checklist', () => {
+    const empty = percentComplete({
+      stageIndex: 1,
+      documentsUploaded: 0,
+      documentsRequired: REQUIRED,
+    });
+    const half = percentComplete({
+      stageIndex: 1,
+      documentsUploaded: Math.floor(REQUIRED / 2),
+      documentsRequired: REQUIRED,
+    });
+    const full = percentComplete({
+      stageIndex: 1,
+      documentsUploaded: REQUIRED,
+      documentsRequired: REQUIRED,
+    });
+    expect(empty).toBe(STAGE_START_PERCENT.documents);
+    expect(half).toBeGreaterThan(empty);
+    expect(full).toBe(STAGE_START_PERCENT.analysis);
+  });
+
+  it('never exceeds the next stage when extra documents are uploaded', () => {
+    expect(
+      percentComplete({ stageIndex: 1, documentsUploaded: 99, documentsRequired: REQUIRED }),
+    ).toBe(STAGE_START_PERCENT.analysis);
+  });
+
+  it('does not divide by zero when nothing is required', () => {
+    expect(percentComplete({ stageIndex: 1, documentsUploaded: 0, documentsRequired: 0 })).toBe(
+      STAGE_START_PERCENT.documents,
+    );
+  });
+
+  it('clamps a stage index past the last stage', () => {
+    expect(
+      percentComplete({ stageIndex: 99, documentsUploaded: 0, documentsRequired: REQUIRED }),
+    ).toBe(100);
+  });
+
+  it('always returns 0–100', () => {
+    for (let stageIndex = -1; stageIndex < PROGRESS_STAGES.length; stageIndex += 1) {
+      for (let uploaded = 0; uploaded <= REQUIRED; uploaded += 1) {
+        const value = percentComplete({ stageIndex, documentsUploaded: uploaded, documentsRequired: REQUIRED });
+        expect(value).toBeGreaterThanOrEqual(0);
+        expect(value).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+});
+
+describe('nextClientAction', () => {
+  const base = {
+    halted: false,
+    stageIndex: 1,
+    waitingOnClient: false,
+    missingDocuments: 0,
+    reportAvailable: false,
+  };
+
+  it('sends halted engagements to support, overriding everything else', () => {
+    const action = nextClientAction({
+      ...base,
+      halted: true,
+      missingDocuments: 3,
+      reportAvailable: true,
+      stageIndex: 4,
+    });
+    expect(action.key).toBe('contact_support');
+    expect(action.client_action_required).toBe(true);
+  });
+
+  it('offers the report once delivered', () => {
+    const action = nextClientAction({ ...base, stageIndex: 4, reportAvailable: true });
+    expect(action.key).toBe('download_report');
+    expect(action.client_action_required).toBe(false);
+    expect(action.tab).toBe('report');
+  });
+
+  it('does not offer a report that is not available yet', () => {
+    expect(nextClientAction({ ...base, stageIndex: 4, reportAvailable: false }).key).not.toBe(
+      'download_report',
+    );
+  });
+
+  it('asks for a draft review in the draft stage', () => {
+    const action = nextClientAction({ ...base, stageIndex: 3, missingDocuments: 2 });
+    expect(action.key).toBe('review_draft');
+  });
+
+  it('asks for missing documents, pluralised', () => {
+    expect(nextClientAction({ ...base, missingDocuments: 1 }).label).toContain('1 remaining document');
+    expect(nextClientAction({ ...base, missingDocuments: 3 }).label).toContain(
+      '3 remaining documents',
+    );
+  });
+
+  it('prefers a complete checklist over a pending question', () => {
+    const action = nextClientAction({ ...base, missingDocuments: 2, waitingOnClient: true });
+    expect(action.key).toBe('upload_documents');
+  });
+
+  it('falls back to responding when nothing is missing but we are waiting', () => {
+    expect(nextClientAction({ ...base, waitingOnClient: true }).key).toBe('respond_to_request');
+  });
+
+  it('says nothing is needed when the ball is with us', () => {
+    const action = nextClientAction({ ...base, stageIndex: 2 });
+    expect(action.key).toBe('awaiting_us');
+    expect(action.client_action_required).toBe(false);
+    expect(action.tab).toBeNull();
+  });
+
+  it('always returns a non-empty label and detail', () => {
+    for (const stageIndex of [-1, 0, 1, 2, 3, 4]) {
+      for (const halted of [true, false]) {
+        const action = nextClientAction({ ...base, stageIndex, halted });
+        expect(action.label.length).toBeGreaterThan(0);
+        expect(action.detail.length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+describe('daysBetween', () => {
+  it('counts whole days', () => {
+    expect(daysBetween(new Date('2026-01-01T00:00:00Z'), new Date('2026-01-04T12:00:00Z'))).toBe(3);
+  });
+
+  it('floors at zero for reversed inputs', () => {
+    expect(daysBetween(new Date('2026-01-04T00:00:00Z'), new Date('2026-01-01T00:00:00Z'))).toBe(0);
+  });
+});
+
+describe('estimatedDeliveryAt', () => {
+  const now = new Date('2026-01-01T00:00:00Z');
+
+  it('is null when halted', () => {
+    expect(estimatedDeliveryAt({ stageIndex: 1, halted: true, now })).toBeNull();
+  });
+
+  it('is null once delivered', () => {
+    expect(estimatedDeliveryAt({ stageIndex: 4, halted: false, now })).toBeNull();
+  });
+
+  it('is null for an unknown stage', () => {
+    expect(estimatedDeliveryAt({ stageIndex: -1, halted: false, now })).toBeNull();
+  });
+
+  it('sums the remaining stages', () => {
+    const expected = TYPICAL_STAGE_DAYS.analysis + TYPICAL_STAGE_DAYS.draft;
+    const eta = estimatedDeliveryAt({ stageIndex: 2, halted: false, now })!;
+    expect(eta.getTime() - now.getTime()).toBe(expected * 86_400_000);
+  });
+
+  it('gets nearer as the valuation advances', () => {
+    const early = estimatedDeliveryAt({ stageIndex: 0, halted: false, now })!;
+    const late = estimatedDeliveryAt({ stageIndex: 3, halted: false, now })!;
+    expect(late.getTime()).toBeLessThan(early.getTime());
+  });
+});
+
+describe('stageDurations', () => {
+  const now = new Date('2026-01-11T00:00:00Z');
+
+  it('returns null for stages never entered', () => {
+    const durations = stageDurations(new Map(), now);
+    expect(durations).toEqual([null, null, null, null, null]);
+  });
+
+  it('measures a finished stage against the next entry', () => {
+    const entered = new Map([
+      [0, new Date('2026-01-01T00:00:00Z')],
+      [1, new Date('2026-01-04T00:00:00Z')],
+    ]);
+    const durations = stageDurations(entered, now);
+    expect(durations[0]).toBe(3);
+  });
+
+  it('measures the current stage against now', () => {
+    const entered = new Map([[1, new Date('2026-01-04T00:00:00Z')]]);
+    expect(stageDurations(entered, now)[1]).toBe(7);
+  });
+
+  it('skips over stages that were never entered', () => {
+    const entered = new Map([
+      [0, new Date('2026-01-01T00:00:00Z')],
+      [3, new Date('2026-01-06T00:00:00Z')],
+    ]);
+    const durations = stageDurations(entered, now);
+    expect(durations[0]).toBe(5);
+    expect(durations[1]).toBeNull();
+    expect(durations[3]).toBe(5);
+  });
+
+  it('returns one entry per stage', () => {
+    expect(stageDurations(new Map(), now)).toHaveLength(PROGRESS_STAGES.length);
   });
 });

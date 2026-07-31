@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { isUlid, newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { diffRecords } from '../domain/auditTrail.js';
 import {
   EVENT_TYPES,
   type ValuationKind,
@@ -547,7 +548,8 @@ export async function patchValuation(
   fields: Record<string, unknown>,
   actor: EventActor,
 ): Promise<ValuationRow> {
-  const entries = Object.entries(fields).filter(([k, v]) => current[k] !== v);
+  const changes = diffRecords(current, fields, Object.keys(fields));
+  const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
   if (entries.length === 0) return current;
 
   return withTransaction(pool, async (client) => {
@@ -570,7 +572,6 @@ export async function patchValuation(
       params,
     );
 
-    const changes = Object.fromEntries(entries.map(([k, v]) => [k, { from: current[k] ?? null, to: v }]));
     await recordEvent(client, {
       valuationId: current.id,
       type: EVENT_TYPES.updated,

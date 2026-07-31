@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiError, getToken } from '../../lib/api';
 import { downloadPdf } from '../../lib/m2';
-import { formatDateTime } from '../../lib/format';
+import { formatDate, formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { ErrorNote, Spinner } from '../../components/ui';
 
@@ -11,6 +12,8 @@ interface ProgressStage {
   description: string;
   status: 'done' | 'current' | 'upcoming';
   entered_at: string | null;
+  duration_days: number | null;
+  typical_days: number;
 }
 
 interface ChecklistItem {
@@ -27,16 +30,86 @@ interface TimelineEntry {
   occurred_at: string;
 }
 
+interface NextAction {
+  key: string;
+  label: string;
+  detail: string;
+  tab: string | null;
+  client_action_required: boolean;
+}
+
 interface ProgressResponse {
   state: string;
   halted: boolean;
   waiting_on_client: boolean;
+  percent_complete: number;
+  next_action: NextAction;
+  estimated_delivery_at: string | null;
+  days_in_progress: number;
+  last_activity_at: string | null;
   stages: ProgressStage[];
   checklist: ChecklistItem[];
   documents_uploaded: number;
+  documents_missing: number;
   report: { available: boolean };
   explanation: { available: boolean };
   timeline: TimelineEntry[];
+}
+
+/** Headline bar: one number for "how far along am I?". */
+function CompletionBar({ percent, halted }: { percent: number; halted: boolean }) {
+  return (
+    <div data-testid="progress-bar">
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <span className="overline text-ink-400">Overall progress</span>
+        <span className="tnum text-sm font-semibold text-ink-800">{percent}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuenow={percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Overall progress"
+        className="h-2 w-full overflow-hidden rounded-full bg-paper-200"
+      >
+        <div
+          className={`h-full rounded-full transition-[width] duration-500 ${
+            halted ? 'bg-ink-300' : 'bg-bond-600'
+          }`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** The one thing the client should do next, with a link to the right tab. */
+function NextActionCard({ action, base }: { action: NextAction; base: string }) {
+  const attention = action.client_action_required;
+  return (
+    <div
+      data-testid="next-action"
+      className={`rounded-lg border p-5 ${
+        attention ? 'border-amber-200 bg-amber-50' : 'border-paper-300 bg-surface'
+      }`}
+    >
+      <p className="overline mb-1 text-ink-400">Next step</p>
+      <p className={`text-sm font-semibold ${attention ? 'text-amber-900' : 'text-ink-900'}`}>
+        {action.label}
+      </p>
+      <p className={`mt-1 text-sm ${attention ? 'text-amber-800' : 'text-ink-500'}`}>
+        {action.detail}
+      </p>
+      {action.tab && (
+        <Link
+          to={`${base}/${action.tab}`}
+          className="mt-3 inline-block text-sm font-semibold text-bond-700 underline underline-offset-2 hover:text-bond-800"
+        >
+          Go to {action.tab}
+        </Link>
+      )}
+    </div>
+  );
 }
 
 function StageStepper({ stages }: { stages: ProgressStage[] }) {
@@ -72,6 +145,16 @@ function StageStepper({ stages }: { stages: ProgressStage[] }) {
           {stage.entered_at && (
             <p className="tnum mt-2 text-[11px] text-ink-400">{formatDateTime(stage.entered_at)}</p>
           )}
+          {stage.duration_days !== null && stage.status !== 'upcoming' && (
+            <p className="tnum text-[11px] text-ink-400">
+              {stage.duration_days} day{stage.duration_days === 1 ? '' : 's'}
+              {stage.status === 'current' && stage.duration_days > stage.typical_days && (
+                <span className="ml-1 font-semibold text-amber-700">
+                  · longer than usual ({stage.typical_days}d)
+                </span>
+              )}
+            </p>
+          )}
         </li>
       ))}
     </ol>
@@ -102,6 +185,7 @@ export function ProgressTab() {
   if (!progress) return <Spinner />;
 
   const missing = progress.checklist.filter((c) => !c.uploaded);
+  const base = `/valuations/${valuation.id}`;
 
   return (
     <div className="space-y-8">
@@ -111,11 +195,33 @@ export function ProgressTab() {
           unexpected.
         </div>
       )}
-      {progress.waiting_on_client && !progress.halted && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          We're waiting on you — check the document checklist below for anything outstanding.
+
+      <div className="grid gap-6 lg:grid-cols-[2fr_1fr] lg:items-start">
+        <div className="space-y-5">
+          <CompletionBar percent={progress.percent_complete} halted={progress.halted} />
+          <dl className="grid grid-cols-3 gap-4" data-testid="progress-stats">
+            <div>
+              <dt className="overline text-ink-400">Days in progress</dt>
+              <dd className="tnum text-lg font-semibold text-ink-900">
+                {progress.days_in_progress}
+              </dd>
+            </div>
+            <div>
+              <dt className="overline text-ink-400">Estimated delivery</dt>
+              <dd className="tnum text-lg font-semibold text-ink-900">
+                {progress.estimated_delivery_at ? formatDate(progress.estimated_delivery_at) : '—'}
+              </dd>
+            </div>
+            <div>
+              <dt className="overline text-ink-400">Last activity</dt>
+              <dd className="tnum text-lg font-semibold text-ink-900">
+                {progress.last_activity_at ? formatDate(progress.last_activity_at) : '—'}
+              </dd>
+            </div>
+          </dl>
         </div>
-      )}
+        <NextActionCard action={progress.next_action} base={base} />
+      </div>
 
       <StageStepper stages={progress.stages} />
 

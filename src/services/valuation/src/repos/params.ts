@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { withTransaction } from '../db/pool.js';
+import { diffRecords } from '../domain/auditTrail.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
@@ -106,9 +107,8 @@ export async function patchParams(
   fields: Record<string, unknown>,
   actor: EventActor,
 ): Promise<ValuationParamsRow> {
-  const entries = Object.entries(fields).filter(
-    ([k, v]) => (PARAM_COLUMNS as readonly string[]).includes(k) && current[k] !== v,
-  );
+  const changes = diffRecords(current, fields, PARAM_COLUMNS);
+  const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
   if (entries.length === 0) return current;
 
   return withTransaction(pool, async (client) => {
@@ -123,7 +123,6 @@ export async function patchParams(
       `UPDATE valuation_params SET ${sets.join(', ')} WHERE valuation_id = $${params.length} RETURNING *`,
       params,
     );
-    const changes = Object.fromEntries(entries.map(([k, v]) => [k, { from: current[k] ?? null, to: v }]));
     await recordEvent(client, {
       valuationId: current.valuation_id,
       type: PIPELINE_EVENT_TYPES.paramsUpdated,

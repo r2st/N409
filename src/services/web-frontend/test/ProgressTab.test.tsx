@@ -17,18 +17,30 @@ const PROGRESS = {
   state: 'user_finished',
   halted: false,
   waiting_on_client: true,
+  percent_complete: 35,
+  next_action: {
+    key: 'upload_documents',
+    label: 'Upload 1 remaining document',
+    detail: 'We cannot finish the analysis until the checklist is complete.',
+    tab: 'documents',
+    client_action_required: true,
+  },
+  estimated_delivery_at: '2026-06-12T00:00:00Z',
+  days_in_progress: 9,
+  last_activity_at: '2026-06-02T10:00:00Z',
   stages: [
-    { key: 'setup', label: 'Getting started', description: 'd1', status: 'done', entered_at: '2026-06-01T00:00:00Z' },
-    { key: 'documents', label: 'Document collection', description: 'd2', status: 'current', entered_at: '2026-06-02T00:00:00Z' },
-    { key: 'analysis', label: 'Analysis & review', description: 'd3', status: 'upcoming', entered_at: null },
-    { key: 'draft', label: 'Draft report', description: 'd4', status: 'upcoming', entered_at: null },
-    { key: 'delivered', label: 'Final delivery', description: 'd5', status: 'upcoming', entered_at: null },
+    { key: 'setup', label: 'Getting started', description: 'd1', status: 'done', entered_at: '2026-06-01T00:00:00Z', duration_days: 1, typical_days: 1 },
+    { key: 'documents', label: 'Document collection', description: 'd2', status: 'current', entered_at: '2026-06-02T00:00:00Z', duration_days: 8, typical_days: 5 },
+    { key: 'analysis', label: 'Analysis & review', description: 'd3', status: 'upcoming', entered_at: null, duration_days: null, typical_days: 3 },
+    { key: 'draft', label: 'Draft report', description: 'd4', status: 'upcoming', entered_at: null, duration_days: null, typical_days: 2 },
+    { key: 'delivered', label: 'Final delivery', description: 'd5', status: 'upcoming', entered_at: null, duration_days: null, typical_days: 0 },
   ],
   checklist: [
     { kind: 'cap_table', label: 'Capitalization table', uploaded: true, count: 1 },
     { kind: 'income_statement', label: 'Income statement / P&L', uploaded: false, count: 0 },
   ],
   documents_uploaded: 1,
+  documents_missing: 1,
   report: { available: true },
   explanation: { available: false },
   timeline: [
@@ -68,7 +80,6 @@ describe('ProgressTab (client portal §5.6)', () => {
     const current = screen.getByText('Document collection').closest('li');
     expect(current).toHaveAttribute('aria-current', 'step');
 
-    expect(screen.getByText(/waiting on you/i)).toBeInTheDocument();
     expect(screen.getByText('Capitalization table')).toBeInTheDocument();
     expect(screen.getByText(/1 item still needed/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Download your report' })).toBeInTheDocument();
@@ -92,7 +103,6 @@ describe('ProgressTab (client portal §5.6)', () => {
 
     expect(await screen.findByText(/not progressing/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Download your report' })).not.toBeInTheDocument();
-    expect(screen.queryByText(/waiting on you/i)).not.toBeInTheDocument();
   });
 
   it('surfaces API errors', async () => {
@@ -101,5 +111,72 @@ describe('ProgressTab (client portal §5.6)', () => {
     );
     renderTab();
     expect(await screen.findByText(/Not Found/)).toBeInTheDocument();
+  });
+  it('shows the completion bar, headline stats and the next action', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(PROGRESS));
+    renderTab();
+
+    const bar = await screen.findByRole('progressbar');
+    expect(bar).toHaveAttribute('aria-valuenow', '35');
+    expect(screen.getByTestId('progress-bar')).toHaveTextContent('35%');
+
+    const stats = screen.getByTestId('progress-stats');
+    expect(stats).toHaveTextContent('Days in progress');
+    expect(stats).toHaveTextContent('9');
+
+    const next = screen.getByTestId('next-action');
+    expect(next).toHaveTextContent('Upload 1 remaining document');
+    expect(screen.getByRole('link', { name: /Go to documents/ })).toHaveAttribute(
+      'href',
+      `/valuations/${valuation.id}/documents`,
+    );
+  });
+
+  it('flags a current stage that is running longer than usual', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(PROGRESS));
+    renderTab();
+
+    const stepper = await screen.findByTestId('progress-stepper');
+    expect(stepper).toHaveTextContent('8 days');
+    expect(stepper).toHaveTextContent(/longer than usual/);
+  });
+
+  it('does not flag a stage that is inside its typical duration', async () => {
+    const stages = PROGRESS.stages.map((s) =>
+      s.key === 'documents' ? { ...s, duration_days: 2 } : s,
+    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ...PROGRESS, stages }));
+    renderTab();
+
+    const stepper = await screen.findByTestId('progress-stepper');
+    expect(stepper).not.toHaveTextContent(/longer than usual/);
+  });
+
+  it('omits the call-to-action link when there is nothing for the client to do', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({
+        ...PROGRESS,
+        next_action: {
+          key: 'awaiting_us',
+          label: 'Nothing needed from you',
+          detail: 'Our analysts are working on your valuation.',
+          tab: null,
+          client_action_required: false,
+        },
+      }),
+    );
+    renderTab();
+
+    expect(await screen.findByText('Nothing needed from you')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Go to/ })).not.toBeInTheDocument();
+  });
+
+  it('renders an em dash when there is no delivery estimate', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ ...PROGRESS, estimated_delivery_at: null, last_activity_at: null }),
+    );
+    renderTab();
+    const stats = await screen.findByTestId('progress-stats');
+    expect(stats.textContent).toContain('\u2014');
   });
 });
