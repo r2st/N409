@@ -83,11 +83,11 @@ export async function findPendingInvitationByToken(
   return rows[0] ?? null;
 }
 
-/** True while an unaccepted, unrevoked invitation exists for the address. */
+/** True while an unaccepted, unrevoked, unexpired invitation exists for the address. */
 export async function hasPendingInvitation(pool: pg.Pool, email: string): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT 1 FROM user_invitations
-     WHERE lower(email) = lower($1) AND accepted_at IS NULL AND revoked_at IS NULL`,
+     WHERE lower(email) = lower($1) AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,
     [email],
   );
   return rows.length > 0;
