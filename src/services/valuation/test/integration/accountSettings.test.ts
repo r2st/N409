@@ -183,7 +183,7 @@ describe.skipIf(!dbUp)('account settings', () => {
         method: 'POST',
         url: '/api/v1/auth/change-password',
         headers: authHeader(user.token),
-        payload: { current_password: SEED_PASSWORD, new_password: 'a-brand-new-password' },
+        payload: { current_password: SEED_PASSWORD, new_password: 'a-brand-new-password1' },
       });
       expect(res.statusCode).toBe(200);
 
@@ -207,7 +207,7 @@ describe.skipIf(!dbUp)('account settings', () => {
       const res = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/auth/reset-password',
-        payload: { token: secret, password: 'another-new-password' },
+        payload: { token: secret, password: 'another-new-password1' },
       });
       expect(res.statusCode).toBe(200);
       expect((await me(user.token)).statusCode).toBe(401);
@@ -563,7 +563,7 @@ describe.skipIf(!dbUp)('system settings', () => {
       ctx.app.inject({
         method: 'POST',
         url: '/api/v1/auth/register',
-        payload: { email: `signup-${Date.now()}@test.example.com`, password: 'a-good-password' },
+        payload: { email: `signup-${Date.now()}@test.example.com`, password: 'a-good-password1' },
       });
 
     expect((await put(admin.token, { registration_enabled: false })).statusCode).toBe(200);

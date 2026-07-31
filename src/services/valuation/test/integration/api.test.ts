@@ -34,7 +34,7 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
       const res = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/auth/register',
-        payload: { email: 'founder@newco.com', password: 'a-long-password', first_name: 'Fo' },
+        payload: { email: 'founder@newco.com', password: 'a-long-password1', first_name: 'Fo' },
       });
       expect(res.statusCode).toBe(201);
       const { token, user } = res.json();
@@ -50,7 +50,7 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
       const res = await ctx.app.inject({
         method: 'POST',
         url: '/api/v1/auth/register',
-        payload: { email: 'FOUNDER@newco.com', password: 'a-long-password' },
+        payload: { email: 'FOUNDER@newco.com', password: 'a-long-password1' },
       });
       expect(res.statusCode).toBe(409);
     });

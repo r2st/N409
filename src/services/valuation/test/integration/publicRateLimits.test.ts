@@ -131,7 +131,7 @@ describe.skipIf(!dbUp)('rate limits on the auth routes', () => {
     // even though each prior attempt already 409'd on the duplicate.
     const payload = {
       email: 'repeat-signup@test.example.com',
-      password: 'a-long-enough-password',
+      password: 'a-long-enough-password1',
     };
     const codes: number[] = [];
     for (let i = 0; i < 4; i++) {
@@ -154,7 +154,7 @@ describe.skipIf(!dbUp)('rate limits on the auth routes', () => {
           await app.inject({
             method: 'POST',
             url: '/api/v1/auth/register',
-            payload: { email: `ip-flood-${i}@test.example.com`, password: 'a-long-enough-password' },
+            payload: { email: `ip-flood-${i}@test.example.com`, password: 'a-long-enough-password1' },
           })
         ).statusCode,
       );
@@ -193,7 +193,7 @@ describe.skipIf(!dbUp)('rate limits on the auth routes', () => {
           await app.inject({
             method: 'POST',
             url: '/api/v1/auth/reset-password',
-            payload: { token: `guess-${i}`, password: 'a-long-enough-password' },
+            payload: { token: `guess-${i}`, password: 'a-long-enough-password1' },
           })
         ).statusCode,
       );
@@ -210,7 +210,7 @@ describe.skipIf(!dbUp)('rate limits on the auth routes', () => {
           await app.inject({
             method: 'POST',
             url: '/api/v1/auth/accept-invite',
-            payload: { token: `guess-${i}`, password: 'a-long-enough-password' },
+            payload: { token: `guess-${i}`, password: 'a-long-enough-password1' },
           })
         ).statusCode,
       );
