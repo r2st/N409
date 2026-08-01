@@ -4,7 +4,13 @@ import { z } from 'zod';
 import { problems } from '@n409/shared';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { isOps, valuationScope, type Principal } from '../auth/rbac.js';
-import { computeCompletion, INTAKE_SECTIONS } from '../domain/intake.js';
+import {
+  computeCompletion,
+  hasBlockingIssues,
+  INTAKE_CROSS_RULES,
+  INTAKE_SECTIONS,
+  validateIntake,
+} from '../domain/intake.js';
 import {
   filterIntakeAnswers,
   intakeLinkStatus,
@@ -199,8 +205,10 @@ export function registerClientIntakeRoutes(
       firm: resolveBranding(branding),
       client_name: link.client_name,
       sections: INTAKE_SECTIONS,
+      cross_rules: INTAKE_CROSS_RULES,
       answers,
       completion: computeCompletion(answers),
+      issues: validateIntake(answers),
       status: intakeLinkStatus(link, now),
       can_edit: isIntakeLinkOpen(link, now),
       submitted_at: link.submitted_at,
@@ -221,7 +229,11 @@ export function registerClientIntakeRoutes(
     // which of their guesses was a real token.
     if (!link) throw problems.unauthorized('This intake link can no longer be edited');
 
-    return { answers: link.answers, completion: computeCompletion(link.answers ?? {}) };
+    return {
+      answers: link.answers,
+      completion: computeCompletion(link.answers ?? {}),
+      issues: validateIntake(link.answers ?? {}),
+    };
   });
 
   /** Submit. Refused until every required field is answered. */
@@ -235,14 +247,21 @@ export function registerClientIntakeRoutes(
     const current = await redeemIntakeToken(deps.pool, parsed.data.token);
     if (!current) throw problems.unauthorized('This intake link is invalid, expired, or withdrawn');
 
-    const completion = computeCompletion(current.answers ?? {});
+    const answers = current.answers ?? {};
+    const completion = computeCompletion(answers);
     if (!completion.ready) {
       throw problems.unprocessable('Complete all required fields before submitting', { completion });
+    }
+    const issues = validateIntake(answers);
+    if (hasBlockingIssues(issues)) {
+      throw problems.unprocessable('Correct the highlighted answers before submitting', {
+        issues: issues.filter((i) => i.severity === 'error'),
+      });
     }
 
     const link = await submitIntakeLink(deps.pool, parsed.data.token);
     if (!link) throw problems.unauthorized('This intake link can no longer be edited');
 
-    return { submitted_at: link.submitted_at, completion };
+    return { submitted_at: link.submitted_at, completion, issues };
   });
 }

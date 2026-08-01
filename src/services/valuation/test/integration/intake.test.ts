@@ -101,11 +101,23 @@ describe.skipIf(!dbUp)('feature 7 — client intake questionnaire + reminders', 
     const schema = (
       await app.inject({ method: 'GET', url: '/api/v1/intake/schema', headers: authHeader(client.token) })
     ).json().sections;
+    // Type-appropriate answers: 'x' in a date or a select is now refused by
+    // the answer rules (see intakeValidation.test.ts), so filling every field
+    // with a placeholder string would exercise that gate rather than this one.
     const answers: Record<string, unknown> = {};
     for (const section of schema) {
       for (const field of section.fields) {
         if (!field.required) continue;
-        answers[field.key] = field.type === 'boolean' ? true : field.type === 'number' ? 5 : 'x';
+        answers[field.key] =
+          field.type === 'boolean'
+            ? true
+            : field.type === 'number'
+              ? 5
+              : field.type === 'date'
+                ? '2020-01-15'
+                : field.type === 'select'
+                  ? field.options[0]
+                  : 'x';
       }
     }
     await app.inject({

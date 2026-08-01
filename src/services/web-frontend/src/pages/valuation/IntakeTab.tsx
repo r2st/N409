@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../../components/ui';
+import { FieldWarnings, ValidationSummary } from '../../components/ValidationNotes';
+import {
+  hasBlockingIssues,
+  issuesByField,
+  validateIntake,
+  type IntakeCrossRule,
+  type IntakeSection,
+} from '../../lib/intakeValidation';
 
 /**
  * Client self-service intake wizard (feature 7). A sectioned questionnaire
@@ -11,21 +19,6 @@ import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from
  * an outstanding-documents checklist, and — for ops — a document reminder.
  */
 
-type FieldType = 'text' | 'textarea' | 'number' | 'date' | 'boolean' | 'select';
-interface IntakeField {
-  key: string;
-  label: string;
-  type: FieldType;
-  required: boolean;
-  options?: string[];
-  hint?: string;
-}
-interface IntakeSection {
-  key: string;
-  title: string;
-  description: string;
-  fields: IntakeField[];
-}
 interface SectionCompletion {
   key: string;
   title: string;
@@ -64,6 +57,7 @@ export function IntakeTab() {
   const { user } = useAuth();
   const ops = isOps(user);
   const [schema, setSchema] = useState<IntakeSection[] | null>(null);
+  const [crossRules, setCrossRules] = useState<IntakeCrossRule[]>([]);
   const [data, setData] = useState<QuestionnaireResponse | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [step, setStep] = useState(0);
@@ -82,8 +76,11 @@ export function IntakeTab() {
   }, [valuation.id]);
 
   useEffect(() => {
-    void api<{ sections: IntakeSection[] }>('/intake/schema')
-      .then((r) => setSchema(r.sections))
+    void api<{ sections: IntakeSection[]; cross_rules?: IntakeCrossRule[] }>('/intake/schema')
+      .then((r) => {
+        setSchema(r.sections);
+        setCrossRules(r.cross_rules ?? []);
+      })
       .catch(() => setSchema([]));
     void load();
   }, [load]);
@@ -139,11 +136,21 @@ export function IntakeTab() {
     }
   };
 
+  // Validated against the answers in hand, not the last saved ones — the point
+  // is to catch a mistyped figure while the client is still looking at it.
+  const issues = useMemo(
+    () => validateIntake(schema ?? [], crossRules, answers),
+    [schema, crossRules, answers],
+  );
+  const issuesFor = useMemo(() => issuesByField(issues), [issues]);
+  const blocked = hasBlockingIssues(issues);
+
   if (!schema || !data) return <Spinner />;
 
   const canEdit = data.can_edit;
   const section = schema[step];
   const completion = data.completion;
+  const sectionIssues = section ? issues.filter((i) => section.fields.some((f) => f.key === i.field)) : [];
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_18rem]">
@@ -174,7 +181,11 @@ export function IntakeTab() {
             <div className="grid gap-4 sm:grid-cols-2">
               {section.fields.map((f) => (
                 <div key={f.key} className={f.type === 'textarea' ? 'sm:col-span-2' : ''}>
-                  <Field label={`${f.label}${f.required ? ' *' : ''}`} hint={f.hint}>
+                  <Field
+                    label={`${f.label}${f.required ? ' *' : ''}`}
+                    hint={f.hint}
+                    error={issuesFor.get(f.key)?.find((i) => i.severity === 'error')?.message}
+                  >
                     {f.type === 'textarea' ? (
                       <textarea
                         disabled={!canEdit}
@@ -224,9 +235,16 @@ export function IntakeTab() {
                       />
                     )}
                   </Field>
+                  <FieldWarnings issues={issuesFor.get(f.key) ?? []} />
                 </div>
               ))}
             </div>
+
+            {sectionIssues.length > 0 && (
+              <div className="mt-5">
+                <ValidationSummary issues={sectionIssues} />
+              </div>
+            )}
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <Button
@@ -260,7 +278,8 @@ export function IntakeTab() {
               ) : (
                 canEdit && (
                   <Button
-                    disabled={busy || !completion.ready}
+                    disabled={busy || !completion.ready || blocked}
+                    title={blocked ? 'Correct the highlighted answers first' : undefined}
                     onClick={async () => {
                       if (await saveSection(section)) await submit();
                     }}
@@ -306,6 +325,15 @@ export function IntakeTab() {
             ))}
           </ul>
         </div>
+
+        {/* Whole-form roll-up: submit lives on the last step, but what blocks
+            it may be three sections back. */}
+        {issues.length > 0 && (
+          <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+            <h3 className="overline mb-3 text-ink-400">Data checks</h3>
+            <ValidationSummary issues={issues} />
+          </div>
+        )}
 
         <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
           <h3 className="overline mb-3 text-ink-400">Documents still needed</h3>

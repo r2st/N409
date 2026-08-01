@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import { FieldWarnings, ValidationSummary } from '../components/ValidationNotes';
 import { PLATFORM_BRANDING, type Branding } from '../lib/branding';
+import {
+  hasBlockingIssues,
+  issuesByField,
+  validateIntake,
+  type IntakeCrossRule,
+  type IntakeField,
+  type IntakeSection,
+} from '../lib/intakeValidation';
 
 /**
  * Client intake form — the prospect-facing half of a firm's intake link.
@@ -18,24 +27,6 @@ import { PLATFORM_BRANDING, type Branding } from '../lib/branding';
  * stays out of access logs, and posting it keeps it out of the Referer header
  * too. Same discipline as the auditor portal.
  */
-
-type FieldType = 'text' | 'textarea' | 'number' | 'date' | 'boolean' | 'select';
-
-interface IntakeField {
-  key: string;
-  label: string;
-  type: FieldType;
-  required: boolean;
-  options?: string[];
-  hint?: string;
-}
-
-interface IntakeSection {
-  key: string;
-  title: string;
-  description: string;
-  fields: IntakeField[];
-}
 
 interface SectionCompletion {
   key: string;
@@ -59,6 +50,7 @@ interface Portal {
   firm: Branding;
   client_name: string | null;
   sections: IntakeSection[];
+  cross_rules?: IntakeCrossRule[];
   answers: Record<string, unknown>;
   completion: Completion;
   status: string;
@@ -124,6 +116,16 @@ export function ClientIntakePage() {
   const pending = useRef<Set<string>>(new Set());
   const answersRef = useRef<Record<string, unknown>>({});
   answersRef.current = answers;
+
+  // Judged locally against the rules the server sent with the schema, so a
+  // mistyped figure is caught at the keyboard rather than by an analyst
+  // three days later.
+  const issues = useMemo(
+    () => validateIntake(data?.sections ?? [], data?.cross_rules ?? [], answers),
+    [data, answers],
+  );
+  const issuesFor = useMemo(() => issuesByField(issues), [issues]);
+  const blocked = hasBlockingIssues(issues);
 
   useEffect(() => {
     const raw = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token');
@@ -304,6 +306,11 @@ export function ClientIntakePage() {
           {onReview ? (
             <>
               <Review sections={data.sections} answers={answers} onEdit={readOnly ? undefined : goTo} />
+              {issues.length > 0 && (
+                <div className="mt-5">
+                  <ValidationSummary issues={issues} />
+                </div>
+              )}
               {submitError && (
                 <div className="mt-5">
                   <ErrorNote>{submitError}</ErrorNote>
@@ -315,9 +322,10 @@ export function ClientIntakePage() {
                 </Button>
                 {!readOnly && (
                   <Button
-                    disabled={submitting || !completion.ready}
+                    disabled={submitting || !completion.ready || blocked}
+                    title={blocked ? 'Correct the highlighted answers first' : undefined}
                     style={
-                      completion.ready && !submitting
+                      completion.ready && !blocked && !submitting
                         ? { backgroundColor: firm.accent, color: firm.accent_fg }
                         : undefined
                     }
@@ -347,12 +355,26 @@ export function ClientIntakePage() {
                 <div className="grid gap-5 sm:grid-cols-2">
                   {section.fields.map((f) => (
                     <div key={f.key} className={f.type === 'textarea' ? 'sm:col-span-2' : ''}>
-                      <Field label={`${f.label}${f.required ? ' *' : ''}`} hint={f.hint}>
+                      <Field
+                        label={`${f.label}${f.required ? ' *' : ''}`}
+                        hint={f.hint}
+                        error={issuesFor.get(f.key)?.find((i) => i.severity === 'error')?.message}
+                      >
                         <Control field={f} answers={answers} disabled={readOnly} onChange={setField} />
                       </Field>
+                      <FieldWarnings issues={issuesFor.get(f.key) ?? []} />
                     </div>
                   ))}
                 </div>
+
+                {(() => {
+                  const sectionIssues = issues.filter((i) => section.fields.some((f) => f.key === i.field));
+                  return sectionIssues.length > 0 ? (
+                    <div className="mt-6">
+                      <ValidationSummary issues={sectionIssues} />
+                    </div>
+                  ) : null;
+                })()}
 
                 <div className="mt-8 flex items-center justify-between gap-3 border-t border-paper-200 pt-5">
                   <Button variant="secondary" disabled={step === 0} onClick={() => goTo(step - 1)}>

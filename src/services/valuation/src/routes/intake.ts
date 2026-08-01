@@ -11,7 +11,14 @@ import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
-import { computeCompletion, INTAKE_EVENT_TYPES, INTAKE_SECTIONS } from '../domain/intake.js';
+import {
+  computeCompletion,
+  hasBlockingIssues,
+  INTAKE_CROSS_RULES,
+  INTAKE_EVENT_TYPES,
+  INTAKE_SECTIONS,
+  validateIntake,
+} from '../domain/intake.js';
 import { REQUIRED_DOCUMENT_KINDS } from '../domain/progress.js';
 import { findQuestionnaire, saveQuestionnaire, submitQuestionnaire } from '../repos/intake.js';
 
@@ -54,8 +61,11 @@ export function registerIntakeRoutes(
 ): void {
   // The questionnaire schema is static — expose it so the wizard renders from
   // the same source of truth as the completion calculation.
+  // The rules ride along with the schema so the wizard warns as the client
+  // types without a round trip, and judges answers exactly as submit will.
   app.get('/api/v1/intake/schema', { preHandler: app.authenticate }, async () => ({
     sections: INTAKE_SECTIONS,
+    cross_rules: INTAKE_CROSS_RULES,
   }));
 
   // Questionnaire + completion + document checklist for a valuation.
@@ -69,6 +79,7 @@ export function registerIntakeRoutes(
       answers,
       submitted_at: row?.submitted_at ?? null,
       completion: computeCompletion(answers),
+      issues: validateIntake(answers),
       missing_documents: await missingDocuments(deps.pool, id),
       can_edit: canEditIntake(principal, await findValuationById(deps.pool, id).then((v) => v!)),
     };
@@ -93,6 +104,7 @@ export function registerIntakeRoutes(
       answers: row.answers,
       submitted_at: row.submitted_at,
       completion: computeCompletion(row.answers),
+      issues: validateIntake(row.answers),
     };
   });
 
@@ -105,17 +117,26 @@ export function registerIntakeRoutes(
       throw problems.forbidden('Only the client or operations can submit the questionnaire');
     }
     const row = await findQuestionnaire(deps.pool, id);
-    const completion = computeCompletion(row?.answers ?? {});
+    const answers = row?.answers ?? {};
+    const completion = computeCompletion(answers);
     if (!completion.ready) {
       throw problems.unprocessable('Complete all required fields before submitting', {
         completion,
+      });
+    }
+    // Warnings are the client's judgement call; errors are answers that cannot
+    // be true, and an analyst would only have to send them back.
+    const issues = validateIntake(answers);
+    if (hasBlockingIssues(issues)) {
+      throw problems.unprocessable('Correct the highlighted answers before submitting', {
+        issues: issues.filter((i) => i.severity === 'error'),
       });
     }
     const submitted = await submitQuestionnaire(deps.pool, id, {
       actorType: 'human',
       actorId: principal.id,
     });
-    return { submitted_at: submitted.submitted_at, completion };
+    return { submitted_at: submitted.submitted_at, completion, issues };
   });
 
   // Email the client a reminder of the documents still outstanding (ops).
