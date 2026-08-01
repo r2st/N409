@@ -1,15 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../lib/api';
 
 /**
  * Getting Started checklist (dashboard).
  *
- * A dismissible, self-guided list of the steps to a first board-approved
- * valuation. Progress (which steps are checked, and whether the whole card is
- * dismissed) persists in localStorage so it survives reloads. It vanishes once
- * every step is checked or the user dismisses it — new users see it, veterans
- * don't. No network calls, so it's safe to render anywhere.
+ * A dismissible list of the steps to a first board-approved valuation. Steps
+ * tick themselves from what the account actually contains — a user with three
+ * valuations and a signed board resolution should never be told they are 0/8 —
+ * and can also be ticked by hand for the work the product cannot observe.
+ *
+ * The two sources are unioned, never subtracted: a manual tick survives a
+ * server that hasn't caught up, and a real completion survives a cleared
+ * localStorage. The card vanishes once every step is done or the user
+ * dismisses it. If the progress call fails the checklist still renders, on
+ * manual ticks alone.
  */
+
+interface OnboardingProgress {
+  steps: string[];
+}
 
 interface Step {
   id: string;
@@ -95,13 +105,35 @@ function loadDone(): Set<string> {
 export function GettingStarted() {
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1');
   const [done, setDone] = useState<Set<string>>(loadDone);
+  const [earned, setEarned] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    let live = true;
+    api<OnboardingProgress>('/onboarding/progress')
+      .then((p) => {
+        // A checklist is not worth an error state — on failure it simply keeps
+        // showing whatever the user has ticked by hand.
+        if (live) setEarned(new Set(p.steps));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
 
   if (dismissed) return null;
 
-  const completed = STEPS.filter((s) => done.has(s.id)).length;
+  const isComplete = (id: string) => done.has(id) || earned.has(id);
+  const completed = STEPS.filter((s) => isComplete(s.id)).length;
   const allDone = completed === STEPS.length;
 
+  /**
+   * Hand-ticking only ever adds. Unticking a step the account has genuinely
+   * completed would put the box back into the lie this feature removed, so a
+   * server-confirmed step is not togglable.
+   */
   const toggle = (id: string) => {
+    if (earned.has(id)) return;
     setDone((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -152,20 +184,27 @@ export function GettingStarted() {
 
       <ol className="mt-5 space-y-2">
         {STEPS.map((step, i) => {
-          const isDone = done.has(step.id);
+          const isEarned = earned.has(step.id);
+          const isDone = isComplete(step.id);
           return (
             <li key={step.id} className="flex items-start gap-3 rounded-lg border border-paper-200 px-4 py-3">
               <button
                 type="button"
                 role="checkbox"
                 aria-checked={isDone}
-                aria-label={`Mark "${step.title}" as ${isDone ? 'not done' : 'done'}`}
+                aria-disabled={isEarned}
+                aria-label={
+                  isEarned
+                    ? `"${step.title}" is complete`
+                    : `Mark "${step.title}" as ${isDone ? 'not done' : 'done'}`
+                }
+                title={isEarned ? 'Completed in your account' : undefined}
                 onClick={() => toggle(step.id)}
                 className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs font-bold transition-colors ${
                   isDone
                     ? 'border-bond-600 bg-bond-600 text-bond-fg'
                     : 'border-ink-300 text-transparent hover:border-bond-500'
-                }`}
+                } ${isEarned ? 'cursor-default' : ''}`}
               >
                 ✓
               </button>

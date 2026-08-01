@@ -80,6 +80,7 @@ import { registerFundRoutes } from './routes/funds.js';
 import { registerDebtRoutes } from './routes/debt.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerProgressRoutes } from './routes/progress.js';
+import { registerOnboardingRoutes } from './routes/onboarding.js';
 import { registerAuditTrailRoutes } from './routes/auditTrail.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
@@ -287,6 +288,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerHealthCheckRoutes(app, { pool });
   registerDecisionRoutes(app, { pool });
   registerProgressRoutes(app, { pool });
+  registerOnboardingRoutes(app, { pool });
   registerAuditTrailRoutes(app, { pool });
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerBridgeRoutes(app, { pool });
