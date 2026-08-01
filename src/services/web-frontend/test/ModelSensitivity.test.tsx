@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ModelSensitivityPanel } from '../src/components/valuation/ModelSensitivityPanel';
 
@@ -58,7 +58,7 @@ describe('ModelSensitivityPanel', () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(jsonResponse({ sensitivity: RESULT }));
-    render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" currency="USD" />);
+    render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" />);
 
     await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
 
@@ -81,7 +81,7 @@ describe('ModelSensitivityPanel', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({ title: 'Forbidden', detail: 'no' }, 403),
     );
-    render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" currency="USD" />);
+    render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" />);
     await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
     await screen.findByText(/operations-only/i, {}, { timeout: 5000 });
   });

@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
-import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import {

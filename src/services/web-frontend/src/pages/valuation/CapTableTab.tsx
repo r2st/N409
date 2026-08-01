@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, type Problem } from '../../lib/api';
 import { formatMoney, formatNumber } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner } from '../../components/ui';
@@ -239,11 +239,13 @@ export function CapTableTab() {
       setMapping({});
       await load();
     } catch (err) {
-      if (err instanceof ApiError && err.problem && (err.problem as any).validation) {
-        setPreview({
-          entries: [],
-          validation: (err.problem as any).validation as Validation,
-        });
+      // A rejected import carries the same validation payload the preview
+      // shows, so the user sees which rows failed rather than a bare message.
+      // The field is specific to this endpoint, hence the local widening.
+      const rejected =
+        err instanceof ApiError ? (err.problem as Problem & { validation?: Validation }) : null;
+      if (rejected?.validation) {
+        setPreview({ entries: [], validation: rejected.validation });
       }
       setError(err instanceof ApiError ? err.message : 'Could not save the cap table.');
     } finally {

@@ -29,6 +29,9 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     if (this.props.onError) this.props.onError(error, info);
+    // The last resort for a render crash: without this the error is lost and
+    // the user is left with a fallback and no way to say what happened.
+    // eslint-disable-next-line no-console
     else console.error('Unhandled render error:', error, info.componentStack);
   }
 

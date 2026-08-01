@@ -73,13 +73,9 @@ function deltaClass(delta: number | null): string {
   return 'text-ink-500';
 }
 
-export function ModelSensitivityPanel({
-  valuationId,
-  currency,
-}: {
-  valuationId: string;
-  currency: string | null;
-}) {
+// Amounts are formatted from the currency the sensitivity response carries,
+// so the panel needs no currency of its own.
+export function ModelSensitivityPanel({ valuationId }: { valuationId: string }) {
   const [result, setResult] = useState<ModelSensitivityResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

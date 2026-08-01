@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scenarioOverrides, scenarioDefaults, contentDisposition } from '../../src/routes/scenarios.js';
+import { scenarioOverrides, scenarioDefaults } from '../../src/routes/scenarios.js';
 
 describe('scenarioOverrides', () => {
   it('maps named knobs to engine input paths', () => {

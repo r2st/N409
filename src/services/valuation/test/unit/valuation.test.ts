@@ -4,9 +4,6 @@ import {
   VALUATION_STATES,
   VALUATION_SOURCES,
   EVENT_TYPES,
-  type ValuationKind,
-  type ValuationState,
-  type ValuationSource,
 } from '../../src/domain/valuation.js';
 
 describe('VALUATION_KINDS', () => {

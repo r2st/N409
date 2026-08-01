@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type pg from 'pg';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 
@@ -58,7 +57,6 @@ async function approvedValuation(
 describe.skipIf(!dbUp)('feature 6 — grant management', () => {
   let ctx: TestApp;
   let app: FastifyInstance;
-  let pool: pg.Pool;
   let ops: Awaited<ReturnType<typeof seedUser>>;
   let client: Awaited<ReturnType<typeof seedUser>>;
   let otherClient: Awaited<ReturnType<typeof seedUser>>;
@@ -67,7 +65,6 @@ describe.skipIf(!dbUp)('feature 6 — grant management', () => {
   beforeAll(async () => {
     ctx = await setupTestApp({ AUTO_PIPELINE: 'off' });
     app = ctx.app;
-    pool = ctx.pool;
     ops = await seedUser(ctx, { roles: ['reviewer'] });
     client = await seedUser(ctx, { roles: ['valuation_user'] });
     otherClient = await seedUser(ctx, { roles: ['valuation_user'] });

@@ -20,7 +20,6 @@ import {
   advanceStage,
   assignAnalyst,
   ensureEngagement,
-  findEngagement,
   listActiveEngagements,
   stageHistory,
   type EngagementRow,

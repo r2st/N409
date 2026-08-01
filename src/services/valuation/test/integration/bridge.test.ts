@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newUlid } from '@n409/shared';
 import { createValuation } from '../../src/repos/valuations.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';

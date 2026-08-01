@@ -93,7 +93,9 @@ describe('SystemSettingsStore', () => {
   it('invalidates the cache on write so the author sees their own change', async () => {
     const rows = [{ key: 'maintenance_mode', value: false }];
     const pool = fakePool(rows);
-    let now = 0;
+    // The clock never advances and the TTL is a full minute, so cache
+    // invalidation on write is the only thing that can surface the new value.
+    const now = 0;
     const store = new SystemSettingsStore(pool, 60_000, () => now);
 
     expect(await store.get('maintenance_mode')).toBe(false);

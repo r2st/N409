@@ -264,7 +264,7 @@ export function SensitivityPage() {
       )}
 
       <div className="mt-10 border-t border-paper-300 pt-8">
-        <ModelSensitivityPanel valuationId={id ?? ''} currency={result?.currency ?? null} />
+        <ModelSensitivityPanel valuationId={id ?? ''} />
       </div>
     </div>
   );

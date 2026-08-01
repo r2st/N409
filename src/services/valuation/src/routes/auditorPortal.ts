@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
-import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
+import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { findReportByValuation, getVersion } from '../repos/reports.js';
