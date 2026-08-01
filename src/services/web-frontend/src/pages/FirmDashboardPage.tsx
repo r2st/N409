@@ -11,6 +11,7 @@ import {
   Spinner,
   StatCard,
   StateBadge,
+  TableSkeleton,
   TextInput,
   type Column,
 } from '../components/ui';
@@ -322,7 +323,7 @@ export function FirmDashboardPage() {
         </div>
         <div className="mt-3 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
           {clients === null ? (
-            <Spinner />
+            <TableSkeleton columns={clientColumns.length} rows={6} label="Loading clients…" />
           ) : (
             <DataTable
               columns={clientColumns}

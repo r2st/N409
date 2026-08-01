@@ -6,7 +6,7 @@ import { useAuth } from '../lib/auth';
 import { canManageUsers } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
 import type { AdminUser, Invitation, Partner } from '../lib/types';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import { Button, EmptyState, ErrorNote, Field, Select, TableSkeleton, TextInput } from '../components/ui';
 
 const PER_PAGE = 25;
 
@@ -599,7 +599,11 @@ export function AdminUsersPage() {
           {notice}
         </div>
       )}
-      {!data && !error && <Spinner />}
+      {!data && !error && (
+        <div className="mt-6 rounded-lg border border-paper-300 bg-surface shadow-card">
+          <TableSkeleton columns={5} rows={8} label="Loading users…" />
+        </div>
+      )}
 
       {data && data.users.length === 0 && (
         <div className="mt-6">

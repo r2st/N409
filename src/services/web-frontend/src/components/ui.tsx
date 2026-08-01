@@ -253,6 +253,159 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
   );
 }
 
+/*
+ * ── Skeletons ───────────────────────────────────────────────────────────────
+ *
+ * A spinner says "wait"; a skeleton says "wait, and here is what is coming".
+ * On the pages that carry the product — the worklist, the dashboard, a
+ * valuation workspace — a centred spinner on an otherwise empty page also
+ * throws away the layout twice: once when it replaces the page, once when the
+ * page replaces it. The placeholders below hold the real geometry, so the
+ * arriving content lands where the reader is already looking instead of
+ * shoving the viewport around.
+ *
+ * They are for structure that is *known before the data arrives* — a table of
+ * ~n rows, a row of five stat cards. Where the shape genuinely depends on the
+ * response (a form whose fields come from a schema, a three-line panel), the
+ * honest placeholder is still `Spinner`, and those call sites keep it.
+ */
+
+/**
+ * One placeholder block. Decorative by construction: `aria-hidden`, because a
+ * screen reader gains nothing from thirty pulsing rectangles. The announcement
+ * belongs to `LoadingBlock`, which makes it exactly once.
+ */
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <span aria-hidden className={`skeleton block rounded ${className}`} />;
+}
+
+/**
+ * Accessible wrapper for a group of `Skeleton`s: one polite live region and one
+ * sr-only label for the whole placeholder, plus `aria-busy` so assistive tech
+ * knows the region is mid-update rather than empty.
+ */
+export function LoadingBlock({
+  label = 'Loading…',
+  className = '',
+  children,
+}: {
+  label?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div role="status" aria-live="polite" aria-busy="true" className={className}>
+      <span className="sr-only">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+// Line lengths cycle rather than randomise. Math.random() would reshuffle on
+// every render — which reads as flicker, not texture — and would make any test
+// that asserts on the markup non-deterministic.
+const LINE_WIDTHS = ['w-4/5', 'w-3/5', 'w-11/12', 'w-2/3', 'w-3/4', 'w-1/2'];
+
+/** `lines` placeholder text rows of varying length, at body-copy rhythm. */
+export function SkeletonText({ lines = 3, className = '' }: { lines?: number; className?: string }) {
+  return (
+    <span aria-hidden className={`block space-y-2 ${className}`}>
+      {Array.from({ length: lines }, (_, i) => (
+        <Skeleton key={i} className={`h-3.5 ${LINE_WIDTHS[i % LINE_WIDTHS.length]}`} />
+      ))}
+    </span>
+  );
+}
+
+/** Placeholder matching `StatCard`'s box, label and figure. */
+export function StatCardSkeleton() {
+  return (
+    <div aria-hidden className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+      <Skeleton className="h-2.5 w-20" />
+      <Skeleton className="mt-3.5 h-7 w-14" />
+    </div>
+  );
+}
+
+/**
+ * The table picture itself, with no live region of its own — so it can be
+ * composed into a larger skeleton without announcing a second time. Marked
+ * `aria-hidden` and `role="presentation"`: announcing eight empty rows to a
+ * screen reader would be a lie about content. Use `TableSkeleton` when the
+ * table is the whole of what is loading; use this when it is one part of a
+ * larger placeholder that already carries the announcement.
+ */
+export function SkeletonTable({ columns = 5, rows = 6 }: { columns?: number; rows?: number }) {
+  return (
+    <div className="overflow-x-auto">
+      <table role="presentation" aria-hidden className="w-full border-collapse text-sm">
+        <tbody>
+          <tr className="border-b border-paper-300">
+            {Array.from({ length: columns }, (_, c) => (
+              <td key={c} className="px-3 py-2.5">
+                <Skeleton className="h-2.5 w-16" />
+              </td>
+            ))}
+          </tr>
+          {Array.from({ length: rows }, (_, r) => (
+            <tr key={r} className="border-b border-paper-200 last:border-0">
+              {Array.from({ length: columns }, (_, c) => (
+                <td key={c} className="px-3 py-2.5">
+                  <Skeleton className={`h-4 ${LINE_WIDTHS[(r + c) % LINE_WIDTHS.length]}`} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Placeholder matching `DataTable`'s geometry — same paddings, same rules, a
+ * real `<table>` so the columns distribute the way the loaded one will.
+ */
+export function TableSkeleton({
+  columns = 5,
+  rows = 6,
+  label = 'Loading rows…',
+}: {
+  columns?: number;
+  rows?: number;
+  label?: string;
+}) {
+  return (
+    <LoadingBlock label={label}>
+      <SkeletonTable columns={columns} rows={rows} />
+    </LoadingBlock>
+  );
+}
+
+/**
+ * Route-level fallback for a page chunk that has not downloaded yet — a page
+ * heading and a body block, at the position the real page's heading occupies.
+ * Used inside the app shell (see AppLayout), so the sidebar stays put while a
+ * lazily-imported page arrives.
+ */
+export function PageSkeleton({ label = 'Loading page…' }: { label?: string }) {
+  return (
+    <LoadingBlock label={label}>
+      <Skeleton className="h-2.5 w-24" />
+      <Skeleton className="mt-3 h-8 w-72 max-w-full" />
+      <Skeleton className="mt-3 h-3.5 w-96 max-w-full" />
+      <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {Array.from({ length: 4 }, (_, i) => (
+          <StatCardSkeleton key={i} />
+        ))}
+      </div>
+      <div className="mt-8 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
+        <SkeletonTable columns={4} rows={5} />
+      </div>
+    </LoadingBlock>
+  );
+}
+
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 

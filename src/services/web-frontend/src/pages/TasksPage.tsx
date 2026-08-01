@@ -15,7 +15,15 @@ import {
   type ReviewTaskStatus,
 } from '../lib/pipeline';
 import { TaskStatusBadge } from '../components/valuation/TasksPanel';
-import { Button, EmptyState, ErrorNote, KindBadge, Select, Spinner, StateBadge } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  KindBadge,
+  Select,
+  StateBadge,
+  TableSkeleton,
+} from '../components/ui';
 
 type View = 'tasks' | 'reviews';
 type Scope = 'me' | 'all' | 'overdue';
@@ -154,7 +162,7 @@ function TaskQueue({ options }: { options: UserOption[] }) {
 
       <div className="mt-6">
         {error && <ErrorNote>{error}</ErrorNote>}
-        {!tasks && !error && <Spinner />}
+        {!tasks && !error && <TableSkeleton columns={5} rows={6} label="Loading tasks…" />}
         {tasks && tasks.length === 0 && (
           <EmptyState title="Nothing here">
             {scope === 'overdue'
@@ -305,7 +313,7 @@ function ReviewQueue({ options }: { options: UserOption[] }) {
 
       <div className="mt-6">
         {error && <ErrorNote>{error}</ErrorNote>}
-        {!reviews && !error && <Spinner />}
+        {!reviews && !error && <TableSkeleton columns={5} rows={4} label="Loading review queue…" />}
         {reviews && reviews.length === 0 && (
           <EmptyState title="Review queue is clear">
             {mine === 'me'

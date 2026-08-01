@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { PageSkeleton } from './ui';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, effectiveUser, isFirmAdmin, isOps, isPartner, scopeLabel } from '../lib/rbac';
@@ -404,7 +405,19 @@ export function AppLayout() {
 
       <main className="min-w-0 flex-1 lg:ml-64">
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
-          <Outlet />
+          {/*
+           * The app's only Suspense boundary used to sit above the router, so
+           * the first visit to any page — every page is a lazy chunk — tore
+           * the whole shell down and put a spinner on an empty screen: sidebar
+           * gone, heading gone, scroll position gone, for the length of one
+           * chunk fetch. Catching the suspension here instead keeps the
+           * furniture on screen and confines the wait to the region that is
+           * actually changing. The outer boundary in App.tsx still covers the
+           * public pages, which have no shell to preserve.
+           */}
+          <Suspense fallback={<PageSkeleton />}>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
 

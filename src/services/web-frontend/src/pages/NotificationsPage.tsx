@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import type { AppNotification } from '../lib/types';
-import { Button, EmptyState, ErrorNote, Spinner } from '../components/ui';
+import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton } from '../components/ui';
 
 /** In-app notification center (M4). */
 export function NotificationsPage() {
@@ -64,7 +64,18 @@ export function NotificationsPage() {
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
-      {!notifications && !error && <Spinner />}
+      {!notifications && !error && (
+        <LoadingBlock label="Loading notifications…">
+          <ul aria-hidden className="mt-6 space-y-2">
+            {Array.from({ length: 6 }, (_, i) => (
+              <li key={i} className="rounded-lg border border-paper-300 bg-surface p-4 shadow-card">
+                <Skeleton className="h-3.5 w-3/5" />
+                <Skeleton className="mt-2 h-3 w-1/4" />
+              </li>
+            ))}
+          </ul>
+        </LoadingBlock>
+      )}
 
       {notifications && notifications.length === 0 && (
         <div className="mt-6">

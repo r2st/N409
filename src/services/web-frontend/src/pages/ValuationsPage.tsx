@@ -20,8 +20,10 @@ import {
   EmptyState,
   ErrorNote,
   KindBadge,
+  LoadingBlock,
   Select,
-  Spinner,
+  Skeleton,
+  SkeletonTable,
   StateBadge,
   TextInput,
 } from '../components/ui';
@@ -461,7 +463,31 @@ export function ValuationsPage() {
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
-      {!data && !error && <Spinner />}
+      {/*
+       * The worklist is the page ops live on, and it reloads on every filter,
+       * sort and page change — a centred spinner threw the table away and
+       * moved the pagination up the viewport each time. The placeholder holds
+       * the same two layouts the loaded list uses, so nothing jumps.
+       */}
+      {!data && !error && (
+        <LoadingBlock label="Loading valuations…">
+          <ul aria-hidden className="mt-6 space-y-3 md:hidden">
+            {Array.from({ length: 5 }, (_, i) => (
+              <li key={i} className="rounded-lg border border-paper-300 bg-surface p-4 shadow-card">
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="mt-2.5 h-3 w-1/3" />
+                <div className="mt-3 flex gap-2">
+                  <Skeleton className="h-5 w-16" />
+                  <Skeleton className="h-5 w-20" />
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-6 hidden rounded-lg border border-paper-300 bg-surface shadow-card md:block">
+            <SkeletonTable columns={ops ? 9 : 7} rows={8} />
+          </div>
+        </LoadingBlock>
+      )}
 
       {/* M4 — bulk action bar (ops) */}
       {ops && selected.size > 0 && (

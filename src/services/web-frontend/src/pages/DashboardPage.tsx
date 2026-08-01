@@ -20,8 +20,11 @@ import {
   EmptyState,
   ErrorNote,
   KindBadge,
-  Spinner,
+  LoadingBlock,
+  Skeleton,
+  SkeletonTable,
   StatCard,
+  StatCardSkeleton,
   StateBadge,
   TextInput,
 } from '../components/ui';
@@ -111,7 +114,20 @@ export function DashboardPage() {
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
-      {!valuations && !error && <Spinner />}
+      {/* Same five-card grid the counts land in, so the fold does not move. */}
+      {!valuations && !error && (
+        <LoadingBlock label="Loading your dashboard…">
+          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+            {Array.from({ length: 5 }, (_, i) => (
+              <StatCardSkeleton key={i} />
+            ))}
+          </div>
+          <Skeleton className="mt-10 h-2.5 w-32" />
+          <div className="mt-4 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
+            <SkeletonTable columns={4} rows={5} />
+          </div>
+        </LoadingBlock>
+      )}
 
       {stats && (
         <>

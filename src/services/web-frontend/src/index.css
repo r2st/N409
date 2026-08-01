@@ -83,6 +83,16 @@
    */
   --color-surface: #ffffff;
 
+  /*
+   * skeleton — the loading placeholder fill and the sheen that sweeps across
+   * it. Its own pair rather than a reuse of `paper`, because the sheen has to
+   * be *lighter* than the fill in light mode and *lighter* again in dark mode,
+   * which no single step of an inverting ramp can do. See the `skeleton`
+   * utility at the bottom of this file.
+   */
+  --color-skeleton: #e8e5dc;
+  --color-skeleton-sheen: #f8f6f2;
+
   --shadow-card: 0 1px 2px rgb(11 18 32 / 0.05), 0 1px 3px rgb(11 18 32 / 0.06);
   --shadow-lift: 0 4px 12px rgb(11 18 32 / 0.08), 0 1px 3px rgb(11 18 32 / 0.06);
 }
@@ -193,6 +203,9 @@
   --color-slate-600: #aab3c6;
   --color-slate-700: #c8cfdd;
   --color-slate-900: #eef1f7;
+
+  --color-skeleton: #1b2331;
+  --color-skeleton-sheen: #2b3549;
 
   /* A 5%-black shadow is invisible on a dark ground; depth needs real black. */
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
@@ -306,6 +319,40 @@ html {
 .report-editor th {
   background: var(--color-paper-100);
   font-weight: 600;
+}
+
+@keyframes n409-sheen {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+/*
+ * Loading placeholder fill (see `Skeleton` in components/ui.tsx). A tinted
+ * block with a highlight band sweeping left, sized at 200% so the gradient has
+ * somewhere to travel from and to.
+ *
+ * Under `prefers-reduced-motion` the sweep is dropped rather than slowed: a
+ * page of thirty placeholders all animating is exactly the "large moving
+ * element" the preference exists to suppress. The flat fill still reads as
+ * "content is arriving here", and the announcement that carries the actual
+ * information is the sr-only live region in `LoadingBlock`, which is
+ * unaffected either way.
+ */
+@utility skeleton {
+  background-color: var(--color-skeleton);
+  background-image: linear-gradient(90deg, transparent 0%, var(--color-skeleton-sheen) 50%, transparent 100%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: n409-sheen 1.6s ease-in-out infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    background-image: none;
+    animation: none;
+  }
 }
 
 /* Hide the native scrollbar on strips that provide their own affordance

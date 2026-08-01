@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useOutletContext, useParams } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
@@ -6,7 +6,15 @@ import { isOps } from '../../lib/rbac';
 import { REPORT_VISIBLE_STATES } from '../../lib/m2';
 import { useValuationStream, type Viewer } from '../../lib/realtime';
 import type { Valuation } from '../../lib/types';
-import { ErrorNote, KindBadge, Spinner, StateBadge } from '../../components/ui';
+import {
+  ErrorNote,
+  KindBadge,
+  LoadingBlock,
+  Skeleton,
+  SkeletonTable,
+  SkeletonText,
+  StateBadge,
+} from '../../components/ui';
 import { HelpIcon } from '../../components/HelpIcon';
 import { ScrollableTabs } from '../../components/ScrollableTabs';
 
@@ -95,6 +103,55 @@ function Tab({ to, label, end = false }: { to: string; label: string; end?: bool
 }
 
 /**
+ * Placeholder for the workspace shell itself: back-link, company name, badge
+ * row, reference line and the tab strip. The shell's geometry is fixed and
+ * known before the aggregate arrives, so it can be drawn immediately and the
+ * heading lands where the reader is already looking.
+ */
+function WorkspaceSkeleton() {
+  const tabWidths = ['w-16', 'w-20', 'w-14', 'w-24', 'w-16', 'w-20'];
+  return (
+    <LoadingBlock label="Loading valuation…">
+      <Skeleton className="h-3.5 w-24" />
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Skeleton className="h-8 w-64 max-w-full" />
+        <Skeleton className="h-5 w-20" />
+        <Skeleton className="h-5 w-24" />
+      </div>
+      <Skeleton className="mt-2 h-3 w-56 max-w-full" />
+      <div className="mt-6 flex gap-6 border-b border-paper-300 pb-2.5">
+        {tabWidths.map((w, i) => (
+          <Skeleton key={i} className={`h-3.5 ${w}`} />
+        ))}
+      </div>
+      <div className="mt-8">
+        <SkeletonText lines={2} className="max-w-lg" />
+        <div className="mt-6 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
+          <SkeletonTable columns={4} rows={4} />
+        </div>
+      </div>
+    </LoadingBlock>
+  );
+}
+
+/**
+ * Fallback for a tab whose chunk has not downloaded yet. Deliberately generic —
+ * the tabs range from a two-field form to a twelve-column table, so this claims
+ * only that a panel of some sort is arriving, and does it inside the workspace
+ * so the header and tab strip stay put while it does.
+ */
+function TabSkeleton() {
+  return (
+    <LoadingBlock label="Loading tab…">
+      <SkeletonText lines={2} className="max-w-lg" />
+      <div className="mt-6 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
+        <SkeletonTable columns={4} rows={4} />
+      </div>
+    </LoadingBlock>
+  );
+}
+
+/**
  * Per-valuation workspace shell (features.md "analyst nav"): loads the
  * aggregate, renders the header + tab bar, and hands the valuation to the
  * active tab via outlet context. Tab visibility mirrors the API's RBAC —
@@ -139,7 +196,7 @@ export function ValuationWorkspace() {
       </div>
     );
   }
-  if (!valuation) return <Spinner />;
+  if (!valuation) return <WorkspaceSkeleton />;
 
   const ops = isOps(user);
   const owner = valuation.user_id === user?.id;
@@ -206,16 +263,25 @@ export function ValuationWorkspace() {
       </ScrollableTabs>
 
       <div className="mt-8">
-        <Outlet
-          context={
-            {
-              valuation,
-              reload,
-              viewers: viewers.filter((v) => v.user_id !== user?.id),
-              commentTick,
-            } satisfies WorkspaceContext
-          }
-        />
+        {/*
+         * Each tab is its own lazy chunk. Without a boundary here the first
+         * click on a tab suspends all the way up to the app shell, which
+         * replaces the valuation header and the tab strip the analyst just
+         * clicked — so the control that caused the navigation disappears.
+         * Catching it at the panel keeps the tab bar interactive throughout.
+         */}
+        <Suspense fallback={<TabSkeleton />}>
+          <Outlet
+            context={
+              {
+                valuation,
+                reload,
+                viewers: viewers.filter((v) => v.user_id !== user?.id),
+                commentTick,
+              } satisfies WorkspaceContext
+            }
+          />
+        </Suspense>
       </div>
     </div>
   );
