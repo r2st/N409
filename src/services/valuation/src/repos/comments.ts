@@ -3,6 +3,7 @@ import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { OPERATIONS_EVENT_TYPES, type CommentKind } from '../domain/operations.js';
+import { invalidateValuation } from './valuations.js';
 
 export interface CommentRow {
   id: string;
@@ -91,6 +92,7 @@ export async function createComment(
     );
     const comment = rows[0]!;
     await client.query('UPDATE valuations SET last_comment_at = now() WHERE id = $1', [input.valuationId]);
+    invalidateValuation(input.valuationId);
     await recordEvent(client, {
       valuationId: input.valuationId,
       type:

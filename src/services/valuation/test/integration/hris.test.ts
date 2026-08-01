@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { listGrants } from '../../src/repos/grants.js';
-import { signCapTableSyncState } from '../../src/auth/jwt.js';
+import { signCapTableSyncState, signHrisState } from '../../src/auth/jwt.js';
 import { runDueHrisSyncs } from '../../src/routes/hris.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -65,7 +65,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       { kind: '409a', companyName: 'Acme', userId: ops.id },
       { actorType: 'human', actorId: ops.id, source: 'test' },
     );
-    const state = await signCapTableSyncState(
+    const state = await signHrisState(
       { valuationId: v.id, provider: 'rippling', userId: ops.id },
       { secret: 'integration-test-secret-0123456789abcdef', issuer: 'n409', ttlSeconds: 3600 },
     );
@@ -76,6 +76,26 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     expect(cb.statusCode).toBe(302);
     return v;
   }
+
+  it('refuses a cap-table-sync state at the HRIS callback', async () => {
+    // The callback is unauthenticated by design — the signed state is its only
+    // credential — so a state minted for a different integration must not be
+    // redeemable here, however identical its payload looks.
+    const v = await createValuation(
+      ctx.pool,
+      { kind: '409a', companyName: 'Confusable', userId: ops.id },
+      { actorType: 'human', actorId: ops.id, source: 'test' },
+    );
+    const foreignState = await signCapTableSyncState(
+      { valuationId: v.id, provider: 'rippling', userId: ops.id },
+      { secret: 'integration-test-secret-0123456789abcdef', issuer: 'n409', ttlSeconds: 3600 },
+    );
+    const cb = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/hris/callback?state=${encodeURIComponent(foreignState)}&code=abc&company_id=co1`,
+    });
+    expect(cb.statusCode).toBe(422);
+  });
 
   it('lists providers with Rippling configured', async () => {
     const v = await connectedValuation();

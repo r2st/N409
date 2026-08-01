@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import type { EntityType, PortfolioEntity } from '../domain/portfolio.js';
+import { invalidateValuation } from './valuations.js';
 
 export type OrgEntityType = 'holding_company' | 'fund' | 'operating_group';
 
@@ -154,6 +155,7 @@ export async function assignValuationToOrg(
   } else {
     await pool.query('UPDATE valuations SET organization_id = $2 WHERE id = $1', [valuationId, orgId]);
   }
+  invalidateValuation(valuationId);
 }
 
 /** Set the inter-company relationship (entity type + parent valuation). */
@@ -168,6 +170,7 @@ export async function setEntityRelationship(
     entityType,
     parentValuationId,
   ]);
+  invalidateValuation(valuationId);
 }
 
 /** The organization's entities with their latest successful valuation figures. */

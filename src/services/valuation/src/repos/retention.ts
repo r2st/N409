@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import type { RetentionPolicy } from '../domain/retention.js';
+import { invalidateValuation } from './valuations.js';
 
 // ── Policies ─────────────────────────────────────────────────────────────────
 
@@ -159,4 +160,5 @@ export async function findArchivableValuations(
 
 export async function markValuationArchived(pool: pg.Pool, id: string): Promise<void> {
   await pool.query('UPDATE valuations SET archived_at = now() WHERE id = $1 AND archived_at IS NULL', [id]);
+  invalidateValuation(id);
 }

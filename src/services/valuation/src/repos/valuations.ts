@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { isUlid, newUlid } from '@n409/shared';
+import { isUlid, newUlid, TtlCache } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { diffRecords } from '../domain/auditTrail.js';
 import {
@@ -87,9 +87,55 @@ export async function createValuation(
   });
 }
 
+/**
+ * Read-through cache for the single hottest query in the service.
+ *
+ * Almost every valuation-scoped route starts by loading the row to authorize
+ * against it, and the busier pages load several of those routes at once — the
+ * detail view alone fans out to params, cap table, documents, comments,
+ * progress and the audit trail, each re-fetching the same row before doing its
+ * own work. Those are identical `WHERE id = $1` lookups within milliseconds of
+ * each other.
+ *
+ * Correctness rests on invalidation, not on the TTL: every statement in this
+ * service that writes to `valuations` calls `invalidateValuation`, and there
+ * are only eight of them (this file, plus comments, organizations, retention
+ * and pipelineRuns — see the callers of the export). The TTL is the backstop
+ * for a writer nobody remembered to wire up and for the day this service runs
+ * more than one process, and it is deliberately short enough that a stale read
+ * cannot outlive a page view.
+ *
+ * `getOrLoad` also collapses concurrent identical lookups into one query, which
+ * is what actually helps the fan-out above: those six requests arrive together,
+ * so they share a single round trip rather than queueing six.
+ */
+const VALUATION_CACHE_TTL_MS = 5_000;
+
+const valuationCache = new TtlCache<ValuationRow | null>({
+  ttlMs: VALUATION_CACHE_TTL_MS,
+  // Roughly a busy analyst's working set; eviction is oldest-first.
+  maxEntries: 1_000,
+});
+
+/**
+ * Drops a valuation from the read cache. Call after any statement that writes
+ * to the `valuations` row — including from other repos, which is why this is
+ * exported rather than kept private to this module.
+ */
+export function invalidateValuation(id: string): void {
+  valuationCache.delete(id);
+}
+
+/** Empties the cache. For tests, and for anything that rewrites rows in bulk. */
+export function clearValuationCache(): void {
+  valuationCache.clear();
+}
+
 export async function findValuationById(pool: pg.Pool, id: string): Promise<ValuationRow | null> {
-  const { rows } = await pool.query<ValuationRow>('SELECT * FROM valuations WHERE id = $1', [id]);
-  return rows[0] ?? null;
+  return valuationCache.getOrLoad(id, async () => {
+    const { rows } = await pool.query<ValuationRow>('SELECT * FROM valuations WHERE id = $1', [id]);
+    return rows[0] ?? null;
+  });
 }
 
 /**
@@ -282,10 +328,6 @@ export async function listValuations(
   if (scope.kind === 'none') return { items: [], total: 0 };
 
   const { whereSql, params } = buildValuationWhere(scope, filters);
-  const { rows: countRows } = await pool.query<{ count: string }>(
-    `SELECT count(*)::text AS count FROM valuations ${whereSql}`,
-    params,
-  );
 
   // Per-row unread flag (gap 4) for the caller's side of the conversation.
   const readCol = filters.readerSide === 'admin' ? 'admin_read_at' : 'user_read_at';
@@ -294,19 +336,29 @@ export async function listValuations(
     : '';
 
   const paged = [...params, filters.perPage, (filters.page - 1) * filters.perPage];
-  const { rows } = await pool.query<ValuationRow>(
-    `SELECT *${unreadSql} FROM valuations ${whereSql}
-     ${orderBySql(filters.sort)}
-     LIMIT $${paged.length - 1} OFFSET $${paged.length}`,
-    paged,
-  );
-  return { items: rows, total: Number(countRows[0]!.count) };
+
+  // The count and the page share a WHERE clause but neither needs the other's
+  // result, and on an ops inbox filtered down from tens of thousands of rows
+  // the count is the slower of the two. Running them in sequence made every
+  // list request wait for both; issuing them together halves the wall clock at
+  // the cost of one extra pooled connection for the duration.
+  const [countResult, pageResult] = await Promise.all([
+    pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM valuations ${whereSql}`, params),
+    pool.query<ValuationRow>(
+      `SELECT *${unreadSql} FROM valuations ${whereSql}
+       ${orderBySql(filters.sort)}
+       LIMIT $${paged.length - 1} OFFSET $${paged.length}`,
+      paged,
+    ),
+  ]);
+  return { items: pageResult.rows, total: Number(countResult.rows[0]!.count) };
 }
 
 /** Stamp the side's read marker; called when a valuation is opened (gap 4). */
 export async function markValuationRead(pool: pg.Pool, id: string, side: 'admin' | 'user'): Promise<void> {
   const column = side === 'admin' ? 'admin_read_at' : 'user_read_at';
   await pool.query(`UPDATE valuations SET ${column} = now() WHERE id = $1`, [id]);
+  invalidateValuation(id);
 }
 
 /** Live counts per tab (state group), honouring scope + every non-tab filter. */
@@ -554,6 +606,7 @@ export async function patchValuation(
       `UPDATE valuations SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
       params,
     );
+    invalidateValuation(current.id);
 
     await recordEvent(client, {
       valuationId: current.id,
