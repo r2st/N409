@@ -27,11 +27,19 @@ export interface ChartPoint {
  * Charts are vector-drawn by pdfkit — no image pipeline, no headless browser,
  * and the output stays deterministic and text-searchable.
  *
+ * Four shapes, one per question a reader actually asks:
+ *
  * `bar` compares magnitudes across categories (equity value by approach).
  * `waterfall` explains how a starting value becomes an ending one through
  * signed steps — the shape a 409A conclusion actually has: marketable common
  * value per share, less the discount for lack of control, less the discount
  * for lack of marketability, equals fair market value.
+ * `donut` shows composition, where the whole is the point and the parts are
+ * shares of it — approach weighting is a weighting, and a reader should see
+ * that the pieces sum to one rather than have to add four bars up.
+ * `line` shows a value moving over time. A 409A is not read in isolation; the
+ * board's first question about a new number is how it compares with the last
+ * one, and a trend answers that in the space a sentence would take.
  */
 export type ChartSpec =
   | {
@@ -52,6 +60,23 @@ export type ChartSpec =
        *  the engine means the two differ by a cent. */
       end_value?: number;
       end_display?: string;
+      note?: string;
+    }
+  | {
+      type: 'donut';
+      title: string;
+      /** Magnitudes; normalised to the total, so weights or raw values both work. */
+      slices: ChartPoint[];
+      /** Two short lines in the hole — typically the total and what it is. */
+      center?: string;
+      center_note?: string;
+      note?: string;
+    }
+  | {
+      type: 'line';
+      title: string;
+      /** Chronological. `label` is the period (a date), `value` the metric. */
+      points: ChartPoint[];
       note?: string;
     };
 
@@ -538,18 +563,137 @@ export function waterfallColumns(
   return columns;
 }
 
+// ── donut ─────────────────────────────────────────────────────────────────────
+
+export interface DonutSegment {
+  label: string;
+  display: string;
+  value: number;
+  /** Share of the total, 0–1. */
+  fraction: number;
+  /** Radians, 0 at twelve o'clock, increasing clockwise. */
+  start: number;
+  end: number;
+}
+
+/**
+ * Slices as angles, largest first.
+ *
+ * Ordering by magnitude is not decoration: a weighting chart is read to find
+ * which approach dominates, and putting the biggest slice at twelve o'clock
+ * answers that before the legend is read. Non-positive and non-finite values
+ * are dropped — a zero-weight approach is not a sliver, it is absent.
+ */
+export function donutSegments(slices: readonly ChartPoint[]): DonutSegment[] {
+  const usable = slices.filter((s) => Number.isFinite(s.value) && s.value > 0);
+  const total = usable.reduce((sum, s) => sum + s.value, 0);
+  if (total <= 0) return [];
+
+  let cursor = 0;
+  return [...usable]
+    .sort((a, b) => b.value - a.value)
+    .map((slice) => {
+      const fraction = slice.value / total;
+      const start = cursor;
+      cursor += fraction * Math.PI * 2;
+      return {
+        label: slice.label,
+        display: slice.display ?? `${(fraction * 100).toFixed(1)}%`,
+        value: slice.value,
+        fraction,
+        start,
+        end: cursor,
+      };
+    });
+}
+
+// ── line ──────────────────────────────────────────────────────────────────────
+
+export interface LinePoint {
+  label: string;
+  display: string;
+  value: number;
+  /** 0–1 across the plot width, left to right. */
+  x: number;
+  /** 0–1 up the plot height; 1 is the top of the band. */
+  y: number;
+}
+
+export interface LinePlot {
+  points: LinePoint[];
+  min: number;
+  max: number;
+}
+
+/**
+ * Normalised coordinates for a time series.
+ *
+ * The band is padded by a tenth of the range at each end so the extremes are
+ * not drawn on the frame, and a flat series is centred rather than dividing by
+ * a zero range — an unchanged FMV is a perfectly ordinary thing to plot, and a
+ * chart that renders it as a line along the axis reads as missing data.
+ */
+export function linePlot(points: readonly ChartPoint[]): LinePlot {
+  const usable = points.filter((p) => Number.isFinite(p.value));
+  if (usable.length === 0) return { points: [], min: 0, max: 0 };
+
+  const values = usable.map((p) => p.value);
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const pad = rawMax === rawMin ? Math.abs(rawMax) * 0.1 || 1 : (rawMax - rawMin) * 0.1;
+  const min = rawMin - pad;
+  const max = rawMax + pad;
+  const span = max - min;
+
+  return {
+    min,
+    max,
+    points: usable.map((p, i) => ({
+      label: p.label,
+      display: p.display ?? formatChartValue(p.value),
+      value: p.value,
+      x: usable.length === 1 ? 0.5 : i / (usable.length - 1),
+      y: (p.value - min) / span,
+    })),
+  };
+}
+
 /** Vertical space a chart needs, so pagination can decide before drawing. */
 export function chartHeight(spec: ChartSpec): number {
   const title = 20;
   const note = spec.note ? 16 : 0;
-  if (spec.type === 'bar') return title + Math.max(1, spec.points.length) * 20 + 10 + note;
-  return title + WATERFALL_PLOT_HEIGHT + 34 + note;
+  switch (spec.type) {
+    case 'bar':
+      return title + Math.max(1, spec.points.length) * 20 + 10 + note;
+    case 'donut':
+      // The legend can be taller than the ring once there are enough slices.
+      return title + Math.max(DONUT_SIZE, donutSegments(spec.slices).length * 18 + 8) + 12 + note;
+    case 'line':
+      return title + LINE_PLOT_HEIGHT + 30 + note;
+    case 'waterfall':
+      return title + WATERFALL_PLOT_HEIGHT + 34 + note;
+  }
 }
 
 const WATERFALL_PLOT_HEIGHT = 150;
+const LINE_PLOT_HEIGHT = 140;
+const DONUT_SIZE = 130;
 const CHART_INK = '#222222';
 const CHART_MUTED = '#8a8a8a';
 const CHART_GRID = '#dddddd';
+const CHART_TRACK = '#f1efeb';
+
+/**
+ * Slice colours: the accent for the dominant share, then a descending grey
+ * ramp. A valuation report is printed, photocopied and read in black and
+ * white as often as not, so the series has to separate on lightness alone —
+ * a rainbow palette would collapse into four identical greys on a fax.
+ */
+const DONUT_RAMP = ['#4a4a4a', '#7a7a7a', '#a5a5a5', '#c6c6c6', '#dedede'];
+
+export function donutColor(index: number, accent: string): string {
+  return index === 0 ? accent : (DONUT_RAMP[(index - 1) % DONUT_RAMP.length] ?? CHART_MUTED);
+}
 
 /** Bars are the accent colour; reductions are muted so a discount reads as one. */
 function chartColor(kind: WaterfallColumn['kind'], accent: string): string {
@@ -565,6 +709,8 @@ function renderChart(doc: PDFKit.PDFDocument, spec: ChartSpec, usable: number, a
   doc.moveDown(0.4);
 
   if (spec.type === 'bar') renderBarChart(doc, spec, usable, accent);
+  else if (spec.type === 'donut') renderDonutChart(doc, spec, usable, accent);
+  else if (spec.type === 'line') renderLineChart(doc, spec, usable, accent);
   else renderWaterfallChart(doc, spec, usable, accent);
 
   if (spec.note) {
@@ -604,6 +750,10 @@ function renderBarChart(
       .text(point.label, left, y + 1, { width: labelWidth - 8, lineBreak: false, ellipsis: true });
 
     const barX = left + labelWidth;
+    // A track behind every bar. Without it the shortest bar in a set reads as
+    // a rendering fault rather than a small number, and there is nothing to
+    // measure the others against.
+    doc.rect(barX, y, trackWidth, barHeight).fillColor(CHART_TRACK).fill();
     if (max > 0 && point.value !== 0) {
       const width = Math.max(1, (Math.abs(point.value) / max) * trackWidth);
       doc
@@ -623,6 +773,206 @@ function renderBarChart(
     doc.y = y + rowHeight;
     doc.x = left;
   });
+}
+
+/**
+ * An annulus segment, approximated as a polygon.
+ *
+ * pdfkit has no arc primitive, and stitching beziers for four slices is more
+ * arithmetic than the drawing is worth. A degree of resolution is invisible at
+ * print sizes and cannot get the winding wrong.
+ */
+function annulusPath(
+  doc: PDFKit.PDFDocument,
+  cx: number,
+  cy: number,
+  outer: number,
+  inner: number,
+  start: number,
+  end: number,
+): void {
+  // Angles run clockwise from twelve o'clock; PDF's y axis grows downward, so
+  // sin drives x and −cos drives y.
+  const at = (angle: number, r: number): [number, number] => [
+    cx + Math.sin(angle) * r,
+    cy - Math.cos(angle) * r,
+  ];
+  const steps = Math.max(2, Math.ceil(((end - start) / (Math.PI * 2)) * 180));
+  const step = (end - start) / steps;
+
+  doc.moveTo(...at(start, outer));
+  for (let i = 1; i <= steps; i += 1) doc.lineTo(...at(start + step * i, outer));
+  doc.lineTo(...at(end, inner));
+  for (let i = steps - 1; i >= 0; i -= 1) doc.lineTo(...at(start + step * i, inner));
+  doc.closePath();
+}
+
+function renderDonutChart(
+  doc: PDFKit.PDFDocument,
+  spec: Extract<ChartSpec, { type: 'donut' }>,
+  usable: number,
+  accent: string,
+): void {
+  const left = doc.page.margins.left;
+  const top = doc.y;
+  const segments = donutSegments(spec.slices);
+  if (segments.length === 0) {
+    doc
+      .font(FONTS.italic)
+      .fontSize(9)
+      .fillColor(CHART_MUTED)
+      .text('No weighted components to show.', left, top, { width: usable });
+    doc.x = left;
+    return;
+  }
+
+  const outer = DONUT_SIZE / 2;
+  const inner = outer * 0.58;
+  const cx = left + outer;
+  const cy = top + outer;
+
+  segments.forEach((segment, i) => {
+    annulusPath(doc, cx, cy, outer, inner, segment.start, segment.end);
+    doc.fillColor(donutColor(i, accent)).fill();
+  });
+
+  if (spec.center) {
+    doc
+      .font(FONTS.bold)
+      .fontSize(13)
+      .fillColor(CHART_INK)
+      .text(spec.center, cx - inner, cy - (spec.center_note ? 14 : 7), {
+        width: inner * 2,
+        align: 'center',
+        lineBreak: false,
+      });
+  }
+  if (spec.center_note) {
+    doc
+      .font(FONTS.regular)
+      .fontSize(7.5)
+      .fillColor('#777777')
+      .text(spec.center_note, cx - inner, cy + (spec.center ? 3 : -4), {
+        width: inner * 2,
+        align: 'center',
+        lineBreak: false,
+      });
+  }
+
+  // Legend to the right of the ring: a slice is unreadable without its name,
+  // and labels laid on the arcs collide the moment two slices are thin.
+  const legendX = left + DONUT_SIZE + 22;
+  const legendWidth = Math.max(80, usable - DONUT_SIZE - 22);
+  let legendY = top + Math.max(0, (DONUT_SIZE - segments.length * 18) / 2);
+  segments.forEach((segment, i) => {
+    doc
+      .rect(legendX, legendY + 2.5, 8, 8)
+      .fillColor(donutColor(i, accent))
+      .fill();
+    doc
+      .font(FONTS.regular)
+      .fontSize(9)
+      .fillColor(CHART_INK)
+      .text(segment.label, legendX + 14, legendY + 1, {
+        width: legendWidth - 76,
+        lineBreak: false,
+        ellipsis: true,
+      });
+    doc
+      .font(FONTS.bold)
+      .fontSize(9)
+      .fillColor(CHART_INK)
+      .text(segment.display, legendX + legendWidth - 60, legendY + 1, {
+        width: 60,
+        align: 'right',
+        lineBreak: false,
+      });
+    legendY += 18;
+  });
+
+  doc.x = left;
+  doc.y = top + Math.max(DONUT_SIZE, segments.length * 18 + 8) + 4;
+}
+
+function renderLineChart(
+  doc: PDFKit.PDFDocument,
+  spec: Extract<ChartSpec, { type: 'line' }>,
+  usable: number,
+  accent: string,
+): void {
+  const left = doc.page.margins.left;
+  const top = doc.y;
+  const plot = linePlot(spec.points);
+  const axisWidth = 56;
+  const plotLeft = left + axisWidth;
+  const plotWidth = Math.max(60, usable - axisWidth - 8);
+  const plotHeight = LINE_PLOT_HEIGHT - 26;
+  const baseline = top + plotHeight;
+
+  if (plot.points.length === 0) {
+    doc
+      .font(FONTS.italic)
+      .fontSize(9)
+      .fillColor(CHART_MUTED)
+      .text('No history to plot yet.', left, top, { width: usable });
+    doc.x = left;
+    doc.y = top + 16;
+    return;
+  }
+
+  // Three gridlines with their values, so a reader can take a number off the
+  // chart instead of only a shape.
+  for (const level of [0, 0.5, 1]) {
+    const y = baseline - level * plotHeight;
+    doc
+      .moveTo(plotLeft, y)
+      .lineTo(plotLeft + plotWidth, y)
+      .lineWidth(0.5)
+      .strokeColor(CHART_GRID)
+      .stroke();
+    doc
+      .font(FONTS.regular)
+      .fontSize(7.5)
+      .fillColor('#888888')
+      .text(formatChartValue(plot.min + level * (plot.max - plot.min)), left, y - 4, {
+        width: axisWidth - 8,
+        align: 'right',
+        lineBreak: false,
+      });
+  }
+
+  const coords = plot.points.map((p) => ({
+    ...p,
+    px: plotLeft + p.x * plotWidth,
+    py: baseline - p.y * plotHeight,
+  }));
+
+  if (coords.length > 1) {
+    doc.moveTo(coords[0]!.px, coords[0]!.py);
+    for (const c of coords.slice(1)) doc.lineTo(c.px, c.py);
+    doc.lineWidth(1.6).strokeColor(accent).stroke();
+  }
+
+  coords.forEach((c, i) => {
+    doc.circle(c.px, c.py, 2.6).fillColor(accent).fill();
+    // Only the endpoints carry a value. Labelling every marker on a six-point
+    // series produces a chart made of overlapping numbers.
+    if (i === 0 || i === coords.length - 1) {
+      doc
+        .font(FONTS.bold)
+        .fontSize(7.5)
+        .fillColor(CHART_INK)
+        .text(c.display, c.px - 30, c.py - 13, { width: 60, align: 'center', lineBreak: false });
+    }
+    doc
+      .font(FONTS.regular)
+      .fontSize(7.5)
+      .fillColor('#777777')
+      .text(c.label, c.px - 30, baseline + 6, { width: 60, align: 'center', lineBreak: false });
+  });
+
+  doc.x = left;
+  doc.y = baseline + 20;
 }
 
 function renderWaterfallChart(

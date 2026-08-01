@@ -33,6 +33,20 @@ const ChartSpec = z.discriminatedUnion('type', [
     end_display: z.string().max(60).optional(),
     note: z.string().max(400).optional(),
   }),
+  z.object({
+    type: z.literal('donut'),
+    title: z.string().min(1).max(200),
+    slices: z.array(ChartPoint).max(12),
+    center: z.string().max(40).optional(),
+    center_note: z.string().max(60).optional(),
+    note: z.string().max(400).optional(),
+  }),
+  z.object({
+    type: z.literal('line'),
+    title: z.string().min(1).max(200),
+    points: z.array(ChartPoint).max(40),
+    note: z.string().max(400).optional(),
+  }),
 ]);
 
 const SummaryFigure = z.object({

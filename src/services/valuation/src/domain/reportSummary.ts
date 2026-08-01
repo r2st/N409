@@ -129,6 +129,73 @@ export function approachChart(results: ResultsShape, currency: string): ChartSpe
   };
 }
 
+/**
+ * Approach weighting as a ring.
+ *
+ * The bar chart above it answers "how big is each approach"; this answers "how
+ * much did each one count", which is a different question and the one a
+ * reviewer challenges. Showing it as parts of a whole makes the weights
+ * self-evidently sum to 100% — a set of bars requires the reader to add up
+ * four percentages and trust the result.
+ */
+export function weightingChart(results: ResultsShape): ChartSpec | null {
+  const approaches = results.approaches;
+  if (!approaches || typeof approaches !== 'object') return null;
+  const slices = Object.entries(approaches)
+    .map(([key, value]) => ({
+      label: APPROACH_LABELS[key] ?? key,
+      weight: num(value?.weight) ?? 0,
+    }))
+    .filter((s) => s.weight > 0);
+  // A single approach at 100% is a full ring saying nothing the sentence
+  // above it does not already say.
+  if (slices.length < 2) return null;
+
+  return {
+    type: 'donut',
+    title: 'Approach weighting',
+    slices: slices.map((s) => ({
+      label: s.label,
+      value: s.weight,
+      display: formatPercent(s.weight, 0),
+    })),
+    center: `${slices.length}`,
+    center_note: 'approaches',
+    note: 'Weights applied to each approach in concluding equity value.',
+  };
+}
+
+/** One point per prior valuation of this company, oldest first. */
+export interface HistoryPoint {
+  /** ISO date the calculation was produced. */
+  as_of: string;
+  fmv_per_share: number;
+}
+
+/**
+ * FMV per share over time.
+ *
+ * A board's first question about a new 409A is how it compares with the last
+ * one. Answering it inside the report — rather than leaving the reader to find
+ * the previous PDF — is the difference between a document and an answer.
+ * Suppressed below two points, where a "trend" would be a single dot.
+ */
+export function historyChart(history: readonly HistoryPoint[], currency: string): ChartSpec | null {
+  const points = history.filter((h) => Number.isFinite(h.fmv_per_share));
+  if (points.length < 2) return null;
+
+  return {
+    type: 'line',
+    title: 'Fair market value per common share over time',
+    points: points.map((p) => ({
+      label: p.as_of.slice(0, 10),
+      value: p.fmv_per_share,
+      display: formatCurrency(p.fmv_per_share, currency, 4),
+    })),
+    note: 'Concluded FMV of each prior valuation of this company, oldest first.',
+  };
+}
+
 /** Marketable value per share → DLOC → DLOM → FMV. */
 export function discountChart(results: ResultsShape, currency: string): ChartSpec | null {
   const fmv = num(results.fmv_per_share);
@@ -176,6 +243,11 @@ export interface SummaryContext {
   /** Valuation date as the report states it (YYYY-MM-DD). */
   valuationDate?: string | null;
   companyName: string;
+  /**
+   * Prior concluded values for this company, oldest first, for the trend
+   * chart. Omit (or pass fewer than two) and the chart is left out.
+   */
+  history?: readonly HistoryPoint[];
 }
 
 /**
@@ -241,9 +313,15 @@ export function buildReportSummary(
     `of one share of common stock of ${context.companyName}${asOf} is ` +
     `${formatCurrency(fmv, currency, 4)} per share, on a non-marketable, minority-interest basis.`;
 
-  const charts = [approachChart(results, currency), discountChart(results, currency)].filter(
-    (c): c is ChartSpec => c !== null,
-  );
+  // Ordered as the page is read: what the approaches produced, how they were
+  // weighted, how the discounts got from there to the conclusion, and how the
+  // conclusion compares with the last one.
+  const charts = [
+    approachChart(results, currency),
+    weightingChart(results),
+    discountChart(results, currency),
+    historyChart(context.history ?? [], currency),
+  ].filter((c): c is ChartSpec => c !== null);
 
   return {
     headline: {

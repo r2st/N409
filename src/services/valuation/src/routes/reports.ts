@@ -129,6 +129,44 @@ async function brandingFor(
 }
 
 /**
+ * Concluded FMV of every prior valuation of the same company, oldest first —
+ * the trend chart on the summary page.
+ *
+ * Scoped to the same owner and company name, exactly as the analytics endpoint
+ * scopes its series, so a report can never plot another client's history. Only
+ * runs strictly before this one count: a report states what was known on the
+ * day it was drawn, and a later revision appearing in its own history chart
+ * would be a document that changes after signature.
+ */
+async function historyFor(
+  pool: pg.Pool,
+  valuation: ValuationRow,
+  before: Date,
+): Promise<Array<{ as_of: string; fmv_per_share: number }>> {
+  const { rows } = await pool.query<{ as_of: Date; fmv_per_share: string | null }>(
+    `SELECT c.created_at AS as_of, c.fmv_per_share
+       FROM valuations v
+       JOIN LATERAL (
+         SELECT created_at, fmv_per_share
+           FROM calculations
+          WHERE valuation_id = v.id
+            AND status = 'succeeded'
+            AND fmv_per_share IS NOT NULL
+            AND created_at <= $3
+          ORDER BY created_at DESC
+          LIMIT 1
+       ) c ON true
+      WHERE v.user_id = $1
+        AND lower(trim(v.company_name)) = lower(trim($2))
+      ORDER BY c.created_at ASC`,
+    [valuation.user_id, valuation.company_name, before],
+  );
+  return rows
+    .map((r) => ({ as_of: new Date(r.as_of).toISOString(), fmv_per_share: Number(r.fmv_per_share) }))
+    .filter((p) => Number.isFinite(p.fmv_per_share));
+}
+
+/**
  * Executive summary for this valuation, from its latest successful engine run.
  * A report drafted before the engine has produced a value renders without one.
  */
@@ -136,11 +174,13 @@ async function summaryFor(pool: pg.Pool, valuation: ValuationRow): Promise<Repor
   const calculation = await latestSucceededCalculation(pool, valuation.id);
   const payload = calculation?.inputs as { inputs?: { valuation_date?: unknown } } | undefined;
   const rawDate = payload?.inputs?.valuation_date;
+  const history = calculation ? await historyFor(pool, valuation, calculation.created_at) : [];
   return (
     buildReportSummary(calculation, {
       currency: valuation.currency,
       companyName: valuation.company_name,
       valuationDate: typeof rawDate === 'string' ? rawDate.slice(0, 10) : null,
+      history,
     }) ?? undefined
   );
 }

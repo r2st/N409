@@ -5,8 +5,10 @@ import {
   discountChart,
   formatCurrency,
   formatPercent,
+  historyChart,
   marketableValuePerShare,
   num,
+  weightingChart,
 } from '../../src/domain/reportSummary.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
 
@@ -130,6 +132,65 @@ describe('approachChart', () => {
   });
 });
 
+describe('weightingChart', () => {
+  it('shows each weighted approach as a slice, so the weights visibly sum to 100%', () => {
+    const chart = weightingChart(RESULTS)!;
+    expect(chart.type).toBe('donut');
+    const donut = chart as Extract<typeof chart, { type: 'donut' }>;
+    // The asset approach carries no weight, so it is not part of the ring.
+    expect(donut.slices.map((s) => s.label)).toEqual(['Income (DCF)', 'Market (comparables)']);
+    expect(donut.slices.map((s) => s.value)).toEqual([0.6, 0.4]);
+    expect(donut.slices[0]!.display).toBe('60%');
+    expect(donut.center).toBe('2');
+    expect(donut.center_note).toBe('approaches');
+  });
+
+  it('stays silent when a ring would say nothing the sentence above it does not', () => {
+    // One approach at 100% — a full ring.
+    expect(weightingChart({ approaches: { income: { weight: 1, equity_value: 5 } } })).toBeNull();
+    // Weighted approaches, but only one of them actually counts.
+    expect(
+      weightingChart({
+        approaches: { income: { weight: 1, equity_value: 5 }, asset: { weight: 0, equity_value: 2 } },
+      }),
+    ).toBeNull();
+    expect(weightingChart({})).toBeNull();
+  });
+});
+
+describe('historyChart', () => {
+  it('plots prior concluded values oldest first, in the report currency', () => {
+    const chart = historyChart(
+      [
+        { as_of: '2025-06-30', fmv_per_share: 0.91 },
+        { as_of: '2026-06-30T00:00:00Z', fmv_per_share: 1.2345 },
+      ],
+      'USD',
+    )!;
+    expect(chart.type).toBe('line');
+    const line = chart as Extract<typeof chart, { type: 'line' }>;
+    expect(line.points.map((p) => p.label)).toEqual(['2025-06-30', '2026-06-30']);
+    expect(line.points.map((p) => p.value)).toEqual([0.91, 1.2345]);
+    // Per-share figures carry four decimals, as everywhere else in the summary.
+    expect(line.points[1]!.display).toBe('$1.2345');
+  });
+
+  it('needs two real points before there is a trend to draw', () => {
+    expect(historyChart([], 'USD')).toBeNull();
+    expect(historyChart([{ as_of: '2026-06-30', fmv_per_share: 1 }], 'USD')).toBeNull();
+    // A non-finite value is dropped, which can take the series below two.
+    expect(
+      historyChart(
+        [
+          { as_of: '2025-06-30', fmv_per_share: Number.NaN },
+          { as_of: '2026-06-30', fmv_per_share: 1 },
+        ],
+        'USD',
+      ),
+    ).toBeNull();
+  });
+});
+
 describe('discountChart', () => {
   it('walks marketable value down to FMV through each discount', () => {
     const chart = discountChart(RESULTS, 'USD')!;
@@ -159,7 +220,7 @@ describe('discountChart', () => {
 });
 
 describe('buildReportSummary', () => {
-  it('builds the headline, figures, statement and both charts', () => {
+  it('builds the headline, figures, statement and the charts', () => {
     const summary = buildReportSummary(calculation(), CONTEXT)!;
 
     expect(summary.headline).toMatchObject({
@@ -186,7 +247,26 @@ describe('buildReportSummary', () => {
     expect(summary.statement).toContain('$1.2345');
     expect(summary.statement).toContain('non-marketable, minority-interest basis');
 
-    expect(summary.charts!.map((c) => c.type)).toEqual(['bar', 'waterfall']);
+    // Ordered as the page is read. No history was supplied, so no trend line.
+    expect(summary.charts!.map((c) => c.type)).toEqual(['bar', 'donut', 'waterfall']);
+  });
+
+  it('appends the trend line only once there is a prior valuation to trend against', () => {
+    const withHistory = buildReportSummary(calculation(), {
+      ...CONTEXT,
+      history: [
+        { as_of: '2025-06-30', fmv_per_share: 0.91 },
+        { as_of: '2026-06-30', fmv_per_share: 1.2345 },
+      ],
+    })!;
+    expect(withHistory.charts!.map((c) => c.type)).toEqual(['bar', 'donut', 'waterfall', 'line']);
+
+    // A single prior point is a dot, not a trend.
+    const onePoint = buildReportSummary(calculation(), {
+      ...CONTEXT,
+      history: [{ as_of: '2026-06-30', fmv_per_share: 1.2345 }],
+    })!;
+    expect(onePoint.charts!.map((c) => c.type)).toEqual(['bar', 'donut', 'waterfall']);
   });
 
   it('summarises nothing until the engine has produced a value', () => {
