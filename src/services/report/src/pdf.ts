@@ -12,6 +12,68 @@ import PDFDocument from 'pdfkit';
 export interface ReportPdfSection {
   heading: string;
   html: string;
+  /** Vector charts appended after this section's prose. */
+  charts?: ChartSpec[];
+}
+
+/** One plotted value. `display` overrides the default number formatting. */
+export interface ChartPoint {
+  label: string;
+  value: number;
+  display?: string;
+}
+
+/**
+ * Charts are vector-drawn by pdfkit — no image pipeline, no headless browser,
+ * and the output stays deterministic and text-searchable.
+ *
+ * `bar` compares magnitudes across categories (equity value by approach).
+ * `waterfall` explains how a starting value becomes an ending one through
+ * signed steps — the shape a 409A conclusion actually has: marketable common
+ * value per share, less the discount for lack of control, less the discount
+ * for lack of marketability, equals fair market value.
+ */
+export type ChartSpec =
+  | {
+      type: 'bar';
+      title: string;
+      points: ChartPoint[];
+      /** Caption under the plot, e.g. what the weights were. */
+      note?: string;
+    }
+  | {
+      type: 'waterfall';
+      title: string;
+      start: ChartPoint;
+      /** Signed contributions applied in order. */
+      steps: ChartPoint[];
+      end_label: string;
+      /** Ending value; defaults to start + Σsteps. Pass it when rounding in
+       *  the engine means the two differ by a cent. */
+      end_value?: number;
+      end_display?: string;
+      note?: string;
+    };
+
+/** A headline figure on the executive summary page. */
+export interface SummaryFigure {
+  label: string;
+  value: string;
+  /** Small print under the value — the basis, method, or a caveat. */
+  note?: string;
+}
+
+/**
+ * The page a board member reads. One headline number, the facts that qualify
+ * it, and the conclusion-of-value statement — before the methodology sections
+ * that support it.
+ */
+export interface ReportPdfSummary {
+  headline: SummaryFigure;
+  figures?: SummaryFigure[];
+  /** Conclusion of value, as plain sentences (no markup). */
+  statement?: string;
+  charts?: ChartSpec[];
 }
 
 export interface ReportPdfInput {
@@ -20,6 +82,8 @@ export interface ReportPdfInput {
   /** cover-page facts, e.g. Valuation date / Reference / Template / Version */
   meta: Array<{ label: string; value: string }>;
   sections: ReportPdfSection[];
+  /** Executive summary page, rendered after the contents and before §1. */
+  summary?: ReportPdfSummary;
   /** White-label branding (improvement 8): partner logo + accent on the cover. */
   branding?: {
     partner_name: string;
@@ -296,6 +360,320 @@ function fontFor(run: Pick<Run, 'bold' | 'italic'>): string {
   return FONTS.regular;
 }
 
+// ── charts ────────────────────────────────────────────────────────────────────
+
+/** Default formatting when a point carries no `display`. */
+export function formatChartValue(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}bn`;
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}m`;
+  if (abs >= 10_000) return `${Math.round(value / 1000)}k`;
+  if (abs >= 1) return value.toFixed(2);
+  return value.toFixed(4);
+}
+
+export interface WaterfallColumn {
+  label: string;
+  display: string;
+  kind: 'total' | 'increase' | 'decrease';
+  /** Bar spans [bottom, top] in value space; equal for a zero-height step. */
+  bottom: number;
+  top: number;
+}
+
+/**
+ * Turns a start value and signed steps into floating bars.
+ *
+ * Totals (first and last) sit on the axis; each step floats between the
+ * running value before and after it. Rendering only needs [bottom, top] per
+ * column, so the geometry is decided here — in a pure function the tests can
+ * pin without reading a PDF.
+ */
+export function waterfallColumns(
+  start: ChartPoint,
+  steps: readonly ChartPoint[],
+  endLabel: string,
+  endValue?: number,
+  endDisplay?: string,
+): WaterfallColumn[] {
+  const columns: WaterfallColumn[] = [
+    {
+      label: start.label,
+      display: start.display ?? formatChartValue(start.value),
+      kind: 'total',
+      bottom: 0,
+      top: start.value,
+    },
+  ];
+  let running = start.value;
+  for (const step of steps) {
+    const next = running + step.value;
+    columns.push({
+      label: step.label,
+      display: step.display ?? formatChartValue(step.value),
+      kind: step.value < 0 ? 'decrease' : 'increase',
+      bottom: Math.min(running, next),
+      top: Math.max(running, next),
+    });
+    running = next;
+  }
+  const total = endValue ?? running;
+  columns.push({
+    label: endLabel,
+    display: endDisplay ?? formatChartValue(total),
+    kind: 'total',
+    bottom: 0,
+    top: total,
+  });
+  return columns;
+}
+
+/** Vertical space a chart needs, so pagination can decide before drawing. */
+export function chartHeight(spec: ChartSpec): number {
+  const title = 20;
+  const note = spec.note ? 16 : 0;
+  if (spec.type === 'bar') return title + Math.max(1, spec.points.length) * 20 + 10 + note;
+  return title + WATERFALL_PLOT_HEIGHT + 34 + note;
+}
+
+const WATERFALL_PLOT_HEIGHT = 150;
+const CHART_INK = '#222222';
+const CHART_MUTED = '#8a8a8a';
+const CHART_GRID = '#dddddd';
+
+/** Bars are the accent colour; reductions are muted so a discount reads as one. */
+function chartColor(kind: WaterfallColumn['kind'], accent: string): string {
+  if (kind === 'decrease') return CHART_MUTED;
+  if (kind === 'total') return CHART_INK;
+  return accent;
+}
+
+function renderChart(doc: PDFKit.PDFDocument, spec: ChartSpec, usable: number, accent: string): void {
+  ensureRoom(doc, chartHeight(spec));
+  const left = doc.page.margins.left;
+  doc.font(FONTS.bold).fontSize(10.5).fillColor(CHART_INK).text(spec.title, left, doc.y, { width: usable });
+  doc.moveDown(0.4);
+
+  if (spec.type === 'bar') renderBarChart(doc, spec, usable, accent);
+  else renderWaterfallChart(doc, spec, usable, accent);
+
+  if (spec.note) {
+    doc.font(FONTS.italic).fontSize(8.5).fillColor('#777777').text(spec.note, left, doc.y + 4, {
+      width: usable,
+    });
+  }
+  doc.x = left;
+  doc.moveDown(1);
+}
+
+function renderBarChart(
+  doc: PDFKit.PDFDocument,
+  spec: Extract<ChartSpec, { type: 'bar' }>,
+  usable: number,
+  accent: string,
+): void {
+  const left = doc.page.margins.left;
+  const labelWidth = Math.min(150, usable * 0.32);
+  const valueWidth = 78;
+  const trackWidth = Math.max(40, usable - labelWidth - valueWidth - 16);
+  // Scale off the largest magnitude; an all-zero series draws labels only.
+  const max = Math.max(0, ...spec.points.map((p) => Math.abs(p.value)));
+  const rowHeight = 20;
+  const barHeight = 11;
+
+  spec.points.forEach((point) => {
+    const y = doc.y;
+    doc
+      .font(FONTS.regular)
+      .fontSize(9.5)
+      .fillColor(CHART_INK)
+      .text(point.label, left, y + 1, { width: labelWidth - 8, lineBreak: false, ellipsis: true });
+
+    const barX = left + labelWidth;
+    if (max > 0 && point.value !== 0) {
+      const width = Math.max(1, (Math.abs(point.value) / max) * trackWidth);
+      doc
+        .rect(barX, y, width, barHeight)
+        .fillColor(point.value < 0 ? CHART_MUTED : accent)
+        .fill();
+    }
+    doc
+      .font(FONTS.regular)
+      .fontSize(9.5)
+      .fillColor(CHART_INK)
+      .text(point.display ?? formatChartValue(point.value), left + labelWidth + trackWidth + 8, y + 1, {
+        width: valueWidth,
+        align: 'right',
+        lineBreak: false,
+      });
+    doc.y = y + rowHeight;
+    doc.x = left;
+  });
+}
+
+function renderWaterfallChart(
+  doc: PDFKit.PDFDocument,
+  spec: Extract<ChartSpec, { type: 'waterfall' }>,
+  usable: number,
+  accent: string,
+): void {
+  const left = doc.page.margins.left;
+  const top = doc.y;
+  const baseline = top + WATERFALL_PLOT_HEIGHT;
+  const columns = waterfallColumns(
+    spec.start,
+    spec.steps,
+    spec.end_label,
+    spec.end_value,
+    spec.end_display,
+  );
+
+  const ceiling = Math.max(0, ...columns.map((c) => c.top));
+  const slotWidth = usable / columns.length;
+  const barWidth = Math.min(66, slotWidth * 0.6);
+  // Headroom for the value label printed above each bar.
+  const scale = ceiling > 0 ? (WATERFALL_PLOT_HEIGHT - 16) / ceiling : 0;
+
+  doc
+    .moveTo(left, baseline)
+    .lineTo(left + usable, baseline)
+    .lineWidth(0.6)
+    .strokeColor(CHART_GRID)
+    .stroke();
+
+  columns.forEach((column, i) => {
+    const centre = left + slotWidth * (i + 0.5);
+    const x = centre - barWidth / 2;
+    const yTop = baseline - column.top * scale;
+    const height = Math.max(1, (column.top - column.bottom) * scale);
+
+    doc.rect(x, yTop, barWidth, height).fillColor(chartColor(column.kind, accent)).fill();
+
+    // Connector from this bar's settled value into the next column.
+    const next = columns[i + 1];
+    if (next && next.kind !== 'total') {
+      const connectorY = baseline - Math.max(column.top, column.bottom) * scale;
+      doc
+        .moveTo(x + barWidth, connectorY)
+        .lineTo(centre + slotWidth - barWidth / 2, connectorY)
+        .lineWidth(0.5)
+        .strokeColor(CHART_GRID)
+        .stroke();
+    }
+
+    doc
+      .font(FONTS.bold)
+      .fontSize(8)
+      .fillColor(CHART_INK)
+      .text(column.display, centre - slotWidth / 2, yTop - 11, {
+        width: slotWidth,
+        align: 'center',
+        lineBreak: false,
+      });
+    doc
+      .font(FONTS.regular)
+      .fontSize(8)
+      .fillColor('#555555')
+      .text(column.label, centre - slotWidth / 2 + 2, baseline + 5, {
+        width: slotWidth - 4,
+        align: 'center',
+        height: 24,
+      });
+  });
+
+  doc.x = left;
+  doc.y = baseline + 30;
+}
+
+// ── executive summary ─────────────────────────────────────────────────────────
+
+export const SUMMARY_HEADING = 'Executive Summary';
+
+function renderSummaryPage(
+  doc: PDFKit.PDFDocument,
+  summary: ReportPdfSummary,
+  usable: number,
+  accent: string,
+): void {
+  const left = doc.page.margins.left;
+  doc.font(FONTS.bold).fontSize(16).fillColor('#111111').text(SUMMARY_HEADING, left, doc.y);
+  doc.moveDown(0.8);
+
+  // Headline: the one number the engagement exists to produce.
+  const boxTop = doc.y;
+  const boxHeight = summary.headline.note ? 78 : 66;
+  doc.rect(left, boxTop, usable, boxHeight).fillColor('#f6f5f2').fill();
+  doc.rect(left, boxTop, 4, boxHeight).fillColor(accent).fill();
+  doc
+    .font(FONTS.regular)
+    .fontSize(9.5)
+    .fillColor('#666666')
+    .text(summary.headline.label.toUpperCase(), left + 18, boxTop + 12, { width: usable - 36 });
+  doc
+    .font(FONTS.bold)
+    .fontSize(26)
+    .fillColor('#111111')
+    .text(summary.headline.value, left + 18, boxTop + 26, { width: usable - 36 });
+  if (summary.headline.note) {
+    doc
+      .font(FONTS.italic)
+      .fontSize(8.5)
+      .fillColor('#777777')
+      .text(summary.headline.note, left + 18, boxTop + 60, { width: usable - 36, lineBreak: false });
+  }
+  doc.x = left;
+  doc.y = boxTop + boxHeight + 18;
+
+  // Supporting figures, three to a row.
+  const figures = summary.figures ?? [];
+  if (figures.length > 0) {
+    const perRow = 3;
+    const columnWidth = usable / perRow;
+    for (let i = 0; i < figures.length; i += perRow) {
+      const row = figures.slice(i, i + perRow);
+      const rowTop = doc.y;
+      let rowHeight = 0;
+      row.forEach((figure, c) => {
+        const x = left + c * columnWidth;
+        doc
+          .font(FONTS.regular)
+          .fontSize(8)
+          .fillColor('#888888')
+          .text(figure.label.toUpperCase(), x, rowTop, { width: columnWidth - 12 });
+        doc
+          .font(FONTS.bold)
+          .fontSize(12)
+          .fillColor('#111111')
+          .text(figure.value, x, rowTop + 11, { width: columnWidth - 12 });
+        let bottom = rowTop + 27;
+        if (figure.note) {
+          doc
+            .font(FONTS.regular)
+            .fontSize(8)
+            .fillColor('#777777')
+            .text(figure.note, x, bottom, { width: columnWidth - 12 });
+          bottom = doc.y;
+        }
+        rowHeight = Math.max(rowHeight, bottom - rowTop);
+      });
+      doc.x = left;
+      doc.y = rowTop + rowHeight + 14;
+    }
+  }
+
+  if (summary.statement) {
+    doc.moveDown(0.2);
+    doc
+      .font(FONTS.regular)
+      .fontSize(10.5)
+      .fillColor('#222222')
+      .text(summary.statement, left, doc.y, { width: usable, lineGap: 2, align: 'left' });
+    doc.moveDown(1);
+  }
+
+  for (const chart of summary.charts ?? []) renderChart(doc, chart, usable, accent);
+}
+
 export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions = {}): Promise<Buffer> {
   const doc = new PDFDocument({
     size: 'LETTER',
@@ -375,6 +753,14 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     tocPageIndex = currentPageIndex(doc);
   }
 
+  // Executive summary — after the contents, before §1.
+  let summaryPage: number | null = null;
+  if (input.summary) {
+    doc.addPage();
+    summaryPage = currentPageIndex(doc);
+    renderSummaryPage(doc, input.summary, usable, brandColor);
+  }
+
   // Sections
   const sectionStartPages: number[] = [];
   input.sections.forEach((section, idx) => {
@@ -391,22 +777,31 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     for (const block of htmlToBlocks(section.html)) {
       renderBlock(doc, block, usable);
     }
+    for (const chart of section.charts ?? []) {
+      renderChart(doc, chart, usable, brandColor);
+    }
   });
 
   const range = doc.bufferedPageRange();
 
   if (tocPageIndex !== null) {
+    const entries: TocEntry[] = input.sections.map((section, idx) => ({
+      heading: section.heading,
+      number: `${idx + 1}.`,
+      page: sectionStartPages[idx]! - range.start + 1,
+    }));
+    // The summary is unnumbered — it precedes §1 rather than being part of it.
+    if (summaryPage !== null) {
+      entries.unshift({
+        heading: SUMMARY_HEADING,
+        number: null,
+        page: summaryPage - range.start + 1,
+      });
+    }
     doc.switchToPage(tocPageIndex);
     doc.x = doc.page.margins.left;
     doc.y = doc.page.margins.top;
-    renderTableOfContents(
-      doc,
-      input.sections.map((section, idx) => ({
-        heading: section.heading,
-        page: sectionStartPages[idx]! - range.start + 1,
-      })),
-      usable,
-    );
+    renderTableOfContents(doc, entries, usable);
   }
 
   // Footer: identity, confidentiality marker and page numbers on every page.
@@ -449,6 +844,8 @@ export interface TocEntry {
   heading: string;
   /** 1-based page number as stamped in the footer. */
   page: number;
+  /** Prefix such as "3."; null for an unnumbered entry (the summary). */
+  number?: string | null;
 }
 
 /**
@@ -468,7 +865,8 @@ function renderTableOfContents(
   const numberWidth = 34;
   entries.forEach((entry, idx) => {
     ensureRoom(doc, 22);
-    const label = `${idx + 1}. ${entry.heading}`;
+    const prefix = entry.number === undefined ? `${idx + 1}.` : entry.number;
+    const label = prefix ? `${prefix} ${entry.heading}` : entry.heading;
     const page = String(entry.page);
     const y = doc.y;
 

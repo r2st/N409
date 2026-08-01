@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import { renderReportPdf } from '@n409/report/pdf';
+import { renderReportPdf, type ReportPdfSummary } from '@n409/report/pdf';
 import { canEditWorkingData, canReadReport, canReadValuation } from '../auth/rbac.js';
 import {
   contentFromManagedTemplate,
@@ -22,6 +22,8 @@ import {
   storeRenderedPdf,
   type ReportRow,
 } from '../repos/reports.js';
+import { buildReportSummary } from '../domain/reportSummary.js';
+import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findPartnerById } from '../repos/adminUsers.js';
 import { fetchPartnerLogo } from '../clients/partnerLogo.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -126,6 +128,26 @@ async function brandingFor(
   };
 }
 
+/**
+ * Executive summary for this valuation, from its latest successful engine run.
+ * A report drafted before the engine has produced a value renders without one.
+ */
+async function summaryFor(
+  pool: pg.Pool,
+  valuation: ValuationRow,
+): Promise<ReportPdfSummary | undefined> {
+  const calculation = await latestSucceededCalculation(pool, valuation.id);
+  const payload = calculation?.inputs as { inputs?: { valuation_date?: unknown } } | undefined;
+  const rawDate = payload?.inputs?.valuation_date;
+  return (
+    buildReportSummary(calculation, {
+      currency: valuation.currency,
+      companyName: valuation.company_name,
+      valuationDate: typeof rawDate === 'string' ? rawDate.slice(0, 10) : null,
+    }) ?? undefined
+  );
+}
+
 async function renderVersionPdf(
   pool: pg.Pool,
   valuation: ValuationRow,
@@ -146,6 +168,7 @@ async function renderVersionPdf(
       { label: 'Rendered', value: new Date().toISOString().slice(0, 10) },
     ],
     sections: content.sections.map((s) => ({ heading: s.heading, html: s.html })),
+    summary: await summaryFor(pool, valuation),
     branding: await brandingFor(pool, valuation),
   });
   await storeRenderedPdf(pool, { report, version, pdf, actor });

@@ -10,6 +10,37 @@ import { renderReportPdf } from './pdf.js';
  * surface serves other consumers and keeps rendering independently scalable.
  */
 
+const ChartPoint = z.object({
+  label: z.string().min(1).max(120),
+  value: z.number().finite(),
+  display: z.string().max(60).optional(),
+});
+
+const ChartSpec = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('bar'),
+    title: z.string().min(1).max(200),
+    points: z.array(ChartPoint).max(20),
+    note: z.string().max(400).optional(),
+  }),
+  z.object({
+    type: z.literal('waterfall'),
+    title: z.string().min(1).max(200),
+    start: ChartPoint,
+    steps: z.array(ChartPoint).max(10),
+    end_label: z.string().min(1).max(120),
+    end_value: z.number().finite().optional(),
+    end_display: z.string().max(60).optional(),
+    note: z.string().max(400).optional(),
+  }),
+]);
+
+const SummaryFigure = z.object({
+  label: z.string().min(1).max(120),
+  value: z.string().max(120),
+  note: z.string().max(300).optional(),
+});
+
 const RenderBody = z.object({
   title: z.string().min(1).max(300),
   company_name: z.string().min(1).max(300),
@@ -22,10 +53,19 @@ const RenderBody = z.object({
       z.object({
         heading: z.string().min(1).max(300),
         html: z.string().max(200_000),
+        charts: z.array(ChartSpec).max(6).optional(),
       }),
     )
     .min(1)
     .max(100),
+  summary: z
+    .object({
+      headline: SummaryFigure,
+      figures: z.array(SummaryFigure).max(9).optional(),
+      statement: z.string().max(4000).optional(),
+      charts: z.array(ChartSpec).max(6).optional(),
+    })
+    .optional(),
   include_toc: z.boolean().optional(),
   confidentiality: z.string().max(120).nullable().optional(),
 });
