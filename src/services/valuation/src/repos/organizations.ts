@@ -79,6 +79,60 @@ export async function updateOrganization(
   return rows[0] ?? null;
 }
 
+/**
+ * Would making `candidateParentId` the parent of `id` close a loop?
+ *
+ * Both hierarchies here are self-referencing single-parent trees, and nothing
+ * in the schema prevents A→B→A. A cycle is not merely untidy: `buildEntityTree`
+ * finds a root by looking for a node whose parent is outside the set, so a
+ * cycle leaves every node in it parented and the whole branch vanishes from
+ * the portfolio view — entities silently missing from a consolidated report,
+ * which is precisely the number an auditor relies on.
+ *
+ * Walks up from the candidate parent; if we reach `id`, the candidate is
+ * already a descendant. `UNION` (not `UNION ALL`) terminates on any pre-existing
+ * cycle rather than recursing forever.
+ */
+async function wouldCycle(
+  pool: pg.Pool,
+  table: 'organizations' | 'valuations',
+  parentColumn: 'parent_org_id' | 'parent_valuation_id',
+  id: string,
+  candidateParentId: string,
+): Promise<boolean> {
+  if (id === candidateParentId) return true;
+  const { rows } = await pool.query<{ hit: boolean }>(
+    `WITH RECURSIVE ancestors(id) AS (
+       SELECT $1::text
+       UNION
+       SELECT t.${parentColumn} FROM ${table} t
+         JOIN ancestors a ON a.id = t.id
+        WHERE t.${parentColumn} IS NOT NULL
+     )
+     SELECT true AS hit FROM ancestors WHERE id = $2 LIMIT 1`,
+    [candidateParentId, id],
+  );
+  return rows.length > 0;
+}
+
+/** True when re-parenting `orgId` under `candidateParentId` would close a loop. */
+export function organizationParentWouldCycle(
+  pool: pg.Pool,
+  orgId: string,
+  candidateParentId: string,
+): Promise<boolean> {
+  return wouldCycle(pool, 'organizations', 'parent_org_id', orgId, candidateParentId);
+}
+
+/** True when re-parenting `valuationId` under `candidateParentId` would close a loop. */
+export function entityParentWouldCycle(
+  pool: pg.Pool,
+  valuationId: string,
+  candidateParentId: string,
+): Promise<boolean> {
+  return wouldCycle(pool, 'valuations', 'parent_valuation_id', valuationId, candidateParentId);
+}
+
 export async function deleteOrganization(pool: pg.Pool, id: string): Promise<boolean> {
   const { rowCount } = await pool.query('DELETE FROM organizations WHERE id = $1', [id]);
   return (rowCount ?? 0) > 0;

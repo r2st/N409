@@ -1,0 +1,222 @@
+import type { FastifyInstance } from 'fastify';
+
+/**
+ * Boot-time guard against an unauthenticated endpoint reaching production.
+ *
+ * Every route this service registers must either run through
+ * `app.authenticate` or appear in PUBLIC_ROUTES below with a reason. The check
+ * runs on `onReady`, so a route that forgets its `preHandler` fails the
+ * process at start-up instead of quietly serving a client's valuation to
+ * anyone who knows the id.
+ *
+ * That "forgets its preHandler" case is the whole point: authorization in this
+ * service lives inside the handler (`requirePrincipal` + an rbac predicate),
+ * and `requirePrincipal` only throws because `app.authenticate` never ran and
+ * left `req.principal` null. A missing preHandler is therefore a 401, not a
+ * leak — until a handler reads something before it calls `requirePrincipal`,
+ * which is exactly the mistake nobody notices in review.
+ */
+
+/** A route that is deliberately reachable without a session, and why. */
+interface PublicRoute {
+  method: string;
+  url: string;
+  /** How the route authenticates instead, or why it needs no authentication. */
+  reason: string;
+}
+
+export const PUBLIC_ROUTES: readonly PublicRoute[] = [
+  // Liveness/readiness — scraped by systemd and the reverse proxy.
+  { method: 'GET', url: '/', reason: 'service banner naming the health endpoints' },
+  { method: 'GET', url: '/health', reason: 'liveness probe' },
+  { method: 'GET', url: '/ready', reason: 'readiness probe' },
+
+  // Sign-in and account recovery: the routes that mint a session cannot
+  // require one. Each is rate-limited and validates its own credential.
+  { method: 'POST', url: '/api/v1/auth/register', reason: 'creates the account' },
+  { method: 'POST', url: '/api/v1/auth/login', reason: 'mints the session' },
+  {
+    method: 'POST',
+    url: '/api/v1/auth/mfa/verify',
+    reason: 'second factor, authenticated by the MFA challenge token',
+  },
+  { method: 'POST', url: '/api/v1/auth/logout', reason: 'clears the cookie; safe without a valid session' },
+  { method: 'GET', url: '/api/v1/auth/providers', reason: 'which sign-in buttons to render' },
+  { method: 'GET', url: '/api/v1/auth/google', reason: 'OIDC redirect start' },
+  {
+    method: 'GET',
+    url: '/api/v1/auth/google/callback',
+    reason: 'OIDC redirect return, authenticated by the signed state',
+  },
+  { method: 'GET', url: '/api/v1/auth/me', reason: 'reads the cookie itself and returns null when absent' },
+  { method: 'POST', url: '/api/v1/auth/forgot-password', reason: 'the caller has lost their credential' },
+  { method: 'POST', url: '/api/v1/auth/reset-password', reason: 'authenticated by the emailed reset token' },
+  {
+    method: 'POST',
+    url: '/api/v1/auth/verify-email',
+    reason: 'authenticated by the emailed verification token',
+  },
+  {
+    method: 'POST',
+    url: '/api/v1/auth/resend-verification',
+    reason: 'the caller cannot sign in until verified',
+  },
+  {
+    method: 'POST',
+    url: '/api/v1/auth/change-password',
+    reason: 'authenticated by the current password in the body',
+  },
+  { method: 'POST', url: '/api/v1/auth/invite-info', reason: 'authenticated by the invitation token' },
+  { method: 'POST', url: '/api/v1/auth/accept-invite', reason: 'authenticated by the invitation token' },
+
+  // Enterprise SSO: the SP endpoints are the pre-session half of the handshake;
+  // SCIM carries its own bearer secret and its own per-IP limiter.
+  { method: 'GET', url: '/api/v1/auth/saml/metadata', reason: 'SP metadata is public by specification' },
+  { method: 'GET', url: '/api/v1/auth/saml/login', reason: 'SAML AuthnRequest redirect' },
+  {
+    method: 'POST',
+    url: '/api/v1/auth/saml/acs',
+    reason: 'assertion consumer, authenticated by the signed SAML assertion',
+  },
+  {
+    method: 'GET',
+    url: '/scim/v2/ServiceProviderConfig',
+    reason: 'SCIM discovery; guarded by the SCIM bearer',
+  },
+  { method: 'GET', url: '/scim/v2/Users', reason: 'guarded by the SCIM bearer token' },
+  { method: 'GET', url: '/scim/v2/Users/:id', reason: 'guarded by the SCIM bearer token' },
+  { method: 'POST', url: '/scim/v2/Users', reason: 'guarded by the SCIM bearer token' },
+  { method: 'PATCH', url: '/scim/v2/Users/:id', reason: 'guarded by the SCIM bearer token' },
+  { method: 'DELETE', url: '/scim/v2/Users/:id', reason: 'guarded by the SCIM bearer token' },
+
+  // OAuth redirect returns from third-party providers. The browser arrives
+  // without our cookie; the signed `state` is the authentication, and each
+  // callback rejects a state minted for a different flow.
+  {
+    method: 'GET',
+    url: '/api/v1/accounting/callback',
+    reason: 'authenticated by the signed accounting state',
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/cap-table-sync/callback',
+    reason: 'authenticated by the signed cap-table state',
+  },
+  { method: 'GET', url: '/api/v1/hris/callback', reason: 'authenticated by the signed HRIS state' },
+
+  // Token-authenticated portals for people who have no account here: the
+  // auditor with a share link, the board member with a signing link, the
+  // client filling in a firm's intake form. Each redeems a single-purpose
+  // token and is behind a per-IP limiter.
+  { method: 'POST', url: '/api/v1/auditor/portal', reason: 'authenticated by the auditor access token' },
+  { method: 'POST', url: '/api/v1/board/resolution', reason: 'authenticated by the board signing token' },
+  { method: 'POST', url: '/api/v1/board/sign', reason: 'authenticated by the board signing token' },
+  { method: 'POST', url: '/api/v1/intake/portal', reason: 'authenticated by the intake link token' },
+  { method: 'POST', url: '/api/v1/intake/portal/answers', reason: 'authenticated by the intake link token' },
+  { method: 'POST', url: '/api/v1/intake/portal/submit', reason: 'authenticated by the intake link token' },
+
+  // Payment-provider webhooks: authenticated by the Stripe signature header,
+  // which is the only thing that can be trusted on a server-to-server POST.
+  { method: 'POST', url: '/api/v1/stripe/webhook', reason: 'authenticated by the Stripe signature' },
+  { method: 'POST', url: '/api/v1/billing/webhook', reason: 'authenticated by the Stripe signature' },
+
+  // Deliberately public reads. These serve the sign-in page before anyone has
+  // a session — a firm's logo and colours, and whether registration is open.
+  { method: 'GET', url: '/api/v1/public/branding/:key', reason: 'white-label chrome on the pre-login pages' },
+  {
+    method: 'GET',
+    url: '/api/v1/public/partners/:key/branding',
+    reason: 'white-label chrome on the pre-login pages',
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/public/settings',
+    reason: 'is registration open, is the platform in maintenance',
+  },
+
+  // Marketing surface.
+  {
+    method: 'POST',
+    url: '/api/v1/contact',
+    reason: 'public contact form; rate-limited and captcha-free by design',
+  },
+  { method: 'GET', url: '/api/partner/v1/docs', reason: 'self-describing partner API documentation' },
+];
+
+const key = (method: string, url: string): string => `${method.toUpperCase()} ${url}`;
+
+const PUBLIC_KEYS: ReadonlySet<string> = new Set(PUBLIC_ROUTES.map((r) => key(r.method, r.url)));
+
+export interface RouteAudit {
+  /** Registered routes that are neither authenticated nor allow-listed. */
+  unguarded(): string[];
+  /** Allow-list entries no route matched — a stale exemption to delete. */
+  staleExemptions(): string[];
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /** Exposed so the security regression test can inspect the same data the boot check uses. */
+    routeAudit: RouteAudit;
+  }
+}
+
+/**
+ * Records every route as it is registered. Must run before the first route, so
+ * `buildApp` installs it immediately after the problem handler.
+ */
+export function registerRouteAudit(app: FastifyInstance): RouteAudit {
+  const authenticated = new Set<string>();
+  const seen = new Set<string>();
+
+  app.addHook('onRoute', (route) => {
+    // HEAD is synthesised by Fastify for every GET; auditing it twice adds noise.
+    const methods = (Array.isArray(route.method) ? route.method : [route.method]).filter(
+      (m) => m !== 'HEAD' && m !== 'OPTIONS',
+    );
+    const handlers = route.preHandler
+      ? Array.isArray(route.preHandler)
+        ? route.preHandler
+        : [route.preHandler]
+      : [];
+    const guarded = handlers.some((h) => h === app.authenticate);
+    for (const method of methods) {
+      const k = key(method, route.url);
+      seen.add(k);
+      if (guarded) authenticated.add(k);
+    }
+  });
+
+  const audit: RouteAudit = {
+    unguarded: () =>
+      [...seen]
+        .filter((k) => !authenticated.has(k) && !PUBLIC_KEYS.has(k))
+        .sort((a, b) => a.localeCompare(b)),
+    staleExemptions: () => [...PUBLIC_KEYS].filter((k) => !seen.has(k)).sort((a, b) => a.localeCompare(b)),
+  };
+  app.decorate('routeAudit', audit);
+  return audit;
+}
+
+/**
+ * Fails `app.ready()` if any route escaped both `app.authenticate` and
+ * PUBLIC_ROUTES, so an unguarded endpoint takes the service down at boot
+ * rather than serving traffic.
+ *
+ * This runs on `onReady`, not at the end of `buildApp`, because the Stripe
+ * webhooks and the SAML assertion consumer are registered inside encapsulated
+ * `app.register()` scopes whose bodies do not execute until the boot sequence
+ * runs. Asserting synchronously would silently skip exactly the routes that
+ * most need the check.
+ */
+export function assertRoutesGuarded(app: FastifyInstance, audit: RouteAudit): void {
+  app.addHook('onReady', async () => {
+    const unguarded = audit.unguarded();
+    if (unguarded.length > 0) {
+      throw new Error(
+        `Unauthenticated routes registered without an entry in PUBLIC_ROUTES:\n  ${unguarded.join('\n  ')}\n` +
+          'Add `preHandler: app.authenticate`, or list the route in src/plugins/routeAudit.ts with a reason.',
+      );
+    }
+  });
+}

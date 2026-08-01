@@ -4,7 +4,7 @@ import pLimit from 'p-limit';
 import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import { signCapTableSyncState, verifyCapTableSyncState, type JwtConfig } from '../auth/jwt.js';
+import { signHrisState, verifyHrisState, type JwtConfig } from '../auth/jwt.js';
 import {
   HRIS_PROVIDERS,
   HRIS_PROVIDER_LABELS,
@@ -226,7 +226,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     const valuation = await loadAuthorized(principal, id);
     const creds = deps.credentials[provider];
     if (!creds) throw providerUnavailable(provider);
-    const state = await signCapTableSyncState(
+    const state = await signHrisState(
       { valuationId: valuation.id, provider, userId: principal.id },
       deps.jwt,
     );
@@ -238,7 +238,7 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     if (!q.state) throw problems.unprocessable('Missing state');
     let state;
     try {
-      state = await verifyCapTableSyncState(q.state, deps.jwt);
+      state = await verifyHrisState(q.state, deps.jwt);
     } catch {
       throw problems.unprocessable('Invalid or expired state');
     }

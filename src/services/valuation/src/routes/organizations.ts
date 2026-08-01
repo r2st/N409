@@ -7,7 +7,9 @@ import {
   assignValuationToOrg,
   createOrganization,
   deleteOrganization,
+  entityParentWouldCycle,
   findOrganization,
+  organizationParentWouldCycle,
   listOrganizations,
   listPortfolioEntities,
   setEntityRelationship,
@@ -108,6 +110,13 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
       if (parsed.data.parent_org_id === id)
         throw problems.unprocessable('An organization cannot be its own parent');
       await loadOwnedOrg(principal, parsed.data.parent_org_id);
+      // Longer loops are just as damaging as self-parenting and just as easy
+      // to create two requests apart.
+      if (await organizationParentWouldCycle(deps.pool, id, parsed.data.parent_org_id)) {
+        throw problems.unprocessable(
+          'That parent sits below this organization — the hierarchy would loop back on itself',
+        );
+      }
     }
     const updated = await updateOrganization(deps.pool, id, {
       name: parsed.data.name,
@@ -168,6 +177,14 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
       if (parsed.data.parent_valuation_id === id)
         throw problems.unprocessable('A valuation cannot be its own parent');
       await loadEditableValuation(principal, parsed.data.parent_valuation_id);
+      // A subsidiary cannot also be its own parent's parent: the entity tree
+      // drops any branch that loops, so the consolidated roll-up would quietly
+      // stop counting both entities.
+      if (await entityParentWouldCycle(deps.pool, id, parsed.data.parent_valuation_id)) {
+        throw problems.unprocessable(
+          'That entity sits below this one — the inter-company hierarchy would loop back on itself',
+        );
+      }
     }
     await setEntityRelationship(
       deps.pool,

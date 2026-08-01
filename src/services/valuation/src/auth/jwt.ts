@@ -99,22 +99,40 @@ export async function verifyOidcState(state: string, cfg: JwtConfig): Promise<vo
   if (payload.purpose !== 'oidc-state') throw new Error('invalid state');
 }
 
-// ── Accounting OAuth state (409.ai §23) ───────────────────────────────────────
-// The redirect round-trip carries which valuation/provider is being connected
+// ── Third-party OAuth state (accounting §23, cap-table sync, HRIS) ───────────
+// Each redirect round-trip carries which valuation/provider is being connected
 // and who initiated it; the signature is the callback's only authentication.
+//
+// The three integrations share this shape but NOT their purpose claim. A state
+// minted to connect a payroll provider must not be redeemable at the accounting
+// or cap-table callback: those callbacks write a provider connection against
+// `valuationId`, and cross-flow replay would let a caller aim one flow's
+// authorization at another flow's table. `purpose` is checked on the way out,
+// so the integrations cannot be confused for one another.
 
-export interface AccountingState {
+export interface IntegrationState {
   valuationId: string;
   provider: string;
   userId: string;
 }
 
-export async function signAccountingState(s: AccountingState, cfg: JwtConfig): Promise<string> {
-  return new SignJWT({
-    purpose: 'accounting-state',
-    v: s.valuationId,
-    p: s.provider,
-  })
+/** @deprecated Historical name — `IntegrationState` covers all three flows. */
+export type AccountingState = IntegrationState;
+
+const INTEGRATION_PURPOSES = {
+  accounting: 'accounting-state',
+  capTable: 'captable-state',
+  hris: 'hris-state',
+} as const;
+
+type IntegrationKind = keyof typeof INTEGRATION_PURPOSES;
+
+async function signIntegrationState(
+  kind: IntegrationKind,
+  s: IntegrationState,
+  cfg: JwtConfig,
+): Promise<string> {
+  return new SignJWT({ purpose: INTEGRATION_PURPOSES[kind], v: s.valuationId, p: s.provider })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(s.userId)
     .setIssuer(cfg.issuer)
@@ -123,10 +141,14 @@ export async function signAccountingState(s: AccountingState, cfg: JwtConfig): P
     .sign(key(cfg.secret));
 }
 
-export async function verifyAccountingState(state: string, cfg: JwtConfig): Promise<AccountingState> {
+async function verifyIntegrationState(
+  kind: IntegrationKind,
+  state: string,
+  cfg: JwtConfig,
+): Promise<IntegrationState> {
   const { payload } = await jwtVerify(state, key(cfg.secret), { issuer: cfg.issuer });
   if (
-    payload.purpose !== 'accounting-state' ||
+    payload.purpose !== INTEGRATION_PURPOSES[kind] ||
     typeof payload.v !== 'string' ||
     typeof payload.p !== 'string' ||
     typeof payload.sub !== 'string'
@@ -136,29 +158,17 @@ export async function verifyAccountingState(state: string, cfg: JwtConfig): Prom
   return { valuationId: payload.v, provider: payload.p, userId: payload.sub };
 }
 
-// ── Cap-table sync OAuth state (feature 4) ────────────────────────────────────
-// Same shape and role as the accounting state: the OAuth round-trip carries
-// which valuation/provider is being connected and who initiated it.
+export const signAccountingState = (s: IntegrationState, cfg: JwtConfig): Promise<string> =>
+  signIntegrationState('accounting', s, cfg);
+export const verifyAccountingState = (state: string, cfg: JwtConfig): Promise<IntegrationState> =>
+  verifyIntegrationState('accounting', state, cfg);
 
-export async function signCapTableSyncState(s: AccountingState, cfg: JwtConfig): Promise<string> {
-  return new SignJWT({ purpose: 'captable-state', v: s.valuationId, p: s.provider })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setSubject(s.userId)
-    .setIssuer(cfg.issuer)
-    .setIssuedAt()
-    .setExpirationTime('30m')
-    .sign(key(cfg.secret));
-}
+export const signCapTableSyncState = (s: IntegrationState, cfg: JwtConfig): Promise<string> =>
+  signIntegrationState('capTable', s, cfg);
+export const verifyCapTableSyncState = (state: string, cfg: JwtConfig): Promise<IntegrationState> =>
+  verifyIntegrationState('capTable', state, cfg);
 
-export async function verifyCapTableSyncState(state: string, cfg: JwtConfig): Promise<AccountingState> {
-  const { payload } = await jwtVerify(state, key(cfg.secret), { issuer: cfg.issuer });
-  if (
-    payload.purpose !== 'captable-state' ||
-    typeof payload.v !== 'string' ||
-    typeof payload.p !== 'string' ||
-    typeof payload.sub !== 'string'
-  ) {
-    throw new Error('invalid state');
-  }
-  return { valuationId: payload.v, provider: payload.p, userId: payload.sub };
-}
+export const signHrisState = (s: IntegrationState, cfg: JwtConfig): Promise<string> =>
+  signIntegrationState('hris', s, cfg);
+export const verifyHrisState = (state: string, cfg: JwtConfig): Promise<IntegrationState> =>
+  verifyIntegrationState('hris', state, cfg);

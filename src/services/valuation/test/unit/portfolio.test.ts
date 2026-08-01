@@ -58,4 +58,41 @@ describe('portfolio consolidation (feature 6)', () => {
     expect(roots.sort()).toEqual(['orphan', 'parent']);
     expect(childrenOf['parent']!.sort()).toEqual(['sub1', 'sub2']);
   });
+
+  it('still surfaces entities caught in a parent cycle', () => {
+    // Rows predating the API's cycle check: a↔b parent each other, so neither
+    // is a root by the naive rule and the whole branch would disappear from
+    // the portfolio view. Every entity must remain reachable.
+    const { roots, childrenOf } = buildEntityTree([
+      entity({ valuation_id: 'top' }),
+      entity({ valuation_id: 'a', parent_valuation_id: 'b' }),
+      entity({ valuation_id: 'b', parent_valuation_id: 'a' }),
+    ]);
+    expect(roots).toContain('top');
+    // Exactly one of the pair is promoted; the other hangs off it as a child.
+    expect(roots).toContain('a');
+    expect(roots).not.toContain('b');
+    expect(childrenOf['a']).toEqual(['b']);
+  });
+
+  it('reaches every entity from some root, cycles included', () => {
+    const entities = [
+      entity({ valuation_id: 'root' }),
+      entity({ valuation_id: 'child', parent_valuation_id: 'root' }),
+      entity({ valuation_id: 'x', parent_valuation_id: 'y' }),
+      entity({ valuation_id: 'y', parent_valuation_id: 'z' }),
+      entity({ valuation_id: 'z', parent_valuation_id: 'x' }),
+    ];
+    const { roots, childrenOf } = buildEntityTree(entities);
+
+    const seen = new Set<string>();
+    const walk = (id: string): void => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      for (const child of childrenOf[id] ?? []) walk(child);
+    };
+    for (const r of roots) walk(r);
+
+    expect([...seen].sort()).toEqual(['child', 'root', 'x', 'y', 'z']);
+  });
 });

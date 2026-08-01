@@ -76,6 +76,13 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
  * Build a parent → children adjacency map from the inter-company references,
  * for rendering the entity tree. Entities with a parent outside the set (or
  * none) surface as roots.
+ *
+ * A cycle (A parents B parents A) leaves every member of the loop parented, so
+ * a naive pass finds no root for that branch and the caller renders nothing —
+ * entities silently absent from a portfolio view. The API refuses to create
+ * one, but rows predating that check still exist, so anything unreachable from
+ * a genuine root is promoted to a root of its own. Showing a wrong-looking
+ * tree beats showing a company that isn't there.
  */
 export function buildEntityTree(entities: PortfolioEntity[]): {
   roots: string[];
@@ -91,5 +98,22 @@ export function buildEntityTree(entities: PortfolioEntity[]): {
       roots.push(e.valuation_id);
     }
   }
+
+  // Promote the first member of each orphaned cycle, in input order, so the
+  // result is deterministic and every entity is reachable exactly once.
+  const reachable = new Set<string>();
+  const walk = (id: string): void => {
+    if (reachable.has(id)) return;
+    reachable.add(id);
+    for (const child of childrenOf[id] ?? []) walk(child);
+  };
+  for (const root of roots) walk(root);
+  for (const e of entities) {
+    if (!reachable.has(e.valuation_id)) {
+      roots.push(e.valuation_id);
+      walk(e.valuation_id);
+    }
+  }
+
   return { roots, childrenOf };
 }

@@ -7,6 +7,7 @@ import { createLogger, registerHealth, registerProblemHandler } from '@n409/shar
 import type { Config } from './config.js';
 import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
+import { assertRoutesGuarded, registerRouteAudit } from './plugins/routeAudit.js';
 import { registerParamValidation } from './plugins/params.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerAccountRoutes } from './routes/account.js';
@@ -196,6 +197,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   });
 
   registerProblemHandler(app);
+  // Records every route as it registers so the assertion at the end of this
+  // function can refuse to boot with an endpoint that has neither
+  // `app.authenticate` nor a documented exemption. Must precede the first
+  // route registration, health checks included.
+  const routeAudit = registerRouteAudit(app);
   // Every route below reads its ids via `req.params as …`, a cast Fastify never
   // checks. Validated here, once, so a malformed id is turned away before any
   // handler, repo or SQL sees it — including on the public token-authenticated
@@ -425,6 +431,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     credentials: capTableSyncCredentials(config),
     fetchFn: deps.capTableSyncFetch,
   });
+
+  // Refuse to finish booting with an endpoint nobody decided to make public.
+  // Deferred to onReady so it also covers the encapsulated webhook/ACS scopes.
+  assertRoutesGuarded(app, routeAudit);
 
   return app;
 }

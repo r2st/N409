@@ -1,6 +1,17 @@
 import { SignJWT } from 'jose';
 import { describe, expect, it } from 'vitest';
-import { signOidcState, signSession, verifyOidcState, verifySession } from '../../src/auth/jwt.js';
+import {
+  signAccountingState,
+  signCapTableSyncState,
+  signHrisState,
+  signOidcState,
+  signSession,
+  verifyAccountingState,
+  verifyCapTableSyncState,
+  verifyHrisState,
+  verifyOidcState,
+  verifySession,
+} from '../../src/auth/jwt.js';
 
 const cfg = { secret: 'test-secret-0123456789abcdef-0123456789', issuer: 'n409', ttlSeconds: 3600 };
 
@@ -126,5 +137,44 @@ describe('session JWT purpose claim (token confusion prevention)', () => {
       .setExpirationTime('1h')
       .sign(new TextEncoder().encode(cfg.secret));
     await expect(verifySession(wrongAud, cfg)).rejects.toThrow('wrong audience');
+  });
+});
+
+/**
+ * The accounting, cap-table and HRIS OAuth callbacks are unauthenticated by
+ * design — the signed `state` is the only thing vouching for the redirect. All
+ * three carry the same {valuation, provider, user} payload, so nothing but the
+ * purpose claim stops a state minted for one flow being redeemed at another's
+ * callback, which writes a provider connection against that valuation.
+ */
+describe('integration OAuth state is not interchangeable between flows', () => {
+  const state = { valuationId: '01VALUATION', provider: 'gusto', userId: '01USER' };
+
+  const flows = [
+    { name: 'accounting', sign: signAccountingState, verify: verifyAccountingState },
+    { name: 'cap-table sync', sign: signCapTableSyncState, verify: verifyCapTableSyncState },
+    { name: 'HRIS', sign: signHrisState, verify: verifyHrisState },
+  ] as const;
+
+  for (const flow of flows) {
+    it(`round-trips its own ${flow.name} state`, async () => {
+      const token = await flow.sign(state, cfg);
+      await expect(flow.verify(token, cfg)).resolves.toEqual(state);
+    });
+  }
+
+  for (const minted of flows) {
+    for (const redeemed of flows) {
+      if (minted === redeemed) continue;
+      it(`rejects a ${minted.name} state at the ${redeemed.name} callback`, async () => {
+        const token = await minted.sign(state, cfg);
+        await expect(redeemed.verify(token, cfg)).rejects.toThrow('invalid state');
+      });
+    }
+  }
+
+  it('rejects a session token presented as integration state', async () => {
+    const session = await signSession(claims(), cfg);
+    await expect(verifyHrisState(session, cfg)).rejects.toThrow('invalid state');
   });
 });
