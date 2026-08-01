@@ -285,6 +285,9 @@ export function AppLayout() {
         onNavigate={close}
         badge={unread}
       />
+      {/* Firm users only: the console scopes itself from the session. Ops belong
+          to no firm and reach a named one from the partner console instead. */}
+      {isPartner(eff) && <NavItem to="/firm" label="Firm console" icon={icons.partner} onNavigate={close} />}
       {isPartner(eff) && (
         <NavItem to="/partner" label="Partner portal" icon={icons.partner} onNavigate={close} />
       )}

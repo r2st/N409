@@ -307,3 +307,14 @@ html {
   background: var(--color-paper-100);
   font-weight: 600;
 }
+
+/* Hide the native scrollbar on strips that provide their own affordance
+   (ScrollableTabs draws edge fades and arrow buttons instead). Scrolling
+   itself is untouched — wheel, trackpad, touch and keyboard all still work. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

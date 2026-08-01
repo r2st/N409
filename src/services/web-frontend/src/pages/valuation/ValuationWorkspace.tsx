@@ -8,6 +8,7 @@ import { useValuationStream, type Viewer } from '../../lib/realtime';
 import type { Valuation } from '../../lib/types';
 import { ErrorNote, KindBadge, Spinner, StateBadge } from '../../components/ui';
 import { HelpIcon } from '../../components/HelpIcon';
+import { ScrollableTabs } from '../../components/ScrollableTabs';
 
 /**
  * Maps each workspace tab (keyed by its sub-path, '' = Overview) to the help
@@ -174,10 +175,7 @@ export function ValuationWorkspace() {
       </div>
       <p className="tnum mt-1.5 text-xs text-ink-400">Ref {valuation.id}</p>
 
-      <nav
-        className="mt-6 flex gap-6 overflow-x-auto border-b border-paper-300"
-        aria-label="Valuation workspace"
-      >
+      <ScrollableTabs label="Valuation workspace" activeKey={activeTab}>
         <Tab to={base} label="Overview" end />
         <Tab to={`${base}/progress`} label="Progress" />
         {(ops || owner) && <Tab to={`${base}/intake`} label="Intake" />}
@@ -205,7 +203,7 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/monitoring`} label="Monitoring" />}
         {ops && <Tab to={`${base}/package`} label="Package" />}
         <Tab to={`${base}/audit-trail`} label="Change History" />
-      </nav>
+      </ScrollableTabs>
 
       <div className="mt-8">
         <Outlet

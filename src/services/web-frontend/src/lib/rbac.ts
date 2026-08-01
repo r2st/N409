@@ -65,6 +65,15 @@ export function canManageUsers(user: Pick<User, 'roles'> | null): boolean {
 }
 
 /**
+ * Who sees the firm console. Everyone inside a firm — `partner` and `member`
+ * alike, since it only shows their own firm's book, which they can already
+ * list — plus ops, who open a named firm's console from the partner console.
+ */
+export function canUseFirmConsole(user: Pick<User, 'roles'> | null): boolean {
+  return isPartner(user) || isOps(user);
+}
+
+/**
  * Who may white-label their firm (mirrors canManageBranding in auth/rbac.ts):
  * a firm's own `partner` administrator, or platform admins for any firm.
  * `member` is the ordinary seat inside a firm and is deliberately excluded.

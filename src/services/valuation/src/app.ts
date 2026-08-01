@@ -50,6 +50,7 @@ import { registerBridgeRoutes } from './routes/bridge.js';
 import { registerAnalyticsRoutes } from './routes/analytics.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerBrandingRoutes } from './routes/branding.js';
+import { registerFirmRoutes } from './routes/firm.js';
 import { registerAuditorPortalRoutes } from './routes/auditorPortal.js';
 import { registerSamlRoutes } from './routes/saml.js';
 import { registerScimRoutes } from './routes/scim.js';
@@ -296,6 +297,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAnalyticsRoutes(app, { pool });
   registerOrganizationRoutes(app, { pool });
   registerBrandingRoutes(app, { pool });
+  registerFirmRoutes(app, { pool });
   registerAuditorPortalRoutes(app, {
     pool,
     publicBaseUrl: config.PUBLIC_BASE_URL,

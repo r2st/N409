@@ -174,6 +174,11 @@ export function PartnerDetailPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {/* Ops belong to no firm, so the console needs the tenant named in
+              the URL — this is the only place that name is known. */}
+          <Button variant="secondary" onClick={() => navigate(`/firm?partner_id=${partner.id}`)}>
+            Firm console
+          </Button>
           <Button variant="secondary" onClick={() => navigate(`/valuations?partner_id=${partner.id}`)}>
             View valuations
           </Button>

@@ -3,7 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from './components/RequireAuth';
 import { RequireRole } from './components/RequireRole';
 import { useAuth } from './lib/auth';
-import { canManageUsers, isFirmAdmin, isOps, isPartner } from './lib/rbac';
+import { canManageUsers, canUseFirmConsole, isFirmAdmin, isOps, isPartner } from './lib/rbac';
 import { MarketingFooter, MarketingHeader, MarketingLayout } from './components/MarketingLayout';
 import { LandingPage } from './pages/marketing/LandingPage';
 
@@ -96,6 +96,7 @@ const OverwritesSchemaPage = named(() => import('./pages/OverwritesSchemaPage'),
 const SettingsPage = named(() => import('./pages/SettingsPage'), 'SettingsPage');
 const AdminSettingsPage = named(() => import('./pages/AdminSettingsPage'), 'AdminSettingsPage');
 const BrandingPage = named(() => import('./pages/BrandingPage'), 'BrandingPage');
+const FirmDashboardPage = named(() => import('./pages/FirmDashboardPage'), 'FirmDashboardPage');
 const AdminSsoPage = named(() => import('./pages/AdminSsoPage'), 'AdminSsoPage');
 const AdminRetentionPage = named(() => import('./pages/AdminRetentionPage'), 'AdminRetentionPage');
 const AdminUsersPage = named(() => import('./pages/AdminUsersPage'), 'AdminUsersPage');
@@ -268,6 +269,10 @@ export default function App() {
           {/* A firm white-labelling itself; the API re-checks the tenant. */}
           <Route element={<RequireRole allow={isFirmAdmin} />}>
             <Route path="/settings/branding" element={<BrandingPage />} />
+          </Route>
+          {/* The firm console — everyone inside a firm, ops included. */}
+          <Route element={<RequireRole allow={canUseFirmConsole} />}>
+            <Route path="/firm" element={<FirmDashboardPage />} />
           </Route>
           <Route path="/partner/api-docs" element={<ApiDocsPage />} />
           <Route path="/search" element={<SearchPage />} />
