@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps, isPartner } from '../lib/rbac';
 import { computeStats } from '../lib/stats';
+import { attentionItems } from '../lib/attention';
 import {
   displayName,
   formatDate,
@@ -27,6 +28,7 @@ import {
 import { DonutChart } from '../components/charts';
 import { HelpIcon } from '../components/HelpIcon';
 import { GettingStarted } from '../components/GettingStarted';
+import { AttentionBand } from '../components/AttentionBand';
 
 const PIVOT_GROUPS = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
 
@@ -61,6 +63,9 @@ export function DashboardPage() {
 
   const stats = valuations ? computeStats(valuations) : null;
   const recent = valuations?.slice(0, 6) ?? [];
+  // `now` is captured once per render rather than read inside the ranking, so
+  // every row on one paint is measured against the same instant.
+  const attention = useMemo(() => attentionItems(valuations ?? [], new Date()), [valuations]);
 
   /** Worklist URL matching a pivot cell's cohort — same date range, plus filters. */
   const drillTo = (filters: Record<string, string>) => {
@@ -110,19 +115,16 @@ export function DashboardPage() {
 
       {stats && (
         <>
+          {/* Each count is a cohort the worklist can show; the cards go there. */}
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            <StatCard label="Total" value={stats.total} />
-            <StatCard label="Open" value={stats.open} />
-            <StatCard label="In review" value={stats.inReview} />
-            <StatCard label="Drafted" value={stats.drafted} />
-            <StatCard label="Published" value={stats.published} accent />
+            <StatCard label="Total" value={stats.total} to="/valuations" />
+            <StatCard label="Open" value={stats.open} to="/valuations?group=open" />
+            <StatCard label="In review" value={stats.inReview} to="/valuations?group=in_review" />
+            <StatCard label="Drafted" value={stats.drafted} to="/valuations?group=drafted" />
+            <StatCard label="Published" value={stats.published} accent to="/valuations?group=published" />
           </div>
-          {stats.waitingOnClient > 0 && (
-            <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
-              <strong className="font-semibold">{stats.waitingOnClient}</strong> valuation
-              {stats.waitingOnClient === 1 ? ' is' : 's are'} waiting on client input.
-            </div>
-          )}
+
+          <AttentionBand items={attention} isOps={isOps(user)} />
 
           {/* ── Analytics: date range + product pivot + pies (M3) — ops/partner only */}
           {showAnalytics && (

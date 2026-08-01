@@ -12,6 +12,7 @@ import {
   type SelectHTMLAttributes,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import type { StateTone } from '../lib/format';
 import { STATE_LABELS, STATE_TONES, KIND_LABELS } from '../lib/format';
 import type { ValuationKind, ValuationState } from '../lib/types';
@@ -186,21 +187,39 @@ export function StatCard({
   label,
   value,
   accent = false,
+  to,
 }: {
   label: string;
   value: ReactNode;
   accent?: boolean;
+  /** Makes the whole card a link to the cohort it counts. */
+  to?: string;
 }) {
-  return (
-    <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+  const body = (
+    <>
       <div className="overline text-ink-400">{label}</div>
       <div
         className={`tnum mt-2 font-display text-3xl font-semibold ${accent ? 'text-bond-600' : 'text-ink-900'}`}
       >
         {value}
       </div>
-    </div>
+    </>
   );
+  const base = 'block rounded-lg border border-paper-300 bg-surface p-5 shadow-card';
+
+  // A count nobody can act on is decoration. Where the caller knows the
+  // worklist behind a number, the card carries the reader there.
+  if (to) {
+    return (
+      <Link
+        to={to}
+        className={`${base} transition-shadow hover:border-bond-300 hover:shadow-lift focus-visible:ring-2 focus-visible:ring-bond-600/30 focus-visible:outline-none`}
+      >
+        {body}
+      </Link>
+    );
+  }
+  return <div className={base}>{body}</div>;
 }
 
 export function ErrorNote({ children }: { children: ReactNode }) {
