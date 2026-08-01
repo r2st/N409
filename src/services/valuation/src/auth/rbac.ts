@@ -106,3 +106,15 @@ export function canReadReport(p: Principal, v: ValuationRef & { state: string })
 export function canManageUsers(p: Principal): boolean {
   return p.roles.some((r) => USER_ADMIN_ROLES.has(r));
 }
+
+/**
+ * White-label branding (migration 0091) is the one tenant-level setting a firm
+ * administers itself — the whole point of selling to firms is that they do not
+ * open a ticket to change their own logo. Platform admins may edit any tenant;
+ * a `partner` principal may edit exactly their own. `member` is deliberately
+ * excluded: it is the ordinary seat inside a firm, not its administrator.
+ */
+export function canManageBranding(p: Principal, partnerId: string): boolean {
+  if (canManageUsers(p)) return true;
+  return p.roles.includes('partner') && p.partnerId === partnerId;
+}

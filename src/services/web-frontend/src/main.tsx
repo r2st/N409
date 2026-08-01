@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import App from './App';
 import { AuthProvider } from './lib/auth';
+import { BrandingProvider } from './lib/branding';
 import { ConsentProvider } from './lib/consent';
 import { Analytics } from './components/Analytics';
 import { CookieConsent } from './components/CookieConsent';
@@ -19,9 +20,13 @@ createRoot(document.getElementById('root')!).render(
         <BrowserRouter>
           <ConsentProvider>
             <AuthProvider>
-              <App />
-              <Analytics />
-              <CookieConsent />
+              {/* Inside AuthProvider: the tenant's brand is resolved from the
+                  session, and reverts to platform branding on sign-out. */}
+              <BrandingProvider>
+                <App />
+                <Analytics />
+                <CookieConsent />
+              </BrandingProvider>
             </AuthProvider>
           </ConsentProvider>
         </BrowserRouter>

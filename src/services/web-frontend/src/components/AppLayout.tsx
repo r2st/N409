@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { canManageUsers, effectiveUser, isOps, isPartner, scopeLabel } from '../lib/rbac';
+import { canManageUsers, effectiveUser, isFirmAdmin, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, initials } from '../lib/format';
 import { Wordmark } from './Logo';
 import { HelpWidget } from './HelpWidget';
@@ -287,6 +287,9 @@ export function AppLayout() {
       />
       {isPartner(eff) && (
         <NavItem to="/partner" label="Partner portal" icon={icons.partner} onNavigate={close} />
+      )}
+      {isFirmAdmin(eff) && (
+        <NavItem to="/settings/branding" label="Branding" icon={icons.settings} onNavigate={close} />
       )}
       {isOps(eff) && (
         <NavGroup label="Operations">

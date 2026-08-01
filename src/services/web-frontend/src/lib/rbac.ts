@@ -64,6 +64,15 @@ export function canManageUsers(user: Pick<User, 'roles'> | null): boolean {
   return Boolean(user?.roles.some((r) => USER_ADMIN_ROLES.has(r)));
 }
 
+/**
+ * Who may white-label their firm (mirrors canManageBranding in auth/rbac.ts):
+ * a firm's own `partner` administrator, or platform admins for any firm.
+ * `member` is the ordinary seat inside a firm and is deliberately excluded.
+ */
+export function isFirmAdmin(user: Pick<User, 'roles'> | null): boolean {
+  return Boolean(user?.roles.includes('partner')) || canManageUsers(user);
+}
+
 /** Which valuation fields this user may PATCH (mirrors auth/rbac.ts). */
 export function editableFields(user: User | null, valuation: { user_id: string }): Set<string> {
   if (isOps(user)) {

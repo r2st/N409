@@ -199,6 +199,32 @@
   --shadow-lift: 0 4px 14px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.35);
 }
 
+/*
+ * White-label branding — a firm's accent in place of ours.
+ *
+ * Same mechanism as dark mode above: re-point the accent tokens rather than
+ * touch callsites, so every `bg-bond-500`, `text-bond-700` and focus ring in
+ * the app follows the tenant with no per-component work. The `--brand-*` values
+ * are written by BrandingProvider (lib/branding.tsx) from a server-computed
+ * ramp; nothing here does colour maths.
+ *
+ * This block sits after the dark block so it wins at equal specificity in light
+ * mode. It needs no dark twin: the provider emits a light and a dark rule for
+ * the `--brand-*` values themselves, so the mapping below is written once and
+ * follows the theme for free. `data-brand` is only set once branding resolves
+ * to a white-label tenant, so unbranded sessions never enter here.
+ */
+:root[data-brand='on'] {
+  --color-bond-50: var(--brand-accent-soft);
+  --color-bond-100: var(--brand-accent-soft);
+  --color-bond-200: var(--brand-accent-muted);
+  --color-bond-500: var(--brand-accent);
+  --color-bond-600: var(--brand-accent-strong);
+  --color-bond-700: var(--brand-accent-strong);
+  --color-bond-800: var(--brand-accent-strong);
+  --color-bond-fg: var(--brand-accent-fg);
+}
+
 html {
   font-family: var(--font-sans);
   background-color: var(--color-paper-100);
