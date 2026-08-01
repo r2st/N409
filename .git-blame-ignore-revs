@@ -1,0 +1,10 @@
+# Revisions to skip when running git blame — mechanical, repo-wide changes
+# with no behavioural content.
+#
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# GitHub honours this file automatically in its blame view.
+
+# style: apply prettier across src to restore the format:check gate
+15fd511d390d0bf45c176cbfff5f601e206a1baa
