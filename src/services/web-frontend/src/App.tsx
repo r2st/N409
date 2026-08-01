@@ -52,6 +52,7 @@ const VerifyEmailPage = named(() => import('./pages/VerifyEmailPage'), 'VerifyEm
 const AcceptInvitePage = named(() => import('./pages/AcceptInvitePage'), 'AcceptInvitePage');
 const GoogleCompletePage = named(() => import('./pages/GoogleCompletePage'), 'GoogleCompletePage');
 const AuditorPortalPage = named(() => import('./pages/AuditorPortalPage'), 'AuditorPortalPage');
+const ClientIntakePage = named(() => import('./pages/ClientIntakePage'), 'ClientIntakePage');
 const BoardSignPage = named(() => import('./pages/BoardSignPage'), 'BoardSignPage');
 const PartnerLoginPage = named(() => import('./pages/PartnerLoginPage'), 'PartnerLoginPage');
 
@@ -191,6 +192,8 @@ export default function App() {
         <Route path="/board-sign" element={<BoardSignPage />} />
         {/* Public external auditor portal (feature 8), token from link fragment */}
         <Route path="/auditor" element={<AuditorPortalPage />} />
+        {/* Firm-branded client intake — public, token from the link fragment */}
+        <Route path="/intake" element={<ClientIntakePage />} />
         {/* White-label partner login (improvement 8) — public, branded per slug */}
         <Route path="/partner/:slug/login" element={<PartnerLoginPage />} />
         <Route

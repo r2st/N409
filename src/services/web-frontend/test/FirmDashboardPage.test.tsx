@@ -103,6 +103,8 @@ function mockApi(opts: { dashboardStatus?: number } = {}) {
         : jsonResponse(DASHBOARD);
     }
     if (path.includes('/firm/clients')) return jsonResponse({ clients: CLIENTS, total: 2 });
+    // The intake panel lives on this page; its own suite covers its behaviour.
+    if (path.includes('/firm/intake-links')) return jsonResponse({ links: [] });
     throw new Error(`unexpected fetch ${path}`);
   });
   return paths;

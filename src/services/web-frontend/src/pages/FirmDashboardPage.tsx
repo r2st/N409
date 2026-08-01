@@ -14,6 +14,7 @@ import {
   TextInput,
   type Column,
 } from '../components/ui';
+import { IntakeLinksPanel } from '../components/IntakeLinksPanel';
 import type { ValuationState } from '../lib/types';
 
 /**
@@ -340,6 +341,8 @@ export function FirmDashboardPage() {
           onPage={setPage}
         />
       </section>
+
+      <IntakeLinksPanel partnerId={partnerId} />
 
       <p className="mt-10 text-sm text-ink-400">
         Looking for a single engagement?{' '}

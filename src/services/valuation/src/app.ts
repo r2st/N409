@@ -51,6 +51,7 @@ import { registerAnalyticsRoutes } from './routes/analytics.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerBrandingRoutes } from './routes/branding.js';
 import { registerFirmRoutes } from './routes/firm.js';
+import { registerClientIntakeRoutes } from './routes/clientIntake.js';
 import { registerAuditorPortalRoutes } from './routes/auditorPortal.js';
 import { registerSamlRoutes } from './routes/saml.js';
 import { registerScimRoutes } from './routes/scim.js';
@@ -101,6 +102,8 @@ export interface AppDeps {
   boardPublicLimiter?: FixedWindowRateLimiter;
   /** injectable for tests — per-IP limiter for the auditor portal redeem route */
   auditorPortalLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests — per-IP limiter for the public client intake portal */
+  clientIntakeLimiter?: FixedWindowRateLimiter;
   /** injectable for tests — per-IP limiter for /scim/v2/* */
   scimLimiter?: FixedWindowRateLimiter;
   /** injectable for tests/prod — per-user throttle across the whole authenticated API */
@@ -298,6 +301,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerOrganizationRoutes(app, { pool });
   registerBrandingRoutes(app, { pool });
   registerFirmRoutes(app, { pool });
+  registerClientIntakeRoutes(app, {
+    pool,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+    limiter: deps.clientIntakeLimiter,
+  });
   registerAuditorPortalRoutes(app, {
     pool,
     publicBaseUrl: config.PUBLIC_BASE_URL,
