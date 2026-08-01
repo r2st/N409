@@ -362,6 +362,114 @@ function fontFor(run: Pick<Run, 'bold' | 'italic'>): string {
   return FONTS.regular;
 }
 
+/**
+ * One ink ramp for the whole document.
+ *
+ * These greys were previously written as literals at each call site, which is
+ * how a report ends up with four almost-identical greys and no way to change
+ * the emphasis of a tier without hunting for it.
+ */
+const INK = {
+  strong: '#111111',
+  body: '#222222',
+  muted: '#666666',
+  faint: '#888888',
+  hint: '#777777',
+  rule: '#cccccc',
+  hair: '#e4e2dd',
+  band: '#f6f5f2',
+} as const;
+
+// ── tables ────────────────────────────────────────────────────────────────────
+
+export type CellAlign = 'left' | 'right';
+
+/** Cells that carry no value and so vote for neither alignment. */
+const BLANK_CELLS = new Set(['', '-', '—', '–', 'n/a', 'N/A', 'N/M', 'n/m']);
+
+/**
+ * A figure rather than prose: optional currency or sign, digits with grouping,
+ * an optional decimal, and an optional trailing unit — `1,234`, `$(4,200.50)`,
+ * `12.5%`, `3.2x`.
+ */
+const NUMERIC_CELL = /^[($€£¥]?\s*[-+(]?\s*[($€£¥]?\s*\d[\d,\s]*(\.\d+)?\s*[)%x×]?\s*$/;
+
+/** True when a cell reads as a figure, so its column should align right. */
+export function isNumericCell(text: string): boolean {
+  const trimmed = text.trim();
+  if (BLANK_CELLS.has(trimmed)) return false;
+  return NUMERIC_CELL.test(trimmed);
+}
+
+/**
+ * Per-column alignment, decided from the body rows.
+ *
+ * A valuation report is mostly tables of money, and a left-aligned column of
+ * figures is the single thing that makes one look amateur — digits no longer
+ * line up by place value, so the reader cannot compare magnitudes down the
+ * column. Headers are excluded from the vote because a header is always prose.
+ */
+export function columnAlignments(rows: readonly string[][], headerRows: number): CellAlign[] {
+  const cols = Math.max(1, ...rows.map((r) => r.length));
+  const body = rows.slice(headerRows);
+  return Array.from({ length: cols }, (_, c) => {
+    let numeric = 0;
+    let prose = 0;
+    for (const row of body) {
+      const cell = (row[c] ?? '').trim();
+      if (BLANK_CELLS.has(cell)) continue;
+      if (isNumericCell(cell)) numeric += 1;
+      else prose += 1;
+    }
+    // Ties go to the figures: a footnote marker in one cell of an otherwise
+    // numeric column shouldn't unalign the column.
+    return numeric > 0 && numeric >= prose ? 'right' : 'left';
+  });
+}
+
+/** Narrowest a column may be squeezed to before it stops being readable. */
+const MIN_COLUMN_WIDTH = 42;
+
+/**
+ * Column widths proportional to the widest cell each column holds.
+ *
+ * Equal columns waste the page: a "Metric / FY-1 / FY-2" table gave a third of
+ * the width to two-character year headings and wrapped the labels. Each
+ * column's natural width is clamped before the split so one long prose cell
+ * cannot starve the rest, then the whole set is normalised to fill the width —
+ * a table that stops short of the margin reads as a rendering accident.
+ */
+export function columnWidths(
+  rows: readonly string[][],
+  usable: number,
+  measure: (text: string, bold: boolean) => number,
+  headerRows: number,
+): number[] {
+  const cols = Math.max(1, ...rows.map((r) => r.length));
+  if (cols === 1) return [usable];
+
+  const ceiling = Math.max(MIN_COLUMN_WIDTH, usable * 0.5);
+  const natural = Array.from({ length: cols }, (_, c) => {
+    let widest = 0;
+    rows.forEach((row, rowIdx) => {
+      const cell = row[c] ?? '';
+      if (cell === '') return;
+      widest = Math.max(widest, measure(cell, rowIdx < headerRows));
+    });
+    return Math.min(ceiling, Math.max(MIN_COLUMN_WIDTH, widest + TABLE_PADDING * 2));
+  });
+
+  const total = natural.reduce((sum, w) => sum + w, 0);
+  if (total <= 0) return Array.from({ length: cols }, () => usable / cols);
+  return natural.map((w) => (w / total) * usable);
+}
+
+const TABLE_PADDING = 5;
+const TABLE_FONT_SIZE = 9.5;
+
+/** Marker above a header re-drawn at the top of a continuation page. */
+export const TABLE_CONTINUED = 'Table continued';
+
 // ── charts ────────────────────────────────────────────────────────────────────
 
 /** Default formatting when a point carries no `display`. */
@@ -588,6 +696,7 @@ function renderWaterfallChart(
 // ── executive summary ─────────────────────────────────────────────────────────
 
 export const SUMMARY_HEADING = 'Executive Summary';
+export const TOC_HEADING = 'Table of Contents';
 
 function renderSummaryPage(
   doc: PDFKit.PDFDocument,
@@ -696,23 +805,33 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   const brandColor = /^#[0-9a-fA-F]{6}$/.test(input.branding?.brand_color ?? '')
     ? input.branding!.brand_color!
     : '#999999';
+
+  // A colour band across the head of the cover. The rule under the title said
+  // "branded" only to someone looking for it; a band is the first thing seen,
+  // and it is the firm's colour rather than ours on a white-label report.
+  doc.rect(0, 0, doc.page.width, 10).fillColor(brandColor).fill();
+
+  // The title block is anchored rather than floated. Stacking moveDown()s meant
+  // a two-line title or a tall logo pushed the meta block down the page, so no
+  // two covers in a set sat at the same height.
+  const COVER_TITLE_TOP = 250;
   if (input.branding?.logo) {
     try {
       // Centered partner logo above the title, capped to a 140×56pt box.
-      doc.image(input.branding.logo, doc.page.width / 2 - 70, doc.y + 24, {
+      doc.image(input.branding.logo, doc.page.width / 2 - 70, COVER_TITLE_TOP - 110, {
         fit: [140, 56],
         align: 'center',
         valign: 'center',
       });
-      doc.y += 96;
     } catch {
       // Undecodable image bytes — render the cover without the logo.
-      doc.moveDown(6);
     }
-  } else {
-    doc.moveDown(6);
   }
-  doc.font(FONTS.bold).fontSize(24).fillColor('#111111').text(input.title, { align: 'center' });
+  doc.y = COVER_TITLE_TOP;
+  doc.font(FONTS.bold).fontSize(26).fillColor(INK.strong).text(input.title, doc.page.margins.left, doc.y, {
+    width: usable,
+    align: 'center',
+  });
   doc.moveDown(0.5);
   doc.font(FONTS.regular).fontSize(14).fillColor('#444444').text(input.company_name, { align: 'center' });
   if (input.branding) {
@@ -720,10 +839,10 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     doc
       .font(FONTS.italic)
       .fontSize(10.5)
-      .fillColor('#666666')
+      .fillColor(INK.muted)
       .text(`Prepared in partnership with ${input.branding.partner_name}`, { align: 'center' });
   }
-  doc.moveDown(2);
+  doc.moveDown(1.6);
   const ruleY = doc.y;
   doc
     .moveTo(doc.page.margins.left + usable / 4, ruleY)
@@ -731,17 +850,21 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     .lineWidth(input.branding ? 1.2 : 0.5)
     .strokeColor(brandColor)
     .stroke();
-  doc.moveDown(2);
+
+  // Cover facts sit in a fixed block low on the page, so a long title grows
+  // into the space above them instead of shunting them towards the footer.
+  doc.y = Math.max(doc.y + 24, doc.page.height - 250);
   for (const item of input.meta) {
     doc
       .font(FONTS.bold)
-      .fontSize(10)
-      .fillColor('#666666')
-      .text(`${item.label}: `, { continued: true, align: 'center' })
+      .fontSize(9)
+      .fillColor(INK.faint)
+      .text(item.label.toUpperCase(), doc.page.margins.left, doc.y, { width: usable, align: 'center' })
       .font(FONTS.regular)
-      .fillColor('#111111')
-      .text(item.value, { align: 'center' });
-    doc.moveDown(0.3);
+      .fontSize(11)
+      .fillColor(INK.strong)
+      .text(item.value, { width: usable, align: 'center' });
+    doc.moveDown(0.7);
   }
 
   // Contents. The page is reserved here and filled in at the end, once the
@@ -766,14 +889,24 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   input.sections.forEach((section, idx) => {
     if (idx === 0) doc.addPage();
     else doc.moveDown(1.5);
-    ensureRoom(doc, 80);
+    ensureRoom(doc, 96);
     sectionStartPages.push(currentPageIndex(doc));
     doc
       .font(FONTS.bold)
       .fontSize(16)
-      .fillColor('#111111')
-      .text(`${idx + 1}. ${section.heading}`);
-    doc.moveDown(0.6);
+      .fillColor(INK.strong)
+      .text(`${idx + 1}. ${section.heading}`, doc.page.margins.left, doc.y, { width: usable });
+    // A rule in the brand colour under each section heading, so the reader can
+    // find where a section begins while flipping rather than reading.
+    doc.y += 6;
+    doc
+      .moveTo(doc.page.margins.left, doc.y)
+      .lineTo(doc.page.margins.left + usable, doc.y)
+      .lineWidth(1)
+      .strokeColor(brandColor)
+      .stroke();
+    doc.x = doc.page.margins.left;
+    doc.moveDown(0.8);
     for (const block of htmlToBlocks(section.html)) {
       renderBlock(doc, block, usable);
     }
@@ -804,25 +937,70 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     renderTableOfContents(doc, entries, usable);
   }
 
-  // Footer: identity, confidentiality marker and page numbers on every page.
+  // Page furniture. Both bands are stamped after layout, when the total page
+  // count and the section each page belongs to are finally known.
   const confidentiality = input.confidentiality === null ? null : (input.confidentiality ?? 'Confidential');
+  const headings = runningHeadings(range.count, range.start, [
+    ...(tocPageIndex !== null ? [{ page: tocPageIndex, label: TOC_HEADING }] : []),
+    ...(summaryPage !== null ? [{ page: summaryPage, label: SUMMARY_HEADING }] : []),
+    ...input.sections.map((section, idx) => ({
+      page: sectionStartPages[idx]!,
+      label: `${idx + 1}. ${section.heading}`,
+    })),
+  ]);
+
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
     const bottom = doc.page.margins.bottom;
-    doc.page.margins.bottom = 0; // allow writing inside the reserved margin
+    const top = doc.page.margins.top;
+    // Writing into the reserved margins is the point of these bands.
+    doc.page.margins.bottom = 0;
+    doc.page.margins.top = 0;
+
+    // Running head: what the reader is holding, and where they are in it. The
+    // cover carries its own title block and would only be cluttered by it.
+    const heading = headings[i - range.start];
+    if (i > range.start && heading) {
+      doc
+        .font(FONTS.regular)
+        .fontSize(8)
+        .fillColor(INK.faint)
+        .text(input.company_name, doc.page.margins.left, 42, {
+          width: usable / 2,
+          lineBreak: false,
+        });
+      doc
+        .font(FONTS.regular)
+        .fontSize(8)
+        .fillColor(INK.faint)
+        .text(heading, doc.page.margins.left + usable / 2, 42, {
+          width: usable / 2,
+          align: 'right',
+          lineBreak: false,
+          ellipsis: true,
+        });
+      doc
+        .moveTo(doc.page.margins.left, 56)
+        .lineTo(doc.page.margins.left + usable, 56)
+        .lineWidth(0.5)
+        .strokeColor(INK.hair)
+        .stroke();
+    }
+
     const parts = [`${input.company_name} — ${input.title}`];
     if (confidentiality) parts.push(confidentiality);
     parts.push(`Page ${i - range.start + 1} of ${range.count}`);
     doc
       .font(FONTS.regular)
       .fontSize(8)
-      .fillColor('#888888')
+      .fillColor(INK.faint)
       .text(parts.join(' · '), doc.page.margins.left, doc.page.height - 46, {
         width: usable,
         align: 'center',
         lineBreak: false,
       });
     doc.page.margins.bottom = bottom;
+    doc.page.margins.top = top;
   }
 
   doc.end();
@@ -839,6 +1017,40 @@ function currentPageIndex(doc: PDFKit.PDFDocument): number {
   return range.start + range.count - 1;
 }
 
+export interface PageLandmark {
+  /** Absolute buffered-page index where this part of the report starts. */
+  page: number;
+  label: string;
+}
+
+/**
+ * The running-head label for every page: the most recent landmark that began at
+ * or before it.
+ *
+ * Derived after layout because a section's start page is not known until it has
+ * been laid out, and a section that runs over three pages has to keep labelling
+ * all three — a header that only appeared on the page where a section began
+ * would be worse than none at all.
+ */
+export function runningHeadings(
+  pageCount: number,
+  firstPage: number,
+  landmarks: readonly PageLandmark[],
+): Array<string | null> {
+  const sorted = [...landmarks].sort((a, b) => a.page - b.page);
+  const headings: Array<string | null> = [];
+  let current: string | null = null;
+  let next = 0;
+  for (let page = firstPage; page < firstPage + pageCount; page += 1) {
+    while (next < sorted.length && sorted[next]!.page <= page) {
+      current = sorted[next]!.label;
+      next += 1;
+    }
+    headings.push(current);
+  }
+  return headings;
+}
+
 export interface TocEntry {
   heading: string;
   /** 1-based page number as stamped in the footer. */
@@ -853,7 +1065,7 @@ export interface TocEntry {
  * number instead of wrapping.
  */
 function renderTableOfContents(doc: PDFKit.PDFDocument, entries: readonly TocEntry[], usable: number): void {
-  doc.font(FONTS.bold).fontSize(16).fillColor('#111111').text('Table of Contents');
+  doc.font(FONTS.bold).fontSize(16).fillColor(INK.strong).text(TOC_HEADING);
   doc.moveDown(1);
 
   const left = doc.page.margins.left;
@@ -944,42 +1156,121 @@ function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number): voi
       break;
     }
     case 'table': {
-      const cols = Math.max(1, ...block.rows.map((r) => r.length));
-      const colWidth = usable / cols;
-      const padding = 4;
-      block.rows.forEach((row, rowIdx) => {
-        const isHeader = rowIdx < block.headerRows;
-        const font = isHeader ? FONTS.bold : FONTS.regular;
-        const heights = row.map((cell) =>
-          doc
-            .font(font)
-            .fontSize(9.5)
-            .heightOfString(cell || ' ', { width: colWidth - padding * 2 }),
-        );
-        const rowHeight = Math.max(14, ...heights) + padding * 2;
-        ensureRoom(doc, rowHeight + 4);
-        const y = doc.y;
-        row.forEach((cell, c) => {
-          doc
-            .font(font)
-            .fontSize(9.5)
-            .fillColor('#222222')
-            .text(cell, doc.page.margins.left + c * colWidth + padding, y + padding, {
-              width: colWidth - padding * 2,
-              lineGap: 1,
-            });
-        });
-        doc
-          .moveTo(doc.page.margins.left, y + rowHeight)
-          .lineTo(doc.page.margins.left + usable, y + rowHeight)
-          .lineWidth(isHeader ? 0.8 : 0.4)
-          .strokeColor(isHeader ? '#555555' : '#cccccc')
-          .stroke();
-        doc.y = y + rowHeight + 2;
-        doc.x = doc.page.margins.left;
-      });
-      doc.moveDown(0.7);
+      renderTable(doc, block, usable);
       break;
     }
   }
+}
+
+/**
+ * A table, banded and column-aware, that survives a page break.
+ *
+ * The previous renderer walked the rows and let `ensureRoom` start a new page
+ * mid-table. Every row after the break then arrived with no header — in a
+ * report whose longest tables are cap tables and comparable-company sets, a
+ * reader turning the page found six unlabelled columns of numbers. The header
+ * rows are therefore re-drawn at the top of each continuation.
+ */
+function renderTable(
+  doc: PDFKit.PDFDocument,
+  block: Extract<Block, { type: 'table' }>,
+  usable: number,
+): void {
+  const left = doc.page.margins.left;
+  const measure = (text: string, bold: boolean) =>
+    doc
+      .font(bold ? FONTS.bold : FONTS.regular)
+      .fontSize(TABLE_FONT_SIZE)
+      .widthOfString(text);
+
+  const widths = columnWidths(block.rows, usable, measure, block.headerRows);
+  const aligns = columnAlignments(block.rows, block.headerRows);
+  const offsets: number[] = [];
+  widths.reduce((x, width) => {
+    offsets.push(x);
+    return x + width;
+  }, 0);
+
+  const headerRows = block.rows.slice(0, block.headerRows);
+  const bodyRows = block.rows.slice(block.headerRows);
+
+  const heightOf = (row: string[], bold: boolean): number => {
+    const heights = row.map((cell, c) =>
+      doc
+        .font(bold ? FONTS.bold : FONTS.regular)
+        .fontSize(TABLE_FONT_SIZE)
+        .heightOfString(cell || ' ', { width: (widths[c] ?? usable) - TABLE_PADDING * 2 }),
+    );
+    return Math.max(14, ...heights, 0) + TABLE_PADDING * 2;
+  };
+
+  const drawRow = (row: string[], bold: boolean, fill: string | null): number => {
+    const height = heightOf(row, bold);
+    const y = doc.y;
+    if (fill) doc.rect(left, y, usable, height).fillColor(fill).fill();
+    row.forEach((cell, c) => {
+      const width = widths[c] ?? usable;
+      doc
+        .font(bold ? FONTS.bold : FONTS.regular)
+        .fontSize(TABLE_FONT_SIZE)
+        .fillColor(bold ? INK.strong : INK.body)
+        .text(cell, left + (offsets[c] ?? 0) + TABLE_PADDING, y + TABLE_PADDING, {
+          width: width - TABLE_PADDING * 2,
+          align: aligns[c] ?? 'left',
+          lineGap: 1,
+        });
+    });
+    doc.y = y + height;
+    doc.x = left;
+    return height;
+  };
+
+  const rule = (weight: number, color: string) => {
+    doc
+      .moveTo(left, doc.y)
+      .lineTo(left + usable, doc.y)
+      .lineWidth(weight)
+      .strokeColor(color)
+      .stroke();
+  };
+
+  const drawHeader = (continued: boolean) => {
+    if (headerRows.length === 0) return;
+    if (continued) {
+      // Without this a repeated header reads as a second, unrelated table
+      // beginning at the top of the page.
+      doc
+        .font(FONTS.italic)
+        .fontSize(8)
+        .fillColor(INK.hint)
+        .text(TABLE_CONTINUED, left, doc.y, { width: usable });
+      doc.y += 2;
+      doc.x = left;
+    }
+    rule(0.8, INK.muted);
+    for (const row of headerRows) drawRow(row, true, INK.band);
+    rule(0.8, INK.muted);
+  };
+
+  // The header plus one body row is the smallest fragment worth leaving on a
+  // page; anything less is a stub the reader has to turn back from.
+  const headerHeight = headerRows.reduce((sum, row) => sum + heightOf(row, true), 0);
+  ensureRoom(doc, headerHeight + (bodyRows[0] ? heightOf(bodyRows[0], false) : 0) + 6);
+
+  drawHeader(false);
+  if (headerRows.length === 0) rule(0.8, INK.muted);
+
+  bodyRows.forEach((row, idx) => {
+    const height = heightOf(row, false);
+    if (doc.y + height > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      drawHeader(true);
+    }
+    drawRow(row, false, null);
+    if (idx < bodyRows.length - 1) rule(0.4, INK.hair);
+  });
+
+  rule(0.8, INK.muted);
+  doc.y += 2;
+  doc.moveDown(0.7);
 }
