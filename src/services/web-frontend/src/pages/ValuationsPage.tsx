@@ -256,6 +256,9 @@ export function ValuationsPage() {
           </h1>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => navigate('/valuations/compare')}>
+            Compare
+          </Button>
           <Button variant="secondary" onClick={() => void exportAs('csv')}>
             Export CSV
           </Button>

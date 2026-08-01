@@ -64,6 +64,7 @@ const FundPortfolioPage = named(() => import('./pages/FundPortfolioPage'), 'Fund
 const DebtInstrumentsPage = named(() => import('./pages/DebtInstrumentsPage'), 'DebtInstrumentsPage');
 const ValuationsPage = named(() => import('./pages/ValuationsPage'), 'ValuationsPage');
 const NewValuationPage = named(() => import('./pages/NewValuationPage'), 'NewValuationPage');
+const ValuationComparePage = named(() => import('./pages/ValuationComparePage'), 'ValuationComparePage');
 const ValuationDetailPage = named(() => import('./pages/ValuationDetailPage'), 'ValuationDetailPage');
 const ValuationWorkspace = named(() => import('./pages/valuation/ValuationWorkspace'), 'ValuationWorkspace');
 const AiTab = named(() => import('./pages/valuation/PipelineTabs'), 'AiTab');
@@ -207,6 +208,7 @@ export default function App() {
           <Route path="/valuations" element={<ValuationsPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/valuations/new" element={<NewValuationPage />} />
+          <Route path="/valuations/compare" element={<ValuationComparePage />} />
           <Route path="/onboarding" element={<OnboardingPage />} />
           <Route path="/payment/success" element={<PaymentSuccessPage />} />
           <Route path="/payment/cancel" element={<PaymentCancelPage />} />

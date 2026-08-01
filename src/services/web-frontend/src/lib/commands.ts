@@ -108,6 +108,13 @@ export function buildCommands(options: {
     to: '/valuations/new',
     keywords: 'create start order',
   });
+  add({
+    id: 'nav:compare',
+    label: 'Compare valuations',
+    group: 'Workspace',
+    to: '/valuations/compare',
+    keywords: 'diff side by side versus changed delta',
+  });
   add({ id: 'nav:portfolio', label: 'Portfolio', group: 'Workspace', to: '/portfolio' });
   add({ id: 'nav:search', label: 'Search', group: 'Workspace', to: '/search', keywords: 'find' });
   add({

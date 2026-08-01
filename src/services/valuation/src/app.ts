@@ -48,6 +48,7 @@ import { registerAiRoutes } from './routes/ai.js';
 import { registerCalculationRoutes } from './routes/calculations.js';
 import { registerBridgeRoutes } from './routes/bridge.js';
 import { registerAnalyticsRoutes } from './routes/analytics.js';
+import { registerCompareRoutes } from './routes/compare.js';
 import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerBrandingRoutes } from './routes/branding.js';
 import { registerFirmRoutes } from './routes/firm.js';
@@ -298,6 +299,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerBridgeRoutes(app, { pool });
   registerAnalyticsRoutes(app, { pool });
+  registerCompareRoutes(app, { pool });
   registerOrganizationRoutes(app, { pool });
   registerBrandingRoutes(app, { pool });
   registerFirmRoutes(app, { pool });
