@@ -28,9 +28,7 @@ interface ApiDocs {
 
 function MethodChip({ method }: { method: EndpointDoc['method'] }) {
   const tone = method === 'GET' ? 'bg-bond-50 text-bond-700' : 'bg-emerald-50 text-emerald-700';
-  return (
-    <span className={`tnum rounded px-1.5 py-0.5 font-mono text-xs font-bold ${tone}`}>{method}</span>
-  );
+  return <span className={`tnum rounded px-1.5 py-0.5 font-mono text-xs font-bold ${tone}`}>{method}</span>;
 }
 
 function FieldTable({ title, fields }: { title: string; fields: Record<string, string> }) {
@@ -72,11 +70,15 @@ export function ApiDocsPage() {
       <div className="overline text-ink-400">Partner API</div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">API reference</h1>
       <p className="mt-1 text-sm text-ink-400">
-        Programmatic valuation submission — create engagements, upload documents, poll status, and
-        retrieve results from your own systems.
+        Programmatic valuation submission — create engagements, upload documents, poll status, and retrieve
+        results from your own systems.
       </p>
 
-      {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-6">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {!docs && !error && <Spinner />}
 
       {docs && (
@@ -93,8 +95,8 @@ export function ApiDocsPage() {
             <h2 className="overline mt-6 mb-2 text-ink-400">Rate limits</h2>
             <p className="text-sm text-ink-600">
               <span className="tnum font-semibold">{docs.rate_limit.limit}</span> requests per{' '}
-              <span className="tnum font-semibold">{docs.rate_limit.window_seconds}s</span> per API
-              key. Current usage is returned in{' '}
+              <span className="tnum font-semibold">{docs.rate_limit.window_seconds}s</span> per API key.
+              Current usage is returned in{' '}
               {docs.rate_limit.headers.map((h, i) => (
                 <span key={h}>
                   {i > 0 && ', '}
@@ -118,9 +120,7 @@ export function ApiDocsPage() {
                     {ep.path}
                   </code>
                   {ep.auth === 'none' && (
-                    <span className="rounded bg-paper-200 px-1.5 py-0.5 text-xs text-ink-500">
-                      no auth
-                    </span>
+                    <span className="rounded bg-paper-200 px-1.5 py-0.5 text-xs text-ink-500">no auth</span>
                   )}
                 </div>
                 <p className="mt-2 text-sm text-ink-600">{ep.summary}</p>

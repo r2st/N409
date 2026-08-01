@@ -100,7 +100,12 @@ export function injectGa4(config: AnalyticsConfig, win: DataLayerWindow, doc: Do
 }
 
 interface FbqWindow extends Window {
-  fbq?: FbqFn & { queue?: unknown[]; loaded?: boolean; version?: string; callMethod?: (...a: unknown[]) => void };
+  fbq?: FbqFn & {
+    queue?: unknown[];
+    loaded?: boolean;
+    version?: string;
+    callMethod?: (...a: unknown[]) => void;
+  };
   _fbq?: unknown;
 }
 type FbqFn = (...args: unknown[]) => void;

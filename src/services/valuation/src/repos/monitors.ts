@@ -16,10 +16,9 @@ export interface MonitorRow {
 }
 
 export async function findMonitor(pool: pg.Pool, valuationId: string): Promise<MonitorRow | null> {
-  const { rows } = await pool.query<MonitorRow>(
-    'SELECT * FROM valuation_monitors WHERE valuation_id = $1',
-    [valuationId],
-  );
+  const { rows } = await pool.query<MonitorRow>('SELECT * FROM valuation_monitors WHERE valuation_id = $1', [
+    valuationId,
+  ]);
   return rows[0] ?? null;
 }
 
@@ -49,11 +48,7 @@ export async function enableMonitor(
   });
 }
 
-export async function disableMonitor(
-  pool: pg.Pool,
-  monitor: MonitorRow,
-  actor: EventActor,
-): Promise<void> {
+export async function disableMonitor(pool: pg.Pool, monitor: MonitorRow, actor: EventActor): Promise<void> {
   await withTransaction(pool, async (client) => {
     await client.query('UPDATE valuation_monitors SET enabled = false, updated_at = now() WHERE id = $1', [
       monitor.id,

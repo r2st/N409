@@ -314,10 +314,7 @@ export interface AuditFilters {
 }
 
 /** Apply the visibility rule and every optional filter, newest first. */
-export function filterAuditEntries(
-  entries: readonly AuditEntry[],
-  filters: AuditFilters,
-): AuditEntry[] {
+export function filterAuditEntries(entries: readonly AuditEntry[], filters: AuditFilters): AuditEntry[] {
   return entries
     .filter((e) => {
       if (!filters.includeInternal && e.visibility !== 'client') return false;

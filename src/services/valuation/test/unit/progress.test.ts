@@ -153,21 +153,17 @@ describe('TYPICAL_STAGE_DAYS', () => {
 
 describe('percentComplete', () => {
   it('is 0 for halted valuations', () => {
-    expect(
-      percentComplete({ stageIndex: -1, documentsUploaded: 3, documentsRequired: REQUIRED }),
-    ).toBe(0);
+    expect(percentComplete({ stageIndex: -1, documentsUploaded: 3, documentsRequired: REQUIRED })).toBe(0);
   });
 
   it('reports the stage entry percentage outside document collection', () => {
-    expect(
-      percentComplete({ stageIndex: 0, documentsUploaded: 0, documentsRequired: REQUIRED }),
-    ).toBe(STAGE_START_PERCENT.setup);
-    expect(
-      percentComplete({ stageIndex: 2, documentsUploaded: 0, documentsRequired: REQUIRED }),
-    ).toBe(STAGE_START_PERCENT.analysis);
-    expect(
-      percentComplete({ stageIndex: 4, documentsUploaded: 0, documentsRequired: REQUIRED }),
-    ).toBe(100);
+    expect(percentComplete({ stageIndex: 0, documentsUploaded: 0, documentsRequired: REQUIRED })).toBe(
+      STAGE_START_PERCENT.setup,
+    );
+    expect(percentComplete({ stageIndex: 2, documentsUploaded: 0, documentsRequired: REQUIRED })).toBe(
+      STAGE_START_PERCENT.analysis,
+    );
+    expect(percentComplete({ stageIndex: 4, documentsUploaded: 0, documentsRequired: REQUIRED })).toBe(100);
   });
 
   it('fills the documents stage from the checklist', () => {
@@ -192,9 +188,9 @@ describe('percentComplete', () => {
   });
 
   it('never exceeds the next stage when extra documents are uploaded', () => {
-    expect(
-      percentComplete({ stageIndex: 1, documentsUploaded: 99, documentsRequired: REQUIRED }),
-    ).toBe(STAGE_START_PERCENT.analysis);
+    expect(percentComplete({ stageIndex: 1, documentsUploaded: 99, documentsRequired: REQUIRED })).toBe(
+      STAGE_START_PERCENT.analysis,
+    );
   });
 
   it('does not divide by zero when nothing is required', () => {
@@ -204,15 +200,17 @@ describe('percentComplete', () => {
   });
 
   it('clamps a stage index past the last stage', () => {
-    expect(
-      percentComplete({ stageIndex: 99, documentsUploaded: 0, documentsRequired: REQUIRED }),
-    ).toBe(100);
+    expect(percentComplete({ stageIndex: 99, documentsUploaded: 0, documentsRequired: REQUIRED })).toBe(100);
   });
 
   it('always returns 0–100', () => {
     for (let stageIndex = -1; stageIndex < PROGRESS_STAGES.length; stageIndex += 1) {
       for (let uploaded = 0; uploaded <= REQUIRED; uploaded += 1) {
-        const value = percentComplete({ stageIndex, documentsUploaded: uploaded, documentsRequired: REQUIRED });
+        const value = percentComplete({
+          stageIndex,
+          documentsUploaded: uploaded,
+          documentsRequired: REQUIRED,
+        });
         expect(value).toBeGreaterThanOrEqual(0);
         expect(value).toBeLessThanOrEqual(100);
       }
@@ -261,9 +259,7 @@ describe('nextClientAction', () => {
 
   it('asks for missing documents, pluralised', () => {
     expect(nextClientAction({ ...base, missingDocuments: 1 }).label).toContain('1 remaining document');
-    expect(nextClientAction({ ...base, missingDocuments: 3 }).label).toContain(
-      '3 remaining documents',
-    );
+    expect(nextClientAction({ ...base, missingDocuments: 3 }).label).toContain('3 remaining documents');
   });
 
   it('prefers a complete checklist over a pending question', () => {

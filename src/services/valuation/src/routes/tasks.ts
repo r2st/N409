@@ -15,7 +15,13 @@ const CreateBody = z.object({
   title: z.string().min(1).max(300),
   description: z.string().max(5000).nullable().optional(),
   assignee_id: z.string().nullable().optional(),
-  sla_hours: z.number().int().positive().max(24 * 90).nullable().optional(),
+  sla_hours: z
+    .number()
+    .int()
+    .positive()
+    .max(24 * 90)
+    .nullable()
+    .optional(),
   due_at: z.string().datetime().nullable().optional(),
 });
 
@@ -26,7 +32,12 @@ const PatchBody = z
     description: z.string().max(5000).nullable(),
     status: z.enum(REVIEW_TASK_STATUSES),
     assignee_id: z.string().nullable(),
-    sla_hours: z.number().int().positive().max(24 * 90).nullable(),
+    sla_hours: z
+      .number()
+      .int()
+      .positive()
+      .max(24 * 90)
+      .nullable(),
     due_at: z.string().datetime().nullable(),
   })
   .partial()
@@ -124,7 +135,12 @@ export function registerTaskRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
     if ('assignee_id' in parsed.data) await assertAssigneeExists(deps.pool, parsed.data.assignee_id);
 
-    const updated = await patchTask(deps.pool, task, parsed.data as Record<string, unknown>, actorFor(principal));
+    const updated = await patchTask(
+      deps.pool,
+      task,
+      parsed.data as Record<string, unknown>,
+      actorFor(principal),
+    );
     return { task: updated };
   });
 }

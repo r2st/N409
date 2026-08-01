@@ -17,7 +17,9 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 describe('accounting OAuth (§23)', () => {
   it('builds a provider authorize URL with state and redirect', () => {
-    const url = new URL(authorizeUrl('xero', creds, 'https://n409.example/api/v1/accounting/callback', 'st4te'));
+    const url = new URL(
+      authorizeUrl('xero', creds, 'https://n409.example/api/v1/accounting/callback', 'st4te'),
+    );
     expect(url.origin).toBe('https://login.xero.com');
     expect(url.searchParams.get('client_id')).toBe('cid');
     expect(url.searchParams.get('state')).toBe('st4te');
@@ -45,10 +47,7 @@ describe('accounting OAuth (§23)', () => {
     });
     expect(tokens.expiresAt).toBeInstanceOf(Date);
 
-    const [, init] = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
+    const [, init] = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
     expect(new Headers(init.headers).get('authorization')).toBe(
       `Basic ${Buffer.from('cid:shh').toString('base64')}`,
     );
@@ -109,13 +108,14 @@ describe('P&L parsers', () => {
           Rows: [
             {
               Rows: [
-                { RowType: 'SummaryRow', Cells: [{ Value: 'Total Income' }, { Value: '1250000.50' }, { Value: '900000' }] },
+                {
+                  RowType: 'SummaryRow',
+                  Cells: [{ Value: 'Total Income' }, { Value: '1250000.50' }, { Value: '900000' }],
+                },
               ],
             },
             {
-              Rows: [
-                { RowType: 'SummaryRow', Cells: [{ Value: 'Net Profit' }, { Value: '-52000.25' }] },
-              ],
+              Rows: [{ RowType: 'SummaryRow', Cells: [{ Value: 'Net Profit' }, { Value: '-52000.25' }] }],
             },
           ],
         },
@@ -139,7 +139,14 @@ describe('P&L parsers', () => {
           { group: 'Income', Summary: { ColData: [{ value: 'Total Income' }, { value: '425000.00' }] } },
           {
             group: 'Expenses',
-            Rows: { Row: [{ group: 'NetIncome', Summary: { ColData: [{ value: 'Net Income' }, { value: '31000.10' }] } }] },
+            Rows: {
+              Row: [
+                {
+                  group: 'NetIncome',
+                  Summary: { ColData: [{ value: 'Net Income' }, { value: '31000.10' }] },
+                },
+              ],
+            },
           },
         ],
       },
@@ -177,8 +184,8 @@ describe('fetchFinancials', () => {
   });
 
   it('declines providers without an import parser', async () => {
-    await expect(
-      fetchFinancials('wave', { accessToken: 'at', externalOrgId: null }, fetch),
-    ).rejects.toThrow(/not supported/);
+    await expect(fetchFinancials('wave', { accessToken: 'at', externalOrgId: null }, fetch)).rejects.toThrow(
+      /not supported/,
+    );
   });
 });

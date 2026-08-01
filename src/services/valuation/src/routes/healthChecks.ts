@@ -66,9 +66,7 @@ export function registerHealthCheckRoutes(app: FastifyInstance, deps: { pool: pg
       listHealthChecks(deps.pool, id),
       latestSucceededCalculation(deps.pool, id),
     ]);
-    const current = calculation
-      ? (runs.find((r) => r.calculation_id === calculation.id) ?? null)
-      : null;
+    const current = calculation ? (runs.find((r) => r.calculation_id === calculation.id) ?? null) : null;
     return {
       health_checks: runs,
       latest_calculation_id: calculation?.id ?? null,

@@ -67,7 +67,8 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
   app.post('/api/v1/organizations', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = CreateOrgBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid organization', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid organization', { errors: parsed.error.issues });
     if (parsed.data.parent_org_id) await loadOwnedOrg(principal, parsed.data.parent_org_id);
     const org = await createOrganization(deps.pool, {
       name: parsed.data.name,
@@ -104,7 +105,8 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const parsed = UpdateOrgBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid update', { errors: parsed.error.issues });
     if (parsed.data.parent_org_id) {
-      if (parsed.data.parent_org_id === id) throw problems.unprocessable('An organization cannot be its own parent');
+      if (parsed.data.parent_org_id === id)
+        throw problems.unprocessable('An organization cannot be its own parent');
       await loadOwnedOrg(principal, parsed.data.parent_org_id);
     }
     const updated = await updateOrganization(deps.pool, id, {
@@ -163,10 +165,19 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     const parsed = EntityBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid entity', { errors: parsed.error.issues });
     if (parsed.data.parent_valuation_id) {
-      if (parsed.data.parent_valuation_id === id) throw problems.unprocessable('A valuation cannot be its own parent');
+      if (parsed.data.parent_valuation_id === id)
+        throw problems.unprocessable('A valuation cannot be its own parent');
       await loadEditableValuation(principal, parsed.data.parent_valuation_id);
     }
-    await setEntityRelationship(deps.pool, id, parsed.data.entity_type, parsed.data.parent_valuation_id ?? null);
-    return { entity_type: parsed.data.entity_type, parent_valuation_id: parsed.data.parent_valuation_id ?? null };
+    await setEntityRelationship(
+      deps.pool,
+      id,
+      parsed.data.entity_type,
+      parsed.data.parent_valuation_id ?? null,
+    );
+    return {
+      entity_type: parsed.data.entity_type,
+      parent_valuation_id: parsed.data.parent_valuation_id ?? null,
+    };
   });
 }

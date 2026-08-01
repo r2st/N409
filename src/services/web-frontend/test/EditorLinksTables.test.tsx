@@ -35,11 +35,7 @@ describe('RichTextEditor toolbar', () => {
     render(<RichTextEditor value="<p>hi</p>" onChange={() => {}} />);
 
     await user.click(screen.getByTitle('Insert link'));
-    expect(document.execCommand).toHaveBeenCalledWith(
-      'createLink',
-      false,
-      'https://ex.com/data-room',
-    );
+    expect(document.execCommand).toHaveBeenCalledWith('createLink', false, 'https://ex.com/data-room');
   });
 
   it('does nothing when the prompt is cancelled', async () => {

@@ -45,7 +45,10 @@ describe('applyTemplateOverrides (§15.5)', () => {
     const out = applyTemplateOverrides(
       specs,
       new Map([
-        ['draft_ready', { subject: '{{company_name}} draft', body: 'Your {{kind_label}} draft.', enabled: true }],
+        [
+          'draft_ready',
+          { subject: '{{company_name}} draft', body: 'Your {{kind_label}} draft.', enabled: true },
+        ],
       ]),
       vars,
     );
@@ -84,9 +87,9 @@ describe('isCampaignDue (§15.6)', () => {
     const drip = { delay_hours: 24, repeat_hours: 96, max_sends: 3 };
     expect(isCampaignDue(drip, hoursAgo(200), [hoursAgo(50)], now)).toBe(false); // too soon
     expect(isCampaignDue(drip, hoursAgo(200), [hoursAgo(96)], now)).toBe(true);
-    expect(
-      isCampaignDue(drip, hoursAgo(900), [hoursAgo(100), hoursAgo(300), hoursAgo(500)], now),
-    ).toBe(false); // max sends reached
+    expect(isCampaignDue(drip, hoursAgo(900), [hoursAgo(100), hoursAgo(300), hoursAgo(500)], now)).toBe(
+      false,
+    ); // max sends reached
   });
 
   it('measures repeat from the most recent send', () => {

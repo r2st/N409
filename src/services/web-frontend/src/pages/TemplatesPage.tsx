@@ -93,10 +93,17 @@ export function TemplatesPage() {
         <Button onClick={() => setCreating((v) => !v)}>{creating ? 'Cancel' : '+ New version'}</Button>
       </div>
 
-      {actionError && <div className="mt-4"><ErrorNote>{actionError}</ErrorNote></div>}
+      {actionError && (
+        <div className="mt-4">
+          <ErrorNote>{actionError}</ErrorNote>
+        </div>
+      )}
 
       {creating && (
-        <form onSubmit={create} className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+        <form
+          onSubmit={create}
+          className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+        >
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="Template name" hint="Reusing a name mints its next version (e.g. 409a → 409a.v2).">
               <TextInput
@@ -156,9 +163,13 @@ export function TemplatesPage() {
                   .map((t) => (
                     <tr key={t.id} className="border-b border-paper-200 align-top last:border-0">
                       <td className="px-5 py-3.5 font-mono text-xs font-semibold text-ink-900">{t.label}</td>
-                      <td className="px-5 py-3.5"><StatusPill status={t.status} /></td>
+                      <td className="px-5 py-3.5">
+                        <StatusPill status={t.status} />
+                      </td>
                       <td className="px-5 py-3.5 text-ink-600">{KIND_LABELS[t.kind]}</td>
-                      <td className="tnum px-5 py-3.5 text-xs text-ink-400">{formatDateTime(t.updated_at)}</td>
+                      <td className="tnum px-5 py-3.5 text-xs text-ink-400">
+                        {formatDateTime(t.updated_at)}
+                      </td>
                       <td className="px-5 py-3.5">
                         <div className="flex justify-end gap-2">
                           {t.status === 'draft' && (
@@ -175,7 +186,9 @@ export function TemplatesPage() {
                               <Button
                                 disabled={busy}
                                 onClick={() =>
-                                  void run(() => api(`/report-templates/${t.id}/activate`, { method: 'POST' }))
+                                  void run(() =>
+                                    api(`/report-templates/${t.id}/activate`, { method: 'POST' }),
+                                  )
                                 }
                               >
                                 Activate

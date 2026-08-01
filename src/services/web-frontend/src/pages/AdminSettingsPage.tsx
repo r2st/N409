@@ -61,9 +61,7 @@ export function AdminSettingsPage() {
         setData(d);
         setDraft(d.settings);
       })
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load system settings.'),
-      );
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load system settings.'));
   }, []);
 
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
@@ -107,8 +105,8 @@ export function AdminSettingsPage() {
       <div className="overline text-ink-400">Administration</div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">System settings</h1>
       <p className="mt-2 text-sm text-ink-400">
-        Platform-wide switches that take effect immediately, without a redeploy. Secrets and service
-        URLs stay in the environment. Every change is recorded in the activity log.
+        Platform-wide switches that take effect immediately, without a redeploy. Secrets and service URLs stay
+        in the environment. Every change is recorded in the activity log.
       </p>
 
       {!editable && (

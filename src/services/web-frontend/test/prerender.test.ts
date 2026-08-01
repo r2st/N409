@@ -120,9 +120,7 @@ describe('output paths and manifest', () => {
   });
 
   it('gives each prerendered page its own title', () => {
-    const titles = prerenderPages(SHELL, ORIGIN).map(
-      (p) => /<title>(.*?)<\/title>/.exec(p.html)?.[1],
-    );
+    const titles = prerenderPages(SHELL, ORIGIN).map((p) => /<title>(.*?)<\/title>/.exec(p.html)?.[1]);
     expect(titles.every(Boolean)).toBe(true);
     expect(titles).toHaveLength(new Set(titles).size);
   });

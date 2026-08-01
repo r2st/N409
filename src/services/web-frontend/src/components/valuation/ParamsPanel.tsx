@@ -365,21 +365,25 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             </div>
           )}
         </div>
-        {isHybrid && Math.abs((Number(hybridOpmWeight) || 0) + (Number(hybridPwermWeight) || 0) - 1) > 1e-4 && (
-          <p className="mt-3 text-sm text-red-600" data-testid="hybrid-weight-warning">
-            OPM + PWERM weights must sum to 1.00.
-          </p>
-        )}
+        {isHybrid &&
+          Math.abs((Number(hybridOpmWeight) || 0) + (Number(hybridPwermWeight) || 0) - 1) > 1e-4 && (
+            <p className="mt-3 text-sm text-red-600" data-testid="hybrid-weight-warning">
+              OPM + PWERM weights must sum to 1.00.
+            </p>
+          )}
         {isCvm && (
           <p className="mt-3 text-sm text-ink-400">
-            CVM allocates the current equity value by the deterministic liquidation waterfall — best
-            for very early-stage, pre-revenue, or distressed companies.
+            CVM allocates the current equity value by the deterministic liquidation waterfall — best for very
+            early-stage, pre-revenue, or distressed companies.
           </p>
         )}
       </section>
 
       {(isPwerm || isHybrid) && (
-        <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card" data-testid="pwerm-scenarios">
+        <section
+          className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+          data-testid="pwerm-scenarios"
+        >
           <div className="mb-4 flex items-baseline justify-between">
             <h3 className="overline text-ink-400">
               {isHybrid ? 'Hybrid — near-term exit scenarios (PWERM leg)' : 'PWERM exit scenarios'}
@@ -421,26 +425,75 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                   {scenarios.map((s, i) => (
                     <tr key={i} className="border-b border-paper-200 last:border-0">
                       <td className="py-1.5 pr-3">
-                        <TextInput disabled={readOnly} value={s.name} onChange={(e) => setScenario(i, 'name')(e.target.value)} aria-label={`Scenario ${i + 1} name`} />
+                        <TextInput
+                          disabled={readOnly}
+                          value={s.name}
+                          onChange={(e) => setScenario(i, 'name')(e.target.value)}
+                          aria-label={`Scenario ${i + 1} name`}
+                        />
                       </td>
                       <td className="py-1.5 pr-3">
-                        <Select disabled={readOnly} value={s.type} onChange={(e) => setScenario(i, 'type')(e.target.value)} aria-label={`Scenario ${i + 1} type`}>
+                        <Select
+                          disabled={readOnly}
+                          value={s.type}
+                          onChange={(e) => setScenario(i, 'type')(e.target.value)}
+                          aria-label={`Scenario ${i + 1} type`}
+                        >
                           {SCENARIO_TYPES.map((t) => (
-                            <option key={t.value} value={t.value}>{t.label}</option>
+                            <option key={t.value} value={t.value}>
+                              {t.label}
+                            </option>
                           ))}
                         </Select>
                       </td>
                       <td className="py-1.5 pr-3">
-                        <TextInput type="number" min={0} max={1} step={0.01} disabled={readOnly} value={s.probability} onChange={(e) => setScenario(i, 'probability')(e.target.value)} className="w-24" aria-label={`Scenario ${i + 1} probability`} />
+                        <TextInput
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          disabled={readOnly}
+                          value={s.probability}
+                          onChange={(e) => setScenario(i, 'probability')(e.target.value)}
+                          className="w-24"
+                          aria-label={`Scenario ${i + 1} probability`}
+                        />
                       </td>
                       <td className="py-1.5 pr-3">
-                        <TextInput type="number" min={0} step="any" disabled={readOnly} value={s.exit_value} onChange={(e) => setScenario(i, 'exit_value')(e.target.value)} className="w-36" aria-label={`Scenario ${i + 1} exit value`} />
+                        <TextInput
+                          type="number"
+                          min={0}
+                          step="any"
+                          disabled={readOnly}
+                          value={s.exit_value}
+                          onChange={(e) => setScenario(i, 'exit_value')(e.target.value)}
+                          className="w-36"
+                          aria-label={`Scenario ${i + 1} exit value`}
+                        />
                       </td>
                       <td className="py-1.5 pr-3">
-                        <TextInput type="number" min={0} step="any" disabled={readOnly} value={s.time_years} onChange={(e) => setScenario(i, 'time_years')(e.target.value)} className="w-20" aria-label={`Scenario ${i + 1} years`} />
+                        <TextInput
+                          type="number"
+                          min={0}
+                          step="any"
+                          disabled={readOnly}
+                          value={s.time_years}
+                          onChange={(e) => setScenario(i, 'time_years')(e.target.value)}
+                          className="w-20"
+                          aria-label={`Scenario ${i + 1} years`}
+                        />
                       </td>
                       <td className="py-1.5 pr-3">
-                        <TextInput type="number" step="any" disabled={readOnly} value={s.discount_rate} onChange={(e) => setScenario(i, 'discount_rate')(e.target.value)} className="w-24" placeholder="dflt" aria-label={`Scenario ${i + 1} discount rate`} />
+                        <TextInput
+                          type="number"
+                          step="any"
+                          disabled={readOnly}
+                          value={s.discount_rate}
+                          onChange={(e) => setScenario(i, 'discount_rate')(e.target.value)}
+                          className="w-24"
+                          placeholder="dflt"
+                          aria-label={`Scenario ${i + 1} discount rate`}
+                        />
                       </td>
                       <td className="py-1.5">
                         {!readOnly && (
@@ -461,15 +514,28 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             </div>
           )}
           {probabilityOff && (
-            <p className="mt-3 text-sm font-medium text-red-600">Scenario probabilities must sum to 1.0000.</p>
+            <p className="mt-3 text-sm font-medium text-red-600">
+              Scenario probabilities must sum to 1.0000.
+            </p>
           )}
           {scenariosSaved && <p className="mt-3 text-sm font-medium text-bond-700">Scenarios saved.</p>}
           {!readOnly && (
             <div className="mt-4 flex gap-2">
-              <Button type="button" variant="secondary" onClick={() => { setScenariosSaved(false); setScenarios((r) => [...r, emptyScenario()]); }}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setScenariosSaved(false);
+                  setScenarios((r) => [...r, emptyScenario()]);
+                }}
+              >
                 Add scenario
               </Button>
-              <Button type="button" onClick={() => void saveScenarios()} disabled={scenariosBusy || scenarios.length === 0 || probabilityOff}>
+              <Button
+                type="button"
+                onClick={() => void saveScenarios()}
+                disabled={scenariosBusy || scenarios.length === 0 || probabilityOff}
+              >
                 {scenariosBusy ? 'Saving…' : 'Save scenarios'}
               </Button>
             </div>
@@ -512,7 +578,10 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             </Select>
           </Field>
           {form.dlom_method === 'qualitative' && (
-            <Field label="Qualitative DLOM (fraction)" error={qualitativeMissing ? 'Required for the qualitative method.' : null}>
+            <Field
+              label="Qualitative DLOM (fraction)"
+              error={qualitativeMissing ? 'Required for the qualitative method.' : null}
+            >
               <TextInput
                 type="number"
                 min={0}

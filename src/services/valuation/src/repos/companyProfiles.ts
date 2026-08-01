@@ -64,9 +64,7 @@ export async function upsertCompanyProfile(
   const insertCols = ['valuation_id', ...present, 'updated_by'];
   const values: unknown[] = [valuationId, ...present.map((f) => fields[f] ?? null), actor.actorId];
   const placeholders = values.map((_, i) => `$${i + 1}`);
-  const updates = [...present, 'updated_by']
-    .map((f) => `${f} = EXCLUDED.${f}`)
-    .concat('updated_at = now()');
+  const updates = [...present, 'updated_by'].map((f) => `${f} = EXCLUDED.${f}`).concat('updated_at = now()');
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<CompanyProfileRow>(
       `INSERT INTO company_profiles (${insertCols.join(', ')})

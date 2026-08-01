@@ -99,9 +99,7 @@ describe('DecisionsTab (audit defense §5.3)', () => {
   });
 
   it('disables submitting until decision and rationale are filled', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ decisions: [], categories: CATEGORIES }),
-    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ decisions: [], categories: CATEGORIES }));
     renderTab();
     expect(await screen.findByRole('button', { name: 'Record decision' })).toBeDisabled();
   });

@@ -1,10 +1,6 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
-import {
-  isCampaignDue,
-  renderTemplate,
-  valuationTemplateVars,
-} from '../domain/communications.js';
+import { isCampaignDue, renderTemplate, valuationTemplateVars } from '../domain/communications.js';
 import {
   dueCandidates,
   findTemplateByKey,

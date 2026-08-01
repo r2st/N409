@@ -47,9 +47,7 @@ describe('LoginPage', () => {
     expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.queryByText('Continue with Google')).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText('Continue with Google')).not.toBeInTheDocument());
   });
 
   it('shows the Google button when the provider is configured', async () => {

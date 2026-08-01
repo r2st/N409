@@ -47,10 +47,7 @@ export function effectiveRoles(user: Pick<User, 'roles'>, viewMode: ViewMode): s
  * Feed this to the RBAC predicates for UI gating; keep the *real* user for the
  * toggle itself and for anything that hits the API.
  */
-export function effectiveUser<T extends { roles: string[] }>(
-  user: T | null,
-  viewMode: ViewMode,
-): T | null {
+export function effectiveUser<T extends { roles: string[] }>(user: T | null, viewMode: ViewMode): T | null {
   if (!user || viewMode !== 'normal') return user;
   return { ...user, roles: effectiveRoles(user, viewMode) };
 }

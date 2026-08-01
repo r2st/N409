@@ -99,9 +99,7 @@ describe('FeaturesPage', () => {
       screen.getByRole('heading', { name: 'Specialized valuation engines', level: 2 }),
     ).toBeInTheDocument();
     // The three engine categories each render a learn-more link into the Help Center.
-    const hrefs = screen
-      .getAllByRole('link', { name: 'Learn more →' })
-      .map((l) => l.getAttribute('href'));
+    const hrefs = screen.getAllByRole('link', { name: 'Learn more →' }).map((l) => l.getAttribute('href'));
     expect(hrefs).toContain('/help/asc718-public-overview');
     expect(hrefs).toContain('/help/fund-holdings-overview');
     expect(hrefs).toContain('/help/debt-valuation-overview');

@@ -3,11 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
-import {
-  createSupportMessage,
-  listSupportMessages,
-  setSupportMessageStatus,
-} from '../repos/support.js';
+import { createSupportMessage, listSupportMessages, setSupportMessageStatus } from '../repos/support.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**

@@ -11,12 +11,7 @@
  * current valuation_params row and the valuation itself.
  */
 
-export type HealthCategory =
-  | 'methodology'
-  | 'assumptions'
-  | 'completeness'
-  | 'mathematical'
-  | 'temporal';
+export type HealthCategory = 'methodology' | 'assumptions' | 'completeness' | 'mathematical' | 'temporal';
 
 /** A passing check is `ok`; findings escalate info < warning < error. */
 export type HealthSeverity = 'ok' | 'info' | 'warning' | 'error';
@@ -351,7 +346,13 @@ export function runHealthChecks(args: {
     sev: HealthSeverity = 'warning',
   ) => {
     if (earlier === null || laterOrEqual === null) return;
-    add('temporal', key, label, earlier <= laterOrEqual ? 'ok' : sev, earlier <= laterOrEqual ? detailOk : detailBad);
+    add(
+      'temporal',
+      key,
+      label,
+      earlier <= laterOrEqual ? 'ok' : sev,
+      earlier <= laterOrEqual ? detailOk : detailBad,
+    );
   };
   checkOrder(
     'fiscal_before_valuation',

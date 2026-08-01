@@ -141,11 +141,14 @@ export function registerScenarioRoutes(
     const valuation = await loadValuation(principal, id);
 
     const parsed = PreviewBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid scenario inputs', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid scenario inputs', { errors: parsed.error.issues });
 
     const calc = await latestSucceededCalculation(deps.pool, valuation.id);
     if (!calc) {
-      throw problems.unprocessable('No completed calculation to sandbox yet — check back once the valuation is drafted');
+      throw problems.unprocessable(
+        'No completed calculation to sandbox yet — check back once the valuation is drafted',
+      );
     }
 
     const base = basePayload(calc);

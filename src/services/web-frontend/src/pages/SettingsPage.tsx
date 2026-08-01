@@ -12,7 +12,15 @@ import { PhoneInput } from '../components/PhoneInput';
 import { MfaCard } from '../components/MfaCard';
 import { ThemeToggle } from '../components/ThemeToggle';
 
-function Card({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+function Card({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-1 text-ink-400">{title}</h2>
@@ -300,9 +308,7 @@ function NotificationPreferencesCard() {
 
   const toggle = async (eventType: string, channel: 'in_app' | 'email') => {
     if (!prefs) return;
-    const next = prefs.map((p) =>
-      p.event_type === eventType ? { ...p, [channel]: !p[channel] } : p,
-    );
+    const next = prefs.map((p) => (p.event_type === eventType ? { ...p, [channel]: !p[channel] } : p));
     setPrefs(next);
     setSaving(true);
     setError(null);
@@ -439,9 +445,7 @@ function ApiTokensCard() {
       )}
 
       {!tokens && !error && <Spinner />}
-      {tokens && live.length === 0 && (
-        <p className="text-sm text-ink-400">You have no active tokens.</p>
-      )}
+      {tokens && live.length === 0 && <p className="text-sm text-ink-400">You have no active tokens.</p>}
       {live.length > 0 && (
         <table className="w-full text-sm" aria-label="Personal API tokens">
           <thead>
@@ -526,20 +530,17 @@ function SessionCard() {
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
-      {done && <div className="mb-3"><SavedNote>Other sessions have been signed out.</SavedNote></div>}
+      {done && (
+        <div className="mb-3">
+          <SavedNote>Other sessions have been signed out.</SavedNote>
+        </div>
+      )}
       <p className="mb-4 text-sm text-ink-400">
         This session expires{' '}
-        <span className="tnum text-ink-700">
-          {exp ? formatDateTime(new Date(exp).toISOString()) : '—'}
-        </span>
-        .
+        <span className="tnum text-ink-700">{exp ? formatDateTime(new Date(exp).toISOString()) : '—'}</span>.
       </p>
       <div className="flex flex-wrap gap-3">
-        <Button
-          variant="secondary"
-          disabled={busy}
-          onClick={() => void revokeAll()}
-        >
+        <Button variant="secondary" disabled={busy} onClick={() => void revokeAll()}>
           {busy ? 'Signing out…' : 'Sign out everywhere else'}
         </Button>
         <Button

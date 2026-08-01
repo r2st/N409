@@ -11,7 +11,8 @@ import { canManageUsers, isOps, isPartner } from './rbac';
  * user hits streamed in from `/api/v1/search`. The palette merges them.
  */
 
-export type CommandGroup = 'Workspace' | 'This valuation' | 'Operations' | 'Administration' | 'Account' | 'Actions';
+export type CommandGroup =
+  'Workspace' | 'This valuation' | 'Operations' | 'Administration' | 'Account' | 'Actions';
 
 export interface Command {
   /** Stable across renders and used as the recent-items key. */
@@ -86,7 +87,13 @@ export function buildCommands(options: {
 
   const add = (c: Command) => commands.push(c);
 
-  add({ id: 'nav:dashboard', label: 'Dashboard', group: 'Workspace', to: '/dashboard', keywords: 'home overview' });
+  add({
+    id: 'nav:dashboard',
+    label: 'Dashboard',
+    group: 'Workspace',
+    to: '/dashboard',
+    keywords: 'home overview',
+  });
   add({
     id: 'nav:valuations',
     label: ops ? 'All valuations' : 'Valuations',
@@ -103,10 +110,22 @@ export function buildCommands(options: {
   });
   add({ id: 'nav:portfolio', label: 'Portfolio', group: 'Workspace', to: '/portfolio' });
   add({ id: 'nav:search', label: 'Search', group: 'Workspace', to: '/search', keywords: 'find' });
-  add({ id: 'nav:notifications', label: 'Notifications', group: 'Workspace', to: '/notifications', keywords: 'alerts inbox' });
+  add({
+    id: 'nav:notifications',
+    label: 'Notifications',
+    group: 'Workspace',
+    to: '/notifications',
+    keywords: 'alerts inbox',
+  });
   if (ops) {
     add({ id: 'nav:funds', label: 'Fund portfolios', group: 'Workspace', to: '/funds' });
-    add({ id: 'nav:debt', label: 'Debt instruments', group: 'Workspace', to: '/debt', keywords: 'safe convertible note' });
+    add({
+      id: 'nav:debt',
+      label: 'Debt instruments',
+      group: 'Workspace',
+      to: '/debt',
+      keywords: 'safe convertible note',
+    });
   }
   if (partner) add({ id: 'nav:partner', label: 'Partner portal', group: 'Workspace', to: '/partner' });
 
@@ -133,11 +152,28 @@ export function buildCommands(options: {
     add({ id: 'nav:engagements', label: 'Engagement pipeline', group: 'Operations', to: '/engagements' });
     add({ id: 'nav:monitors', label: 'Monitored valuations', group: 'Operations', to: '/monitors' });
     add({ id: 'nav:templates', label: 'Report templates', group: 'Operations', to: '/templates' });
-    add({ id: 'nav:prompts', label: 'Bot prompts', group: 'Operations', to: '/admin/prompts', keywords: 'ai' });
+    add({
+      id: 'nav:prompts',
+      label: 'Bot prompts',
+      group: 'Operations',
+      to: '/admin/prompts',
+      keywords: 'ai',
+    });
     add({ id: 'nav:support', label: 'Support inbox', group: 'Operations', to: '/admin/support' });
     add({ id: 'nav:outbox', label: 'Email outbox', group: 'Operations', to: '/admin/outbox' });
-    add({ id: 'nav:communications', label: 'Communications', group: 'Operations', to: '/admin/communications' });
-    add({ id: 'nav:activity', label: 'Activity log', group: 'Operations', to: '/admin/activity', keywords: 'audit events' });
+    add({
+      id: 'nav:communications',
+      label: 'Communications',
+      group: 'Operations',
+      to: '/admin/communications',
+    });
+    add({
+      id: 'nav:activity',
+      label: 'Activity log',
+      group: 'Operations',
+      to: '/admin/activity',
+      keywords: 'audit events',
+    });
     add({ id: 'nav:admin-help', label: 'Help articles', group: 'Operations', to: '/admin/help' });
     add({ id: 'nav:settings-system', label: 'System settings', group: 'Operations', to: '/admin/settings' });
     add({ id: 'nav:schema', label: 'Overwrites schema', group: 'Operations', to: '/schema/overwrites' });
@@ -145,15 +181,45 @@ export function buildCommands(options: {
 
   if (admin) {
     add({ id: 'nav:users', label: 'Users & roles', group: 'Administration', to: '/admin/users' });
-    add({ id: 'nav:sso', label: 'Enterprise SSO', group: 'Administration', to: '/admin/sso', keywords: 'saml scim' });
+    add({
+      id: 'nav:sso',
+      label: 'Enterprise SSO',
+      group: 'Administration',
+      to: '/admin/sso',
+      keywords: 'saml scim',
+    });
     add({ id: 'nav:retention', label: 'Data retention', group: 'Administration', to: '/admin/retention' });
-    add({ id: 'nav:partners', label: 'Partners', group: 'Administration', to: '/admin/partners', keywords: 'white label' });
+    add({
+      id: 'nav:partners',
+      label: 'Partners',
+      group: 'Administration',
+      to: '/admin/partners',
+      keywords: 'white label',
+    });
   }
 
-  add({ id: 'nav:billing', label: 'Billing', group: 'Account', to: '/billing', keywords: 'invoice payment subscription' });
-  add({ id: 'nav:settings', label: 'Settings', group: 'Account', to: '/settings', keywords: 'profile password mfa theme' });
+  add({
+    id: 'nav:billing',
+    label: 'Billing',
+    group: 'Account',
+    to: '/billing',
+    keywords: 'invoice payment subscription',
+  });
+  add({
+    id: 'nav:settings',
+    label: 'Settings',
+    group: 'Account',
+    to: '/settings',
+    keywords: 'profile password mfa theme',
+  });
   add({ id: 'nav:features', label: 'Features', group: 'Account', to: '/features' });
-  add({ id: 'nav:help', label: 'Help Center', group: 'Account', to: '/help', keywords: 'docs support article' });
+  add({
+    id: 'nav:help',
+    label: 'Help Center',
+    group: 'Account',
+    to: '/help',
+    keywords: 'docs support article',
+  });
 
   add({
     id: 'action:theme',
@@ -163,7 +229,13 @@ export function buildCommands(options: {
     hint: 'Light → Dark → System',
     perform: actions.toggleTheme,
   });
-  add({ id: 'action:sign-out', label: 'Sign out', group: 'Actions', keywords: 'logout leave', perform: actions.signOut });
+  add({
+    id: 'action:sign-out',
+    label: 'Sign out',
+    group: 'Actions',
+    keywords: 'logout leave',
+    perform: actions.signOut,
+  });
 
   return commands;
 }
@@ -230,7 +302,9 @@ const RECENT_LIMIT = 8;
 export function readRecent(): string[] {
   try {
     const raw = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]') as unknown;
-    return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string').slice(0, RECENT_LIMIT) : [];
+    return Array.isArray(raw)
+      ? raw.filter((v): v is string => typeof v === 'string').slice(0, RECENT_LIMIT)
+      : [];
   } catch {
     return [];
   }

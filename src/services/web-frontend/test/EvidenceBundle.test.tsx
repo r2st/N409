@@ -33,8 +33,16 @@ vi.mock('../src/pages/valuation/ValuationWorkspace', () => ({
   useWorkspace: () => ({ valuation: VALUATION, reload: async () => {} }),
 }));
 
-const opsUser = { id: '01N409USER00000000000000OP', email: 'ops@example.com', roles: ['admin'] } as unknown as User;
-const clientUser = { id: '01N409USER00000000000000CL', email: 'c@example.com', roles: ['valuation_user'] } as unknown as User;
+const opsUser = {
+  id: '01N409USER00000000000000OP',
+  email: 'ops@example.com',
+  roles: ['admin'],
+} as unknown as User;
+const clientUser = {
+  id: '01N409USER00000000000000CL',
+  email: 'c@example.com',
+  roles: ['valuation_user'],
+} as unknown as User;
 
 /** Everything the detail page's children fetch, in one permissive stub. */
 function stubPageFetches(onBundle?: (init?: RequestInit) => Response) {
@@ -107,7 +115,9 @@ describe('Export Evidence Bundle button', () => {
 
   it('surfaces an error when the export fails', async () => {
     mockUser = opsUser;
-    stubPageFetches(() => jsonResponse({ title: 'Forbidden', detail: 'Evidence bundles are operations-only' }, 403));
+    stubPageFetches(() =>
+      jsonResponse({ title: 'Forbidden', detail: 'Evidence bundles are operations-only' }, 403),
+    );
     render(
       <MemoryRouter>
         <ValuationDetailPage />

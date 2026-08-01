@@ -47,9 +47,7 @@ describe.skipIf(!dbUp)('partner management API', () => {
         url: '/api/v1/partners',
         headers: authHeader(admin.token),
       });
-      expect(
-        defaultList.json().partners.map((p: { id: string }) => p.id),
-      ).not.toContain(partner.id);
+      expect(defaultList.json().partners.map((p: { id: string }) => p.id)).not.toContain(partner.id);
 
       const fullList = await ctx.app.inject({
         method: 'GET',

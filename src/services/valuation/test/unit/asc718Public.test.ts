@@ -78,7 +78,15 @@ describe('expected-term methods', () => {
   });
 
   it('a lower exercise multiple lowers the value and shortens the expected term', () => {
-    const base = { underlying: 50, strike: 50, contractualTermYears: 10, vestingYears: 4, volatility: 0.4, riskFreeRate: 0.03, steps: 300 };
+    const base = {
+      underlying: 50,
+      strike: 50,
+      contractualTermYears: 10,
+      vestingYears: 4,
+      volatility: 0.4,
+      riskFreeRate: 0.03,
+      steps: 300,
+    };
     const patient = binomialLattice({ ...base, exerciseMultiple: 5 });
     const eager = binomialLattice({ ...base, exerciseMultiple: 1.5 });
     expect(eager.fairValue).toBeLessThan(patient.fairValue);
@@ -134,7 +142,11 @@ describe('RSU fair value', () => {
   });
 
   it('non-dividend-protected RSU is discounted for forgone dividends', () => {
-    const protectedFv = rsuMarketFairValue(100, { vestingYears: 4, dividendYield: 0.02, dividendProtected: true });
+    const protectedFv = rsuMarketFairValue(100, {
+      vestingYears: 4,
+      dividendYield: 0.02,
+      dividendProtected: true,
+    });
     const unprotected = rsuMarketFairValue(100, { vestingYears: 4, dividendYield: 0.02 });
     expect(protectedFv).toBe(100);
     expect(unprotected).toBeLessThan(100);
@@ -195,7 +207,10 @@ describe('relative TSR Monte-Carlo', () => {
   });
 
   it('is deterministic for a fixed seed', () => {
-    const peers = [{ name: 'A', volatility: 0.5 }, { name: 'B', volatility: 0.3 }];
+    const peers = [
+      { name: 'A', volatility: 0.5 },
+      { name: 'B', volatility: 0.3 },
+    ];
     const args = {
       subject: { underlying: 100, volatility: 0.4 },
       peers,

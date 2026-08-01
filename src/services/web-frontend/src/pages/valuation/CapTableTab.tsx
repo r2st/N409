@@ -308,7 +308,8 @@ export function CapTableTab() {
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {Object.keys(FIELD_LABELS).map((fieldKey) => {
                   const presetCol = currentPreset?.mapping[fieldKey];
-                  const value = mapping[fieldKey] ?? (headers.includes(presetCol ?? '') ? presetCol : '') ?? '';
+                  const value =
+                    mapping[fieldKey] ?? (headers.includes(presetCol ?? '') ? presetCol : '') ?? '';
                   return (
                     <Field key={fieldKey} label={FIELD_LABELS[fieldKey]!}>
                       <Select
@@ -353,7 +354,9 @@ export function CapTableTab() {
 
       {!stored && !importing ? (
         <EmptyState title="No cap table imported yet">
-          {canEdit ? 'Import a CSV from Carta, Pulley, or a generic export.' : 'The cap table will appear here once imported.'}
+          {canEdit
+            ? 'Import a CSV from Carta, Pulley, or a generic export.'
+            : 'The cap table will appear here once imported.'}
         </EmptyState>
       ) : (
         stored && (

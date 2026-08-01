@@ -80,9 +80,7 @@ describe('Asc718Tab', () => {
     const companyType = await screen.findByLabelText('Company type');
     await user.selectOptions(companyType, 'public');
 
-    expect(
-      screen.getByRole('button', { name: 'About Expected-term method' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'About Expected-term method' })).toBeInTheDocument();
 
     // Add an ESPP offering and confirm the lookback tooltip is present.
     await user.click(screen.getByRole('button', { name: 'Add ESPP' }));

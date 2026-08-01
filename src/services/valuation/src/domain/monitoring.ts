@@ -89,11 +89,7 @@ export function evaluateTriggers(
   }
 
   // Material revenue change.
-  if (
-    baseline.annual_revenue !== null &&
-    baseline.annual_revenue > 0 &&
-    current.annual_revenue !== null
-  ) {
+  if (baseline.annual_revenue !== null && baseline.annual_revenue > 0 && current.annual_revenue !== null) {
     const change = Math.abs(current.annual_revenue - baseline.annual_revenue) / baseline.annual_revenue;
     const pct = Math.round(change * 1000) / 10;
     if (change > MATERIAL_REVENUE_CHANGE) {
@@ -118,7 +114,8 @@ export function evaluateTriggers(
   // New funding round.
   if (current.last_round_date && current.last_round_date !== baseline.last_round_date) {
     const isNewer =
-      !baseline.last_round_date || current.last_round_date.slice(0, 10) > baseline.last_round_date.slice(0, 10);
+      !baseline.last_round_date ||
+      current.last_round_date.slice(0, 10) > baseline.last_round_date.slice(0, 10);
     if (isNewer) {
       triggers.push({
         type: 'funding_round',
@@ -137,9 +134,7 @@ export function evaluateTriggers(
     current.fully_diluted_shares !== baseline.fully_diluted_shares
   ) {
     const delta = current.fully_diluted_shares - baseline.fully_diluted_shares;
-    const pct = baseline.fully_diluted_shares > 0
-      ? Math.abs(delta) / baseline.fully_diluted_shares
-      : 1;
+    const pct = baseline.fully_diluted_shares > 0 ? Math.abs(delta) / baseline.fully_diluted_shares : 1;
     triggers.push({
       type: 'cap_table_change',
       level: pct > 0.05 ? 'red' : 'yellow',

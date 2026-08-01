@@ -26,7 +26,9 @@ export function TaskStatusBadge({ task }: { task: Pick<ReviewTask, 'status' | 'o
             ? 'bg-amber-50 text-amber-800 ring-amber-200'
             : 'bg-paper-200 text-ink-600 ring-ink-200';
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${tone}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${tone}`}
+    >
       {task.overdue && task.status !== 'done' && task.status !== 'cancelled'
         ? 'Overdue'
         : TASK_STATUS_LABELS[task.status]}

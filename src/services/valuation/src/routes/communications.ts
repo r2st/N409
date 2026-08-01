@@ -62,7 +62,12 @@ const AutoEmailBody = z.object({
   channel: z.enum(['email', 'sms']).default('email'),
   trigger_state: z.enum(VALUATION_STATES),
   condition: z.enum(AUTO_EMAIL_CONDITIONS).default('always'),
-  delay_hours: z.number().int().min(0).max(24 * 90).default(24),
+  delay_hours: z
+    .number()
+    .int()
+    .min(0)
+    .max(24 * 90)
+    .default(24),
   repeat_hours: z
     .number()
     .int()
@@ -116,56 +121,42 @@ export function registerCommunicationRoutes(
 
   // ── Templates ───────────────────────────────────────────────────────────────
 
-  app.get(
-    '/api/v1/admin/communication-templates',
-    { preHandler: app.authenticate },
-    async (req) => {
-      requireOps(req);
-      return { templates: await listCommunicationTemplates(deps.pool) };
-    },
-  );
+  app.get('/api/v1/admin/communication-templates', { preHandler: app.authenticate }, async (req) => {
+    requireOps(req);
+    return { templates: await listCommunicationTemplates(deps.pool) };
+  });
 
-  app.post(
-    '/api/v1/admin/communication-templates',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const principal = requireOps(req);
-      const parsed = TemplateBody.safeParse(req.body);
-      if (!parsed.success)
-        throw problems.unprocessable('Invalid template', { errors: parsed.error.issues });
-      if (parsed.data.channel === 'email' && !parsed.data.subject)
-        throw problems.unprocessable('Email templates need a subject');
-      if (await findTemplateByKey(deps.pool, parsed.data.key))
-        throw problems.conflict('A template with this key already exists');
+  app.post('/api/v1/admin/communication-templates', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requireOps(req);
+    const parsed = TemplateBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid template', { errors: parsed.error.issues });
+    if (parsed.data.channel === 'email' && !parsed.data.subject)
+      throw problems.unprocessable('Email templates need a subject');
+    if (await findTemplateByKey(deps.pool, parsed.data.key))
+      throw problems.conflict('A template with this key already exists');
 
-      const template = await createCommunicationTemplate(deps.pool, parsed.data, principal.id);
-      await auditTemplate(principal.id, 'communication_template_created', template);
-      return reply.status(201).send({ template });
-    },
-  );
+    const template = await createCommunicationTemplate(deps.pool, parsed.data, principal.id);
+    await auditTemplate(principal.id, 'communication_template_created', template);
+    return reply.status(201).send({ template });
+  });
 
-  app.patch(
-    '/api/v1/admin/communication-templates/:id',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requireOps(req);
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.notFound();
-      const existing = await findTemplateById(deps.pool, id);
-      if (!existing) throw problems.notFound();
+  app.patch('/api/v1/admin/communication-templates/:id', { preHandler: app.authenticate }, async (req) => {
+    const principal = requireOps(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const existing = await findTemplateById(deps.pool, id);
+    if (!existing) throw problems.notFound();
 
-      const parsed = TemplatePatch.safeParse(req.body);
-      if (!parsed.success)
-        throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
-      if (existing.channel === 'email' && parsed.data.subject === '')
-        throw problems.unprocessable('Email templates need a subject');
+    const parsed = TemplatePatch.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (existing.channel === 'email' && parsed.data.subject === '')
+      throw problems.unprocessable('Email templates need a subject');
 
-      const template = await updateCommunicationTemplate(deps.pool, id, parsed.data, principal.id);
-      if (!template) throw problems.notFound();
-      await auditTemplate(principal.id, 'communication_template_updated', template);
-      return { template };
-    },
-  );
+    const template = await updateCommunicationTemplate(deps.pool, id, parsed.data, principal.id);
+    if (!template) throw problems.notFound();
+    await auditTemplate(principal.id, 'communication_template_updated', template);
+    return { template };
+  });
 
   app.delete(
     '/api/v1/admin/communication-templates/:id',
@@ -221,8 +212,7 @@ export function registerCommunicationRoutes(
   app.post('/api/v1/admin/auto-emails', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireOps(req);
     const parsed = AutoEmailBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid campaign', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid campaign', { errors: parsed.error.issues });
 
     const template = await findTemplateByKey(deps.pool, parsed.data.template_key);
     if (!template) throw problems.unprocessable('Unknown template_key');
@@ -251,8 +241,7 @@ export function registerCommunicationRoutes(
     if (!existing) throw problems.notFound();
 
     const parsed = AutoEmailPatch.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
 
     const templateKey = parsed.data.template_key ?? existing.template_key;
     const channel = parsed.data.channel ?? existing.channel;
@@ -269,20 +258,16 @@ export function registerCommunicationRoutes(
     return { auto_email: campaign };
   });
 
-  app.delete(
-    '/api/v1/admin/auto-emails/:id',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const principal = requireOps(req);
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.notFound();
-      const existing = await findAutoEmailById(deps.pool, id);
-      if (!existing) throw problems.notFound();
-      await deleteAutoEmail(deps.pool, id);
-      await auditAutoEmail(principal.id, 'auto_email_deleted', existing);
-      return reply.status(204).send();
-    },
-  );
+  app.delete('/api/v1/admin/auto-emails/:id', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requireOps(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const existing = await findAutoEmailById(deps.pool, id);
+    if (!existing) throw problems.notFound();
+    await deleteAutoEmail(deps.pool, id);
+    await auditAutoEmail(principal.id, 'auto_email_deleted', existing);
+    return reply.status(204).send();
+  });
 
   // On-demand scan — same code path the interval runs.
   app.post('/api/v1/admin/auto-emails/run', { preHandler: app.authenticate }, async (req) => {

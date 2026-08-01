@@ -5,11 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { listDocuments } from '../repos/documents.js';
-import {
-  activePipelineRun,
-  latestPipelineRun,
-  setValuationAutoPipeline,
-} from '../repos/pipelineRuns.js';
+import { activePipelineRun, latestPipelineRun, setValuationAutoPipeline } from '../repos/pipelineRuns.js';
 import { isExtractable, startPipelineRun, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
@@ -52,32 +48,28 @@ export function registerPipelineRoutes(
     };
   });
 
-  app.post(
-    '/api/v1/valuations/:id/pipeline/runs',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const principal = requirePrincipal(req);
-      if (!isOps(principal)) throw problems.forbidden('Pipeline runs are operations-only');
-      const { id } = req.params as { id: string };
-      const valuation = await loadValuation(principal, id);
-      if (!deps.autoPipeline.enabled) {
-        throw problems.unprocessable('The pipeline is disabled on this deployment (AUTO_PIPELINE=off)');
-      }
-      const documents = await listDocuments(deps.pool, valuation.id);
-      if (!documents.some(isExtractable)) {
-        throw problems.unprocessable('Upload at least one extractable document (pdf/txt/csv/xlsx/…) first');
-      }
-      if (await activePipelineRun(deps.pool, valuation.id)) {
-        throw problems.conflict('A pipeline run is already in progress for this valuation');
-      }
-      const run = await startPipelineRun(deps.autoPipeline, {
-        valuation,
-        trigger: 'manual',
-        triggeredBy: principal.id,
-      });
-      return reply.status(201).send({ run });
-    },
-  );
+  app.post('/api/v1/valuations/:id/pipeline/runs', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('Pipeline runs are operations-only');
+    const { id } = req.params as { id: string };
+    const valuation = await loadValuation(principal, id);
+    if (!deps.autoPipeline.enabled) {
+      throw problems.unprocessable('The pipeline is disabled on this deployment (AUTO_PIPELINE=off)');
+    }
+    const documents = await listDocuments(deps.pool, valuation.id);
+    if (!documents.some(isExtractable)) {
+      throw problems.unprocessable('Upload at least one extractable document (pdf/txt/csv/xlsx/…) first');
+    }
+    if (await activePipelineRun(deps.pool, valuation.id)) {
+      throw problems.conflict('A pipeline run is already in progress for this valuation');
+    }
+    const run = await startPipelineRun(deps.autoPipeline, {
+      valuation,
+      trigger: 'manual',
+      triggeredBy: principal.id,
+    });
+    return reply.status(201).send({ run });
+  });
 
   app.patch('/api/v1/valuations/:id/pipeline', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

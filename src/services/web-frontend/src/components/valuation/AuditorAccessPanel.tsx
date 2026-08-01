@@ -62,17 +62,22 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
   };
 
   return (
-    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card" data-testid="auditor-access">
+    <section
+      className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+      data-testid="auditor-access"
+    >
       <h3 className="overline mb-1 text-ink-400">External auditor access</h3>
       <p className="mb-4 text-sm text-ink-400">
-        Share a read-only link to the report, assumptions and audit-defense review — no account
-        required, and it expires automatically.
+        Share a read-only link to the report, assumptions and audit-defense review — no account required, and
+        it expires automatically.
       </p>
       {error && <ErrorNote>{error}</ErrorNote>}
 
       {minted && (
         <div className="mb-4 rounded-md border border-bond-200 bg-bond-50 p-4">
-          <p className="text-sm font-semibold text-bond-800">Link created — copy it now, it won't be shown again:</p>
+          <p className="text-sm font-semibold text-bond-800">
+            Link created — copy it now, it won't be shown again:
+          </p>
           <code className="mt-2 block overflow-x-auto rounded bg-surface px-3 py-2 font-mono text-xs text-ink-700">
             {minted}
           </code>

@@ -147,7 +147,8 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
       throw problems.unprocessable('state is required for set_state');
     }
     if (action === 'assign_reviewer') {
-      if (reviewer_id === undefined) throw problems.unprocessable('reviewer_id is required for assign_reviewer');
+      if (reviewer_id === undefined)
+        throw problems.unprocessable('reviewer_id is required for assign_reviewer');
       if (reviewer_id !== null && (!isUlid(reviewer_id) || !(await findUserById(deps.pool, reviewer_id)))) {
         throw problems.unprocessable('Unknown reviewer', { errors: [{ path: ['reviewer_id'] }] });
       }
@@ -174,7 +175,8 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
             break;
           }
           case 'restart': {
-            if (!canRestart(valuation.state)) throw problems.conflict(`Cannot restart from '${valuation.state}'`);
+            if (!canRestart(valuation.state))
+              throw problems.conflict(`Cannot restart from '${valuation.state}'`);
             const updated = await applyState(valuation, RESTART_STATE, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });
             break;
@@ -198,7 +200,11 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
         });
       }
     }
-    return { results, succeeded: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
+    return {
+      results,
+      succeeded: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+    };
   };
 
   app.post('/api/v1/valuations/bulk', { preHandler: app.authenticate }, async (req) => {

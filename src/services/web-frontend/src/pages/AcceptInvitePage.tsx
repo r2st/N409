@@ -72,9 +72,7 @@ export function AcceptInvitePage() {
       await adoptToken(res.token);
       navigate('/', { replace: true });
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : 'Something went wrong — please try again.',
-      );
+      setError(err instanceof ApiError ? err.message : 'Something went wrong — please try again.');
       setBusy(false);
     }
   };
@@ -91,8 +89,7 @@ export function AcceptInvitePage() {
     return (
       <AuthShell title="Invitation not valid" subtitle="This link can't be used.">
         <p className="text-sm text-ink-600">
-          This invitation is invalid, expired, or has been revoked. Ask your administrator to send
-          a new one.
+          This invitation is invalid, expired, or has been revoked. Ask your administrator to send a new one.
         </p>
         <p className="mt-8 text-center text-sm text-ink-400">
           <Link to="/login" className="font-semibold text-bond-600 hover:text-bond-700">
@@ -108,8 +105,8 @@ export function AcceptInvitePage() {
       title="Join N409"
       subtitle={
         <>
-          You've been invited as <span className="font-semibold text-ink-700">{email}</span>. Set a
-          password to finish creating your account.
+          You've been invited as <span className="font-semibold text-ink-700">{email}</span>. Set a password
+          to finish creating your account.
         </>
       }
     >

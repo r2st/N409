@@ -31,8 +31,7 @@ export interface InvitationListRow extends InvitationRow {
   invited_by_email: string | null;
 }
 
-const RETURNING =
-  'id, email, roles, partner_id, invited_by, expires_at, accepted_at, revoked_at, created_at';
+const RETURNING = 'id, email, roles, partner_id, invited_by, expires_at, accepted_at, revoked_at, created_at';
 
 export async function createInvitation(
   pool: pg.Pool,
@@ -119,9 +118,7 @@ export async function revokeInvitation(pool: pg.Pool, id: string): Promise<boole
 }
 
 export type AcceptResult =
-  | { status: 'invalid' }
-  | { status: 'conflict' }
-  | { status: 'ok'; user: UserWithRoles };
+  { status: 'invalid' } | { status: 'conflict' } | { status: 'ok'; user: UserWithRoles };
 
 /**
  * Claims the token and creates the account in one transaction, so a raced

@@ -40,18 +40,16 @@ describe('siteConfig — environment-driven marketing links', () => {
   });
 
   it('accepts well-formed addresses and rejects malformed ones', () => {
-    expect(siteConfig({ VITE_PARTNERS_EMAIL: 'partners@n409.ai' }).partnersEmail).toBe(
-      'partners@n409.ai',
-    );
+    expect(siteConfig({ VITE_PARTNERS_EMAIL: 'partners@n409.ai' }).partnersEmail).toBe('partners@n409.ai');
     for (const bad of ['partners', 'partners@', '@n409.ai', 'partners@localhost', 'a b@c.io']) {
       expect(siteConfig({ VITE_PARTNERS_EMAIL: bad }).partnersEmail).toBeUndefined();
     }
   });
 
   it('includes only the social profiles that are configured', () => {
-    expect(siteConfig({ VITE_LINKEDIN_URL: 'https://linkedin.com/company/n409' }).socialLinks).toEqual(
-      [{ label: 'LinkedIn', href: 'https://linkedin.com/company/n409' }],
-    );
+    expect(siteConfig({ VITE_LINKEDIN_URL: 'https://linkedin.com/company/n409' }).socialLinks).toEqual([
+      { label: 'LinkedIn', href: 'https://linkedin.com/company/n409' },
+    ]);
 
     const both = siteConfig({
       VITE_TWITTER_URL: 'https://x.com/n409',

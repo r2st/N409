@@ -34,7 +34,13 @@ interface SyncOutcome {
   applied: boolean;
   class_count: number;
   external_company_name: string | null;
-  diff: { conflicts: ClassConflict[]; has_conflicts: boolean; added: number; removed: number; changed: number };
+  diff: {
+    conflicts: ClassConflict[];
+    has_conflicts: boolean;
+    added: number;
+    removed: number;
+    changed: number;
+  };
   validation: { valid: boolean };
 }
 
@@ -89,10 +95,10 @@ export function CapTableSyncPanel({
     setError(null);
     setBusy(provider);
     try {
-      const outcome = await api<SyncOutcome>(
-        `/valuations/${valuationId}/cap-table/sync/${provider}/pull`,
-        { method: 'POST', body: { apply } },
-      );
+      const outcome = await api<SyncOutcome>(`/valuations/${valuationId}/cap-table/sync/${provider}/pull`, {
+        method: 'POST',
+        body: { apply },
+      });
       if (outcome.applied) {
         setPending(null);
         onApplied();
@@ -133,7 +139,10 @@ export function CapTableSyncPanel({
   if (!providers) return <Spinner />;
 
   return (
-    <section className="space-y-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card" data-testid="cap-table-sync">
+    <section
+      className="space-y-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+      data-testid="cap-table-sync"
+    >
       <div>
         <h3 className="overline text-ink-400">Live sync</h3>
         <p className="mt-1 text-sm text-ink-400">
@@ -153,7 +162,8 @@ export function CapTableSyncPanel({
                   <span className="text-xs text-ink-400">Not configured on this deployment</span>
                 ) : connected ? (
                   <span className="rounded-full bg-bond-50 px-2.5 py-0.5 text-xs font-semibold text-bond-700">
-                    Connected{p.connection?.external_company_name ? ` · ${p.connection.external_company_name}` : ''}
+                    Connected
+                    {p.connection?.external_company_name ? ` · ${p.connection.external_company_name}` : ''}
                   </span>
                 ) : (
                   <span className="rounded-full bg-paper-100 px-2.5 py-0.5 text-xs font-semibold text-ink-500">
@@ -192,7 +202,11 @@ export function CapTableSyncPanel({
                         <option value="weekly">Weekly</option>
                       </Select>
                     </label>
-                    <Button variant="ghost" disabled={busy === p.provider} onClick={() => disconnect(p.provider)}>
+                    <Button
+                      variant="ghost"
+                      disabled={busy === p.provider}
+                      onClick={() => disconnect(p.provider)}
+                    >
                       Disconnect
                     </Button>
                   </>

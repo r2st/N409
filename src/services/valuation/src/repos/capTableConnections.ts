@@ -36,10 +36,7 @@ const FREQ_INTERVAL: Record<SyncFrequency, string | null> = {
   weekly: '7 days',
 };
 
-export async function listConnections(
-  pool: pg.Pool,
-  valuationId: string,
-): Promise<CapTableConnectionRow[]> {
+export async function listConnections(pool: pg.Pool, valuationId: string): Promise<CapTableConnectionRow[]> {
   const { rows } = await pool.query<CapTableConnectionRow>(
     'SELECT * FROM cap_table_connections WHERE valuation_id = $1 ORDER BY provider',
     [valuationId],
@@ -118,17 +115,13 @@ export async function recordSync(
 }
 
 export async function recordSyncError(pool: pg.Pool, id: string, error: string): Promise<void> {
-  await pool.query(
-    `UPDATE cap_table_connections SET status = 'error', last_error = $2 WHERE id = $1`,
-    [id, error.slice(0, 500)],
-  );
+  await pool.query(`UPDATE cap_table_connections SET status = 'error', last_error = $2 WHERE id = $1`, [
+    id,
+    error.slice(0, 500),
+  ]);
 }
 
-export async function setSyncFrequency(
-  pool: pg.Pool,
-  id: string,
-  frequency: SyncFrequency,
-): Promise<void> {
+export async function setSyncFrequency(pool: pg.Pool, id: string, frequency: SyncFrequency): Promise<void> {
   const interval = FREQ_INTERVAL[frequency];
   await pool.query(
     `UPDATE cap_table_connections
@@ -154,10 +147,7 @@ export async function revokeConnection(
 }
 
 /** Connections whose scheduled sync is due (background scheduler). */
-export async function findDueConnections(
-  pool: pg.Pool,
-  limit = 25,
-): Promise<CapTableConnectionRow[]> {
+export async function findDueConnections(pool: pg.Pool, limit = 25): Promise<CapTableConnectionRow[]> {
   const { rows } = await pool.query<CapTableConnectionRow>(
     `SELECT * FROM cap_table_connections
      WHERE status = 'connected' AND sync_frequency <> 'manual'

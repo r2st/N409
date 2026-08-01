@@ -108,14 +108,10 @@ describe('internal shared-secret header (audit B-1 P0)', () => {
 
 describe('invalid JSON response handling', () => {
   it('wraps non-JSON 200 response as InternalServiceError', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response('not json at all', { status: 200 }),
-    );
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('not json at all', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const err = await postJson('engine', 'http://x/y', {}, { retries: 0 }).catch(
-      (e: unknown) => e,
-    );
+    const err = await postJson('engine', 'http://x/y', {}, { retries: 0 }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(InternalServiceError);
     expect((err as InternalServiceError).detail).toBe('invalid JSON in response body');
     expect((err as InternalServiceError).status).toBe(200);

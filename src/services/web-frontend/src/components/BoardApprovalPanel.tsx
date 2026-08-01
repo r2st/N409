@@ -154,9 +154,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
           </span>
         )}
         {resolution?.approved_at && (
-          <span className="tnum text-xs text-ink-400">
-            Approved {formatDateTime(resolution.approved_at)}
-          </span>
+          <span className="tnum text-xs text-ink-400">Approved {formatDateTime(resolution.approved_at)}</span>
         )}
       </div>
       {error && (
@@ -168,8 +166,8 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
       {!resolution ? (
         <div>
           <p className="mb-3 text-sm text-ink-500">
-            Generate a board resolution from the concluded fair market value, then collect
-            e-signatures from the board for safe-harbor adoption.
+            Generate a board resolution from the concluded fair market value, then collect e-signatures from
+            the board for safe-harbor adoption.
           </p>
           <Button onClick={() => void generate()} disabled={busy}>
             {busy ? 'Generating…' : 'Generate resolution'}
@@ -250,9 +248,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
                         </button>
                       )}
                     </span>
-                    {m.comment && (
-                      <p className="w-full text-xs text-ink-500 italic">“{m.comment}”</p>
-                    )}
+                    {m.comment && <p className="w-full text-xs text-ink-500 italic">“{m.comment}”</p>}
                   </li>
                 ))}
               </ul>

@@ -17,7 +17,10 @@ const partner = {
   brand_color: '#1f6f54',
   logo_url: 'https://cdn.example.com/bridge.png',
   email_templates: {
-    draft_ready: { subject: 'Your draft from {{partner_name}}', body: 'Draft for {{company_name}} is ready.' },
+    draft_ready: {
+      subject: 'Your draft from {{partner_name}}',
+      body: 'Draft for {{company_name}} is ready.',
+    },
   },
   user_count: 2,
   valuation_count: 5,

@@ -14,7 +14,13 @@ const CARTA_V1 = {
   companyName: 'Acme Inc',
   shareClasses: [
     { name: 'Common', type: 'common', outstandingShares: 8_000_000 },
-    { name: 'Series A', type: 'preferred', outstandingShares: 2_000_000, amountInvested: 3_000_000, liquidationPreference: 1 },
+    {
+      name: 'Series A',
+      type: 'preferred',
+      outstandingShares: 2_000_000,
+      amountInvested: 3_000_000,
+      liquidationPreference: 1,
+    },
   ],
   optionPools: [{ name: 'Option Pool', outstandingShares: 1_000_000, strikePrice: 0.5 }],
 };
@@ -23,7 +29,13 @@ const CARTA_V2 = {
   ...CARTA_V1,
   shareClasses: [
     { name: 'Common', type: 'common', outstandingShares: 8_000_000 },
-    { name: 'Series A', type: 'preferred', outstandingShares: 2_500_000, amountInvested: 3_500_000, liquidationPreference: 1 },
+    {
+      name: 'Series A',
+      type: 'preferred',
+      outstandingShares: 2_500_000,
+      amountInvested: 3_500_000,
+      liquidationPreference: 1,
+    },
   ],
 };
 
@@ -32,7 +44,12 @@ function mockFetch(capPayload: () => unknown) {
   return vi.fn(async (url: string | URL | Request) => {
     const u = String(url);
     if (u.includes('/oauth/token')) {
-      return jsonResponse({ access_token: 'tok', refresh_token: 'ref', expires_in: 3600, company_id: 'co_1' });
+      return jsonResponse({
+        access_token: 'tok',
+        refresh_token: 'ref',
+        expires_in: 3600,
+        company_id: 'co_1',
+      });
     }
     if (u.includes('/capitalization')) return jsonResponse(capPayload());
     throw new Error(`unexpected fetch ${u}`);
@@ -47,7 +64,9 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
   let payload = CARTA_V1 as unknown;
 
   beforeAll(async () => {
-    ctx = await setupTestApp(CARTA_ENV, { capTableSyncFetch: mockFetch(() => payload) as unknown as typeof fetch });
+    ctx = await setupTestApp(CARTA_ENV, {
+      capTableSyncFetch: mockFetch(() => payload) as unknown as typeof fetch,
+    });
     ops = await seedUser(ctx, { roles: ['valuation_user'] });
   });
   afterAll(async () => ctx?.teardown());
@@ -198,7 +217,12 @@ describe.skipIf(!dbUp)('cap-table sync (feature 4)', () => {
     const trackingFetch = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);
       if (u.includes('/oauth/token')) {
-        return jsonResponse({ access_token: 'tok', refresh_token: 'ref', expires_in: 3600, company_id: 'co_1' });
+        return jsonResponse({
+          access_token: 'tok',
+          refresh_token: 'ref',
+          expires_in: 3600,
+          company_id: 'co_1',
+        });
       }
       if (u.includes('/capitalization')) {
         capCalls += 1;

@@ -70,9 +70,7 @@ export function simplifiedExpectedTerm(vestingYears: number, contractualYears: n
  * average time from grant to exercise. `exercises` pairs a time-to-exercise (in
  * years) with the number of options exercised at that time.
  */
-export function historicalExpectedTerm(
-  exercises: Array<{ years: number; options: number }>,
-): number {
+export function historicalExpectedTerm(exercises: Array<{ years: number; options: number }>): number {
   let wsum = 0;
   let w = 0;
   for (const e of exercises) {
@@ -333,7 +331,12 @@ export function performanceRsuMonteCarlo(args: {
   maxPayoutRatio?: number;
   paths?: number;
   seed?: number;
-}): { fairValuePerUnit: number; expectedPayoutRatio: number; expectedToVestUnits: number; totalFairValue: number } {
+}): {
+  fairValuePerUnit: number;
+  expectedPayoutRatio: number;
+  expectedToVestUnits: number;
+  totalFairValue: number;
+} {
   const paths = Math.max(1000, Math.min(args.paths ?? 20000, 200000));
   const cap = args.maxPayoutRatio ?? 2;
   const z = standardNormals(args.seed ?? 0x51ed270b);
@@ -445,7 +448,11 @@ export function relativeTsrMonteCarlo(args: {
   const t = args.performancePeriodYears;
   const r = args.riskFreeRate;
   if (subject.underlying <= 0 || t <= 0 || peers.length === 0) {
-    return { fairValuePerUnit: round4(Math.max(0, subject.underlying)), expectedPayoutRatio: 0, expectedPercentile: 0 };
+    return {
+      fairValuePerUnit: round4(Math.max(0, subject.underlying)),
+      expectedPayoutRatio: 0,
+      expectedPercentile: 0,
+    };
   }
   const paths = Math.max(1000, Math.min(args.paths ?? 30000, 300000));
   const z = standardNormals(args.seed ?? 0x6d2b79f5);

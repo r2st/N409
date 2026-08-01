@@ -104,15 +104,20 @@ export function MonitoringTab() {
         <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="font-display text-lg font-semibold text-ink-900">Monitoring</h2>
           <p className="mt-2 mb-4 text-sm text-ink-500">
-            Track this valuation for events that suggest a fresh 409A is due — a new funding round,
-            a material revenue change, a cap-table change, or the 12-month safe-harbor expiry.
+            Track this valuation for events that suggest a fresh 409A is due — a new funding round, a material
+            revenue change, a cap-table change, or the 12-month safe-harbor expiry.
           </p>
           {data.monitorable === false ? (
             <EmptyState title="Not ready to monitor">
               A valuation can be monitored once it is completed.
             </EmptyState>
           ) : (
-            <Button disabled={busy} onClick={() => void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'POST', body: {} }))}>
+            <Button
+              disabled={busy}
+              onClick={() =>
+                void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'POST', body: {} }))
+              }
+            >
               Enable monitoring
             </Button>
           )}
@@ -122,8 +127,12 @@ export function MonitoringTab() {
           <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="font-display text-lg font-semibold text-ink-900">Monitoring</h2>
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${MONITOR_TONE[data.status]}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${data.status === 'green' ? 'bg-bond-500' : data.status === 'yellow' ? 'bg-amber-500' : 'bg-red-500'}`} />
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${MONITOR_TONE[data.status]}`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${data.status === 'green' ? 'bg-bond-500' : data.status === 'yellow' ? 'bg-amber-500' : 'bg-red-500'}`}
+                />
                 {STATUS_LABEL[data.status]}
               </span>
               {data.monitor?.last_checked_at && (
@@ -143,7 +152,9 @@ export function MonitoringTab() {
                   <li
                     key={`${t.type}-${i}`}
                     className={`rounded-md border px-3.5 py-2.5 text-sm ${
-                      t.level === 'red' ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800'
+                      t.level === 'red'
+                        ? 'border-red-200 bg-red-50 text-red-800'
+                        : 'border-amber-200 bg-amber-50 text-amber-800'
                     }`}
                   >
                     <span className="font-semibold capitalize">{t.type.replace(/_/g, ' ')}:</span> {t.message}
@@ -161,7 +172,9 @@ export function MonitoringTab() {
               <Button
                 variant="secondary"
                 disabled={busy}
-                onClick={() => void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'DELETE' }))}
+                onClick={() =>
+                  void act(() => api(`/valuations/${valuation.id}/monitor`, { method: 'DELETE' }))
+                }
               >
                 Disable monitoring
               </Button>

@@ -93,12 +93,18 @@ export function SubscriptionSection() {
   return (
     <section className="mt-10">
       <h2 className="font-display text-xl font-semibold text-ink-900">Subscription</h2>
-      {error && <div className="mt-3"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
 
       {mine.subscription ? (
         <div className="mt-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="font-semibold text-ink-900">{mine.plan?.name ?? mine.subscription.plan_tier}</span>
+            <span className="font-semibold text-ink-900">
+              {mine.plan?.name ?? mine.subscription.plan_tier}
+            </span>
             <span className="rounded-full bg-bond-50 px-2.5 py-0.5 text-xs font-semibold text-bond-700">
               {mine.subscription.status}
             </span>
@@ -150,7 +156,9 @@ export function SubscriptionSection() {
                   <tr key={inv.id} className="border-b border-paper-200 last:border-0">
                     <td className="px-4 py-2.5 font-semibold text-ink-800">{inv.number}</td>
                     <td className="px-4 py-2.5 text-ink-500">{inv.status}</td>
-                    <td className="tnum px-4 py-2.5 text-right text-ink-900">{money(inv.amount_cents, inv.currency)}</td>
+                    <td className="tnum px-4 py-2.5 text-right text-ink-900">
+                      {money(inv.amount_cents, inv.currency)}
+                    </td>
                     <td className="px-4 py-2.5 text-right">
                       <a
                         className="text-sm font-semibold text-bond-600 hover:text-bond-700"
@@ -182,14 +190,23 @@ interface AdminSub {
 }
 interface AdminBilling {
   subscriptions: AdminSub[];
-  invoices: Array<{ id: string; number: string; email: string; amount_cents: number; currency: string; status: string }>;
+  invoices: Array<{
+    id: string;
+    number: string;
+    email: string;
+    amount_cents: number;
+    currency: string;
+    status: string;
+  }>;
   summary: { active: number; mrr_cents: number; collected_cents: number };
 }
 
 function AdminBillingDashboard() {
   const [data, setData] = useState<AdminBilling | null>(null);
   useEffect(() => {
-    api<AdminBilling>('/admin/billing').then(setData).catch(() => {});
+    api<AdminBilling>('/admin/billing')
+      .then(setData)
+      .catch(() => {});
   }, []);
   if (!data) return null;
   return (

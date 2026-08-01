@@ -84,7 +84,10 @@ function OverrideForm({
           )}
         </Field>
         {!existing && (
-          <Field label="Original value (optional)" hint="The AI/computed value being replaced — kept for audit.">
+          <Field
+            label="Original value (optional)"
+            hint="The AI/computed value being replaced — kept for audit."
+          >
             <TextInput value={original} onChange={(e) => setOriginal(e.target.value)} />
           </Field>
         )}
@@ -139,7 +142,12 @@ export function OverwritesTab() {
   if (error && !schema) return <ErrorNote>{error}</ErrorNote>;
   if (!schema || !overwrites) return <Spinner />;
 
-  const save = async (def: OverwriteFieldDef, value: string | number, reason: string, originalValue: string | number | null) => {
+  const save = async (
+    def: OverwriteFieldDef,
+    value: string | number,
+    reason: string,
+    originalValue: string | number | null,
+  ) => {
     setBusy(true);
     setError(null);
     try {
@@ -269,7 +277,9 @@ export function OverwritesTab() {
                           existing={overwrite}
                           busy={busy}
                           onCancel={() => setEditing(null)}
-                          onSave={(value, reason, originalValue) => void save(def, value, reason, originalValue)}
+                          onSave={(value, reason, originalValue) =>
+                            void save(def, value, reason, originalValue)
+                          }
                         />
                       </div>
                     )}

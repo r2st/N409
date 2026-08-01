@@ -58,8 +58,7 @@ const renderPage = () =>
     </MemoryRouter>,
   );
 
-const settled = () =>
-  waitFor(() => expect(screen.getByText('System settings')).toBeInTheDocument());
+const settled = () => waitFor(() => expect(screen.getByText('System settings')).toBeInTheDocument());
 
 describe('AdminSettingsPage', () => {
   beforeEach(() => vi.restoreAllMocks());

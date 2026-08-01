@@ -1,12 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
-import {
-  authHeader,
-  isDbAvailable,
-  seedUser,
-  setupTestApp,
-  type TestApp,
-} from './helpers.js';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * P0 integrations (remaining-gaps §6): Stripe payments, signature workflow,

@@ -32,11 +32,7 @@ export interface ResolutionInput {
 
 /** Minimal HTML escaper — resolution text is analyst-authored but rendered to a browser. */
 export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function formatMoney(amount: number, currency: string): string {
@@ -49,8 +45,18 @@ function formatDate(iso: string): string {
   // Render in a locale-stable long form without depending on Date.now().
   const [y, m, d] = iso.slice(0, 10).split('-');
   const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
   const monthName = months[Number(m) - 1] ?? m;
   return `${monthName} ${Number(d)}, ${y}`;
@@ -96,9 +102,7 @@ export function renderBoardResolution(input: ResolutionInput): string {
  * Aggregate status from the member sign-offs. Any rejection rejects the whole
  * resolution; approval requires at least one member and every member signed.
  */
-export function resolutionStatusFrom(
-  signoffs: Array<{ status: BoardSignoffStatus }>,
-): BoardResolutionStatus {
+export function resolutionStatusFrom(signoffs: Array<{ status: BoardSignoffStatus }>): BoardResolutionStatus {
   if (signoffs.some((s) => s.status === 'rejected')) return 'rejected';
   if (signoffs.length > 0 && signoffs.every((s) => s.status === 'signed')) return 'approved';
   return 'pending';

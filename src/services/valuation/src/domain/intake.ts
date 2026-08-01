@@ -36,11 +36,22 @@ export const INTAKE_SECTIONS: readonly IntakeSection[] = [
     description: 'Tell us about the company being valued.',
     fields: [
       { key: 'legal_name', label: 'Legal company name', type: 'text', required: true },
-      { key: 'state_of_incorporation', label: 'State / country of incorporation', type: 'text', required: true },
+      {
+        key: 'state_of_incorporation',
+        label: 'State / country of incorporation',
+        type: 'text',
+        required: true,
+      },
       { key: 'incorporation_date', label: 'Date of incorporation', type: 'date', required: true },
       { key: 'industry', label: 'Industry / sector', type: 'text', required: true },
       { key: 'employee_count', label: 'Number of employees', type: 'number', required: false },
-      { key: 'business_description', label: 'Business description', type: 'textarea', required: true, hint: 'A few sentences on what the company does.' },
+      {
+        key: 'business_description',
+        label: 'Business description',
+        type: 'textarea',
+        required: true,
+        hint: 'A few sentences on what the company does.',
+      },
     ],
   },
   {
@@ -48,7 +59,13 @@ export const INTAKE_SECTIONS: readonly IntakeSection[] = [
     title: 'Financials',
     description: 'High-level financial position. Detailed statements are uploaded as documents.',
     fields: [
-      { key: 'revenue_status', label: 'Revenue stage', type: 'select', required: true, options: ['pre_revenue', 'post_revenue'] },
+      {
+        key: 'revenue_status',
+        label: 'Revenue stage',
+        type: 'select',
+        required: true,
+        options: ['pre_revenue', 'post_revenue'],
+      },
       { key: 'last_fy_revenue', label: 'Last fiscal-year revenue', type: 'number', required: false },
       { key: 'ytd_revenue', label: 'Year-to-date revenue', type: 'number', required: false },
       { key: 'cash_on_hand', label: 'Cash on hand', type: 'number', required: false },
@@ -75,7 +92,12 @@ export const INTAKE_SECTIONS: readonly IntakeSection[] = [
       { key: 'has_articles', label: 'Articles of incorporation available?', type: 'boolean', required: true },
       { key: 'has_charter_amendments', label: 'Any charter amendments?', type: 'boolean', required: false },
       { key: 'pending_litigation', label: 'Any pending litigation?', type: 'boolean', required: false },
-      { key: 'anticipated_liquidity', label: 'Anticipated liquidity event / timeline', type: 'text', required: false },
+      {
+        key: 'anticipated_liquidity',
+        label: 'Anticipated liquidity event / timeline',
+        type: 'text',
+        required: false,
+      },
     ],
   },
 ] as const;

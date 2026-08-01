@@ -22,10 +22,10 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
       { kind: '409a', companyName: company, userId: admin.id },
       { ...actor, actorId: admin.id },
     );
-    await ctx.pool.query(`UPDATE valuations SET created_at = now() - ($2 || ' days')::interval WHERE id = $1`, [
-      v.id,
-      String(ageDays),
-    ]);
+    await ctx.pool.query(
+      `UPDATE valuations SET created_at = now() - ($2 || ' days')::interval WHERE id = $1`,
+      [v.id, String(ageDays)],
+    );
     return v;
   }
 
@@ -107,7 +107,9 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
     const holdId = placed.json().hold.id;
 
     await runRetentionSweep(ctx.pool);
-    expect((await ctx.pool.query('SELECT archived_at FROM valuations WHERE id = $1', [v.id])).rows[0].archived_at).toBeNull();
+    expect(
+      (await ctx.pool.query('SELECT archived_at FROM valuations WHERE id = $1', [v.id])).rows[0].archived_at,
+    ).toBeNull();
 
     const rel = await ctx.app.inject({
       method: 'POST',
@@ -117,7 +119,9 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
     expect(rel.statusCode).toBe(200);
 
     await runRetentionSweep(ctx.pool);
-    expect((await ctx.pool.query('SELECT archived_at FROM valuations WHERE id = $1', [v.id])).rows[0].archived_at).not.toBeNull();
+    expect(
+      (await ctx.pool.query('SELECT archived_at FROM valuations WHERE id = $1', [v.id])).rows[0].archived_at,
+    ).not.toBeNull();
   });
 
   it('gates retention admin to admins', async () => {

@@ -6,7 +6,10 @@ import {
   type CalcInput,
 } from '../../src/domain/valuationAnalytics.js';
 
-function calc(as_of: string, over: { fmv: number; dlom: number; vol: number; multiples?: number[] }): CalcInput {
+function calc(
+  as_of: string,
+  over: { fmv: number; dlom: number; vol: number; multiples?: number[] },
+): CalcInput {
   return {
     calculation_id: `c-${as_of}`,
     valuation_id: `v-${as_of}`,

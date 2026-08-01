@@ -1,11 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import {
-  authHeader,
-  isDbAvailable,
-  seedUser,
-  setupTestApp,
-  type TestApp,
-} from './helpers.js';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Activity audit log viewer (P2 #12): admin console actions are evented into
@@ -71,7 +65,7 @@ describe.skipIf(!dbUp)('activity audit log', () => {
     expect(created!.actor_email).toBe(client.email);
   });
 
-  it('returns only that valuation\'s events when filtering by valuation', async () => {
+  it("returns only that valuation's events when filtering by valuation", async () => {
     const res = await listEvents(`valuation_id=${valuationId}`);
     const events = res.json().events as EventJson[];
     expect(events.length).toBeGreaterThan(0);
@@ -203,9 +197,7 @@ describe.skipIf(!dbUp)('activity audit log', () => {
   });
 
   it('keeps admin_events append-only at the database level', async () => {
-    await expect(
-      ctx.pool.query(`UPDATE admin_events SET type = 'tampered'`),
-    ).rejects.toThrow(/append-only/);
+    await expect(ctx.pool.query(`UPDATE admin_events SET type = 'tampered'`)).rejects.toThrow(/append-only/);
     await expect(ctx.pool.query('DELETE FROM admin_events')).rejects.toThrow(/append-only/);
   });
 });

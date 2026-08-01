@@ -3,12 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canManageTokens } from '../auth/operations.js';
-import {
-  createApiToken,
-  findApiTokenById,
-  listApiTokens,
-  revokeApiToken,
-} from '../repos/apiTokens.js';
+import { createApiToken, findApiTokenById, listApiTokens, revokeApiToken } from '../repos/apiTokens.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -24,28 +19,23 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     return { tokens: await listApiTokens(deps.pool, partnerId) };
   });
 
-  app.post(
-    '/api/v1/partners/:partnerId/tokens',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const principal = requirePrincipal(req);
-      const { partnerId } = req.params as { partnerId: string };
-      if (!isUlid(partnerId)) throw problems.notFound();
-      if (!canManageTokens(principal, partnerId)) throw problems.forbidden();
+  app.post('/api/v1/partners/:partnerId/tokens', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    const { partnerId } = req.params as { partnerId: string };
+    if (!isUlid(partnerId)) throw problems.notFound();
+    if (!canManageTokens(principal, partnerId)) throw problems.forbidden();
 
-      const parsed = z.object({ name: z.string().min(1).max(200) }).safeParse(req.body);
-      if (!parsed.success)
-        throw problems.unprocessable('Invalid token', { errors: parsed.error.issues });
+    const parsed = z.object({ name: z.string().min(1).max(200) }).safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid token', { errors: parsed.error.issues });
 
-      const { token, secret } = await createApiToken(deps.pool, {
-        partnerId,
-        createdBy: principal.id,
-        name: parsed.data.name,
-      });
-      // `secret` is shown once and never retrievable again.
-      return reply.status(201).send({ token, secret });
-    },
-  );
+    const { token, secret } = await createApiToken(deps.pool, {
+      partnerId,
+      createdBy: principal.id,
+      name: parsed.data.name,
+    });
+    // `secret` is shown once and never retrievable again.
+    return reply.status(201).send({ token, secret });
+  });
 
   app.delete('/api/v1/api-tokens/:id', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);

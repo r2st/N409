@@ -137,7 +137,12 @@ export function registerMonitoringRoutes(
     const valuation = await loadValuation(deps.pool, id);
     const monitor = await findMonitor(deps.pool, id);
     if (!monitor || !monitor.enabled) {
-      return { monitor: null, status: 'green', triggers: [], monitorable: MONITORABLE_STATES.has(valuation.state) };
+      return {
+        monitor: null,
+        status: 'green',
+        triggers: [],
+        monitorable: MONITORABLE_STATES.has(valuation.state),
+      };
     }
     const current = await buildSnapshot(deps.pool, valuation);
     const triggers = evaluateTriggers(monitor.baseline, current, new Date());
@@ -237,17 +242,21 @@ export function registerMonitoringRoutes(
   });
 
   // One-click roll-forward into a fresh valuation pre-populated from this one.
-  app.post('/api/v1/valuations/:id/monitor/new-valuation', { preHandler: app.authenticate }, async (req, reply) => {
-    const principal = requirePrincipal(req);
-    requireOps(principal);
-    const { id } = req.params as { id: string };
-    const valuation = await loadValuation(deps.pool, id);
-    const clone = await cloneValuation(
-      deps.pool,
-      valuation,
-      { rollForward: true, userId: valuation.user_id },
-      { actorType: 'human', actorId: principal.id },
-    );
-    return reply.status(201).send({ valuation: clone });
-  });
+  app.post(
+    '/api/v1/valuations/:id/monitor/new-valuation',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      requireOps(principal);
+      const { id } = req.params as { id: string };
+      const valuation = await loadValuation(deps.pool, id);
+      const clone = await cloneValuation(
+        deps.pool,
+        valuation,
+        { rollForward: true, userId: valuation.user_id },
+        { actorType: 'human', actorId: principal.id },
+      );
+      return reply.status(201).send({ valuation: clone });
+    },
+  );
 }

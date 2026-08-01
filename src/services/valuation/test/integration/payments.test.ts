@@ -2,13 +2,7 @@ import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPayment, findPaymentBySessionId } from '../../src/repos/payments.js';
 import { priceForKind } from '../../src/routes/payments.js';
-import {
-  authHeader,
-  isDbAvailable,
-  seedUser,
-  setupTestApp,
-  type TestApp,
-} from './helpers.js';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Payment UI backend (P0 #2 phase A): the quote endpoint and the signed
@@ -20,10 +14,7 @@ const WEBHOOK_SECRET = 'whsec_integration_test';
 
 function signedHeaders(payload: string): Record<string, string> {
   const t = Math.floor(Date.now() / 1000);
-  const mac = crypto
-    .createHmac('sha256', WEBHOOK_SECRET)
-    .update(`${t}.${payload}`)
-    .digest('hex');
+  const mac = crypto.createHmac('sha256', WEBHOOK_SECRET).update(`${t}.${payload}`).digest('hex');
   return { 'content-type': 'application/json', 'stripe-signature': `t=${t},v1=${mac}` };
 }
 
@@ -169,9 +160,7 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
         payload: expire('cs_test_success_1'),
       });
       expect(late.statusCode).toBe(200);
-      expect((await findPaymentBySessionId(ctx.pool, 'cs_test_success_1'))?.status).toBe(
-        'succeeded',
-      );
+      expect((await findPaymentBySessionId(ctx.pool, 'cs_test_success_1'))?.status).toBe('succeeded');
     });
 
     it('rejects a tampered signature', async () => {

@@ -190,7 +190,11 @@ describe.skipIf(!dbUp)('M4 — Polish', () => {
         url: `/api/v1/admin/email-outbox?valuation_id=${vid}`,
         headers: authHeader(ops.token),
       });
-      const emails = outbox.json().emails as Array<{ template_key: string; status: string; to_email: string }>;
+      const emails = outbox.json().emails as Array<{
+        template_key: string;
+        status: string;
+        to_email: string;
+      }>;
       const reviewEmail = emails.find((e) => e.template_key === 'review_needed');
       expect(reviewEmail).toBeDefined();
       expect(reviewEmail!.to_email).toBe(reviewer.email);

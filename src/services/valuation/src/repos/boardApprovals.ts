@@ -119,14 +119,10 @@ export async function findResolutionByValuation(
   return rows[0] ?? null;
 }
 
-export async function findResolutionById(
-  pool: pg.Pool,
-  id: string,
-): Promise<BoardResolutionRow | null> {
-  const { rows } = await pool.query<BoardResolutionRow>(
-    'SELECT * FROM board_resolutions WHERE id = $1',
-    [id],
-  );
+export async function findResolutionById(pool: pg.Pool, id: string): Promise<BoardResolutionRow | null> {
+  const { rows } = await pool.query<BoardResolutionRow>('SELECT * FROM board_resolutions WHERE id = $1', [
+    id,
+  ]);
   return rows[0] ?? null;
 }
 
@@ -170,10 +166,7 @@ export async function addBoardMember(
   });
 }
 
-export async function listBoardMembers(
-  pool: pg.Pool,
-  resolutionId: string,
-): Promise<BoardSignoffRow[]> {
+export async function listBoardMembers(pool: pg.Pool, resolutionId: string): Promise<BoardSignoffRow[]> {
   const { rows } = await pool.query<BoardSignoffRow>(
     'SELECT * FROM board_signoffs WHERE resolution_id = $1 ORDER BY created_at',
     [resolutionId],
@@ -181,10 +174,7 @@ export async function listBoardMembers(
   return rows;
 }
 
-export async function findSignoffById(
-  pool: pg.Pool,
-  id: string,
-): Promise<BoardSignoffRow | null> {
+export async function findSignoffById(pool: pg.Pool, id: string): Promise<BoardSignoffRow | null> {
   const { rows } = await pool.query<BoardSignoffRow>('SELECT * FROM board_signoffs WHERE id = $1', [id]);
   return rows[0] ?? null;
 }
@@ -193,10 +183,9 @@ export async function findSignoffByTokenHash(
   pool: pg.Pool,
   tokenHash: string,
 ): Promise<BoardSignoffRow | null> {
-  const { rows } = await pool.query<BoardSignoffRow>(
-    'SELECT * FROM board_signoffs WHERE token_sha256 = $1',
-    [tokenHash],
-  );
+  const { rows } = await pool.query<BoardSignoffRow>('SELECT * FROM board_signoffs WHERE token_sha256 = $1', [
+    tokenHash,
+  ]);
   return rows[0] ?? null;
 }
 
@@ -245,12 +234,10 @@ export async function recordSignoff(
       actor: { actorType: 'human', source: 'board-member' },
       payload: { signoff_id: signoff.id, member_email: signoff.member_email, decision: decision.status },
     });
-    const resolution = await refreshResolutionStatusTx(
-      client,
-      signoff.resolution_id,
-      signoff.valuation_id,
-      { actorType: 'system', source: 'board' },
-    );
+    const resolution = await refreshResolutionStatusTx(client, signoff.resolution_id, signoff.valuation_id, {
+      actorType: 'system',
+      source: 'board',
+    });
     return { signoff: rows[0]!, resolution };
   });
 }

@@ -34,7 +34,16 @@ describe('AuditorAccessPanel (feature 8)', () => {
       'GET /valuations/01N409VAL000000000000000AA/auditor-access': () =>
         jsonResponse({
           access: created
-            ? [{ id: 'a1', label: 'PwC', expires_at: '2030-01-01T00:00:00Z', revoked_at: null, last_accessed_at: null, access_count: 0 }]
+            ? [
+                {
+                  id: 'a1',
+                  label: 'PwC',
+                  expires_at: '2030-01-01T00:00:00Z',
+                  revoked_at: null,
+                  last_accessed_at: null,
+                  access_count: 0,
+                },
+              ]
             : [],
         }),
     });

@@ -45,7 +45,9 @@ describe.skipIf(!dbUp)('white-label partner portal', () => {
   });
 
   it('404s unknown, malformed, and archived slugs', async () => {
-    expect((await app.inject({ method: 'GET', url: '/api/v1/public/partners/nope/branding' })).statusCode).toBe(404);
+    expect(
+      (await app.inject({ method: 'GET', url: '/api/v1/public/partners/nope/branding' })).statusCode,
+    ).toBe(404);
     expect(
       (await app.inject({ method: 'GET', url: '/api/v1/public/partners/UPPER%20case/branding' })).statusCode,
     ).toBe(404);
@@ -130,10 +132,9 @@ describe.skipIf(!dbUp)('white-label partner portal', () => {
       headers: authHeader(adminToken),
       payload: { state: 'started' },
     });
-    const { rows } = await pool.query(
-      `SELECT subject FROM email_outbox WHERE valuation_id = $1`,
-      [valuationId],
-    );
+    const { rows } = await pool.query(`SELECT subject FROM email_outbox WHERE valuation_id = $1`, [
+      valuationId,
+    ]);
     expect(rows[0].subject).toBe("We've started your 409A valuation for Solo Co");
   });
 });

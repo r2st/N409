@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseEmailSubjectRef, stateGroupOf, STATE_GROUPS } from '../../src/domain/operations.js';
-import {
-  canManageTokens,
-  canPostComment,
-  visibleCommentKinds,
-} from '../../src/auth/operations.js';
+import { canManageTokens, canPostComment, visibleCommentKinds } from '../../src/auth/operations.js';
 import { VALUATION_STATES } from '../../src/domain/valuation.js';
 import type { Principal } from '../../src/auth/rbac.js';
 

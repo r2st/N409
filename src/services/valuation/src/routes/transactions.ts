@@ -59,7 +59,10 @@ async function loadAuthorizedValuation(
 ): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
-  if (!valuation || !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })) {
+  if (
+    !valuation ||
+    !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })
+  ) {
     throw problems.notFound();
   }
   return valuation;
@@ -137,16 +140,20 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
     return { round };
   });
 
-  app.delete('/api/v1/valuations/:id/rounds/:roundId', { preHandler: app.authenticate }, async (req, reply) => {
-    const principal = requirePrincipal(req);
-    const { id, roundId } = req.params as { id: string; roundId: string };
-    const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
-    requireWriteAccess(principal, valuation);
-    if (!isUlid(roundId) || !(await deleteRound(deps.pool, id, roundId, actorFor(principal)))) {
-      throw problems.notFound();
-    }
-    return reply.status(204).send();
-  });
+  app.delete(
+    '/api/v1/valuations/:id/rounds/:roundId',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id, roundId } = req.params as { id: string; roundId: string };
+      const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+      requireWriteAccess(principal, valuation);
+      if (!isUlid(roundId) || !(await deleteRound(deps.pool, id, roundId, actorFor(principal)))) {
+        throw problems.notFound();
+      }
+      return reply.status(204).send();
+    },
+  );
 
   // ── Transactions ────────────────────────────────────────────────────────────
   app.get('/api/v1/valuations/:id/transactions', { preHandler: app.authenticate }, async (req) => {
@@ -189,7 +196,10 @@ export function registerTransactionRoutes(app: FastifyInstance, deps: { pool: pg
       const { id, transactionId } = req.params as { id: string; transactionId: string };
       const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
       requireWriteAccess(principal, valuation);
-      if (!isUlid(transactionId) || !(await deleteTransaction(deps.pool, id, transactionId, actorFor(principal)))) {
+      if (
+        !isUlid(transactionId) ||
+        !(await deleteTransaction(deps.pool, id, transactionId, actorFor(principal)))
+      ) {
         throw problems.notFound();
       }
       return reply.status(204).send();

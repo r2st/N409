@@ -132,14 +132,21 @@ const icons = {
   ),
   schema: (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M4 19.5V6a2 2 0 0 1 2-2h13.5v13.5H6a2 2 0 0 0-2 2Zm0 0A2 2 0 0 0 6 21.5h13.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M4 19.5V6a2 2 0 0 1 2-2h13.5v13.5H6a2 2 0 0 0-2 2Zm0 0A2 2 0 0 0 6 21.5h13.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
       <path d="M8.5 8.5h7M8.5 12h5" strokeLinecap="round" />
     </svg>
   ),
   settings: (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <circle cx="12" cy="12" r="3.2" />
-      <path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1" strokeLinecap="round" />
+      <path
+        d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1"
+        strokeLinecap="round"
+      />
     </svg>
   ),
   partner: (
@@ -227,7 +234,10 @@ const icons = {
   ),
   features: (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M12 2.5l2.6 5.5 6 .8-4.4 4.2 1.1 6L12 16.9 6.7 19l1.1-6L3.4 8.8l6-.8L12 2.5Z" strokeLinejoin="round" />
+      <path
+        d="M12 2.5l2.6 5.5 6 .8-4.4 4.2 1.1 6L12 16.9 6.7 19l1.1-6L3.4 8.8l6-.8L12 2.5Z"
+        strokeLinejoin="round"
+      />
     </svg>
   ),
 };
@@ -261,8 +271,12 @@ export function AppLayout() {
       />
       <NavItem to="/valuations/new" label="New valuation" icon={icons.newValuation} onNavigate={close} />
       <NavItem to="/portfolio" label="Portfolio" icon={icons.dashboard} onNavigate={close} />
-      {isOps(eff) && <NavItem to="/funds" label="Fund Portfolios" icon={icons.dashboard} onNavigate={close} />}
-      {isOps(eff) && <NavItem to="/debt" label="Debt Instruments" icon={icons.dashboard} onNavigate={close} />}
+      {isOps(eff) && (
+        <NavItem to="/funds" label="Fund Portfolios" icon={icons.dashboard} onNavigate={close} />
+      )}
+      {isOps(eff) && (
+        <NavItem to="/debt" label="Debt Instruments" icon={icons.dashboard} onNavigate={close} />
+      )}
       <NavItem to="/search" label="Search" icon={icons.search} onNavigate={close} />
       <NavItem
         to="/notifications"

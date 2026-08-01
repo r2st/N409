@@ -49,10 +49,7 @@ describe('invalidIdParams', () => {
   });
 
   it('names every offending id parameter', () => {
-    expect(invalidIdParams({ id: 'nope', grantId: 'also-nope' }).sort()).toEqual([
-      'grantId',
-      'id',
-    ]);
+    expect(invalidIdParams({ id: 'nope', grantId: 'also-nope' }).sort()).toEqual(['grantId', 'id']);
   });
 
   it('reports only the bad one in a mixed params object', () => {

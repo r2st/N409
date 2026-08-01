@@ -31,14 +31,7 @@ export async function createContactSubmission(
   const { rows } = await pool.query<ContactSubmissionRow>(
     `INSERT INTO contact_submissions (id, name, email, company, phone, message)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [
-      newUlid(),
-      input.name,
-      input.email,
-      input.company ?? null,
-      input.phone ?? null,
-      input.message,
-    ],
+    [newUlid(), input.name, input.email, input.company ?? null, input.phone ?? null, input.message],
   );
   return rows[0]!;
 }

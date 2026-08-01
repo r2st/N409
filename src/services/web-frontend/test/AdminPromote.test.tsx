@@ -84,8 +84,7 @@ function renderPage() {
   );
 }
 
-const targetRow = async () =>
-  within((await screen.findByText('ada@acme.com')).closest('tr') as HTMLElement);
+const targetRow = async () => within((await screen.findByText('ada@acme.com')).closest('tr') as HTMLElement);
 
 describe('AdminUsersPage — promote / demote', () => {
   beforeEach(() => {
@@ -116,7 +115,10 @@ describe('AdminUsersPage — promote / demote', () => {
     await waitFor(() =>
       expect(
         calls.some(
-          (c) => c.method === 'POST' && c.path.endsWith('/users/u2/promote') && (c.body as { role: string }).role === 'admin',
+          (c) =>
+            c.method === 'POST' &&
+            c.path.endsWith('/users/u2/promote') &&
+            (c.body as { role: string }).role === 'admin',
         ),
       ).toBe(true),
     );

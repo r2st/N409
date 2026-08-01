@@ -116,19 +116,15 @@ export function registerAuditTrailRoutes(app: FastifyInstance, deps: { pool: pg.
    * The same trail as a flat CSV — one row per changed field, openable in
    * Excel. Same visibility rule as the JSON view.
    */
-  app.get(
-    '/api/v1/valuations/:id/audit-trail.csv',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const { entries, includeInternal } = await loadTrail(req);
-      const visible = filterAuditEntries(entries, { includeInternal });
-      const { id } = req.params as { id: string };
-      return reply
-        .header('content-type', 'text/csv; charset=utf-8')
-        .header('content-disposition', `attachment; filename="change-log-${id}.csv"`)
-        .send(changeLogCsv(visible));
-    },
-  );
+  app.get('/api/v1/valuations/:id/audit-trail.csv', { preHandler: app.authenticate }, async (req, reply) => {
+    const { entries, includeInternal } = await loadTrail(req);
+    const visible = filterAuditEntries(entries, { includeInternal });
+    const { id } = req.params as { id: string };
+    return reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="change-log-${id}.csv"`)
+      .send(changeLogCsv(visible));
+  });
 
   /** Every recorded change to a single field, newest first. */
   app.get(

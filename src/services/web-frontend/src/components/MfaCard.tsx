@@ -224,9 +224,7 @@ export function MfaCard() {
           />
           <p className="text-xs text-ink-400">
             Can't scan? Enter this secret manually:{' '}
-            <code className="rounded bg-paper-100 px-1.5 py-0.5 font-mono text-ink-700">
-              {setup.secret}
-            </code>
+            <code className="rounded bg-paper-100 px-1.5 py-0.5 font-mono text-ink-700">{setup.secret}</code>
           </p>
           <Field label="Authenticator code">
             <TextInput

@@ -1,13 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAiJob } from '../../src/repos/aiJobs.js';
 import { latestPromptVersion, listPrompts } from '../../src/repos/aiPrompts.js';
-import {
-  authHeader,
-  isDbAvailable,
-  seedUser,
-  setupTestApp,
-  type TestApp,
-} from './helpers.js';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Prompt registry versioning (P1 #8): every content edit appends a numbered

@@ -37,7 +37,9 @@ export interface DebtValuationRow {
 }
 
 export async function listInstruments(pool: pg.Pool): Promise<DebtInstrumentRow[]> {
-  const { rows } = await pool.query<DebtInstrumentRow>('SELECT * FROM debt_instruments ORDER BY created_at DESC');
+  const { rows } = await pool.query<DebtInstrumentRow>(
+    'SELECT * FROM debt_instruments ORDER BY created_at DESC',
+  );
   return rows;
 }
 
@@ -48,12 +50,25 @@ export async function findInstrument(pool: pg.Pool, id: string): Promise<DebtIns
 
 export async function createInstrument(
   pool: pg.Pool,
-  input: { name: string; instrumentType: InstrumentType; currency: string; params: Record<string, unknown>; createdBy: string },
+  input: {
+    name: string;
+    instrumentType: InstrumentType;
+    currency: string;
+    params: Record<string, unknown>;
+    createdBy: string;
+  },
 ): Promise<DebtInstrumentRow> {
   const { rows } = await pool.query<DebtInstrumentRow>(
     `INSERT INTO debt_instruments (id, name, instrument_type, currency, params, created_by)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [newUlid(), input.name, input.instrumentType, input.currency, JSON.stringify(input.params), input.createdBy],
+    [
+      newUlid(),
+      input.name,
+      input.instrumentType,
+      input.currency,
+      JSON.stringify(input.params),
+      input.createdBy,
+    ],
   );
   return rows[0]!;
 }
@@ -75,14 +90,22 @@ export async function updateInstrument(
 }
 
 export async function findCreditTerms(pool: pg.Pool, instrumentId: string): Promise<CreditTermsRow | null> {
-  const { rows } = await pool.query<CreditTermsRow>('SELECT * FROM credit_terms WHERE instrument_id = $1', [instrumentId]);
+  const { rows } = await pool.query<CreditTermsRow>('SELECT * FROM credit_terms WHERE instrument_id = $1', [
+    instrumentId,
+  ]);
   return rows[0] ?? null;
 }
 
 export async function upsertCreditTerms(
   pool: pg.Pool,
   instrumentId: string,
-  input: { rating: string | null; benchmarkYield: number | null; spread: number | null; seniority: Seniority; secured: boolean },
+  input: {
+    rating: string | null;
+    benchmarkYield: number | null;
+    spread: number | null;
+    seniority: Seniority;
+    secured: boolean;
+  },
 ): Promise<CreditTermsRow> {
   const { rows } = await pool.query<CreditTermsRow>(
     `INSERT INTO credit_terms (instrument_id, rating, benchmark_yield, spread, seniority, secured)

@@ -34,10 +34,7 @@ const named = <T extends string>(
 // ── Marketing (secondary pages) ───────────────────────────────────────────────
 const PricingPage = named(() => import('./pages/marketing/PricingPage'), 'PricingPage');
 const ProductPage = named(() => import('./pages/marketing/ProductPage'), 'ProductPage');
-const WhichValuationPage = named(
-  () => import('./pages/marketing/WhichValuationPage'),
-  'WhichValuationPage',
-);
+const WhichValuationPage = named(() => import('./pages/marketing/WhichValuationPage'), 'WhichValuationPage');
 const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
 const CompareHubPage = named(() => import('./pages/marketing/CompareHubPage'), 'CompareHubPage');
 const AboutPage = named(() => import('./pages/marketing/StaticPages'), 'AboutPage');
@@ -67,10 +64,7 @@ const DebtInstrumentsPage = named(() => import('./pages/DebtInstrumentsPage'), '
 const ValuationsPage = named(() => import('./pages/ValuationsPage'), 'ValuationsPage');
 const NewValuationPage = named(() => import('./pages/NewValuationPage'), 'NewValuationPage');
 const ValuationDetailPage = named(() => import('./pages/ValuationDetailPage'), 'ValuationDetailPage');
-const ValuationWorkspace = named(
-  () => import('./pages/valuation/ValuationWorkspace'),
-  'ValuationWorkspace',
-);
+const ValuationWorkspace = named(() => import('./pages/valuation/ValuationWorkspace'), 'ValuationWorkspace');
 const AiTab = named(() => import('./pages/valuation/PipelineTabs'), 'AiTab');
 const CalculationsTab = named(() => import('./pages/valuation/PipelineTabs'), 'CalculationsTab');
 const DocumentsTab = named(() => import('./pages/valuation/PipelineTabs'), 'DocumentsTab');
@@ -98,10 +92,7 @@ const HealthTab = named(() => import('./pages/valuation/HealthTab'), 'HealthTab'
 const DecisionsTab = named(() => import('./pages/valuation/DecisionsTab'), 'DecisionsTab');
 const CompanyTab = named(() => import('./pages/valuation/CompanyTab'), 'CompanyTab');
 const PackageTab = named(() => import('./pages/valuation/PackageTab'), 'PackageTab');
-const OverwritesSchemaPage = named(
-  () => import('./pages/OverwritesSchemaPage'),
-  'OverwritesSchemaPage',
-);
+const OverwritesSchemaPage = named(() => import('./pages/OverwritesSchemaPage'), 'OverwritesSchemaPage');
 const SettingsPage = named(() => import('./pages/SettingsPage'), 'SettingsPage');
 const AdminSettingsPage = named(() => import('./pages/AdminSettingsPage'), 'AdminSettingsPage');
 const AdminSsoPage = named(() => import('./pages/AdminSsoPage'), 'AdminSsoPage');
@@ -126,10 +117,7 @@ const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
 const SupportInboxPage = named(() => import('./pages/SupportInboxPage'), 'SupportInboxPage');
 const CommunicationsPage = named(() => import('./pages/CommunicationsPage'), 'CommunicationsPage');
 const OnboardingPage = named(() => import('./pages/OnboardingPage'), 'OnboardingPage');
-const PaymentSuccessPage = named(
-  () => import('./pages/PaymentRedirectPages'),
-  'PaymentSuccessPage',
-);
+const PaymentSuccessPage = named(() => import('./pages/PaymentRedirectPages'), 'PaymentSuccessPage');
 const PaymentCancelPage = named(() => import('./pages/PaymentRedirectPages'), 'PaymentCancelPage');
 
 /** Shared full-page loader — used while auth resolves and while a chunk loads. */

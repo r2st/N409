@@ -44,11 +44,13 @@ const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /** Routes the calculation list, the preflight dry run, and the compute POST. */
-function mockApi(opts: {
-  calculations?: Calculation[];
-  preflight?: unknown;
-  compute?: { status: number; body: unknown };
-} = {}) {
+function mockApi(
+  opts: {
+    calculations?: Calculation[];
+    preflight?: unknown;
+    compute?: { status: number; body: unknown };
+  } = {},
+) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
     if (path.includes('/calculations/preflight')) {
@@ -70,9 +72,7 @@ describe('fieldLabel', () => {
   it('turns a dotted engine path into a readable label', () => {
     expect(fieldLabel('inputs.income.discount_rate')).toBe('Income · discount rate');
     expect(fieldLabel('params.dlom')).toBe('Dlom');
-    expect(fieldLabel('inputs.pwerm.scenarios[2].probability')).toBe(
-      'Pwerm · scenarios 2 · probability',
-    );
+    expect(fieldLabel('inputs.pwerm.scenarios[2].probability')).toBe('Pwerm · scenarios 2 · probability');
   });
 });
 

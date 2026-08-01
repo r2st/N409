@@ -32,7 +32,10 @@ async function authorize(pool: pg.Pool, principal: Principal, id: string): Promi
   if (!canEditWorkingData(principal)) throw problems.forbidden();
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
-  if (!valuation || !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })) {
+  if (
+    !valuation ||
+    !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })
+  ) {
     throw problems.notFound();
   }
 }
@@ -52,7 +55,8 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
     await authorize(deps.pool, principal, id);
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid workbook patch', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid workbook patch', { errors: parsed.error.issues });
 
     const errors = parsed.data.cells
       .map((c) => ({ cell: c, error: validateCellRef(c.sheet, c.row_key, c.column_key) }))

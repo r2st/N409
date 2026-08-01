@@ -20,7 +20,12 @@ const REVIEW = {
   status: 'warn',
   checks: [
     { key: 'fmv_positive', label: 'FMV per share is positive', status: 'pass', detail: 'FMV/share 2' },
-    { key: 'dlom_range', label: 'DLOM within market norms', status: 'warn', detail: 'DLOM 45.0% exceeds the 35% benchmark auditors scrutinize' },
+    {
+      key: 'dlom_range',
+      label: 'DLOM within market norms',
+      status: 'warn',
+      detail: 'DLOM 45.0% exceeds the 35% benchmark auditors scrutinize',
+    },
   ],
   ai_findings: {
     findings: [{ area: 'assumptions', finding: 'Volatility looks low', severity: 'warn' }],

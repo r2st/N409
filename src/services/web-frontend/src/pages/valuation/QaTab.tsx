@@ -211,9 +211,7 @@ export function QaTab() {
                 <span className="text-ink-600">
                   {review.checks.length} checks{review.ai_findings ? ' + AI review' : ''}
                 </span>
-                <span className="tnum ml-auto text-xs text-ink-400">
-                  {formatDateTime(review.created_at)}
-                </span>
+                <span className="tnum ml-auto text-xs text-ink-400">{formatDateTime(review.created_at)}</span>
               </li>
             ))}
           </ol>

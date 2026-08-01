@@ -179,7 +179,9 @@ export function ReportTab() {
           </div>
         )}
         {ops && dirty && (
-          <p className="text-xs font-medium text-amber-700">Unsaved changes — render is disabled until you save.</p>
+          <p className="text-xs font-medium text-amber-700">
+            Unsaved changes — render is disabled until you save.
+          </p>
         )}
 
         {/* §4.5 — plain-English summary; renders only when one exists. */}
@@ -201,7 +203,10 @@ export function ReportTab() {
         )}
 
         {content.sections.map((section, index) => (
-          <section key={section.key} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+          <section
+            key={section.key}
+            className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+          >
             {ops ? (
               <>
                 <TextInput

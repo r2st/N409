@@ -83,7 +83,8 @@ function mockApi() {
         ],
       });
     }
-    if (path.includes('/review/decision')) return jsonResponse({ valuation: { ...review, state: 'reviewed' } });
+    if (path.includes('/review/decision'))
+      return jsonResponse({ valuation: { ...review, state: 'reviewed' } });
     if (path.includes('/reviews')) return jsonResponse({ reviews: [review], total: 1 });
     if (method === 'PATCH' && path.includes('/tasks/')) return jsonResponse({ task });
     if (path.includes('/tasks')) return jsonResponse({ tasks: [task], total: 1 });

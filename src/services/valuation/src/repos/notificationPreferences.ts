@@ -1,8 +1,5 @@
 import type pg from 'pg';
-import {
-  NOTIFICATION_EVENT_TYPES,
-  type NotificationEventType,
-} from '../domain/emailWorkflows.js';
+import { NOTIFICATION_EVENT_TYPES, type NotificationEventType } from '../domain/emailWorkflows.js';
 
 /**
  * Notification preferences (P2 #11). Sparse and default-on: a missing row

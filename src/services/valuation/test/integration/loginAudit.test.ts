@@ -32,8 +32,11 @@ async function loginEventsFor(ctx: TestApp, userId: string) {
     subject_id: string;
     subject_label: string;
     payload: { method?: string; mfa?: boolean };
-  }>(`SELECT type, actor_id, subject_id, subject_label, payload FROM admin_events
-      WHERE subject_id = $1 AND type = 'user_login' ORDER BY occurred_at`, [userId]);
+  }>(
+    `SELECT type, actor_id, subject_id, subject_label, payload FROM admin_events
+      WHERE subject_id = $1 AND type = 'user_login' ORDER BY occurred_at`,
+    [userId],
+  );
   return rows;
 }
 

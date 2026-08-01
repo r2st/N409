@@ -108,7 +108,9 @@ export function DecisionsTab() {
               <li
                 key={entry.id}
                 className={`rounded-lg border p-4 ${
-                  entry.superseded ? 'border-paper-300 bg-paper-100 opacity-70' : 'border-paper-300 bg-surface shadow-card'
+                  entry.superseded
+                    ? 'border-paper-300 bg-paper-100 opacity-70'
+                    : 'border-paper-300 bg-surface shadow-card'
                 }`}
               >
                 <div className="flex flex-wrap items-center gap-2">
@@ -123,9 +125,13 @@ export function DecisionsTab() {
                   {entry.supersedes && (
                     <span className="text-xs text-ink-400">revises an earlier decision</span>
                   )}
-                  <span className="tnum ml-auto text-xs text-ink-400">{formatDateTime(entry.created_at)}</span>
+                  <span className="tnum ml-auto text-xs text-ink-400">
+                    {formatDateTime(entry.created_at)}
+                  </span>
                 </div>
-                <p className={`mt-2.5 text-sm font-medium ${entry.superseded ? 'text-ink-500 line-through' : 'text-ink-900'}`}>
+                <p
+                  className={`mt-2.5 text-sm font-medium ${entry.superseded ? 'text-ink-500 line-through' : 'text-ink-900'}`}
+                >
                   {entry.decision}
                 </p>
                 <p className="mt-1.5 text-sm leading-relaxed text-ink-600">

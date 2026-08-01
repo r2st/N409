@@ -17,8 +17,7 @@ function commandsFor(roles: string[], pathname = '/dashboard') {
   return buildCommands({ user: user(roles), effective: user(roles), pathname, actions });
 }
 
-const labels = (roles: string[], pathname?: string) =>
-  commandsFor(roles, pathname).map((c) => c.label);
+const labels = (roles: string[], pathname?: string) => commandsFor(roles, pathname).map((c) => c.label);
 
 describe('valuationIdFromPath', () => {
   it('recognises a workspace path and its tabs', () => {
@@ -135,9 +134,7 @@ describe('rankCommands', () => {
     const cold = rankCommands(all, 'b', []);
     const warm = rankCommands(all, 'b', ['nav:billing']);
     expect(warm[0]?.label).toBe('Billing');
-    expect(warm.map((c) => c.label)).toEqual(
-      expect.arrayContaining(cold.map((c) => c.label)),
-    );
+    expect(warm.map((c) => c.label)).toEqual(expect.arrayContaining(cold.map((c) => c.label)));
   });
 
   it('keeps registry order for ties with no history', () => {

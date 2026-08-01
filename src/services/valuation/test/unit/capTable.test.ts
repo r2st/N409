@@ -53,8 +53,16 @@ describe('capTable', () => {
       ];
       const entries = parseCapTable(rows, presetByKey('generic')!.mapping);
       expect(entries).toHaveLength(3);
-      expect(entries[0]).toMatchObject({ security_class: 'Common Stock', class_type: 'common', shares: 8_000_000 });
-      expect(entries[1]).toMatchObject({ class_type: 'preferred', shares: 2_000_000, invested_amount: 2_000_000 });
+      expect(entries[0]).toMatchObject({
+        security_class: 'Common Stock',
+        class_type: 'common',
+        shares: 8_000_000,
+      });
+      expect(entries[1]).toMatchObject({
+        class_type: 'preferred',
+        shares: 2_000_000,
+        invested_amount: 2_000_000,
+      });
       expect(entries[2]).toMatchObject({ class_type: 'option', shares: 1_000_000 });
     });
 
@@ -65,16 +73,46 @@ describe('capTable', () => {
     });
 
     it('skips blank/total rows', () => {
-      const rows = [{ class: '', shares: '' }, { class: 'Total', shares: '' }];
+      const rows = [
+        { class: '', shares: '' },
+        { class: 'Total', shares: '' },
+      ];
       expect(parseCapTable(rows, presetByKey('generic')!.mapping)).toHaveLength(1);
     });
   });
 
   describe('validateCapTable', () => {
     const good: CapTableEntry[] = [
-      { security_class: 'Common', class_type: 'common', shares: 8_000_000, price_per_share: 0.1, invested_amount: null, liquidation_multiple: null, seniority: null, conversion_ratio: null },
-      { security_class: 'Series A', class_type: 'preferred', shares: 2_000_000, price_per_share: 1, invested_amount: 2_000_000, liquidation_multiple: 1, seniority: 1, conversion_ratio: 1 },
-      { security_class: 'Options', class_type: 'option', shares: 1_000_000, price_per_share: null, invested_amount: null, liquidation_multiple: null, seniority: null, conversion_ratio: null },
+      {
+        security_class: 'Common',
+        class_type: 'common',
+        shares: 8_000_000,
+        price_per_share: 0.1,
+        invested_amount: null,
+        liquidation_multiple: null,
+        seniority: null,
+        conversion_ratio: null,
+      },
+      {
+        security_class: 'Series A',
+        class_type: 'preferred',
+        shares: 2_000_000,
+        price_per_share: 1,
+        invested_amount: 2_000_000,
+        liquidation_multiple: 1,
+        seniority: 1,
+        conversion_ratio: 1,
+      },
+      {
+        security_class: 'Options',
+        class_type: 'option',
+        shares: 1_000_000,
+        price_per_share: null,
+        invested_amount: null,
+        liquidation_multiple: null,
+        seniority: null,
+        conversion_ratio: null,
+      },
     ];
 
     it('accepts a well-formed cap table and summarises it', () => {
@@ -99,7 +137,16 @@ describe('capTable', () => {
 
     it('warns (not errors) on missing liquidation preference and no option pool', () => {
       const v = validateCapTable([
-        { security_class: 'Series B', class_type: 'preferred', shares: 100, price_per_share: 5, invested_amount: 500, liquidation_multiple: null, seniority: null, conversion_ratio: null },
+        {
+          security_class: 'Series B',
+          class_type: 'preferred',
+          shares: 100,
+          price_per_share: 5,
+          invested_amount: 500,
+          liquidation_multiple: null,
+          seniority: null,
+          conversion_ratio: null,
+        },
       ]);
       expect(v.valid).toBe(true);
       expect(v.issues.some((i) => i.code === 'default_liq_pref')).toBe(true);
@@ -116,17 +163,58 @@ describe('capTable', () => {
   describe('toWaterfallInputs', () => {
     it('projects common + options + preferred stack', () => {
       const entries: CapTableEntry[] = [
-        { security_class: 'Common', class_type: 'common', shares: 8_000_000, price_per_share: null, invested_amount: null, liquidation_multiple: null, seniority: null, conversion_ratio: null },
-        { security_class: 'Warrants', class_type: 'warrant', shares: 100_000, price_per_share: null, invested_amount: null, liquidation_multiple: null, seniority: null, conversion_ratio: null },
-        { security_class: 'Options', class_type: 'option', shares: 1_000_000, price_per_share: null, invested_amount: null, liquidation_multiple: null, seniority: null, conversion_ratio: null },
-        { security_class: 'Series A', class_type: 'preferred', shares: 2_000_000, price_per_share: 1, invested_amount: null, liquidation_multiple: null, seniority: null, conversion_ratio: null },
+        {
+          security_class: 'Common',
+          class_type: 'common',
+          shares: 8_000_000,
+          price_per_share: null,
+          invested_amount: null,
+          liquidation_multiple: null,
+          seniority: null,
+          conversion_ratio: null,
+        },
+        {
+          security_class: 'Warrants',
+          class_type: 'warrant',
+          shares: 100_000,
+          price_per_share: null,
+          invested_amount: null,
+          liquidation_multiple: null,
+          seniority: null,
+          conversion_ratio: null,
+        },
+        {
+          security_class: 'Options',
+          class_type: 'option',
+          shares: 1_000_000,
+          price_per_share: null,
+          invested_amount: null,
+          liquidation_multiple: null,
+          seniority: null,
+          conversion_ratio: null,
+        },
+        {
+          security_class: 'Series A',
+          class_type: 'preferred',
+          shares: 2_000_000,
+          price_per_share: 1,
+          invested_amount: null,
+          liquidation_multiple: null,
+          seniority: null,
+          conversion_ratio: null,
+        },
       ];
       const w = toWaterfallInputs(entries);
       expect(w.common_shares).toBe(8_100_000); // common + warrants
       expect(w.option_pool_shares).toBe(1_000_000);
       expect(w.preferred).toHaveLength(1);
       // invested defaulted from price × shares; liq multiple + conversion default to 1.
-      expect(w.preferred[0]).toMatchObject({ invested_amount: 2_000_000, liquidation_multiple: 1, conversion_ratio: 1, seniority: 1 });
+      expect(w.preferred[0]).toMatchObject({
+        invested_amount: 2_000_000,
+        liquidation_multiple: 1,
+        conversion_ratio: 1,
+        seniority: 1,
+      });
     });
   });
 });

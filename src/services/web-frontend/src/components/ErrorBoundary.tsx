@@ -49,8 +49,8 @@ export class ErrorBoundary extends Component<Props, State> {
       >
         <h1 className="text-xl font-semibold text-slate-900">Something went wrong</h1>
         <p className="text-sm text-slate-600">
-          An unexpected error interrupted {this.props.label ?? 'the page'}. Your data is safe — try
-          again, and if it keeps happening, reload.
+          An unexpected error interrupted {this.props.label ?? 'the page'}. Your data is safe — try again, and
+          if it keeps happening, reload.
         </p>
         <div className="flex gap-3">
           <button

@@ -54,10 +54,7 @@ export async function listApiTokens(pool: pg.Pool, partnerId: string): Promise<A
 }
 
 /** A user's personal tokens — partner tokens they minted for an org are excluded. */
-export async function listPersonalApiTokens(
-  pool: pg.Pool,
-  userId: string,
-): Promise<ApiTokenRow[]> {
+export async function listPersonalApiTokens(pool: pg.Pool, userId: string): Promise<ApiTokenRow[]> {
   const { rows } = await pool.query<ApiTokenRow>(
     `SELECT id, partner_id, created_by, name, token_prefix, created_at, last_used_at, revoked_at
      FROM api_tokens WHERE created_by = $1 AND partner_id IS NULL ORDER BY created_at DESC`,

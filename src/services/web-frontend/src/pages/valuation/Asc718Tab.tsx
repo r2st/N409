@@ -4,7 +4,16 @@ import { formatMoney, formatNumber } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  InfoTooltip,
+  Select,
+  Spinner,
+  TextInput,
+} from '../../components/ui';
 import { HelpIcon } from '../../components/HelpIcon';
 
 /**
@@ -45,12 +54,38 @@ interface Asc718Response {
     market: Market | null;
     options: {
       totalCompensationCost: number;
-      grants: Array<{ label: string | null; fairValuePerOption: number; totalCompensationCost: number; expectedToVestOptions: number }>;
+      grants: Array<{
+        label: string | null;
+        fairValuePerOption: number;
+        totalCompensationCost: number;
+        expectedToVestOptions: number;
+      }>;
       expenseByYear: Array<{ year: number; expense: number; cumulative: number }>;
     } | null;
-    espp: Array<{ label: string | null; shares_enrolled: number; fair_value_per_share: number; total_fair_value: number; components: { purchaseDiscount: number; callComponent: number; putComponent: number } }>;
-    rsu: Array<{ label: string | null; condition: string; units: number; fairValuePerUnit?: number; expectedPayoutRatio?: number; probabilityMet?: number; totalFairValue?: number }>;
-    tsr: Array<{ label: string | null; target_units: number; fairValuePerUnit: number; expectedPayoutRatio: number; expectedPercentile: number; totalFairValue: number }>;
+    espp: Array<{
+      label: string | null;
+      shares_enrolled: number;
+      fair_value_per_share: number;
+      total_fair_value: number;
+      components: { purchaseDiscount: number; callComponent: number; putComponent: number };
+    }>;
+    rsu: Array<{
+      label: string | null;
+      condition: string;
+      units: number;
+      fairValuePerUnit?: number;
+      expectedPayoutRatio?: number;
+      probabilityMet?: number;
+      totalFairValue?: number;
+    }>;
+    tsr: Array<{
+      label: string | null;
+      target_units: number;
+      fairValuePerUnit: number;
+      expectedPayoutRatio: number;
+      expectedPercentile: number;
+      totalFairValue: number;
+    }>;
     valuation_fmv_per_share: number | null;
     currency: string;
   };
@@ -61,9 +96,35 @@ const numOrU = (s: string): number | undefined => {
   return s.trim() === '' || !Number.isFinite(n) ? undefined : n;
 };
 
-const emptyOption = { label: '', options_granted: '100000', grant_date: '2026-01-01', vesting_months: '48', exercise_price: '', expected_term_years: '6', volatility: '', risk_free_rate: '0.04' };
-const emptyEspp = { label: '', shares_enrolled: '50000', grant_date_price: '', discount_pct: '0.15', lookback_months: '12', risk_free_rate: '0.03' };
-const emptyRsu = { label: '', condition: 'service' as 'service' | 'performance' | 'market', units: '1000', market_price: '', vesting_years: '3', expected_attainment: '1', attainment_volatility: '0.25', hurdle_price: '', risk_free_rate: '0.03' };
+const emptyOption = {
+  label: '',
+  options_granted: '100000',
+  grant_date: '2026-01-01',
+  vesting_months: '48',
+  exercise_price: '',
+  expected_term_years: '6',
+  volatility: '',
+  risk_free_rate: '0.04',
+};
+const emptyEspp = {
+  label: '',
+  shares_enrolled: '50000',
+  grant_date_price: '',
+  discount_pct: '0.15',
+  lookback_months: '12',
+  risk_free_rate: '0.03',
+};
+const emptyRsu = {
+  label: '',
+  condition: 'service' as 'service' | 'performance' | 'market',
+  units: '1000',
+  market_price: '',
+  vesting_years: '3',
+  expected_attainment: '1',
+  attainment_volatility: '0.25',
+  hurdle_price: '',
+  risk_free_rate: '0.03',
+};
 
 export function Asc718Tab() {
   const { valuation } = useWorkspace();
@@ -133,7 +194,9 @@ export function Asc718Tab() {
       const payload: Record<string, unknown> = {
         company_type: companyType,
         ...(companyType === 'public' && ticker.trim() ? { ticker: ticker.trim().toUpperCase() } : {}),
-        ...(numOrU(defaultUnderlying) !== undefined ? { default_grant_date_fair_value: numOrU(defaultUnderlying) } : {}),
+        ...(numOrU(defaultUnderlying) !== undefined
+          ? { default_grant_date_fair_value: numOrU(defaultUnderlying) }
+          : {}),
         ...(numOrU(defaultVol) !== undefined ? { default_volatility: numOrU(defaultVol) } : {}),
         grants: options
           .filter((o) => numOrU(o.exercise_price) !== undefined)
@@ -162,8 +225,15 @@ export function Asc718Tab() {
           units: numOrU(r.units),
           market_price: numOrU(r.market_price),
           vesting_years: numOrU(r.vesting_years),
-          ...(r.condition === 'performance' ? { expected_attainment: numOrU(r.expected_attainment), attainment_volatility: numOrU(r.attainment_volatility) } : {}),
-          ...(r.condition === 'market' ? { hurdle_price: numOrU(r.hurdle_price), risk_free_rate: numOrU(r.risk_free_rate) } : {}),
+          ...(r.condition === 'performance'
+            ? {
+                expected_attainment: numOrU(r.expected_attainment),
+                attainment_volatility: numOrU(r.attainment_volatility),
+              }
+            : {}),
+          ...(r.condition === 'market'
+            ? { hurdle_price: numOrU(r.hurdle_price), risk_free_rate: numOrU(r.risk_free_rate) }
+            : {}),
         })),
       };
       const res = await api<Asc718Response>(`/valuations/${id}/asc718`, { method: 'POST', body: payload });
@@ -175,7 +245,12 @@ export function Asc718Tab() {
     }
   }, [id, companyType, ticker, defaultUnderlying, defaultVol, options, espps, rsus, termMethod]);
 
-  if (!ops) return <EmptyState title="Operations only">ASC 718 measurement is restricted to the valuation team.</EmptyState>;
+  if (!ops)
+    return (
+      <EmptyState title="Operations only">
+        ASC 718 measurement is restricted to the valuation team.
+      </EmptyState>
+    );
   if (loading) return <Spinner />;
 
   const currency = result?.currency ?? valuation.currency ?? 'USD';
@@ -205,7 +280,12 @@ export function Asc718Tab() {
           {companyType === 'public' && (
             <>
               <Field label="Ticker">
-                <TextInput value={ticker} onChange={(e) => setTicker(e.target.value)} placeholder="ACME" className="w-28" />
+                <TextInput
+                  value={ticker}
+                  onChange={(e) => setTicker(e.target.value)}
+                  placeholder="ACME"
+                  className="w-28"
+                />
               </Field>
               <Field
                 label="Expected-term method"
@@ -219,17 +299,30 @@ export function Asc718Tab() {
               </Field>
             </>
           )}
-          <Button variant="secondary" onClick={() => void saveSettings()}>Save settings</Button>
+          <Button variant="secondary" onClick={() => void saveSettings()}>
+            Save settings
+          </Button>
         </div>
-        {settings && <p className="mt-2 text-xs text-ink-400">Settings saved. Company type: {settings.company_type}.</p>}
+        {settings && (
+          <p className="mt-2 text-xs text-ink-400">Settings saved. Company type: {settings.company_type}.</p>
+        )}
       </div>
 
       {/* Defaults */}
       <div className="rounded-lg border border-paper-200 bg-surface p-4">
         <h3 className="mb-3 text-sm font-semibold text-ink-700">Default assumptions</h3>
         <div className="flex flex-wrap gap-4">
-          <Field label={companyType === 'public' ? 'Underlying (blank → market price)' : 'Underlying (blank → 409A FMV)'}>
-            <TextInput value={defaultUnderlying} onChange={(e) => setDefaultUnderlying(e.target.value)} placeholder="e.g. 20" className="w-40" />
+          <Field
+            label={
+              companyType === 'public' ? 'Underlying (blank → market price)' : 'Underlying (blank → 409A FMV)'
+            }
+          >
+            <TextInput
+              value={defaultUnderlying}
+              onChange={(e) => setDefaultUnderlying(e.target.value)}
+              placeholder="e.g. 20"
+              className="w-40"
+            />
           </Field>
           <Field
             label={companyType === 'public' ? 'Volatility (blank → historical)' : 'Volatility'}
@@ -239,7 +332,12 @@ export function Asc718Tab() {
                 : 'Annualised return volatility used in Black-Scholes, typically derived from a comparable-company peer set (e.g. 0.40 = 40%).'
             }
           >
-            <TextInput value={defaultVol} onChange={(e) => setDefaultVol(e.target.value)} placeholder="e.g. 0.4" className="w-40" />
+            <TextInput
+              value={defaultVol}
+              onChange={(e) => setDefaultVol(e.target.value)}
+              placeholder="e.g. 0.4"
+              className="w-40"
+            />
           </Field>
         </div>
         {companyType === 'public' && (
@@ -254,7 +352,9 @@ export function Asc718Tab() {
       <RsuSection rsus={rsus} setRsus={setRsus} disabled={companyType !== 'public'} />
 
       {error && <ErrorNote>{error}</ErrorNote>}
-      <Button onClick={() => void run()} disabled={running}>{running ? 'Computing…' : 'Run ASC 718'}</Button>
+      <Button onClick={() => void run()} disabled={running}>
+        {running ? 'Computing…' : 'Run ASC 718'}
+      </Button>
 
       {result && <Results result={result} currency={currency} />}
     </div>
@@ -265,30 +365,96 @@ function ArrayHeader({ title, onAdd, addLabel }: { title: string; onAdd?: () => 
   return (
     <div className="mb-3 flex items-center justify-between">
       <h3 className="text-sm font-semibold text-ink-700">{title}</h3>
-      {onAdd && <Button variant="secondary" onClick={onAdd}>{addLabel ?? 'Add'}</Button>}
+      {onAdd && (
+        <Button variant="secondary" onClick={onAdd}>
+          {addLabel ?? 'Add'}
+        </Button>
+      )}
     </div>
   );
 }
 
-function OptionSection({ options, setOptions }: { options: (typeof emptyOption)[]; setOptions: (v: (typeof emptyOption)[]) => void }) {
-  const upd = (i: number, k: keyof typeof emptyOption, v: string) => setOptions(options.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
+function OptionSection({
+  options,
+  setOptions,
+}: {
+  options: (typeof emptyOption)[];
+  setOptions: (v: (typeof emptyOption)[]) => void;
+}) {
+  const upd = (i: number, k: keyof typeof emptyOption, v: string) =>
+    setOptions(options.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
   return (
     <div className="rounded-lg border border-paper-200 bg-surface p-4">
-      <ArrayHeader title="Option grants" onAdd={() => setOptions([...options, { ...emptyOption }])} addLabel="Add grant" />
+      <ArrayHeader
+        title="Option grants"
+        onAdd={() => setOptions([...options, { ...emptyOption }])}
+        addLabel="Add grant"
+      />
       {options.length === 0 && <p className="text-sm text-ink-400">No option grants.</p>}
       <div className="space-y-3">
         {options.map((o, i) => (
-          <div key={i} className="grid grid-cols-2 gap-3 border-b border-paper-100 pb-3 last:border-0 md:grid-cols-4">
-            <Field label="Label"><TextInput value={o.label} onChange={(e) => upd(i, 'label', e.target.value)} placeholder="2026 pool" /></Field>
-            <Field label="Options"><TextInput value={o.options_granted} onChange={(e) => upd(i, 'options_granted', e.target.value)} /></Field>
-            <Field label="Grant date"><TextInput value={o.grant_date} onChange={(e) => upd(i, 'grant_date', e.target.value)} /></Field>
-            <Field label="Vesting months"><TextInput value={o.vesting_months} onChange={(e) => upd(i, 'vesting_months', e.target.value)} /></Field>
-            <Field label="Exercise price"><TextInput value={o.exercise_price} onChange={(e) => upd(i, 'exercise_price', e.target.value)} placeholder="required" /></Field>
-            <Field label="Expected term (y)" tooltip="Years the option is expected to stay outstanding before exercise — shorter than the contractual term. Used directly by the simplified method; the lattice derives it from modelled exercise behaviour instead."><TextInput value={o.expected_term_years} onChange={(e) => upd(i, 'expected_term_years', e.target.value)} /></Field>
-            <Field label="Volatility"><TextInput value={o.volatility} onChange={(e) => upd(i, 'volatility', e.target.value)} placeholder="blank → default" /></Field>
-            <Field label="Risk-free"><TextInput value={o.risk_free_rate} onChange={(e) => upd(i, 'risk_free_rate', e.target.value)} /></Field>
+          <div
+            key={i}
+            className="grid grid-cols-2 gap-3 border-b border-paper-100 pb-3 last:border-0 md:grid-cols-4"
+          >
+            <Field label="Label">
+              <TextInput
+                value={o.label}
+                onChange={(e) => upd(i, 'label', e.target.value)}
+                placeholder="2026 pool"
+              />
+            </Field>
+            <Field label="Options">
+              <TextInput
+                value={o.options_granted}
+                onChange={(e) => upd(i, 'options_granted', e.target.value)}
+              />
+            </Field>
+            <Field label="Grant date">
+              <TextInput value={o.grant_date} onChange={(e) => upd(i, 'grant_date', e.target.value)} />
+            </Field>
+            <Field label="Vesting months">
+              <TextInput
+                value={o.vesting_months}
+                onChange={(e) => upd(i, 'vesting_months', e.target.value)}
+              />
+            </Field>
+            <Field label="Exercise price">
+              <TextInput
+                value={o.exercise_price}
+                onChange={(e) => upd(i, 'exercise_price', e.target.value)}
+                placeholder="required"
+              />
+            </Field>
+            <Field
+              label="Expected term (y)"
+              tooltip="Years the option is expected to stay outstanding before exercise — shorter than the contractual term. Used directly by the simplified method; the lattice derives it from modelled exercise behaviour instead."
+            >
+              <TextInput
+                value={o.expected_term_years}
+                onChange={(e) => upd(i, 'expected_term_years', e.target.value)}
+              />
+            </Field>
+            <Field label="Volatility">
+              <TextInput
+                value={o.volatility}
+                onChange={(e) => upd(i, 'volatility', e.target.value)}
+                placeholder="blank → default"
+              />
+            </Field>
+            <Field label="Risk-free">
+              <TextInput
+                value={o.risk_free_rate}
+                onChange={(e) => upd(i, 'risk_free_rate', e.target.value)}
+              />
+            </Field>
             <div className="col-span-full">
-              <button className="text-xs text-red-600 hover:underline" onClick={() => setOptions(options.filter((_, j) => j !== i))}>Remove</button>
+              <button
+                className="text-xs text-red-600 hover:underline"
+                onClick={() => setOptions(options.filter((_, j) => j !== i))}
+              >
+                Remove
+              </button>
             </div>
           </div>
         ))}
@@ -297,26 +463,81 @@ function OptionSection({ options, setOptions }: { options: (typeof emptyOption)[
   );
 }
 
-function EsppSection({ espps, setEspps, disabled }: { espps: (typeof emptyEspp)[]; setEspps: (v: (typeof emptyEspp)[]) => void; disabled: boolean }) {
-  const upd = (i: number, k: keyof typeof emptyEspp, v: string) => setEspps(espps.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
+function EsppSection({
+  espps,
+  setEspps,
+  disabled,
+}: {
+  espps: (typeof emptyEspp)[];
+  setEspps: (v: (typeof emptyEspp)[]) => void;
+  disabled: boolean;
+}) {
+  const upd = (i: number, k: keyof typeof emptyEspp, v: string) =>
+    setEspps(espps.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
   return (
     <div className="rounded-lg border border-paper-200 bg-surface p-4">
-      <ArrayHeader title="ESPP (public)" onAdd={disabled ? undefined : () => setEspps([...espps, { ...emptyEspp }])} addLabel="Add ESPP" />
+      <ArrayHeader
+        title="ESPP (public)"
+        onAdd={disabled ? undefined : () => setEspps([...espps, { ...emptyEspp }])}
+        addLabel="Add ESPP"
+      />
       {disabled ? (
-        <p className="text-sm text-ink-400">ESPP valuation is a public-company award. Switch company type to Public.</p>
+        <p className="text-sm text-ink-400">
+          ESPP valuation is a public-company award. Switch company type to Public.
+        </p>
       ) : espps.length === 0 ? (
         <p className="text-sm text-ink-400">No ESPP offerings.</p>
       ) : (
         <div className="space-y-3">
           {espps.map((e, i) => (
-            <div key={i} className="grid grid-cols-2 gap-3 border-b border-paper-100 pb-3 last:border-0 md:grid-cols-3">
-              <Field label="Label"><TextInput value={e.label} onChange={(ev) => upd(i, 'label', ev.target.value)} /></Field>
-              <Field label="Shares enrolled"><TextInput value={e.shares_enrolled} onChange={(ev) => upd(i, 'shares_enrolled', ev.target.value)} /></Field>
-              <Field label="Grant-date price"><TextInput value={e.grant_date_price} onChange={(ev) => upd(i, 'grant_date_price', ev.target.value)} /></Field>
-              <Field label="Discount %"><TextInput value={e.discount_pct} onChange={(ev) => upd(i, 'discount_pct', ev.target.value)} /></Field>
-              <Field label="Lookback months" tooltip="Length of the ESPP lookback window. Employees buy at a price based on the lower of the offering-date and purchase-date prices, so a longer lookback embeds a more valuable call option and raises the fair value."><TextInput value={e.lookback_months} onChange={(ev) => upd(i, 'lookback_months', ev.target.value)} /></Field>
-              <Field label="Risk-free"><TextInput value={e.risk_free_rate} onChange={(ev) => upd(i, 'risk_free_rate', ev.target.value)} /></Field>
-              <div className="col-span-full"><button className="text-xs text-red-600 hover:underline" onClick={() => setEspps(espps.filter((_, j) => j !== i))}>Remove</button></div>
+            <div
+              key={i}
+              className="grid grid-cols-2 gap-3 border-b border-paper-100 pb-3 last:border-0 md:grid-cols-3"
+            >
+              <Field label="Label">
+                <TextInput value={e.label} onChange={(ev) => upd(i, 'label', ev.target.value)} />
+              </Field>
+              <Field label="Shares enrolled">
+                <TextInput
+                  value={e.shares_enrolled}
+                  onChange={(ev) => upd(i, 'shares_enrolled', ev.target.value)}
+                />
+              </Field>
+              <Field label="Grant-date price">
+                <TextInput
+                  value={e.grant_date_price}
+                  onChange={(ev) => upd(i, 'grant_date_price', ev.target.value)}
+                />
+              </Field>
+              <Field label="Discount %">
+                <TextInput
+                  value={e.discount_pct}
+                  onChange={(ev) => upd(i, 'discount_pct', ev.target.value)}
+                />
+              </Field>
+              <Field
+                label="Lookback months"
+                tooltip="Length of the ESPP lookback window. Employees buy at a price based on the lower of the offering-date and purchase-date prices, so a longer lookback embeds a more valuable call option and raises the fair value."
+              >
+                <TextInput
+                  value={e.lookback_months}
+                  onChange={(ev) => upd(i, 'lookback_months', ev.target.value)}
+                />
+              </Field>
+              <Field label="Risk-free">
+                <TextInput
+                  value={e.risk_free_rate}
+                  onChange={(ev) => upd(i, 'risk_free_rate', ev.target.value)}
+                />
+              </Field>
+              <div className="col-span-full">
+                <button
+                  className="text-xs text-red-600 hover:underline"
+                  onClick={() => setEspps(espps.filter((_, j) => j !== i))}
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -325,20 +546,40 @@ function EsppSection({ espps, setEspps, disabled }: { espps: (typeof emptyEspp)[
   );
 }
 
-function RsuSection({ rsus, setRsus, disabled }: { rsus: (typeof emptyRsu)[]; setRsus: (v: (typeof emptyRsu)[]) => void; disabled: boolean }) {
-  const upd = (i: number, k: keyof typeof emptyRsu, v: string) => setRsus(rsus.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
+function RsuSection({
+  rsus,
+  setRsus,
+  disabled,
+}: {
+  rsus: (typeof emptyRsu)[];
+  setRsus: (v: (typeof emptyRsu)[]) => void;
+  disabled: boolean;
+}) {
+  const upd = (i: number, k: keyof typeof emptyRsu, v: string) =>
+    setRsus(rsus.map((o, j) => (j === i ? { ...o, [k]: v } : o)));
   return (
     <div className="rounded-lg border border-paper-200 bg-surface p-4">
-      <ArrayHeader title="RSUs (public)" onAdd={disabled ? undefined : () => setRsus([...rsus, { ...emptyRsu }])} addLabel="Add RSU" />
+      <ArrayHeader
+        title="RSUs (public)"
+        onAdd={disabled ? undefined : () => setRsus([...rsus, { ...emptyRsu }])}
+        addLabel="Add RSU"
+      />
       {disabled ? (
-        <p className="text-sm text-ink-400">RSU valuation is a public-company award. Switch company type to Public.</p>
+        <p className="text-sm text-ink-400">
+          RSU valuation is a public-company award. Switch company type to Public.
+        </p>
       ) : rsus.length === 0 ? (
         <p className="text-sm text-ink-400">No RSU grants.</p>
       ) : (
         <div className="space-y-3">
           {rsus.map((r, i) => (
-            <div key={i} className="grid grid-cols-2 gap-3 border-b border-paper-100 pb-3 last:border-0 md:grid-cols-4">
-              <Field label="Label"><TextInput value={r.label} onChange={(e) => upd(i, 'label', e.target.value)} /></Field>
+            <div
+              key={i}
+              className="grid grid-cols-2 gap-3 border-b border-paper-100 pb-3 last:border-0 md:grid-cols-4"
+            >
+              <Field label="Label">
+                <TextInput value={r.label} onChange={(e) => upd(i, 'label', e.target.value)} />
+              </Field>
               <Field label="Condition">
                 <Select value={r.condition} onChange={(e) => upd(i, 'condition', e.target.value)}>
                   <option value="service">Service only</option>
@@ -346,23 +587,70 @@ function RsuSection({ rsus, setRsus, disabled }: { rsus: (typeof emptyRsu)[]; se
                   <option value="market">Market</option>
                 </Select>
               </Field>
-              <Field label="Units"><TextInput value={r.units} onChange={(e) => upd(i, 'units', e.target.value)} /></Field>
-              <Field label="Market price"><TextInput value={r.market_price} onChange={(e) => upd(i, 'market_price', e.target.value)} placeholder="blank → default" /></Field>
-              {r.condition === 'service' && <Field label="Vesting years"><TextInput value={r.vesting_years} onChange={(e) => upd(i, 'vesting_years', e.target.value)} /></Field>}
+              <Field label="Units">
+                <TextInput value={r.units} onChange={(e) => upd(i, 'units', e.target.value)} />
+              </Field>
+              <Field label="Market price">
+                <TextInput
+                  value={r.market_price}
+                  onChange={(e) => upd(i, 'market_price', e.target.value)}
+                  placeholder="blank → default"
+                />
+              </Field>
+              {r.condition === 'service' && (
+                <Field label="Vesting years">
+                  <TextInput
+                    value={r.vesting_years}
+                    onChange={(e) => upd(i, 'vesting_years', e.target.value)}
+                  />
+                </Field>
+              )}
               {r.condition === 'performance' && (
                 <>
-                  <Field label="Expected attainment"><TextInput value={r.expected_attainment} onChange={(e) => upd(i, 'expected_attainment', e.target.value)} /></Field>
-                  <Field label="Attainment vol"><TextInput value={r.attainment_volatility} onChange={(e) => upd(i, 'attainment_volatility', e.target.value)} /></Field>
+                  <Field label="Expected attainment">
+                    <TextInput
+                      value={r.expected_attainment}
+                      onChange={(e) => upd(i, 'expected_attainment', e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Attainment vol">
+                    <TextInput
+                      value={r.attainment_volatility}
+                      onChange={(e) => upd(i, 'attainment_volatility', e.target.value)}
+                    />
+                  </Field>
                 </>
               )}
               {r.condition === 'market' && (
                 <>
-                  <Field label="Hurdle price"><TextInput value={r.hurdle_price} onChange={(e) => upd(i, 'hurdle_price', e.target.value)} /></Field>
-                  <Field label="Vesting years"><TextInput value={r.vesting_years} onChange={(e) => upd(i, 'vesting_years', e.target.value)} /></Field>
-                  <Field label="Risk-free"><TextInput value={r.risk_free_rate} onChange={(e) => upd(i, 'risk_free_rate', e.target.value)} /></Field>
+                  <Field label="Hurdle price">
+                    <TextInput
+                      value={r.hurdle_price}
+                      onChange={(e) => upd(i, 'hurdle_price', e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Vesting years">
+                    <TextInput
+                      value={r.vesting_years}
+                      onChange={(e) => upd(i, 'vesting_years', e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Risk-free">
+                    <TextInput
+                      value={r.risk_free_rate}
+                      onChange={(e) => upd(i, 'risk_free_rate', e.target.value)}
+                    />
+                  </Field>
                 </>
               )}
-              <div className="col-span-full"><button className="text-xs text-red-600 hover:underline" onClick={() => setRsus(rsus.filter((_, j) => j !== i))}>Remove</button></div>
+              <div className="col-span-full">
+                <button
+                  className="text-xs text-red-600 hover:underline"
+                  onClick={() => setRsus(rsus.filter((_, j) => j !== i))}
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -378,16 +666,29 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
       {result.market && (
         <div className="rounded-md border border-paper-200 bg-surface p-3 text-sm">
           <span className="font-semibold">{result.market.ticker}</span> — underlying{' '}
-          {result.market.underlying != null ? formatMoney(result.market.underlying, currency) : '—'}, historical vol{' '}
+          {result.market.underlying != null ? formatMoney(result.market.underlying, currency) : '—'},
+          historical vol{' '}
           {result.market.volatility != null ? `${(result.market.volatility * 100).toFixed(1)}%` : '—'}{' '}
-          <span className="text-ink-400">({result.market.source}{result.market.warning ? ` — ${result.market.warning}` : ''})</span>
+          <span className="text-ink-400">
+            ({result.market.source}
+            {result.market.warning ? ` — ${result.market.warning}` : ''})
+          </span>
         </div>
       )}
       {result.options && (
         <div>
-          <h4 className="overline mb-2 text-ink-400">Options — total cost {formatMoney(result.options.totalCompensationCost, currency)}</h4>
+          <h4 className="overline mb-2 text-ink-400">
+            Options — total cost {formatMoney(result.options.totalCompensationCost, currency)}
+          </h4>
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase"><th className="py-1.5 pr-3">Grant</th><th className="py-1.5 pr-3">FV/option</th><th className="py-1.5 pr-3">Expected to vest</th><th className="py-1.5">Total cost</th></tr></thead>
+            <thead>
+              <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                <th className="py-1.5 pr-3">Grant</th>
+                <th className="py-1.5 pr-3">FV/option</th>
+                <th className="py-1.5 pr-3">Expected to vest</th>
+                <th className="py-1.5">Total cost</th>
+              </tr>
+            </thead>
             <tbody className="tnum">
               {result.options.grants.map((g, i) => (
                 <tr key={i} className="border-b border-paper-200 last:border-0">
@@ -405,15 +706,30 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
         <div>
           <h4 className="overline mb-2 text-ink-400">ESPP</h4>
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase"><th className="py-1.5 pr-3">Offering</th><th className="py-1.5 pr-3">FV/share</th><th className="py-1.5 pr-3">Discount</th><th className="py-1.5 pr-3">Call</th><th className="py-1.5 pr-3">Put</th><th className="py-1.5">Total</th></tr></thead>
+            <thead>
+              <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                <th className="py-1.5 pr-3">Offering</th>
+                <th className="py-1.5 pr-3">FV/share</th>
+                <th className="py-1.5 pr-3">Discount</th>
+                <th className="py-1.5 pr-3">Call</th>
+                <th className="py-1.5 pr-3">Put</th>
+                <th className="py-1.5">Total</th>
+              </tr>
+            </thead>
             <tbody className="tnum">
               {result.espp.map((e, i) => (
                 <tr key={i} className="border-b border-paper-200 last:border-0">
                   <td className="py-1.5 pr-3">{e.label ?? `ESPP ${i + 1}`}</td>
                   <td className="py-1.5 pr-3">{formatMoney(e.fair_value_per_share, currency)}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">{formatMoney(e.components.purchaseDiscount, currency)}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">{formatMoney(e.components.callComponent, currency)}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">{formatMoney(e.components.putComponent, currency)}</td>
+                  <td className="py-1.5 pr-3 text-ink-500">
+                    {formatMoney(e.components.purchaseDiscount, currency)}
+                  </td>
+                  <td className="py-1.5 pr-3 text-ink-500">
+                    {formatMoney(e.components.callComponent, currency)}
+                  </td>
+                  <td className="py-1.5 pr-3 text-ink-500">
+                    {formatMoney(e.components.putComponent, currency)}
+                  </td>
                   <td className="py-1.5 font-semibold">{formatMoney(e.total_fair_value, currency)}</td>
                 </tr>
               ))}
@@ -425,15 +741,31 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
         <div>
           <h4 className="overline mb-2 text-ink-400">RSUs</h4>
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase"><th className="py-1.5 pr-3">Award</th><th className="py-1.5 pr-3">Condition</th><th className="py-1.5 pr-3">Units</th><th className="py-1.5 pr-3">FV/unit</th><th className="py-1.5">Total</th></tr></thead>
+            <thead>
+              <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                <th className="py-1.5 pr-3">Award</th>
+                <th className="py-1.5 pr-3">Condition</th>
+                <th className="py-1.5 pr-3">Units</th>
+                <th className="py-1.5 pr-3">FV/unit</th>
+                <th className="py-1.5">Total</th>
+              </tr>
+            </thead>
             <tbody className="tnum">
               {result.rsu.map((r, i) => (
                 <tr key={i} className="border-b border-paper-200 last:border-0">
                   <td className="py-1.5 pr-3">{r.label ?? `RSU ${i + 1}`}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">{r.condition}{r.expectedPayoutRatio != null ? ` (${(r.expectedPayoutRatio * 100).toFixed(0)}%)` : ''}{r.probabilityMet != null ? ` (P=${(r.probabilityMet * 100).toFixed(0)}%)` : ''}</td>
+                  <td className="py-1.5 pr-3 text-ink-500">
+                    {r.condition}
+                    {r.expectedPayoutRatio != null ? ` (${(r.expectedPayoutRatio * 100).toFixed(0)}%)` : ''}
+                    {r.probabilityMet != null ? ` (P=${(r.probabilityMet * 100).toFixed(0)}%)` : ''}
+                  </td>
                   <td className="py-1.5 pr-3">{formatNumber(r.units)}</td>
-                  <td className="py-1.5 pr-3">{r.fairValuePerUnit != null ? formatMoney(r.fairValuePerUnit, currency) : '—'}</td>
-                  <td className="py-1.5 font-semibold">{r.totalFairValue != null ? formatMoney(r.totalFairValue, currency) : '—'}</td>
+                  <td className="py-1.5 pr-3">
+                    {r.fairValuePerUnit != null ? formatMoney(r.fairValuePerUnit, currency) : '—'}
+                  </td>
+                  <td className="py-1.5 font-semibold">
+                    {r.totalFairValue != null ? formatMoney(r.totalFairValue, currency) : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -450,7 +782,16 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
             />
           </h4>
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase"><th className="py-1.5 pr-3">Award</th><th className="py-1.5 pr-3">Units</th><th className="py-1.5 pr-3">FV/unit</th><th className="py-1.5 pr-3">Exp. %ile</th><th className="py-1.5 pr-3">Payout</th><th className="py-1.5">Total</th></tr></thead>
+            <thead>
+              <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                <th className="py-1.5 pr-3">Award</th>
+                <th className="py-1.5 pr-3">Units</th>
+                <th className="py-1.5 pr-3">FV/unit</th>
+                <th className="py-1.5 pr-3">Exp. %ile</th>
+                <th className="py-1.5 pr-3">Payout</th>
+                <th className="py-1.5">Total</th>
+              </tr>
+            </thead>
             <tbody className="tnum">
               {result.tsr.map((t, i) => (
                 <tr key={i} className="border-b border-paper-200 last:border-0">

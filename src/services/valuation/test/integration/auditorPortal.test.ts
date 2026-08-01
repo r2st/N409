@@ -70,7 +70,10 @@ describe.skipIf(!dbUp)('external auditor portal (feature 8)', () => {
   it('rejects an expired link', async () => {
     const v = await seedValuation();
     const { token } = (await createLink(owner.token, v.id)).json();
-    await ctx.pool.query(`UPDATE auditor_access SET expires_at = now() - interval '1 day' WHERE valuation_id = $1`, [v.id]);
+    await ctx.pool.query(
+      `UPDATE auditor_access SET expires_at = now() - interval '1 day' WHERE valuation_id = $1`,
+      [v.id],
+    );
     const bundle = await redeem(token);
     expect(bundle.statusCode).toBe(401);
   });

@@ -21,9 +21,15 @@ describe('sanitizeHtml (client mirror)', () => {
 describe('formatWorkbookValue', () => {
   it('formats currency, number, percent and null', () => {
     expect(formatWorkbookValue(null, 'currency')).toBe('—');
-    expect(formatWorkbookValue(5100000, 'currency')).toBe((5100000).toLocaleString(undefined, { maximumFractionDigits: 0 }));
-    expect(formatWorkbookValue(0.6667, 'percent')).toBe(`${(66.67).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`);
-    expect(formatWorkbookValue(6.5, 'number')).toBe((6.5).toLocaleString(undefined, { maximumFractionDigits: 2 }));
+    expect(formatWorkbookValue(5100000, 'currency')).toBe(
+      (5100000).toLocaleString(undefined, { maximumFractionDigits: 0 }),
+    );
+    expect(formatWorkbookValue(0.6667, 'percent')).toBe(
+      `${(66.67).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`,
+    );
+    expect(formatWorkbookValue(6.5, 'number')).toBe(
+      (6.5).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    );
   });
 });
 

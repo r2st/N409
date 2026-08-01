@@ -90,15 +90,11 @@ export async function createComment(
       ],
     );
     const comment = rows[0]!;
-    await client.query('UPDATE valuations SET last_comment_at = now() WHERE id = $1', [
-      input.valuationId,
-    ]);
+    await client.query('UPDATE valuations SET last_comment_at = now() WHERE id = $1', [input.valuationId]);
     await recordEvent(client, {
       valuationId: input.valuationId,
       type:
-        input.kind === 'email'
-          ? OPERATIONS_EVENT_TYPES.emailReceived
-          : OPERATIONS_EVENT_TYPES.commentAdded,
+        input.kind === 'email' ? OPERATIONS_EVENT_TYPES.emailReceived : OPERATIONS_EVENT_TYPES.commentAdded,
       actor,
       payload: {
         comment_id: comment.id,

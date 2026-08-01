@@ -20,9 +20,7 @@ export function AdminPartnersPage() {
 
   const load = useCallback(async () => {
     try {
-      const { partners: items } = await api<{ partners: Partner[] }>(
-        '/partners?include_archived=true',
-      );
+      const { partners: items } = await api<{ partners: Partner[] }>('/partners?include_archived=true');
       setPartners(items);
     } catch (err) {
       setError(
@@ -90,8 +88,8 @@ export function AdminPartnersPage() {
           <div className="overline text-ink-400">Administration</div>
           <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Partners</h1>
           <p className="mt-1 text-sm text-ink-400">
-            Organisations that channel valuations through the platform. Assign users to a partner
-            from the users console.
+            Organisations that channel valuations through the platform. Assign users to a partner from the
+            users console.
           </p>
         </div>
         <Button onClick={() => setCreating((v) => !v)}>{creating ? 'Cancel' : '+ New partner'}</Button>
@@ -179,11 +177,7 @@ export function AdminPartnersPage() {
                         className="flex items-center gap-2"
                         onSubmit={(e) => {
                           e.preventDefault();
-                          void patch(
-                            p.id,
-                            { name: renameDraft.trim() },
-                            'Could not rename the partner.',
-                          );
+                          void patch(p.id, { name: renameDraft.trim() }, 'Could not rename the partner.');
                         }}
                       >
                         <TextInput

@@ -25,7 +25,9 @@ function JobResult({ job }: { job: AiJob }) {
         ))}
         {gaps.map((g, i) => (
           <div key={`g${i}`} className="flex items-center gap-2">
-            <span className={`h-1.5 w-1.5 rounded-full ${g.severity === 'blocking' ? 'bg-red-500' : 'bg-amber-500'}`} />
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${g.severity === 'blocking' ? 'bg-red-500' : 'bg-amber-500'}`}
+            />
             {g.item}
           </div>
         ))}
@@ -37,7 +39,8 @@ function JobResult({ job }: { job: AiJob }) {
   if (job.pipeline === 'extract') {
     const inputs = (result.engine_inputs as Record<string, number> | undefined) ?? {};
     const entries = Object.entries(inputs);
-    if (entries.length === 0) return <p className="mt-2 text-sm text-ink-600">No values could be extracted.</p>;
+    if (entries.length === 0)
+      return <p className="mt-2 text-sm text-ink-600">No values could be extracted.</p>;
     return (
       <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3">
         {entries.map(([key, value]) => (
@@ -52,8 +55,8 @@ function JobResult({ job }: { job: AiJob }) {
 
   if (job.pipeline === 'summarize') {
     const summaries =
-      (result.summaries as Array<{ filename: string; summary: string; key_figures?: string[] }> | undefined) ??
-      [];
+      (result.summaries as
+        Array<{ filename: string; summary: string; key_figures?: string[] }> | undefined) ?? [];
     const overall = result.overall as string | undefined;
     if (summaries.length === 0 && !overall)
       return <p className="mt-2 text-sm text-ink-600">Nothing to summarize yet.</p>;
@@ -79,13 +82,15 @@ function JobResult({ job }: { job: AiJob }) {
 
   // comparables
   const comps =
-    (result.comparables as Array<{
-      name: string;
-      ticker: string;
-      rationale: string;
-      revenue_multiple: number | null;
-      ebitda_multiple: number | null;
-    }> | undefined) ?? [];
+    (result.comparables as
+      | Array<{
+          name: string;
+          ticker: string;
+          rationale: string;
+          revenue_multiple: number | null;
+          ebitda_multiple: number | null;
+        }>
+      | undefined) ?? [];
   return (
     <div className="mt-2 overflow-x-auto">
       {typeof result.sector === 'string' && result.sector && (
@@ -178,7 +183,10 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {AI_PIPELINES.map((pipeline) => (
-          <div key={pipeline} className="flex flex-col rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+          <div
+            key={pipeline}
+            className="flex flex-col rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+          >
             <h3 className="text-sm font-semibold text-ink-900">{AI_PIPELINE_META[pipeline].label}</h3>
             <p className="mt-1 flex-1 text-xs text-ink-500">{AI_PIPELINE_META[pipeline].description}</p>
             <Button
@@ -194,16 +202,15 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
       </div>
       {running && (
         <p className="text-sm text-ink-500">
-          Running {AI_PIPELINE_META[running].label.toLowerCase()} — free-tier models can take up to a
-          minute…
+          Running {AI_PIPELINE_META[running].label.toLowerCase()} — free-tier models can take up to a minute…
         </p>
       )}
 
       {latestExtract && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-bond-200 bg-bond-50 px-4 py-3">
           <p className="text-sm text-bond-800">
-            Apply the latest extraction to the valuation params so every calculation uses it
-            (Set Valuation Parameters).
+            Apply the latest extraction to the valuation params so every calculation uses it (Set Valuation
+            Parameters).
           </p>
           <Button
             variant="secondary"
@@ -244,8 +251,7 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
                 </span>
                 {(() => {
                   const anon = job.result?.anonymization as
-                    | { applied?: boolean; redacted?: Record<string, number> }
-                    | undefined;
+                    { applied?: boolean; redacted?: Record<string, number> } | undefined;
                   const redactedCount = Object.values(anon?.redacted ?? {}).reduce((a, b) => a + b, 0);
                   return anon?.applied ? (
                     <span

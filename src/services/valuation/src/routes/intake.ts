@@ -11,17 +11,9 @@ import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
-import {
-  computeCompletion,
-  INTAKE_EVENT_TYPES,
-  INTAKE_SECTIONS,
-} from '../domain/intake.js';
+import { computeCompletion, INTAKE_EVENT_TYPES, INTAKE_SECTIONS } from '../domain/intake.js';
 import { REQUIRED_DOCUMENT_KINDS } from '../domain/progress.js';
-import {
-  findQuestionnaire,
-  saveQuestionnaire,
-  submitQuestionnaire,
-} from '../repos/intake.js';
+import { findQuestionnaire, saveQuestionnaire, submitQuestionnaire } from '../repos/intake.js';
 
 /**
  * Client self-service portal (feature 7): a guided intake questionnaire, a
@@ -34,11 +26,7 @@ const SaveBody = z.object({
   answers: z.record(z.string(), z.unknown()),
 });
 
-async function loadReadable(
-  pool: pg.Pool,
-  id: string,
-  principal: Principal,
-): Promise<ValuationRow> {
+async function loadReadable(pool: pg.Pool, id: string, principal: Principal): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
   if (!valuation) throw problems.notFound();

@@ -32,10 +32,7 @@ export interface QaCalculation {
 const SEVERITY: Record<QaStatus, number> = { pass: 0, warn: 1, fail: 2 };
 
 export function worstStatus(statuses: QaStatus[]): QaStatus {
-  return statuses.reduce<QaStatus>(
-    (worst, s) => (SEVERITY[s] > SEVERITY[worst] ? s : worst),
-    'pass',
-  );
+  return statuses.reduce<QaStatus>((worst, s) => (SEVERITY[s] > SEVERITY[worst] ? s : worst), 'pass');
 }
 
 const num = (v: unknown): number | null => {

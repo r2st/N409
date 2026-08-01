@@ -168,11 +168,10 @@ export async function runDueCapTableSyncs(deps: {
     due.map((connection) =>
       limit(async () => {
         try {
-          await syncCapTableConnection(
-            { pool: deps.pool, fetchFn },
-            connection,
-            { apply: true, actorId: connection.connected_by ?? connection.id },
-          );
+          await syncCapTableConnection({ pool: deps.pool, fetchFn }, connection, {
+            apply: true,
+            actorId: connection.connected_by ?? connection.id,
+          });
           return true;
         } catch (err) {
           deps.log?.warn({ err, connectionId: connection.id }, 'scheduled cap-table sync failed');
@@ -284,11 +283,10 @@ export function registerCapTableSyncRoutes(app: FastifyInstance, deps: CapTableS
 
       let outcome;
       try {
-        outcome = await syncCapTableConnection(
-          { pool: deps.pool, fetchFn },
-          connection,
-          { apply: body.apply, actorId: principal.id },
-        );
+        outcome = await syncCapTableConnection({ pool: deps.pool, fetchFn }, connection, {
+          apply: body.apply,
+          actorId: principal.id,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw problems.unprocessable(`Sync failed: ${message}`);

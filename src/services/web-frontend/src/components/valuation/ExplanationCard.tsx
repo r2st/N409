@@ -31,10 +31,7 @@ export function ExplanationCard({ valuationId }: { valuationId: string }) {
   if (!explanation) return null;
 
   return (
-    <section
-      data-testid="explanation-card"
-      className="rounded-lg border border-bond-200 bg-bond-50/60 p-5"
-    >
+    <section data-testid="explanation-card" className="rounded-lg border border-bond-200 bg-bond-50/60 p-5">
       <h3 className="overline mb-3 text-bond-700">In plain English</h3>
       <p className="text-sm leading-relaxed whitespace-pre-line text-ink-800">{explanation.summary}</p>
 

@@ -83,9 +83,7 @@ describe('costOfRequest', () => {
   });
 
   it('matches methods case-insensitively', () => {
-    expect(costOfRequest('post', `${VAL}/calculations`)).toBe(
-      costOfRequest('POST', `${VAL}/calculations`),
-    );
+    expect(costOfRequest('post', `${VAL}/calculations`)).toBe(costOfRequest('POST', `${VAL}/calculations`));
   });
 
   it('never returns a negative cost', () => {

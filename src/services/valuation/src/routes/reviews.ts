@@ -55,55 +55,50 @@ export function registerReviewRoutes(
     return { reviews: items, page: q.page, per_page: q.per_page, total };
   });
 
-  app.post(
-    '/api/v1/valuations/:id/review/decision',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      requireOps(principal);
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.notFound();
-      const valuation = await findValuationById(deps.pool, id);
-      if (!valuation) throw problems.notFound();
+  app.post('/api/v1/valuations/:id/review/decision', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    requireOps(principal);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const valuation = await findValuationById(deps.pool, id);
+    if (!valuation) throw problems.notFound();
 
-      const parsed = DecisionBody.safeParse(req.body);
-      if (!parsed.success)
-        throw problems.unprocessable('Invalid decision', { errors: parsed.error.issues });
-      const { decision, comment } = parsed.data;
+    const parsed = DecisionBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid decision', { errors: parsed.error.issues });
+    const { decision, comment } = parsed.data;
 
-      const target = decisionTarget(valuation.state, decision);
-      if (!target) {
-        throw problems.conflict(`'${valuation.state}' is not awaiting a review decision`);
-      }
+    const target = decisionTarget(valuation.state, decision);
+    if (!target) {
+      throw problems.conflict(`'${valuation.state}' is not awaiting a review decision`);
+    }
 
-      await assertPublishGate(deps.pool, valuation.id, target);
-      const actor = { actorType: 'human' as const, actorId: principal.id, source: 'review' };
-      const updated = await patchValuation(deps.pool, valuation, { state: target }, actor);
+    await assertPublishGate(deps.pool, valuation.id, target);
+    const actor = { actorType: 'human' as const, actorId: principal.id, source: 'review' };
+    const updated = await patchValuation(deps.pool, valuation, { state: target }, actor);
 
-      let commentId: string | null = null;
-      if (comment) {
-        const { comment: created } = await createComment(
-          deps.pool,
-          { valuationId: id, kind: 'note', authorId: principal.id, body: comment },
-          actor,
-        );
-        commentId = created.id;
-      }
-      await withTransaction(deps.pool, (client) =>
-        recordEvent(client, {
-          valuationId: id,
-          type: 'review_decision',
-          actor,
-          payload: {
-            decision,
-            from: valuation.state,
-            to: target,
-            ...(commentId ? { comment_id: commentId } : {}),
-          },
-        }),
+    let commentId: string | null = null;
+    if (comment) {
+      const { comment: created } = await createComment(
+        deps.pool,
+        { valuationId: id, kind: 'note', authorId: principal.id, body: comment },
+        actor,
       );
-      await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, target);
-      return { valuation: updated, decision };
-    },
-  );
+      commentId = created.id;
+    }
+    await withTransaction(deps.pool, (client) =>
+      recordEvent(client, {
+        valuationId: id,
+        type: 'review_decision',
+        actor,
+        payload: {
+          decision,
+          from: valuation.state,
+          to: target,
+          ...(commentId ? { comment_id: commentId } : {}),
+        },
+      }),
+    );
+    await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, target);
+    return { valuation: updated, decision };
+  });
 }

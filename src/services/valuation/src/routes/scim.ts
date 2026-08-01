@@ -114,7 +114,11 @@ export function registerScimRoutes(
   app.post('/scim/v2/Users', limited, async (req, reply) => {
     if (!(await requireToken(req, reply))) return;
     const parsed = parseScimUser(req.body);
-    if (!parsed) return reply.status(400).header('content-type', CT).send(scimError(400, 'A userName / email is required'));
+    if (!parsed)
+      return reply
+        .status(400)
+        .header('content-type', CT)
+        .send(scimError(400, 'A userName / email is required'));
 
     const existing = await findUserByEmail(deps.pool, parsed.email);
     if (existing) {
@@ -132,7 +136,9 @@ export function registerScimRoutes(
     return reply
       .status(201)
       .header('content-type', CT)
-      .send(toScimUser({ ...(user as unknown as ScimUserRow), deleted_at: parsed.active ? null : new Date() }));
+      .send(
+        toScimUser({ ...(user as unknown as ScimUserRow), deleted_at: parsed.active ? null : new Date() }),
+      );
   });
 
   // PATCH — the common path is toggling `active` (deprovision / reactivate).

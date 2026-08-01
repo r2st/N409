@@ -139,7 +139,8 @@ function normalizeType(raw: unknown, name: string): CapTableClassType {
   const t = String(raw ?? '').toLowerCase();
   if (CLASS_TYPES.has(t)) return t as CapTableClassType;
   if (/option|pool|isos?|nso/.test(t) || /option|pool/.test(name.toLowerCase())) return 'option';
-  if (/warrant|note|safe|convertible/.test(t + ' ' + name.toLowerCase())) return t.includes('warrant') ? 'warrant' : 'preferred';
+  if (/warrant|note|safe|convertible/.test(t + ' ' + name.toLowerCase()))
+    return t.includes('warrant') ? 'warrant' : 'preferred';
   if (/preferred|series|seed/.test(t + ' ' + name.toLowerCase())) return 'preferred';
   return 'common';
 }
@@ -273,8 +274,7 @@ export async function fetchCapTable(
   const entries = provider === 'carta' ? mapCarta(payload) : mapPulley(payload);
   return {
     provider,
-    external_company_name:
-      (payload.companyName as string | undefined) ?? tokens.externalCompanyName ?? null,
+    external_company_name: (payload.companyName as string | undefined) ?? tokens.externalCompanyName ?? null,
     entries,
     as_of: (payload.asOf as string | undefined) ?? (payload.as_of as string | undefined) ?? null,
   };

@@ -25,9 +25,7 @@ describe.skipIf(!dbUp)('adminPatchUser column allow-list', () => {
       password_digest: string;
       session_epoch: number;
       deleted_at: Date | null;
-    }>('SELECT first_name, password_digest, session_epoch, deleted_at FROM users WHERE id = $1', [
-      id,
-    ]);
+    }>('SELECT first_name, password_digest, session_epoch, deleted_at FROM users WHERE id = $1', [id]);
     return rows[0]!;
   };
 

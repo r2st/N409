@@ -89,12 +89,7 @@ function marketMultiple(r: Results): number | null {
   return num(market.multiple);
 }
 
-function driver(
-  key: string,
-  label: string,
-  from: number | null,
-  to: number | null,
-): BridgeDriver {
+function driver(key: string, label: string, from: number | null, to: number | null): BridgeDriver {
   return { key, label, from, to, delta: from !== null && to !== null ? to - from : null };
 }
 
@@ -125,7 +120,12 @@ export function buildBridge(from: Results, to: Results): ValuationBridge {
       num((to.assumptions as Results | undefined)?.volatility),
     ),
     driver('weight_asset', 'Asset weight', approachWeight(from, 'asset'), approachWeight(to, 'asset')),
-    driver('weight_opm', 'OPM weight', approachWeight(from, 'opm_backsolve'), approachWeight(to, 'opm_backsolve')),
+    driver(
+      'weight_opm',
+      'OPM weight',
+      approachWeight(from, 'opm_backsolve'),
+      approachWeight(to, 'opm_backsolve'),
+    ),
     driver('weight_income', 'Income weight', approachWeight(from, 'income'), approachWeight(to, 'income')),
     driver('weight_market', 'Market weight', approachWeight(from, 'market'), approachWeight(to, 'market')),
     driver('market_multiple', 'Market multiple', marketMultiple(from), marketMultiple(to)),
@@ -148,7 +148,12 @@ export function buildBridge(from: Results, to: Results): ValuationBridge {
       from: eFrom && eFrom > 0 ? baseFrom / eFrom : null,
       to: eTo && eTo > 0 ? baseTo / eTo : null,
     },
-    { key: 'dloc' as const, label: 'Marketability of control (DLOC)', from: 1 - fromD.dloc, to: 1 - toD.dloc },
+    {
+      key: 'dloc' as const,
+      label: 'Marketability of control (DLOC)',
+      from: 1 - fromD.dloc,
+      to: 1 - toD.dloc,
+    },
     { key: 'dlom' as const, label: 'Marketability (DLOM)', from: 1 - fromD.dlom, to: 1 - toD.dlom },
   ];
 
@@ -212,12 +217,7 @@ export function renderBridgeSection(
     `<strong>${usd(bridge.delta)}</strong>${pct}.</p>`;
 
   const factorRows = bridge.decomposable
-    ? bridge.factors
-        .map(
-          (f) =>
-            `<tr><td>${esc(f.label)}</td><td>${usd(f.contribution)}</td></tr>`,
-        )
-        .join('')
+    ? bridge.factors.map((f) => `<tr><td>${esc(f.label)}</td><td>${usd(f.contribution)}</td></tr>`).join('')
     : '';
   const factorTable = bridge.decomposable
     ? `<p>Attribution of the per-share change:</p><table><thead><tr><th>Driver</th>` +

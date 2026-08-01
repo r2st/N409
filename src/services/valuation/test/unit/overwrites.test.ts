@@ -37,7 +37,15 @@ describe('overwrites registry (features.md §3.6)', () => {
   });
 
   it('includes the documented example fields', () => {
-    for (const key of ['industry_id', 'valuation_date', 'exit_timeline', 'currency', 'service_countries', 'yearend', 'bootstrap_assets']) {
+    for (const key of [
+      'industry_id',
+      'valuation_date',
+      'exit_timeline',
+      'currency',
+      'service_countries',
+      'yearend',
+      'bootstrap_assets',
+    ]) {
       expect(OVERWRITE_FIELDS_BY_KEY.has(key), key).toBe(true);
     }
   });

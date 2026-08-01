@@ -13,7 +13,10 @@ const failingTransport: EmailTransport = {
   },
 };
 
-async function seedFailedEmail(ctx: TestApp, overrides: Partial<{ toEmail: string }> = {}): Promise<EmailOutboxRow> {
+async function seedFailedEmail(
+  ctx: TestApp,
+  overrides: Partial<{ toEmail: string }> = {},
+): Promise<EmailOutboxRow> {
   const email = await enqueueEmail(ctx.pool, {
     toEmail: overrides.toEmail ?? 'client@test.example.com',
     templateKey: 'test_template',
@@ -52,11 +55,15 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
 
   it('leaves the row failed and increments attempts when the retry itself fails', async () => {
     const email = await seedFailedEmail(ctx, { toEmail: 'retry-fail@test.example.com' });
-    const before = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find((e) => e.id === email.id)!;
+    const before = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find(
+      (e) => e.id === email.id,
+    )!;
 
     await retryFailedEmails({ pool: ctx.pool, transport: failingTransport });
 
-    const after = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find((e) => e.id === email.id)!;
+    const after = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find(
+      (e) => e.id === email.id,
+    )!;
     expect(after.attempts).toBe(before.attempts + 1);
   });
 
@@ -82,7 +89,9 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     await retryFailedEmails({ pool: ctx.pool, transport, maxAttempts: 3 });
     expect(deliveredIds).not.toContain(email.id);
 
-    const row = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find((e) => e.id === email.id)!;
+    const row = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find(
+      (e) => e.id === email.id,
+    )!;
     expect(row.attempts).toBe(3);
   });
 
@@ -107,7 +116,9 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     });
     expect(deliveredIds).not.toContain(email.id);
 
-    const row = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find((e) => e.id === email.id)!;
+    const row = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find(
+      (e) => e.id === email.id,
+    )!;
     expect(row.status).toBe('failed');
   });
 });

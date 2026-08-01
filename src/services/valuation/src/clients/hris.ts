@@ -157,7 +157,11 @@ export interface HrisPull {
  * expose vesting as {months, cliff, frequency}; sensible 48/12/1 defaults fill
  * gaps (the analyst can adjust after import).
  */
-function mapGrant(raw: Record<string, unknown>, granteeName: string, granteeEmail: string | null): MappedGrant | null {
+function mapGrant(
+  raw: Record<string, unknown>,
+  granteeName: string,
+  granteeEmail: string | null,
+): MappedGrant | null {
   const options = toNum(raw.optionsGranted ?? raw.shares ?? raw.quantity);
   const grantDate = toDate(raw.grantDate ?? raw.issueDate ?? raw.date);
   const externalId = String(raw.id ?? raw.grantId ?? '').trim();
@@ -183,7 +187,10 @@ function mapGrant(raw: Record<string, unknown>, granteeName: string, granteeEmai
  * shapes are close enough that one mapper covers them with lenient field names.
  */
 export function mapEmployees(payload: unknown): { roster: RosterEmployee[]; grants: MappedGrant[] } {
-  const p = payload as { employees?: Array<Record<string, unknown>>; people?: Array<Record<string, unknown>> };
+  const p = payload as {
+    employees?: Array<Record<string, unknown>>;
+    people?: Array<Record<string, unknown>>;
+  };
   const people = p.employees ?? p.people ?? [];
   const roster: RosterEmployee[] = [];
   const grants: MappedGrant[] = [];
@@ -191,18 +198,21 @@ export function mapEmployees(payload: unknown): { roster: RosterEmployee[]; gran
     const name =
       String(emp.fullName ?? emp.name ?? [emp.firstName, emp.lastName].filter(Boolean).join(' ')).trim() ||
       'Unknown';
-    const email = typeof emp.workEmail === 'string' ? emp.workEmail : typeof emp.email === 'string' ? emp.email : null;
+    const email =
+      typeof emp.workEmail === 'string' ? emp.workEmail : typeof emp.email === 'string' ? emp.email : null;
     roster.push({
       external_id: String(emp.id ?? emp.employeeId ?? email ?? name),
       name,
       email,
-      title: typeof emp.title === 'string' ? emp.title : typeof emp.jobTitle === 'string' ? emp.jobTitle : null,
+      title:
+        typeof emp.title === 'string' ? emp.title : typeof emp.jobTitle === 'string' ? emp.jobTitle : null,
       status:
         (typeof emp.status === 'string' && emp.status) ||
         (typeof emp.employmentStatus === 'string' && emp.employmentStatus) ||
         null,
     });
-    const empGrants = (emp.equityGrants ?? emp.grants ?? emp.equity) as Array<Record<string, unknown>> | undefined;
+    const empGrants = (emp.equityGrants ?? emp.grants ?? emp.equity) as
+      Array<Record<string, unknown>> | undefined;
     if (Array.isArray(empGrants)) {
       for (const g of empGrants) {
         const mapped = mapGrant(g, name, email);
@@ -227,8 +237,7 @@ export async function fetchRosterAndGrants(
   const { roster, grants } = mapEmployees(payload);
   return {
     provider,
-    external_company_name:
-      (payload.companyName as string | undefined) ?? tokens.externalCompanyName ?? null,
+    external_company_name: (payload.companyName as string | undefined) ?? tokens.externalCompanyName ?? null,
     roster,
     grants,
   };

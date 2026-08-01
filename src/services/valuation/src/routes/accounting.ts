@@ -65,10 +65,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
   const fetchFn = deps.fetchFn ?? fetch;
   const redirectUri = `${deps.publicBaseUrl}/api/v1/accounting/callback`;
 
-  const loadAuthorizedValuation = async (
-    principal: Principal,
-    id: string,
-  ): Promise<ValuationRow> => {
+  const loadAuthorizedValuation = async (principal: Principal, id: string): Promise<ValuationRow> => {
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
     if (
@@ -81,27 +78,23 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
   };
 
   // Provider availability + this valuation's connections (tokens redacted).
-  app.get(
-    '/api/v1/valuations/:id/accounting',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      const { id } = req.params as { id: string };
-      const valuation = await loadAuthorizedValuation(principal, id);
+  app.get('/api/v1/valuations/:id/accounting', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadAuthorizedValuation(principal, id);
 
-      const connections = await listConnections(deps.pool, valuation.id);
-      const byProvider = new Map(connections.map((c) => [c.provider, c]));
-      return {
-        providers: ACCOUNTING_PROVIDERS.map((provider) => ({
-          provider,
-          label: PROVIDER_LABELS[provider],
-          configured: Boolean(deps.credentials[provider]),
-          import_supported: IMPORT_SUPPORTED.has(provider),
-          connection: byProvider.has(provider) ? toPublic(byProvider.get(provider)!) : null,
-        })),
-      };
-    },
-  );
+    const connections = await listConnections(deps.pool, valuation.id);
+    const byProvider = new Map(connections.map((c) => [c.provider, c]));
+    return {
+      providers: ACCOUNTING_PROVIDERS.map((provider) => ({
+        provider,
+        label: PROVIDER_LABELS[provider],
+        configured: Boolean(deps.credentials[provider]),
+        import_supported: IMPORT_SUPPORTED.has(provider),
+        connection: byProvider.has(provider) ? toPublic(byProvider.get(provider)!) : null,
+      })),
+    };
+  });
 
   app.post(
     '/api/v1/valuations/:id/accounting/:provider/connect',
@@ -216,12 +209,7 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
         const current = await findParams(deps.pool, valuation.id);
         if (current) await patchParams(deps.pool, current, paramsPatch, actor);
       }
-      await applyEngineInputs(
-        deps.pool,
-        valuation.id,
-        { accounting_import: financials },
-        actor,
-      );
+      await applyEngineInputs(deps.pool, valuation.id, { accounting_import: financials }, actor);
       await recordImport(deps.pool, connection.id, financials);
 
       return { imported: financials };

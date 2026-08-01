@@ -109,9 +109,7 @@ describe('SavedViews', () => {
     const picker = await screen.findByRole('combobox', { name: 'Saved view' });
 
     await userEvent.selectOptions(picker, 'sv-1');
-    await waitFor(() =>
-      expect(screen.getByTestId('search')).toHaveTextContent('due_to=2026-08-06'),
-    );
+    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent('due_to=2026-08-06'));
   });
 
   it('will not save an unfiltered list', async () => {
@@ -120,11 +118,7 @@ describe('SavedViews', () => {
   });
 
   it('saves the on-screen filters under a name', async () => {
-    const recorded = renderViews(
-      ['reviewer'],
-      [],
-      '/valuations?state=in_review&kind=409a&page=4',
-    );
+    const recorded = renderViews(['reviewer'], [], '/valuations?state=in_review&kind=409a&page=4');
     await userEvent.click(await screen.findByRole('button', { name: 'Save this view' }));
     await userEvent.type(screen.getByRole('textbox'), 'Review queue');
     await userEvent.click(screen.getByRole('button', { name: 'Save view' }));
@@ -168,7 +162,15 @@ describe('SavedViews', () => {
   it('shows a teammate’s shared view but no controls for it', async () => {
     renderViews(
       ['reviewer'],
-      [view({ id: 'sv-shared', name: 'Unpaid', query: 'paid_status=unpaid', is_owner: false, owner_name: 'Ada' })],
+      [
+        view({
+          id: 'sv-shared',
+          name: 'Unpaid',
+          query: 'paid_status=unpaid',
+          is_owner: false,
+          owner_name: 'Ada',
+        }),
+      ],
       '/valuations?paid_status=unpaid',
     );
     expect(await screen.findByRole('option', { name: /Unpaid — Ada/ })).toBeInTheDocument();

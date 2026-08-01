@@ -14,14 +14,10 @@ export interface EngagementRow {
   updated_at: Date;
 }
 
-export async function findEngagement(
-  pool: pg.Pool,
-  valuationId: string,
-): Promise<EngagementRow | null> {
-  const { rows } = await pool.query<EngagementRow>(
-    'SELECT * FROM engagements WHERE valuation_id = $1',
-    [valuationId],
-  );
+export async function findEngagement(pool: pg.Pool, valuationId: string): Promise<EngagementRow | null> {
+  const { rows } = await pool.query<EngagementRow>('SELECT * FROM engagements WHERE valuation_id = $1', [
+    valuationId,
+  ]);
   return rows[0] ?? null;
 }
 
@@ -113,10 +109,7 @@ export async function assignAnalyst(
   });
 }
 
-export async function stageHistory(
-  pool: pg.Pool,
-  engagementId: string,
-): Promise<StageHistoryEntry[]> {
+export async function stageHistory(pool: pg.Pool, engagementId: string): Promise<StageHistoryEntry[]> {
   const { rows } = await pool.query<StageHistoryEntry>(
     'SELECT stage, entered_at FROM engagement_stage_history WHERE engagement_id = $1 ORDER BY entered_at',
     [engagementId],

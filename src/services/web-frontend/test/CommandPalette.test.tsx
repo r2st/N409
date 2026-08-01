@@ -135,9 +135,7 @@ describe('CommandPalette', () => {
     await open();
     await userEvent.type(screen.getByRole('textbox', { name: 'Search commands' }), 'workbook');
     await userEvent.click(await screen.findByRole('option', { name: /Workbook/ }));
-    await waitFor(() =>
-      expect(screen.getByTestId('path')).toHaveTextContent('/valuations/v-9001/workbook'),
-    );
+    await waitFor(() => expect(screen.getByTestId('path')).toHaveTextContent('/valuations/v-9001/workbook'));
   });
 
   it('adds live valuation hits below the local commands', async () => {

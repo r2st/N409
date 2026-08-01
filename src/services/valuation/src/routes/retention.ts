@@ -44,10 +44,7 @@ export interface SweepResult {
  * its archive_after_days, skipping any under legal hold. Every decision is
  * logged to retention_actions. Extend here for additional data types.
  */
-export async function runRetentionSweep(
-  pool: pg.Pool,
-  opts: { limit?: number } = {},
-): Promise<SweepResult> {
+export async function runRetentionSweep(pool: pg.Pool, opts: { limit?: number } = {}): Promise<SweepResult> {
   const result: SweepResult = { archived: 0, skipped_hold: 0 };
   const policies = await listPolicies(pool);
   const valPolicy = policies.find((p) => p.data_type === 'valuation');
@@ -114,7 +111,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
     }
     const hold = await placeHold(deps.pool, {
       scope: parsed.data.scope,
-      referenceId: parsed.data.scope === 'global' ? null : parsed.data.reference_id ?? null,
+      referenceId: parsed.data.scope === 'global' ? null : (parsed.data.reference_id ?? null),
       reason: parsed.data.reason,
       placedBy: principal.id,
     });

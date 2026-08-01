@@ -83,7 +83,10 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
 
   const setFrequency = async (provider: Provider, frequency: Frequency) => {
     try {
-      await api(`/valuations/${valuationId}/hris/${provider}/frequency`, { method: 'POST', body: { frequency } });
+      await api(`/valuations/${valuationId}/hris/${provider}/frequency`, {
+        method: 'POST',
+        body: { frequency },
+      });
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not update the cadence.');
@@ -103,7 +106,10 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
   if (!providers) return <Spinner />;
 
   return (
-    <section className="space-y-3 rounded-lg border border-paper-300 bg-surface p-6 shadow-card" data-testid="hris-sync">
+    <section
+      className="space-y-3 rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+      data-testid="hris-sync"
+    >
       <div>
         <h3 className="overline text-ink-400">HRIS / payroll sync</h3>
         <p className="mt-1 text-sm text-ink-400">
@@ -111,7 +117,11 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
         </p>
       </div>
       {error && <ErrorNote>{error}</ErrorNote>}
-      {note && <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">{note}</div>}
+      {note && (
+        <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
+          {note}
+        </div>
+      )}
 
       {providers.map((p) => {
         const connected = p.connection && p.connection.status !== 'revoked';
@@ -123,7 +133,8 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
                 <span className="text-xs text-ink-400">Not configured on this deployment</span>
               ) : connected ? (
                 <span className="rounded-full bg-bond-50 px-2.5 py-0.5 text-xs font-semibold text-bond-700">
-                  Connected{p.connection?.external_company_name ? ` · ${p.connection.external_company_name}` : ''}
+                  Connected
+                  {p.connection?.external_company_name ? ` · ${p.connection.external_company_name}` : ''}
                 </span>
               ) : (
                 <span className="rounded-full bg-paper-100 px-2.5 py-0.5 text-xs font-semibold text-ink-500">
@@ -131,10 +142,16 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
                 </span>
               )}
             </div>
-            {p.connection?.last_error && <p className="mt-2 text-xs text-red-600">Last error: {p.connection.last_error}</p>}
+            {p.connection?.last_error && (
+              <p className="mt-2 text-xs text-red-600">Last error: {p.connection.last_error}</p>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {!connected ? (
-                <Button variant="secondary" disabled={!p.configured || busy === p.provider} onClick={() => connect(p.provider)}>
+                <Button
+                  variant="secondary"
+                  disabled={!p.configured || busy === p.provider}
+                  onClick={() => connect(p.provider)}
+                >
                   Connect {p.label}
                 </Button>
               ) : (
@@ -154,7 +171,11 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
                       <option value="weekly">Weekly</option>
                     </Select>
                   </label>
-                  <Button variant="ghost" disabled={busy === p.provider} onClick={() => disconnect(p.provider)}>
+                  <Button
+                    variant="ghost"
+                    disabled={busy === p.provider}
+                    onClick={() => disconnect(p.provider)}
+                  >
                     Disconnect
                   </Button>
                 </>

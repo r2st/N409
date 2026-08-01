@@ -143,8 +143,7 @@ export function registerAdminUserRoutes(
   /** New partner assignments must reference a live (non-archived) partner. */
   const assertAssignablePartner = async (partnerId: string) => {
     const partner = isUlid(partnerId) ? await findPartnerById(deps.pool, partnerId) : null;
-    if (!partner)
-      throw problems.unprocessable('Unknown partner', { errors: [{ path: ['partner_id'] }] });
+    if (!partner) throw problems.unprocessable('Unknown partner', { errors: [{ path: ['partner_id'] }] });
     if (partner.archived_at)
       throw problems.unprocessable('This partner is archived', { errors: [{ path: ['partner_id'] }] });
   };
@@ -189,8 +188,7 @@ export function registerAdminUserRoutes(
   app.post('/api/v1/users/invite', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireUserAdmin(req);
     const parsed = InviteBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
     const { email, roles, partner_id } = parsed.data;
     assertPartnerScopeConsistent(roles, partner_id ?? null);
     if (partner_id) await assertAssignablePartner(partner_id);
@@ -218,42 +216,28 @@ export function registerAdminUserRoutes(
     return { invitations: (await listInvitations(deps.pool)).map(toInvitation) };
   });
 
-  app.post(
-    '/api/v1/users/invitations/:id/resend',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requireUserAdmin(req);
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.notFound();
+  app.post('/api/v1/users/invitations/:id/resend', { preHandler: app.authenticate }, async (req) => {
+    const principal = requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
 
-      const refreshed = await refreshInvitation(deps.pool, id);
-      if (!refreshed)
-        throw problems.conflict('This invitation was already accepted or revoked');
-      const inviter = await findUserById(deps.pool, principal.id);
-      await sendInviteEmail(
-        req,
-        refreshed.invitation,
-        refreshed.secret,
-        inviter?.email ?? 'An administrator',
-      );
-      await audit(principal.id, 'invitation_resent', 'invitation', id, refreshed.invitation.email);
-      return { invitation: toInvitation(refreshed.invitation) };
-    },
-  );
+    const refreshed = await refreshInvitation(deps.pool, id);
+    if (!refreshed) throw problems.conflict('This invitation was already accepted or revoked');
+    const inviter = await findUserById(deps.pool, principal.id);
+    await sendInviteEmail(req, refreshed.invitation, refreshed.secret, inviter?.email ?? 'An administrator');
+    await audit(principal.id, 'invitation_resent', 'invitation', id, refreshed.invitation.email);
+    return { invitation: toInvitation(refreshed.invitation) };
+  });
 
-  app.delete(
-    '/api/v1/users/invitations/:id',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const principal = requireUserAdmin(req);
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.notFound();
-      const revoked = await revokeInvitation(deps.pool, id);
-      if (!revoked) throw problems.notFound('No pending invitation to revoke');
-      await audit(principal.id, 'invitation_revoked', 'invitation', id, null);
-      return reply.status(204).send();
-    },
-  );
+  app.delete('/api/v1/users/invitations/:id', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const revoked = await revokeInvitation(deps.pool, id);
+    if (!revoked) throw problems.notFound('No pending invitation to revoke');
+    await audit(principal.id, 'invitation_revoked', 'invitation', id, null);
+    return reply.status(204).send();
+  });
 
   app.get('/api/v1/users', { preHandler: app.authenticate }, async (req) => {
     requireUserAdmin(req);
@@ -360,8 +344,7 @@ export function registerAdminUserRoutes(
 
     // Validate the state the patch would leave behind, not just the patch.
     const nextRoles = parsed.data.roles ?? existing.roles;
-    const nextPartnerId =
-      parsed.data.partner_id !== undefined ? parsed.data.partner_id : existing.partner_id;
+    const nextPartnerId = parsed.data.partner_id !== undefined ? parsed.data.partner_id : existing.partner_id;
     assertPartnerScopeConsistent(nextRoles, nextPartnerId);
     if (parsed.data.partner_id && parsed.data.partner_id !== existing.partner_id)
       await assertAssignablePartner(parsed.data.partner_id);
@@ -537,9 +520,7 @@ export function registerAdminUserRoutes(
   app.get('/api/v1/partners', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden();
-    const parsed = z
-      .object({ include_archived: z.coerce.boolean().default(false) })
-      .safeParse(req.query);
+    const parsed = z.object({ include_archived: z.coerce.boolean().default(false) }).safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query');
     return { partners: await listPartners(deps.pool, { includeArchived: parsed.data.include_archived }) };
   });
@@ -573,7 +554,14 @@ export function registerAdminUserRoutes(
   app.post('/api/v1/partners', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireUserAdmin(req);
     const parsed = z
-      .object({ name: z.string().min(1).max(200), key: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/) })
+      .object({
+        name: z.string().min(1).max(200),
+        key: z
+          .string()
+          .min(1)
+          .max(100)
+          .regex(/^[a-z0-9-]+$/),
+      })
       .safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid partner', { errors: parsed.error.issues });
     try {

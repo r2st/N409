@@ -35,8 +35,21 @@ export function FundingHistory({
   const [busy, setBusy] = useState(false);
   const [addingRound, setAddingRound] = useState(false);
   const [addingTxn, setAddingTxn] = useState(false);
-  const [roundForm, setRoundForm] = useState({ name: '', security_type: '', closed_on: '', amount: '', pre_money: '', post_money: '' });
-  const [txnForm, setTxnForm] = useState({ kind: 'issuance', occurred_on: '', shares: '', price: '', counterparty: '' });
+  const [roundForm, setRoundForm] = useState({
+    name: '',
+    security_type: '',
+    closed_on: '',
+    amount: '',
+    pre_money: '',
+    post_money: '',
+  });
+  const [txnForm, setTxnForm] = useState({
+    kind: 'issuance',
+    occurred_on: '',
+    shares: '',
+    price: '',
+    counterparty: '',
+  });
 
   const load = useCallback(async () => {
     try {
@@ -108,7 +121,11 @@ export function FundingHistory({
   return (
     <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-5 text-ink-400">Funding & transaction history</h2>
-      {error && <div className="mb-4"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mb-4">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
 
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-ink-800">Funding rounds</h3>
@@ -119,24 +136,58 @@ export function FundingHistory({
         )}
       </div>
       {addingRound && (
-        <form onSubmit={addRound} className="mt-3 grid gap-4 rounded-md border border-paper-300 bg-paper-50 p-4 sm:grid-cols-3">
+        <form
+          onSubmit={addRound}
+          className="mt-3 grid gap-4 rounded-md border border-paper-300 bg-paper-50 p-4 sm:grid-cols-3"
+        >
           <Field label="Round name">
-            <TextInput value={roundForm.name} onChange={(e) => setRoundForm((f) => ({ ...f, name: e.target.value }))} required placeholder="Series A" />
+            <TextInput
+              value={roundForm.name}
+              onChange={(e) => setRoundForm((f) => ({ ...f, name: e.target.value }))}
+              required
+              placeholder="Series A"
+            />
           </Field>
           <Field label="Security type">
-            <TextInput value={roundForm.security_type} onChange={(e) => setRoundForm((f) => ({ ...f, security_type: e.target.value }))} placeholder="Preferred" />
+            <TextInput
+              value={roundForm.security_type}
+              onChange={(e) => setRoundForm((f) => ({ ...f, security_type: e.target.value }))}
+              placeholder="Preferred"
+            />
           </Field>
           <Field label="Closed on">
-            <TextInput type="date" value={roundForm.closed_on} onChange={(e) => setRoundForm((f) => ({ ...f, closed_on: e.target.value }))} />
+            <TextInput
+              type="date"
+              value={roundForm.closed_on}
+              onChange={(e) => setRoundForm((f) => ({ ...f, closed_on: e.target.value }))}
+            />
           </Field>
           <Field label="Amount raised ($)">
-            <TextInput type="number" min="0" step="any" value={roundForm.amount} onChange={(e) => setRoundForm((f) => ({ ...f, amount: e.target.value }))} />
+            <TextInput
+              type="number"
+              min="0"
+              step="any"
+              value={roundForm.amount}
+              onChange={(e) => setRoundForm((f) => ({ ...f, amount: e.target.value }))}
+            />
           </Field>
           <Field label="Pre-money ($)">
-            <TextInput type="number" min="0" step="any" value={roundForm.pre_money} onChange={(e) => setRoundForm((f) => ({ ...f, pre_money: e.target.value }))} />
+            <TextInput
+              type="number"
+              min="0"
+              step="any"
+              value={roundForm.pre_money}
+              onChange={(e) => setRoundForm((f) => ({ ...f, pre_money: e.target.value }))}
+            />
           </Field>
           <Field label="Post-money ($)">
-            <TextInput type="number" min="0" step="any" value={roundForm.post_money} onChange={(e) => setRoundForm((f) => ({ ...f, post_money: e.target.value }))} />
+            <TextInput
+              type="number"
+              min="0"
+              step="any"
+              value={roundForm.post_money}
+              onChange={(e) => setRoundForm((f) => ({ ...f, post_money: e.target.value }))}
+            />
           </Field>
           <div className="sm:col-span-3">
             <Button type="submit" disabled={busy || !roundForm.name.trim()}>
@@ -145,7 +196,9 @@ export function FundingHistory({
           </div>
         </form>
       )}
-      {rounds && rounds.length === 0 && <p className="mt-2 text-sm text-ink-400">No funding rounds recorded.</p>}
+      {rounds && rounds.length === 0 && (
+        <p className="mt-2 text-sm text-ink-400">No funding rounds recorded.</p>
+      )}
       {rounds && rounds.length > 0 && (
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[560px] text-sm">
@@ -167,14 +220,22 @@ export function FundingHistory({
                     {r.security_type && <span className="ml-2 text-xs text-ink-400">{r.security_type}</span>}
                   </td>
                   <td className="tnum py-2.5 pr-4 text-ink-600">{formatDate(r.closed_on)}</td>
-                  <td className="tnum py-2.5 pr-4 text-right text-ink-900">{formatMoney(r.amount_raised_cents, currency)}</td>
-                  <td className="tnum py-2.5 pr-4 text-right text-ink-600">{formatMoney(r.pre_money_cents, currency)}</td>
-                  <td className="tnum py-2.5 pr-4 text-right text-ink-600">{formatMoney(r.post_money_cents, currency)}</td>
+                  <td className="tnum py-2.5 pr-4 text-right text-ink-900">
+                    {formatMoney(r.amount_raised_cents, currency)}
+                  </td>
+                  <td className="tnum py-2.5 pr-4 text-right text-ink-600">
+                    {formatMoney(r.pre_money_cents, currency)}
+                  </td>
+                  <td className="tnum py-2.5 pr-4 text-right text-ink-600">
+                    {formatMoney(r.post_money_cents, currency)}
+                  </td>
                   {canEdit && (
                     <td className="py-2.5 text-right">
                       <button
                         onClick={() =>
-                          void run(() => api(`/valuations/${valuationId}/rounds/${r.id}`, { method: 'DELETE' }))
+                          void run(() =>
+                            api(`/valuations/${valuationId}/rounds/${r.id}`, { method: 'DELETE' }),
+                          )
                         }
                         className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700"
                       >
@@ -198,9 +259,15 @@ export function FundingHistory({
         )}
       </div>
       {addingTxn && (
-        <form onSubmit={addTxn} className="mt-3 grid gap-4 rounded-md border border-paper-300 bg-paper-50 p-4 sm:grid-cols-3">
+        <form
+          onSubmit={addTxn}
+          className="mt-3 grid gap-4 rounded-md border border-paper-300 bg-paper-50 p-4 sm:grid-cols-3"
+        >
           <Field label="Type">
-            <Select value={txnForm.kind} onChange={(e) => setTxnForm((f) => ({ ...f, kind: e.target.value }))}>
+            <Select
+              value={txnForm.kind}
+              onChange={(e) => setTxnForm((f) => ({ ...f, kind: e.target.value }))}
+            >
               {TRANSACTION_KINDS.map((k) => (
                 <option key={k} value={k}>
                   {TXN_LABELS[k]}
@@ -209,16 +276,36 @@ export function FundingHistory({
             </Select>
           </Field>
           <Field label="Date">
-            <TextInput type="date" value={txnForm.occurred_on} onChange={(e) => setTxnForm((f) => ({ ...f, occurred_on: e.target.value }))} required />
+            <TextInput
+              type="date"
+              value={txnForm.occurred_on}
+              onChange={(e) => setTxnForm((f) => ({ ...f, occurred_on: e.target.value }))}
+              required
+            />
           </Field>
           <Field label="Counterparty">
-            <TextInput value={txnForm.counterparty} onChange={(e) => setTxnForm((f) => ({ ...f, counterparty: e.target.value }))} />
+            <TextInput
+              value={txnForm.counterparty}
+              onChange={(e) => setTxnForm((f) => ({ ...f, counterparty: e.target.value }))}
+            />
           </Field>
           <Field label="Shares">
-            <TextInput type="number" min="0" step="1" value={txnForm.shares} onChange={(e) => setTxnForm((f) => ({ ...f, shares: e.target.value }))} />
+            <TextInput
+              type="number"
+              min="0"
+              step="1"
+              value={txnForm.shares}
+              onChange={(e) => setTxnForm((f) => ({ ...f, shares: e.target.value }))}
+            />
           </Field>
           <Field label="Price / share ($)">
-            <TextInput type="number" min="0" step="any" value={txnForm.price} onChange={(e) => setTxnForm((f) => ({ ...f, price: e.target.value }))} />
+            <TextInput
+              type="number"
+              min="0"
+              step="any"
+              value={txnForm.price}
+              onChange={(e) => setTxnForm((f) => ({ ...f, price: e.target.value }))}
+            />
           </Field>
           <div className="flex items-end">
             <Button type="submit" disabled={busy || !txnForm.occurred_on}>
@@ -249,7 +336,9 @@ export function FundingHistory({
                   <td className="py-2.5 pr-4 font-semibold text-ink-900">{TXN_LABELS[t.kind]}</td>
                   <td className="tnum py-2.5 pr-4 text-ink-600">{formatDate(t.occurred_on)}</td>
                   <td className="tnum py-2.5 pr-4 text-right text-ink-600">{formatNumber(t.shares)}</td>
-                  <td className="tnum py-2.5 pr-4 text-right text-ink-600">{formatMoney(t.price_per_share_cents, currency)}</td>
+                  <td className="tnum py-2.5 pr-4 text-right text-ink-600">
+                    {formatMoney(t.price_per_share_cents, currency)}
+                  </td>
                   <td className="py-2.5 pr-4 text-ink-600">{t.counterparty ?? '—'}</td>
                   {canEdit && (
                     <td className="py-2.5 text-right">

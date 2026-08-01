@@ -1,11 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  DEMO_VIDEO_TITLE,
-  PARTNER_LOGOS,
-  PROOF_POINTS,
-  TESTIMONIALS,
-} from '../../lib/marketing';
+import { DEMO_VIDEO_TITLE, PARTNER_LOGOS, PROOF_POINTS, TESTIMONIALS } from '../../lib/marketing';
 import { siteConfig } from '../../lib/siteConfig';
 
 /**
@@ -207,8 +202,8 @@ export function BookACallSection() {
             Prefer to talk it through?
           </h2>
           <p className="mt-3 max-w-md text-sm leading-relaxed text-ink-600">
-            Talk to a valuation analyst — no sales pitch, just answers about your situation, your
-            timeline, and which report you actually need.
+            Talk to a valuation analyst — no sales pitch, just answers about your situation, your timeline,
+            and which report you actually need.
             {demoVideoUrl ? ' Or watch the two-minute product demo.' : ''}
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-4">

@@ -91,7 +91,11 @@ describe.skipIf(!dbUp)('improvements phase 1', () => {
             ? {
                 summary: 'Your company was valued at $20M, or $2.00 per common share.',
                 methodology: [
-                  { approach: 'Income approach', weight: 0.6, explanation: 'Discounts projected cash flows.' },
+                  {
+                    approach: 'Income approach',
+                    weight: 0.6,
+                    explanation: 'Discounts projected cash flows.',
+                  },
                 ],
                 drivers: ['Revenue growth'],
                 caveats: 'This explanation is informational only.',

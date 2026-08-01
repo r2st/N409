@@ -45,9 +45,9 @@ describe('no placeholder contact details ship to production', () => {
   it('uses no reserved example domains', () => {
     // RFC 2606 reserves .example/.test/.invalid — anything addressed there is
     // guaranteed to bounce.
-    const offenders = FILES.filter(({ text }) =>
-      /@[a-z0-9-]+\.(example|test|invalid)\b/i.test(text),
-    ).map(({ file }) => file);
+    const offenders = FILES.filter(({ text }) => /@[a-z0-9-]+\.(example|test|invalid)\b/i.test(text)).map(
+      ({ file }) => file,
+    );
     expect(offenders).toEqual([]);
   });
 
@@ -87,9 +87,7 @@ describe('headline claims are substantiated', () => {
     // "2× faster than a traditional firm" sat directly above our competitor
     // comparison pages with nothing behind it. Stats must be product facts.
     for (const stat of STATS) {
-      expect(`${stat.value} ${stat.label}`).not.toMatch(
-        /\b(faster|cheaper|better|more accurate)\s+than\b/i,
-      );
+      expect(`${stat.value} ${stat.label}`).not.toMatch(/\b(faster|cheaper|better|more accurate)\s+than\b/i);
     }
   });
 

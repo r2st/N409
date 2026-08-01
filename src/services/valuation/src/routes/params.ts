@@ -89,7 +89,10 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
   const loadValuation = async (principal: Principal, id: string) => {
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
-    if (!valuation || !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })) {
+    if (
+      !valuation ||
+      !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })
+    ) {
       throw problems.notFound();
     }
     return valuation;

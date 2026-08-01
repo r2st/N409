@@ -49,13 +49,8 @@ export async function createPayment(
   return rows[0]!;
 }
 
-export async function findPaymentBySessionId(
-  pool: pg.Pool,
-  sessionId: string,
-): Promise<PaymentRow | null> {
-  const { rows } = await pool.query<PaymentRow>('SELECT * FROM payments WHERE session_id = $1', [
-    sessionId,
-  ]);
+export async function findPaymentBySessionId(pool: pg.Pool, sessionId: string): Promise<PaymentRow | null> {
+  const { rows } = await pool.query<PaymentRow>('SELECT * FROM payments WHERE session_id = $1', [sessionId]);
   return rows[0] ?? null;
 }
 

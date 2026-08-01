@@ -132,9 +132,7 @@ export function renderHeadTags({ title, tags, jsonLd }: HeadTags): string {
   const lines = [`<title>${escapeHtml(title)}</title>`];
   for (const t of tags) {
     const valueAttr = t.tag === 'meta' ? 'content' : 'href';
-    lines.push(
-      `<${t.tag} ${t.key}="${escapeHtml(t.keyValue)}" ${valueAttr}="${escapeHtml(t.value)}" />`,
-    );
+    lines.push(`<${t.tag} ${t.key}="${escapeHtml(t.keyValue)}" ${valueAttr}="${escapeHtml(t.value)}" />`);
   }
   for (const node of jsonLd) {
     lines.push(`<script type="application/ld+json">${serializeJsonLd(node)}</script>`);

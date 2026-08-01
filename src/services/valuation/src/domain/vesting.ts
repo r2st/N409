@@ -21,9 +21,27 @@ export interface VestingTemplate {
 
 /** Built-in templates; 'custom' lets the analyst specify the months directly. */
 export const VESTING_TEMPLATES: readonly VestingTemplate[] = [
-  { key: 'standard_4yr_1yr_cliff', label: '4-year monthly, 1-year cliff', vestingMonths: 48, cliffMonths: 12, frequencyMonths: 1 },
-  { key: 'four_year_no_cliff', label: '4-year monthly, no cliff', vestingMonths: 48, cliffMonths: 0, frequencyMonths: 1 },
-  { key: 'three_year_quarterly', label: '3-year quarterly, 1-year cliff', vestingMonths: 36, cliffMonths: 12, frequencyMonths: 3 },
+  {
+    key: 'standard_4yr_1yr_cliff',
+    label: '4-year monthly, 1-year cliff',
+    vestingMonths: 48,
+    cliffMonths: 12,
+    frequencyMonths: 1,
+  },
+  {
+    key: 'four_year_no_cliff',
+    label: '4-year monthly, no cliff',
+    vestingMonths: 48,
+    cliffMonths: 0,
+    frequencyMonths: 1,
+  },
+  {
+    key: 'three_year_quarterly',
+    label: '3-year quarterly, 1-year cliff',
+    vestingMonths: 36,
+    cliffMonths: 12,
+    frequencyMonths: 3,
+  },
 ] as const;
 
 export function templateByKey(key: string): VestingTemplate | undefined {
@@ -129,7 +147,11 @@ export function vestingTimeline(schedule: VestingSchedule): VestingPoint[] {
   for (let m = freq; m <= schedule.vestingMonths; m += freq) {
     const asOf = new Date(`${addMonths(schedule.vestingStartDate, m)}T00:00:00Z`);
     const status = vestingStatus(schedule, asOf);
-    points.push({ monthOffset: m, date: addMonths(schedule.vestingStartDate, m), cumulativeVested: status.vestedShares });
+    points.push({
+      monthOffset: m,
+      date: addMonths(schedule.vestingStartDate, m),
+      cumulativeVested: status.vestedShares,
+    });
   }
   // Ensure the final point shows full vesting even if the term isn't a clean
   // multiple of the cadence.

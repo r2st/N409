@@ -109,7 +109,12 @@ if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
   emailRetryTimer = setInterval(() => {
     if (retrying) return;
     retrying = true;
-    retryFailedEmails({ pool, ...emailTransports, log: app.log, maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS })
+    retryFailedEmails({
+      pool,
+      ...emailTransports,
+      log: app.log,
+      maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS,
+    })
       .then((r) => {
         if (r.attempted > 0) app.log.info(r, 'email retry sweep');
       })

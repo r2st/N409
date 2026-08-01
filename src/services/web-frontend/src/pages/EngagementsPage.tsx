@@ -100,7 +100,9 @@ export function EngagementsPage() {
                         <KindBadge kind={e.kind as never} />
                       </div>
                       <div className="mt-2 flex items-center justify-between gap-2">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${SLA_TONE[e.sla.level]}`}>
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${SLA_TONE[e.sla.level]}`}
+                        >
                           {e.sla.overdue ? 'Overdue' : hours(e.sla.elapsedHours)}
                         </span>
                         <span className="truncate text-xs text-ink-400">

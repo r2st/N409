@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  opmFmvPerShareCents,
-  sensitivityTables,
-  type OpmInputs,
-} from '../../src/domain/sensitivity.js';
+import { opmFmvPerShareCents, sensitivityTables, type OpmInputs } from '../../src/domain/sensitivity.js';
 
 const BASE: OpmInputs = {
   equityValueCents: 2_000_000_000, // $20M

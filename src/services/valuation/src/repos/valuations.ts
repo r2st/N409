@@ -8,12 +8,7 @@ import {
   type ValuationSource,
   type ValuationState,
 } from '../domain/valuation.js';
-import {
-  OPERATIONS_EVENT_TYPES,
-  STATE_GROUPS,
-  stateGroupOf,
-  type StateGroup,
-} from '../domain/operations.js';
+import { OPERATIONS_EVENT_TYPES, STATE_GROUPS, stateGroupOf, type StateGroup } from '../domain/operations.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import type { ValuationScope } from '../auth/rbac.js';
 
@@ -108,10 +103,7 @@ export async function findValuationById(pool: pg.Pool, id: string): Promise<Valu
  * Ids missing from the result are simply absent from the map — callers already
  * skip monitors whose valuation has been deleted.
  */
-export async function findValuationsByIds(
-  pool: pg.Pool,
-  ids: string[],
-): Promise<Map<string, ValuationRow>> {
+export async function findValuationsByIds(pool: pg.Pool, ids: string[]): Promise<Map<string, ValuationRow>> {
   if (ids.length === 0) return new Map();
   const { rows } = await pool.query<ValuationRow>('SELECT * FROM valuations WHERE id = ANY($1)', [
     [...new Set(ids)],
@@ -119,13 +111,8 @@ export async function findValuationsByIds(
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-export async function findValuationByNumber(
-  pool: pg.Pool,
-  number: number,
-): Promise<ValuationRow | null> {
-  const { rows } = await pool.query<ValuationRow>('SELECT * FROM valuations WHERE number = $1', [
-    number,
-  ]);
+export async function findValuationByNumber(pool: pg.Pool, number: number): Promise<ValuationRow | null> {
+  const { rows } = await pool.query<ValuationRow>('SELECT * FROM valuations WHERE number = $1', [number]);
   return rows[0] ?? null;
 }
 
@@ -317,11 +304,7 @@ export async function listValuations(
 }
 
 /** Stamp the side's read marker; called when a valuation is opened (gap 4). */
-export async function markValuationRead(
-  pool: pg.Pool,
-  id: string,
-  side: 'admin' | 'user',
-): Promise<void> {
+export async function markValuationRead(pool: pg.Pool, id: string, side: 'admin' | 'user'): Promise<void> {
   const column = side === 'admin' ? 'admin_read_at' : 'user_read_at';
   await pool.query(`UPDATE valuations SET ${column} = now() WHERE id = $1`, [id]);
 }

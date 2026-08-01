@@ -3,7 +3,14 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
-import { DOCUMENT_KIND_LABELS, formatBytes, formatMoney, AI_PIPELINE_META, TASK_KIND_LABELS, TASK_STATUS_LABELS } from '../../lib/pipeline';
+import {
+  DOCUMENT_KIND_LABELS,
+  formatBytes,
+  formatMoney,
+  AI_PIPELINE_META,
+  TASK_KIND_LABELS,
+  TASK_STATUS_LABELS,
+} from '../../lib/pipeline';
 import type { AiPipeline, DocumentKind, ReviewTaskKind, ReviewTaskStatus } from '../../lib/pipeline';
 import { ErrorNote, Spinner } from '../../components/ui';
 import { useWorkspace } from './ValuationWorkspace';
@@ -18,10 +25,20 @@ interface PackageDocument {
 
 interface PackageData {
   valuation: Record<string, unknown>;
-  company_profile: { legal_name: string | null; industry: string | null; employee_count: number | null } | null;
+  company_profile: {
+    legal_name: string | null;
+    industry: string | null;
+    employee_count: number | null;
+  } | null;
   params: Record<string, unknown> | null;
   documents: PackageDocument[];
-  ai_jobs: Array<{ id: string; pipeline: AiPipeline; status: string; model: string | null; created_at: string }>;
+  ai_jobs: Array<{
+    id: string;
+    pipeline: AiPipeline;
+    status: string;
+    model: string | null;
+    created_at: string;
+  }>;
   calculations: Array<{
     id: string;
     status: string;
@@ -40,7 +57,12 @@ interface PackageData {
     versions: Array<{ version: number; created_at: string; has_pdf: boolean }>;
   } | null;
   tasks: Array<{ id: string; kind: ReviewTaskKind; title: string; status: ReviewTaskStatus }>;
-  funding_rounds: Array<{ id: string; name: string; closed_on: string | null; amount_raised_cents: number | null }>;
+  funding_rounds: Array<{
+    id: string;
+    name: string;
+    closed_on: string | null;
+    amount_raised_cents: number | null;
+  }>;
   transactions: Array<{ id: string; kind: string; occurred_on: string }>;
 }
 
@@ -59,10 +81,7 @@ function Node({
   children: ReactNode;
 }) {
   return (
-    <details
-      open={defaultOpen}
-      className="group rounded-lg border border-paper-300 bg-surface shadow-card"
-    >
+    <details open={defaultOpen} className="group rounded-lg border border-paper-300 bg-surface shadow-card">
       <summary className="flex cursor-pointer items-center gap-3 px-5 py-3.5 select-none">
         <svg
           width="12"
@@ -132,17 +151,15 @@ export function PackageTab() {
   const base = `/valuations/${valuation.id}`;
   const currency = (valuation.currency as string) ?? 'USD';
   const paramsSet = pkg.params
-    ? Object.entries(pkg.params).filter(
-        ([k, v]) => v !== null && !['valuation_id', 'updated_at'].includes(k),
-      )
+    ? Object.entries(pkg.params).filter(([k, v]) => v !== null && !['valuation_id', 'updated_at'].includes(k))
     : [];
   const latestCalc = pkg.calculations.find((c) => c.status === 'succeeded');
 
   return (
     <div className="space-y-4">
       <p className="max-w-2xl text-sm text-ink-500">
-        The complete engagement package — every artifact attached to this valuation, in one place.
-        Sections link to their working tabs.
+        The complete engagement package — every artifact attached to this valuation, in one place. Sections
+        link to their working tabs.
       </p>
 
       <Node label="Company profile" count={pkg.company_profile ? 1 : 0} to={`${base}/company`} defaultOpen>
@@ -268,11 +285,7 @@ export function PackageTab() {
         )}
       </Node>
 
-      <Node
-        label="Report"
-        count={pkg.report ? pkg.report.versions.length : 0}
-        to={`${base}/report`}
-      >
+      <Node label="Report" count={pkg.report ? pkg.report.versions.length : 0} to={`${base}/report`}>
         {pkg.report ? (
           <div>
             <p className="text-sm text-ink-700">

@@ -44,10 +44,9 @@ const verify = (ctx: TestApp, token: string) =>
   ctx.app.inject({ method: 'POST', url: '/api/v1/auth/verify-email', payload: { token } });
 
 const isVerified = async (ctx: TestApp, userId: string): Promise<boolean> => {
-  const { rows } = await ctx.pool.query<{ verified: boolean }>(
-    'SELECT verified FROM users WHERE id = $1',
-    [userId],
-  );
+  const { rows } = await ctx.pool.query<{ verified: boolean }>('SELECT verified FROM users WHERE id = $1', [
+    userId,
+  ]);
   return rows[0]!.verified;
 };
 

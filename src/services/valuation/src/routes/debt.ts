@@ -123,7 +123,10 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     await loadInstrument(id);
     const parsed = UpdateBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid update', { errors: parsed.error.issues });
-    const instrument = await updateInstrument(deps.pool, id, { name: parsed.data.name, params: parsed.data.params });
+    const instrument = await updateInstrument(deps.pool, id, {
+      name: parsed.data.name,
+      params: parsed.data.params,
+    });
     return { instrument };
   });
 
@@ -132,7 +135,8 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadInstrument(id);
     const parsed = CreditTermsBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid credit terms', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid credit terms', { errors: parsed.error.issues });
     const b = parsed.data;
     const creditTerms = await upsertCreditTerms(deps.pool, id, {
       rating: b.rating ?? null,
@@ -150,7 +154,8 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     const instrument = await loadInstrument(id);
     const parsed = ValueBody.safeParse(req.body ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid value request', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid value request', { errors: parsed.error.issues });
 
     // Engine params = stored instrument params + credit terms (for the credit-
     // spread path) + the caller's per-run overrides.

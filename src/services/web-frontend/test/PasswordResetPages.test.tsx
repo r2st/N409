@@ -94,7 +94,11 @@ describe('ResetPasswordPage', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).endsWith('/auth/reset-password'))
         return jsonResponse(
-          { title: 'Bad Request', status: 400, detail: 'This reset link is invalid, expired, or already used' },
+          {
+            title: 'Bad Request',
+            status: 400,
+            detail: 'This reset link is invalid, expired, or already used',
+          },
           400,
         );
       throw new Error(`unexpected fetch ${String(url)}`);

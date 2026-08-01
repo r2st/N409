@@ -241,10 +241,10 @@ export async function deleteTransaction(
   actor: EventActor,
 ): Promise<boolean> {
   return withTransaction(pool, async (client) => {
-    const res = await client.query(
-      'DELETE FROM valuation_transactions WHERE id = $1 AND valuation_id = $2',
-      [transactionId, valuationId],
-    );
+    const res = await client.query('DELETE FROM valuation_transactions WHERE id = $1 AND valuation_id = $2', [
+      transactionId,
+      valuationId,
+    ]);
     if ((res.rowCount ?? 0) === 0) return false;
     await recordEvent(client, {
       valuationId,

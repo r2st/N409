@@ -28,16 +28,16 @@ export async function stageTotpSecret(pool: pg.Pool, userId: string, secretBase3
 export async function confirmTotpEnrollment(pool: pg.Pool, userId: string): Promise<string[]> {
   const codes = generateBackupCodes();
   await withTransaction(pool, async (client) => {
-    await client.query(
-      `UPDATE users SET totp_enabled = true, totp_confirmed_at = now() WHERE id = $1`,
-      [userId],
-    );
+    await client.query(`UPDATE users SET totp_enabled = true, totp_confirmed_at = now() WHERE id = $1`, [
+      userId,
+    ]);
     await client.query('DELETE FROM mfa_backup_codes WHERE user_id = $1', [userId]);
     for (const code of codes) {
-      await client.query(
-        `INSERT INTO mfa_backup_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`,
-        [newUlid(), userId, hashBackupCode(code)],
-      );
+      await client.query(`INSERT INTO mfa_backup_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`, [
+        newUlid(),
+        userId,
+        hashBackupCode(code),
+      ]);
     }
   });
   return codes;
@@ -61,10 +61,11 @@ export async function regenerateBackupCodes(pool: pg.Pool, userId: string): Prom
   await withTransaction(pool, async (client) => {
     await client.query('DELETE FROM mfa_backup_codes WHERE user_id = $1', [userId]);
     for (const code of codes) {
-      await client.query(
-        `INSERT INTO mfa_backup_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`,
-        [newUlid(), userId, hashBackupCode(code)],
-      );
+      await client.query(`INSERT INTO mfa_backup_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`, [
+        newUlid(),
+        userId,
+        hashBackupCode(code),
+      ]);
     }
   });
   return codes;

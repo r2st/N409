@@ -58,8 +58,7 @@ export function OrgAssignmentCard({ valuationId }: { valuationId: string }) {
       <h2 className="overline mb-4 text-ink-400">Portfolio</h2>
       {orgs.length === 0 ? (
         <p className="text-sm text-ink-400">
-          Create an organization on the Portfolio page to group this entity into a fund or holding
-          company.
+          Create an organization on the Portfolio page to group this entity into a fund or holding company.
         </p>
       ) : (
         <div className="space-y-3">

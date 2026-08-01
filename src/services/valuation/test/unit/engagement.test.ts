@@ -70,7 +70,12 @@ describe('engagement', () => {
       // kickoff took 48h vs 24h SLA → breach
       expect(durations[0]).toMatchObject({ stage: 'kickoff', actualHours: 48, breachedSla: true });
       // data_collection open 12h so far, no breach
-      expect(durations[1]).toMatchObject({ stage: 'data_collection', actualHours: 12, breachedSla: false, exitedAt: null });
+      expect(durations[1]).toMatchObject({
+        stage: 'data_collection',
+        actualHours: 12,
+        breachedSla: false,
+        exitedAt: null,
+      });
     });
   });
 });

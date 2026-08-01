@@ -75,13 +75,10 @@ describe('HelpWidget', () => {
     expect(send).toBeDisabled(); // empty form can't submit
 
     await user.type(screen.getByPlaceholderText('What do you need help with?'), 'Upload fails');
-    await user.type(
-      screen.getByPlaceholderText(/Tell us what happened/),
-      'The cap table upload errors out.',
-    );
+    await user.type(screen.getByPlaceholderText(/Tell us what happened/), 'The cap table upload errors out.');
     await user.click(send);
 
-    await waitFor(() => expect(screen.getByText('Thanks — we\'re on it.')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Thanks — we're on it.")).toBeInTheDocument());
     expect(fetchSpy).toHaveBeenCalledWith(
       '/api/v1/support/messages',
       expect.objectContaining({ method: 'POST' }),

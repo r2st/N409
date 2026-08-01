@@ -56,8 +56,8 @@ export function EmailOutboxPage() {
           <div className="overline text-ink-400">Operations</div>
           <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Email outbox</h1>
           <p className="mt-1 text-sm text-ink-400">
-            Transactional emails queued by workflow events. Failed sends are retried automatically
-            by the outbox worker.
+            Transactional emails queued by workflow events. Failed sends are retried automatically by the
+            outbox worker.
           </p>
         </div>
         <Button variant="secondary" onClick={() => void load()}>

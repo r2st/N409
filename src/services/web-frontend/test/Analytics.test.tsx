@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
 import { Analytics } from '../src/components/Analytics';
-import {
-  CONSENT_STORAGE_KEY,
-  ConsentProvider,
-  type ConsentValue,
-} from '../src/lib/consent';
+import { CONSENT_STORAGE_KEY, ConsentProvider, type ConsentValue } from '../src/lib/consent';
 import type { AnalyticsConfig } from '../src/lib/analytics';
 
 const CONFIG: AnalyticsConfig = { gtmId: 'GTM-GATE', ga4Id: '', fbPixelId: '' };

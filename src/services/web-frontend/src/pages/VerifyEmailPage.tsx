@@ -42,8 +42,7 @@ export function VerifyEmailPage() {
       } catch (err) {
         setState({
           kind: 'error',
-          message:
-            err instanceof ApiError ? err.message : 'Something went wrong — please try again.',
+          message: err instanceof ApiError ? err.message : 'Something went wrong — please try again.',
         });
       }
     })();
@@ -78,10 +77,13 @@ export function VerifyEmailPage() {
 
   if (state.kind === 'missing') {
     return (
-      <AuthShell title="Verification link invalid" subtitle="This page needs a link from a verification email.">
+      <AuthShell
+        title="Verification link invalid"
+        subtitle="This page needs a link from a verification email."
+      >
         <p className="text-sm text-ink-600">
-          The verification link is missing or incomplete. Sign in and request a fresh link from your
-          account settings.
+          The verification link is missing or incomplete. Sign in and request a fresh link from your account
+          settings.
         </p>
         <p className="mt-8 text-center text-sm text-ink-400">
           <Link to="/login" className="font-semibold text-bond-600 hover:text-bond-700">
@@ -96,8 +98,8 @@ export function VerifyEmailPage() {
     <AuthShell title="Verification failed" subtitle="This link didn’t work.">
       <ErrorNote>{state.message}</ErrorNote>
       <p className="mt-6 text-sm text-ink-600">
-        Verification links expire after 24 hours and can be used once. Sign in and request a fresh
-        link from your account settings.
+        Verification links expire after 24 hours and can be used once. Sign in and request a fresh link from
+        your account settings.
       </p>
       <p className="mt-8 text-center text-sm text-ink-400">
         <Link to="/login" className="font-semibold text-bond-600 hover:text-bond-700">

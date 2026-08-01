@@ -54,8 +54,7 @@ export function registerContactRoutes(
       );
     }
     const parsed = CreateBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid message', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid message', { errors: parsed.error.issues });
     const submission = await createContactSubmission(deps.pool, {
       name: parsed.data.name,
       email: parsed.data.email,
@@ -81,12 +80,7 @@ export function registerContactRoutes(
     if (!isUlid(id)) throw problems.notFound();
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
-    const submission = await setContactSubmissionStatus(
-      deps.pool,
-      id,
-      parsed.data.status,
-      principal.id,
-    );
+    const submission = await setContactSubmissionStatus(deps.pool, id, parsed.data.status, principal.id);
     if (!submission) throw problems.notFound();
     return { submission };
   });

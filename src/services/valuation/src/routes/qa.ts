@@ -120,9 +120,7 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       latestSucceededCalculation(deps.pool, id),
     ]);
     // Which review (if any) currently satisfies the publish gate.
-    const current = calculation
-      ? (reviews.find((r) => r.calculation_id === calculation.id) ?? null)
-      : null;
+    const current = calculation ? (reviews.find((r) => r.calculation_id === calculation.id) ?? null) : null;
     return {
       reviews,
       latest_calculation_id: calculation?.id ?? null,

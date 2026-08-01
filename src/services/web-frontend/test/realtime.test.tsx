@@ -68,9 +68,7 @@ describe('CommentsSection live refresh', () => {
   );
 
   it('re-fetches the thread when refreshKey bumps (SSE comment push)', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse({ comments: [] }));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ comments: [] }));
     const commentCalls = () =>
       fetchMock.mock.calls.filter(([url]) => String(url).includes('/valuations/v1/comments'));
 

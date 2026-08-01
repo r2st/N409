@@ -75,24 +75,28 @@ describe('OPM sensitivity math (M4 #19)', () => {
   });
 
   it('returns zero for zero or negative commonShares instead of Infinity', () => {
-    expect(opmFmvPerShareCents({
-      equityValueCents: 100_000,
-      strikeCents: 50_000,
-      volatility: 0.5,
-      termYears: 3,
-      riskFreeRate: 0.04,
-      commonShares: 0,
-      dlom: 0.25,
-    })).toBe(0);
-    expect(opmFmvPerShareCents({
-      equityValueCents: 100_000,
-      strikeCents: 50_000,
-      volatility: 0.5,
-      termYears: 3,
-      riskFreeRate: 0.04,
-      commonShares: -100,
-      dlom: 0.25,
-    })).toBe(0);
+    expect(
+      opmFmvPerShareCents({
+        equityValueCents: 100_000,
+        strikeCents: 50_000,
+        volatility: 0.5,
+        termYears: 3,
+        riskFreeRate: 0.04,
+        commonShares: 0,
+        dlom: 0.25,
+      }),
+    ).toBe(0);
+    expect(
+      opmFmvPerShareCents({
+        equityValueCents: 100_000,
+        strikeCents: 50_000,
+        volatility: 0.5,
+        termYears: 3,
+        riskFreeRate: 0.04,
+        commonShares: -100,
+        dlom: 0.25,
+      }),
+    ).toBe(0);
   });
 
   it('clamps DLOM to [0, 0.99] so FMV never goes negative', () => {

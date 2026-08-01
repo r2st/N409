@@ -112,10 +112,7 @@ describe.skipIf(!dbUp)('improvement 4 — realtime presence + comment stream (SS
   it('streams presence joins/leaves and live comment events to co-viewers', async () => {
     const owner = await openStream(base, valuationId, client.token);
     expect(owner.status).toBe(200);
-    const solo = await until(
-      () => owner.events.find((e) => e.event === 'presence'),
-      'owner presence',
-    );
+    const solo = await until(() => owner.events.find((e) => e.event === 'presence'), 'owner presence');
     expect(solo.data.viewers).toHaveLength(1);
 
     // Second viewer joins → both ends see two viewers.
@@ -141,10 +138,7 @@ describe.skipIf(!dbUp)('improvement 4 — realtime presence + comment stream (SS
     expect(posted.statusCode).toBe(201);
     const commentId = posted.json().comment.id;
     for (const stream of [owner, reviewer]) {
-      const ev = await until(
-        () => stream.events.find((e) => e.event === 'comment'),
-        'comment event',
-      );
+      const ev = await until(() => stream.events.find((e) => e.event === 'comment'), 'comment event');
       expect(ev.data).toEqual({ comment_id: commentId, kind: 'chat' });
     }
 
@@ -168,10 +162,7 @@ describe.skipIf(!dbUp)('improvement 4 — realtime presence + comment stream (SS
   it('one presence badge per user, however many tabs they have open', async () => {
     const tab1 = await openStream(base, valuationId, client.token);
     const tab2 = await openStream(base, valuationId, client.token);
-    await until(
-      () => tab2.events.find((e) => e.event === 'presence'),
-      'presence on the second tab',
-    );
+    await until(() => tab2.events.find((e) => e.event === 'presence'), 'presence on the second tab');
     const last = tab2.events.filter((e) => e.event === 'presence').at(-1)!;
     expect(last.data.viewers).toHaveLength(1);
     expect(last.data.viewers[0].user_id).toBe(client.id);

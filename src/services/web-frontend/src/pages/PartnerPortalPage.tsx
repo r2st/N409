@@ -7,7 +7,16 @@ import { useAuth } from '../lib/auth';
 import { computeStats } from '../lib/stats';
 import { formatDate, formatDateTime } from '../lib/format';
 import type { ApiToken, PartnerBranding, Valuation, ValuationList } from '../lib/types';
-import { Button, EmptyState, ErrorNote, KindBadge, Spinner, StatCard, StateBadge, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  KindBadge,
+  Spinner,
+  StatCard,
+  StateBadge,
+  TextInput,
+} from '../components/ui';
 
 /**
  * M3 feature 12 — the partner portal. Everything here is server-scoped to the
@@ -108,7 +117,11 @@ export function PartnerPortalPage() {
         Valuations across your organisation — scoped to your partnership.
       </p>
 
-      {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-6">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {!valuations && !error && <Spinner />}
 
       {stats && (
@@ -175,7 +188,11 @@ export function PartnerPortalPage() {
             </code>
           </p>
 
-          {tokenError && <div className="mt-4"><ErrorNote>{tokenError}</ErrorNote></div>}
+          {tokenError && (
+            <div className="mt-4">
+              <ErrorNote>{tokenError}</ErrorNote>
+            </div>
+          )}
 
           {minted && (
             <div className="mt-4 rounded-md border border-bond-200 bg-bond-50 px-4 py-3 text-sm text-bond-700">
@@ -214,45 +231,43 @@ export function PartnerPortalPage() {
           {tokens && tokens.length > 0 && (
             <div className="mt-5 overflow-x-auto">
               <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-paper-300 text-left">
-                  <th className="overline py-2 pr-4 font-semibold text-ink-400">Name</th>
-                  <th className="overline py-2 pr-4 font-semibold text-ink-400">Prefix</th>
-                  <th className="overline py-2 pr-4 font-semibold text-ink-400">Created</th>
-                  <th className="overline py-2 pr-4 font-semibold text-ink-400">Last used</th>
-                  <th className="overline py-2 font-semibold text-ink-400">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tokens.map((t) => (
-                  <tr key={t.id} className="border-b border-paper-200 last:border-0">
-                    <td className="py-2.5 pr-4 font-semibold text-ink-900">{t.name}</td>
-                    <td className="tnum py-2.5 pr-4 font-mono text-xs text-ink-600">{t.token_prefix}…</td>
-                    <td className="tnum py-2.5 pr-4 text-ink-600">{formatDate(t.created_at)}</td>
-                    <td className="tnum py-2.5 pr-4 text-ink-600">
-                      {t.last_used_at ? formatDateTime(t.last_used_at) : 'Never'}
-                    </td>
-                    <td className="py-2.5">
-                      {t.revoked_at ? (
-                        <span className="text-xs font-semibold text-ink-300">Revoked</span>
-                      ) : (
-                        <button
-                          onClick={() => revoke(t)}
-                          className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700"
-                        >
-                          Revoke
-                        </button>
-                      )}
-                    </td>
+                <thead>
+                  <tr className="border-b border-paper-300 text-left">
+                    <th className="overline py-2 pr-4 font-semibold text-ink-400">Name</th>
+                    <th className="overline py-2 pr-4 font-semibold text-ink-400">Prefix</th>
+                    <th className="overline py-2 pr-4 font-semibold text-ink-400">Created</th>
+                    <th className="overline py-2 pr-4 font-semibold text-ink-400">Last used</th>
+                    <th className="overline py-2 font-semibold text-ink-400">Status</th>
                   </tr>
-                ))}
-              </tbody>
+                </thead>
+                <tbody>
+                  {tokens.map((t) => (
+                    <tr key={t.id} className="border-b border-paper-200 last:border-0">
+                      <td className="py-2.5 pr-4 font-semibold text-ink-900">{t.name}</td>
+                      <td className="tnum py-2.5 pr-4 font-mono text-xs text-ink-600">{t.token_prefix}…</td>
+                      <td className="tnum py-2.5 pr-4 text-ink-600">{formatDate(t.created_at)}</td>
+                      <td className="tnum py-2.5 pr-4 text-ink-600">
+                        {t.last_used_at ? formatDateTime(t.last_used_at) : 'Never'}
+                      </td>
+                      <td className="py-2.5">
+                        {t.revoked_at ? (
+                          <span className="text-xs font-semibold text-ink-300">Revoked</span>
+                        ) : (
+                          <button
+                            onClick={() => revoke(t)}
+                            className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700"
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
               </table>
             </div>
           )}
-          {tokens && tokens.length === 0 && (
-            <p className="mt-5 text-sm text-ink-400">No tokens yet.</p>
-          )}
+          {tokens && tokens.length === 0 && <p className="mt-5 text-sm text-ink-400">No tokens yet.</p>}
         </section>
       )}
     </div>

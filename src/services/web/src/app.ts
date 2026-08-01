@@ -86,9 +86,7 @@ export function loadPrerenderManifest(staticRoot: string): Map<string, string> {
     const routes = (parsed as { routes?: Record<string, unknown> }).routes;
     if (!routes || typeof routes !== 'object') return new Map();
     return new Map(
-      Object.entries(routes).filter(
-        (entry): entry is [string, string] => typeof entry[1] === 'string',
-      ),
+      Object.entries(routes).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
     );
   } catch {
     return new Map();

@@ -65,7 +65,11 @@ export function AdminRetentionPage() {
     try {
       await api(`/admin/retention/policies/${p.data_type}`, {
         method: 'PUT',
-        body: { archive_after_days: p.archive_after_days, retention_days: p.retention_days, enabled: p.enabled },
+        body: {
+          archive_after_days: p.archive_after_days,
+          retention_days: p.retention_days,
+          enabled: p.enabled,
+        },
       });
       await load();
     } catch (err) {
@@ -116,13 +120,23 @@ export function AdminRetentionPage() {
         <HelpIcon article="data-retention-overview" />
       </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Data retention</h1>
-      {error && <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>}
-      {note && <div className="mt-4 rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">{note}</div>}
+      {error && (
+        <div className="mt-4">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+      {note && (
+        <div className="mt-4 rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
+          {note}
+        </div>
+      )}
 
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="overline text-ink-400">Retention policies</h2>
-          <Button variant="secondary" onClick={runSweep}>Run archival sweep</Button>
+          <Button variant="secondary" onClick={runSweep}>
+            Run archival sweep
+          </Button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[600px] text-sm">
@@ -144,7 +158,9 @@ export function AdminRetentionPage() {
                       type="number"
                       value={p.archive_after_days ?? ''}
                       onChange={(e) =>
-                        setPolicy(p.data_type, { archive_after_days: e.target.value === '' ? null : Number(e.target.value) })
+                        setPolicy(p.data_type, {
+                          archive_after_days: e.target.value === '' ? null : Number(e.target.value),
+                        })
                       }
                       className="w-24"
                     />
@@ -154,7 +170,9 @@ export function AdminRetentionPage() {
                       type="number"
                       value={p.retention_days ?? ''}
                       onChange={(e) =>
-                        setPolicy(p.data_type, { retention_days: e.target.value === '' ? null : Number(e.target.value) })
+                        setPolicy(p.data_type, {
+                          retention_days: e.target.value === '' ? null : Number(e.target.value),
+                        })
                       }
                       className="w-24"
                     />
@@ -167,7 +185,10 @@ export function AdminRetentionPage() {
                     />
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <button onClick={() => savePolicy(p)} className="text-sm font-semibold text-bond-600 hover:text-bond-700">
+                    <button
+                      onClick={() => savePolicy(p)}
+                      className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+                    >
                       Save
                     </button>
                   </td>
@@ -183,7 +204,11 @@ export function AdminRetentionPage() {
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-sm">
             <span className="overline mb-1 block text-ink-400">Scope</span>
-            <Select value={holdForm.scope} onChange={(e) => setHoldForm((f) => ({ ...f, scope: e.target.value }))} aria-label="Hold scope">
+            <Select
+              value={holdForm.scope}
+              onChange={(e) => setHoldForm((f) => ({ ...f, scope: e.target.value }))}
+              aria-label="Hold scope"
+            >
               <option value="valuation">Valuation</option>
               <option value="user">User</option>
               <option value="global">Global</option>
@@ -192,26 +217,42 @@ export function AdminRetentionPage() {
           {holdForm.scope !== 'global' && (
             <label className="text-sm">
               <span className="overline mb-1 block text-ink-400">Reference ID</span>
-              <TextInput value={holdForm.reference_id} onChange={(e) => setHoldForm((f) => ({ ...f, reference_id: e.target.value }))} placeholder="valuation / user id" />
+              <TextInput
+                value={holdForm.reference_id}
+                onChange={(e) => setHoldForm((f) => ({ ...f, reference_id: e.target.value }))}
+                placeholder="valuation / user id"
+              />
             </label>
           )}
           <label className="text-sm flex-1">
             <span className="overline mb-1 block text-ink-400">Reason</span>
-            <TextInput value={holdForm.reason} onChange={(e) => setHoldForm((f) => ({ ...f, reason: e.target.value }))} placeholder="e.g. IRS audit 2026" />
+            <TextInput
+              value={holdForm.reason}
+              onChange={(e) => setHoldForm((f) => ({ ...f, reason: e.target.value }))}
+              placeholder="e.g. IRS audit 2026"
+            />
           </label>
-          <Button disabled={!holdForm.reason.trim()} onClick={placeHold}>Place hold</Button>
+          <Button disabled={!holdForm.reason.trim()} onClick={placeHold}>
+            Place hold
+          </Button>
         </div>
         {holds.length > 0 && (
           <table className="mt-4 w-full text-sm">
             <tbody>
               {holds.map((h) => (
                 <tr key={h.id} className="border-b border-paper-200 last:border-0">
-                  <td className="px-2 py-2 font-semibold text-ink-800">{h.scope}{h.reference_id ? ` · ${h.reference_id}` : ''}</td>
+                  <td className="px-2 py-2 font-semibold text-ink-800">
+                    {h.scope}
+                    {h.reference_id ? ` · ${h.reference_id}` : ''}
+                  </td>
                   <td className="px-2 py-2 text-ink-600">{h.reason}</td>
                   <td className="px-2 py-2 text-ink-500">{h.active ? 'Active' : 'Released'}</td>
                   <td className="px-2 py-2 text-right">
                     {h.active && (
-                      <button onClick={() => releaseHold(h.id)} className="text-sm font-semibold text-red-600 hover:text-red-700">
+                      <button
+                        onClick={() => releaseHold(h.id)}
+                        className="text-sm font-semibold text-red-600 hover:text-red-700"
+                      >
                         Release
                       </button>
                     )}
@@ -231,7 +272,9 @@ export function AdminRetentionPage() {
           <ul className="space-y-1.5 text-sm">
             {actions.slice(0, 50).map((a) => (
               <li key={a.id} className="flex items-center gap-3">
-                <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${a.action === 'archived' ? 'bg-paper-100 text-ink-700' : 'bg-amber-50 text-amber-800'}`}>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-xs font-semibold ${a.action === 'archived' ? 'bg-paper-100 text-ink-700' : 'bg-amber-50 text-amber-800'}`}
+                >
                   {a.action}
                 </span>
                 <span className="text-ink-600">{a.data_type}</span>

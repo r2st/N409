@@ -63,7 +63,9 @@ export function PaletteTrigger({ onNavigate }: { onNavigate?: () => void }) {
           </svg>
         </span>
         <span className="flex-1">Jump to…</span>
-        <kbd className="rounded border border-chrome-600 px-1.5 py-0.5 text-[0.6rem] text-chrome-faint">⌘K</kbd>
+        <kbd className="rounded border border-chrome-600 px-1.5 py-0.5 text-[0.6rem] text-chrome-faint">
+          ⌘K
+        </kbd>
       </button>
     </div>
   );
@@ -243,7 +245,14 @@ export function CommandPalette() {
       >
         <div className="flex items-center gap-3 border-b border-paper-200 px-4">
           <span className="text-ink-300" aria-hidden>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+            >
               <circle cx="11" cy="11" r="6.5" />
               <path d="M15.8 15.8L20.5 20.5" strokeLinecap="round" />
             </svg>
@@ -257,7 +266,9 @@ export function CommandPalette() {
               setCursor(0);
             }}
             onKeyDown={onInputKeyDown}
-            placeholder={isOps(user) ? 'Jump to a page, valuation or person…' : 'Jump to a page or valuation…'}
+            placeholder={
+              isOps(user) ? 'Jump to a page, valuation or person…' : 'Jump to a page or valuation…'
+            }
             aria-label="Search commands"
             aria-controls="command-palette-list"
             aria-activedescendant={rows[cursor] ? `cmd-${rowKey(rows[cursor]!)}` : undefined}
@@ -273,11 +284,14 @@ export function CommandPalette() {
           </kbd>
         </div>
 
-        <div id="command-palette-list" ref={listRef} role="listbox" className="max-h-[52vh] overflow-y-auto py-2">
+        <div
+          id="command-palette-list"
+          ref={listRef}
+          role="listbox"
+          className="max-h-[52vh] overflow-y-auto py-2"
+        >
           {rows.length === 0 && (
-            <p className="px-4 py-6 text-center text-sm text-ink-400">
-              Nothing matches “{query}”.
-            </p>
+            <p className="px-4 py-6 text-center text-sm text-ink-400">Nothing matches “{query}”.</p>
           )}
           {rows.map((row, index) => {
             const group = groupOf(row);
@@ -302,9 +316,7 @@ export function CommandPalette() {
                   {row.kind === 'command' && (
                     <>
                       <span className="flex-1 font-medium">{row.command.label}</span>
-                      {row.command.hint && (
-                        <span className="text-xs text-ink-400">{row.command.hint}</span>
-                      )}
+                      {row.command.hint && <span className="text-xs text-ink-400">{row.command.hint}</span>}
                     </>
                   )}
                   {row.kind === 'valuation' && (

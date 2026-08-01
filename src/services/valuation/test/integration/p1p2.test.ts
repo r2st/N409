@@ -9,9 +9,7 @@ import type pg from 'pg';
 const dbUp = await isDbAvailable();
 
 /** Stub AI/engine upstream that records the last payload per URL. */
-async function startStub(
-  routes: Record<string, (body: unknown) => { status?: number; body: unknown }>,
-) {
+async function startStub(routes: Record<string, (body: unknown) => { status?: number; body: unknown }>) {
   const stub = Fastify({ logger: false });
   for (const [url, handler] of Object.entries(routes)) {
     stub.post(url, async (req, reply) => {

@@ -21,11 +21,41 @@ const RUN = {
   blocking: true,
   counts: { ok: 3, info: 0, warning: 1, error: 1 },
   checks: [
-    { key: 'weights_sum', category: 'mathematical', label: 'Approach weights sum to 100%', severity: 'error', detail: 'Weights sum to 125.0% — must total 100%' },
-    { key: 'dlom_range', category: 'assumptions', label: 'DLOM within market norms', severity: 'warning', detail: 'DLOM 45.0% exceeds the 35% benchmark' },
-    { key: 'common_shares_present', category: 'completeness', label: 'Common share count is set', severity: 'ok', detail: '8,000,000 common shares' },
-    { key: 'opm_volatility_present', category: 'methodology', label: 'OPM has a volatility input', severity: 'ok', detail: 'OPM volatility 60.0%' },
-    { key: 'exit_after_valuation', category: 'temporal', label: 'Expected exit is after the valuation date', severity: 'ok', detail: 'Expected exit is in the future' },
+    {
+      key: 'weights_sum',
+      category: 'mathematical',
+      label: 'Approach weights sum to 100%',
+      severity: 'error',
+      detail: 'Weights sum to 125.0% — must total 100%',
+    },
+    {
+      key: 'dlom_range',
+      category: 'assumptions',
+      label: 'DLOM within market norms',
+      severity: 'warning',
+      detail: 'DLOM 45.0% exceeds the 35% benchmark',
+    },
+    {
+      key: 'common_shares_present',
+      category: 'completeness',
+      label: 'Common share count is set',
+      severity: 'ok',
+      detail: '8,000,000 common shares',
+    },
+    {
+      key: 'opm_volatility_present',
+      category: 'methodology',
+      label: 'OPM has a volatility input',
+      severity: 'ok',
+      detail: 'OPM volatility 60.0%',
+    },
+    {
+      key: 'exit_after_valuation',
+      category: 'temporal',
+      label: 'Expected exit is after the valuation date',
+      severity: 'ok',
+      detail: 'Expected exit is in the future',
+    },
   ],
   created_at: '2026-07-02T00:00:00Z',
 };
@@ -90,6 +120,8 @@ describe('HealthTab', () => {
       }),
     );
     renderTab();
-    await waitFor(() => expect(screen.getByTestId('health-gate-banner')).toHaveTextContent(/Ready to finalize/i));
+    await waitFor(() =>
+      expect(screen.getByTestId('health-gate-banner')).toHaveTextContent(/Ready to finalize/i),
+    );
   });
 });

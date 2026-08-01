@@ -87,18 +87,11 @@ export async function countScenarios(pool: pg.Pool, valuationId: string): Promis
 }
 
 export async function findScenarioById(pool: pg.Pool, id: string): Promise<ScenarioRow | null> {
-  const { rows } = await pool.query<ScenarioRow>(
-    'SELECT * FROM valuation_scenarios WHERE id = $1',
-    [id],
-  );
+  const { rows } = await pool.query<ScenarioRow>('SELECT * FROM valuation_scenarios WHERE id = $1', [id]);
   return rows[0] ?? null;
 }
 
-export async function deleteScenario(
-  pool: pg.Pool,
-  scenario: ScenarioRow,
-  actor: EventActor,
-): Promise<void> {
+export async function deleteScenario(pool: pg.Pool, scenario: ScenarioRow, actor: EventActor): Promise<void> {
   await withTransaction(pool, async (client) => {
     await client.query('DELETE FROM valuation_scenarios WHERE id = $1', [scenario.id]);
     await recordEvent(client, {

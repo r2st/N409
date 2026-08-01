@@ -39,10 +39,7 @@ export interface SubscriptionRow {
 
 export const ACTIVE_STATUSES = ['active', 'trialing', 'past_due'] as const;
 
-export async function findActiveSubscription(
-  pool: pg.Pool,
-  userId: string,
-): Promise<SubscriptionRow | null> {
+export async function findActiveSubscription(pool: pg.Pool, userId: string): Promise<SubscriptionRow | null> {
   const { rows } = await pool.query<SubscriptionRow>(
     `SELECT * FROM subscriptions
       WHERE user_id = $1 AND status IN ('active', 'trialing', 'past_due')
@@ -242,9 +239,10 @@ export async function listInvoicesForUser(pool: pg.Pool, userId: string): Promis
   return rows;
 }
 
-export async function listAllInvoices(pool: pg.Pool, limit = 200): Promise<
-  Array<InvoiceRow & { email: string }>
-> {
+export async function listAllInvoices(
+  pool: pg.Pool,
+  limit = 200,
+): Promise<Array<InvoiceRow & { email: string }>> {
   const { rows } = await pool.query(
     `SELECT i.*, u.email FROM invoices i JOIN users u ON u.id = i.user_id
       ORDER BY i.issued_at DESC LIMIT $1`,

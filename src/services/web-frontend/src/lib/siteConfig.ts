@@ -70,9 +70,7 @@ export interface SiteConfig {
  * exercise both the configured and the unconfigured site without touching
  * `import.meta.env`.
  */
-export function siteConfig(
-  env: MarketingEnv = import.meta.env as MarketingEnv,
-): SiteConfig {
+export function siteConfig(env: MarketingEnv = import.meta.env as MarketingEnv): SiteConfig {
   const twitter = optUrl(env.VITE_TWITTER_URL);
   const linkedin = optUrl(env.VITE_LINKEDIN_URL);
   return {

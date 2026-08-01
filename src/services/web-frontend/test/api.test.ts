@@ -61,9 +61,9 @@ describe('api client', () => {
 
   it('attaches the bearer token and parses JSON', async () => {
     setToken('the-token');
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), { status: 200 }),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const res = await api<{ ok: boolean }>('/valuations');
     expect(res.ok).toBe(true);
     const [url, init] = fetchMock.mock.calls[0]!;

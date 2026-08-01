@@ -63,9 +63,7 @@ describe('readBuildInfo', () => {
 
   it('reports unknown for a file that is not a sha', () => {
     const file = tmpFile('not a commit\n');
-    expect(readBuildInfo({ BUILD_SHA_FILE: file }, { defaultFile: undefined })).toEqual(
-      UNKNOWN_BUILD,
-    );
+    expect(readBuildInfo({ BUILD_SHA_FILE: file }, { defaultFile: undefined })).toEqual(UNKNOWN_BUILD);
   });
 
   it('reports unknown when nothing is configured at all', () => {
@@ -74,14 +72,12 @@ describe('readBuildInfo', () => {
 
   it('is bounded: a huge wrong file does not become the sha', () => {
     const file = tmpFile('0'.repeat(500_000));
-    expect(readBuildInfo({ BUILD_SHA_FILE: file }, { defaultFile: undefined })).toEqual(
-      UNKNOWN_BUILD,
-    );
+    expect(readBuildInfo({ BUILD_SHA_FILE: file }, { defaultFile: undefined })).toEqual(UNKNOWN_BUILD);
   });
 
   it('rejects a directory traversal dressed up as a sha', () => {
-    expect(
-      readBuildInfo({ BUILD_SHA: '../../etc/passwd' }, { defaultFile: undefined }),
-    ).toEqual(UNKNOWN_BUILD);
+    expect(readBuildInfo({ BUILD_SHA: '../../etc/passwd' }, { defaultFile: undefined })).toEqual(
+      UNKNOWN_BUILD,
+    );
   });
 });

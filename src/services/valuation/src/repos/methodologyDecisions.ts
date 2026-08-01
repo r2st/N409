@@ -70,10 +70,7 @@ export async function createDecision(
   });
 }
 
-export async function listDecisions(
-  pool: pg.Pool,
-  valuationId: string,
-): Promise<MethodologyDecisionRow[]> {
+export async function listDecisions(pool: pg.Pool, valuationId: string): Promise<MethodologyDecisionRow[]> {
   const { rows } = await pool.query<MethodologyDecisionRow>(
     'SELECT * FROM methodology_decisions WHERE valuation_id = $1 ORDER BY created_at ASC',
     [valuationId],
@@ -81,10 +78,7 @@ export async function listDecisions(
   return rows;
 }
 
-export async function findDecisionById(
-  pool: pg.Pool,
-  id: string,
-): Promise<MethodologyDecisionRow | null> {
+export async function findDecisionById(pool: pg.Pool, id: string): Promise<MethodologyDecisionRow | null> {
   const { rows } = await pool.query<MethodologyDecisionRow>(
     'SELECT * FROM methodology_decisions WHERE id = $1',
     [id],

@@ -122,7 +122,10 @@ function toBody(form: FormState): EngineInputs {
   const fcfs = numList(form.projections.map((p) => p.fcf));
   const revenues = numList(form.projections.map((p) => p.revenue));
   const incomeHas =
-    fcfs.length > 0 || revenues.length > 0 || form.discount_rate.trim() !== '' || form.terminal_growth.trim() !== '';
+    fcfs.length > 0 ||
+    revenues.length > 0 ||
+    form.discount_rate.trim() !== '' ||
+    form.terminal_growth.trim() !== '';
   const income = incomeHas
     ? {
         free_cash_flows: fcfs.length > 0 ? fcfs : null,
@@ -139,7 +142,9 @@ function toBody(form: FormState): EngineInputs {
     : null;
 
   const assetHas =
-    form.total_assets.trim() !== '' || form.total_liabilities.trim() !== '' || form.cost_to_replicate.trim() !== '';
+    form.total_assets.trim() !== '' ||
+    form.total_liabilities.trim() !== '' ||
+    form.cost_to_replicate.trim() !== '';
   const asset = assetHas
     ? {
         total_assets: numOrNull(form.total_assets),
@@ -193,7 +198,10 @@ function modelProblem(form: FormState): string | null {
   if (dr !== null && tg !== null && dr <= tg) {
     return 'DCF discount rate must exceed terminal growth.';
   }
-  if (form.share_classes.some((c) => c.name.trim() !== '') && !form.share_classes.some((c) => c.kind === 'common' && c.name.trim() !== '')) {
+  if (
+    form.share_classes.some((c) => c.name.trim() !== '') &&
+    !form.share_classes.some((c) => c.kind === 'common' && c.name.trim() !== '')
+  ) {
     return 'The cap table must include at least one common class.';
   }
   return null;
@@ -289,8 +297,8 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
   return (
     <form onSubmit={save} className="space-y-6">
       <p className="max-w-3xl text-sm text-ink-500">
-        Enter the financial model by hand. These inputs feed the compute engine directly — once the model
-        is complete and approach weights are set in <span className="font-semibold">Params</span>, run the
+        Enter the financial model by hand. These inputs feed the compute engine directly — once the model is
+        complete and approach weights are set in <span className="font-semibold">Params</span>, run the
         valuation from the <span className="font-semibold">Calculations</span> tab.
       </p>
       {error && <ErrorNote>{error}</ErrorNote>}
@@ -317,7 +325,10 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
         <div className="mt-6">
           <div className="mb-2 flex items-center justify-between">
             <h4 className="text-[0.8rem] font-semibold text-ink-700">
-              Share classes <span className="font-normal text-ink-400">(optional — enables the multi-breakpoint waterfall)</span>
+              Share classes{' '}
+              <span className="font-normal text-ink-400">
+                (optional — enables the multi-breakpoint waterfall)
+              </span>
             </h4>
             {!readOnly && (
               <div className="flex gap-2">
@@ -437,9 +448,7 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
                 {!readOnly && (
                   <button
                     type="button"
-                    onClick={() =>
-                      update({ share_classes: form.share_classes.filter((_, j) => j !== i) })
-                    }
+                    onClick={() => update({ share_classes: form.share_classes.filter((_, j) => j !== i) })}
                     className="cursor-pointer justify-self-start text-xs font-semibold text-red-600 hover:text-red-700"
                   >
                     Remove
@@ -467,7 +476,10 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
             tooltip:
               'The return on a risk-free asset (Treasury yield) matched to the time to exit. Used by the Black-Scholes OPM allocation.',
           })}
-          {numField('time_to_exit_years', 'Time to exit (years)', { hint: 'Overrides the params exit date.', step: 0.25 })}
+          {numField('time_to_exit_years', 'Time to exit (years)', {
+            hint: 'Overrides the params exit date.',
+            step: 0.25,
+          })}
           <Field label="Valuation date" hint="Used with the exit date if no explicit term.">
             <TextInput
               type="date"
@@ -486,7 +498,10 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
       <section className={cardClass}>
         <h3 className={headingClass}>Income approach — DCF</h3>
         <div className="grid gap-5 sm:grid-cols-2">
-          {numField('discount_rate', 'Discount rate (WACC)', { hint: 'Decimal, must exceed terminal growth.', step: 0.01 })}
+          {numField('discount_rate', 'Discount rate (WACC)', {
+            hint: 'Decimal, must exceed terminal growth.',
+            step: 0.01,
+          })}
           {numField('terminal_growth', 'Terminal growth', { hint: 'Decimal, e.g. 0.02.', step: 0.01 })}
         </div>
         <div className="mt-5 overflow-x-auto">
@@ -554,7 +569,9 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
       <section className={cardClass}>
         <h3 className={headingClass}>Market approach — comparables</h3>
         <div className="grid gap-5 sm:grid-cols-2">
-          {numField('market_metric', 'Metric', { hint: 'The company metric the multiple applies to (e.g. revenue or EBITDA).' })}
+          {numField('market_metric', 'Metric', {
+            hint: 'The company metric the multiple applies to (e.g. revenue or EBITDA).',
+          })}
           <div>
             <span className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">
               Comparable multiples
@@ -613,7 +630,9 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
         <h3 className={headingClass}>OPM backsolve — last priced round</h3>
         <div className="grid gap-5 sm:grid-cols-3">
           {numField('last_round_post_money', 'Post-money valuation')}
-          {numField('last_round_price_per_share', 'Price per share', { hint: 'Enables the Newton-Raphson backsolve.' })}
+          {numField('last_round_price_per_share', 'Price per share', {
+            hint: 'Enables the Newton-Raphson backsolve.',
+          })}
           <Field label="Last round class" hint="Which share class was priced (waterfall backsolve).">
             <TextInput
               disabled={readOnly}

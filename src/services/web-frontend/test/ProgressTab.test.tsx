@@ -29,11 +29,51 @@ const PROGRESS = {
   days_in_progress: 9,
   last_activity_at: '2026-06-02T10:00:00Z',
   stages: [
-    { key: 'setup', label: 'Getting started', description: 'd1', status: 'done', entered_at: '2026-06-01T00:00:00Z', duration_days: 1, typical_days: 1 },
-    { key: 'documents', label: 'Document collection', description: 'd2', status: 'current', entered_at: '2026-06-02T00:00:00Z', duration_days: 8, typical_days: 5 },
-    { key: 'analysis', label: 'Analysis & review', description: 'd3', status: 'upcoming', entered_at: null, duration_days: null, typical_days: 3 },
-    { key: 'draft', label: 'Draft report', description: 'd4', status: 'upcoming', entered_at: null, duration_days: null, typical_days: 2 },
-    { key: 'delivered', label: 'Final delivery', description: 'd5', status: 'upcoming', entered_at: null, duration_days: null, typical_days: 0 },
+    {
+      key: 'setup',
+      label: 'Getting started',
+      description: 'd1',
+      status: 'done',
+      entered_at: '2026-06-01T00:00:00Z',
+      duration_days: 1,
+      typical_days: 1,
+    },
+    {
+      key: 'documents',
+      label: 'Document collection',
+      description: 'd2',
+      status: 'current',
+      entered_at: '2026-06-02T00:00:00Z',
+      duration_days: 8,
+      typical_days: 5,
+    },
+    {
+      key: 'analysis',
+      label: 'Analysis & review',
+      description: 'd3',
+      status: 'upcoming',
+      entered_at: null,
+      duration_days: null,
+      typical_days: 3,
+    },
+    {
+      key: 'draft',
+      label: 'Draft report',
+      description: 'd4',
+      status: 'upcoming',
+      entered_at: null,
+      duration_days: null,
+      typical_days: 2,
+    },
+    {
+      key: 'delivered',
+      label: 'Final delivery',
+      description: 'd5',
+      status: 'upcoming',
+      entered_at: null,
+      duration_days: null,
+      typical_days: 0,
+    },
   ],
   checklist: [
     { kind: 'cap_table', label: 'Capitalization table', uploaded: true, count: 1 },
@@ -44,8 +84,18 @@ const PROGRESS = {
   report: { available: true },
   explanation: { available: false },
   timeline: [
-    { type: 'document_uploaded', label: 'Document uploaded', detail: 'cap.csv', occurred_at: '2026-06-02T10:00:00Z' },
-    { type: 'valuation_created', label: 'Valuation created', detail: null, occurred_at: '2026-06-01T09:00:00Z' },
+    {
+      type: 'document_uploaded',
+      label: 'Document uploaded',
+      detail: 'cap.csv',
+      occurred_at: '2026-06-02T10:00:00Z',
+    },
+    {
+      type: 'valuation_created',
+      label: 'Valuation created',
+      detail: null,
+      occurred_at: '2026-06-01T09:00:00Z',
+    },
   ],
 };
 
@@ -106,9 +156,7 @@ describe('ProgressTab (client portal §5.6)', () => {
   });
 
   it('surfaces API errors', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ title: 'Not Found', status: 404 }, 404),
-    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Not Found', status: 404 }, 404));
     renderTab();
     expect(await screen.findByText(/Not Found/)).toBeInTheDocument();
   });
@@ -142,9 +190,7 @@ describe('ProgressTab (client portal §5.6)', () => {
   });
 
   it('does not flag a stage that is inside its typical duration', async () => {
-    const stages = PROGRESS.stages.map((s) =>
-      s.key === 'documents' ? { ...s, duration_days: 2 } : s,
-    );
+    const stages = PROGRESS.stages.map((s) => (s.key === 'documents' ? { ...s, duration_days: 2 } : s));
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ...PROGRESS, stages }));
     renderTab();
 

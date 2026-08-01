@@ -202,10 +202,7 @@ describe.skipIf(!dbUp)('partner API', () => {
   });
 
   it('rate limits per key with 429 + retry-after once the window is exhausted', async () => {
-    const tight = await setupTestApp(
-      {},
-      { partnerApiLimiter: new FixedWindowRateLimiter(2, 60_000) },
-    );
+    const tight = await setupTestApp({}, { partnerApiLimiter: new FixedWindowRateLimiter(2, 60_000) });
     try {
       const pid = await seedPartner(tight, 'Tight Org');
       const admin = await seedUser(tight, { roles: ['partner'], partnerId: pid });

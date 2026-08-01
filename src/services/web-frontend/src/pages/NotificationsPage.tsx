@@ -59,7 +59,11 @@ export function NotificationsPage() {
         )}
       </div>
 
-      {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-6">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {!notifications && !error && <Spinner />}
 
       {notifications && notifications.length === 0 && (

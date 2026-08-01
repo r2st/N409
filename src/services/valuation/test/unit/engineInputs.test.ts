@@ -17,7 +17,12 @@ describe('EngineInputsBody', () => {
     last_round_price_per_share: 2.5,
     last_round_class: 'Series A',
     asset: { total_assets: 3_000_000, total_liabilities: 1_000_000 },
-    income: { free_cash_flows: [1e6, 2e6, 3e6], revenues: [5e6, 8e6, 12e6], discount_rate: 0.25, terminal_growth: 0.03 },
+    income: {
+      free_cash_flows: [1e6, 2e6, 3e6],
+      revenues: [5e6, 8e6, 12e6],
+      discount_rate: 0.25,
+      terminal_growth: 0.03,
+    },
     market: { metric: 4_000_000, multiples: [3.5, 5, 6.2] },
     share_classes: [
       { kind: 'common', name: 'Common', shares: 8_000_000 },
@@ -95,7 +100,12 @@ describe('EngineInputsBody', () => {
   });
 
   it('accepts explicit nulls to clear fields/sections', () => {
-    const res = EngineInputsBody.safeParse({ volatility: null, income: null, market: null, share_classes: null });
+    const res = EngineInputsBody.safeParse({
+      volatility: null,
+      income: null,
+      market: null,
+      share_classes: null,
+    });
     expect(res.success).toBe(true);
   });
 

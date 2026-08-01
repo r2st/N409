@@ -256,7 +256,11 @@ export function registerValuationRoutes(
     );
     // M4: state changes fire the auto email workflows + in-app notifications.
     if (parsed.data.state && parsed.data.state !== valuation.state) {
-      await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, updated.state);
+      await onStateChanged(
+        { pool: deps.pool, transport: deps.transport, log: app.log },
+        updated,
+        updated.state,
+      );
     }
     return { valuation: updated };
   });

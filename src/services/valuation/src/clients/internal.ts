@@ -106,12 +106,7 @@ export async function postJson<T>(
   }
 }
 
-async function postJsonOnce<T>(
-  service: string,
-  url: string,
-  body: unknown,
-  timeoutMs?: number,
-): Promise<T> {
+async function postJsonOnce<T>(service: string, url: string, body: unknown, timeoutMs?: number): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {

@@ -252,47 +252,52 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     return reply.status(201).send({ mark });
   });
 
-  app.post('/api/v1/funds/:id/positions/:pid/rollforward', { preHandler: app.authenticate }, async (req, reply) => {
-    const principal = requirePrincipal(req);
-    requireOps(principal);
-    const { id, pid } = req.params as { id: string; pid: string };
-    await loadFund(id);
-    const position = await findPosition(deps.pool, id, pid);
-    if (!position) throw problems.notFound();
-    const parsed = RollForwardBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid roll-forward', { errors: parsed.error.issues });
-    const b = parsed.data;
-    const marks = await listMarks(deps.pool, pid);
-    const prior = marks[0];
-    if (!prior) throw problems.unprocessable('No prior mark to roll forward — record a mark first');
+  app.post(
+    '/api/v1/funds/:id/positions/:pid/rollforward',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      requireOps(principal);
+      const { id, pid } = req.params as { id: string; pid: string };
+      await loadFund(id);
+      const position = await findPosition(deps.pool, id, pid);
+      if (!position) throw problems.notFound();
+      const parsed = RollForwardBody.safeParse(req.body);
+      if (!parsed.success)
+        throw problems.unprocessable('Invalid roll-forward', { errors: parsed.error.issues });
+      const b = parsed.data;
+      const marks = await listMarks(deps.pool, pid);
+      const prior = marks[0];
+      if (!prior) throw problems.unprocessable('No prior mark to roll forward — record a mark first');
 
-    const rolled = await engine<{ new_fair_value: number; change: number; method: string }>(
-      '/engine/v1/fund-rollforward',
-      {
-        prior_fair_value: n(prior.fair_value),
-        method: b.method,
-        index_return: b.index_return,
-        accretion_rate: b.accretion_rate,
-        periods: b.periods,
-        new_calibrated_value: b.new_calibrated_value,
-      },
-    );
+      const rolled = await engine<{ new_fair_value: number; change: number; method: string }>(
+        '/engine/v1/fund-rollforward',
+        {
+          prior_fair_value: n(prior.fair_value),
+          method: b.method,
+          index_return: b.index_return,
+          accretion_rate: b.accretion_rate,
+          periods: b.periods,
+          new_calibrated_value: b.new_calibrated_value,
+        },
+      );
 
-    if (b.record) {
-      const mark = await createMark(deps.pool, {
-        positionId: pid,
-        measurementDate: b.measurement_date ?? new Date().toISOString().slice(0, 10),
-        // A rolled mark is a model estimate → Level 3 (unless a fresh calibration).
-        method: 'calibrated_opm',
-        fairValue: rolled.new_fair_value,
-        level: 3,
-        inputs: { model_value: rolled.new_fair_value, rolled_from: prior.id, roll_method: b.method },
-        createdBy: principal.id,
-      });
-      return reply.status(201).send({ rollforward: rolled, mark });
-    }
-    return { rollforward: rolled };
-  });
+      if (b.record) {
+        const mark = await createMark(deps.pool, {
+          positionId: pid,
+          measurementDate: b.measurement_date ?? new Date().toISOString().slice(0, 10),
+          // A rolled mark is a model estimate → Level 3 (unless a fresh calibration).
+          method: 'calibrated_opm',
+          fairValue: rolled.new_fair_value,
+          level: 3,
+          inputs: { model_value: rolled.new_fair_value, rolled_from: prior.id, roll_method: b.method },
+          createdBy: principal.id,
+        });
+        return reply.status(201).send({ rollforward: rolled, mark });
+      }
+      return { rollforward: rolled };
+    },
+  );
 
   // ── NAV ──────────────────────────────────────────────────────────────────
   app.get('/api/v1/funds/:id/nav', { preHandler: app.authenticate }, async (req) => {
@@ -304,11 +309,15 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const marks = await latestMarks(deps.pool, id);
     const enginePositions = positions.map((p) => {
       const mark = marks.get(p.id);
-      if (mark && mark.inputs) return enginePosition(p.company_name, n(p.cost_basis), mark.method, mark.inputs);
+      if (mark && mark.inputs)
+        return enginePosition(p.company_name, n(p.cost_basis), mark.method, mark.inputs);
       // No mark yet → carry at cost.
       return enginePosition(p.company_name, n(p.cost_basis), 'cost', {});
     });
-    const nav = await engine<EngineNav>('/engine/v1/fund-valuation', { positions: enginePositions, liabilities: 0 });
+    const nav = await engine<EngineNav>('/engine/v1/fund-valuation', {
+      positions: enginePositions,
+      liabilities: 0,
+    });
     return { fund_id: fund.id, currency: fund.currency, nav };
   });
 
@@ -346,7 +355,8 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadFund(id);
     const parsed = WaterfallBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid waterfall request', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid waterfall request', { errors: parsed.error.issues });
     const terms = await findLpTerms(deps.pool, id);
     if (!terms) throw problems.unprocessable('Set the fund LP terms before running the waterfall');
     const waterfall = await engine('/engine/v1/fund-waterfall', {
@@ -369,7 +379,8 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
     const { id } = req.params as { id: string };
     await loadFund(id);
     const parsed = CalibrateBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid calibration request', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid calibration request', { errors: parsed.error.issues });
     const b = parsed.data;
     const calibration = await engine('/engine/v1/fund-calibrate', {
       round_price_per_share: b.round_price_per_share,

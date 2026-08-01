@@ -50,7 +50,9 @@ const GrantBody = z.object({
   risk_free_rate: z.number().min(0).max(0.25),
   dividend_yield: z.number().min(0).max(0.25).optional(),
   forfeiture_rate: z.number().min(0).max(1).optional(),
-  amortization_frequency_months: z.union([z.literal(1), z.literal(3), z.literal(6), z.literal(12)]).optional(),
+  amortization_frequency_months: z
+    .union([z.literal(1), z.literal(3), z.literal(6), z.literal(12)])
+    .optional(),
   /** Underlying FMV/market price at grant; defaults to the resolved underlying. */
   grant_date_fair_value: z.number().positive().max(1e9).optional(),
   /** Public expected-term method for this grant (overrides settings default). */
@@ -96,7 +98,10 @@ const TsrPeerBody = z.object({
   dividend_yield: z.number().min(0).max(0.25).optional(),
 });
 
-const TsrPayoutTier = z.object({ percentile: z.number().min(0).max(100), payout_ratio: z.number().min(0).max(10) });
+const TsrPayoutTier = z.object({
+  percentile: z.number().min(0).max(100),
+  payout_ratio: z.number().min(0).max(10),
+});
 
 const TsrBody = z.object({
   label: z.string().trim().min(1).max(120).optional(),
@@ -184,9 +189,23 @@ async function resolveMarket(
         as_of: prices[prices.length - 1]?.date ?? end,
       };
     }
-    return { ticker, underlying: null, volatility: null, source: 'fallback', as_of: null, warning: 'no live prices for ticker' };
+    return {
+      ticker,
+      underlying: null,
+      volatility: null,
+      source: 'fallback',
+      as_of: null,
+      warning: 'no live prices for ticker',
+    };
   } catch {
-    return { ticker, underlying: null, volatility: null, source: 'fallback', as_of: null, warning: 'market feed unavailable' };
+    return {
+      ticker,
+      underlying: null,
+      volatility: null,
+      source: 'fallback',
+      as_of: null,
+      warning: 'market feed unavailable',
+    };
   }
 }
 
@@ -200,7 +219,9 @@ function resolveExpectedTerm(
   const method = g.expected_term_method ?? (companyType === 'public' ? 'simplified' : 'simplified');
   if (method === 'historical') {
     if (!g.exercise_history || g.exercise_history.length === 0) {
-      throw problems.unprocessable(`Grant "${g.label ?? 'unnamed'}" uses the historical term method but has no exercise_history`);
+      throw problems.unprocessable(
+        `Grant "${g.label ?? 'unnamed'}" uses the historical term method but has no exercise_history`,
+      );
     }
     return historicalExpectedTerm(g.exercise_history);
   }
@@ -246,7 +267,8 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     const { id } = req.params as { id: string };
     await loadValuation(id);
     const parsed = SettingsBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid ASC 718 settings', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid ASC 718 settings', { errors: parsed.error.issues });
     const b = parsed.data;
     const settings = await upsertAsc718Settings(deps.pool, id, {
       companyType: b.company_type,
@@ -268,7 +290,8 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     const valuation = await loadValuation(id);
 
     const parsed = Body.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid ASC 718 request', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid ASC 718 request', { errors: parsed.error.issues });
     const b = parsed.data;
 
     if (b.grants.length === 0 && !b.espp?.length && !b.rsu?.length && !b.tsr?.length) {
@@ -283,13 +306,23 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     let market: MarketResolution | null = null;
     if (b.company_type === 'public' && b.ticker) {
       const end = b.valuation_date ?? new Date().toISOString().slice(0, 10);
-      market = await resolveMarket(deps.engineUrl, b.ticker.toUpperCase(), end, b.market_lookback_days ?? 504);
+      market = await resolveMarket(
+        deps.engineUrl,
+        b.ticker.toUpperCase(),
+        end,
+        b.market_lookback_days ?? 504,
+      );
     }
 
     const defaultUnderlying =
       b.default_grant_date_fair_value ??
-      (b.company_type === 'public' ? market?.underlying ?? undefined : fmv != null && fmv > 0 ? fmv : undefined);
-    const defaultVolatility = b.default_volatility ?? (b.company_type === 'public' ? market?.volatility ?? undefined : undefined);
+      (b.company_type === 'public'
+        ? (market?.underlying ?? undefined)
+        : fmv != null && fmv > 0
+          ? fmv
+          : undefined);
+    const defaultVolatility =
+      b.default_volatility ?? (b.company_type === 'public' ? (market?.volatility ?? undefined) : undefined);
 
     // ── Options ───────────────────────────────────────────────────────────
     const grants: Asc718Grant[] = [];
@@ -304,7 +337,9 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
       }
       const volatility = g.volatility ?? defaultVolatility;
       if (volatility === undefined) {
-        throw problems.unprocessable(`Grant "${g.label ?? 'unnamed'}" has no volatility (supply per-grant volatility or default_volatility)`);
+        throw problems.unprocessable(
+          `Grant "${g.label ?? 'unnamed'}" has no volatility (supply per-grant volatility or default_volatility)`,
+        );
       }
       const expectedTermYears = resolveExpectedTerm(g, b.company_type, underlying, volatility);
       grants.push({
@@ -331,7 +366,9 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     const espp = (b.espp ?? []).map((e) => {
       const volatility = e.volatility ?? defaultVolatility;
       if (volatility === undefined) {
-        throw problems.unprocessable(`ESPP "${e.label ?? 'unnamed'}" has no volatility (supply volatility or default_volatility)`);
+        throw problems.unprocessable(
+          `ESPP "${e.label ?? 'unnamed'}" has no volatility (supply volatility or default_volatility)`,
+        );
       }
       const fv = esppFairValue({
         grantDatePrice: e.grant_date_price,
@@ -353,7 +390,8 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     // ── RSUs ──────────────────────────────────────────────────────────────
     const rsu = (b.rsu ?? []).map((rItem, idx) => {
       const price = rItem.market_price ?? defaultUnderlying;
-      if (price === undefined) throw problems.unprocessable(`RSU "${rItem.label ?? 'unnamed'}" has no market price`);
+      if (price === undefined)
+        throw problems.unprocessable(`RSU "${rItem.label ?? 'unnamed'}" has no market price`);
       if (rItem.condition === 'performance') {
         const res = performanceRsuMonteCarlo({
           marketPrice: price,
@@ -367,8 +405,14 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
       }
       if (rItem.condition === 'market') {
         const volatility = rItem.volatility ?? defaultVolatility;
-        if (volatility === undefined || rItem.hurdle_price === undefined || rItem.vesting_years === undefined) {
-          throw problems.unprocessable(`Market-condition RSU "${rItem.label ?? 'unnamed'}" needs hurdle_price, vesting_years and volatility`);
+        if (
+          volatility === undefined ||
+          rItem.hurdle_price === undefined ||
+          rItem.vesting_years === undefined
+        ) {
+          throw problems.unprocessable(
+            `Market-condition RSU "${rItem.label ?? 'unnamed'}" needs hurdle_price, vesting_years and volatility`,
+          );
         }
         const res = marketConditionRsuMonteCarlo({
           underlying: price,
@@ -419,7 +463,10 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
         })),
         performancePeriodYears: tItem.performance_period_years,
         riskFreeRate: tItem.risk_free_rate,
-        payoutSchedule: tItem.payout_schedule.map((t) => ({ percentile: t.percentile, payoutRatio: t.payout_ratio })),
+        payoutSchedule: tItem.payout_schedule.map((t) => ({
+          percentile: t.percentile,
+          payoutRatio: t.payout_ratio,
+        })),
         seed: 0x6d2b79f5 + idx,
       });
       return {

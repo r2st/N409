@@ -20,7 +20,7 @@ describe('sanitizeHtml link support', () => {
   });
 
   it('escapes quotes inside a kept href', () => {
-    expect(sanitizeHtml('<a href=\'https://ex.com/a"b\'>x</a>')).toBe(
+    expect(sanitizeHtml("<a href='https://ex.com/a\"b'>x</a>")).toBe(
       '<a href="https://ex.com/a&quot;b">x</a>',
     );
   });

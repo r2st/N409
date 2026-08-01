@@ -45,8 +45,7 @@ function payloadSummary(payload: Record<string, unknown>): string {
 }
 
 function ActorCell({ e }: { e: ActivityEvent }) {
-  if (e.actor_type !== 'human')
-    return <span className="font-mono text-xs text-ink-400">{e.actor_type}</span>;
+  if (e.actor_type !== 'human') return <span className="font-mono text-xs text-ink-400">{e.actor_type}</span>;
   return <span className="text-ink-700">{e.actor_email ?? e.actor_id ?? 'unknown'}</span>;
 }
 
@@ -144,8 +143,8 @@ export function ActivityLogPage() {
       </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Activity log</h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-500">
-        Every valuation mutation and admin console action, newest first. The log is append-only —
-        entries can never be edited or removed.
+        Every valuation mutation and admin console action, newest first. The log is append-only — entries can
+        never be edited or removed.
       </p>
 
       <form
@@ -217,7 +216,11 @@ export function ActivityLogPage() {
         <button type="submit" hidden />
       </form>
 
-      {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-6">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {loading && events.length === 0 && <Spinner />}
 
       {!error && !loading && events.length === 0 && (

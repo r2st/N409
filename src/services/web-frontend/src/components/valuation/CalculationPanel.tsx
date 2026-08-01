@@ -144,10 +144,10 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
   if (!calculations && !error) return <Spinner />;
 
   const latest = calculations?.find((c) => c.status === 'succeeded');
-  const discounts = latest?.results?.discounts as { dloc?: number; dlom?: number; dlom_method?: string } | undefined;
+  const discounts = latest?.results?.discounts as
+    { dloc?: number; dlom?: number; dlom_method?: string } | undefined;
   const assumptions = latest?.results?.assumptions as
-    | { time_to_exit_years?: number; volatility?: number | null; risk_free_rate?: number }
-    | undefined;
+    { time_to_exit_years?: number; volatility?: number | null; risk_free_rate?: number } | undefined;
 
   return (
     <div className="space-y-6">
@@ -160,9 +160,7 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
         <Button variant="secondary" onClick={() => void check()} disabled={busy !== null || checking}>
           {checking ? 'Checking…' : 'Check inputs'}
         </Button>
-        <p className="text-sm text-ink-500">
-          Uses saved params + the latest AI extraction and comparables.
-        </p>
+        <p className="text-sm text-ink-500">Uses saved params + the latest AI extraction and comparables.</p>
       </div>
 
       {preflight && (
@@ -226,7 +224,11 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
       {latest && (
         <>
           <div className="grid gap-4 sm:grid-cols-3">
-            <StatCard label="Fair market value / share" value={formatMoney(latest.fmv_per_share, currency)} accent />
+            <StatCard
+              label="Fair market value / share"
+              value={formatMoney(latest.fmv_per_share, currency)}
+              accent
+            />
             <StatCard label="Equity value" value={formatMoney(latest.equity_value, currency)} />
             <StatCard
               label="DLOM applied"
@@ -295,7 +297,9 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
                   {calc.status}
                 </span>
                 <span className="tnum font-semibold text-ink-900">
-                  {calc.status === 'succeeded' ? formatMoney(calc.fmv_per_share, currency) : (calc.error ?? 'failed')}
+                  {calc.status === 'succeeded'
+                    ? formatMoney(calc.fmv_per_share, currency)
+                    : (calc.error ?? 'failed')}
                 </span>
                 {Array.isArray(calc.results?.recomputed) && (
                   <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[0.65rem] font-bold text-sky-800 uppercase">

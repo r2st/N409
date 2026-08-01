@@ -72,10 +72,7 @@ export const CALCULATION_DEPENDENT_PIPELINES: ReadonlySet<AiPipeline> = new Set(
 ]);
 
 /** Agents that read the uploaded document corpus (cap-table docs, financials). */
-export const DOCUMENT_DEPENDENT_PIPELINES: ReadonlySet<AiPipeline> = new Set([
-  'extract',
-  'cap_table',
-]);
+export const DOCUMENT_DEPENDENT_PIPELINES: ReadonlySet<AiPipeline> = new Set(['extract', 'cap_table']);
 
 export const PIPELINE_EVENT_TYPES = {
   taskCreated: 'review_task_created',

@@ -213,7 +213,8 @@ export function htmlToBlocks(html: string): Block[] {
       if (text.trim().length === 0 && !paragraphOpen && !listItem && tableCell === null) continue;
       if (tableCell !== null) tableCell += text;
       else if (listItem) {
-        if (text.length > 0) listItem.push({ text, bold: bold > 0, italic: italic > 0, underline: underline > 0 });
+        if (text.length > 0)
+          listItem.push({ text, bold: bold > 0, italic: italic > 0, underline: underline > 0 });
       } else pushRun(text);
       continue;
     }
@@ -269,7 +270,8 @@ export function htmlToBlocks(html: string): Block[] {
         if (closing) {
           if (listItem && list) list.items.push(trimRuns(listItem));
           listItem = null;
-          if (list && list.items.length > 0) blocks.push({ type: 'list', ordered: list.ordered, items: list.items });
+          if (list && list.items.length > 0)
+            blocks.push({ type: 'list', ordered: list.ordered, items: list.items });
           list = null;
         } else {
           flushParagraph();
@@ -458,9 +460,13 @@ function renderChart(doc: PDFKit.PDFDocument, spec: ChartSpec, usable: number, a
   else renderWaterfallChart(doc, spec, usable, accent);
 
   if (spec.note) {
-    doc.font(FONTS.italic).fontSize(8.5).fillColor('#777777').text(spec.note, left, doc.y + 4, {
-      width: usable,
-    });
+    doc
+      .font(FONTS.italic)
+      .fontSize(8.5)
+      .fillColor('#777777')
+      .text(spec.note, left, doc.y + 4, {
+        width: usable,
+      });
   }
   doc.x = left;
   doc.moveDown(1);
@@ -520,13 +526,7 @@ function renderWaterfallChart(
   const left = doc.page.margins.left;
   const top = doc.y;
   const baseline = top + WATERFALL_PLOT_HEIGHT;
-  const columns = waterfallColumns(
-    spec.start,
-    spec.steps,
-    spec.end_label,
-    spec.end_value,
-    spec.end_display,
-  );
+  const columns = waterfallColumns(spec.start, spec.steps, spec.end_label, spec.end_value, spec.end_display);
 
   const ceiling = Math.max(0, ...columns.map((c) => c.top));
   const slotWidth = usable / columns.length;
@@ -805,8 +805,7 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   }
 
   // Footer: identity, confidentiality marker and page numbers on every page.
-  const confidentiality =
-    input.confidentiality === null ? null : (input.confidentiality ?? 'Confidential');
+  const confidentiality = input.confidentiality === null ? null : (input.confidentiality ?? 'Confidential');
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
     const bottom = doc.page.margins.bottom;
@@ -853,11 +852,7 @@ export interface TocEntry {
  * The leader is sized from the measured text so it lands flush against the
  * number instead of wrapping.
  */
-function renderTableOfContents(
-  doc: PDFKit.PDFDocument,
-  entries: readonly TocEntry[],
-  usable: number,
-): void {
+function renderTableOfContents(doc: PDFKit.PDFDocument, entries: readonly TocEntry[], usable: number): void {
   doc.font(FONTS.bold).fontSize(16).fillColor('#111111').text('Table of Contents');
   doc.moveDown(1);
 
@@ -915,12 +910,7 @@ function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number): voi
       const size = block.level === 1 ? 14 : block.level === 2 ? 12.5 : 11.5;
       doc.moveDown(0.6);
       doc.font(FONTS.bold).fontSize(size).fillColor('#111111');
-      doc.text(
-        block.runs.map((r) => r.text).join(''),
-        doc.page.margins.left,
-        doc.y,
-        { width: usable },
-      );
+      doc.text(block.runs.map((r) => r.text).join(''), doc.page.margins.left, doc.y, { width: usable });
       doc.moveDown(0.3);
       break;
     }
@@ -938,12 +928,14 @@ function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number): voi
           .font(FONTS.regular)
           .fontSize(10.5)
           .fillColor('#222222')
-          .text(marker, doc.page.margins.left + 10, doc.y, { continued: true, width: usable - 10, lineGap: 2 });
+          .text(marker, doc.page.margins.left + 10, doc.y, {
+            continued: true,
+            width: usable - 10,
+            lineGap: 2,
+          });
         item.forEach((run, runIdx) => {
           const last = runIdx === item.length - 1;
-          doc
-            .font(fontFor(run))
-            .text(run.text, { continued: !last, underline: run.underline, lineGap: 2 });
+          doc.font(fontFor(run)).text(run.text, { continued: !last, underline: run.underline, lineGap: 2 });
         });
         if (item.length === 0) doc.text('', { continued: false });
         doc.moveDown(0.2);

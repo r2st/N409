@@ -111,10 +111,10 @@ export function EngagementTab() {
 
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <h2 className="font-display text-lg font-semibold text-ink-900">
-            Stage: {sla.label}
-          </h2>
-          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${SLA_TONE[sla.level]}`}>
+          <h2 className="font-display text-lg font-semibold text-ink-900">Stage: {sla.label}</h2>
+          <span
+            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${SLA_TONE[sla.level]}`}
+          >
             {sla.overdue ? 'Overdue' : sla.level === 'yellow' ? 'Approaching SLA' : 'On track'}
           </span>
           <span className="tnum text-xs text-ink-400">
@@ -144,7 +144,10 @@ export function EngagementTab() {
         </ol>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={() => void advance()} disabled={busy || view.engagement.current_stage === 'complete'}>
+          <Button
+            onClick={() => void advance()}
+            disabled={busy || view.engagement.current_stage === 'complete'}
+          >
             Advance to next stage
           </Button>
           <div className="flex items-center gap-2">
@@ -182,7 +185,9 @@ export function EngagementTab() {
                   <td className="py-1.5 pr-3 font-semibold text-ink-800">{d.label}</td>
                   <td className="py-1.5 pr-3 text-ink-500">{formatDateTime(d.enteredAt)}</td>
                   <td className="py-1.5 pr-3">{hours(d.actualHours)}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">{d.expectedHours > 0 ? hours(d.expectedHours) : '—'}</td>
+                  <td className="py-1.5 pr-3 text-ink-500">
+                    {d.expectedHours > 0 ? hours(d.expectedHours) : '—'}
+                  </td>
                   <td className="py-1.5">
                     {d.breachedSla ? (
                       <span className="text-red-700">breached</span>

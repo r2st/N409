@@ -44,9 +44,7 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // Only the event types this view actually renders — the stage stepper reads
     // state_changed, the timeline reads the client-safe catalog. A long-running
     // valuation's full spine is thousands of rows we would immediately discard.
-    const relevantTypes = [
-      ...new Set(['state_changed', ...Object.keys(CLIENT_TIMELINE_EVENTS)]),
-    ];
+    const relevantTypes = [...new Set(['state_changed', ...Object.keys(CLIENT_TIMELINE_EVENTS)])];
     const [documents, events, lastActivityAt, report, explainJob] = await Promise.all([
       listDocuments(deps.pool, valuation.id),
       listEvents(deps.pool, valuation.id, { types: relevantTypes }),

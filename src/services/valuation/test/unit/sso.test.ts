@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  activeFromPatch,
-  parseScimUser,
-  parseUserNameFilter,
-  toScimUser,
-} from '../../src/domain/scim.js';
+import { activeFromPatch, parseScimUser, parseUserNameFilter, toScimUser } from '../../src/domain/scim.js';
 import { extractIdentity } from '../../src/routes/saml.js';
 
 describe('SCIM mapping (feature 9)', () => {
@@ -26,8 +21,13 @@ describe('SCIM mapping (feature 9)', () => {
 
   it('marks a soft-deleted user inactive', () => {
     const scim = toScimUser({
-      id: 'u1', email: 'a@corp.com', first_name: null, last_name: null,
-      scim_external_id: null, deleted_at: new Date(), created_at: new Date(),
+      id: 'u1',
+      email: 'a@corp.com',
+      first_name: null,
+      last_name: null,
+      scim_external_id: null,
+      deleted_at: new Date(),
+      created_at: new Date(),
     });
     expect(scim.active).toBe(false);
   });
@@ -53,7 +53,9 @@ describe('SCIM mapping (feature 9)', () => {
   it('resolves active from a PatchOp with or without a path', () => {
     expect(activeFromPatch({ Operations: [{ op: 'replace', path: 'active', value: false }] })).toBe(false);
     expect(activeFromPatch({ Operations: [{ op: 'replace', value: { active: true } }] })).toBe(true);
-    expect(activeFromPatch({ Operations: [{ op: 'replace', path: 'name.givenName', value: 'X' }] })).toBeUndefined();
+    expect(
+      activeFromPatch({ Operations: [{ op: 'replace', path: 'name.givenName', value: 'X' }] }),
+    ).toBeUndefined();
   });
 });
 

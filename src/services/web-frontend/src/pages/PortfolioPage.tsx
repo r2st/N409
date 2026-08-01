@@ -115,9 +115,16 @@ export function PortfolioPage() {
       </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Entities & funds</h1>
 
-      {error && <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-4">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
 
-      <form onSubmit={create} className="mt-6 flex flex-wrap items-end gap-3 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+      <form
+        onSubmit={create}
+        className="mt-6 flex flex-wrap items-end gap-3 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+      >
         <Field label="New organization">
           <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Holdings" />
         </Field>
@@ -147,7 +154,9 @@ export function PortfolioPage() {
                 key={o.id}
                 onClick={() => setSelected(o.id)}
                 className={`rounded-full px-3.5 py-1.5 text-sm font-semibold ${
-                  selected === o.id ? 'bg-bond-700 text-paper-50' : 'bg-paper-100 text-ink-600 hover:bg-paper-200'
+                  selected === o.id
+                    ? 'bg-bond-700 text-paper-50'
+                    : 'bg-paper-100 text-ink-600 hover:bg-paper-200'
                 }`}
               >
                 {o.name}
@@ -160,16 +169,16 @@ export function PortfolioPage() {
               <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
                 <Metric label="Entities" value={String(detail.consolidated.entity_count)} />
                 <Metric label="Valued" value={String(detail.consolidated.valued_count)} />
-                <Metric
-                  label="Total equity"
-                  value={usd(detail.consolidated.total_equity_value, currency)}
-                />
+                <Metric label="Total equity" value={usd(detail.consolidated.total_equity_value, currency)} />
                 <Metric
                   label="Consolidated equity"
                   value={usd(detail.consolidated.consolidated_equity_value, currency)}
                   hint="Subsidiaries excluded"
                 />
-                <Metric label="Type" value={ENTITY_LABELS[detail.organization.entity_type] ?? detail.organization.entity_type} />
+                <Metric
+                  label="Type"
+                  value={ENTITY_LABELS[detail.organization.entity_type] ?? detail.organization.entity_type}
+                />
               </div>
 
               <section className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
@@ -179,7 +188,9 @@ export function PortfolioPage() {
                       <th className="overline px-4 py-3 font-semibold text-ink-400">Company</th>
                       <th className="overline px-4 py-3 font-semibold text-ink-400">Role</th>
                       <th className="overline px-4 py-3 font-semibold text-ink-400">State</th>
-                      <th className="overline px-4 py-3 text-right font-semibold text-ink-400">Equity value</th>
+                      <th className="overline px-4 py-3 text-right font-semibold text-ink-400">
+                        Equity value
+                      </th>
                       <th className="overline px-4 py-3 text-right font-semibold text-ink-400">FMV/share</th>
                     </tr>
                   </thead>
@@ -187,14 +198,18 @@ export function PortfolioPage() {
                     {detail.entities.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="px-4 py-6 text-center text-ink-400">
-                          No entities assigned yet. Add valuations to this organization from a valuation's Overview.
+                          No entities assigned yet. Add valuations to this organization from a valuation's
+                          Overview.
                         </td>
                       </tr>
                     ) : (
                       detail.entities.map((e) => (
                         <tr key={e.valuation_id} className="border-b border-paper-200 last:border-0">
                           <td className="px-4 py-2.5">
-                            <Link to={`/valuations/${e.valuation_id}`} className="font-semibold text-bond-600 hover:text-bond-700">
+                            <Link
+                              to={`/valuations/${e.valuation_id}`}
+                              className="font-semibold text-bond-600 hover:text-bond-700"
+                            >
                               {e.company_name}
                             </Link>
                             <span className="ml-2 text-xs text-ink-400">{e.number}</span>

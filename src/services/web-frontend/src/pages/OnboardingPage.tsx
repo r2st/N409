@@ -41,9 +41,7 @@ function Stepper({ current }: { current: number }) {
           >
             {i < current ? '✓' : i + 1}
           </span>
-          <span
-            className={`text-sm font-semibold ${i === current ? 'text-ink-900' : 'text-ink-400'}`}
-          >
+          <span className={`text-sm font-semibold ${i === current ? 'text-ink-900' : 'text-ink-400'}`}>
             {label}
           </span>
           {i < STEPS.length - 1 && <span className="mx-1 h-px w-6 bg-paper-300" />}
@@ -151,7 +149,11 @@ export function OnboardingPage() {
         Let's get your valuation started
       </h1>
       <Stepper current={step} />
-      {error && <div className="mt-5"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-5">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
 
       {step === 0 && (
         <form
@@ -199,8 +201,8 @@ export function OnboardingPage() {
         <div className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <p className="text-sm text-ink-800">
             Your {KIND_LABELS[valuation.kind]} request for{' '}
-            <span className="font-semibold">{valuation.company_name}</span> is in. Pay now to move it
-            to the front of the queue — or skip and settle by invoice later.
+            <span className="font-semibold">{valuation.company_name}</span> is in. Pay now to move it to the
+            front of the queue — or skip and settle by invoice later.
           </p>
           {quote && (
             <p className="text-sm text-ink-800" data-testid="onboarding-quote">
@@ -233,8 +235,8 @@ export function OnboardingPage() {
             </p>
           )}
           <p className="text-sm text-ink-800">
-            Upload what you have — the more we get now, the faster the draft. You can always add more
-            from the workspace later.
+            Upload what you have — the more we get now, the faster the draft. You can always add more from the
+            workspace later.
           </p>
           <ul className="grid gap-1.5 text-sm text-ink-600 sm:grid-cols-2">
             {CHECKLIST.map((k) => (
@@ -287,11 +289,9 @@ export function OnboardingPage() {
             Your request is in, {valuation.company_name}
           </h2>
           <p className="text-sm text-ink-600">
-            {uploadedCount > 0
-              ? `${uploadedCount} document${uploadedCount === 1 ? '' : 's'} received. `
-              : ''}
-            Our analysts pick it up from here — you'll get an email at every milestone, and you can
-            track progress or chat with us any time from your workspace.
+            {uploadedCount > 0 ? `${uploadedCount} document${uploadedCount === 1 ? '' : 's'} received. ` : ''}
+            Our analysts pick it up from here — you'll get an email at every milestone, and you can track
+            progress or chat with us any time from your workspace.
           </p>
           <div className="flex justify-center gap-3">
             <Button onClick={() => navigate(`/valuations/${valuation.id}`)}>Open my valuation</Button>

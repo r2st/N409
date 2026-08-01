@@ -23,18 +23,14 @@ export async function assertPublishGate(
 ): Promise<void> {
   if (to !== 'published') return;
   if (!(await hasMainSignature(pool, valuationId))) {
-    throw problems.conflict(
-      'A main signature is required before publishing — sign the valuation first',
-    );
+    throw problems.conflict('A main signature is required before publishing — sign the valuation first');
   }
 
   const calculation = await latestSucceededCalculation(pool, valuationId);
   if (!calculation) return; // Nothing calculated — nothing for QA to judge.
   const review = await latestQaReviewForCalculation(pool, calculation.id);
   if (!review) {
-    throw problems.conflict(
-      'Quality gate: run a QA review of the latest calculation before publishing',
-    );
+    throw problems.conflict('Quality gate: run a QA review of the latest calculation before publishing');
   }
   if (review.status === 'fail') {
     throw problems.conflict(

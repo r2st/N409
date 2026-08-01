@@ -143,7 +143,12 @@ export async function syncHrisConnection(
     grants_skipped: skipped,
     external_company_name: pull.external_company_name,
   };
-  await recordSync(deps.pool, connection.id, { ...outcome, provider: connection.provider }, connection.sync_frequency);
+  await recordSync(
+    deps.pool,
+    connection.id,
+    { ...outcome, provider: connection.provider },
+    connection.sync_frequency,
+  );
   return outcome;
 }
 
@@ -163,11 +168,9 @@ export async function runDueHrisSyncs(deps: {
     due.map((connection) =>
       limit(async () => {
         try {
-          await syncHrisConnection(
-            { pool: deps.pool, fetchFn },
-            connection,
-            { actorId: connection.connected_by ?? connection.id },
-          );
+          await syncHrisConnection({ pool: deps.pool, fetchFn }, connection, {
+            actorId: connection.connected_by ?? connection.id,
+          });
           return true;
         } catch (err) {
           deps.log?.warn({ err, connectionId: connection.id }, 'scheduled HRIS sync failed');
@@ -215,24 +218,20 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     };
   });
 
-  app.post(
-    '/api/v1/valuations/:id/hris/:provider/connect',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      requireOps(principal);
-      const { id, provider: rawProvider } = req.params as { id: string; provider: string };
-      const provider = parseProvider(rawProvider);
-      const valuation = await loadAuthorized(principal, id);
-      const creds = deps.credentials[provider];
-      if (!creds) throw providerUnavailable(provider);
-      const state = await signCapTableSyncState(
-        { valuationId: valuation.id, provider, userId: principal.id },
-        deps.jwt,
-      );
-      return { authorize_url: authorizeUrl(provider, creds, redirectUri, state) };
-    },
-  );
+  app.post('/api/v1/valuations/:id/hris/:provider/connect', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    requireOps(principal);
+    const { id, provider: rawProvider } = req.params as { id: string; provider: string };
+    const provider = parseProvider(rawProvider);
+    const valuation = await loadAuthorized(principal, id);
+    const creds = deps.credentials[provider];
+    if (!creds) throw providerUnavailable(provider);
+    const state = await signCapTableSyncState(
+      { valuationId: valuation.id, provider, userId: principal.id },
+      deps.jwt,
+    );
+    return { authorize_url: authorizeUrl(provider, creds, redirectUri, state) };
+  });
 
   app.get('/api/v1/hris/callback', async (req, reply) => {
     const q = req.query as { state?: string; code?: string; error?: string; company_id?: string };
@@ -267,26 +266,22 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
     }
   });
 
-  app.post(
-    '/api/v1/valuations/:id/hris/:provider/pull',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      requireOps(principal);
-      const { id, provider: rawProvider } = req.params as { id: string; provider: string };
-      const provider = parseProvider(rawProvider);
-      const valuation = await loadAuthorized(principal, id);
-      const connection = await findConnection(deps.pool, valuation.id, provider);
-      if (!connection || connection.status === 'revoked') {
-        throw problems.unprocessable(`${HRIS_PROVIDER_LABELS[provider]} is not connected`);
-      }
-      try {
-        return await syncHrisConnection({ pool: deps.pool, fetchFn }, connection, { actorId: principal.id });
-      } catch (err) {
-        throw problems.unprocessable(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    },
-  );
+  app.post('/api/v1/valuations/:id/hris/:provider/pull', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    requireOps(principal);
+    const { id, provider: rawProvider } = req.params as { id: string; provider: string };
+    const provider = parseProvider(rawProvider);
+    const valuation = await loadAuthorized(principal, id);
+    const connection = await findConnection(deps.pool, valuation.id, provider);
+    if (!connection || connection.status === 'revoked') {
+      throw problems.unprocessable(`${HRIS_PROVIDER_LABELS[provider]} is not connected`);
+    }
+    try {
+      return await syncHrisConnection({ pool: deps.pool, fetchFn }, connection, { actorId: principal.id });
+    } catch (err) {
+      throw problems.unprocessable(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 
   app.post(
     '/api/v1/valuations/:id/hris/:provider/frequency',

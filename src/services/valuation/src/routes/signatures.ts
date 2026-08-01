@@ -4,11 +4,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
-import {
-  deleteSignature,
-  listSignatures,
-  upsertSignature,
-} from '../repos/signatures.js';
+import { deleteSignature, listSignatures, upsertSignature } from '../repos/signatures.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**

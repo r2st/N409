@@ -48,10 +48,7 @@ export interface LegalHold {
  * Whether a valuation (owned by userId) is frozen by any active hold — a global
  * hold, a hold on the valuation, or a hold on its owner.
  */
-export function isFrozen(
-  holds: LegalHold[],
-  target: { valuationId: string; userId: string },
-): boolean {
+export function isFrozen(holds: LegalHold[], target: { valuationId: string; userId: string }): boolean {
   return holds.some((h) => {
     if (!h.active) return false;
     if (h.scope === 'global') return true;

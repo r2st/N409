@@ -121,9 +121,7 @@ describe.skipIf(!dbUp)('review workflow API', () => {
         url: `/api/v1/valuations/${id}/events`,
         headers: authHeader(ops.token),
       });
-      const decision = events
-        .json()
-        .events.find((e: { type: string }) => e.type === 'review_decision');
+      const decision = events.json().events.find((e: { type: string }) => e.type === 'review_decision');
       expect(decision).toBeTruthy();
       expect(decision.actor_id).toBe(reviewer.id);
       expect(decision.payload).toMatchObject({ decision: 'approve', from: 'review', to: 'reviewed' });
@@ -145,9 +143,7 @@ describe.skipIf(!dbUp)('review workflow API', () => {
         url: `/api/v1/valuations/${id}/comments?kind=note`,
         headers: authHeader(ops.token),
       });
-      const note = comments
-        .json()
-        .comments.find((c: { body: string }) => c.body.includes('2025 SAFE'));
+      const note = comments.json().comments.find((c: { body: string }) => c.body.includes('2025 SAFE'));
       expect(note).toBeTruthy();
 
       const events = await ctx.app.inject({
@@ -155,9 +151,7 @@ describe.skipIf(!dbUp)('review workflow API', () => {
         url: `/api/v1/valuations/${id}/events`,
         headers: authHeader(ops.token),
       });
-      const decision = events
-        .json()
-        .events.find((e: { type: string }) => e.type === 'review_decision');
+      const decision = events.json().events.find((e: { type: string }) => e.type === 'review_decision');
       expect(decision.payload).toMatchObject({
         decision: 'request_changes',
         from: 'reviewed',

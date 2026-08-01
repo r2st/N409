@@ -41,10 +41,7 @@ describe('RegisterPage', () => {
     expect(await screen.findByText('Registration is closed')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create account' })).not.toBeInTheDocument();
     // The support address comes from the same setting, so it stays current.
-    expect(screen.getByRole('link', { name: 'help@409.ai' })).toHaveAttribute(
-      'href',
-      'mailto:help@409.ai',
-    );
+    expect(screen.getByRole('link', { name: 'help@409.ai' })).toHaveAttribute('href', 'mailto:help@409.ai');
   });
 
   it('falls back to showing the form if the settings call fails', async () => {

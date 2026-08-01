@@ -37,170 +37,166 @@ function toJson(value: unknown): string {
 }
 
 export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
-  app.post(
-    '/api/v1/valuations/:id/evidence-bundle',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const principal = requirePrincipal(req);
-      if (!isOps(principal)) throw problems.forbidden('Evidence bundles are operations-only');
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.notFound();
-      const valuation = await findValuationById(deps.pool, id);
-      if (!valuation) throw problems.notFound();
+  app.post('/api/v1/valuations/:id/evidence-bundle', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('Evidence bundles are operations-only');
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const valuation = await findValuationById(deps.pool, id);
+    if (!valuation) throw problems.notFound();
 
-      const [events, calculations, documents, comments, signatures, aiJobs, report, generator] =
-        await Promise.all([
-          listEvents(deps.pool, id),
-          listCalculations(deps.pool, id),
-          listDocuments(deps.pool, id),
-          listComments(deps.pool, id, ALL_COMMENT_KINDS),
-          listSignatures(deps.pool, id),
-          listAiJobs(deps.pool, id),
-          findReportByValuation(deps.pool, id),
-          findUserById(deps.pool, principal.id),
-        ]);
-      // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
-      // methodology decision log, QA review history, and saved scenarios.
-      const [decisions, qaReviews, scenarios] = await Promise.all([
-        listDecisions(deps.pool, id),
-        listQaReviews(deps.pool, id),
-        listScenarios(deps.pool, id),
+    const [events, calculations, documents, comments, signatures, aiJobs, report, generator] =
+      await Promise.all([
+        listEvents(deps.pool, id),
+        listCalculations(deps.pool, id),
+        listDocuments(deps.pool, id),
+        listComments(deps.pool, id, ALL_COMMENT_KINDS),
+        listSignatures(deps.pool, id),
+        listAiJobs(deps.pool, id),
+        findReportByValuation(deps.pool, id),
+        findUserById(deps.pool, principal.id),
       ]);
+    // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
+    // methodology decision log, QA review history, and saved scenarios.
+    const [decisions, qaReviews, scenarios] = await Promise.all([
+      listDecisions(deps.pool, id),
+      listQaReviews(deps.pool, id),
+      listScenarios(deps.pool, id),
+    ]);
 
-      // Review tasks carry the approve / request-changes workflow; decisions
-      // themselves are `review_decision` events (already in events.json).
-      const { rows: reviewTasks } = await deps.pool.query(
-        'SELECT * FROM review_tasks WHERE valuation_id = $1 ORDER BY created_at ASC',
-        [id],
-      );
-      // Admin events whose subject is this valuation (rare but possible).
-      const { rows: adminEvents } = await deps.pool.query(
-        'SELECT * FROM admin_events WHERE subject_id = $1 ORDER BY occurred_at ASC',
-        [id],
-      );
-      // Provenance: the exact prompt versions the valuation's AI runs used.
-      const { rows: promptVersions } = await deps.pool.query(
-        `SELECT DISTINCT v.id, p.pipeline, v.version, v.system_prompt, v.model, v.created_at
+    // Review tasks carry the approve / request-changes workflow; decisions
+    // themselves are `review_decision` events (already in events.json).
+    const { rows: reviewTasks } = await deps.pool.query(
+      'SELECT * FROM review_tasks WHERE valuation_id = $1 ORDER BY created_at ASC',
+      [id],
+    );
+    // Admin events whose subject is this valuation (rare but possible).
+    const { rows: adminEvents } = await deps.pool.query(
+      'SELECT * FROM admin_events WHERE subject_id = $1 ORDER BY occurred_at ASC',
+      [id],
+    );
+    // Provenance: the exact prompt versions the valuation's AI runs used.
+    const { rows: promptVersions } = await deps.pool.query(
+      `SELECT DISTINCT v.id, p.pipeline, v.version, v.system_prompt, v.model, v.created_at
          FROM ai_prompt_versions v
          JOIN ai_prompts p ON p.id = v.prompt_id
          JOIN ai_jobs j ON j.pipeline = p.pipeline AND j.prompt_version = v.version
          WHERE j.valuation_id = $1
          ORDER BY p.pipeline, v.version`,
-        [id],
-      );
+      [id],
+    );
 
-      const versions = report ? await listVersions(deps.pool, report.id) : [];
-      // The most recent rendered PDF is the deliverable an auditor wants.
-      let renderedPdf: { name: string; data: Buffer } | null = null;
-      const latestRendered = versions.find((v) => v.has_pdf);
-      if (report && latestRendered) {
-        const full = await getVersion(deps.pool, report.id, latestRendered.version);
-        if (full?.pdf) renderedPdf = { name: `report-v${full.version}.pdf`, data: full.pdf };
-      }
+    const versions = report ? await listVersions(deps.pool, report.id) : [];
+    // The most recent rendered PDF is the deliverable an auditor wants.
+    let renderedPdf: { name: string; data: Buffer } | null = null;
+    const latestRendered = versions.find((v) => v.has_pdf);
+    if (report && latestRendered) {
+      const full = await getVersion(deps.pool, report.id, latestRendered.version);
+      if (full?.pdf) renderedPdf = { name: `report-v${full.version}.pdf`, data: full.pdf };
+    }
 
-      const generatedAt = new Date();
-      const documentManifest = documents.map((d) => ({
-        id: d.id,
-        kind: d.kind,
-        filename: d.filename,
-        content_type: d.content_type,
-        size_bytes: d.size_bytes,
-        sha256: d.sha256,
-        uploaded_by: d.uploaded_by,
-        created_at: d.created_at,
-      }));
+    const generatedAt = new Date();
+    const documentManifest = documents.map((d) => ({
+      id: d.id,
+      kind: d.kind,
+      filename: d.filename,
+      content_type: d.content_type,
+      size_bytes: d.size_bytes,
+      sha256: d.sha256,
+      uploaded_by: d.uploaded_by,
+      created_at: d.created_at,
+    }));
 
-      // The spine, enriched: every event carries its category, severity and
-      // field-level before/after, plus a flat CSV of just the changes.
-      const auditEntries = events.map(describeEvent);
-      const auditSummary = summarizeAuditTrail(auditEntries);
+    // The spine, enriched: every event carries its category, severity and
+    // field-level before/after, plus a flat CSV of just the changes.
+    const auditEntries = events.map(describeEvent);
+    const auditSummary = summarizeAuditTrail(auditEntries);
 
-      const entries: ZipEntry[] = [
-        { name: 'events.json', data: toJson(events) },
-        { name: 'audit-trail.json', data: toJson({ summary: auditSummary, entries: auditEntries }) },
-        { name: 'change-log.csv', data: changeLogCsv(auditEntries) },
-        { name: 'calculations.json', data: toJson(calculations) },
-        { name: 'documents.json', data: toJson(documentManifest) },
-        { name: 'comments.json', data: toJson(comments) },
-        { name: 'signatures.json', data: toJson(signatures) },
-        { name: 'review-tasks.json', data: toJson(reviewTasks) },
-        { name: 'admin-events.json', data: toJson(adminEvents) },
-        { name: 'ai-jobs.json', data: toJson(aiJobs) },
-        { name: 'ai-prompt-versions.json', data: toJson(promptVersions) },
-        { name: 'decisions.json', data: toJson(decisions) },
-        { name: 'qa-reviews.json', data: toJson(qaReviews) },
-        { name: 'scenarios.json', data: toJson(scenarios) },
-        {
-          name: 'report-versions.json',
-          data: toJson({ report: report ?? null, versions }),
-        },
-        ...(renderedPdf ? [renderedPdf] : []),
-      ];
-      const manifest = {
-        format: 'n409-evidence-bundle/1',
-        generated_at: generatedAt.toISOString(),
-        generated_by: { id: principal.id, email: generator?.email ?? null },
-        valuation: {
-          id: valuation.id,
-          number: valuation.number,
-          workflow_id: valuation.workflow_id,
-          kind: valuation.kind,
-          state: valuation.state,
-          company_name: valuation.company_name,
-          currency: valuation.currency,
-          created_at: valuation.created_at,
-          published_at: valuation.published_at,
-        },
-        /** What changed over the life of the valuation, at a glance. */
-        audit_summary: {
-          critical_changes: auditSummary.critical_changes,
-          by_category: auditSummary.by_category,
-          by_severity: auditSummary.by_severity,
-          by_actor_type: auditSummary.by_actor_type,
-          changed_fields: auditSummary.changed_fields,
-          first_at: auditSummary.first_at,
-          last_at: auditSummary.last_at,
-        },
-        counts: {
-          events: events.length,
-          field_changes: auditEntries.reduce((n, e) => n + e.changes.length, 0),
-          calculations: calculations.length,
-          documents: documents.length,
-          comments: comments.length,
-          signatures: signatures.length,
-          review_tasks: reviewTasks.length,
-          admin_events: adminEvents.length,
-          ai_jobs: aiJobs.length,
-          decisions: decisions.length,
-          qa_reviews: qaReviews.length,
-          scenarios: scenarios.length,
-          report_versions: versions.length,
-        },
-        files: ['manifest.json', ...entries.map((e) => e.name)],
-      };
-      entries.unshift({ name: 'manifest.json', data: toJson(manifest) });
-      for (const entry of entries) entry.mtime = generatedAt;
+    const entries: ZipEntry[] = [
+      { name: 'events.json', data: toJson(events) },
+      { name: 'audit-trail.json', data: toJson({ summary: auditSummary, entries: auditEntries }) },
+      { name: 'change-log.csv', data: changeLogCsv(auditEntries) },
+      { name: 'calculations.json', data: toJson(calculations) },
+      { name: 'documents.json', data: toJson(documentManifest) },
+      { name: 'comments.json', data: toJson(comments) },
+      { name: 'signatures.json', data: toJson(signatures) },
+      { name: 'review-tasks.json', data: toJson(reviewTasks) },
+      { name: 'admin-events.json', data: toJson(adminEvents) },
+      { name: 'ai-jobs.json', data: toJson(aiJobs) },
+      { name: 'ai-prompt-versions.json', data: toJson(promptVersions) },
+      { name: 'decisions.json', data: toJson(decisions) },
+      { name: 'qa-reviews.json', data: toJson(qaReviews) },
+      { name: 'scenarios.json', data: toJson(scenarios) },
+      {
+        name: 'report-versions.json',
+        data: toJson({ report: report ?? null, versions }),
+      },
+      ...(renderedPdf ? [renderedPdf] : []),
+    ];
+    const manifest = {
+      format: 'n409-evidence-bundle/1',
+      generated_at: generatedAt.toISOString(),
+      generated_by: { id: principal.id, email: generator?.email ?? null },
+      valuation: {
+        id: valuation.id,
+        number: valuation.number,
+        workflow_id: valuation.workflow_id,
+        kind: valuation.kind,
+        state: valuation.state,
+        company_name: valuation.company_name,
+        currency: valuation.currency,
+        created_at: valuation.created_at,
+        published_at: valuation.published_at,
+      },
+      /** What changed over the life of the valuation, at a glance. */
+      audit_summary: {
+        critical_changes: auditSummary.critical_changes,
+        by_category: auditSummary.by_category,
+        by_severity: auditSummary.by_severity,
+        by_actor_type: auditSummary.by_actor_type,
+        changed_fields: auditSummary.changed_fields,
+        first_at: auditSummary.first_at,
+        last_at: auditSummary.last_at,
+      },
+      counts: {
+        events: events.length,
+        field_changes: auditEntries.reduce((n, e) => n + e.changes.length, 0),
+        calculations: calculations.length,
+        documents: documents.length,
+        comments: comments.length,
+        signatures: signatures.length,
+        review_tasks: reviewTasks.length,
+        admin_events: adminEvents.length,
+        ai_jobs: aiJobs.length,
+        decisions: decisions.length,
+        qa_reviews: qaReviews.length,
+        scenarios: scenarios.length,
+        report_versions: versions.length,
+      },
+      files: ['manifest.json', ...entries.map((e) => e.name)],
+    };
+    entries.unshift({ name: 'manifest.json', data: toJson(manifest) });
+    for (const entry of entries) entry.mtime = generatedAt;
 
-      const zip = buildZip(entries);
+    const zip = buildZip(entries);
 
-      // The export itself is an auditable act.
-      await withTransaction(deps.pool, (client) =>
-        recordEvent(client, {
-          valuationId: id,
-          type: 'evidence_bundle_exported',
-          actor: { actorType: 'human', actorId: principal.id, source: 'api' },
-          payload: { files: manifest.files, size_bytes: zip.length },
-        }),
-      );
+    // The export itself is an auditable act.
+    await withTransaction(deps.pool, (client) =>
+      recordEvent(client, {
+        valuationId: id,
+        type: 'evidence_bundle_exported',
+        actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+        payload: { files: manifest.files, size_bytes: zip.length },
+      }),
+    );
 
-      const stamp = generatedAt.toISOString().slice(0, 10);
-      return reply
-        .header('content-type', 'application/zip')
-        .header(
-          'content-disposition',
-          `attachment; filename="evidence-bundle-${valuation.number}-${stamp}.zip"`,
-        )
-        .send(zip);
-    },
-  );
+    const stamp = generatedAt.toISOString().slice(0, 10);
+    return reply
+      .header('content-type', 'application/zip')
+      .header(
+        'content-disposition',
+        `attachment; filename="evidence-bundle-${valuation.number}-${stamp}.zip"`,
+      )
+      .send(zip);
+  });
 }

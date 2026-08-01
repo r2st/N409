@@ -16,11 +16,7 @@ export interface SessionCookieConfig {
   ttlSeconds: number;
 }
 
-export function setSessionCookie(
-  reply: FastifyReply,
-  token: string,
-  config: SessionCookieConfig,
-): void {
+export function setSessionCookie(reply: FastifyReply, token: string, config: SessionCookieConfig): void {
   reply.setCookie(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'strict',

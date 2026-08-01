@@ -129,17 +129,21 @@ export async function createProvisionedUser(
       `INSERT INTO users (id, email, first_name, last_name, verified, provisioned_by, scim_external_id)
        VALUES ($1, $2, $3, $4, true, $5, $6)
        RETURNING *`,
-      [id, args.email, args.firstName ?? null, args.lastName ?? null, args.provisionedBy, args.externalId ?? null],
+      [
+        id,
+        args.email,
+        args.firstName ?? null,
+        args.lastName ?? null,
+        args.provisionedBy,
+        args.externalId ?? null,
+      ],
     );
     await assignRoles(client, id, args.roles);
     return { ...rows[0]!, roles: args.roles };
   });
 }
 
-export async function findUserByExternalId(
-  pool: pg.Pool,
-  externalId: string,
-): Promise<UserWithRoles | null> {
+export async function findUserByExternalId(pool: pg.Pool, externalId: string): Promise<UserWithRoles | null> {
   const { rows } = await pool.query<UserWithRoles>(
     `SELECT u.*, coalesce(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
        FROM users u
@@ -154,10 +158,7 @@ export async function findUserByExternalId(
 
 /** Soft delete / reactivate for SCIM `active` toggling. */
 export async function setUserActive(pool: pg.Pool, id: string, active: boolean): Promise<void> {
-  await pool.query(
-    `UPDATE users SET deleted_at = ${active ? 'NULL' : 'now()'} WHERE id = $1`,
-    [id],
-  );
+  await pool.query(`UPDATE users SET deleted_at = ${active ? 'NULL' : 'now()'} WHERE id = $1`, [id]);
 }
 
 export async function assignRoles(client: pg.PoolClient, userId: string, roles: RoleKey[]): Promise<void> {
@@ -210,14 +211,8 @@ const OWN_PROFILE_COLUMNS: ReadonlySet<string> = new Set([
   'email',
 ]);
 
-export async function updateOwnProfile(
-  pool: pg.Pool,
-  id: string,
-  patch: OwnProfilePatch,
-): Promise<void> {
-  const entries = Object.entries(patch).filter(
-    ([k, v]) => v !== undefined && OWN_PROFILE_COLUMNS.has(k),
-  );
+export async function updateOwnProfile(pool: pg.Pool, id: string, patch: OwnProfilePatch): Promise<void> {
+  const entries = Object.entries(patch).filter(([k, v]) => v !== undefined && OWN_PROFILE_COLUMNS.has(k));
   if (entries.length === 0) return;
   const sets = entries.map(([k], i) => `${k} = $${i + 1}`);
   await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${entries.length + 1}`, [
@@ -226,11 +221,7 @@ export async function updateOwnProfile(
   ]);
 }
 
-export async function setPasswordDigest(
-  pool: pg.Pool,
-  id: string,
-  digest: string,
-): Promise<void> {
+export async function setPasswordDigest(pool: pg.Pool, id: string, digest: string): Promise<void> {
   await pool.query('UPDATE users SET password_digest = $2 WHERE id = $1', [id, digest]);
 }
 

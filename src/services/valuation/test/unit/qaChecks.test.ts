@@ -31,8 +31,19 @@ describe('deterministic QA checks', () => {
   it('passes a healthy calculation', () => {
     const result = runQaChecks({
       calculation: calc({
-        params: { weight_income: 0.6, weight_market: 0.4, weight_asset: 0, weight_opm: 0, dlom: 0.3, dloc: 0.1 },
-        inputs: { volatility: 0.6, income: { discount_rate: 0.25, terminal_growth: 0.03 }, last_round_price_per_share: 3.5 },
+        params: {
+          weight_income: 0.6,
+          weight_market: 0.4,
+          weight_asset: 0,
+          weight_opm: 0,
+          dlom: 0.3,
+          dloc: 0.1,
+        },
+        inputs: {
+          volatility: 0.6,
+          income: { discount_rate: 0.25, terminal_growth: 0.03 },
+          last_round_price_per_share: 3.5,
+        },
       }),
     });
     expect(result.status).toBe('pass');
@@ -54,7 +65,9 @@ describe('deterministic QA checks', () => {
 
   it('fails weights that do not sum to 100%', () => {
     const result = runQaChecks({
-      calculation: calc({ params: { weight_income: 0.5, weight_market: 0.4, weight_asset: 0, weight_opm: 0 } }),
+      calculation: calc({
+        params: { weight_income: 0.5, weight_market: 0.4, weight_asset: 0, weight_opm: 0 },
+      }),
     });
     expect(byKey(result, 'weights_sum')?.status).toBe('fail');
     expect(byKey(result, 'weights_sum')?.detail).toContain('90.0%');
@@ -66,16 +79,30 @@ describe('deterministic QA checks', () => {
   });
 
   it('grades DLOM: pass ≤35%, warn >35%, fail >60%', () => {
-    expect(byKey(runQaChecks({ calculation: calc({ params: { dlom: 0.3 } }) }), 'dlom_range')?.status).toBe('pass');
-    expect(byKey(runQaChecks({ calculation: calc({ params: { dlom: 0.45 } }) }), 'dlom_range')?.status).toBe('warn');
-    expect(byKey(runQaChecks({ calculation: calc({ params: { dlom: 0.7 } }) }), 'dlom_range')?.status).toBe('fail');
+    expect(byKey(runQaChecks({ calculation: calc({ params: { dlom: 0.3 } }) }), 'dlom_range')?.status).toBe(
+      'pass',
+    );
+    expect(byKey(runQaChecks({ calculation: calc({ params: { dlom: 0.45 } }) }), 'dlom_range')?.status).toBe(
+      'warn',
+    );
+    expect(byKey(runQaChecks({ calculation: calc({ params: { dlom: 0.7 } }) }), 'dlom_range')?.status).toBe(
+      'fail',
+    );
   });
 
   it('warns on volatility outliers and fails non-positive volatility', () => {
-    expect(byKey(runQaChecks({ calculation: calc({ inputs: { volatility: 2.5 } }) }), 'volatility_range')?.status).toBe('warn');
-    expect(byKey(runQaChecks({ calculation: calc({ inputs: { volatility: 0.05 } }) }), 'volatility_range')?.status).toBe('warn');
-    expect(byKey(runQaChecks({ calculation: calc({ inputs: { volatility: 0 } }) }), 'volatility_range')?.status).toBe('fail');
-    expect(byKey(runQaChecks({ calculation: calc({ inputs: { volatility: -1 } }) }), 'volatility_range')?.status).toBe('fail');
+    expect(
+      byKey(runQaChecks({ calculation: calc({ inputs: { volatility: 2.5 } }) }), 'volatility_range')?.status,
+    ).toBe('warn');
+    expect(
+      byKey(runQaChecks({ calculation: calc({ inputs: { volatility: 0.05 } }) }), 'volatility_range')?.status,
+    ).toBe('warn');
+    expect(
+      byKey(runQaChecks({ calculation: calc({ inputs: { volatility: 0 } }) }), 'volatility_range')?.status,
+    ).toBe('fail');
+    expect(
+      byKey(runQaChecks({ calculation: calc({ inputs: { volatility: -1 } }) }), 'volatility_range')?.status,
+    ).toBe('fail');
   });
 
   it('fails when the discount rate does not exceed terminal growth', () => {

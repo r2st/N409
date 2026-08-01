@@ -159,18 +159,16 @@ describe('extractChanges', () => {
   });
 
   it('namespaces auto-applied engine inputs', () => {
-    expect(extractChanges('params_updated', { engine_inputs_applied: { volatility: 0.6 } })).toEqual(
-      [{ field: 'engine_inputs.volatility', from: null, to: 0.6 }],
-    );
+    expect(extractChanges('params_updated', { engine_inputs_applied: { volatility: 0.6 } })).toEqual([
+      { field: 'engine_inputs.volatility', from: null, to: 0.6 },
+    ]);
   });
 
   it('falls back to field names when only names were recorded', () => {
-    expect(extractChanges('grant_updated', { grant_id: 'g1', fields: ['shares', 'strike'] })).toEqual(
-      [
-        { field: 'shares', from: null, to: null },
-        { field: 'strike', from: null, to: null },
-      ],
-    );
+    expect(extractChanges('grant_updated', { grant_id: 'g1', fields: ['shares', 'strike'] })).toEqual([
+      { field: 'shares', from: null, to: null },
+      { field: 'strike', from: null, to: null },
+    ]);
   });
 
   it('returns nothing for payloads with no change information', () => {
@@ -236,9 +234,7 @@ describe('formatAuditValue', () => {
 
 describe('summarizeChanges', () => {
   it('renders from → to for each change', () => {
-    expect(
-      summarizeChanges([{ field: 'dlom', from: '0.20', to: '0.22' }]),
-    ).toBe('DLOM: 0.20 → 0.22');
+    expect(summarizeChanges([{ field: 'dlom', from: '0.20', to: '0.22' }])).toBe('DLOM: 0.20 → 0.22');
   });
 
   it('renders a set for first-time values', () => {

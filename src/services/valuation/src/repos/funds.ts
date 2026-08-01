@@ -65,7 +65,13 @@ export async function findFund(pool: pg.Pool, id: string): Promise<FundRow | nul
 
 export async function createFund(
   pool: pg.Pool,
-  input: { name: string; fundType: FundType; currency: string; vintageYear: number | null; createdBy: string },
+  input: {
+    name: string;
+    fundType: FundType;
+    currency: string;
+    vintageYear: number | null;
+    createdBy: string;
+  },
 ): Promise<FundRow> {
   const { rows } = await pool.query<FundRow>(
     `INSERT INTO fund_portfolios (id, name, fund_type, currency, vintage_year, created_by)
@@ -85,7 +91,11 @@ export async function listPositions(pool: pg.Pool, fundId: string): Promise<Fund
   return rows;
 }
 
-export async function findPosition(pool: pg.Pool, fundId: string, positionId: string): Promise<FundPositionRow | null> {
+export async function findPosition(
+  pool: pg.Pool,
+  fundId: string,
+  positionId: string,
+): Promise<FundPositionRow | null> {
   const { rows } = await pool.query<FundPositionRow>(
     'SELECT * FROM fund_positions WHERE id = $1 AND fund_id = $2',
     [positionId, fundId],
@@ -107,7 +117,15 @@ export async function createPosition(
   const { rows } = await pool.query<FundPositionRow>(
     `INSERT INTO fund_positions (id, fund_id, company_name, security_type, quantity, cost_basis, mark_method)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [newUlid(), input.fundId, input.companyName, input.securityType, input.quantity, input.costBasis, input.markMethod],
+    [
+      newUlid(),
+      input.fundId,
+      input.companyName,
+      input.securityType,
+      input.quantity,
+      input.costBasis,
+      input.markMethod,
+    ],
   );
   return rows[0]!;
 }

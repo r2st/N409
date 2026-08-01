@@ -310,8 +310,7 @@ export function AdminUsersPage() {
   };
 
   const revokeInvite = async (i: Invitation) => {
-    if (!window.confirm(`Revoke the invitation for ${i.email}? The emailed link will stop working.`))
-      return;
+    if (!window.confirm(`Revoke the invitation for ${i.email}? The emailed link will stop working.`)) return;
     try {
       await api(`/users/invitations/${i.id}`, { method: 'DELETE' });
       loadInvitations();
@@ -587,7 +586,11 @@ export function AdminUsersPage() {
         </section>
       )}
 
-      {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-6">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {notice && (
         <div
           role="status"
@@ -727,22 +730,26 @@ export function AdminUsersPage() {
             <Button
               variant="secondary"
               disabled={page <= 1}
-              onClick={() => setParams((p) => {
-                const next = new URLSearchParams(p);
-                next.set('page', String(page - 1));
-                return next;
-              })}
+              onClick={() =>
+                setParams((p) => {
+                  const next = new URLSearchParams(p);
+                  next.set('page', String(page - 1));
+                  return next;
+                })
+              }
             >
               ← Previous
             </Button>
             <Button
               variant="secondary"
               disabled={page >= totalPages}
-              onClick={() => setParams((p) => {
-                const next = new URLSearchParams(p);
-                next.set('page', String(page + 1));
-                return next;
-              })}
+              onClick={() =>
+                setParams((p) => {
+                  const next = new URLSearchParams(p);
+                  next.set('page', String(page + 1));
+                  return next;
+                })
+              }
             >
               Next →
             </Button>

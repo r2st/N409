@@ -150,11 +150,7 @@ export async function updateGrant(
   });
 }
 
-export async function cancelGrant(
-  pool: pg.Pool,
-  grant: GrantRow,
-  actor: EventActor,
-): Promise<GrantRow> {
+export async function cancelGrant(pool: pg.Pool, grant: GrantRow, actor: EventActor): Promise<GrantRow> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<GrantRow>(
       "UPDATE option_grants SET status = 'cancelled', updated_at = now() WHERE id = $1 RETURNING *",

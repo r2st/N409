@@ -73,21 +73,28 @@ export function safeFilename(name: string): string {
  * ``filename`` for legacy clients and ``filename*`` with UTF-8 percent-
  * encoding for modern ones that understand RFC 5987.
  */
-export function contentDisposition(name: string, disposition: 'attachment' | 'inline' = 'attachment'): string {
+export function contentDisposition(
+  name: string,
+  disposition: 'attachment' | 'inline' = 'attachment',
+): string {
   // ASCII-only fallback: drop non-ASCII and quotes.
   const ascii = name.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
   // RFC 5987 encoding: percent-encode everything outside unreserved chars.
   const encoded = [...name]
-    .map(ch => {
+    .map((ch) => {
       const code = ch.charCodeAt(0);
       if (
         (code >= 0x30 && code <= 0x39) || // 0-9
-        (code >= 0x41 && code <= 0x5A) || // A-Z
-        (code >= 0x61 && code <= 0x7A) || // a-z
-        ch === '-' || ch === '.' || ch === '_' || ch === '~'
-      ) return ch;
+        (code >= 0x41 && code <= 0x5a) || // A-Z
+        (code >= 0x61 && code <= 0x7a) || // a-z
+        ch === '-' ||
+        ch === '.' ||
+        ch === '_' ||
+        ch === '~'
+      )
+        return ch;
       return [...new TextEncoder().encode(ch)]
-        .map(b => '%' + b.toString(16).toUpperCase().padStart(2, '0'))
+        .map((b) => '%' + b.toString(16).toUpperCase().padStart(2, '0'))
         .join('');
     })
     .join('');

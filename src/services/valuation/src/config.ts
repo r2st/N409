@@ -127,9 +127,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // trivially low-entropy — a publicly known key is a full auth bypass.
   if (config.NODE_ENV === 'production') {
     const secret = config.JWT_SECRET;
-    const denied = KNOWN_EXAMPLE_JWT_SECRETS.some(
-      (known) => known.toLowerCase() === secret.toLowerCase(),
-    );
+    const denied = KNOWN_EXAMPLE_JWT_SECRETS.some((known) => known.toLowerCase() === secret.toLowerCase());
     if (denied || looksLowEntropy(secret)) {
       throw new Error(
         'Invalid configuration: JWT_SECRET is a known example or low-entropy value — ' +

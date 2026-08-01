@@ -1,11 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
-import {
-  PIPELINE_EVENT_TYPES,
-  type ReviewTaskKind,
-  type ReviewTaskStatus,
-} from '../domain/pipeline.js';
+import { PIPELINE_EVENT_TYPES, type ReviewTaskKind, type ReviewTaskStatus } from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
 export interface ReviewTaskRow {
@@ -47,7 +43,11 @@ export interface CreateTaskInput {
  * Creates the task and its audit event atomically. When `slaHours` is given
  * without an explicit due date, due_at is derived from it (SLA tracking).
  */
-export async function createTask(pool: pg.Pool, input: CreateTaskInput, actor: EventActor): Promise<ReviewTaskRow> {
+export async function createTask(
+  pool: pg.Pool,
+  input: CreateTaskInput,
+  actor: EventActor,
+): Promise<ReviewTaskRow> {
   return withTransaction(pool, async (client) => {
     const id = newUlid();
     const { rows } = await client.query<ReviewTaskRow>(
@@ -145,9 +145,7 @@ export async function patchTask(
   fields: Record<string, unknown>,
   actor: EventActor,
 ): Promise<ReviewTaskRow> {
-  const entries = Object.entries(fields).filter(
-    ([k, v]) => TASK_PATCH_COLUMNS.has(k) && current[k] !== v,
-  );
+  const entries = Object.entries(fields).filter(([k, v]) => TASK_PATCH_COLUMNS.has(k) && current[k] !== v);
   if (entries.length === 0) return current;
 
   return withTransaction(pool, async (client) => {

@@ -150,15 +150,11 @@ export function AuditTrailTab() {
         </div>
         <div>
           <dt className="overline text-ink-400">Value-moving</dt>
-          <dd className="tnum text-lg font-semibold text-ink-900">
-            {data.summary.critical_changes}
-          </dd>
+          <dd className="tnum text-lg font-semibold text-ink-900">{data.summary.critical_changes}</dd>
         </div>
         <div>
           <dt className="overline text-ink-400">Fields changed</dt>
-          <dd className="tnum text-lg font-semibold text-ink-900">
-            {data.summary.changed_fields.length}
-          </dd>
+          <dd className="tnum text-lg font-semibold text-ink-900">{data.summary.changed_fields.length}</dd>
         </div>
         <div>
           <dt className="overline text-ink-400">Last change</dt>
@@ -170,14 +166,13 @@ export function AuditTrailTab() {
 
       {!data.includes_internal && (
         <p className="rounded-md border border-paper-300 bg-paper-50 px-4 py-2.5 text-xs text-ink-500">
-          This trail shows the events shared with you. Internal analyst working notes are not
-          included.
+          This trail shows the events shared with you. Internal analyst working notes are not included.
         </p>
       )}
       {data.truncated && (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
-          This valuation has more history than one view can show — the oldest events are omitted.
-          Narrow the filters to reach them.
+          This valuation has more history than one view can show — the oldest events are omitted. Narrow the
+          filters to reach them.
         </p>
       )}
 
@@ -238,10 +233,7 @@ export function AuditTrailTab() {
       ) : (
         <ol className="space-y-3" data-testid="audit-entries">
           {data.entries.map((entry) => (
-            <li
-              key={entry.id}
-              className="rounded-lg border border-paper-300 bg-surface p-4 shadow-card"
-            >
+            <li key={entry.id} className="rounded-lg border border-paper-300 bg-surface p-4 shadow-card">
               <div className="flex flex-wrap items-baseline gap-2">
                 <span className="text-sm font-semibold text-ink-900">{entry.label}</span>
                 <span
@@ -250,9 +242,7 @@ export function AuditTrailTab() {
                   {entry.severity}
                 </span>
                 <span className="text-xs text-ink-400">{entry.category}</span>
-                <span className="tnum ml-auto text-xs text-ink-400">
-                  {formatDateTime(entry.occurred_at)}
-                </span>
+                <span className="tnum ml-auto text-xs text-ink-400">{formatDateTime(entry.occurred_at)}</span>
               </div>
               <p className="mt-1 text-xs text-ink-500">
                 by {entry.actor_type}

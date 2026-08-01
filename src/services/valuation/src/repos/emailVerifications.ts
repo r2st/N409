@@ -50,10 +50,7 @@ export type VerifyEmailOutcome = 'verified' | 'already_verified' | 'invalid';
  * their email after the link went out, the address no longer matches and the
  * link is rejected.
  */
-export async function verifyEmailWithToken(
-  pool: pg.Pool,
-  rawToken: string,
-): Promise<VerifyEmailOutcome> {
+export async function verifyEmailWithToken(pool: pg.Pool, rawToken: string): Promise<VerifyEmailOutcome> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<{ user_id: string; email: string }>(
       `UPDATE email_verification_tokens SET used_at = now()

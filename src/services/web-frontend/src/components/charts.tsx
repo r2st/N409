@@ -113,11 +113,23 @@ export function WaterfallChart({
 }) {
   const end = start.value + steps.reduce((a, s) => a + s.value, 0);
   // Running cumulative levels for each floating bar.
-  const bars: Array<{ label: string; from: number; to: number; value: number; kind: 'total' | 'up' | 'down' }> = [];
+  const bars: Array<{
+    label: string;
+    from: number;
+    to: number;
+    value: number;
+    kind: 'total' | 'up' | 'down';
+  }> = [];
   bars.push({ label: start.label, from: 0, to: start.value, value: start.value, kind: 'total' });
   let cum = start.value;
   for (const s of steps) {
-    bars.push({ label: s.label, from: cum, to: cum + s.value, value: s.value, kind: s.value >= 0 ? 'up' : 'down' });
+    bars.push({
+      label: s.label,
+      from: cum,
+      to: cum + s.value,
+      value: s.value,
+      kind: s.value >= 0 ? 'up' : 'down',
+    });
     cum += s.value;
   }
   bars.push({ label: end >= 0 ? 'New' : 'New', from: 0, to: end, value: end, kind: 'total' });
@@ -133,7 +145,13 @@ export function WaterfallChart({
   return (
     <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="overline text-ink-400">{title}</div>
-      <svg viewBox="0 0 100 118" className="mt-4 w-full" role="img" aria-label={title} preserveAspectRatio="none">
+      <svg
+        viewBox="0 0 100 118"
+        className="mt-4 w-full"
+        role="img"
+        aria-label={title}
+        preserveAspectRatio="none"
+      >
         {/* zero baseline */}
         <line x1="0" x2="100" y1={y(0)} y2={y(0)} stroke="var(--color-paper-300)" strokeWidth="0.4" />
         {bars.map((b, i) => {
@@ -228,10 +246,23 @@ export function LineChart({
       {!hasData ? (
         <p className="mt-4 text-sm text-ink-400">Not enough data yet.</p>
       ) : (
-        <svg viewBox="0 0 100 66" className="mt-3 w-full" role="img" aria-label={title} preserveAspectRatio="none">
+        <svg
+          viewBox="0 0 100 66"
+          className="mt-3 w-full"
+          role="img"
+          aria-label={title}
+          preserveAspectRatio="none"
+        >
           <line x1="0" x2="100" y1={y(lo)} y2={y(lo)} stroke="var(--color-paper-300)" strokeWidth="0.3" />
           {segments.map((pts, i) => (
-            <polyline key={i} points={pts} fill="none" stroke={color} strokeWidth="0.8" strokeLinejoin="round" />
+            <polyline
+              key={i}
+              points={pts}
+              fill="none"
+              stroke={color}
+              strokeWidth="0.8"
+              strokeLinejoin="round"
+            />
           ))}
           {points.map((p, i) =>
             p.value === null ? null : (

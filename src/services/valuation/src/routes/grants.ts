@@ -40,7 +40,10 @@ const CreateBody = z.object({
   options_count: z.number().int().positive(),
   exercise_price: z.number().nonnegative().optional(),
   vesting_template: z.string().max(60).default('standard_4yr_1yr_cliff'),
-  vesting_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  vesting_start_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   vesting_months: z.number().int().min(0).max(240).optional(),
   cliff_months: z.number().int().min(0).max(120).optional(),
   frequency_months: z.number().int().min(1).max(12).optional(),
@@ -50,10 +53,16 @@ const CreateBody = z.object({
 const PatchBody = z.object({
   grantee_name: z.string().min(1).max(200).optional(),
   grantee_email: z.string().email().max(320).nullable().optional(),
-  grant_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  grant_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   options_count: z.number().int().positive().optional(),
   vesting_template: z.string().max(60).optional(),
-  vesting_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  vesting_start_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   vesting_months: z.number().int().min(0).max(240).optional(),
   cliff_months: z.number().int().min(0).max(120).optional(),
   frequency_months: z.number().int().min(1).max(12).optional(),
@@ -64,11 +73,7 @@ function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Grant management is operations-only');
 }
 
-async function loadReadable(
-  pool: pg.Pool,
-  id: string,
-  principal: Principal,
-): Promise<ValuationRow> {
+async function loadReadable(pool: pg.Pool, id: string, principal: Principal): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
   if (!valuation) throw problems.notFound();
@@ -127,9 +132,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
 
     const resolution = await findResolutionByValuation(deps.pool, id);
     if (!resolution || resolution.status !== 'approved') {
-      throw problems.conflict(
-        'Grants can only be issued after the board has approved the 409A valuation',
-      );
+      throw problems.conflict('Grants can only be issued after the board has approved the 409A valuation');
     }
 
     // Exercise price from the adopted FMV unless explicitly overridden.

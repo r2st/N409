@@ -101,9 +101,7 @@ describe('fetchPartnerLogo', () => {
     expect(
       await fetchPartnerLogo('https://x.example/logo', fetchReturning(Buffer.from('<html>nope'))),
     ).toBeNull();
-    expect(
-      await fetchPartnerLogo('https://x.example/logo', fetchReturning(Buffer.alloc(0))),
-    ).toBeNull();
+    expect(await fetchPartnerLogo('https://x.example/logo', fetchReturning(Buffer.alloc(0)))).toBeNull();
     const failing = vi.fn(async () => new Response('gone', { status: 404 }));
     expect(await fetchPartnerLogo('https://x.example/logo', failing)).toBeNull();
     const throwing = vi.fn(async () => {

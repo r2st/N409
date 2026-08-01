@@ -415,10 +415,9 @@ describe.skipIf(!dbUp)('account settings', () => {
 
     it('refuses to send a reset link to an SSO account', async () => {
       const user = await seedUser(ctx, { roles: ['valuation_user'] });
-      await ctx.pool.query(
-        `UPDATE users SET password_digest = NULL, sso_provider = 'google' WHERE id = $1`,
-        [user.id],
-      );
+      await ctx.pool.query(`UPDATE users SET password_digest = NULL, sso_provider = 'google' WHERE id = $1`, [
+        user.id,
+      ]);
       const res = await ctx.app.inject({
         method: 'POST',
         url: `/api/v1/users/${user.id}/send-password-reset`,

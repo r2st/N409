@@ -48,11 +48,7 @@ export const PROGRESS_STAGES: readonly ProgressStage[] = [
 ] as const;
 
 /** States that halt the engagement instead of progressing it. */
-export const HALTED_STATES: ReadonlySet<ValuationState> = new Set([
-  'cancelled',
-  'timeout',
-  'ignored',
-]);
+export const HALTED_STATES: ReadonlySet<ValuationState> = new Set(['cancelled', 'timeout', 'ignored']);
 
 /** Index of the stage a state belongs to, or -1 for halted states. */
 export function stageIndexOf(state: ValuationState): number {
@@ -224,11 +220,7 @@ export function daysBetween(from: Date, to: Date): number {
  * Null once delivered or when the engagement is halted — an ETA on a stalled
  * valuation is worse than no ETA.
  */
-export function estimatedDeliveryAt(args: {
-  stageIndex: number;
-  halted: boolean;
-  now: Date;
-}): Date | null {
+export function estimatedDeliveryAt(args: { stageIndex: number; halted: boolean; now: Date }): Date | null {
   const { stageIndex, halted, now } = args;
   if (halted || stageIndex < 0 || stageIndex >= PROGRESS_STAGES.length - 1) return null;
   const remaining = PROGRESS_STAGES.slice(stageIndex).reduce(
@@ -242,10 +234,7 @@ export function estimatedDeliveryAt(args: {
  * Days spent in each stage: the gap to the next stage's entry, or to `now` for
  * the stage still in progress. Stages never entered report null.
  */
-export function stageDurations(
-  enteredAt: ReadonlyMap<number, Date>,
-  now: Date,
-): Array<number | null> {
+export function stageDurations(enteredAt: ReadonlyMap<number, Date>, now: Date): Array<number | null> {
   return PROGRESS_STAGES.map((_, index) => {
     const start = enteredAt.get(index);
     if (!start) return null;

@@ -12,14 +12,16 @@ describe('validateWeights', () => {
 
   it('accepts a complete set summing to exactly 1', () => {
     expect(
-      validateWeights(empty, { weight_asset: 0, weight_opm: 0.6, weight_income: 0.15, weight_market: 0.25 }).ok,
+      validateWeights(empty, { weight_asset: 0, weight_opm: 0.6, weight_income: 0.15, weight_market: 0.25 })
+        .ok,
     ).toBe(true);
   });
 
   it('accepts float-noisy sums that are exact in basis points', () => {
     // 0.1 + 0.2 + 0.3 + 0.4 !== 1 in IEEE754 addition order dependent cases
     expect(
-      validateWeights(empty, { weight_asset: 0.1, weight_opm: 0.2, weight_income: 0.3, weight_market: 0.4 }).ok,
+      validateWeights(empty, { weight_asset: 0.1, weight_opm: 0.2, weight_income: 0.3, weight_market: 0.4 })
+        .ok,
     ).toBe(true);
   });
 
@@ -40,13 +42,23 @@ describe('validateWeights', () => {
   });
 
   it('merges against current DB values (numeric strings)', () => {
-    const current = { weight_asset: '0.25', weight_opm: '0.25', weight_income: '0.25', weight_market: '0.25' };
+    const current = {
+      weight_asset: '0.25',
+      weight_opm: '0.25',
+      weight_income: '0.25',
+      weight_market: '0.25',
+    };
     expect(validateWeights(current, { weight_market: 0.3 }).ok).toBe(false);
     expect(validateWeights(current, { weight_market: 0.25 }).ok).toBe(true);
   });
 
   it('allows clearing all four', () => {
-    const current = { weight_asset: '0.25', weight_opm: '0.25', weight_income: '0.25', weight_market: '0.25' };
+    const current = {
+      weight_asset: '0.25',
+      weight_opm: '0.25',
+      weight_income: '0.25',
+      weight_market: '0.25',
+    };
     expect(
       validateWeights(current, {
         weight_asset: null,
@@ -60,9 +72,11 @@ describe('validateWeights', () => {
 
 describe('deepMerge', () => {
   it('merges nested objects, later wins', () => {
-    expect(
-      deepMerge({ a: 1, m: { x: 1, y: 2 } }, { m: { y: 3, z: 4 }, b: 2 }),
-    ).toEqual({ a: 1, b: 2, m: { x: 1, y: 3, z: 4 } });
+    expect(deepMerge({ a: 1, m: { x: 1, y: 2 } }, { m: { y: 3, z: 4 }, b: 2 })).toEqual({
+      a: 1,
+      b: 2,
+      m: { x: 1, y: 3, z: 4 },
+    });
   });
 
   it('replaces arrays and scalars wholesale', () => {

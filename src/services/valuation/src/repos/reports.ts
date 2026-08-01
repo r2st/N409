@@ -27,7 +27,9 @@ export interface ReportVersionRow {
 }
 
 export async function findReportByValuation(pool: pg.Pool, valuationId: string): Promise<ReportRow | null> {
-  const { rows } = await pool.query<ReportRow>('SELECT * FROM reports WHERE valuation_id = $1', [valuationId]);
+  const { rows } = await pool.query<ReportRow>('SELECT * FROM reports WHERE valuation_id = $1', [
+    valuationId,
+  ]);
   return rows[0] ?? null;
 }
 

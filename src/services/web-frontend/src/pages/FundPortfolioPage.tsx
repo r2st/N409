@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
-import { Button, EmptyState, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  InfoTooltip,
+  Select,
+  Spinner,
+  TextInput,
+} from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
 
 /**
@@ -122,7 +131,9 @@ export function FundPortfolioPage() {
             Fund Portfolios
             <HelpIcon article="fund-holdings-overview" label="Help: Fund holdings & ASC 820" />
           </h1>
-          <p className="mt-1 text-sm text-ink-500">ASC 820 fair-value marks, NAV and LP waterfall for investment funds.</p>
+          <p className="mt-1 text-sm text-ink-500">
+            ASC 820 fair-value marks, NAV and LP waterfall for investment funds.
+          </p>
         </div>
         <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : 'New fund'}</Button>
       </header>
@@ -130,8 +141,17 @@ export function FundPortfolioPage() {
       {error && <ErrorNote>{error}</ErrorNote>}
 
       {showCreate && (
-        <form onSubmit={create} className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-surface p-4">
-          <Field label="Fund name"><TextInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></Field>
+        <form
+          onSubmit={create}
+          className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-surface p-4"
+        >
+          <Field label="Fund name">
+            <TextInput
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+            />
+          </Field>
           <Field label="Type">
             <Select value={form.fund_type} onChange={(e) => setForm({ ...form, fund_type: e.target.value })}>
               <option value="vc">Venture</option>
@@ -141,14 +161,28 @@ export function FundPortfolioPage() {
               <option value="other">Other</option>
             </Select>
           </Field>
-          <Field label="Currency"><TextInput value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} className="w-20" /></Field>
-          <Field label="Vintage"><TextInput value={form.vintage_year} onChange={(e) => setForm({ ...form, vintage_year: e.target.value })} className="w-24" /></Field>
+          <Field label="Currency">
+            <TextInput
+              value={form.currency}
+              onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              className="w-20"
+            />
+          </Field>
+          <Field label="Vintage">
+            <TextInput
+              value={form.vintage_year}
+              onChange={(e) => setForm({ ...form, vintage_year: e.target.value })}
+              className="w-24"
+            />
+          </Field>
           <Button type="submit">Create</Button>
         </form>
       )}
 
       {funds.length === 0 ? (
-        <EmptyState title="No funds yet">Create a fund to start marking its portfolio to fair value.</EmptyState>
+        <EmptyState title="No funds yet">
+          Create a fund to start marking its portfolio to fair value.
+        </EmptyState>
       ) : (
         <div className="flex flex-wrap gap-2">
           {funds.map((f) => (
@@ -156,7 +190,9 @@ export function FundPortfolioPage() {
               key={f.id}
               onClick={() => setSelected(f.id)}
               className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
-                selected === f.id ? 'border-bond-600 bg-bond-50 text-bond-700' : 'border-paper-300 text-ink-600 hover:bg-paper-100'
+                selected === f.id
+                  ? 'border-bond-600 bg-bond-50 text-bond-700'
+                  : 'border-paper-300 text-ink-600 hover:bg-paper-100'
               }`}
             >
               {f.name} <span className="text-ink-400">· {f.fund_type.toUpperCase()}</span>
@@ -175,7 +211,13 @@ function FundDetailView({ fundId }: { fundId: string }) {
   const [nav, setNav] = useState<Nav | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPos, setShowPos] = useState(false);
-  const [posForm, setPosForm] = useState({ company_name: '', security_type: 'preferred', quantity: '0', cost_basis: '0', mark_method: 'cost' });
+  const [posForm, setPosForm] = useState({
+    company_name: '',
+    security_type: 'preferred',
+    quantity: '0',
+    cost_basis: '0',
+    mark_method: 'cost',
+  });
 
   const load = useCallback(async () => {
     setError(null);
@@ -212,7 +254,13 @@ function FundDetailView({ fundId }: { fundId: string }) {
         },
       });
       setShowPos(false);
-      setPosForm({ company_name: '', security_type: 'preferred', quantity: '0', cost_basis: '0', mark_method: 'cost' });
+      setPosForm({
+        company_name: '',
+        security_type: 'preferred',
+        quantity: '0',
+        cost_basis: '0',
+        mark_method: 'cost',
+      });
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to add position');
@@ -242,8 +290,20 @@ function FundDetailView({ fundId }: { fundId: string }) {
         <div className="rounded-lg border border-paper-200 bg-surface p-4">
           <h3 className="mb-2 text-sm font-semibold text-ink-700">ASC 820 fair-value hierarchy</h3>
           <table className="w-full text-sm">
-            <thead><tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500"><th className="py-1.5">Level 1 (quoted)</th><th className="py-1.5">Level 2 (observable)</th><th className="py-1.5">Level 3 (unobservable)</th></tr></thead>
-            <tbody className="tnum"><tr><td className="py-1.5">{money(nav.level_breakdown.level_1, cur)}</td><td className="py-1.5">{money(nav.level_breakdown.level_2, cur)}</td><td className="py-1.5">{money(nav.level_breakdown.level_3, cur)}</td></tr></tbody>
+            <thead>
+              <tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500">
+                <th className="py-1.5">Level 1 (quoted)</th>
+                <th className="py-1.5">Level 2 (observable)</th>
+                <th className="py-1.5">Level 3 (unobservable)</th>
+              </tr>
+            </thead>
+            <tbody className="tnum">
+              <tr>
+                <td className="py-1.5">{money(nav.level_breakdown.level_1, cur)}</td>
+                <td className="py-1.5">{money(nav.level_breakdown.level_2, cur)}</td>
+                <td className="py-1.5">{money(nav.level_breakdown.level_3, cur)}</td>
+              </tr>
+            </tbody>
           </table>
         </div>
       )}
@@ -252,30 +312,60 @@ function FundDetailView({ fundId }: { fundId: string }) {
       <div className="rounded-lg border border-paper-200 bg-surface p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-ink-700">Positions</h3>
-          <Button variant="secondary" onClick={() => setShowPos((s) => !s)}>{showPos ? 'Cancel' : 'Add position'}</Button>
+          <Button variant="secondary" onClick={() => setShowPos((s) => !s)}>
+            {showPos ? 'Cancel' : 'Add position'}
+          </Button>
         </div>
         {showPos && (
           <form onSubmit={addPosition} className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Field label="Company"><TextInput value={posForm.company_name} onChange={(e) => setPosForm({ ...posForm, company_name: e.target.value })} required /></Field>
+            <Field label="Company">
+              <TextInput
+                value={posForm.company_name}
+                onChange={(e) => setPosForm({ ...posForm, company_name: e.target.value })}
+                required
+              />
+            </Field>
             <Field label="Security">
-              <Select value={posForm.security_type} onChange={(e) => setPosForm({ ...posForm, security_type: e.target.value })}>
-                {['common', 'preferred', 'safe', 'note', 'warrant', 'other'].map((s) => <option key={s} value={s}>{s}</option>)}
+              <Select
+                value={posForm.security_type}
+                onChange={(e) => setPosForm({ ...posForm, security_type: e.target.value })}
+              >
+                {['common', 'preferred', 'safe', 'note', 'warrant', 'other'].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
               </Select>
             </Field>
             <Field
               label="Default mark method"
               tooltip="Sets the ASC 820 fair-value level: Market = Level 1 (quoted price), Last round = Level 2 (observable), Calibrated OPM and Cost = Level 3 (model / unobservable). Level 3 marks get the most auditor scrutiny."
             >
-              <Select value={posForm.mark_method} onChange={(e) => setPosForm({ ...posForm, mark_method: e.target.value })}>
+              <Select
+                value={posForm.mark_method}
+                onChange={(e) => setPosForm({ ...posForm, mark_method: e.target.value })}
+              >
                 <option value="cost">Cost</option>
                 <option value="market">Market (L1)</option>
                 <option value="last_round">Last round (L2)</option>
                 <option value="calibrated_opm">Calibrated OPM (L3)</option>
               </Select>
             </Field>
-            <Field label="Quantity"><TextInput value={posForm.quantity} onChange={(e) => setPosForm({ ...posForm, quantity: e.target.value })} /></Field>
-            <Field label="Cost basis"><TextInput value={posForm.cost_basis} onChange={(e) => setPosForm({ ...posForm, cost_basis: e.target.value })} /></Field>
-            <div className="flex items-end"><Button type="submit">Add</Button></div>
+            <Field label="Quantity">
+              <TextInput
+                value={posForm.quantity}
+                onChange={(e) => setPosForm({ ...posForm, quantity: e.target.value })}
+              />
+            </Field>
+            <Field label="Cost basis">
+              <TextInput
+                value={posForm.cost_basis}
+                onChange={(e) => setPosForm({ ...posForm, cost_basis: e.target.value })}
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button type="submit">Add</Button>
+            </div>
           </form>
         )}
         {positions.length === 0 ? (
@@ -294,10 +384,27 @@ function FundDetailView({ fundId }: { fundId: string }) {
   );
 }
 
-function PositionRow({ fundId, position, currency, onChange }: { fundId: string; position: Position; currency: string; onChange: () => void }) {
+function PositionRow({
+  fundId,
+  position,
+  currency,
+  onChange,
+}: {
+  fundId: string;
+  position: Position;
+  currency: string;
+  onChange: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [marks, setMarks] = useState<Mark[] | null>(null);
-  const [markForm, setMarkForm] = useState({ measurement_date: '2026-03-31', method: 'market', quantity: position.quantity, quoted_price: '', round_price_per_share: '', model_value: '' });
+  const [markForm, setMarkForm] = useState({
+    measurement_date: '2026-03-31',
+    method: 'market',
+    quantity: position.quantity,
+    quoted_price: '',
+    round_price_per_share: '',
+    model_value: '',
+  });
   const [error, setError] = useState<string | null>(null);
 
   const loadMarks = useCallback(async () => {
@@ -314,10 +421,19 @@ function PositionRow({ fundId, position, currency, onChange }: { fundId: string;
     e.preventDefault();
     setError(null);
     try {
-      const body: Record<string, unknown> = { measurement_date: markForm.measurement_date, method: markForm.method };
-      if (markForm.method === 'market') { body.quantity = Number(markForm.quantity); body.quoted_price = Number(markForm.quoted_price); }
-      else if (markForm.method === 'last_round') { body.quantity = Number(markForm.quantity); body.round_price_per_share = Number(markForm.round_price_per_share); }
-      else if (markForm.method === 'calibrated_opm') { body.model_value = Number(markForm.model_value); }
+      const body: Record<string, unknown> = {
+        measurement_date: markForm.measurement_date,
+        method: markForm.method,
+      };
+      if (markForm.method === 'market') {
+        body.quantity = Number(markForm.quantity);
+        body.quoted_price = Number(markForm.quoted_price);
+      } else if (markForm.method === 'last_round') {
+        body.quantity = Number(markForm.quantity);
+        body.round_price_per_share = Number(markForm.round_price_per_share);
+      } else if (markForm.method === 'calibrated_opm') {
+        body.model_value = Number(markForm.model_value);
+      }
       await api(`/funds/${fundId}/positions/${position.id}/marks`, { method: 'POST', body });
       await loadMarks();
       onChange();
@@ -329,34 +445,100 @@ function PositionRow({ fundId, position, currency, onChange }: { fundId: string;
   const lm = position.latest_mark;
   return (
     <div className="rounded-md border border-paper-200">
-      <button onClick={toggle} className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-paper-50">
-        <span className="font-medium text-ink-700">{position.company_name}<span className="ml-2 text-xs text-ink-400">{position.security_type}</span></span>
-        <span className="tnum text-ink-600">{lm ? `${money(Number(lm.fair_value), currency)} · L${lm.level}` : `cost ${money(Number(position.cost_basis), currency)}`}</span>
+      <button
+        onClick={toggle}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-paper-50"
+      >
+        <span className="font-medium text-ink-700">
+          {position.company_name}
+          <span className="ml-2 text-xs text-ink-400">{position.security_type}</span>
+        </span>
+        <span className="tnum text-ink-600">
+          {lm
+            ? `${money(Number(lm.fair_value), currency)} · L${lm.level}`
+            : `cost ${money(Number(position.cost_basis), currency)}`}
+        </span>
       </button>
       {open && (
         <div className="space-y-3 border-t border-paper-200 p-3">
           {error && <ErrorNote>{error}</ErrorNote>}
           <form onSubmit={addMark} className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            <Field label="Date" tooltip="Measurement date for this mark. For a calibrated OPM, this is the calibration date the model is anchored to — usually the last observable transaction, such as the round the fund invested in."><TextInput value={markForm.measurement_date} onChange={(e) => setMarkForm({ ...markForm, measurement_date: e.target.value })} /></Field>
+            <Field
+              label="Date"
+              tooltip="Measurement date for this mark. For a calibrated OPM, this is the calibration date the model is anchored to — usually the last observable transaction, such as the round the fund invested in."
+            >
+              <TextInput
+                value={markForm.measurement_date}
+                onChange={(e) => setMarkForm({ ...markForm, measurement_date: e.target.value })}
+              />
+            </Field>
             <Field label="Method">
-              <Select value={markForm.method} onChange={(e) => setMarkForm({ ...markForm, method: e.target.value })}>
+              <Select
+                value={markForm.method}
+                onChange={(e) => setMarkForm({ ...markForm, method: e.target.value })}
+              >
                 <option value="market">Market (L1)</option>
                 <option value="last_round">Last round (L2)</option>
                 <option value="calibrated_opm">Calibrated (L3)</option>
                 <option value="cost">Cost (L3)</option>
               </Select>
             </Field>
-            {markForm.method === 'market' && <Field label="Quoted price"><TextInput value={markForm.quoted_price} onChange={(e) => setMarkForm({ ...markForm, quoted_price: e.target.value })} /></Field>}
-            {markForm.method === 'last_round' && <Field label="Round price/sh"><TextInput value={markForm.round_price_per_share} onChange={(e) => setMarkForm({ ...markForm, round_price_per_share: e.target.value })} /></Field>}
-            {markForm.method === 'calibrated_opm' && <Field label="Model value"><TextInput value={markForm.model_value} onChange={(e) => setMarkForm({ ...markForm, model_value: e.target.value })} /></Field>}
-            <div className="flex items-end"><Button type="submit" variant="secondary">Record mark</Button></div>
+            {markForm.method === 'market' && (
+              <Field label="Quoted price">
+                <TextInput
+                  value={markForm.quoted_price}
+                  onChange={(e) => setMarkForm({ ...markForm, quoted_price: e.target.value })}
+                />
+              </Field>
+            )}
+            {markForm.method === 'last_round' && (
+              <Field label="Round price/sh">
+                <TextInput
+                  value={markForm.round_price_per_share}
+                  onChange={(e) => setMarkForm({ ...markForm, round_price_per_share: e.target.value })}
+                />
+              </Field>
+            )}
+            {markForm.method === 'calibrated_opm' && (
+              <Field label="Model value">
+                <TextInput
+                  value={markForm.model_value}
+                  onChange={(e) => setMarkForm({ ...markForm, model_value: e.target.value })}
+                />
+              </Field>
+            )}
+            <div className="flex items-end">
+              <Button type="submit" variant="secondary">
+                Record mark
+              </Button>
+            </div>
           </form>
           <div>
             <h5 className="overline mb-1 text-ink-400">Mark history</h5>
-            {!marks ? <Spinner /> : marks.length === 0 ? <p className="text-xs text-ink-400">No marks yet.</p> : (
+            {!marks ? (
+              <Spinner />
+            ) : marks.length === 0 ? (
+              <p className="text-xs text-ink-400">No marks yet.</p>
+            ) : (
               <table className="w-full text-xs">
-                <thead><tr className="border-b border-paper-200 text-left text-ink-500"><th className="py-1">Date</th><th className="py-1">Method</th><th className="py-1">Level</th><th className="py-1">Fair value</th></tr></thead>
-                <tbody className="tnum">{marks.map((m) => <tr key={m.id} className="border-b border-paper-100 last:border-0"><td className="py-1">{m.measurement_date}</td><td className="py-1">{m.method}</td><td className="py-1">L{m.level}</td><td className="py-1">{money(Number(m.fair_value), currency)}</td></tr>)}</tbody>
+                <thead>
+                  <tr className="border-b border-paper-200 text-left text-ink-500">
+                    <th className="py-1">Date</th>
+                    <th className="py-1">Method</th>
+                    <th className="py-1">Level</th>
+                    <th className="py-1">Fair value</th>
+                  </tr>
+                </thead>
+                <tbody className="tnum">
+                  {marks.map((m) => (
+                    <tr key={m.id} className="border-b border-paper-100 last:border-0">
+                      <td className="py-1">{m.measurement_date}</td>
+                      <td className="py-1">{m.method}</td>
+                      <td className="py-1">L{m.level}</td>
+                      <td className="py-1">{money(Number(m.fair_value), currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
               </table>
             )}
           </div>
@@ -366,7 +548,17 @@ function PositionRow({ fundId, position, currency, onChange }: { fundId: string;
   );
 }
 
-function WaterfallCard({ fundId, lpTerms, currency, onSaved }: { fundId: string; lpTerms: LpTerms | null; currency: string; onSaved: () => void }) {
+function WaterfallCard({
+  fundId,
+  lpTerms,
+  currency,
+  onSaved,
+}: {
+  fundId: string;
+  lpTerms: LpTerms | null;
+  currency: string;
+  onSaved: () => void;
+}) {
   const [terms, setTerms] = useState({
     committed_capital: lpTerms?.committed_capital ?? '0',
     contributed_capital: lpTerms?.contributed_capital ?? '0',
@@ -422,16 +614,55 @@ function WaterfallCard({ fundId, lpTerms, currency, onSaved }: { fundId: string;
       </h3>
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Field label="Committed"><TextInput value={terms.committed_capital} onChange={(e) => setTerms({ ...terms, committed_capital: e.target.value })} /></Field>
-        <Field label="Contributed"><TextInput value={terms.contributed_capital} onChange={(e) => setTerms({ ...terms, contributed_capital: e.target.value })} /></Field>
-        <Field label="Pref return" tooltip="The LP hurdle rate (e.g. 0.08 = 8%). LPs earn this preferred return on contributed capital before the GP shares in profits."><TextInput value={terms.preferred_return_rate} onChange={(e) => setTerms({ ...terms, preferred_return_rate: e.target.value })} /></Field>
-        <Field label="Carry" tooltip="The GP’s carried-interest percentage — its share of profits above the hurdle (e.g. 0.20 = 20%, the ‘20’ in a 20% carry / 80% LP split)."><TextInput value={terms.carry_pct} onChange={(e) => setTerms({ ...terms, carry_pct: e.target.value })} /></Field>
+        <Field label="Committed">
+          <TextInput
+            value={terms.committed_capital}
+            onChange={(e) => setTerms({ ...terms, committed_capital: e.target.value })}
+          />
+        </Field>
+        <Field label="Contributed">
+          <TextInput
+            value={terms.contributed_capital}
+            onChange={(e) => setTerms({ ...terms, contributed_capital: e.target.value })}
+          />
+        </Field>
+        <Field
+          label="Pref return"
+          tooltip="The LP hurdle rate (e.g. 0.08 = 8%). LPs earn this preferred return on contributed capital before the GP shares in profits."
+        >
+          <TextInput
+            value={terms.preferred_return_rate}
+            onChange={(e) => setTerms({ ...terms, preferred_return_rate: e.target.value })}
+          />
+        </Field>
+        <Field
+          label="Carry"
+          tooltip="The GP’s carried-interest percentage — its share of profits above the hurdle (e.g. 0.20 = 20%, the ‘20’ in a 20% carry / 80% LP split)."
+        >
+          <TextInput
+            value={terms.carry_pct}
+            onChange={(e) => setTerms({ ...terms, carry_pct: e.target.value })}
+          />
+        </Field>
       </div>
       <div className="mt-3 flex flex-wrap items-end gap-3">
-        <label className="flex items-center gap-2 text-sm text-ink-600"><input type="checkbox" checked={terms.gp_catch_up} onChange={(e) => setTerms({ ...terms, gp_catch_up: e.target.checked })} /> GP catch-up</label>
-        <Button variant="secondary" onClick={() => void save()}>Save LP terms</Button>
-        <Field label="Distributable"><TextInput value={distributable} onChange={(e) => setDistributable(e.target.value)} /></Field>
-        <Field label="Years"><TextInput value={years} onChange={(e) => setYears(e.target.value)} className="w-16" /></Field>
+        <label className="flex items-center gap-2 text-sm text-ink-600">
+          <input
+            type="checkbox"
+            checked={terms.gp_catch_up}
+            onChange={(e) => setTerms({ ...terms, gp_catch_up: e.target.checked })}
+          />{' '}
+          GP catch-up
+        </label>
+        <Button variant="secondary" onClick={() => void save()}>
+          Save LP terms
+        </Button>
+        <Field label="Distributable">
+          <TextInput value={distributable} onChange={(e) => setDistributable(e.target.value)} />
+        </Field>
+        <Field label="Years">
+          <TextInput value={years} onChange={(e) => setYears(e.target.value)} className="w-16" />
+        </Field>
         <Button onClick={() => void run()}>Run waterfall</Button>
       </div>
       {result && (
@@ -447,9 +678,13 @@ function WaterfallCard({ fundId, lpTerms, currency, onSaved }: { fundId: string;
 
 function SummaryCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className={`rounded-lg border p-3 ${accent ? 'border-bond-200 bg-bond-50' : 'border-paper-200 bg-surface'}`}>
+    <div
+      className={`rounded-lg border p-3 ${accent ? 'border-bond-200 bg-bond-50' : 'border-paper-200 bg-surface'}`}
+    >
       <div className="overline text-ink-400">{label}</div>
-      <div className={`tnum mt-1 text-lg font-semibold ${accent ? 'text-bond-700' : 'text-ink-800'}`}>{value}</div>
+      <div className={`tnum mt-1 text-lg font-semibold ${accent ? 'text-bond-700' : 'text-ink-800'}`}>
+        {value}
+      </div>
     </div>
   );
 }

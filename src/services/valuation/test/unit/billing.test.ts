@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  canConsume,
-  invoiceNumber,
-  invoiceSections,
-  usageView,
-} from '../../src/domain/billing.js';
+import { canConsume, invoiceNumber, invoiceSections, usageView } from '../../src/domain/billing.js';
 import { sanitizeHtml } from '../../src/domain/report.js';
 
 describe('usage / plan limits (feature 7)', () => {

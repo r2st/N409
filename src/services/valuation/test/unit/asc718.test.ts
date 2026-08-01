@@ -28,7 +28,9 @@ describe('ASC 718 grant-date fair value', () => {
   });
 
   it('degenerates to intrinsic value at zero term / zero volatility', () => {
-    expect(blackScholesMerton({ ...textbook, expectedTermYears: 0, volatility: 0, grantDateFairValue: 120 })).toBeCloseTo(20, 6);
+    expect(
+      blackScholesMerton({ ...textbook, expectedTermYears: 0, volatility: 0, grantDateFairValue: 120 }),
+    ).toBeCloseTo(20, 6);
     expect(blackScholesMerton({ ...textbook, expectedTermYears: 0, volatility: 0 })).toBeCloseTo(0, 6);
   });
 
@@ -112,13 +114,25 @@ describe('asc718Portfolio', () => {
         optionsGranted: 50000,
         grantDate: '2026-01-01',
         vestingMonths: 48,
-        assumptions: { grantDateFairValue: 2, exercisePrice: 2, expectedTermYears: 6, volatility: 0.6, riskFreeRate: 0.04 },
+        assumptions: {
+          grantDateFairValue: 2,
+          exercisePrice: 2,
+          expectedTermYears: 6,
+          volatility: 0.6,
+          riskFreeRate: 0.04,
+        },
       },
       {
         optionsGranted: 30000,
         grantDate: '2026-06-01',
         vestingMonths: 24,
-        assumptions: { grantDateFairValue: 2, exercisePrice: 2, expectedTermYears: 5, volatility: 0.6, riskFreeRate: 0.04 },
+        assumptions: {
+          grantDateFairValue: 2,
+          exercisePrice: 2,
+          expectedTermYears: 5,
+          volatility: 0.6,
+          riskFreeRate: 0.04,
+        },
       },
     ];
     const p = asc718Portfolio(grants);

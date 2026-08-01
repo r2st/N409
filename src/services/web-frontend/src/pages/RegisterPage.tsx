@@ -96,14 +96,29 @@ export function RegisterPage() {
         <ErrorNote>{error}</ErrorNote>
         <div className="grid grid-cols-2 gap-4">
           <Field label="First name">
-            <TextInput autoComplete="given-name" value={form.first_name} onChange={set('first_name')} placeholder="Ada" />
+            <TextInput
+              autoComplete="given-name"
+              value={form.first_name}
+              onChange={set('first_name')}
+              placeholder="Ada"
+            />
           </Field>
           <Field label="Last name">
-            <TextInput autoComplete="family-name" value={form.last_name} onChange={set('last_name')} placeholder="Lovelace" />
+            <TextInput
+              autoComplete="family-name"
+              value={form.last_name}
+              onChange={set('last_name')}
+              placeholder="Lovelace"
+            />
           </Field>
         </div>
         <Field label="Company" hint="The company you'll be valuing — you can change this later.">
-          <TextInput autoComplete="organization" value={form.company} onChange={set('company')} placeholder="Acme, Inc." />
+          <TextInput
+            autoComplete="organization"
+            value={form.company}
+            onChange={set('company')}
+            placeholder="Acme, Inc."
+          />
         </Field>
         <Field label="Work email">
           <TextInput

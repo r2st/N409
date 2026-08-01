@@ -2,11 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
-import {
-  publicSubset,
-  SYSTEM_SETTINGS_DEFAULTS,
-  SYSTEM_SETTINGS_SCHEMA,
-} from '../domain/systemSettings.js';
+import { publicSubset, SYSTEM_SETTINGS_DEFAULTS, SYSTEM_SETTINGS_SCHEMA } from '../domain/systemSettings.js';
 import { readSettingRows, type SystemSettingsStore } from '../repos/systemSettings.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -34,10 +30,7 @@ export function registerSystemSettingsRoutes(
   app.get('/api/v1/admin/settings', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('System settings are operations-only');
-    const [settings, rows] = await Promise.all([
-      deps.settings.read(),
-      readSettingRows(deps.pool),
-    ]);
+    const [settings, rows] = await Promise.all([deps.settings.read(), readSettingRows(deps.pool)]);
     // `updated` only carries keys an admin has actually written; the rest are
     // still on their code-side default and have no provenance to show.
     const updated = Object.fromEntries(
@@ -57,10 +50,8 @@ export function registerSystemSettingsRoutes(
       throw problems.forbidden('Only administrators can change system settings');
 
     const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid settings', { errors: parsed.error.issues });
-    if (Object.keys(parsed.data).length === 0)
-      throw problems.unprocessable('No settings to update');
+    if (!parsed.success) throw problems.unprocessable('Invalid settings', { errors: parsed.error.issues });
+    if (Object.keys(parsed.data).length === 0) throw problems.unprocessable('No settings to update');
 
     const settings = await deps.settings.write(parsed.data, principal.id);
     await recordAdminEvent(deps.pool, {

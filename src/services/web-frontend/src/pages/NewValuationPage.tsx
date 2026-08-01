@@ -94,7 +94,14 @@ export function NewValuationPage() {
                   </span>
                   {kind === k && (
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-bond-600 text-bond-fg">
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                      <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                      >
                         <path d="M5 13l5 5L20 7" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </span>

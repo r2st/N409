@@ -44,9 +44,7 @@ describe('HRIS roster + grant mapping (feature 11)', () => {
 
   it('applies default vesting terms when the provider omits them', () => {
     const { grants } = mapEmployees({
-      people: [
-        { id: 'p1', name: 'Bob', grants: [{ grantId: 'gx', shares: 500, issueDate: '2026-01-15' }] },
-      ],
+      people: [{ id: 'p1', name: 'Bob', grants: [{ grantId: 'gx', shares: 500, issueDate: '2026-01-15' }] }],
     });
     expect(grants[0]).toMatchObject({
       external_id: 'gx',

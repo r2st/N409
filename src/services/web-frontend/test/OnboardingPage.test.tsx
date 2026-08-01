@@ -62,15 +62,11 @@ describe('OnboardingPage (guided client funnel)', () => {
       expect.stringContaining('/valuations'),
       expect.objectContaining({ method: 'POST' }),
     );
-    await waitFor(() =>
-      expect(screen.getByTestId('onboarding-quote')).toHaveTextContent('$1,190.00'),
-    );
+    await waitFor(() => expect(screen.getByTestId('onboarding-quote')).toHaveTextContent('$1,190.00'));
 
     // Stripe unconfigured → 503 → invoice fallback advances to uploads
     await user.click(screen.getByRole('button', { name: /with card/i }));
-    await waitFor(() =>
-      expect(screen.getByText(/online payment is not available yet/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/online payment is not available yet/i)).toBeInTheDocument());
     expect(screen.getByText(/upload what you have/i)).toBeInTheDocument();
 
     // Step 3 → skip uploads → done
@@ -108,9 +104,7 @@ describe('OnboardingPage (guided client funnel)', () => {
     renderPage();
     await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme');
     await user.click(screen.getByRole('button', { name: /continue/i }));
-    await waitFor(() =>
-      expect(screen.getByText(/not allowed to create valuations/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/not allowed to create valuations/i)).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /pay now/i })).not.toBeInTheDocument();
   });
 });

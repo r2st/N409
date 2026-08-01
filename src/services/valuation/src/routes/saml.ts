@@ -5,11 +5,7 @@ import { problems } from '@n409/shared';
 import { signSession, type JwtConfig } from '../auth/jwt.js';
 import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
 import { getSamlConfig, type SamlConfigRow } from '../repos/ssoConfig.js';
-import {
-  createProvisionedUser,
-  findUserByEmail,
-  type UserWithRoles,
-} from '../repos/users.js';
+import { createProvisionedUser, findUserByEmail, type UserWithRoles } from '../repos/users.js';
 import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
 
@@ -69,8 +65,7 @@ export function extractIdentity(profile: Record<string, unknown>): {
       'mail',
       'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
       'urn:oid:0.9.2342.19200300.100.1.3',
-    ]) ??
-    (typeof profile.nameID === 'string' && profile.nameID.includes('@') ? profile.nameID : null);
+    ]) ?? (typeof profile.nameID === 'string' && profile.nameID.includes('@') ? profile.nameID : null);
   return {
     email: email ? email.toLowerCase() : null,
     firstName: attr([

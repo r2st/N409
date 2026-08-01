@@ -9,9 +9,11 @@ import {
 
 describe('sanitizeHtml', () => {
   it('keeps whitelisted structure and drops all attributes', () => {
-    expect(sanitizeHtml('<p class="x" style="color:red" onclick="evil()">Hi <strong data-a="1">there</strong></p>')).toBe(
-      '<p>Hi <strong>there</strong></p>',
-    );
+    expect(
+      sanitizeHtml(
+        '<p class="x" style="color:red" onclick="evil()">Hi <strong data-a="1">there</strong></p>',
+      ),
+    ).toBe('<p>Hi <strong>there</strong></p>');
   });
 
   it('removes script/style elements including their content', () => {
@@ -32,7 +34,8 @@ describe('sanitizeHtml', () => {
   });
 
   it('keeps tables and lists intact', () => {
-    const html = '<table><thead><tr><th>A</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table><ul><li>x</li></ul>';
+    const html =
+      '<table><thead><tr><th>A</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table><ul><li>x</li></ul>';
     expect(sanitizeHtml(html)).toBe(html);
   });
 
@@ -57,7 +60,7 @@ describe('report templates', () => {
     expect(templateForKind('718').version).toBe('generic.v1');
   });
 
-  it('keys the registry by each template\'s own version', () => {
+  it("keys the registry by each template's own version", () => {
     for (const [version, template] of REPORT_TEMPLATES) {
       expect(template.version).toBe(version);
     }

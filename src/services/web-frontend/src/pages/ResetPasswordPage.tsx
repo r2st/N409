@@ -61,8 +61,7 @@ export function ResetPasswordPage() {
     return (
       <AuthShell title="Reset link invalid" subtitle="This page needs a link from a reset email.">
         <p className="text-sm text-ink-600">
-          The reset link is missing or incomplete. Request a new one and follow the link in the
-          email exactly.
+          The reset link is missing or incomplete. Request a new one and follow the link in the email exactly.
         </p>
         <p className="mt-8 text-center text-sm text-ink-400">
           <Link to="/forgot-password" className="font-semibold text-bond-600 hover:text-bond-700">

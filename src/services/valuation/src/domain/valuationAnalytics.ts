@@ -66,8 +66,7 @@ function marketMultiples(r: Results): number[] {
   return ms.map(Number).filter((n) => Number.isFinite(n) && n > 0);
 }
 
-const mean = (xs: number[]): number | null =>
-  xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
 /** Linear-interpolation percentile of a sorted-or-unsorted sample, q in [0,1]. */
 export function quantile(values: number[], q: number): number | null {

@@ -86,7 +86,12 @@ export class WeightedWindowRateLimiter {
 
     const resetAt = window.start + this.windowMs;
     if (window.spent + cost > this.budget) {
-      return { allowed: false, limit: this.budget, remaining: Math.max(0, this.budget - window.spent), resetAt };
+      return {
+        allowed: false,
+        limit: this.budget,
+        remaining: Math.max(0, this.budget - window.spent),
+        resetAt,
+      };
     }
     window.spent += cost;
     return {

@@ -148,7 +148,9 @@ export function ModelSensitivityPanel({ valuationId }: { valuationId: string }) 
                                 key={i}
                                 className={`border-b border-paper-200 last:border-0 ${isBase ? 'bg-bond-50' : ''}`}
                               >
-                                <td className={`tnum px-4 py-2 ${isBase ? 'font-semibold text-ink-900' : 'text-ink-700'}`}>
+                                <td
+                                  className={`tnum px-4 py-2 ${isBase ? 'font-semibold text-ink-900' : 'text-ink-700'}`}
+                                >
                                   {meta.fmt(p.value)}
                                 </td>
                                 <td className="tnum px-4 py-2 text-right text-ink-900">

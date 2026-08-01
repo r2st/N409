@@ -2,11 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import {
-  PhoneInput,
-  composePhoneValue,
-  parsePhoneValue,
-} from '../src/components/PhoneInput';
+import { PhoneInput, composePhoneValue, parsePhoneValue } from '../src/components/PhoneInput';
 import { COUNTRIES, flagEmoji } from '../src/lib/countries';
 
 describe('phone value parsing (gap #27)', () => {

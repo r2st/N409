@@ -47,7 +47,13 @@ export interface Asc718Assumptions {
  * Degenerates to intrinsic value as term or volatility → 0.
  */
 export function blackScholesMerton(a: Asc718Assumptions): number {
-  const { grantDateFairValue: s, exercisePrice: k, expectedTermYears: t, volatility: sigma, riskFreeRate: r } = a;
+  const {
+    grantDateFairValue: s,
+    exercisePrice: k,
+    expectedTermYears: t,
+    volatility: sigma,
+    riskFreeRate: r,
+  } = a;
   const q = a.dividendYield ?? 0;
   if (s <= 0) return 0;
   if (t <= 0 || sigma <= 0) {
@@ -66,8 +72,17 @@ export function blackScholesMerton(a: Asc718Assumptions): number {
  * awards. Deterministic: a small LCG seeded from the assumptions replaces
  * Math.random so the estimate is reproducible.
  */
-export function monteCarloFairValue(a: Asc718Assumptions, opts: { paths?: number; seed?: number } = {}): number {
-  const { grantDateFairValue: s, exercisePrice: k, expectedTermYears: t, volatility: sigma, riskFreeRate: r } = a;
+export function monteCarloFairValue(
+  a: Asc718Assumptions,
+  opts: { paths?: number; seed?: number } = {},
+): number {
+  const {
+    grantDateFairValue: s,
+    exercisePrice: k,
+    expectedTermYears: t,
+    volatility: sigma,
+    riskFreeRate: r,
+  } = a;
   const q = a.dividendYield ?? 0;
   if (s <= 0) return 0;
   if (t <= 0 || sigma <= 0) return blackScholesMerton(a);

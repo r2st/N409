@@ -215,46 +215,38 @@ export function registerEngineInputsRoutes(app: FastifyInstance, deps: { pool: p
   };
 
   // Read the current financial model (the raw engine_inputs document).
-  app.get(
-    '/api/v1/valuations/:id/engine-inputs',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      const { id } = req.params as { id: string };
-      await loadValuation(principal, id);
-      const params = await findParams(deps.pool, id);
-      if (!params) throw problems.notFound();
-      return { engine_inputs: params.engine_inputs ?? {} };
-    },
-  );
+  app.get('/api/v1/valuations/:id/engine-inputs', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    await loadValuation(principal, id);
+    const params = await findParams(deps.pool, id);
+    if (!params) throw problems.notFound();
+    return { engine_inputs: params.engine_inputs ?? {} };
+  });
 
   // Hand-enter / edit the financial model. Ops-only, mirroring the params and
   // calculation routes (methodology + inputs are analyst work).
-  app.patch(
-    '/api/v1/valuations/:id/engine-inputs',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      if (!isOps(principal)) throw problems.forbidden('Financial model inputs are operations-only');
-      const { id } = req.params as { id: string };
-      await loadValuation(principal, id);
-      const current = await findParams(deps.pool, id);
-      if (!current) throw problems.notFound();
+  app.patch('/api/v1/valuations/:id/engine-inputs', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('Financial model inputs are operations-only');
+    const { id } = req.params as { id: string };
+    await loadValuation(principal, id);
+    const current = await findParams(deps.pool, id);
+    if (!current) throw problems.notFound();
 
-      const parsed = EngineInputsBody.safeParse(req.body ?? {});
-      if (!parsed.success) {
-        throw problems.unprocessable('Invalid financial model inputs', {
-          errors: parsed.error.issues,
-        });
-      }
+    const parsed = EngineInputsBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw problems.unprocessable('Invalid financial model inputs', {
+        errors: parsed.error.issues,
+      });
+    }
 
-      const updated = await applyEngineInputs(
-        deps.pool,
-        id,
-        parsed.data as Record<string, unknown>,
-        actorFor(principal),
-      );
-      return { params: updated };
-    },
-  );
+    const updated = await applyEngineInputs(
+      deps.pool,
+      id,
+      parsed.data as Record<string, unknown>,
+      actorFor(principal),
+    );
+    return { params: updated };
+  });
 }

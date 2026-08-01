@@ -28,7 +28,12 @@ interface HealthRun {
 interface HealthResponse {
   health_checks: HealthRun[];
   latest_calculation_id: string | null;
-  gate: { satisfied: boolean; health_check_id: string | null; severity: Severity | null; blocking: boolean | null };
+  gate: {
+    satisfied: boolean;
+    health_check_id: string | null;
+    severity: Severity | null;
+    blocking: boolean | null;
+  };
 }
 
 const SEVERITY_STYLES: Record<Severity, string> = {
@@ -46,17 +51,13 @@ const CATEGORY_LABELS: Record<Category, string> = {
   temporal: 'Temporal consistency',
 };
 
-const CATEGORY_ORDER: Category[] = [
-  'methodology',
-  'assumptions',
-  'completeness',
-  'mathematical',
-  'temporal',
-];
+const CATEGORY_ORDER: Category[] = ['methodology', 'assumptions', 'completeness', 'mathematical', 'temporal'];
 
 function SeverityPill({ severity }: { severity: Severity }) {
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${SEVERITY_STYLES[severity]}`}>
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${SEVERITY_STYLES[severity]}`}
+    >
       {severity}
     </span>
   );

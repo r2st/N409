@@ -54,51 +54,47 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     return { candidates: rows };
   });
 
-  app.get(
-    '/api/v1/valuations/:id/bridge/:compareId',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      const { id, compareId } = req.params as { id: string; compareId: string };
-      if (id === compareId) throw problems.unprocessable('Pick two different valuations to compare');
+  app.get('/api/v1/valuations/:id/bridge/:compareId', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id, compareId } = req.params as { id: string; compareId: string };
+    if (id === compareId) throw problems.unprocessable('Pick two different valuations to compare');
 
-      const [to, from] = await Promise.all([load(principal, id), load(principal, compareId)]);
+    const [to, from] = await Promise.all([load(principal, id), load(principal, compareId)]);
 
-      // The bridge only makes sense within one company's history.
-      if (
-        to.user_id !== from.user_id ||
-        to.company_name.trim().toLowerCase() !== from.company_name.trim().toLowerCase()
-      ) {
-        throw problems.unprocessable('Both valuations must be for the same company');
-      }
+    // The bridge only makes sense within one company's history.
+    if (
+      to.user_id !== from.user_id ||
+      to.company_name.trim().toLowerCase() !== from.company_name.trim().toLowerCase()
+    ) {
+      throw problems.unprocessable('Both valuations must be for the same company');
+    }
 
-      const [toCalc, fromCalc] = await Promise.all([
-        latestSucceededCalculation(deps.pool, id),
-        latestSucceededCalculation(deps.pool, compareId),
-      ]);
-      if (!toCalc?.results || !fromCalc?.results) {
-        throw problems.unprocessable(
-          'Both valuations need a completed calculation before they can be compared',
-        );
-      }
+    const [toCalc, fromCalc] = await Promise.all([
+      latestSucceededCalculation(deps.pool, id),
+      latestSucceededCalculation(deps.pool, compareId),
+    ]);
+    if (!toCalc?.results || !fromCalc?.results) {
+      throw problems.unprocessable(
+        'Both valuations need a completed calculation before they can be compared',
+      );
+    }
 
-      const bridge = buildBridge(fromCalc.results, toCalc.results);
-      return {
-        bridge,
-        from: {
-          valuation_id: compareId,
-          number: from.number,
-          calculation_id: fromCalc.id,
-          created_at: fromCalc.created_at,
-        },
-        to: {
-          valuation_id: id,
-          number: to.number,
-          calculation_id: toCalc.id,
-          created_at: toCalc.created_at,
-        },
-        company_name: to.company_name,
-      };
-    },
-  );
+    const bridge = buildBridge(fromCalc.results, toCalc.results);
+    return {
+      bridge,
+      from: {
+        valuation_id: compareId,
+        number: from.number,
+        calculation_id: fromCalc.id,
+        created_at: fromCalc.created_at,
+      },
+      to: {
+        valuation_id: id,
+        number: to.number,
+        calculation_id: toCalc.id,
+        created_at: toCalc.created_at,
+      },
+      company_name: to.company_name,
+    };
+  });
 }

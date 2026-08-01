@@ -65,8 +65,13 @@ describe.skipIf(!dbUp)('analyst agent wiring', () => {
     });
 
   const versions = async (id: string) =>
-    (await app.inject({ method: 'GET', url: `/api/v1/admin/prompts/${id}/versions`, headers: authHeader(ops.token) })).json()
-      .versions as Array<{ version: number }>;
+    (
+      await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/prompts/${id}/versions`,
+        headers: authHeader(ops.token),
+      })
+    ).json().versions as Array<{ version: number }>;
 
   beforeAll(async () => {
     db = await setupTestDb();
@@ -102,7 +107,14 @@ describe.skipIf(!dbUp)('analyst agent wiring', () => {
 
   it('seeds an enabled Bot Prompt row for every agent', async () => {
     const prompts = await listPromptsRaw();
-    for (const pipeline of ['cap_table', 'comp_selection', 'report_narrative', 'assumptions', 'audit_defense', 'roll_forward']) {
+    for (const pipeline of [
+      'cap_table',
+      'comp_selection',
+      'report_narrative',
+      'assumptions',
+      'audit_defense',
+      'roll_forward',
+    ]) {
       const row = prompts.find((p) => p.pipeline === pipeline);
       expect(row, `${pipeline} prompt seeded`).toBeDefined();
       expect(row!.enabled).toBe(true);
@@ -159,11 +171,13 @@ describe.skipIf(!dbUp)('analyst agent wiring', () => {
     expect(noCalc.statusCode).toBe(422);
     expect(noCalc.json().detail).toMatch(/calculation/i);
     // But the pinned model is what the registry now stores.
-    const stored = (await app.inject({
-      method: 'GET',
-      url: `/api/v1/admin/prompts/${prompt.id}`,
-      headers: authHeader(ops.token),
-    })).json().prompt as { model: string };
+    const stored = (
+      await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/prompts/${prompt.id}`,
+        headers: authHeader(ops.token),
+      })
+    ).json().prompt as { model: string };
     expect(stored.model).toBe('stub/pinned-model');
   });
 

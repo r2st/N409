@@ -100,16 +100,10 @@ const ADMIN_PATCH_COLUMNS: ReadonlySet<string> = new Set([
 ]);
 
 /** Field patch + full role replacement in one transaction. */
-export async function adminPatchUser(
-  pool: pg.Pool,
-  id: string,
-  patch: AdminUserPatch,
-): Promise<void> {
+export async function adminPatchUser(pool: pg.Pool, id: string, patch: AdminUserPatch): Promise<void> {
   await withTransaction(pool, async (client) => {
     const { roles, ...fields } = patch;
-    const entries = Object.entries(fields).filter(
-      ([k, v]) => v !== undefined && ADMIN_PATCH_COLUMNS.has(k),
-    );
+    const entries = Object.entries(fields).filter(([k, v]) => v !== undefined && ADMIN_PATCH_COLUMNS.has(k));
     if (entries.length > 0) {
       const sets = entries.map(([k], i) => `${k} = $${i + 1}`);
       await client.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${entries.length + 1}`, [
@@ -195,10 +189,7 @@ export async function findPartnerById(pool: pg.Pool, id: string): Promise<Partne
   return rows[0] ?? null;
 }
 
-export async function createPartner(
-  pool: pg.Pool,
-  args: { name: string; key: string },
-): Promise<PartnerRow> {
+export async function createPartner(pool: pg.Pool, args: { name: string; key: string }): Promise<PartnerRow> {
   const { rows } = await pool.query<PartnerRow>(
     `INSERT INTO partners (id, name, key) VALUES ($1, $2, $3)
      RETURNING id, name, key, created_at, archived_at, brand_color, logo_url, email_templates,
@@ -253,8 +244,7 @@ export async function updatePartner(
   if (patch.name !== undefined) add('name = ?', patch.name);
   if (patch.brand_color !== undefined) add('brand_color = ?', patch.brand_color);
   if (patch.logo_url !== undefined) add('logo_url = ?', patch.logo_url);
-  if (patch.email_templates !== undefined)
-    add('email_templates = ?', JSON.stringify(patch.email_templates));
+  if (patch.email_templates !== undefined) add('email_templates = ?', JSON.stringify(patch.email_templates));
   if (patch.archived === true) add('archived_at = coalesce(archived_at, now())');
   if (patch.archived === false) add('archived_at = NULL');
   if (sets.length === 0) return findPartnerById(pool, id);
@@ -330,7 +320,20 @@ export async function listUserOptions(
 ): Promise<Array<{ id: string; email: string; first_name: string | null; last_name: string | null }>> {
   const keys =
     group === 'ops'
-      ? ['admin', 'god', 'supervisor', 'support', 'support_supervisor', 'reviewer', 'main_reviewer', 'contributing_reviewer', 'data', 'data_supervisor', 'auto', 'spa']
+      ? [
+          'admin',
+          'god',
+          'supervisor',
+          'support',
+          'support_supervisor',
+          'reviewer',
+          'main_reviewer',
+          'contributing_reviewer',
+          'data',
+          'data_supervisor',
+          'auto',
+          'spa',
+        ]
       : ['partner', 'member'];
   const { rows } = await pool.query(
     `SELECT DISTINCT u.id, u.email, u.first_name, u.last_name

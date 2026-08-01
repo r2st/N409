@@ -57,10 +57,7 @@ describe('proof section', () => {
         <ProofSection />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('link', { name: /sample report/i })).toHaveAttribute(
-      'href',
-      '/contact',
-    );
+    expect(screen.getByRole('link', { name: /sample report/i })).toHaveAttribute('href', '/contact');
   });
 });
 
@@ -88,10 +85,7 @@ describe('book a call + demo video (gap #22)', () => {
         <BookACallSection />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('link', { name: /talk to an analyst/i })).toHaveAttribute(
-      'href',
-      '/contact',
-    );
+    expect(screen.getByRole('link', { name: /talk to an analyst/i })).toHaveAttribute('href', '/contact');
     expect(screen.queryByRole('link', { name: 'Book a call' })).toBeNull();
   });
 
@@ -199,8 +193,6 @@ describe('footer social links (gap #29)', () => {
         <MarketingFooter />
       </MemoryRouter>,
     );
-    expect(
-      screen.getByText(new RegExp(`©\\s*${new Date().getFullYear()}\\s+N409`)),
-    ).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`©\\s*${new Date().getFullYear()}\\s+N409`))).toBeInTheDocument();
   });
 });

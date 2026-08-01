@@ -35,7 +35,11 @@ const conflictOutcome = {
     removed: 0,
     changed: 1,
     conflicts: [
-      { security_class: 'Series A', status: 'changed', changes: [{ field: 'shares', from: 2000000, to: 2500000 }] },
+      {
+        security_class: 'Series A',
+        status: 'changed',
+        changes: [{ field: 'shares', from: 2000000, to: 2500000 }],
+      },
       { security_class: 'Series B', status: 'added', changes: [] },
     ],
   },

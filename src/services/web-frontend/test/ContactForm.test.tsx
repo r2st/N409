@@ -29,7 +29,10 @@ describe('contact form (gap #28)', () => {
     await user.type(screen.getByLabelText('Full name'), 'Ada Lovelace');
     await user.type(screen.getByLabelText('Email'), 'ada@analytical.example');
     await user.type(screen.getByLabelText('Company'), 'Analytical Engines');
-    await user.type(screen.getByLabelText('Message'), 'I need a 409A valuation before our next board meeting.');
+    await user.type(
+      screen.getByLabelText('Message'),
+      'I need a 409A valuation before our next board meeting.',
+    );
     await user.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));

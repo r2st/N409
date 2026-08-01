@@ -55,10 +55,7 @@ async function withDeadline(promise: Promise<unknown>, ms: number): Promise<void
  * Installs `uncaughtException` and `unhandledRejection` handlers that log and
  * exit. Returns a function that removes them again (used by tests).
  */
-export function installCrashHandlers(
-  log: CrashHandlerLogger,
-  opts: CrashHandlerOptions,
-): void {
+export function installCrashHandlers(log: CrashHandlerLogger, opts: CrashHandlerOptions): void {
   const target = opts.target ?? process;
   const flushMs = opts.flushMs ?? 2000;
   const exitCode = opts.exitCode ?? 1;

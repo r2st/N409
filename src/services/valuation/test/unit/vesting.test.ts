@@ -101,18 +101,12 @@ describe('vesting', () => {
 
   describe('exerciseScenarios', () => {
     it('computes the in-the-money spread across all shares', () => {
-      const [s] = exerciseScenarios(
-        { totalShares: 1000, exercisePrice: 2, currentFmv: 2 },
-        [10],
-      );
+      const [s] = exerciseScenarios({ totalShares: 1000, exercisePrice: 2, currentFmv: 2 }, [10]);
       expect(s).toMatchObject({ fmv: 10, spreadPerShare: 8, grossValue: 8000, multipleOfCurrent: 5 });
     });
 
     it('never goes below zero (options not exercised at a loss)', () => {
-      const [s] = exerciseScenarios(
-        { totalShares: 1000, exercisePrice: 5, currentFmv: 5 },
-        [3],
-      );
+      const [s] = exerciseScenarios({ totalShares: 1000, exercisePrice: 5, currentFmv: 5 }, [3]);
       expect(s.spreadPerShare).toBe(0);
       expect(s.grossValue).toBe(0);
     });

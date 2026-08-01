@@ -11,14 +11,7 @@
  * All HTTP goes through an injectable fetch so tests never touch the network.
  */
 
-export const ACCOUNTING_PROVIDERS = [
-  'xero',
-  'quickbooks',
-  'freshbooks',
-  'netsuite',
-  'sage',
-  'wave',
-] as const;
+export const ACCOUNTING_PROVIDERS = ['xero', 'quickbooks', 'freshbooks', 'netsuite', 'sage', 'wave'] as const;
 export type AccountingProvider = (typeof ACCOUNTING_PROVIDERS)[number];
 
 export const PROVIDER_LABELS: Record<AccountingProvider, string> = {

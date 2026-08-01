@@ -92,11 +92,7 @@ export function canEditWorkingData(p: Principal): boolean {
 }
 
 /** States in which the deliverable report is visible outside ops. */
-export const REPORT_VISIBLE_STATES: ReadonlySet<string> = new Set([
-  'drafted',
-  'draft_accepted',
-  'published',
-]);
+export const REPORT_VISIBLE_STATES: ReadonlySet<string> = new Set(['drafted', 'draft_accepted', 'published']);
 
 /**
  * Ops always see the report; the owner/partner only once a draft has been

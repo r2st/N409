@@ -112,7 +112,10 @@ export function PartnerLoginPage() {
                 />
               </Field>
               <div className="-mt-2 text-right">
-                <Link to="/forgot-password" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
+                <Link
+                  to="/forgot-password"
+                  className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+                >
                   Forgot password?
                 </Link>
               </div>

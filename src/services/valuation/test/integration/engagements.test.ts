@@ -127,18 +127,15 @@ describe.skipIf(!dbUp)('feature 8 — engagement lifecycle', () => {
     expect(res.json().reminded_count).toBeGreaterThanOrEqual(1);
     expect(res.json().reminded).toContain(valuationId);
 
-    const outbox = await pool.query(
-      'SELECT * FROM email_outbox WHERE to_email = $1 AND subject LIKE $2',
-      [analyst.email, 'Overdue:%'],
-    );
+    const outbox = await pool.query('SELECT * FROM email_outbox WHERE to_email = $1 AND subject LIKE $2', [
+      analyst.email,
+      'Overdue:%',
+    ]);
     expect(outbox.rows.length).toBe(1);
   });
 
   it('is operations-only', async () => {
-    for (const url of [
-      `/api/v1/valuations/${valuationId}/engagement`,
-      '/api/v1/engagements',
-    ]) {
+    for (const url of [`/api/v1/valuations/${valuationId}/engagement`, '/api/v1/engagements']) {
       const res = await app.inject({ method: 'GET', url, headers: authHeader(client.token) });
       expect(res.statusCode).toBe(403);
     }

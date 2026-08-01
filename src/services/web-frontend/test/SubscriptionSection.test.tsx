@@ -10,8 +10,22 @@ const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 const plans = [
-  { tier: 'per_valuation', name: 'Per valuation', valuation_limit: 1, price_cents: 200000, currency: 'usd', interval: 'one_time' },
-  { tier: 'annual_retainer', name: 'Annual retainer', valuation_limit: 12, price_cents: 2000000, currency: 'usd', interval: 'year' },
+  {
+    tier: 'per_valuation',
+    name: 'Per valuation',
+    valuation_limit: 1,
+    price_cents: 200000,
+    currency: 'usd',
+    interval: 'one_time',
+  },
+  {
+    tier: 'annual_retainer',
+    name: 'Annual retainer',
+    valuation_limit: 12,
+    price_cents: 2000000,
+    currency: 'usd',
+    interval: 'year',
+  },
 ];
 
 function mockApi(mySub: unknown) {

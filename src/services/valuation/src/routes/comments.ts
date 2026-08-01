@@ -3,12 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
-import {
-  canEditComment,
-  canIngestEmail,
-  canPostComment,
-  visibleCommentKinds,
-} from '../auth/operations.js';
+import { canEditComment, canIngestEmail, canPostComment, visibleCommentKinds } from '../auth/operations.js';
 import { parseEmailSubjectRef, type CommentKind } from '../domain/operations.js';
 import {
   createComment,
@@ -56,14 +51,13 @@ function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
 }
 
-async function loadReadable(
-  pool: pg.Pool,
-  principal: Principal,
-  id: string,
-): Promise<ValuationRow> {
+async function loadReadable(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
-  if (!valuation || !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id }))
+  if (
+    !valuation ||
+    !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })
+  )
     throw problems.notFound();
   return valuation;
 }
@@ -98,9 +92,7 @@ export function registerCommentRoutes(
     const { id } = req.params as { id: string };
     await loadReadable(deps.pool, principal, id);
 
-    const query = z
-      .object({ kind: z.enum(['chat', 'note', 'email']).optional() })
-      .safeParse(req.query);
+    const query = z.object({ kind: z.enum(['chat', 'note', 'email']).optional() }).safeParse(req.query);
     if (!query.success) throw problems.badRequest('Invalid query');
 
     let kinds = visibleCommentKinds(principal);
@@ -159,11 +151,7 @@ export function registerCommentRoutes(
     return reply.status(204).send();
   });
 
-  async function loadEditable(
-    pool: pg.Pool,
-    principal: Principal,
-    commentId: string,
-  ): Promise<CommentRow> {
+  async function loadEditable(pool: pg.Pool, principal: Principal, commentId: string): Promise<CommentRow> {
     if (!isUlid(commentId)) throw problems.notFound();
     const comment = await findCommentById(pool, commentId);
     if (!comment) throw problems.notFound();

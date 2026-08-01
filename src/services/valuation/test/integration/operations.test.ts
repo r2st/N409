@@ -68,10 +68,9 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
     });
 
     it('bumps last_comment_at on the valuation', async () => {
-      const { rows } = await ctx.pool.query(
-        'SELECT last_comment_at FROM valuations WHERE id = $1',
-        [valuationId],
-      );
+      const { rows } = await ctx.pool.query('SELECT last_comment_at FROM valuations WHERE id = $1', [
+        valuationId,
+      ]);
       expect(rows[0].last_comment_at).not.toBeNull();
     });
 
@@ -100,10 +99,12 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         url: `/api/v1/valuations/${valuationId}/comments`,
         headers: authHeader(ops.token),
       });
-      expect(opsList.json().comments.map((c: { kind: string }) => c.kind).sort()).toEqual([
-        'chat',
-        'note',
-      ]);
+      expect(
+        opsList
+          .json()
+          .comments.map((c: { kind: string }) => c.kind)
+          .sort(),
+      ).toEqual(['chat', 'note']);
 
       const clientList = await ctx.app.inject({
         method: 'GET',
@@ -279,9 +280,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         url: `/api/v1/valuations/${valuationId}/comments`,
         headers: authHeader(client.token),
       });
-      expect(
-        clientList.json().comments.every((c: { kind: string }) => c.kind === 'chat'),
-      ).toBe(true);
+      expect(clientList.json().comments.every((c: { kind: string }) => c.kind === 'chat')).toBe(true);
     });
   });
 
@@ -399,9 +398,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         url: '/api/v1/users?role=member',
         headers: authHeader(ops.token),
       });
-      expect(
-        byRole.json().users.every((u: { roles: string[] }) => u.roles.includes('member')),
-      ).toBe(true);
+      expect(byRole.json().users.every((u: { roles: string[] }) => u.roles.includes('member'))).toBe(true);
     });
 
     it('creates a user with roles', async () => {
@@ -553,9 +550,7 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         url: '/api/v1/partners',
         headers: authHeader(ops.token),
       });
-      const row = partners
-        .json()
-        .partners.find((p: { id: string }) => p.id === pid) as {
+      const row = partners.json().partners.find((p: { id: string }) => p.id === pid) as {
         user_count: number;
         valuation_count: number;
       };

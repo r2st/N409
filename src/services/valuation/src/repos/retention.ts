@@ -69,7 +69,12 @@ export async function listHolds(pool: pg.Pool): Promise<LegalHoldRow[]> {
 
 export async function placeHold(
   pool: pg.Pool,
-  input: { scope: 'global' | 'valuation' | 'user'; referenceId: string | null; reason: string; placedBy: string },
+  input: {
+    scope: 'global' | 'valuation' | 'user';
+    referenceId: string | null;
+    reason: string;
+    placedBy: string;
+  },
 ): Promise<LegalHoldRow> {
   const { rows } = await pool.query<LegalHoldRow>(
     `INSERT INTO legal_holds (id, scope, reference_id, reason, placed_by)

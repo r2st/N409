@@ -130,9 +130,7 @@ describe('AuditTrailTab', () => {
   });
 
   it('tells a client that internal events are excluded', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ ...RESPONSE, includes_internal: false }),
-    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ...RESPONSE, includes_internal: false }));
     renderTab();
     expect(await screen.findByText(/Internal analyst working notes/)).toBeInTheDocument();
   });
@@ -145,9 +143,7 @@ describe('AuditTrailTab', () => {
   });
 
   it('warns when the trail was truncated', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ ...RESPONSE, truncated: true }),
-    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ...RESPONSE, truncated: true }));
     renderTab();
     expect(await screen.findByText(/oldest events are omitted/)).toBeInTheDocument();
   });
@@ -186,9 +182,7 @@ describe('AuditTrailTab', () => {
   });
 
   it('pages forward when there is more than one page', async () => {
-    const spy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse({ ...RESPONSE, total: 60 }));
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ...RESPONSE, total: 60 }));
     renderTab();
     await screen.findByTestId('audit-entries');
 
@@ -202,17 +196,13 @@ describe('AuditTrailTab', () => {
   });
 
   it('shows an empty state when no events match', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ ...RESPONSE, entries: [], total: 0 }),
-    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ...RESPONSE, entries: [], total: 0 }));
     renderTab();
     expect(await screen.findByText(/No events match these filters/)).toBeInTheDocument();
   });
 
   it('surfaces API errors', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ title: 'Not Found', status: 404 }, 404),
-    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Not Found', status: 404 }, 404));
     renderTab();
     expect(await screen.findByText(/Not Found/)).toBeInTheDocument();
   });
@@ -221,8 +211,6 @@ describe('AuditTrailTab', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(RESPONSE));
     renderTab();
     await screen.findByTestId('audit-entries');
-    expect(
-      screen.getByRole('button', { name: /Download change log/ }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Download change log/ })).toBeInTheDocument();
   });
 });

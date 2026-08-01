@@ -297,8 +297,5 @@ export function flagEmoji(iso: string): string {
   if (iso.length !== 2) return '';
   const A = 0x1f1e6;
   const base = 'A'.charCodeAt(0);
-  return String.fromCodePoint(
-    A + (iso.charCodeAt(0) - base),
-    A + (iso.charCodeAt(1) - base),
-  );
+  return String.fromCodePoint(A + (iso.charCodeAt(0) - base), A + (iso.charCodeAt(1) - base));
 }

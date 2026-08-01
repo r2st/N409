@@ -20,8 +20,16 @@ import {
 // RFC 4226 Appendix D reference secret ("12345678901234567890").
 const RFC_SECRET = base32Encode(Buffer.from('12345678901234567890'));
 const RFC_HOTP = [
-  '755224', '287082', '359152', '969429', '338314',
-  '254676', '287922', '162583', '399871', '520489',
+  '755224',
+  '287082',
+  '359152',
+  '969429',
+  '338314',
+  '254676',
+  '287922',
+  '162583',
+  '399871',
+  '520489',
 ];
 
 describe('base32', () => {
@@ -36,12 +44,9 @@ describe('base32', () => {
 });
 
 describe('HOTP (RFC 4226 vectors)', () => {
-  it.each(RFC_HOTP.map((code, counter) => [counter, code]))(
-    'counter %i -> %s',
-    (counter, expected) => {
-      expect(hotp(RFC_SECRET, counter as number)).toBe(expected);
-    },
-  );
+  it.each(RFC_HOTP.map((code, counter) => [counter, code]))('counter %i -> %s', (counter, expected) => {
+    expect(hotp(RFC_SECRET, counter as number)).toBe(expected);
+  });
 });
 
 describe('TOTP', () => {
@@ -120,9 +125,7 @@ describe('secret encryption', () => {
     const orig = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
     try {
-      expect(() => encryptSecret(generateTotpSecret(), null)).toThrow(
-        /must be set in production/,
-      );
+      expect(() => encryptSecret(generateTotpSecret(), null)).toThrow(/must be set in production/);
     } finally {
       process.env.NODE_ENV = orig;
     }

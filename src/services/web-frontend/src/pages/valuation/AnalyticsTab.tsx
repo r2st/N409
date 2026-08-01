@@ -77,7 +77,12 @@ export function AnalyticsTab() {
         <LineChart title="FMV per share" points={points('fmv_per_share')} format={money} color="#2f7d5b" />
         <LineChart title="DLOM" points={points('dlom')} format={pct} color="#a05252" />
         <LineChart title="Volatility" points={points('volatility')} format={pct} color="#3b5b7d" />
-        <LineChart title="Revenue multiple" points={points('market_multiple')} format={mult} color="#b98d4f" />
+        <LineChart
+          title="Revenue multiple"
+          points={points('market_multiple')}
+          format={mult}
+          color="#b98d4f"
+        />
       </div>
 
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
@@ -108,13 +113,11 @@ export function AnalyticsTab() {
             </div>
             {benchmark.company_multiple !== null && (
               <p className="mt-4 text-sm text-ink-600" data-testid="benchmark-percentile">
-                This company's applied multiple of{' '}
-                <strong>{mult(benchmark.company_multiple)}</strong>
+                This company's applied multiple of <strong>{mult(benchmark.company_multiple)}</strong>
                 {benchmark.percentile !== null && (
                   <>
                     {' '}
-                    sits at the{' '}
-                    <strong>{Math.round(benchmark.percentile * 100)}th percentile</strong> of the{' '}
+                    sits at the <strong>{Math.round(benchmark.percentile * 100)}th percentile</strong> of the{' '}
                     {benchmark.count} comparables.
                   </>
                 )}

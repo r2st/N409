@@ -33,13 +33,10 @@ import type { HeadInput } from './headTags';
  * downloaded twice.
  */
 export function fontPreloadTags(assetFileNames: string[]): string {
-  const latinFaces = assetFileNames
-    .filter((name) => /latin-wght-normal.*\.woff2$/.test(name))
-    .sort();
+  const latinFaces = assetFileNames.filter((name) => /latin-wght-normal.*\.woff2$/.test(name)).sort();
   return latinFaces
     .map(
-      (name) =>
-        `<link rel="preload" href="/${name}" as="font" type="font/woff2" crossorigin="anonymous" />`,
+      (name) => `<link rel="preload" href="/${name}" as="font" type="font/woff2" crossorigin="anonymous" />`,
     )
     .join('\n    ');
 }
@@ -73,10 +70,7 @@ export interface PrerenderManifest {
 export const HEAD_FALLBACK_START = '<!--n409:head-fallback-start-->';
 export const HEAD_FALLBACK_END = '<!--n409:head-fallback-end-->';
 
-const FALLBACK_BLOCK = new RegExp(
-  `[ \\t]*${HEAD_FALLBACK_START}[\\s\\S]*?${HEAD_FALLBACK_END}`,
-  'i',
-);
+const FALLBACK_BLOCK = new RegExp(`[ \\t]*${HEAD_FALLBACK_START}[\\s\\S]*?${HEAD_FALLBACK_END}`, 'i');
 
 /** Thrown when the shell has been edited such that prerendering can't proceed. */
 export class PrerenderError extends Error {}
@@ -93,9 +87,7 @@ export function renderRouteHtml(shell: string, meta: HeadInput, origin: string):
   if (!FALLBACK_BLOCK.test(shell)) {
     // Failing loudly beats emitting pages with no metadata: a silent skip here
     // would ship a site whose every shared link previews as blank.
-    throw new PrerenderError(
-      `index.html is missing the ${HEAD_FALLBACK_START} … ${HEAD_FALLBACK_END} block`,
-    );
+    throw new PrerenderError(`index.html is missing the ${HEAD_FALLBACK_START} … ${HEAD_FALLBACK_END} block`);
   }
   const head = renderHeadTags(buildHeadTags(meta, origin));
   const html = shell.replace(FALLBACK_BLOCK, `    ${head}`);

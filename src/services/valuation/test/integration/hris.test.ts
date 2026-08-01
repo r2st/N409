@@ -18,7 +18,13 @@ const ROSTER = {
       fullName: 'Ada Lovelace',
       workEmail: 'ada@acme.com',
       equityGrants: [
-        { id: 'g1', optionsGranted: 10000, strikePrice: 1.25, grantDate: '2025-03-01', vesting: { months: 48, cliffMonths: 12 } },
+        {
+          id: 'g1',
+          optionsGranted: 10000,
+          strikePrice: 1.25,
+          grantDate: '2025-03-01',
+          vesting: { months: 48, cliffMonths: 12 },
+        },
       ],
     },
     {
@@ -33,7 +39,8 @@ const ROSTER = {
 function mockFetch() {
   return vi.fn(async (url: string | URL | Request) => {
     const u = String(url);
-    if (u.includes('/token')) return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
+    if (u.includes('/token'))
+      return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
     if (u.includes('/employees')) return jsonResponse(ROSTER);
     throw new Error(`unexpected fetch ${u}`);
   });
@@ -91,7 +98,12 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       headers: authHeader(ops.token),
     });
     expect(pull.statusCode).toBe(200);
-    expect(pull.json()).toMatchObject({ roster_count: 2, grants_found: 2, grants_created: 2, grants_skipped: 0 });
+    expect(pull.json()).toMatchObject({
+      roster_count: 2,
+      grants_found: 2,
+      grants_created: 2,
+      grants_skipped: 0,
+    });
 
     const grants = await listGrants(ctx.pool, v.id);
     expect(grants).toHaveLength(2);
@@ -143,7 +155,8 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
     let rosterCalls = 0;
     const trackingFetch = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);
-      if (u.includes('/token')) return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
+      if (u.includes('/token'))
+        return jsonResponse({ access_token: 'tok', expires_in: 3600, company_id: 'co1' });
       if (u.includes('/employees')) {
         rosterCalls += 1;
         const myCall = rosterCalls;

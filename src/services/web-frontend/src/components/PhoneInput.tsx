@@ -1,11 +1,5 @@
 import { useMemo, useState } from 'react';
-import {
-  COUNTRIES,
-  DEFAULT_COUNTRY_ISO,
-  countryByIso,
-  flagEmoji,
-  primaryIsoForDial,
-} from '../lib/countries';
+import { COUNTRIES, DEFAULT_COUNTRY_ISO, countryByIso, flagEmoji, primaryIsoForDial } from '../lib/countries';
 import { inputClass } from './ui';
 
 /**

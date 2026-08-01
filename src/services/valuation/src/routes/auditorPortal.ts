@@ -160,7 +160,11 @@ export function registerAuditorPortalRoutes(
       report,
       assumptions,
       conclusion: calc
-        ? { equity_value: calc.equity_value, fmv_per_share: calc.fmv_per_share, engine_version: calc.engine_version }
+        ? {
+            equity_value: calc.equity_value,
+            fmv_per_share: calc.fmv_per_share,
+            engine_version: calc.engine_version,
+          }
         : null,
       qa: qa.map((q) => ({ id: q.id, status: q.status, checks: q.checks, created_at: q.created_at })),
       evidence_summary: {

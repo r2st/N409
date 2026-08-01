@@ -86,10 +86,7 @@ describe('AdminPartnersPage', () => {
     const user = userEvent.setup();
     const fetchSpy = mockApi({
       '/partners': () =>
-        jsonResponse(
-          { partner: { ...partners[1], id: 'new', name: 'Ledgy', key: 'ledgy' } },
-          201,
-        ),
+        jsonResponse({ partner: { ...partners[1], id: 'new', name: 'Ledgy', key: 'ledgy' } }, 201),
     });
     renderPage();
 

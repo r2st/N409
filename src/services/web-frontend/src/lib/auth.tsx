@@ -62,9 +62,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [status, setStatus] = useState<AuthStatus>(() =>
-    hasStoredSession() ? 'loading' : 'anonymous',
-  );
+  const [status, setStatus] = useState<AuthStatus>(() => (hasStoredSession() ? 'loading' : 'anonymous'));
   const [viewMode, setViewMode] = useState<ViewMode>('admin');
 
   const logout = useCallback(() => {
@@ -129,9 +127,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string): Promise<LoginResult> => {
-      const res = await api<
-        { user: User; token: string } | { mfa_required: true; challenge: string }
-      >('/auth/login', { method: 'POST', body: { email, password } });
+      const res = await api<{ user: User; token: string } | { mfa_required: true; challenge: string }>(
+        '/auth/login',
+        { method: 'POST', body: { email, password } },
+      );
       if (!('token' in res)) {
         return { mfaRequired: true, challenge: res.challenge };
       }
@@ -142,12 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const verifyMfa = useCallback(
-    async (input: {
-      challenge: string;
-      code?: string;
-      backupCode?: string;
-      rememberDevice?: boolean;
-    }) => {
+    async (input: { challenge: string; code?: string; backupCode?: string; rememberDevice?: boolean }) => {
       const res = await api<{ user: User; token: string }>('/auth/mfa/verify', {
         method: 'POST',
         body: {
@@ -178,7 +172,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const replaceToken = useCallback((token: string) => setToken(token), []);
 
   const value = useMemo(
-    () => ({ status, user, viewMode, setViewMode, login, verifyMfa, register, adoptToken, setUser, replaceToken, logout }),
+    () => ({
+      status,
+      user,
+      viewMode,
+      setViewMode,
+      login,
+      verifyMfa,
+      register,
+      adoptToken,
+      setUser,
+      replaceToken,
+      logout,
+    }),
     [status, user, viewMode, login, verifyMfa, register, adoptToken, replaceToken, logout],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

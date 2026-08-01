@@ -116,9 +116,7 @@ export function SavedViews() {
       setVisibility('private');
       await load();
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : 'Could not save the view.',
-      );
+      setError(err instanceof ApiError ? err.message : 'Could not save the view.');
     } finally {
       setBusy(false);
     }
@@ -155,9 +153,7 @@ export function SavedViews() {
         onChange={(e) => apply(e.target.value)}
         className="!w-auto min-w-48"
       >
-        <option value="">
-          {views.length ? 'Saved views…' : 'No saved views yet'}
-        </option>
+        <option value="">{views.length ? 'Saved views…' : 'No saved views yet'}</option>
         {views
           .filter((v) => v.is_owner)
           .map((v) => (
@@ -213,8 +209,7 @@ export function SavedViews() {
       <Modal open={saveOpen} onClose={() => setSaveOpen(false)} title="Save this view">
         <div className="space-y-4 px-5 py-4">
           <p className="text-sm text-ink-600">
-            Saves the filters, tab and sort currently on screen. It does not save which page you
-            are on.
+            Saves the filters, tab and sort currently on screen. It does not save which page you are on.
           </p>
           <label className="block text-xs font-semibold text-ink-600">
             Name

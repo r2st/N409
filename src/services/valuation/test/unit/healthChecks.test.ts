@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  runHealthChecks,
-  worstSeverity,
-  type HealthCategory,
-} from '../../src/domain/healthChecks.js';
+import { runHealthChecks, worstSeverity, type HealthCategory } from '../../src/domain/healthChecks.js';
 
 /** A clean, fully-populated valuation that should pass every check. */
 function healthy() {
@@ -69,15 +65,15 @@ describe('runHealthChecks', () => {
     const report = runHealthChecks(healthy());
     expect(report.blocking).toBe(false);
     expect(report.counts.error).toBe(0);
-    expect(report.severity === 'ok' || report.severity === 'info' || report.severity === 'warning').toBe(true);
+    expect(report.severity === 'ok' || report.severity === 'info' || report.severity === 'warning').toBe(
+      true,
+    );
   });
 
   it('covers all five categories', () => {
     const report = runHealthChecks(healthy());
     const cats = new Set<HealthCategory>(report.checks.map((c) => c.category));
-    expect(cats).toEqual(
-      new Set(['methodology', 'assumptions', 'completeness', 'mathematical', 'temporal']),
-    );
+    expect(cats).toEqual(new Set(['methodology', 'assumptions', 'completeness', 'mathematical', 'temporal']));
   });
 
   it('flags weights that do not sum to 100% as a blocking error', () => {

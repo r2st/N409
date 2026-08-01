@@ -668,7 +668,16 @@ The signed resolution is the evidence that the board adopted the FMV as of a spe
     title: 'Grant management & ASC 718 (private company)',
     category: 'grants',
     summary: 'Turn a private company’s option grants into ASC 718 stock-comp expense off the 409A FMV.',
-    keywords: ['grants', 'asc 718', 'private company', 'stock compensation', 'expense', 'vesting', 'black-scholes', 'esop'],
+    keywords: [
+      'grants',
+      'asc 718',
+      'private company',
+      'stock compensation',
+      'expense',
+      'vesting',
+      'black-scholes',
+      'esop',
+    ],
     body: `# Grant management & ASC 718 (private company)
 
 Once you have an FMV, **ASC 718** governs how you book the cost of stock-based compensation on your financial statements. The **Grants** tab manages this for a **private company**, measuring **option** expense off the concluded **[409A FMV](/help/what-is-409a)**.
@@ -1022,7 +1031,19 @@ Configure both under **Administration → Data retention**. Changes are logged f
     title: 'HRIS & payroll integration',
     category: 'hris',
     summary: 'Sync headcount and grant data from your payroll/HR system for ASC 718.',
-    keywords: ['hris', 'payroll', 'integration', 'sync', 'headcount', 'grants', 'asc 718', 'employees', 'rippling', 'gusto', 'deel'],
+    keywords: [
+      'hris',
+      'payroll',
+      'integration',
+      'sync',
+      'headcount',
+      'grants',
+      'asc 718',
+      'employees',
+      'rippling',
+      'gusto',
+      'deel',
+    ],
     body: `# HRIS & payroll integration
 
 For companies tracking stock-comp expense under [ASC 718](/help/grants-overview), keeping grant and employment data current by hand is tedious and error-prone. The **HRIS integration** syncs it from your HR/payroll system.

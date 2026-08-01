@@ -45,7 +45,8 @@ function mockApi() {
     if (path.includes('/tasks')) return jsonResponse({ tasks: [], total: 0 });
     if (path.includes('/reviews')) return jsonResponse({ reviews: [], total: 0 });
     if (path.includes('/users/options')) return jsonResponse({ options: [] });
-    if (path.includes('/valuations')) return jsonResponse({ valuations: [], page: 1, per_page: 100, total: 0 });
+    if (path.includes('/valuations'))
+      return jsonResponse({ valuations: [], page: 1, per_page: 100, total: 0 });
     if (path.includes('/tokens')) return jsonResponse({ tokens: [] });
     return jsonResponse({});
   });

@@ -58,7 +58,11 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
   return (
     <section className="rounded-lg border border-amber-200 bg-amber-50 p-6 shadow-card">
       <h2 className="overline mb-2 text-amber-800">Payment</h2>
-      {error && <div className="mb-3"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mb-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-4">
         <p className="text-sm text-amber-900">
           This valuation is unpaid. Work starts once payment is received.

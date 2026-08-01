@@ -75,11 +75,7 @@ export interface PaymentDeps {
   publicBaseUrl: string;
 }
 
-async function loadAuthorized(
-  pool: pg.Pool,
-  principal: Principal,
-  id: string,
-): Promise<ValuationRow> {
+async function loadAuthorized(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
   if (
@@ -155,24 +151,20 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   });
 
   // Price transparency: what "Pay now" will charge, before opening Stripe.
-  app.get(
-    '/api/v1/valuations/:id/payments/quote',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      const { id } = req.params as { id: string };
-      const valuation = await loadAuthorized(deps.pool, principal, id);
-      return {
-        quote: {
-          amount_cents: priceForKind(valuation.kind),
-          currency: valuation.currency || 'USD',
-          kind: valuation.kind,
-          // false → the UI shows the invoice-fallback messaging up front.
-          configured: Boolean(deps.stripeSecretKey),
-        },
-      };
-    },
-  );
+  app.get('/api/v1/valuations/:id/payments/quote', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadAuthorized(deps.pool, principal, id);
+    return {
+      quote: {
+        amount_cents: priceForKind(valuation.kind),
+        currency: valuation.currency || 'USD',
+        kind: valuation.kind,
+        // false → the UI shows the invoice-fallback messaging up front.
+        configured: Boolean(deps.stripeSecretKey),
+      },
+    };
+  });
 
   // Account-level billing rollup (P2 #13): every payment across the caller's
   // accessible valuations — client: own, partner: org, ops: all — plus the
@@ -206,10 +198,8 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
   // Webhook lives in its own plugin scope so the raw-buffer content parser
   // (required for signature verification) can't leak to other routes.
   void app.register(async (scope) => {
-    scope.addContentTypeParser(
-      'application/json',
-      { parseAs: 'buffer' },
-      (_req, body, done) => done(null, body),
+    scope.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_req, body, done) =>
+      done(null, body),
     );
 
     scope.post('/api/v1/stripe/webhook', async (req, reply) => {
@@ -259,9 +249,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           const valuation = await findValuationById(deps.pool, payment.valuation_id);
           if (valuation && valuation.paid_status === 'unpaid') {
             const amount =
-              typeof session.amount_total === 'number'
-                ? session.amount_total
-                : Number(payment.amount_cents);
+              typeof session.amount_total === 'number' ? session.amount_total : Number(payment.amount_cents);
             await patchValuation(
               deps.pool,
               valuation,

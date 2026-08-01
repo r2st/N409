@@ -60,8 +60,8 @@ export function SupportInboxPage() {
     <div>
       <h1 className="font-display text-3xl font-semibold text-ink-900">Support inbox</h1>
       <p className="mt-2 text-sm text-ink-500">
-        Messages sent through the in-app help widget. Reply on the valuation's chat thread or by
-        email, then mark the message resolved.
+        Messages sent through the in-app help widget. Reply on the valuation's chat thread or by email, then
+        mark the message resolved.
       </p>
 
       <div className="mt-6 flex gap-2">
@@ -89,9 +89,7 @@ export function SupportInboxPage() {
       <div className="mt-6 space-y-4">
         {messages.length === 0 && (
           <EmptyState title={scope === 'open' ? 'Inbox zero' : 'Nothing here'}>
-            {scope === 'open'
-              ? 'No open support messages — nice.'
-              : 'No messages match this filter.'}
+            {scope === 'open' ? 'No open support messages — nice.' : 'No messages match this filter.'}
           </EmptyState>
         )}
         {messages.map((m) => (

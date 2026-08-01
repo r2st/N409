@@ -48,7 +48,7 @@ describe('seo helpers (§24)', () => {
   it('emits FAQPage JSON-LD from items', () => {
     const node = faqJsonLd([{ q: 'Q?', a: 'A.' }]) as Record<string, unknown>;
     expect(node['@type']).toBe('FAQPage');
-    expect((node.mainEntity as unknown[])).toHaveLength(1);
+    expect(node.mainEntity as unknown[]).toHaveLength(1);
   });
 });
 
@@ -75,9 +75,7 @@ describe('<Seo>', () => {
     expect(document.querySelector('meta[name="twitter:card"]')?.getAttribute('content')).toBe(
       'summary_large_image',
     );
-    expect(document.querySelector('link[rel="canonical"]')?.getAttribute('href')).toContain(
-      '/pricing',
-    );
+    expect(document.querySelector('link[rel="canonical"]')?.getAttribute('href')).toContain('/pricing');
     expect(document.querySelector('script[type="application/ld+json"]')?.textContent).toContain(
       'Organization',
     );

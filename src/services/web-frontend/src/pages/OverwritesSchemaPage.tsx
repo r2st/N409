@@ -61,7 +61,11 @@ export function OverwritesSchemaPage() {
               category === c.key ? 'ring-2 ring-bond-600' : ''
             }`}
           >
-            <StatCard label={OVERWRITE_CATEGORY_LABELS[c.key] ?? c.key} value={c.field_count} accent={category === c.key} />
+            <StatCard
+              label={OVERWRITE_CATEGORY_LABELS[c.key] ?? c.key}
+              value={c.field_count}
+              accent={category === c.key}
+            />
           </button>
         ))}
       </div>
@@ -94,7 +98,9 @@ export function OverwritesSchemaPage() {
                   <div className="font-semibold text-ink-800">{f.label}</div>
                   <code className="text-xs text-ink-400">{f.key}</code>
                 </td>
-                <td className="px-4 py-2.5 text-ink-600">{OVERWRITE_CATEGORY_LABELS[f.category] ?? f.category}</td>
+                <td className="px-4 py-2.5 text-ink-600">
+                  {OVERWRITE_CATEGORY_LABELS[f.category] ?? f.category}
+                </td>
                 <td className="px-4 py-2.5">
                   <span
                     className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${CLASS_TONES[f.class] ?? ''}`}

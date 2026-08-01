@@ -94,7 +94,9 @@ export function presetByKey(key: string): FormatPreset | undefined {
 export function parseNumericCell(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  const cleaned = String(value).replace(/[$,\s]/g, '').replace(/[()]/g, '');
+  const cleaned = String(value)
+    .replace(/[$,\s]/g, '')
+    .replace(/[()]/g, '');
   if (cleaned === '') return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
@@ -175,7 +177,9 @@ export function parseCapTable(rows: Record<string, unknown>[], mapping: ColumnMa
     const sharesRaw = parseNumericCell(readCell(row, mapping.shares));
     // Skip blank rows / totals rows with no class and no shares.
     if (name === '' && sharesRaw === null) continue;
-    const typeCell = String(readCell(row, mapping.class_type) ?? '').trim().toLowerCase();
+    const typeCell = String(readCell(row, mapping.class_type) ?? '')
+      .trim()
+      .toLowerCase();
     const classType: CapTableClassType =
       typeCell === 'common' || typeCell === 'preferred' || typeCell === 'option' || typeCell === 'warrant'
         ? (typeCell as CapTableClassType)
@@ -243,14 +247,28 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
   const seen = new Set<string>();
   for (const e of entries) {
     if (e.security_class === '') {
-      issues.push({ severity: 'error', code: 'missing_class', message: 'A row is missing a security class name.' });
+      issues.push({
+        severity: 'error',
+        code: 'missing_class',
+        message: 'A row is missing a security class name.',
+      });
     } else if (seen.has(e.security_class.toLowerCase())) {
-      issues.push({ severity: 'warning', code: 'duplicate_class', message: `Duplicate security class "${e.security_class}".`, security_class: e.security_class });
+      issues.push({
+        severity: 'warning',
+        code: 'duplicate_class',
+        message: `Duplicate security class "${e.security_class}".`,
+        security_class: e.security_class,
+      });
     }
     seen.add(e.security_class.toLowerCase());
 
     if (!Number.isFinite(e.shares) || e.shares < 0) {
-      issues.push({ severity: 'error', code: 'bad_shares', message: `"${e.security_class}" has an invalid share count.`, security_class: e.security_class });
+      issues.push({
+        severity: 'error',
+        code: 'bad_shares',
+        message: `"${e.security_class}" has an invalid share count.`,
+        security_class: e.security_class,
+      });
     }
     summary.total_shares += Math.max(0, e.shares);
     if (e.class_type === 'common') summary.common_shares += e.shares;
@@ -261,18 +279,38 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
     if (e.class_type === 'preferred') {
       const mult = e.liquidation_multiple ?? 1;
       if (e.liquidation_multiple === null) {
-        issues.push({ severity: 'warning', code: 'default_liq_pref', message: `"${e.security_class}" has no liquidation preference — defaulting to 1×.`, security_class: e.security_class });
+        issues.push({
+          severity: 'warning',
+          code: 'default_liq_pref',
+          message: `"${e.security_class}" has no liquidation preference — defaulting to 1×.`,
+          security_class: e.security_class,
+        });
       }
       if (mult < 0) {
-        issues.push({ severity: 'error', code: 'bad_liq_pref', message: `"${e.security_class}" has a negative liquidation preference.`, security_class: e.security_class });
+        issues.push({
+          severity: 'error',
+          code: 'bad_liq_pref',
+          message: `"${e.security_class}" has a negative liquidation preference.`,
+          security_class: e.security_class,
+        });
       }
       if (e.conversion_ratio !== null && e.conversion_ratio <= 0) {
-        issues.push({ severity: 'error', code: 'bad_conversion', message: `"${e.security_class}" has a non-positive conversion ratio.`, security_class: e.security_class });
+        issues.push({
+          severity: 'error',
+          code: 'bad_conversion',
+          message: `"${e.security_class}" has a non-positive conversion ratio.`,
+          security_class: e.security_class,
+        });
       }
       // Preference stack: invested × multiple, else shares × price × multiple.
       const invested = e.invested_amount ?? (e.price_per_share !== null ? e.price_per_share * e.shares : 0);
       if (invested === 0) {
-        issues.push({ severity: 'warning', code: 'no_investment', message: `"${e.security_class}" has no invested amount or price — preference stack may be understated.`, security_class: e.security_class });
+        issues.push({
+          severity: 'warning',
+          code: 'no_investment',
+          message: `"${e.security_class}" has no invested amount or price — preference stack may be understated.`,
+          security_class: e.security_class,
+        });
       }
       summary.total_preference_stack += invested * mult;
     }
@@ -281,7 +319,11 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
   summary.fully_diluted_shares =
     summary.common_shares + summary.preferred_shares + summary.option_shares + summary.warrant_shares;
   if (summary.option_shares === 0) {
-    issues.push({ severity: 'warning', code: 'no_option_pool', message: 'No option pool detected in the cap table.' });
+    issues.push({
+      severity: 'warning',
+      code: 'no_option_pool',
+      message: 'No option pool detected in the cap table.',
+    });
   }
 
   return { valid: !issues.some((i) => i.severity === 'error'), issues, summary };
@@ -317,8 +359,9 @@ export function toWaterfallInputs(entries: CapTableEntry[]): WaterfallInputs {
       conversion_ratio: e.conversion_ratio ?? 1,
     }));
   return {
-    common_shares:
-      entries.filter((e) => e.class_type === 'common' || e.class_type === 'warrant').reduce((n, e) => n + e.shares, 0),
+    common_shares: entries
+      .filter((e) => e.class_type === 'common' || e.class_type === 'warrant')
+      .reduce((n, e) => n + e.shares, 0),
     option_pool_shares: entries.filter((e) => e.class_type === 'option').reduce((n, e) => n + e.shares, 0),
     preferred,
   };

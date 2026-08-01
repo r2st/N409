@@ -45,9 +45,7 @@ export function PaymentSuccessPage({ pollMs = POLL_MS }: { pollMs?: number }) {
         if (cancelled) return;
         if (res.valuation.paid_status !== 'unpaid') {
           setValuation(res.valuation);
-          const { payments } = await api<{ payments: Payment[] }>(
-            `/valuations/${valuationId}/payments`,
-          );
+          const { payments } = await api<{ payments: Payment[] }>(`/valuations/${valuationId}/payments`);
           if (!cancelled) setReceipt(payments.find((p) => p.status === 'succeeded') ?? null);
           return;
         }
@@ -129,8 +127,8 @@ export function PaymentSuccessPage({ pollMs = POLL_MS }: { pollMs?: number }) {
       <Shell>
         <h1 className="font-display text-2xl font-semibold text-ink-900">Payment processing</h1>
         <p className="text-sm text-ink-600">
-          Stripe accepted your payment, but our confirmation is taking longer than usual. The status
-          on your valuation will update automatically — no action needed.
+          Stripe accepted your payment, but our confirmation is taking longer than usual. The status on your
+          valuation will update automatically — no action needed.
         </p>
         <div className="flex justify-center">
           <Link to={`/valuations/${valuationId}`}>
@@ -160,8 +158,8 @@ export function PaymentCancelPage() {
     <Shell>
       <h1 className="font-display text-2xl font-semibold text-ink-900">Payment cancelled</h1>
       <p className="text-sm text-ink-600">
-        No charge was made. You can pay any time from the valuation page — or skip it and we will
-        settle by invoice instead.
+        No charge was made. You can pay any time from the valuation page — or skip it and we will settle by
+        invoice instead.
       </p>
       <div className="flex justify-center gap-3">
         {valuationId ? (

@@ -133,7 +133,11 @@ export function CommentsSection({
       {/* Conversation: chat + (for ops) threaded inbound email */}
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-4 text-ink-400">Conversation</h2>
-        {error && <div className="mb-4"><ErrorNote>{error}</ErrorNote></div>}
+        {error && (
+          <div className="mb-4">
+            <ErrorNote>{error}</ErrorNote>
+          </div>
+        )}
         <ul className="space-y-4">
           {thread.map((c) => (
             <li key={c.id} className="flex gap-3">
@@ -142,12 +146,16 @@ export function CommentsSection({
                   c.kind === 'email' ? 'bg-sky-100 text-sky-800' : 'bg-bond-100 text-bond-800'
                 }`}
               >
-                {c.kind === 'email' ? '@' : (c.author_name ?? c.author_email ?? '?').slice(0, 2).toUpperCase()}
+                {c.kind === 'email'
+                  ? '@'
+                  : (c.author_name ?? c.author_email ?? '?').slice(0, 2).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 text-xs text-ink-400">
                   <span className="font-semibold text-ink-700">
-                    {c.kind === 'email' ? (c.email_meta?.from ?? 'email') : (c.author_name ?? c.author_email ?? 'unknown')}
+                    {c.kind === 'email'
+                      ? (c.email_meta?.from ?? 'email')
+                      : (c.author_name ?? c.author_email ?? 'unknown')}
                   </span>
                   {c.kind === 'email' && (
                     <span className="rounded bg-sky-50 px-1.5 py-0.5 font-semibold text-sky-700 ring-1 ring-sky-200 ring-inset">

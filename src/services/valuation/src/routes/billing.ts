@@ -6,10 +6,7 @@ import { renderReportPdf } from '@n409/report/pdf';
 import { isOps } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findUserById } from '../repos/users.js';
-import {
-  createSubscriptionCheckoutSession,
-  verifyWebhookSignature,
-} from '../payments/stripe.js';
+import { createSubscriptionCheckoutSession, verifyWebhookSignature } from '../payments/stripe.js';
 import {
   cancelSubscription,
   createInvoice,
@@ -124,7 +121,16 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
     // Normalise each active plan's price to a monthly run-rate for MRR.
     const mrrCents = subscriptions
       .filter((s) => s.status === 'active' || s.status === 'trialing')
-      .reduce((sum, s) => sum + (s.interval === 'year' ? Math.round(s.price_cents / 12) : s.interval === 'month' ? s.price_cents : 0), 0);
+      .reduce(
+        (sum, s) =>
+          sum +
+          (s.interval === 'year'
+            ? Math.round(s.price_cents / 12)
+            : s.interval === 'month'
+              ? s.price_cents
+              : 0),
+        0,
+      );
     return {
       subscriptions,
       invoices,

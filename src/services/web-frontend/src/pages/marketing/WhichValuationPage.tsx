@@ -34,14 +34,19 @@ export function WhichValuationPage() {
               }`}
             >
               <span className="block text-sm font-semibold text-ink-900">{option.label}</span>
-              {option.subtitle && <span className="mt-0.5 block text-xs text-ink-500">{option.subtitle}</span>}
+              {option.subtitle && (
+                <span className="mt-0.5 block text-xs text-ink-500">{option.subtitle}</span>
+              )}
             </button>
           );
         })}
       </div>
 
       {product && (
-        <div className="mt-10 rounded-lg border border-bond-200 bg-surface p-6 shadow-lift" data-testid="quiz-result">
+        <div
+          className="mt-10 rounded-lg border border-bond-200 bg-surface p-6 shadow-lift"
+          data-testid="quiz-result"
+        >
           <div className="overline text-bond-700">Our recommendation</div>
           <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">{product.name}</h2>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-ink-600">{product.description}</p>

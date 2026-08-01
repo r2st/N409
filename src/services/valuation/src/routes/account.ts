@@ -132,13 +132,11 @@ export function registerAccountRoutes(
   app.patch('/api/v1/me', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ProfileBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid profile', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid profile', { errors: parsed.error.issues });
 
     const user = await loadSelf(principal.id);
     const { current_password, ...patch } = parsed.data;
-    const changingEmail =
-      patch.email !== undefined && patch.email.toLowerCase() !== user.email.toLowerCase();
+    const changingEmail = patch.email !== undefined && patch.email.toLowerCase() !== user.email.toLowerCase();
 
     if (changingEmail) {
       // Email is the login identifier and the password-reset destination, so
@@ -151,9 +149,7 @@ export function registerAccountRoutes(
         if (!(await verifyPassword(current_password, user.password_digest)))
           throw problems.badRequest('Current password is incorrect');
       } else {
-        throw problems.badRequest(
-          'This account signs in with Google SSO — its email is managed by Google',
-        );
+        throw problems.badRequest('This account signs in with Google SSO — its email is managed by Google');
       }
       if (await findUserByEmail(deps.pool, patch.email!))
         throw problems.conflict('An account with this email already exists');
@@ -212,8 +208,7 @@ export function registerAccountRoutes(
   app.post('/api/v1/me/tokens', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = TokenBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid token', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid token', { errors: parsed.error.issues });
 
     const { token, secret } = await createApiToken(deps.pool, {
       partnerId: null,
@@ -230,8 +225,7 @@ export function registerAccountRoutes(
     if (!isUlid(id)) throw problems.notFound();
     const token = await findApiTokenById(deps.pool, id);
     // 404 rather than 403 for someone else's token — don't confirm it exists.
-    if (!token || token.partner_id !== null || token.created_by !== principal.id)
-      throw problems.notFound();
+    if (!token || token.partner_id !== null || token.created_by !== principal.id) throw problems.notFound();
     await revokeApiToken(deps.pool, id);
     return reply.status(204).send();
   });
@@ -246,8 +240,7 @@ export function registerAccountRoutes(
   app.delete('/api/v1/me', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = CloseAccountBody.safeParse(req.body ?? {});
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
     const user = await loadSelf(principal.id);
     if (user.password_digest) {

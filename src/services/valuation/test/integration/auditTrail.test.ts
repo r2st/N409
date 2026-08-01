@@ -112,9 +112,7 @@ describe.skipIf(!dbUp)('valuation audit trail', () => {
   it('records the state transition as a change to the state field', async () => {
     const body = await trail(ops.token, '?type=state_changed');
     expect(body.total).toBe(1);
-    expect(body.entries[0]!.changes).toEqual([
-      { field: 'state', from: 'pending', to: 'started' },
-    ]);
+    expect(body.entries[0]!.changes).toEqual([{ field: 'state', from: 'pending', to: 'started' }]);
   });
 
   it('hides internal analyst events from the client', async () => {

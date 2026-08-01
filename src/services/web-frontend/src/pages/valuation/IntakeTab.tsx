@@ -154,8 +154,8 @@ export function IntakeTab() {
           </div>
         ) : (
           <div className="rounded-md border border-paper-300 bg-paper-50 px-4 py-3 text-sm text-ink-500">
-            Complete the sections below to help us value {valuation.company_name}. Your answers save
-            per section.
+            Complete the sections below to help us value {valuation.company_name}. Your answers save per
+            section.
           </div>
         )}
 
@@ -212,7 +212,14 @@ export function IntakeTab() {
                         type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
                         value={fieldValue(answers, f.key)}
                         onChange={(e) =>
-                          setField(f.key, f.type === 'number' ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value)
+                          setField(
+                            f.key,
+                            f.type === 'number'
+                              ? e.target.value === ''
+                                ? null
+                                : Number(e.target.value)
+                              : e.target.value,
+                          )
                         }
                       />
                     )}
@@ -222,7 +229,11 @@ export function IntakeTab() {
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <Button variant="secondary" disabled={step === 0} onClick={() => setStep((s) => Math.max(0, s - 1))}>
+              <Button
+                variant="secondary"
+                disabled={step === 0}
+                onClick={() => setStep((s) => Math.max(0, s - 1))}
+              >
                 Back
               </Button>
               {canEdit && (
@@ -276,7 +287,10 @@ export function IntakeTab() {
             </span>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-paper-300">
-            <div className="h-full rounded-full bg-bond-500" style={{ width: `${completion.percentComplete}%` }} />
+            <div
+              className="h-full rounded-full bg-bond-500"
+              style={{ width: `${completion.percentComplete}%` }}
+            />
           </div>
           <ul className="mt-4 space-y-1.5 text-sm">
             {completion.sections.map((s, i) => (

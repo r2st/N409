@@ -57,9 +57,7 @@ describe('PaymentSection (price transparency before checkout)', () => {
     });
 
     render(<PaymentSection valuation={VALUATION} />);
-    await waitFor(() =>
-      expect(screen.getByText(/we will invoice you instead/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/we will invoice you instead/i)).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /pay/i })).not.toBeInTheDocument();
   });
 
@@ -76,16 +74,12 @@ describe('PaymentSection (price transparency before checkout)', () => {
     render(<PaymentSection valuation={VALUATION} />);
     await waitFor(() => expect(screen.getByTestId('payment-quote')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /pay/i }));
-    await waitFor(() =>
-      expect(screen.getByText(/we will invoice you instead/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/we will invoice you instead/i)).toBeInTheDocument());
   });
 
   it('renders nothing for paid valuations', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
-    const { container } = render(
-      <PaymentSection valuation={{ ...VALUATION, paid_status: 'paid' }} />,
-    );
+    const { container } = render(<PaymentSection valuation={{ ...VALUATION, paid_status: 'paid' }} />);
     expect(container).toBeEmptyDOMElement();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -97,7 +91,12 @@ describe('PaymentHistory', () => {
   it('lists past payments with amount, status, and receipt link', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       if (String(input).endsWith('/payments'))
-        return jsonResponse({ payments: [PAYMENT, { ...PAYMENT, id: 'p2', session_id: 'cs_2', status: 'expired', receipt_url: null }] });
+        return jsonResponse({
+          payments: [
+            PAYMENT,
+            { ...PAYMENT, id: 'p2', session_id: 'cs_2', status: 'expired', receipt_url: null },
+          ],
+        });
       throw new Error(`unexpected fetch ${String(input)}`);
     });
 

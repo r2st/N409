@@ -3,7 +3,16 @@ import { api, ApiError } from '../../lib/api';
 import { formatMoney } from '../../lib/pipeline';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, StatCard, TextInput } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  Select,
+  Spinner,
+  StatCard,
+  TextInput,
+} from '../../components/ui';
 
 interface Baseline {
   calculation_id: string;
@@ -411,7 +420,9 @@ export function ScenariosTab() {
                 {saved.baseline && (
                   <tr className="border-b border-paper-200 bg-paper-50">
                     <td className="py-2.5 pr-4 font-semibold text-ink-800">Baseline (official)</td>
-                    <td className="tnum py-2.5 pr-4">{formatMoney(saved.baseline.fmv_per_share, currency)}</td>
+                    <td className="tnum py-2.5 pr-4">
+                      {formatMoney(saved.baseline.fmv_per_share, currency)}
+                    </td>
                     <td className="tnum py-2.5 pr-4">{formatMoney(saved.baseline.equity_value, currency)}</td>
                     <td className="py-2.5 pr-4 text-ink-400">—</td>
                     <td className="py-2.5 pr-4 text-ink-400">—</td>

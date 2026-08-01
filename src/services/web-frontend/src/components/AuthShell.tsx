@@ -2,7 +2,15 @@ import type { ReactNode } from 'react';
 import { LogoMark, Wordmark } from './Logo';
 
 /** Split-panel shell for the sign-in / registration pages. */
-export function AuthShell({ title, subtitle, children }: { title: string; subtitle: ReactNode; children: ReactNode }) {
+export function AuthShell({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div className="flex min-h-screen bg-paper-100">
       {/* Brand panel */}
@@ -15,11 +23,15 @@ export function AuthShell({ title, subtitle, children }: { title: string; subtit
             <br />
             scrutiny, delivered
             <br />
-            with <em className="text-brass-300 not-italic underline decoration-bond-500 decoration-2 underline-offset-8">precision</em>.
+            with{' '}
+            <em className="text-brass-300 not-italic underline decoration-bond-500 decoration-2 underline-offset-8">
+              precision
+            </em>
+            .
           </h1>
           <p className="mt-6 max-w-sm text-[0.95rem] leading-relaxed text-chrome-dim">
-            IRC §409A common-stock valuations and a full family of fair-value opinions — AI-assisted
-            intake, analyst-reviewed, engine-computed.
+            IRC §409A common-stock valuations and a full family of fair-value opinions — AI-assisted intake,
+            analyst-reviewed, engine-computed.
           </p>
         </div>
         <div className="flex items-center gap-6 text-xs text-chrome-faint">

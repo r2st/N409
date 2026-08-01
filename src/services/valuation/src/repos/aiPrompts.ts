@@ -43,13 +43,8 @@ export async function findPromptById(pool: pg.Pool, id: string): Promise<AiPromp
   return rows[0] ?? null;
 }
 
-export async function findPromptByPipeline(
-  pool: pg.Pool,
-  pipeline: AiPipeline,
-): Promise<AiPromptRow | null> {
-  const { rows } = await pool.query<AiPromptRow>('SELECT * FROM ai_prompts WHERE pipeline = $1', [
-    pipeline,
-  ]);
+export async function findPromptByPipeline(pool: pg.Pool, pipeline: AiPipeline): Promise<AiPromptRow | null> {
+  const { rows } = await pool.query<AiPromptRow>('SELECT * FROM ai_prompts WHERE pipeline = $1', [pipeline]);
   return rows[0] ?? null;
 }
 
@@ -62,10 +57,7 @@ export async function latestPromptVersion(pool: pg.Pool, promptId: string): Prom
   return rows[0]?.version ?? null;
 }
 
-export async function listPromptVersions(
-  pool: pg.Pool,
-  promptId: string,
-): Promise<AiPromptVersionListRow[]> {
+export async function listPromptVersions(pool: pg.Pool, promptId: string): Promise<AiPromptVersionListRow[]> {
   const { rows } = await pool.query<AiPromptVersionListRow>(
     `SELECT v.*, u.email AS created_by_email
      FROM ai_prompt_versions v

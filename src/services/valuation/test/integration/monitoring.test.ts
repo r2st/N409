@@ -32,7 +32,16 @@ describe.skipIf(!dbUp)('feature 10 — valuation monitoring', () => {
     // A concluded FMV + a completed-ish state + baseline revenue.
     await createCalculation(
       pool,
-      { valuationId, engineVersion: 't', status: 'succeeded', inputs: {}, results: {}, equityValue: 1, fmvPerShare: 2, createdBy: ops.id },
+      {
+        valuationId,
+        engineVersion: 't',
+        status: 'succeeded',
+        inputs: {},
+        results: {},
+        equityValue: 1,
+        fmvPerShare: 2,
+        createdBy: ops.id,
+      },
       { actorType: 'human', actorId: ops.id },
     );
     await pool.query("UPDATE valuations SET state = 'published', assigned_reviewer_id = $2 WHERE id = $1", [
@@ -99,10 +108,9 @@ describe.skipIf(!dbUp)('feature 10 — valuation monitoring', () => {
     expect(first.statusCode).toBe(200);
     expect(first.json().alerts_sent).toBeGreaterThanOrEqual(1);
 
-    const outbox = await pool.query(
-      'SELECT count(*)::int AS n FROM email_outbox WHERE subject LIKE $1',
-      ['Revaluation trigger:%'],
-    );
+    const outbox = await pool.query('SELECT count(*)::int AS n FROM email_outbox WHERE subject LIKE $1', [
+      'Revaluation trigger:%',
+    ]);
     const firstCount = outbox.rows[0].n as number;
     expect(firstCount).toBeGreaterThanOrEqual(1);
 
@@ -113,10 +121,9 @@ describe.skipIf(!dbUp)('feature 10 — valuation monitoring', () => {
       headers: authHeader(ops.token),
     });
     expect(second.json().alerts_sent).toBe(0);
-    const outbox2 = await pool.query(
-      'SELECT count(*)::int AS n FROM email_outbox WHERE subject LIKE $1',
-      ['Revaluation trigger:%'],
-    );
+    const outbox2 = await pool.query('SELECT count(*)::int AS n FROM email_outbox WHERE subject LIKE $1', [
+      'Revaluation trigger:%',
+    ]);
     expect(outbox2.rows[0].n).toBe(firstCount);
   });
 

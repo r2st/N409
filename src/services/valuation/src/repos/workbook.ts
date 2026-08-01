@@ -15,10 +15,9 @@ export interface WorkbookCellRow {
 }
 
 export async function listWorkbookCells(pool: pg.Pool, valuationId: string): Promise<WorkbookCellInput[]> {
-  const { rows } = await pool.query<WorkbookCellRow>(
-    'SELECT * FROM workbook_cells WHERE valuation_id = $1',
-    [valuationId],
-  );
+  const { rows } = await pool.query<WorkbookCellRow>('SELECT * FROM workbook_cells WHERE valuation_id = $1', [
+    valuationId,
+  ]);
   return rows.map((r) => ({
     sheet: r.sheet,
     row_key: r.row_key,
@@ -63,7 +62,12 @@ export async function patchWorkbookCells(
            AND (sheet, row_key, column_key) IN (
              SELECT * FROM unnest($2::text[], $3::text[], $4::text[])
            )`,
-        [valuationId, clears.map((c) => c.sheet), clears.map((c) => c.row_key), clears.map((c) => c.column_key)],
+        [
+          valuationId,
+          clears.map((c) => c.sheet),
+          clears.map((c) => c.row_key),
+          clears.map((c) => c.column_key),
+        ],
       );
     }
     if (writes.length > 0) {

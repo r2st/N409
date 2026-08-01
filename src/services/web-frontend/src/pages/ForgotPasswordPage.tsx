@@ -31,8 +31,8 @@ export function ForgotPasswordPage() {
       {sent ? (
         <div>
           <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
-            If an account exists for <span className="font-semibold">{email}</span>, we've sent a
-            password reset link. It expires in one hour.
+            If an account exists for <span className="font-semibold">{email}</span>, we've sent a password
+            reset link. It expires in one hour.
           </div>
           <p className="mt-8 text-center text-sm text-ink-400">
             <Link to="/login" className="font-semibold text-bond-600 hover:text-bond-700">

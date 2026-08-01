@@ -9,7 +9,11 @@ interface Section {
 }
 interface Bundle {
   valuation: { number: string; company_name: string; kind: string; state: string; currency: string };
-  report: { template_version: string; status: string; content: { title: string; sections: Section[] } } | null;
+  report: {
+    template_version: string;
+    status: string;
+    content: { title: string; sections: Section[] };
+  } | null;
   assumptions: {
     allocation_method: string;
     weights: { asset: string | null; opm: string | null; income: string | null; market: string | null };
@@ -20,7 +24,12 @@ interface Bundle {
   } | null;
   conclusion: { equity_value: string | null; fmv_per_share: string | null; engine_version: string } | null;
   qa: Array<{ id: string; status: string; checks: Array<{ label: string; status: string; detail: string }> }>;
-  evidence_summary: { has_report: boolean; has_conclusion: boolean; qa_count: number; assumptions_recorded: boolean };
+  evidence_summary: {
+    has_report: boolean;
+    has_conclusion: boolean;
+    qa_count: number;
+    assumptions_recorded: boolean;
+  };
   access_expires_at: string;
 }
 
@@ -79,12 +88,22 @@ export function AuditorPortalPage() {
       <p className="tnum mt-1 text-sm text-ink-400">
         {bundle.valuation.number} · {bundle.valuation.kind.toUpperCase()} · {bundle.valuation.state}
       </p>
-      <p className="mt-1 text-xs text-ink-400">Access expires {new Date(bundle.access_expires_at).toLocaleDateString()}</p>
+      <p className="mt-1 text-xs text-ink-400">
+        Access expires {new Date(bundle.access_expires_at).toLocaleDateString()}
+      </p>
 
       {bundle.conclusion && (
         <section className="mt-6 flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-          <Metric label="Concluded FMV / share" value={bundle.conclusion.fmv_per_share ?? '—'} currency={bundle.valuation.currency} />
-          <Metric label="Equity value" value={bundle.conclusion.equity_value ?? '—'} currency={bundle.valuation.currency} />
+          <Metric
+            label="Concluded FMV / share"
+            value={bundle.conclusion.fmv_per_share ?? '—'}
+            currency={bundle.valuation.currency}
+          />
+          <Metric
+            label="Equity value"
+            value={bundle.conclusion.equity_value ?? '—'}
+            currency={bundle.valuation.currency}
+          />
           <Metric label="Engine version" value={bundle.conclusion.engine_version} />
         </section>
       )}
@@ -126,7 +145,11 @@ export function AuditorPortalPage() {
                   <li key={i} className="text-sm">
                     <span
                       className={`mr-2 rounded px-1.5 py-0.5 text-xs font-semibold ${
-                        c.status === 'pass' ? 'bg-emerald-50 text-emerald-700' : c.status === 'fail' ? 'bg-red-50 text-red-700' : 'bg-paper-100 text-ink-600'
+                        c.status === 'pass'
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : c.status === 'fail'
+                            ? 'bg-red-50 text-red-700'
+                            : 'bg-paper-100 text-ink-600'
                       }`}
                     >
                       {c.status}
@@ -149,7 +172,9 @@ const pct = (v: string | null) => (v === null || v === undefined ? '—' : `${(N
 function Metric({ label, value, currency }: { label: string; value: string; currency?: string }) {
   const display =
     currency && /^-?\d/.test(value)
-      ? new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value))
+      ? new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(
+          Number(value),
+        )
       : value;
   return (
     <div>

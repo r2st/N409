@@ -81,10 +81,7 @@ describe('ids filter (bulk export of a selection)', () => {
   });
 
   it('builds an id = ANY(...) clause scoped on top of RBAC', () => {
-    const { whereSql, params } = buildValuationWhere(
-      { kind: 'own', userId: 'U1' },
-      { ids: [ID_A, ID_B] },
-    );
+    const { whereSql, params } = buildValuationWhere({ kind: 'own', userId: 'U1' }, { ids: [ID_A, ID_B] });
     expect(whereSql).toContain('user_id = $1');
     expect(whereSql).toContain('id = ANY($2)');
     expect(params).toEqual(['U1', [ID_A, ID_B]]);

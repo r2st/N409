@@ -75,32 +75,23 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
 
   // ── Notification preferences (P2 #11) — strictly self-scoped ──────────────
 
-  app.get(
-    '/api/v1/me/notification-preferences',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
-    },
-  );
+  app.get('/api/v1/me/notification-preferences', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
+  });
 
-  app.put(
-    '/api/v1/me/notification-preferences',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      const parsed = PreferencesBody.safeParse(req.body);
-      if (!parsed.success)
-        throw problems.unprocessable('Invalid preferences', { errors: parsed.error.issues });
-      for (const pref of parsed.data.preferences) {
-        await upsertPreference(deps.pool, principal.id, pref.event_type, {
-          in_app: pref.in_app,
-          email: pref.email,
-        });
-      }
-      return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
-    },
-  );
+  app.put('/api/v1/me/notification-preferences', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const parsed = PreferencesBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid preferences', { errors: parsed.error.issues });
+    for (const pref of parsed.data.preferences) {
+      await upsertPreference(deps.pool, principal.id, pref.event_type, {
+        in_app: pref.in_app,
+        email: pref.email,
+      });
+    }
+    return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
+  });
 
   // Ops window into the auto-email outbox (P1 #21 observability).
   app.get('/api/v1/admin/email-outbox', { preHandler: app.authenticate }, async (req) => {

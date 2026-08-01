@@ -32,8 +32,7 @@ export function registerStreamRoutes(
     }
 
     const user = await findUserById(deps.pool, principal.id);
-    const name =
-      [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.email || 'Someone';
+    const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.email || 'Someone';
 
     reply.hijack();
     reply.raw.writeHead(200, {

@@ -63,8 +63,12 @@ export function MonitorsPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-semibold text-ink-900">{m.company_name}</span>
                 <KindBadge kind={m.kind as never} />
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${MONITOR_TONE[m.status]}`}>
-                  <span className={`h-1.5 w-1.5 rounded-full ${m.status === 'green' ? 'bg-bond-500' : m.status === 'yellow' ? 'bg-amber-500' : 'bg-red-500'}`} />
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${MONITOR_TONE[m.status]}`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${m.status === 'green' ? 'bg-bond-500' : m.status === 'yellow' ? 'bg-amber-500' : 'bg-red-500'}`}
+                  />
                   {m.status}
                 </span>
                 {m.triggers.length > 0 && (

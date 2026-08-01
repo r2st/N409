@@ -62,7 +62,13 @@ describe('ParamsPanel — PWERM', () => {
         pwerm: {
           scenarios: [
             { name: 'IPO', type: 'ipo', probability: 0.4, equity_value: 20_000_000, time_to_exit_years: 2 },
-            { name: 'Liq', type: 'liquidation', probability: 0.6, equity_value: 5_000_000, time_to_exit_years: 1 },
+            {
+              name: 'Liq',
+              type: 'liquidation',
+              probability: 0.6,
+              equity_value: 5_000_000,
+              time_to_exit_years: 1,
+            },
           ],
         },
       },
@@ -75,7 +81,11 @@ describe('ParamsPanel — PWERM', () => {
 
   it('flags a probability total that does not sum to one and blocks save', async () => {
     mockApi({
-      engine_inputs: { pwerm: { scenarios: [{ name: 'IPO', probability: 0.4, equity_value: 20_000_000, time_to_exit_years: 2 }] } },
+      engine_inputs: {
+        pwerm: {
+          scenarios: [{ name: 'IPO', probability: 0.4, equity_value: 20_000_000, time_to_exit_years: 2 }],
+        },
+      },
     });
     render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
     await userEvent.selectOptions(await screen.findByLabelText('Allocation method'), 'pwerm');
@@ -85,7 +95,11 @@ describe('ParamsPanel — PWERM', () => {
 
   it('saves scenarios to the engine-inputs endpoint', async () => {
     const patched = mockApi({
-      engine_inputs: { pwerm: { scenarios: [{ name: 'IPO', probability: 1, equity_value: 20_000_000, time_to_exit_years: 2 }] } },
+      engine_inputs: {
+        pwerm: {
+          scenarios: [{ name: 'IPO', probability: 1, equity_value: 20_000_000, time_to_exit_years: 2 }],
+        },
+      },
     });
     render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
     await userEvent.selectOptions(await screen.findByLabelText('Allocation method'), 'pwerm');

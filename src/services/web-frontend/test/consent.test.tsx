@@ -2,12 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import {
-  CONSENT_STORAGE_KEY,
-  ConsentProvider,
-  readStoredConsent,
-  useConsent,
-} from '../src/lib/consent';
+import { CONSENT_STORAGE_KEY, ConsentProvider, readStoredConsent, useConsent } from '../src/lib/consent';
 import { CookieConsent } from '../src/components/CookieConsent';
 
 function ConsentProbe() {

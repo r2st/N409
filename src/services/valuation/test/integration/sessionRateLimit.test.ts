@@ -12,10 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { isDbAvailable, seedPartner, seedUser, setupTestApp, authHeader } from './helpers.js';
-import {
-  FixedWindowRateLimiter,
-  WeightedWindowRateLimiter,
-} from '../../src/plugins/rateLimit.js';
+import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 
 const dbUp = await isDbAvailable();
 const WINDOW_MS = 60_000;

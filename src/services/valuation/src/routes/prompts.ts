@@ -62,10 +62,7 @@ async function loadPrompt(pool: pg.Pool, id: string): Promise<AiPromptRow> {
   return prompt;
 }
 
-export function registerPromptRoutes(
-  app: FastifyInstance,
-  deps: { pool: pg.Pool; aiUrl: string },
-): void {
+export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool; aiUrl: string }): void {
   app.get('/api/v1/admin/prompts', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
     return { prompts: await listPrompts(deps.pool) };
@@ -114,16 +111,12 @@ export function registerPromptRoutes(
   });
 
   // Version history (P1 #8): every content edit appends a numbered version.
-  app.get(
-    '/api/v1/admin/prompts/:id/versions',
-    { preHandler: app.authenticate },
-    async (req) => {
-      requireOps(requirePrincipal(req));
-      const { id } = req.params as { id: string };
-      await loadPrompt(deps.pool, id);
-      return { versions: await listPromptVersions(deps.pool, id) };
-    },
-  );
+  app.get('/api/v1/admin/prompts/:id/versions', { preHandler: app.authenticate }, async (req) => {
+    requireOps(requirePrincipal(req));
+    const { id } = req.params as { id: string };
+    await loadPrompt(deps.pool, id);
+    return { versions: await listPromptVersions(deps.pool, id) };
+  });
 
   // Revert = re-apply an old version's content as a NEW version, so history
   // stays append-only and the AI service picks the content up on the next run.

@@ -117,13 +117,24 @@ export function AdminSsoPage() {
       </div>
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Enterprise SSO</h1>
 
-      {error && <div className="mt-4"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-4">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
 
-      <form onSubmit={save} className="mt-6 space-y-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+      <form
+        onSubmit={save}
+        className="mt-6 space-y-4 rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+      >
         <div className="flex items-center justify-between">
           <h2 className="overline text-ink-400">SAML 2.0 identity provider</h2>
           <label className="flex items-center gap-2 text-sm text-ink-600">
-            <input type="checkbox" checked={config.enabled} onChange={(e) => set('enabled')(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={config.enabled}
+              onChange={(e) => set('enabled')(e.target.checked)}
+            />
             Enabled
           </label>
         </div>
@@ -133,7 +144,11 @@ export function AdminSsoPage() {
           </div>
         )}
         <Field label="IdP SSO URL" hint="SingleSignOnService endpoint (HTTP-Redirect).">
-          <TextInput value={config.idp_sso_url ?? ''} onChange={(e) => set('idp_sso_url')(e.target.value)} placeholder="https://idp.example.com/sso" />
+          <TextInput
+            value={config.idp_sso_url ?? ''}
+            onChange={(e) => set('idp_sso_url')(e.target.value)}
+            placeholder="https://idp.example.com/sso"
+          />
         </Field>
         <Field label="IdP signing certificate" hint="PEM body (base64), no headers.">
           <textarea
@@ -144,16 +159,26 @@ export function AdminSsoPage() {
           />
         </Field>
         <Field label="Allowed email domain" hint="Only this domain is JIT-provisioned (optional).">
-          <TextInput value={config.allowed_domain ?? ''} onChange={(e) => set('allowed_domain')(e.target.value)} placeholder="corp.com" />
+          <TextInput
+            value={config.allowed_domain ?? ''}
+            onChange={(e) => set('allowed_domain')(e.target.value)}
+            placeholder="corp.com"
+          />
         </Field>
         <Field label="SP entity ID (optional)" hint="Defaults to the metadata URL.">
-          <TextInput value={config.sp_entity_id ?? ''} onChange={(e) => set('sp_entity_id')(e.target.value)} />
+          <TextInput
+            value={config.sp_entity_id ?? ''}
+            onChange={(e) => set('sp_entity_id')(e.target.value)}
+          />
         </Field>
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={busy}>
             {busy ? 'Saving…' : 'Save SAML config'}
           </Button>
-          <a href="/api/v1/auth/saml/metadata" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
+          <a
+            href="/api/v1/auth/saml/metadata"
+            className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+          >
             SP metadata XML
           </a>
         </div>
@@ -168,12 +193,15 @@ export function AdminSsoPage() {
         </div>
         {minted && (
           <div className="mt-3 rounded-md border border-bond-200 bg-bond-50 p-4">
-            <p className="text-sm font-semibold text-bond-800">Copy this SCIM token now — it won't be shown again:</p>
+            <p className="text-sm font-semibold text-bond-800">
+              Copy this SCIM token now — it won't be shown again:
+            </p>
             <code className="mt-2 block overflow-x-auto rounded bg-surface px-3 py-2 font-mono text-xs text-ink-700">
               {minted}
             </code>
             <p className="mt-2 text-xs text-ink-400">
-              SCIM base URL: <code>/scim/v2</code> · Authenticate with <code>Authorization: Bearer &lt;token&gt;</code>
+              SCIM base URL: <code>/scim/v2</code> · Authenticate with{' '}
+              <code>Authorization: Bearer &lt;token&gt;</code>
             </p>
           </div>
         )}
@@ -189,7 +217,10 @@ export function AdminSsoPage() {
                   <td className="px-2 py-2 text-ink-500">{t.revoked_at ? 'Revoked' : 'Active'}</td>
                   <td className="px-2 py-2 text-right">
                     {!t.revoked_at && (
-                      <button onClick={() => revokeToken(t.id)} className="text-sm font-semibold text-red-600 hover:text-red-700">
+                      <button
+                        onClick={() => revokeToken(t.id)}
+                        className="text-sm font-semibold text-red-600 hover:text-red-700"
+                      >
                         Revoke
                       </button>
                     )}

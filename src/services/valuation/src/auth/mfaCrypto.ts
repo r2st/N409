@@ -42,7 +42,7 @@ export function encryptSecret(secretBase32: string, key: Buffer | null = mfaKey(
     if (process.env.NODE_ENV === 'production') {
       throw new Error(
         'MFA_ENCRYPTION_KEY (or DOCUMENTS_ENCRYPTION_KEY) must be set in production — ' +
-        'refusing to store TOTP secrets in plaintext.',
+          'refusing to store TOTP secrets in plaintext.',
       );
     }
     return secretBase32; // dev/test: store plaintext, no MAGIC prefix

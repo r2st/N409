@@ -62,9 +62,11 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   app.get('/api/v1/help/articles/:slug', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { slug } = req.params as { slug: string };
-    const article = (await cache.getOrLoad(`slug:${slug}`, async () =>
-      // Cache the miss too (null), so unknown slugs don't hammer the DB.
-      (await findArticleBySlug(deps.pool, slug)) ?? null,
+    const article = (await cache.getOrLoad(
+      `slug:${slug}`,
+      async () =>
+        // Cache the miss too (null), so unknown slugs don't hammer the DB.
+        (await findArticleBySlug(deps.pool, slug)) ?? null,
     )) as HelpArticleRow | null;
     if (!article || (!article.published && !isOps(principal))) throw problems.notFound();
     return { article };
@@ -129,19 +131,15 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     return { article };
   });
 
-  app.delete(
-    '/api/v1/admin/help/articles/:id',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const principal = requireOps(req);
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.notFound();
-      const existing = await findArticleById(deps.pool, id);
-      if (!existing) throw problems.notFound();
-      await deleteArticle(deps.pool, id);
-      await audit(principal.id, 'help_article_deleted', existing);
-      cache.clear();
-      return reply.status(204).send();
-    },
-  );
+  app.delete('/api/v1/admin/help/articles/:id', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requireOps(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const existing = await findArticleById(deps.pool, id);
+    if (!existing) throw problems.notFound();
+    await deleteArticle(deps.pool, id);
+    await audit(principal.id, 'help_article_deleted', existing);
+    cache.clear();
+    return reply.status(204).send();
+  });
 }

@@ -80,7 +80,8 @@ export function buildApp(): FastifyInstance {
 
   app.post('/render/v1/pdf', async (req, reply) => {
     const parsed = RenderBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid render request', { errors: parsed.error.issues });
+    if (!parsed.success)
+      throw problems.unprocessable('Invalid render request', { errors: parsed.error.issues });
     const pdf = await renderReportPdf(parsed.data);
     return reply
       .type('application/pdf')

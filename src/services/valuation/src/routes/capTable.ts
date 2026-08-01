@@ -89,7 +89,8 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
-    if (!canEdit(principal, valuation)) throw problems.forbidden('Only the client or ops can import a cap table');
+    if (!canEdit(principal, valuation))
+      throw problems.forbidden('Only the client or ops can import a cap table');
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
     const { rows, mapping } = parseInput(parsed.data);
@@ -102,7 +103,8 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
-    if (!canEdit(principal, valuation)) throw problems.forbidden('Only the client or ops can import a cap table');
+    if (!canEdit(principal, valuation))
+      throw problems.forbidden('Only the client or ops can import a cap table');
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
 
@@ -128,13 +130,17 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
   });
 
   // Waterfall-engine inputs projected from the stored cap table (ops).
-  app.get('/api/v1/valuations/:id/cap-table/waterfall-inputs', { preHandler: app.authenticate }, async (req) => {
-    const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden('Operations-only');
-    const { id } = req.params as { id: string };
-    await loadReadable(deps.pool, id, principal);
-    const table = await findCapTable(deps.pool, id);
-    if (!table) throw problems.notFound('No cap table imported yet');
-    return { inputs: toWaterfallInputs(table.entries) };
-  });
+  app.get(
+    '/api/v1/valuations/:id/cap-table/waterfall-inputs',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      if (!isOps(principal)) throw problems.forbidden('Operations-only');
+      const { id } = req.params as { id: string };
+      await loadReadable(deps.pool, id, principal);
+      const table = await findCapTable(deps.pool, id);
+      if (!table) throw problems.notFound('No cap table imported yet');
+      return { inputs: toWaterfallInputs(table.entries) };
+    },
+  );
 }

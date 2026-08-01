@@ -32,7 +32,13 @@ function fit(text: string, widthPts: number, fontSize: number): string {
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…`.replace('…', '...') : text;
 }
 
-function pageContent(title: string, columns: PdfColumn[], rows: string[][], pageNo: number, pageCount: number): string {
+function pageContent(
+  title: string,
+  columns: PdfColumn[],
+  rows: string[][],
+  pageNo: number,
+  pageCount: number,
+): string {
   const ops: string[] = ['BT'];
   let y = PAGE_H - MARGIN;
 
@@ -80,7 +86,9 @@ export function tablePdf(title: string, columns: PdfColumn[], rows: string[][]):
   const objects: string[] = [];
   const pageObjIds = pages.map((_, i) => 4 + i * 2);
   objects.push('<< /Type /Catalog /Pages 2 0 R >>');
-  objects.push(`<< /Type /Pages /Kids [${pageObjIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages.length} >>`);
+  objects.push(
+    `<< /Type /Pages /Kids [${pageObjIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages.length} >>`,
+  );
   objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
 
   pages.forEach((pageRows, i) => {

@@ -176,7 +176,9 @@ const TEMPLATE_409A: ReportTemplate = {
       key: 'methodology',
       heading: 'Valuation Methodology',
       html:
-        P('Describe the approaches considered — asset, income, market, and OPM backsolve — and their weights.') +
+        P(
+          'Describe the approaches considered — asset, income, market, and OPM backsolve — and their weights.',
+        ) +
         '<ul><li>Asset approach</li><li>Income approach</li><li>Market approach</li><li>Option-pricing (backsolve)</li></ul>',
     },
     {
@@ -265,13 +267,21 @@ const TEMPLATE_GENERIC: ReportTemplate = {
         'This report presents our valuation analysis of <strong>{{company_name}}</strong> ({{kind}}) as of {{date}}. Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.',
       ),
     },
-    { key: 'company_overview', heading: 'Company Overview', html: P('Describe the business of {{company_name}}.') },
+    {
+      key: 'company_overview',
+      heading: 'Company Overview',
+      html: P('Describe the business of {{company_name}}.'),
+    },
     {
       key: 'analysis',
       heading: 'Valuation Analysis',
       html: P('Describe the methodology, inputs and analysis supporting the conclusion.'),
     },
-    { key: 'conclusion', heading: 'Conclusion of Value', html: P('State the concluded value and its basis.') },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion of Value',
+      html: P('State the concluded value and its basis.'),
+    },
   ],
 };
 
@@ -319,7 +329,10 @@ export function contentFromManagedTemplate(
   const preamble = parts.length > 1 ? parts[0]?.trim() : '';
   if (preamble) sections.push({ key: 'section-0', heading: 'Introduction', html: sanitizeHtml(preamble) });
   for (let i = 1; i < parts.length; i += 2) {
-    const heading = sanitizeHtml(parts[i] ?? '').replace(/<[^>]+>/g, '').trim() || `Section ${sections.length + 1}`;
+    const heading =
+      sanitizeHtml(parts[i] ?? '')
+        .replace(/<[^>]+>/g, '')
+        .trim() || `Section ${sections.length + 1}`;
     sections.push({
       key: `section-${sections.length}`,
       heading,

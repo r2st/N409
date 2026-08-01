@@ -85,7 +85,8 @@ export async function verifyMfaChallenge(token: string, cfg: JwtConfig): Promise
 /** Short-lived signed state for the OIDC redirect round-trip (CSRF protection). */
 export async function signOidcState(cfg: JwtConfig): Promise<string> {
   return new SignJWT({
-    purpose: 'oidc-state' })
+    purpose: 'oidc-state',
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuer(cfg.issuer)
     .setIssuedAt()
@@ -110,7 +111,10 @@ export interface AccountingState {
 
 export async function signAccountingState(s: AccountingState, cfg: JwtConfig): Promise<string> {
   return new SignJWT({
-    purpose: 'accounting-state', v: s.valuationId, p: s.provider })
+    purpose: 'accounting-state',
+    v: s.valuationId,
+    p: s.provider,
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(s.userId)
     .setIssuer(cfg.issuer)
@@ -119,10 +123,7 @@ export async function signAccountingState(s: AccountingState, cfg: JwtConfig): P
     .sign(key(cfg.secret));
 }
 
-export async function verifyAccountingState(
-  state: string,
-  cfg: JwtConfig,
-): Promise<AccountingState> {
+export async function verifyAccountingState(state: string, cfg: JwtConfig): Promise<AccountingState> {
   const { payload } = await jwtVerify(state, key(cfg.secret), { issuer: cfg.issuer });
   if (
     payload.purpose !== 'accounting-state' ||
@@ -149,10 +150,7 @@ export async function signCapTableSyncState(s: AccountingState, cfg: JwtConfig):
     .sign(key(cfg.secret));
 }
 
-export async function verifyCapTableSyncState(
-  state: string,
-  cfg: JwtConfig,
-): Promise<AccountingState> {
+export async function verifyCapTableSyncState(state: string, cfg: JwtConfig): Promise<AccountingState> {
   const { payload } = await jwtVerify(state, key(cfg.secret), { issuer: cfg.issuer });
   if (
     payload.purpose !== 'captable-state' ||

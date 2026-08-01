@@ -94,8 +94,7 @@ const PatchBody = z
   .refine((b) => Object.keys(b).length > 0, { message: 'No fields to update' });
 
 function toJson(row: SavedViewWithOwner, viewerId: string) {
-  const ownerName =
-    [row.owner_first_name, row.owner_last_name].filter(Boolean).join(' ') || row.owner_email;
+  const ownerName = [row.owner_first_name, row.owner_last_name].filter(Boolean).join(' ') || row.owner_email;
   return {
     id: row.id,
     name: row.name,

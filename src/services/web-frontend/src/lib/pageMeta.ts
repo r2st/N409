@@ -87,8 +87,7 @@ function staticPages(): HeadInput[] {
     {
       path: '/privacy-policy',
       title: 'Privacy policy',
-      description:
-        'How N409 collects, uses, and protects your data, including cookies and analytics.',
+      description: 'How N409 collects, uses, and protects your data, including cookies and analytics.',
     },
   ];
 }

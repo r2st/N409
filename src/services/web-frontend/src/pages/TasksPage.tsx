@@ -157,7 +157,9 @@ function TaskQueue({ options }: { options: UserOption[] }) {
         {!tasks && !error && <Spinner />}
         {tasks && tasks.length === 0 && (
           <EmptyState title="Nothing here">
-            {scope === 'overdue' ? 'No overdue tasks — the SLA board is clean.' : 'No tasks match this filter.'}
+            {scope === 'overdue'
+              ? 'No overdue tasks — the SLA board is clean.'
+              : 'No tasks match this filter.'}
           </EmptyState>
         )}
         {tasks && tasks.length > 0 && (
@@ -266,7 +268,10 @@ function ReviewQueue({ options }: { options: UserOption[] }) {
     try {
       await api(`/valuations/${v.id}/review/decision`, {
         method: 'POST',
-        body: { decision, ...(decision === 'request_changes' && comment.trim() ? { comment: comment.trim() } : {}) },
+        body: {
+          decision,
+          ...(decision === 'request_changes' && comment.trim() ? { comment: comment.trim() } : {}),
+        },
       });
       setChangesFor(null);
       setComment('');

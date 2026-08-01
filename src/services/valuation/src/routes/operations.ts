@@ -47,9 +47,7 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
     const scope = valuationScope(principal);
     const filters = toRepoFilters(parsed.data);
     const key = JSON.stringify({ scope, filters });
-    const counts = await countsCache.getOrLoad(key, () =>
-      countValuationsByGroup(deps.pool, scope, filters),
-    );
+    const counts = await countsCache.getOrLoad(key, () => countValuationsByGroup(deps.pool, scope, filters));
     return { counts };
   });
 
@@ -113,9 +111,7 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
       throw problems.notFound();
     if (!canCreateValuation(principal)) throw problems.forbidden();
 
-    const parsed = z
-      .object({ roll_forward: z.boolean().default(false) })
-      .safeParse(req.body ?? {});
+    const parsed = z.object({ roll_forward: z.boolean().default(false) }).safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid clone request');
 
     // Ops clone on behalf of the original owner; a client clones as themselves.

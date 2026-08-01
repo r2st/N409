@@ -97,9 +97,7 @@ function NextActionCard({ action, base }: { action: NextAction; base: string }) 
       <p className={`text-sm font-semibold ${attention ? 'text-amber-900' : 'text-ink-900'}`}>
         {action.label}
       </p>
-      <p className={`mt-1 text-sm ${attention ? 'text-amber-800' : 'text-ink-500'}`}>
-        {action.detail}
-      </p>
+      <p className={`mt-1 text-sm ${attention ? 'text-amber-800' : 'text-ink-500'}`}>{action.detail}</p>
       {action.tab && (
         <Link
           to={`${base}/${action.tab}`}
@@ -191,8 +189,7 @@ export function ProgressTab() {
     <div className="space-y-8">
       {progress.halted && (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          This valuation is not progressing (state: {progress.state}). Contact support if this is
-          unexpected.
+          This valuation is not progressing (state: {progress.state}). Contact support if this is unexpected.
         </div>
       )}
 
@@ -202,9 +199,7 @@ export function ProgressTab() {
           <dl className="grid grid-cols-3 gap-4" data-testid="progress-stats">
             <div>
               <dt className="overline text-ink-400">Days in progress</dt>
-              <dd className="tnum text-lg font-semibold text-ink-900">
-                {progress.days_in_progress}
-              </dd>
+              <dd className="tnum text-lg font-semibold text-ink-900">{progress.days_in_progress}</dd>
             </div>
             <div>
               <dt className="overline text-ink-400">Estimated delivery</dt>

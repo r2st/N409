@@ -54,12 +54,18 @@ export function SearchPage() {
             setInput(e.target.value);
             setParams(e.target.value.trim() ? { q: e.target.value.trim() } : {}, { replace: true });
           }}
-          placeholder={ops ? 'Company, valuation number or id, user name or email…' : 'Company, valuation number…'}
+          placeholder={
+            ops ? 'Company, valuation number or id, user name or email…' : 'Company, valuation number…'
+          }
           aria-label="Search"
         />
       </form>
 
-      {error && <div className="mt-6"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-6">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {busy && <Spinner />}
 
       {!busy && q.trim().length >= 2 && results && (
@@ -75,13 +81,20 @@ export function SearchPage() {
                     {results.valuations.map((v) => (
                       <tr key={v.id} className="border-b border-paper-200 last:border-0 hover:bg-paper-50">
                         <td className="px-5 py-3">
-                          <Link to={`/valuations/${v.id}`} className="font-semibold text-ink-900 hover:text-bond-700">
+                          <Link
+                            to={`/valuations/${v.id}`}
+                            className="font-semibold text-ink-900 hover:text-bond-700"
+                          >
                             {v.company_name}
                           </Link>
                           <span className="tnum ml-2 text-xs text-ink-400">#{v.number}</span>
                         </td>
-                        <td className="px-5 py-3"><KindBadge kind={v.kind} /></td>
-                        <td className="px-5 py-3"><StateBadge state={v.state} /></td>
+                        <td className="px-5 py-3">
+                          <KindBadge kind={v.kind} />
+                        </td>
+                        <td className="px-5 py-3">
+                          <StateBadge state={v.state} />
+                        </td>
                         <td className="tnum px-5 py-3 text-ink-600">{formatDate(v.created_at)}</td>
                       </tr>
                     ))}

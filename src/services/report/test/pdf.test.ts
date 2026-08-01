@@ -66,7 +66,11 @@ describe('htmlToBlocks', () => {
   it('parses headings with levels', () => {
     const blocks = htmlToBlocks('<h2>Section</h2><h3>Sub</h3>');
     expect(blocks).toEqual([
-      { type: 'heading', level: 2, runs: [{ text: 'Section', bold: false, italic: false, underline: false }] },
+      {
+        type: 'heading',
+        level: 2,
+        runs: [{ text: 'Section', bold: false, italic: false, underline: false }],
+      },
       { type: 'heading', level: 3, runs: [{ text: 'Sub', bold: false, italic: false, underline: false }] },
     ]);
   });
@@ -87,7 +91,14 @@ describe('htmlToBlocks', () => {
       '<table><thead><tr><th>H1</th><th>H2</th></tr></thead><tbody><tr><td>a</td><td>b</td></tr></tbody></table>',
     );
     expect(blocks).toEqual([
-      { type: 'table', rows: [['H1', 'H2'], ['a', 'b']], headerRows: 1 },
+      {
+        type: 'table',
+        rows: [
+          ['H1', 'H2'],
+          ['a', 'b'],
+        ],
+        headerRows: 1,
+      },
     ]);
   });
 
@@ -169,9 +180,7 @@ describe('table of contents', () => {
   });
 
   it('is included once the report is long enough', async () => {
-    const text = extractText(
-      await renderReportPdf(withSections(TOC_MIN_SECTIONS), { compress: false }),
-    );
+    const text = extractText(await renderReportPdf(withSections(TOC_MIN_SECTIONS), { compress: false }));
     expect(text).toContain('Table of Contents');
     expect(text).toContain('1. Chapter 1');
     expect(text).toContain(`${TOC_MIN_SECTIONS}. Chapter ${TOC_MIN_SECTIONS}`);
@@ -192,8 +201,7 @@ describe('table of contents', () => {
   });
 
   it('shifts the body one page later to make room for it', async () => {
-    const pageCount = (pdf: Buffer) =>
-      (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
+    const pageCount = (pdf: Buffer) => (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
     const input = withSections(6);
     const without = await renderReportPdf({ ...input, include_toc: false }, { compress: false });
     const withToc = await renderReportPdf({ ...input, include_toc: true }, { compress: false });
@@ -231,10 +239,7 @@ describe('footer', () => {
 
   it('accepts a custom marker', async () => {
     const text = extractText(
-      await renderReportPdf(
-        { ...SAMPLE, confidentiality: 'Privileged & Confidential' },
-        { compress: false },
-      ),
+      await renderReportPdf({ ...SAMPLE, confidentiality: 'Privileged & Confidential' }, { compress: false }),
     );
     expect(text).toContain('Privileged & Confidential');
   });
@@ -335,14 +340,22 @@ describe('formatChartValue', () => {
 
 describe('chartHeight', () => {
   it('grows with the number of bars', () => {
-    const two = chartHeight({ type: 'bar', title: 't', points: [
-      { label: 'a', value: 1 },
-      { label: 'b', value: 2 },
-    ] });
-    const five = chartHeight({ type: 'bar', title: 't', points: Array.from({ length: 5 }, (_, i) => ({
-      label: String(i),
-      value: i,
-    })) });
+    const two = chartHeight({
+      type: 'bar',
+      title: 't',
+      points: [
+        { label: 'a', value: 1 },
+        { label: 'b', value: 2 },
+      ],
+    });
+    const five = chartHeight({
+      type: 'bar',
+      title: 't',
+      points: Array.from({ length: 5 }, (_, i) => ({
+        label: String(i),
+        value: i,
+      })),
+    });
     expect(five).toBeGreaterThan(two);
   });
 
@@ -364,9 +377,7 @@ describe('executive summary page', () => {
   });
 
   it('draws the charts and labels them', async () => {
-    const text = extractText(
-      await renderReportPdf({ ...SAMPLE, summary: SUMMARY }, { compress: false }),
-    );
+    const text = extractText(await renderReportPdf({ ...SAMPLE, summary: SUMMARY }, { compress: false }));
     expect(text).toContain('Equity value by approach');
     expect(text).toContain('Income (DCF)');
     expect(text).toContain('$26,000,000');
@@ -375,8 +386,7 @@ describe('executive summary page', () => {
   });
 
   it('adds exactly one page', async () => {
-    const pageCount = (pdf: Buffer) =>
-      (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
+    const pageCount = (pdf: Buffer) => (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
     const without = await renderReportPdf(SAMPLE, { compress: false });
     const withSummary = await renderReportPdf({ ...SAMPLE, summary: SUMMARY }, { compress: false });
     expect(pageCount(withSummary)).toBe(pageCount(without) + 1);
@@ -450,8 +460,7 @@ describe('section charts', () => {
   });
 
   it('pushes a chart that will not fit onto the next page', async () => {
-    const pageCount = (pdf: Buffer) =>
-      (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
+    const pageCount = (pdf: Buffer) => (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
     const longProse = `<p>${'Filler sentence for pagination. '.repeat(120)}</p>`;
     const chart = {
       type: 'waterfall' as const,

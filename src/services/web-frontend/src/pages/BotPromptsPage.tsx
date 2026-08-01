@@ -81,10 +81,10 @@ function VersionHistory({
     setReverting(true);
     setError(null);
     try {
-      const { prompt: reverted } = await api<{ prompt: BotPrompt }>(
-        `/admin/prompts/${prompt.id}/revert`,
-        { method: 'POST', body: { version: v.version } },
-      );
+      const { prompt: reverted } = await api<{ prompt: BotPrompt }>(`/admin/prompts/${prompt.id}/revert`, {
+        method: 'POST',
+        body: { version: v.version },
+      });
       await onReverted(reverted);
       await load();
     } catch (err) {
@@ -176,9 +176,7 @@ function PromptCard({
   const [testError, setTestError] = useState<string | null>(null);
 
   const dirty =
-    label !== prompt.label ||
-    systemPrompt !== prompt.system_prompt ||
-    model !== (prompt.model ?? '');
+    label !== prompt.label || systemPrompt !== prompt.system_prompt || model !== (prompt.model ?? '');
 
   const save = async () => {
     setSaving(true);
@@ -224,9 +222,7 @@ function PromptCard({
       <div className="flex flex-wrap items-baseline gap-2">
         <h2 className="font-display text-lg font-semibold text-ink-900">{prompt.label}</h2>
         <span className="font-mono text-xs text-ink-400">{prompt.pipeline}</span>
-        <span className="tnum ml-auto text-xs text-ink-400">
-          Updated {formatDateTime(prompt.updated_at)}
-        </span>
+        <span className="tnum ml-auto text-xs text-ink-400">Updated {formatDateTime(prompt.updated_at)}</span>
       </div>
       {prompt.description && <p className="mt-1 text-sm text-ink-500">{prompt.description}</p>}
 
@@ -234,10 +230,7 @@ function PromptCard({
         <Field label="Label">
           <TextInput value={label} onChange={(e) => setLabel(e.target.value)} maxLength={120} />
         </Field>
-        <Field
-          label="Model"
-          hint="OpenRouter model id — leave empty to use the default fallback chain."
-        >
+        <Field label="Model" hint="OpenRouter model id — leave empty to use the default fallback chain.">
           <TextInput
             list={`models-${prompt.id}`}
             value={model}
@@ -364,8 +357,8 @@ export function BotPromptsPage() {
         <HelpIcon article="ai-agents-overview" className="h-6 w-6 text-sm" />
       </div>
       <p className="mt-2 max-w-2xl text-sm text-ink-500">
-        Each AI pipeline runs with a registry-managed system prompt and an optional pinned
-        OpenRouter model. Changes apply to the next run — no deploy needed.
+        Each AI pipeline runs with a registry-managed system prompt and an optional pinned OpenRouter model.
+        Changes apply to the next run — no deploy needed.
       </p>
 
       <div className="mt-8 space-y-6">

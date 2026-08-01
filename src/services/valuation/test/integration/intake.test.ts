@@ -149,10 +149,10 @@ describe.skipIf(!dbUp)('feature 7 — client intake questionnaire + reminders', 
     expect(res.json().missing.length).toBeGreaterThan(0);
 
     // An outbox row was enqueued for the client.
-    const outbox = await pool.query(
-      'SELECT * FROM email_outbox WHERE to_email = $1 AND subject LIKE $2',
-      [client.email, 'Documents still needed%'],
-    );
+    const outbox = await pool.query('SELECT * FROM email_outbox WHERE to_email = $1 AND subject LIKE $2', [
+      client.email,
+      'Documents still needed%',
+    ]);
     expect(outbox.rows.length).toBe(1);
 
     // The reminder is on the audit spine.

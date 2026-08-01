@@ -124,7 +124,11 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
           </span>
         )}
       </div>
-      {error && <div className="mb-4"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mb-4">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
 
       <div className="space-y-2">
         {row('Main', main)}

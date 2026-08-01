@@ -117,21 +117,18 @@ export function SensitivityPage() {
     setError(null);
     setBusy(true);
     try {
-      const { sensitivity } = await api<{ sensitivity: SensitivityResult }>(
-        `/valuations/${id}/sensitivity`,
-        {
-          method: 'POST',
-          body: {
-            equity_value_cents: Math.round(Number(form.equity_value) * 100),
-            strike_cents: Math.round(Number(form.strike) * 100),
-            volatility: Number(form.volatility) / 100,
-            term_years: Number(form.term_years),
-            risk_free_rate: Number(form.risk_free_rate) / 100,
-            common_shares: Math.round(Number(form.common_shares)),
-            dlom: Number(form.dlom) / 100,
-          },
+      const { sensitivity } = await api<{ sensitivity: SensitivityResult }>(`/valuations/${id}/sensitivity`, {
+        method: 'POST',
+        body: {
+          equity_value_cents: Math.round(Number(form.equity_value) * 100),
+          strike_cents: Math.round(Number(form.strike) * 100),
+          volatility: Number(form.volatility) / 100,
+          term_years: Number(form.term_years),
+          risk_free_rate: Number(form.risk_free_rate) / 100,
+          common_shares: Math.round(Number(form.common_shares)),
+          dlom: Number(form.dlom) / 100,
         },
-      );
+      });
       setResult(sensitivity);
     } catch (err) {
       setError(
@@ -160,28 +157,85 @@ export function SensitivityPage() {
       </div>
 
       <form onSubmit={run} className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-        {error && <div className="mb-5"><ErrorNote>{error}</ErrorNote></div>}
+        {error && (
+          <div className="mb-5">
+            <ErrorNote>{error}</ErrorNote>
+          </div>
+        )}
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Equity value ($)">
-            <TextInput type="number" min="1" step="any" value={form.equity_value} onChange={set('equity_value')} required />
+            <TextInput
+              type="number"
+              min="1"
+              step="any"
+              value={form.equity_value}
+              onChange={set('equity_value')}
+              required
+            />
           </Field>
           <Field label="Preference stack / strike ($)">
-            <TextInput type="number" min="0" step="any" value={form.strike} onChange={set('strike')} required />
+            <TextInput
+              type="number"
+              min="0"
+              step="any"
+              value={form.strike}
+              onChange={set('strike')}
+              required
+            />
           </Field>
           <Field label="Volatility (%)">
-            <TextInput type="number" min="1" max="500" step="any" value={form.volatility} onChange={set('volatility')} required />
+            <TextInput
+              type="number"
+              min="1"
+              max="500"
+              step="any"
+              value={form.volatility}
+              onChange={set('volatility')}
+              required
+            />
           </Field>
           <Field label="Term to exit (years)">
-            <TextInput type="number" min="0.1" max="30" step="any" value={form.term_years} onChange={set('term_years')} required />
+            <TextInput
+              type="number"
+              min="0.1"
+              max="30"
+              step="any"
+              value={form.term_years}
+              onChange={set('term_years')}
+              required
+            />
           </Field>
           <Field label="Risk-free rate (%)">
-            <TextInput type="number" min="0" max="25" step="any" value={form.risk_free_rate} onChange={set('risk_free_rate')} required />
+            <TextInput
+              type="number"
+              min="0"
+              max="25"
+              step="any"
+              value={form.risk_free_rate}
+              onChange={set('risk_free_rate')}
+              required
+            />
           </Field>
           <Field label="Common shares (FD)">
-            <TextInput type="number" min="1" step="1" value={form.common_shares} onChange={set('common_shares')} required />
+            <TextInput
+              type="number"
+              min="1"
+              step="1"
+              value={form.common_shares}
+              onChange={set('common_shares')}
+              required
+            />
           </Field>
           <Field label="DLOM (%)">
-            <TextInput type="number" min="0" max="95" step="any" value={form.dlom} onChange={set('dlom')} required />
+            <TextInput
+              type="number"
+              min="0"
+              max="95"
+              step="any"
+              value={form.dlom}
+              onChange={set('dlom')}
+              required
+            />
           </Field>
           <div className="flex items-end">
             <Button type="submit" disabled={busy}>
@@ -257,8 +311,8 @@ export function SensitivityPage() {
           )}
           <p className="text-xs text-ink-400">
             Common stock valued as a Black-Scholes call on equity struck at the preference stack, spread
-            across fully diluted common, less DLOM. Stress steps: volatility ±20%, term ±1 year,
-            risk-free rate ±2%.
+            across fully diluted common, less DLOM. Stress steps: volatility ±20%, term ±1 year, risk-free
+            rate ±2%.
           </p>
         </div>
       )}

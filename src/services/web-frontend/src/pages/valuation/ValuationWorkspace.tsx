@@ -129,7 +129,10 @@ export function ValuationWorkspace() {
     return (
       <div className="max-w-xl">
         <ErrorNote>{error}</ErrorNote>
-        <Link to="/valuations" className="mt-4 inline-block text-sm font-semibold text-bond-600 hover:text-bond-700">
+        <Link
+          to="/valuations"
+          className="mt-4 inline-block text-sm font-semibold text-bond-600 hover:text-bond-700"
+        >
           ← Back to valuations
         </Link>
       </div>

@@ -82,10 +82,7 @@ export function engineParams(p: ValuationParamsRow): Record<string, unknown> {
 }
 
 /** Deep-merges b over a (plain objects only — arrays/scalars replace). */
-export function deepMerge(
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-): Record<string, unknown> {
+export function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...a };
   for (const [k, v] of Object.entries(b)) {
     const prev = out[k];
@@ -289,59 +286,55 @@ export function registerCalculationRoutes(
    * each with the dotted field path that caused it. Nothing is persisted, so
    * an analyst can check their work as often as they like.
    */
-  app.post(
-    '/api/v1/valuations/:id/calculations/preflight',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
-      const { id } = req.params as { id: string };
-      await loadValuation(id);
-      const paramsRow = await findParams(deps.pool, id);
-      if (!paramsRow) throw problems.notFound();
+  app.post('/api/v1/valuations/:id/calculations/preflight', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
+    const { id } = req.params as { id: string };
+    await loadValuation(id);
+    const paramsRow = await findParams(deps.pool, id);
+    if (!paramsRow) throw problems.notFound();
 
-      const parsed = ComputeBody.safeParse(req.body ?? {});
-      if (!parsed.success) throw problems.unprocessable('Invalid inputs', { errors: parsed.error.issues });
+    const parsed = ComputeBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw problems.unprocessable('Invalid inputs', { errors: parsed.error.issues });
 
-      const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs);
+    const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs);
 
-      // A per-approach recalculation only needs the approach being recomputed;
-      // the rest are reused, so the validator checks the prior run instead.
-      let recompute: string[] | undefined;
-      let priorApproaches: Record<string, unknown> | undefined;
-      if (parsed.data.approach) {
-        recompute = [RECALC_APPROACHES[parsed.data.approach].engineKey];
-        const baseline = await latestSucceededCalculation(deps.pool, id);
-        const prior = baseline?.results?.approaches;
-        if (prior && typeof prior === 'object') priorApproaches = prior as Record<string, unknown>;
+    // A per-approach recalculation only needs the approach being recomputed;
+    // the rest are reused, so the validator checks the prior run instead.
+    let recompute: string[] | undefined;
+    let priorApproaches: Record<string, unknown> | undefined;
+    if (parsed.data.approach) {
+      recompute = [RECALC_APPROACHES[parsed.data.approach].engineKey];
+      const baseline = await latestSucceededCalculation(deps.pool, id);
+      const prior = baseline?.results?.approaches;
+      if (prior && typeof prior === 'object') priorApproaches = prior as Record<string, unknown>;
+    }
+
+    try {
+      const response = await postJson<EngineValidateResponse>(
+        'engine',
+        `${deps.engineUrl}/engine/v1/validate`,
+        {
+          params: engineParams(paramsRow),
+          inputs,
+          ...(recompute ? { recompute, prior_approaches: priorApproaches ?? {} } : {}),
+        },
+        { timeoutMs: 15_000 },
+      );
+      return {
+        ok: response.ok === true,
+        engine_version: response.engine_version,
+        errors: parseIssues(response.errors),
+        warnings: parseIssues(response.warnings),
+      };
+    } catch (err) {
+      if (err instanceof InternalServiceError) {
+        req.log.warn({ err }, 'engine preflight failed');
+        throw toProblem(err);
       }
-
-      try {
-        const response = await postJson<EngineValidateResponse>(
-          'engine',
-          `${deps.engineUrl}/engine/v1/validate`,
-          {
-            params: engineParams(paramsRow),
-            inputs,
-            ...(recompute ? { recompute, prior_approaches: priorApproaches ?? {} } : {}),
-          },
-          { timeoutMs: 15_000 },
-        );
-        return {
-          ok: response.ok === true,
-          engine_version: response.engine_version,
-          errors: parseIssues(response.errors),
-          warnings: parseIssues(response.warnings),
-        };
-      } catch (err) {
-        if (err instanceof InternalServiceError) {
-          req.log.warn({ err }, 'engine preflight failed');
-          throw toProblem(err);
-        }
-        throw err;
-      }
-    },
-  );
+      throw err;
+    }
+  });
 
   app.get('/api/v1/valuations/:id/calculations', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

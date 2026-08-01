@@ -6,15 +6,7 @@ import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
 import { HrisSyncPanel } from '../../components/valuation/HrisSyncPanel';
-import {
-  Button,
-  EmptyState,
-  ErrorNote,
-  Field,
-  Select,
-  Spinner,
-  TextInput,
-} from '../../components/ui';
+import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../../components/ui';
 
 /**
  * Grant management (feature 6). Ops issue option grants at the board-adopted
@@ -104,7 +96,12 @@ function VestingTimeline({ timeline, total }: { timeline: VestingPoint[]; total:
   const points = timeline.map((p) => `${x(p.monthOffset)},${y(p.cumulativeVested)}`).join(' ');
   return (
     <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-36 w-full min-w-[420px]" role="img" aria-label="Vesting timeline">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-36 w-full min-w-[420px]"
+        role="img"
+        aria-label="Vesting timeline"
+      >
         <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="#d6d3ce" />
         <polyline points={points} fill="none" stroke="#16a34a" strokeWidth={2} />
         {timeline.map((p) => (
@@ -159,15 +156,17 @@ function GrantDetailPanel({ valuationId, grant }: { valuationId: string; grant: 
                   <td className="py-1.5 pr-3 text-ink-500">{s.multipleOfCurrent}×</td>
                   <td className="py-1.5 pr-3">{formatMoney(s.spreadPerShare, currency)}</td>
                   <td className="py-1.5 pr-3 text-ink-500">{formatMoney(s.exerciseCost, currency)}</td>
-                  <td className="py-1.5 font-semibold text-bond-700">{formatMoney(s.grossValue, currency)}</td>
+                  <td className="py-1.5 font-semibold text-bond-700">
+                    {formatMoney(s.grossValue, currency)}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
         <p className="mt-2 text-xs text-ink-400">
-          Illustrative in-the-money value of exercising all {formatNumber(grant.options_count)} options.
-          Not tax advice.
+          Illustrative in-the-money value of exercising all {formatNumber(grant.options_count)} options. Not
+          tax advice.
         </p>
       </div>
     </div>
@@ -274,21 +273,48 @@ export function GrantsTab() {
       {ops && <HrisSyncPanel valuationId={valuation.id} onImported={load} />}
 
       {ops && showForm && (
-        <form onSubmit={create} className="grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-2">
+        <form
+          onSubmit={create}
+          className="grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-2"
+        >
           <Field label="Grantee name">
-            <TextInput value={form.grantee_name} onChange={(e) => setForm((f) => ({ ...f, grantee_name: e.target.value }))} required maxLength={200} />
+            <TextInput
+              value={form.grantee_name}
+              onChange={(e) => setForm((f) => ({ ...f, grantee_name: e.target.value }))}
+              required
+              maxLength={200}
+            />
           </Field>
           <Field label="Grantee email (optional)">
-            <TextInput type="email" value={form.grantee_email} onChange={(e) => setForm((f) => ({ ...f, grantee_email: e.target.value }))} maxLength={320} />
+            <TextInput
+              type="email"
+              value={form.grantee_email}
+              onChange={(e) => setForm((f) => ({ ...f, grantee_email: e.target.value }))}
+              maxLength={320}
+            />
           </Field>
           <Field label="Grant date">
-            <TextInput type="date" value={form.grant_date} onChange={(e) => setForm((f) => ({ ...f, grant_date: e.target.value }))} required />
+            <TextInput
+              type="date"
+              value={form.grant_date}
+              onChange={(e) => setForm((f) => ({ ...f, grant_date: e.target.value }))}
+              required
+            />
           </Field>
           <Field label="Number of options">
-            <TextInput type="number" min={1} value={form.options_count} onChange={(e) => setForm((f) => ({ ...f, options_count: e.target.value }))} required />
+            <TextInput
+              type="number"
+              min={1}
+              value={form.options_count}
+              onChange={(e) => setForm((f) => ({ ...f, options_count: e.target.value }))}
+              required
+            />
           </Field>
           <Field label="Vesting schedule">
-            <Select value={form.vesting_template} onChange={(e) => setForm((f) => ({ ...f, vesting_template: e.target.value }))}>
+            <Select
+              value={form.vesting_template}
+              onChange={(e) => setForm((f) => ({ ...f, vesting_template: e.target.value }))}
+            >
               {templates.map((t) => (
                 <option key={t.key} value={t.key}>
                   {t.label}
@@ -298,16 +324,23 @@ export function GrantsTab() {
             </Select>
           </Field>
           <Field label="Vesting start (optional)" hint="Defaults to the grant date.">
-            <TextInput type="date" value={form.vesting_start_date} onChange={(e) => setForm((f) => ({ ...f, vesting_start_date: e.target.value }))} />
+            <TextInput
+              type="date"
+              value={form.vesting_start_date}
+              onChange={(e) => setForm((f) => ({ ...f, vesting_start_date: e.target.value }))}
+            />
           </Field>
           {custom && (
             <p className="text-xs text-ink-400 sm:col-span-2">
-              Custom terms use a 4-year monthly schedule by default; adjust after creating via the
-              API. (Standard templates cover the common cases.)
+              Custom terms use a 4-year monthly schedule by default; adjust after creating via the API.
+              (Standard templates cover the common cases.)
             </p>
           )}
           <div className="sm:col-span-2">
-            <Button type="submit" disabled={busy || !form.grantee_name.trim() || !form.grant_date || !form.options_count}>
+            <Button
+              type="submit"
+              disabled={busy || !form.grantee_name.trim() || !form.grant_date || !form.options_count}
+            >
               {busy ? 'Issuing…' : 'Issue grant'}
             </Button>
           </div>

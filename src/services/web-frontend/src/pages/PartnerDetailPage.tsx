@@ -38,7 +38,11 @@ function BrandingPreview({
         <div aria-hidden className="-mx-4 -mt-4 mb-4 h-1 rounded-t-lg" style={{ backgroundColor: accent }} />
         <div className="flex flex-col items-center text-center">
           {logoUrl && (
-            <img src={logoUrl} alt={`${name} logo preview`} className="mb-2 max-h-8 max-w-[120px] object-contain" />
+            <img
+              src={logoUrl}
+              alt={`${name} logo preview`}
+              className="mb-2 max-h-8 max-w-[120px] object-contain"
+            />
           )}
           <div className="font-display text-sm font-semibold text-ink-900">{name}</div>
           <div className="mt-0.5 text-[0.65rem] text-ink-400">Sign in to the {name} valuations portal.</div>
@@ -146,10 +150,7 @@ export function PartnerDetailPage() {
 
   return (
     <div>
-      <Link
-        to="/admin/partners"
-        className="text-sm font-semibold text-bond-600 hover:text-bond-700"
-      >
+      <Link to="/admin/partners" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
         ← All partners
       </Link>
       <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
@@ -173,10 +174,7 @@ export function PartnerDetailPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            onClick={() => navigate(`/valuations?partner_id=${partner.id}`)}
-          >
+          <Button variant="secondary" onClick={() => navigate(`/valuations?partner_id=${partner.id}`)}>
             View valuations
           </Button>
           {partner.archived_at ? (
@@ -283,12 +281,14 @@ export function PartnerDetailPage() {
       <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-1 text-ink-400">White-label branding</h2>
         <p className="text-sm text-ink-400">
-          Used on this partner&rsquo;s portal, their branded login page, and the cover of their
-          report PDFs.
+          Used on this partner&rsquo;s portal, their branded login page, and the cover of their report PDFs.
         </p>
         <p className="mt-2 text-sm text-ink-600">
           Branded login page:{' '}
-          <Link to={`/partner/${partner.key}/login`} className="font-mono text-xs font-semibold text-bond-600 hover:text-bond-700">
+          <Link
+            to={`/partner/${partner.key}/login`}
+            className="font-mono text-xs font-semibold text-bond-600 hover:text-bond-700"
+          >
             /partner/{partner.key}/login
           </Link>
         </p>
@@ -326,15 +326,11 @@ export function PartnerDetailPage() {
       <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-1 text-ink-400">Email templates</h2>
         <p className="text-sm text-ink-400">
-          Override the workflow emails sent for this partner&rsquo;s engagements. Leave a template
-          blank to use the platform default. Placeholders:{' '}
-          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
-            {'{{company_name}}'}
-          </code>{' '}
+          Override the workflow emails sent for this partner&rsquo;s engagements. Leave a template blank to
+          use the platform default. Placeholders:{' '}
+          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{company_name}}'}</code>{' '}
           <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{kind}}'}</code>{' '}
-          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">
-            {'{{partner_name}}'}
-          </code>
+          <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{partner_name}}'}</code>
         </p>
         <form
           className="mt-5 space-y-6"
@@ -342,9 +338,7 @@ export function PartnerDetailPage() {
             e.preventDefault();
             // Only complete overrides are sent; half-filled rows are dropped.
             const filled = Object.fromEntries(
-              Object.entries(templates).filter(
-                ([, t]) => t.subject.trim() !== '' && t.body.trim() !== '',
-              ),
+              Object.entries(templates).filter(([, t]) => t.subject.trim() !== '' && t.body.trim() !== ''),
             );
             void patch({ email_templates: filled }, 'Could not save the email templates.');
           }}

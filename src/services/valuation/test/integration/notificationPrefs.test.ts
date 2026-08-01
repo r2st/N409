@@ -1,11 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import {
-  authHeader,
-  isDbAvailable,
-  seedUser,
-  setupTestApp,
-  type TestApp,
-} from './helpers.js';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Notification preferences (P2 #11): default-on matrix, per-channel opt-out
@@ -73,10 +67,10 @@ describe.skipIf(!dbUp)('notification preferences', () => {
   };
 
   const notificationRows = async (userId: string, type: string) => {
-    const { rows } = await ctx.pool.query(
-      'SELECT id FROM notifications WHERE user_id = $1 AND type = $2',
-      [userId, type],
-    );
+    const { rows } = await ctx.pool.query('SELECT id FROM notifications WHERE user_id = $1 AND type = $2', [
+      userId,
+      type,
+    ]);
     return rows;
   };
 
@@ -100,9 +94,7 @@ describe.skipIf(!dbUp)('notification preferences', () => {
 
   it('round-trips a saved preference', async () => {
     const user = await seedUser(ctx, { roles: ['valuation_user'] });
-    const res = await putPrefs(user.token, [
-      { event_type: 'draft_ready', in_app: true, email: false },
-    ]);
+    const res = await putPrefs(user.token, [{ event_type: 'draft_ready', in_app: true, email: false }]);
     expect(res.statusCode).toBe(200);
     const prefs = await getPrefs(user.token);
     expect(prefs.find((p) => p.event_type === 'draft_ready')).toEqual({
@@ -116,9 +108,7 @@ describe.skipIf(!dbUp)('notification preferences', () => {
 
   it('rejects unknown event types', async () => {
     const user = await seedUser(ctx, { roles: ['valuation_user'] });
-    const res = await putPrefs(user.token, [
-      { event_type: 'password_reset', in_app: false, email: false },
-    ]);
+    const res = await putPrefs(user.token, [{ event_type: 'password_reset', in_app: false, email: false }]);
     expect(res.statusCode).toBe(422);
   });
 

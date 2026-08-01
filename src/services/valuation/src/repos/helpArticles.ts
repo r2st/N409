@@ -29,20 +29,13 @@ export async function listArticles(
   return rows;
 }
 
-export async function findArticleBySlug(
-  pool: pg.Pool,
-  slug: string,
-): Promise<HelpArticleRow | null> {
-  const { rows } = await pool.query<HelpArticleRow>('SELECT * FROM help_articles WHERE slug = $1', [
-    slug,
-  ]);
+export async function findArticleBySlug(pool: pg.Pool, slug: string): Promise<HelpArticleRow | null> {
+  const { rows } = await pool.query<HelpArticleRow>('SELECT * FROM help_articles WHERE slug = $1', [slug]);
   return rows[0] ?? null;
 }
 
 export async function findArticleById(pool: pg.Pool, id: string): Promise<HelpArticleRow | null> {
-  const { rows } = await pool.query<HelpArticleRow>('SELECT * FROM help_articles WHERE id = $1', [
-    id,
-  ]);
+  const { rows } = await pool.query<HelpArticleRow>('SELECT * FROM help_articles WHERE id = $1', [id]);
   return rows[0] ?? null;
 }
 
@@ -92,7 +85,15 @@ export async function updateArticle(
     params.push(value);
     sets.push(`${column} = $${params.length}`);
   };
-  for (const key of ['slug', 'title', 'category', 'keywords', 'body_html', 'sort_order', 'published'] as const) {
+  for (const key of [
+    'slug',
+    'title',
+    'category',
+    'keywords',
+    'body_html',
+    'sort_order',
+    'published',
+  ] as const) {
     if (patch[key] !== undefined) set(key, patch[key]);
   }
   set('author_id', authorId);

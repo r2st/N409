@@ -104,9 +104,7 @@ export function BoardSignPage() {
       <Shell>
         <div className="rounded-md border border-bond-200 bg-bond-50 px-4 py-8 text-center">
           <p className="font-display text-lg text-ink-900">
-            {done === 'signed'
-              ? 'Thank you — your signature is recorded.'
-              : 'Your response is recorded.'}
+            {done === 'signed' ? 'Thank you — your signature is recorded.' : 'Your response is recorded.'}
           </p>
           <p className="mt-2 text-sm text-ink-500">You can close this window.</p>
         </div>
@@ -125,8 +123,8 @@ export function BoardSignPage() {
   return (
     <Shell>
       <p className="mb-4 text-sm text-ink-500">
-        Signing as <span className="font-semibold text-ink-800">{view.member.name}</span> (
-        {view.member.email}).
+        Signing as <span className="font-semibold text-ink-800">{view.member.name}</span> ({view.member.email}
+        ).
       </p>
       <div
         className="prose-resolution max-h-[50vh] overflow-y-auto rounded-lg border border-paper-300 bg-surface p-6 text-sm text-ink-800 shadow-card [&_h1]:mb-2 [&_h1]:font-display [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-4 [&_h2]:mb-1 [&_h2]:font-semibold [&_p]:mb-3"

@@ -251,13 +251,15 @@ describe.skipIf(!dbUp)('M1 core pipeline API', () => {
   describe('documents', () => {
     let documentId: string;
 
-    function multipartUpload(url: string, token: string, opts: { filename: string; kind?: string; content: string }) {
+    function multipartUpload(
+      url: string,
+      token: string,
+      opts: { filename: string; kind?: string; content: string },
+    ) {
       const boundary = '----n409test';
       const parts = [
         ...(opts.kind
-          ? [
-              `--${boundary}\r\ncontent-disposition: form-data; name="kind"\r\n\r\n${opts.kind}\r\n`,
-            ]
+          ? [`--${boundary}\r\ncontent-disposition: form-data; name="kind"\r\n\r\n${opts.kind}\r\n`]
           : []),
         `--${boundary}\r\ncontent-disposition: form-data; name="file"; filename="${opts.filename}"\r\ncontent-type: text/csv\r\n\r\n${opts.content}\r\n`,
         `--${boundary}--\r\n`,
@@ -539,9 +541,7 @@ describe.skipIf(!dbUp)('M1 core pipeline API', () => {
         url: `/api/v1/valuations/${valuationId}/events`,
         headers: authHeader(ops.token),
       });
-      const aiEvents = events
-        .json()
-        .events.filter((e: { type: string }) => e.type === 'ai_job_completed');
+      const aiEvents = events.json().events.filter((e: { type: string }) => e.type === 'ai_job_completed');
       expect(aiEvents.length).toBeGreaterThanOrEqual(2);
       expect(aiEvents[0].actor_type).toBe('ai');
     });

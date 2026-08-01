@@ -55,9 +55,7 @@ describe('ModelSensitivityPanel', () => {
   beforeEach(() => vi.restoreAllMocks());
 
   it('runs the engine sensitivity and renders one-way tables + a heatmap', async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(jsonResponse({ sensitivity: RESULT }));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ sensitivity: RESULT }));
     render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" />);
 
     await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
@@ -78,9 +76,7 @@ describe('ModelSensitivityPanel', () => {
   });
 
   it('surfaces a 403 as an ops-only message', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ title: 'Forbidden', detail: 'no' }, 403),
-    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Forbidden', detail: 'no' }, 403));
     render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" />);
     await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
     await screen.findByText(/operations-only/i, {}, { timeout: 5000 });

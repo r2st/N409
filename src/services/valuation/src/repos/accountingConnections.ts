@@ -92,11 +92,7 @@ export async function upsertConnection(
   return rows[0]!;
 }
 
-export async function recordImport(
-  pool: pg.Pool,
-  id: string,
-  summary: ImportedFinancials,
-): Promise<void> {
+export async function recordImport(pool: pg.Pool, id: string, summary: ImportedFinancials): Promise<void> {
   await pool.query(
     `UPDATE accounting_connections
      SET last_import_at = now(), last_import_summary = $2, status = 'connected', last_error = NULL
@@ -106,10 +102,10 @@ export async function recordImport(
 }
 
 export async function recordImportError(pool: pg.Pool, id: string, error: string): Promise<void> {
-  await pool.query(
-    `UPDATE accounting_connections SET status = 'error', last_error = $2 WHERE id = $1`,
-    [id, error.slice(0, 500)],
-  );
+  await pool.query(`UPDATE accounting_connections SET status = 'error', last_error = $2 WHERE id = $1`, [
+    id,
+    error.slice(0, 500),
+  ]);
 }
 
 export async function revokeConnection(

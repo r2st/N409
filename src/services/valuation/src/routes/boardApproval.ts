@@ -9,10 +9,7 @@ import { latestSucceededCalculation } from '../repos/calculations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
-import {
-  DEFAULT_APPRAISER_QUALIFICATIONS,
-  renderBoardResolution,
-} from '../domain/boardResolution.js';
+import { DEFAULT_APPRAISER_QUALIFICATIONS, renderBoardResolution } from '../domain/boardResolution.js';
 import {
   addBoardMember,
   deleteBoardMember,
@@ -161,8 +158,7 @@ export function registerBoardApprovalRoutes(
       'The fair market value was concluded using generally accepted valuation approaches ' +
         '(income, market and/or asset), with an option-pricing method allocation of equity value ' +
         'across the capital structure and a discount for lack of marketability.';
-    const appraiserQualifications =
-      parsed.data.appraiser_qualifications ?? DEFAULT_APPRAISER_QUALIFICATIONS;
+    const appraiserQualifications = parsed.data.appraiser_qualifications ?? DEFAULT_APPRAISER_QUALIFICATIONS;
 
     const bodyHtml = renderBoardResolution({
       companyName: valuation.company_name,

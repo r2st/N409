@@ -1,10 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import type {
-  AutoEmailRow,
-  CommChannel,
-  CommunicationTemplateRow,
-} from '../domain/communications.js';
+import type { AutoEmailRow, CommChannel, CommunicationTemplateRow } from '../domain/communications.js';
 
 // ── Communication templates (409.ai §15.5) ───────────────────────────────────
 
@@ -26,10 +22,7 @@ export async function findTemplateByKey(
   return rows[0] ?? null;
 }
 
-export async function findTemplateById(
-  pool: pg.Pool,
-  id: string,
-): Promise<CommunicationTemplateRow | null> {
+export async function findTemplateById(pool: pg.Pool, id: string): Promise<CommunicationTemplateRow | null> {
   const { rows } = await pool.query<CommunicationTemplateRow>(
     'SELECT * FROM communication_templates WHERE id = $1',
     [id],
@@ -66,7 +59,16 @@ export async function createCommunicationTemplate(
     `INSERT INTO communication_templates (id, key, channel, description, subject, body, enabled, updated_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
-    [newUlid(), input.key, input.channel, input.description, input.subject, input.body, input.enabled, updatedBy],
+    [
+      newUlid(),
+      input.key,
+      input.channel,
+      input.description,
+      input.subject,
+      input.body,
+      input.enabled,
+      updatedBy,
+    ],
   );
   return rows[0]!;
 }

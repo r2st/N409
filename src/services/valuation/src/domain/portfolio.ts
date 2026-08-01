@@ -41,9 +41,10 @@ const ENTITY_TYPES: EntityType[] = ['standalone', 'parent', 'subsidiary', 'portf
  * the common holding-company reporting convention.
  */
 export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
-  const byType = Object.fromEntries(
-    ENTITY_TYPES.map((t) => [t, { count: 0, equity_value: 0 }]),
-  ) as Record<EntityType, { count: number; equity_value: number }>;
+  const byType = Object.fromEntries(ENTITY_TYPES.map((t) => [t, { count: 0, equity_value: 0 }])) as Record<
+    EntityType,
+    { count: number; equity_value: number }
+  >;
 
   let total = 0;
   let consolidated = 0;

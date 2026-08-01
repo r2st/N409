@@ -12,7 +12,13 @@ const position = {
   quantity: '1000',
   cost_basis: '500000',
   mark_method: 'calibrated_opm',
-  latest_mark: { id: 'm1', measurement_date: '2026-03-31', method: 'calibrated_opm', fair_value: '750000', level: 3 },
+  latest_mark: {
+    id: 'm1',
+    measurement_date: '2026-03-31',
+    method: 'calibrated_opm',
+    fair_value: '750000',
+    level: 3,
+  },
 };
 const detail = { fund, lp_terms: null, positions: [position] };
 const nav = {
@@ -90,8 +96,6 @@ describe('FundPortfolioPage', () => {
     // Expand the position to reveal the record-mark form.
     const row = await screen.findByRole('button', { name: /Acme/ });
     await user.click(row);
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'About Date' })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'About Date' })).toBeInTheDocument());
   });
 });

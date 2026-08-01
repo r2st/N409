@@ -43,10 +43,7 @@ export async function createAuditorAccess(
   return { access: rows[0]!, token };
 }
 
-export async function listAuditorAccess(
-  pool: pg.Pool,
-  valuationId: string,
-): Promise<AuditorAccessRow[]> {
+export async function listAuditorAccess(pool: pg.Pool, valuationId: string): Promise<AuditorAccessRow[]> {
   const { rows } = await pool.query<AuditorAccessRow>(
     'SELECT * FROM auditor_access WHERE valuation_id = $1 ORDER BY created_at DESC',
     [valuationId],
@@ -71,10 +68,7 @@ export async function revokeAuditorAccess(
  * Resolve a raw token to a live (unrevoked, unexpired) access row, recording
  * the access. Returns null for an invalid / revoked / expired token.
  */
-export async function redeemAuditorToken(
-  pool: pg.Pool,
-  rawToken: string,
-): Promise<AuditorAccessRow | null> {
+export async function redeemAuditorToken(pool: pg.Pool, rawToken: string): Promise<AuditorAccessRow | null> {
   const { rows } = await pool.query<AuditorAccessRow>(
     `UPDATE auditor_access
         SET last_accessed_at = now(), access_count = access_count + 1

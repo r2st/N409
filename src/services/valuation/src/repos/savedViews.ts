@@ -118,13 +118,7 @@ export async function updateSavedView(
               updated_at = now()
         WHERE id = $1
         RETURNING *`,
-      [
-        id,
-        patch.name ?? null,
-        patch.query ?? null,
-        patch.visibility ?? null,
-        patch.isDefault ?? null,
-      ],
+      [id, patch.name ?? null, patch.query ?? null, patch.visibility ?? null, patch.isDefault ?? null],
     );
     return rows[0] ?? null;
   });

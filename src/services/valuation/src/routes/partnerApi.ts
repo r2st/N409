@@ -210,8 +210,7 @@ export function registerPartnerApiRoutes(
     async (req, reply) => {
       const { principal, token } = requireToken(req);
       const parsed = CreateBody.safeParse(req.body);
-      if (!parsed.success)
-        throw problems.unprocessable('Invalid valuation', { errors: parsed.error.issues });
+      if (!parsed.success) throw problems.unprocessable('Invalid valuation', { errors: parsed.error.issues });
       const valuation = await createValuation(
         deps.pool,
         {
@@ -295,8 +294,7 @@ export function registerPartnerApiRoutes(
       const { id } = req.params as { id: string };
       const valuation = await loadScoped(token, id);
       const parsed = UploadBody.safeParse(req.body);
-      if (!parsed.success)
-        throw problems.unprocessable('Invalid upload', { errors: parsed.error.issues });
+      if (!parsed.success) throw problems.unprocessable('Invalid upload', { errors: parsed.error.issues });
 
       // Validate base64 encoding — Buffer.from silently skips invalid chars
       if (!/^[A-Za-z0-9+/]*={0,2}$/.test(parsed.data.content_base64)) {
@@ -305,9 +303,7 @@ export function registerPartnerApiRoutes(
       const buffer = Buffer.from(parsed.data.content_base64, 'base64');
       if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
       if (buffer.length > MAX_DOCUMENT_BYTES) {
-        throw problems.unprocessable(
-          `File exceeds the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`,
-        );
+        throw problems.unprocessable(`File exceeds the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`);
       }
 
       // File type validation — same as the session upload route (audit B-1 P2)

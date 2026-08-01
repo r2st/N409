@@ -80,9 +80,7 @@ export function BridgeTab() {
     setError(null);
     api<BridgeResponse>(`/valuations/${valuation.id}/bridge/${compareId}`)
       .then(setData)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not build the value bridge.'),
-      )
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not build the value bridge.'))
       .finally(() => setBusy(false));
   }, [compareId, valuation.id]);
 
@@ -112,7 +110,11 @@ export function BridgeTab() {
       ) : (
         <label className="block max-w-md">
           <span className="overline mb-1.5 block text-ink-400">Compare against</span>
-          <Select value={compareId} onChange={(e) => setCompareId(e.target.value)} aria-label="Compare against">
+          <Select
+            value={compareId}
+            onChange={(e) => setCompareId(e.target.value)}
+            aria-label="Compare against"
+          >
             <option value="">Select an earlier valuation…</option>
             {candidates?.map((c) => (
               <option key={c.id} value={c.id}>
@@ -154,8 +156,8 @@ export function BridgeTab() {
             />
           ) : (
             <p className="rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800">
-              A factor attribution isn't available (a per-share value is zero or negative), but the
-              totals and driver changes are shown below.
+              A factor attribution isn't available (a per-share value is zero or negative), but the totals and
+              driver changes are shown below.
             </p>
           )}
 

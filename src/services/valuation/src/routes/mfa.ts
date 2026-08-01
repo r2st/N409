@@ -41,9 +41,7 @@ export function registerMfaRoutes(
     return {
       enabled: user.totp_enabled,
       confirmed_at: user.totp_confirmed_at,
-      backup_codes_remaining: user.totp_enabled
-        ? await countUnusedBackupCodes(deps.pool, user.id)
-        : 0,
+      backup_codes_remaining: user.totp_enabled ? await countUnusedBackupCodes(deps.pool, user.id) : 0,
       required: (await deps.settings?.get('require_mfa')) ?? false,
       can_enroll: Boolean(user.password_digest), // SSO-only accounts cannot
     };
@@ -57,8 +55,7 @@ export function registerMfaRoutes(
     if (!user) throw problems.unauthorized();
     if (!user.password_digest)
       throw problems.badRequest('This account signs in with Google SSO and manages 2FA there');
-    if (user.totp_enabled)
-      throw problems.conflict('2FA is already enabled — disable it first to re-enrol');
+    if (user.totp_enabled) throw problems.conflict('2FA is already enabled — disable it first to re-enrol');
 
     const secret = generateTotpSecret();
     await stageTotpSecret(deps.pool, user.id, secret);
@@ -72,14 +69,12 @@ export function registerMfaRoutes(
   app.post('/api/v1/account/mfa/confirm', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = ConfirmBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();
     if (user.totp_enabled) throw problems.conflict('2FA is already enabled');
-    if (!user.totp_secret)
-      throw problems.badRequest('Start setup first — no pending 2FA enrolment');
+    if (!user.totp_secret) throw problems.badRequest('Start setup first — no pending 2FA enrolment');
     if (!verifyTotp(decryptSecret(user.totp_secret), parsed.data.code))
       throw problems.badRequest('That code is incorrect — check your authenticator and try again');
 
@@ -92,8 +87,7 @@ export function registerMfaRoutes(
   app.post('/api/v1/account/mfa/disable', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const parsed = PasswordBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();
@@ -108,22 +102,17 @@ export function registerMfaRoutes(
   });
 
   // Regenerate backup codes (invalidates the old set). Password-gated.
-  app.post(
-    '/api/v1/account/mfa/backup-codes',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      const parsed = PasswordBody.safeParse(req.body);
-      if (!parsed.success)
-        throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+  app.post('/api/v1/account/mfa/backup-codes', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const parsed = PasswordBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
-      const user = await findUserById(deps.pool, principal.id);
-      if (!user) throw problems.unauthorized();
-      if (!user.totp_enabled) throw problems.badRequest('2FA is not enabled');
-      if (!user.password_digest || !(await verifyPassword(parsed.data.password, user.password_digest)))
-        throw problems.badRequest('Password is incorrect');
+    const user = await findUserById(deps.pool, principal.id);
+    if (!user) throw problems.unauthorized();
+    if (!user.totp_enabled) throw problems.badRequest('2FA is not enabled');
+    if (!user.password_digest || !(await verifyPassword(parsed.data.password, user.password_digest)))
+      throw problems.badRequest('Password is incorrect');
 
-      return { backup_codes: await regenerateBackupCodes(deps.pool, user.id) };
-    },
-  );
+    return { backup_codes: await regenerateBackupCodes(deps.pool, user.id) };
+  });
 }

@@ -1,14 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPayment, markPayment } from '../../src/repos/payments.js';
 import { priceForKind } from '../../src/routes/payments.js';
-import {
-  authHeader,
-  isDbAvailable,
-  seedPartner,
-  seedUser,
-  setupTestApp,
-  type TestApp,
-} from './helpers.js';
+import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Account-level billing rollup (P2 #13): payments across the caller's

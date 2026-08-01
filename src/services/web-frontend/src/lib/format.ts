@@ -122,7 +122,11 @@ export function formatNumber(value: string | number | null | undefined): string 
   return Number.isFinite(n) ? new Intl.NumberFormat().format(n) : '—';
 }
 
-export function displayName(u: { first_name: string | null; last_name: string | null; email: string }): string {
+export function displayName(u: {
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+}): string {
   const name = [u.first_name, u.last_name].filter(Boolean).join(' ');
   return name || u.email;
 }

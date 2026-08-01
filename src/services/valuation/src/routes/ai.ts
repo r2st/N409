@@ -15,7 +15,13 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { listDocuments, type DocumentRow } from '../repos/documents.js';
-import { completeAiJob, createAiJob, latestSucceededJob, listAiJobs, type AiJobRow } from '../repos/aiJobs.js';
+import {
+  completeAiJob,
+  createAiJob,
+  latestSucceededJob,
+  listAiJobs,
+  type AiJobRow,
+} from '../repos/aiJobs.js';
 import { findPromptByPipeline, latestPromptVersion } from '../repos/aiPrompts.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { decodeFromStorage } from '../storage/documentEncryption.js';
@@ -135,8 +141,7 @@ export async function runAiPipeline(
       service_countries: valuation.service_countries,
     },
     params,
-    documents:
-      args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents),
+    documents: args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents),
     prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
     options: { anonymize: args.anonymize },
     ...(args.extraPayload ?? {}),
@@ -283,7 +288,9 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     const job = await latestSucceededJob(deps.pool, id, 'extract');
     const extracted = job?.result?.engine_inputs;
     if (!extracted || typeof extracted !== 'object' || Object.keys(extracted).length === 0) {
-      throw problems.unprocessable('No successful extraction with engine inputs to apply — run data extraction first');
+      throw problems.unprocessable(
+        'No successful extraction with engine inputs to apply — run data extraction first',
+      );
     }
     const params = await applyEngineInputs(
       deps.pool,

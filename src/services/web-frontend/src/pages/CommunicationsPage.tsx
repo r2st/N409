@@ -2,7 +2,16 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
 import { VALUATION_STATES, type AutoEmail, type CommunicationTemplate } from '../lib/types';
 import { STATE_LABELS } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput, inputClass } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  Select,
+  Spinner,
+  TextInput,
+  inputClass,
+} from '../components/ui';
 
 /**
  * Communications admin (409.ai §15.5/§15.6): email/SMS templates with
@@ -44,9 +53,8 @@ function ChannelBadge({ channel }: { channel: 'email' | 'sms' }) {
 function SmsPreviewNote() {
   return (
     <p className="mt-2 rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
-      <strong>SMS is in preview.</strong> There is no live SMS provider connected yet — messages on
-      this channel are recorded in the service log but not delivered to phones. Email delivery is
-      unaffected.
+      <strong>SMS is in preview.</strong> There is no live SMS provider connected yet — messages on this
+      channel are recorded in the service log but not delivered to phones. Email delivery is unaffected.
     </p>
   );
 }
@@ -114,14 +122,19 @@ function TemplateEditor({
   const runPreview = async () => {
     if (isNew) return;
     try {
-      setPreview(await api(`/admin/communication-templates/${template.id}/preview`, { method: 'POST', body: {} }));
+      setPreview(
+        await api(`/admin/communication-templates/${template.id}/preview`, { method: 'POST', body: {} }),
+      );
     } catch {
       setError('Preview failed.');
     }
   };
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+    <form
+      onSubmit={(e) => void submit(e)}
+      className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+    >
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Key" hint="Matches a workflow templateKey to override built-in content">
           <TextInput
@@ -134,7 +147,11 @@ function TemplateEditor({
           />
         </Field>
         <Field label="Channel">
-          <Select value={channel} onChange={(e) => setChannel(e.target.value as 'email' | 'sms')} disabled={!isNew}>
+          <Select
+            value={channel}
+            onChange={(e) => setChannel(e.target.value as 'email' | 'sms')}
+            disabled={!isNew}
+          >
             <option value="email">Email</option>
             <option value="sms">SMS (preview)</option>
           </Select>
@@ -142,10 +159,17 @@ function TemplateEditor({
       </div>
       {channel === 'sms' && <SmsPreviewNote />}
       <Field label="Description">
-        <TextInput value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this template is for" />
+        <TextInput
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What this template is for"
+        />
       </Field>
       {channel === 'email' && (
-        <Field label="Subject" hint="Supports {{company_name}}, {{kind_label}}, {{valuation_number}}, {{link}}">
+        <Field
+          label="Subject"
+          hint="Supports {{company_name}}, {{kind_label}}, {{valuation_number}}, {{link}}"
+        >
           <TextInput value={subject} onChange={(e) => setSubject(e.target.value)} required />
         </Field>
       )}
@@ -227,12 +251,16 @@ function TemplatesTab() {
     <div>
       <div className="flex items-center justify-between">
         <p className="text-sm text-ink-400">
-          Templates matching a workflow key override the built-in email content; drip campaigns
-          reference templates by key.
+          Templates matching a workflow key override the built-in email content; drip campaigns reference
+          templates by key.
         </p>
         <Button onClick={() => setEditing('new')}>New template</Button>
       </div>
-      {error && <div className="mt-3"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {editing !== undefined && (
         <TemplateEditor
           template={editing === 'new' ? null : editing}
@@ -264,24 +292,38 @@ function TemplatesTab() {
                 <tr key={t.id} className="border-b border-paper-200 align-top last:border-0">
                   <td className="px-5 py-3.5">
                     <span className="font-mono text-xs font-semibold text-ink-900">{t.key}</span>
-                    {t.description && <div className="mt-1 max-w-56 text-xs text-ink-400">{t.description}</div>}
+                    {t.description && (
+                      <div className="mt-1 max-w-56 text-xs text-ink-400">{t.description}</div>
+                    )}
                   </td>
                   <td className="px-4 py-3.5">
                     <ChannelBadge channel={t.channel} />
                   </td>
                   <td className="max-w-72 px-4 py-3.5 text-ink-600">
-                    {t.subject && <div className="truncate font-medium text-ink-800" title={t.subject}>{t.subject}</div>}
-                    <div className="truncate text-xs" title={t.body}>{t.body}</div>
+                    {t.subject && (
+                      <div className="truncate font-medium text-ink-800" title={t.subject}>
+                        {t.subject}
+                      </div>
+                    )}
+                    <div className="truncate text-xs" title={t.body}>
+                      {t.body}
+                    </div>
                   </td>
                   <td className="px-4 py-3.5">
                     <EnabledBadge enabled={t.enabled} />
                   </td>
                   <td className="px-4 py-3.5">
                     <div className="flex gap-3 text-xs font-semibold">
-                      <button className="cursor-pointer text-bond-600 hover:text-bond-700" onClick={() => setEditing(t)}>
+                      <button
+                        className="cursor-pointer text-bond-600 hover:text-bond-700"
+                        onClick={() => setEditing(t)}
+                      >
                         Edit
                       </button>
-                      <button className="cursor-pointer text-red-600 hover:text-red-700" onClick={() => void remove(t)}>
+                      <button
+                        className="cursor-pointer text-red-600 hover:text-red-700"
+                        onClick={() => void remove(t)}
+                      >
                         Delete
                       </button>
                     </div>
@@ -353,7 +395,10 @@ function AutoEmailEditor({
   };
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+    <form
+      onSubmit={(e) => void submit(e)}
+      className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+    >
       <div className="grid gap-4 sm:grid-cols-3">
         <Field label="Name">
           <TextInput
@@ -388,7 +433,10 @@ function AutoEmailEditor({
           </Select>
         </Field>
         <Field label="Trigger state" hint="Fires while the valuation sits in this state">
-          <Select value={triggerState} onChange={(e) => setTriggerState(e.target.value as AutoEmail['trigger_state'])}>
+          <Select
+            value={triggerState}
+            onChange={(e) => setTriggerState(e.target.value as AutoEmail['trigger_state'])}
+          >
             {VALUATION_STATES.map((s) => (
               <option key={s} value={s}>
                 {STATE_LABELS[s] ?? s}
@@ -406,7 +454,12 @@ function AutoEmailEditor({
           </Select>
         </Field>
         <Field label="Delay (hours)">
-          <TextInput type="number" min={0} value={delayHours} onChange={(e) => setDelayHours(Number(e.target.value))} />
+          <TextInput
+            type="number"
+            min={0}
+            value={delayHours}
+            onChange={(e) => setDelayHours(Number(e.target.value))}
+          />
         </Field>
         <Field label="Repeat every (hours)" hint="Blank = send once">
           <TextInput
@@ -417,7 +470,13 @@ function AutoEmailEditor({
           />
         </Field>
         <Field label="Max sends">
-          <TextInput type="number" min={1} max={10} value={maxSends} onChange={(e) => setMaxSends(Number(e.target.value))} />
+          <TextInput
+            type="number"
+            min={1}
+            max={10}
+            value={maxSends}
+            onChange={(e) => setMaxSends(Number(e.target.value))}
+          />
         </Field>
       </div>
       {channel === 'sms' && <SmsPreviewNote />}
@@ -504,8 +563,8 @@ function AutoEmailsTab() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-400">
-          Campaigns fire for valuations that sit in the trigger state past the delay. Sends land in
-          the email outbox.
+          Campaigns fire for valuations that sit in the trigger state past the delay. Sends land in the email
+          outbox.
         </p>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => void runNow()}>
@@ -515,7 +574,11 @@ function AutoEmailsTab() {
         </div>
       </div>
       {runResult && <p className="mt-3 text-sm font-medium text-emerald-700">{runResult}</p>}
-      {error && <div className="mt-3"><ErrorNote>{error}</ErrorNote></div>}
+      {error && (
+        <div className="mt-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
       {editing !== undefined && (
         <AutoEmailEditor
           campaign={editing === 'new' ? null : editing}
@@ -561,8 +624,7 @@ function AutoEmailsTab() {
                     )}
                   </td>
                   <td className="tnum px-4 py-3.5 text-ink-600">
-                    after {c.delay_hours}h
-                    {c.repeat_hours ? `, every ${c.repeat_hours}h` : ''}
+                    after {c.delay_hours}h{c.repeat_hours ? `, every ${c.repeat_hours}h` : ''}
                     {c.max_sends > 1 ? `, max ${c.max_sends}` : ''}
                   </td>
                   <td className="px-4 py-3.5 font-mono text-xs text-ink-500">{c.template_key}</td>
@@ -571,13 +633,22 @@ function AutoEmailsTab() {
                   </td>
                   <td className="px-4 py-3.5">
                     <div className="flex gap-3 text-xs font-semibold">
-                      <button className="cursor-pointer text-ink-600 hover:text-ink-900" onClick={() => void toggle(c)}>
+                      <button
+                        className="cursor-pointer text-ink-600 hover:text-ink-900"
+                        onClick={() => void toggle(c)}
+                      >
                         {c.enabled ? 'Disable' : 'Enable'}
                       </button>
-                      <button className="cursor-pointer text-bond-600 hover:text-bond-700" onClick={() => setEditing(c)}>
+                      <button
+                        className="cursor-pointer text-bond-600 hover:text-bond-700"
+                        onClick={() => setEditing(c)}
+                      >
                         Edit
                       </button>
-                      <button className="cursor-pointer text-red-600 hover:text-red-700" onClick={() => void remove(c)}>
+                      <button
+                        className="cursor-pointer text-red-600 hover:text-red-700"
+                        onClick={() => void remove(c)}
+                      >
                         Delete
                       </button>
                     </div>

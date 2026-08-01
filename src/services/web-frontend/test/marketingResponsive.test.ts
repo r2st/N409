@@ -13,10 +13,7 @@ import { describe, expect, it } from 'vitest';
  * right on the developer's monitor breaks on the phone a founder reads it on.
  */
 
-const MARKETING = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../src/pages/marketing',
-);
+const MARKETING = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/pages/marketing');
 const LAYOUT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../src/components/MarketingLayout.tsx',
@@ -43,10 +40,7 @@ describe('marketing pages stay within a 375px viewport', () => {
    * be justified rather than merely happen to work on the author's screen.
    */
   const ALLOWED_FIXED_WIDTHS = new Map([
-    [
-      'LandingPage.tsx: w-[28rem]',
-      'decorative blur, absolutely positioned inside an overflow-hidden hero',
-    ],
+    ['LandingPage.tsx: w-[28rem]', 'decorative blur, absolutely positioned inside an overflow-hidden hero'],
     [
       'MarketingLayout.tsx: w-[34rem]',
       'desktop-only products dropdown, capped by max-w-[calc(100vw-2.5rem)]',

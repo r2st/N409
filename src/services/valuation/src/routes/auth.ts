@@ -24,12 +24,7 @@ import {
 } from '../auth/cookies.js';
 import { verifyTotp } from '../auth/totp.js';
 import { decryptSecret, backupCodeMatches } from '../auth/mfaCrypto.js';
-import {
-  consumeBackupCode,
-  isDeviceTrusted,
-  listUnusedBackupCodeHashes,
-  trustDevice,
-} from '../repos/mfa.js';
+import { consumeBackupCode, isDeviceTrusted, listUnusedBackupCodeHashes, trustDevice } from '../repos/mfa.js';
 import type { GoogleOidc } from '../auth/google.js';
 import {
   bumpSessionEpoch,
@@ -43,10 +38,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { SlidingWindowRateLimiter } from '../plugins/rateLimit.js';
 import { findUserById } from '../repos/users.js';
 import { createPasswordResetToken, resetPasswordWithToken } from '../repos/passwordResets.js';
-import {
-  createEmailVerificationToken,
-  verifyEmailWithToken,
-} from '../repos/emailVerifications.js';
+import { createEmailVerificationToken, verifyEmailWithToken } from '../repos/emailVerifications.js';
 import { acceptInvitation, findPendingInvitationByToken } from '../repos/invitations.js';
 import { getSamlConfig } from '../repos/ssoConfig.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
@@ -223,10 +215,9 @@ export function registerAuthRoutes(
     // like "1234567890" or "aaaaaaaaaa" are rejected. Full entropy scoring is
     // overkill for a B2B SaaS, but this catches the low-hanging fruit.
     if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password))
-      throw problems.unprocessable(
-        'Password must contain at least one letter and one number',
-        { errors: [{ path: ['password'] }] },
-      );
+      throw problems.unprocessable('Password must contain at least one letter and one number', {
+        errors: [{ path: ['password'] }],
+      });
   };
 
   app.post('/api/v1/auth/register', async (req, reply) => {
@@ -282,7 +273,10 @@ export function registerAuthRoutes(
     // their own successful sign-ins.
     const emailKey = `login:${email.toLowerCase()}`;
     const ipKey = `login-ip:${req.ip}`;
-    if (!allow(emailKey, 10, LOGIN_WINDOW_MS, { peek: true }) || !allow(ipKey, 100, LOGIN_WINDOW_MS, { peek: true })) {
+    if (
+      !allow(emailKey, 10, LOGIN_WINDOW_MS, { peek: true }) ||
+      !allow(ipKey, 100, LOGIN_WINDOW_MS, { peek: true })
+    ) {
       throw problems.tooManyRequests('Too many sign-in attempts — try again later');
     }
 
@@ -327,8 +321,7 @@ export function registerAuthRoutes(
   // TOTP code or a one-time backup code, and (optionally) remember the device.
   app.post('/api/v1/auth/mfa/verify', async (req, reply) => {
     const parsed = MfaVerifyBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
     let userId: string;
     try {
@@ -383,14 +376,14 @@ export function registerAuthRoutes(
     try {
       const header = req.headers.authorization;
       const bearer =
-        (header?.startsWith('Bearer ') ? header.slice(7).trim() : '') ||
-        req.cookies?.[SESSION_COOKIE] ||
-        '';
+        (header?.startsWith('Bearer ') ? header.slice(7).trim() : '') || req.cookies?.[SESSION_COOKIE] || '';
       if (bearer && !bearer.startsWith('n409_pat_')) {
         const claims = await verifySession(bearer, deps.jwt);
         await bumpSessionEpoch(deps.pool, claims.sub);
       }
-    } catch { /* expired / missing / invalid — cookie is still cleared */ }
+    } catch {
+      /* expired / missing / invalid — cookie is still cleared */
+    }
     return reply.status(200).send({ message: 'Signed out.' });
   });
 
@@ -453,8 +446,7 @@ export function registerAuthRoutes(
 
   app.post('/api/v1/auth/forgot-password', async (req, reply) => {
     const parsed = ForgotPasswordBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
     const email = parsed.data.email;
 
     if (!allow(`email:${email.toLowerCase()}`, 3, HOUR_MS) || !allow(`ip:${req.ip}`, 30, HOUR_MS)) {
@@ -483,8 +475,7 @@ export function registerAuthRoutes(
 
   app.post('/api/v1/auth/reset-password', async (req) => {
     const parsed = ResetPasswordBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
     // Bounds token guessing. The tokens are long random secrets, so this is a
     // belt-and-braces limit — but an unbounded redeem endpoint also lets an
@@ -507,8 +498,7 @@ export function registerAuthRoutes(
   // URLs/server logs — the SPA reads it from the fragment and posts it here.
   app.post('/api/v1/auth/verify-email', async (req) => {
     const parsed = VerifyEmailBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
     if (!allow(`verify-email-ip:${req.ip}`, TOKEN_REDEEM_PER_IP, HOUR_MS)) {
       throw problems.tooManyRequests('Too many verification attempts — try again later');
@@ -544,8 +534,7 @@ export function registerAuthRoutes(
   app.post('/api/v1/auth/change-password', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const parsed = ChangePasswordBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
     await assertPasswordStrong(parsed.data.new_password);
 
     const user = await findUserById(deps.pool, principal.id);
@@ -572,8 +561,7 @@ export function registerAuthRoutes(
   // the link's fragment and posts it here to show who the invite is for.
   app.post('/api/v1/auth/invite-info', async (req) => {
     const parsed = InviteTokenBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
     // Same token space as accept-invite below, and it answers "is this token
     // real?" directly — limiting only the redeem route would leave the
@@ -583,15 +571,13 @@ export function registerAuthRoutes(
     }
 
     const invitation = await findPendingInvitationByToken(deps.pool, parsed.data.token);
-    if (!invitation)
-      throw problems.badRequest('This invitation is invalid, expired, or has been revoked');
+    if (!invitation) throw problems.badRequest('This invitation is invalid, expired, or has been revoked');
     return { email: invitation.email, expires_at: invitation.expires_at };
   });
 
   app.post('/api/v1/auth/accept-invite', async (req, reply) => {
     const parsed = AcceptInviteBody.safeParse(req.body);
-    if (!parsed.success)
-      throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.unprocessable('Invalid invitation', { errors: parsed.error.issues });
     const { token, password, first_name, last_name } = parsed.data;
 
     // Accepting an invite mints an account, so an unbounded endpoint is both a
@@ -608,8 +594,7 @@ export function registerAuthRoutes(
     });
     if (result.status === 'invalid')
       throw problems.badRequest('This invitation is invalid, expired, or has been revoked');
-    if (result.status === 'conflict')
-      throw problems.conflict('An account with this email already exists');
+    if (result.status === 'conflict') throw problems.conflict('An account with this email already exists');
     const sessionToken = await issueSession(reply, result.user);
     return reply.status(201).send({ user: toPublicUser(result.user), token: sessionToken });
   });

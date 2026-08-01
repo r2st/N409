@@ -53,10 +53,7 @@ function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
 }
 
-export function registerCompanyProfileRoutes(
-  app: FastifyInstance,
-  deps: { pool: pg.Pool },
-): void {
+export function registerCompanyProfileRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   const loadValuation = async (principal: Principal, id: string) => {
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);

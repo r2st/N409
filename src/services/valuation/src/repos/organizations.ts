@@ -17,7 +17,13 @@ export interface OrganizationRow {
 
 export async function createOrganization(
   pool: pg.Pool,
-  input: { name: string; entityType: OrgEntityType; parentOrgId?: string | null; ownerUserId: string; createdBy: string },
+  input: {
+    name: string;
+    entityType: OrgEntityType;
+    parentOrgId?: string | null;
+    ownerUserId: string;
+    createdBy: string;
+  },
 ): Promise<OrganizationRow> {
   const { rows } = await pool.query<OrganizationRow>(
     `INSERT INTO organizations (id, name, entity_type, parent_org_id, owner_user_id, created_by)
@@ -86,10 +92,11 @@ export async function assignValuationToOrg(
   entityType?: EntityType,
 ): Promise<void> {
   if (entityType) {
-    await pool.query(
-      'UPDATE valuations SET organization_id = $2, entity_type = $3 WHERE id = $1',
-      [valuationId, orgId, entityType],
-    );
+    await pool.query('UPDATE valuations SET organization_id = $2, entity_type = $3 WHERE id = $1', [
+      valuationId,
+      orgId,
+      entityType,
+    ]);
   } else {
     await pool.query('UPDATE valuations SET organization_id = $2 WHERE id = $1', [valuationId, orgId]);
   }
@@ -102,17 +109,15 @@ export async function setEntityRelationship(
   entityType: EntityType,
   parentValuationId: string | null,
 ): Promise<void> {
-  await pool.query(
-    'UPDATE valuations SET entity_type = $2, parent_valuation_id = $3 WHERE id = $1',
-    [valuationId, entityType, parentValuationId],
-  );
+  await pool.query('UPDATE valuations SET entity_type = $2, parent_valuation_id = $3 WHERE id = $1', [
+    valuationId,
+    entityType,
+    parentValuationId,
+  ]);
 }
 
 /** The organization's entities with their latest successful valuation figures. */
-export async function listPortfolioEntities(
-  pool: pg.Pool,
-  orgId: string,
-): Promise<PortfolioEntity[]> {
+export async function listPortfolioEntities(pool: pg.Pool, orgId: string): Promise<PortfolioEntity[]> {
   const { rows } = await pool.query<{
     valuation_id: string;
     number: string;

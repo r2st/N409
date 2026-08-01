@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildHeadTags,
-  escapeHtml,
-  renderHeadTags,
-  serializeJsonLd,
-} from '../src/lib/headTags';
+import { buildHeadTags, escapeHtml, renderHeadTags, serializeJsonLd } from '../src/lib/headTags';
 
 const ORIGIN = 'https://x.io';
 
@@ -63,17 +58,15 @@ describe('buildHeadTags (§24)', () => {
 
   it('defaults og:type to website and honours an override', () => {
     expect(tagValue(buildHeadTags(base, ORIGIN).tags, 'property', 'og:type')).toBe('website');
-    expect(
-      tagValue(buildHeadTags({ ...base, type: 'product' }, ORIGIN).tags, 'property', 'og:type'),
-    ).toBe('product');
+    expect(tagValue(buildHeadTags({ ...base, type: 'product' }, ORIGIN).tags, 'property', 'og:type')).toBe(
+      'product',
+    );
   });
 });
 
 describe('escaping', () => {
   it('escapes HTML metacharacters in attribute values', () => {
-    expect(escapeHtml(`a & b < c > d " e ' f`)).toBe(
-      'a &amp; b &lt; c &gt; d &quot; e &#39; f',
-    );
+    expect(escapeHtml(`a & b < c > d " e ' f`)).toBe('a &amp; b &lt; c &gt; d &quot; e &#39; f');
   });
 
   it('prevents JSON-LD content from closing the script element', () => {
@@ -94,9 +87,7 @@ describe('escaping', () => {
   });
 
   it('renders link tags with href and meta tags with content', () => {
-    const html = renderHeadTags(
-      buildHeadTags({ title: 'T', description: 'D', path: '/pricing' }, ORIGIN),
-    );
+    const html = renderHeadTags(buildHeadTags({ title: 'T', description: 'D', path: '/pricing' }, ORIGIN));
     expect(html).toContain('<link rel="canonical" href="https://x.io/pricing" />');
     expect(html).toContain('<meta name="description" content="D" />');
     expect(html).toContain('<meta property="og:url" content="https://x.io/pricing" />');

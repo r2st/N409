@@ -89,8 +89,7 @@ function renderPage() {
 }
 
 /** The row for the target user, once the table has loaded. */
-const targetRow = async () =>
-  within((await screen.findByText('ada@acme.com')).closest('tr') as HTMLElement);
+const targetRow = async () => within((await screen.findByText('ada@acme.com')).closest('tr') as HTMLElement);
 
 describe('AdminUsersPage — password reset and force sign-out', () => {
   beforeEach(() => {
@@ -117,9 +116,7 @@ describe('AdminUsersPage — password reset and force sign-out', () => {
     await userEvent.click((await targetRow()).getByRole('button', { name: 'Sign out' }));
 
     await screen.findByText('Signed ada@acme.com out of all sessions.');
-    expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/users/u2/revoke-sessions'))).toBe(
-      true,
-    );
+    expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/users/u2/revoke-sessions'))).toBe(true);
   });
 
   it('does nothing when the confirmation is dismissed', async () => {

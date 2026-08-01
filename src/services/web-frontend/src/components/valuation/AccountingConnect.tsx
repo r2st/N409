@@ -116,8 +116,8 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
     <section className="mt-8" aria-label="Accounting integrations">
       <div className="overline text-ink-400">Accounting integrations</div>
       <p className="mt-1 text-sm text-ink-500">
-        Connect your accounting software and we&rsquo;ll pull your financials directly — no exports,
-        no re-typing.
+        Connect your accounting software and we&rsquo;ll pull your financials directly — no exports, no
+        re-typing.
       </p>
       {notice && <p className="mt-3 text-sm font-medium text-emerald-700">{notice}</p>}
       {error && (

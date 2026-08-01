@@ -268,9 +268,9 @@ describe.skipIf(!dbUp)('password reset + invitations (P0 #3 / feature #9)', () =
     });
 
     it('conflicts on existing users and duplicate pending invites', async () => {
-      expect(
-        (await invite(admin.token, { email: client.email, roles: ['valuation_user'] })).statusCode,
-      ).toBe(409);
+      expect((await invite(admin.token, { email: client.email, roles: ['valuation_user'] })).statusCode).toBe(
+        409,
+      );
 
       const email = `${newUlid().toLowerCase()}@pending.example.com`;
       expect((await invite(admin.token, { email, roles: ['valuation_user'] })).statusCode).toBe(201);
