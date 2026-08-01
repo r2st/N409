@@ -111,9 +111,7 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     try {
       buffer = await file.toBuffer();
     } catch {
-      throw problems.unprocessable(
-        `File exceeds the ${MAX_CAP_TABLE_UPLOAD_BYTES / (1024 * 1024)} MB limit`,
-      );
+      throw problems.unprocessable(`File exceeds the ${MAX_CAP_TABLE_UPLOAD_BYTES / (1024 * 1024)} MB limit`);
     }
     if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
 

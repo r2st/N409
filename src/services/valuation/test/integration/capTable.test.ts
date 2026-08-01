@@ -225,11 +225,7 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
       // Same totals the equivalent CSV import produces earlier in this file.
       expect(res.json().validation.valid).toBe(true);
       expect(res.json().validation.summary.fully_diluted_shares).toBe(11_000_000);
-      expect(res.json().entries.map((e: any) => e.class_type)).toEqual([
-        'common',
-        'preferred',
-        'option',
-      ]);
+      expect(res.json().entries.map((e: any) => e.class_type)).toEqual(['common', 'preferred', 'option']);
     });
 
     it('accepts a CSV upload through the same endpoint', async () => {

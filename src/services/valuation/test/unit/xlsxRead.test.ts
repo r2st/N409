@@ -251,9 +251,7 @@ describe('xlsxRead', () => {
 
     it('rejects a file that is not a workbook', () => {
       expect(() => readXlsx(Buffer.from('class,shares\nCommon,10'))).toThrow(XlsxReadError);
-      expect(() => readXlsx(buildZip([{ name: 'notes.txt', data: 'hi' }]))).toThrow(
-        /not an excel workbook/i,
-      );
+      expect(() => readXlsx(buildZip([{ name: 'notes.txt', data: 'hi' }]))).toThrow(/not an excel workbook/i);
     });
   });
 });
