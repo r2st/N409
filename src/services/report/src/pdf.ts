@@ -128,6 +128,15 @@ export interface ReportPdfInput {
    * so. Pass null to omit it.
    */
   confidentiality?: string | null;
+  /**
+   * Timestamp recorded as the document's CreationDate. Pass the report's own
+   * generation time so the PDF's metadata agrees with the audit trail; pdfkit
+   * otherwise stamps whenever the bytes happened to be produced, which for a
+   * re-download is months after the valuation was signed.
+   */
+  generated_at?: Date;
+  /** Document keywords. Defaults to the company, the title and 'valuation'. */
+  keywords?: string[];
 }
 
 /** Reports shorter than this render without a contents page. */
@@ -1048,14 +1057,23 @@ function renderWaterfallChart(
 export const SUMMARY_HEADING = 'Executive Summary';
 export const TOC_HEADING = 'Table of Contents';
 
+/**
+ * Named destinations, so a contents entry is a link rather than an instruction
+ * to scroll. Stable and derived from position, not from the heading text —
+ * two sections may legitimately share a title across a report's appendices.
+ */
+export const SUMMARY_DESTINATION = 'n409-summary';
+export const sectionDestination = (index: number): string => `n409-section-${index + 1}`;
+
 function renderSummaryPage(
   doc: PDFKit.PDFDocument,
   summary: ReportPdfSummary,
   usable: number,
   accent: string,
+  destination?: string,
 ): void {
   const left = doc.page.margins.left;
-  doc.font(FONTS.bold).fontSize(16).fillColor('#111111').text(SUMMARY_HEADING, left, doc.y);
+  doc.font(FONTS.bold).fontSize(16).fillColor('#111111').text(SUMMARY_HEADING, left, doc.y, { destination });
   doc.moveDown(0.8);
 
   // Headline: the one number the engagement exists to produce.
@@ -1139,7 +1157,28 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     margins: { top: 72, bottom: 72, left: 72, right: 72 },
     bufferPages: true,
     compress: opts.compress ?? true,
-    info: { Title: input.title, Author: 'N409' },
+    /*
+     * A valuation report leaves this service and spends the rest of its life in
+     * other people's systems — a board pack, an auditor's document management
+     * system, a data room's search index. Those read the document dictionary,
+     * not the cover page, so it carries the same facts the cover does.
+     *
+     * On a white-label report the preparing firm is the author; N409 is the
+     * software that produced the file, which is what Creator and Producer are
+     * for. `displayTitle` makes a viewer show the report's title in its window
+     * bar rather than whatever the download was named.
+     */
+    info: {
+      Title: input.title,
+      Author: input.branding?.partner_name ?? 'N409',
+      Subject: `${input.company_name} — ${input.title}`,
+      Keywords: (input.keywords ?? [input.company_name, input.title, 'valuation']).join(', '),
+      Creator: 'N409',
+      Producer: 'N409 report service',
+      ...(input.generated_at ? { CreationDate: input.generated_at } : {}),
+    },
+    lang: 'en-US',
+    displayTitle: true,
   });
 
   const chunks: Buffer[] = [];
@@ -1217,13 +1256,29 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     doc.moveDown(0.7);
   }
 
-  // Contents. The page is reserved here and filled in at the end, once the
+  /*
+   * PDF bookmarks. The contents page serves a reader holding paper; anyone
+   * reading a thirty-page report on a screen navigates by the sidebar, and
+   * without an outline that sidebar is empty. Items are added as each landmark
+   * is reached, because pdfkit binds an outline item to whichever page is
+   * current when it is created.
+   */
+  const outline = doc.outline;
+
+  // Contents. The pages are reserved here and filled in at the end, once the
   // section start pages are known — pdfkit cannot insert a page after the fact.
   const wantsToc = input.include_toc ?? input.sections.length >= TOC_MIN_SECTIONS;
-  let tocPageIndex: number | null = null;
+  const tocPages: number[] = [];
+  let tocLayout: TocCapacity | null = null;
   if (wantsToc && input.sections.length > 0) {
-    doc.addPage();
-    tocPageIndex = currentPageIndex(doc);
+    const entryCount = input.sections.length + (input.summary ? 1 : 0);
+    tocLayout = tocCapacity(doc);
+    const reserve = tocPageCount(entryCount, tocLayout);
+    for (let i = 0; i < reserve; i += 1) {
+      doc.addPage();
+      tocPages.push(currentPageIndex(doc));
+      if (i === 0) outline.addItem(TOC_HEADING);
+    }
   }
 
   // Executive summary — after the contents, before §1.
@@ -1231,7 +1286,8 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   if (input.summary) {
     doc.addPage();
     summaryPage = currentPageIndex(doc);
-    renderSummaryPage(doc, input.summary, usable, brandColor);
+    outline.addItem(SUMMARY_HEADING);
+    renderSummaryPage(doc, input.summary, usable, brandColor, SUMMARY_DESTINATION);
   }
 
   // Sections
@@ -1241,11 +1297,17 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     else doc.moveDown(1.5);
     ensureRoom(doc, 96);
     sectionStartPages.push(currentPageIndex(doc));
+    // Both the bookmark and the destination bind to the page that is current
+    // now, which is why they are created here and not in a later pass.
+    outline.addItem(`${idx + 1}. ${section.heading}`);
     doc
       .font(FONTS.bold)
       .fontSize(16)
       .fillColor(INK.strong)
-      .text(`${idx + 1}. ${section.heading}`, doc.page.margins.left, doc.y, { width: usable });
+      .text(`${idx + 1}. ${section.heading}`, doc.page.margins.left, doc.y, {
+        width: usable,
+        destination: sectionDestination(idx),
+      });
     // A rule in the brand colour under each section heading, so the reader can
     // find where a section begins while flipping rather than reading.
     doc.y += 6;
@@ -1267,11 +1329,12 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
 
   const range = doc.bufferedPageRange();
 
-  if (tocPageIndex !== null) {
+  if (tocPages.length > 0 && tocLayout) {
     const entries: TocEntry[] = input.sections.map((section, idx) => ({
       heading: section.heading,
       number: `${idx + 1}.`,
       page: sectionStartPages[idx]! - range.start + 1,
+      destination: sectionDestination(idx),
     }));
     // The summary is unnumbered — it precedes §1 rather than being part of it.
     if (summaryPage !== null) {
@@ -1279,19 +1342,17 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
         heading: SUMMARY_HEADING,
         number: null,
         page: summaryPage - range.start + 1,
+        destination: SUMMARY_DESTINATION,
       });
     }
-    doc.switchToPage(tocPageIndex);
-    doc.x = doc.page.margins.left;
-    doc.y = doc.page.margins.top;
-    renderTableOfContents(doc, entries, usable);
+    renderTableOfContents(doc, entries, usable, tocPages, tocLayout);
   }
 
   // Page furniture. Both bands are stamped after layout, when the total page
   // count and the section each page belongs to are finally known.
   const confidentiality = input.confidentiality === null ? null : (input.confidentiality ?? 'Confidential');
   const headings = runningHeadings(range.count, range.start, [
-    ...(tocPageIndex !== null ? [{ page: tocPageIndex, label: TOC_HEADING }] : []),
+    ...(tocPages.length > 0 ? [{ page: tocPages[0]!, label: TOC_HEADING }] : []),
     ...(summaryPage !== null ? [{ page: summaryPage, label: SUMMARY_HEADING }] : []),
     ...input.sections.map((section, idx) => ({
       page: sectionStartPages[idx]!,
@@ -1381,6 +1442,13 @@ export interface PageLandmark {
  * been laid out, and a section that runs over three pages has to keep labelling
  * all three — a header that only appeared on the page where a section began
  * would be worse than none at all.
+ *
+ * Where several sections begin on one page — six one-paragraph sections fit on
+ * a sheet comfortably — the page is labelled with the *first* of them, not the
+ * last. Taking the last produced the reliably wrong answer: a page opening with
+ * "1. Introduction and Scope" carried a running head reading "5. Allocation of
+ * Equity Value", naming a section four headings further down. The first
+ * landmark is what a reader sees at the top of the sheet the header sits on.
  */
 export function runningHeadings(
   pageCount: number,
@@ -1389,14 +1457,18 @@ export function runningHeadings(
 ): Array<string | null> {
   const sorted = [...landmarks].sort((a, b) => a.page - b.page);
   const headings: Array<string | null> = [];
-  let current: string | null = null;
+  let carried: string | null = null;
   let next = 0;
   for (let page = firstPage; page < firstPage + pageCount; page += 1) {
+    let firstOnPage: string | null = null;
     while (next < sorted.length && sorted[next]!.page <= page) {
-      current = sorted[next]!.label;
+      if (firstOnPage === null) firstOnPage = sorted[next]!.label;
+      // The last one still becomes what later pages carry, since it is the
+      // section actually running when the page ends.
+      carried = sorted[next]!.label;
       next += 1;
     }
-    headings.push(current);
+    headings.push(firstOnPage ?? carried);
   }
   return headings;
 }
@@ -1407,29 +1479,104 @@ export interface TocEntry {
   page: number;
   /** Prefix such as "3."; null for an unnumbered entry (the summary). */
   number?: string | null;
+  /** Named destination to link the entry to; omitted entries render unlinked. */
+  destination?: string;
+}
+
+/** Vertical space one contents line occupies. */
+const TOC_ENTRY_HEIGHT = 18;
+
+export interface TocCapacity {
+  /** Entries that fit on the first contents page, which carries the heading. */
+  first: number;
+  /** Entries that fit on each continuation page. */
+  rest: number;
 }
 
 /**
- * Contents page: numbered headings with a dot leader out to the page number.
- * The leader is sized from the measured text so it lands flush against the
- * number instead of wrapping.
+ * How many contents pages to reserve for `entries`.
+ *
+ * The count has to be known *before* the sections are laid out, because pdfkit
+ * cannot insert a page after the fact — the contents pages are reserved up
+ * front and filled in at the end. Getting this wrong is not a cosmetic
+ * problem: the previous renderer reserved exactly one page and let the entries
+ * run off the bottom, where `ensureRoom` appended a fresh page *at the end of
+ * the document*. A forty-section report therefore finished with a stray sheet
+ * of contents entries 34–40 after the last appendix, and because the page
+ * count had already been read off the buffer before that page existed, every
+ * footer in the report read "of 8" across nine pages and the last page got no
+ * footer at all.
  */
-function renderTableOfContents(doc: PDFKit.PDFDocument, entries: readonly TocEntry[], usable: number): void {
-  doc.font(FONTS.bold).fontSize(16).fillColor(INK.strong).text(TOC_HEADING);
-  doc.moveDown(1);
+export function tocPageCount(entries: number, capacity: TocCapacity): number {
+  if (entries <= capacity.first) return 1;
+  return 1 + Math.ceil((entries - capacity.first) / Math.max(1, capacity.rest));
+}
+
+/** Entries per contents page, measured from the real font metrics. */
+function tocCapacity(doc: PDFKit.PDFDocument): TocCapacity {
+  const body = doc.page.height - doc.page.margins.bottom - doc.page.margins.top;
+  doc.font(FONTS.bold).fontSize(16);
+  // The heading line plus the moveDown(1) that follows it, both at 16pt.
+  const headingBlock = doc.currentLineHeight() * 2;
+  return {
+    first: Math.max(1, Math.floor((body - headingBlock) / TOC_ENTRY_HEIGHT)),
+    rest: Math.max(1, Math.floor(body / TOC_ENTRY_HEIGHT)),
+  };
+}
+
+/**
+ * Contents: numbered headings with a dot leader out to the page number, each
+ * one a link to the section it names. The leader is sized from the measured
+ * text so it lands flush against the number instead of wrapping.
+ *
+ * Runs over the pages reserved in `pages`, switching at the capacity computed
+ * for the reservation rather than calling `ensureRoom` — an appended page here
+ * would land after the last section and be counted by nothing.
+ */
+function renderTableOfContents(
+  doc: PDFKit.PDFDocument,
+  entries: readonly TocEntry[],
+  usable: number,
+  pages: readonly number[],
+  capacity: TocCapacity,
+): void {
+  let slot = 0;
+  let remaining = capacity.first;
+
+  const startPage = (index: number, withHeading: boolean) => {
+    doc.switchToPage(pages[index]!);
+    doc.x = doc.page.margins.left;
+    doc.y = doc.page.margins.top;
+    if (withHeading) {
+      doc.font(FONTS.bold).fontSize(16).fillColor(INK.strong).text(TOC_HEADING);
+      doc.moveDown(1);
+    }
+  };
+
+  startPage(0, true);
 
   const left = doc.page.margins.left;
   const numberWidth = 34;
   entries.forEach((entry, idx) => {
-    ensureRoom(doc, 22);
+    // Reservation and consumption share `capacity`, so the last page always has
+    // room; the bound is here so a future divergence truncates the contents
+    // rather than writing off the bottom of the sheet.
+    if (remaining === 0 && slot + 1 < pages.length) {
+      slot += 1;
+      startPage(slot, false);
+      remaining = capacity.rest;
+    }
+    remaining -= 1;
+
     const prefix = entry.number === undefined ? `${idx + 1}.` : entry.number;
     const label = prefix ? `${prefix} ${entry.heading}` : entry.heading;
     const page = String(entry.page);
     const y = doc.y;
+    const goTo = entry.destination;
 
     doc.font(FONTS.regular).fontSize(11).fillColor('#222222');
     const labelWidth = doc.widthOfString(label);
-    doc.text(label, left, y, { width: usable - numberWidth, lineBreak: false });
+    doc.text(label, left, y, { width: usable - numberWidth, lineBreak: false, goTo });
 
     const leaderStart = left + labelWidth + 4;
     const leaderEnd = left + usable - numberWidth - 4;
@@ -1439,10 +1586,13 @@ function renderTableOfContents(doc: PDFKit.PDFDocument, entries: readonly TocEnt
       doc.fillColor('#bbbbbb').text(dots, leaderStart, y, { lineBreak: false });
     }
 
-    doc
-      .fillColor('#222222')
-      .text(page, left + usable - numberWidth, y, { width: numberWidth, align: 'right', lineBreak: false });
-    doc.y = y + 18;
+    doc.fillColor('#222222').text(page, left + usable - numberWidth, y, {
+      width: numberWidth,
+      align: 'right',
+      lineBreak: false,
+      goTo,
+    });
+    doc.y = y + TOC_ENTRY_HEIGHT;
     doc.x = left;
   });
 }

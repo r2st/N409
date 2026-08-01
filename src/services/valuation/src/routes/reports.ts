@@ -193,6 +193,9 @@ async function renderVersionPdf(
   content: ReportContent,
   actor: EventActor,
 ): Promise<Buffer> {
+  // One instant for both the cover's "Rendered" line and the PDF's own
+  // CreationDate, so a reader comparing the two never sees them disagree.
+  const renderedAt = new Date();
   const pdf = await renderReportPdf({
     title: content.title,
     company_name: valuation.company_name,
@@ -202,11 +205,13 @@ async function renderVersionPdf(
       { label: 'Template', value: report.template_version },
       { label: 'Version', value: `v${version}` },
       { label: 'Currency', value: valuation.currency },
-      { label: 'Rendered', value: new Date().toISOString().slice(0, 10) },
+      { label: 'Rendered', value: renderedAt.toISOString().slice(0, 10) },
     ],
     sections: content.sections.map((s) => ({ heading: s.heading, html: s.html })),
     summary: await summaryFor(pool, valuation),
     branding: await brandingFor(pool, valuation),
+    generated_at: renderedAt,
+    keywords: [valuation.company_name, valuation.kind, 'valuation', `v${version}`],
   });
   await storeRenderedPdf(pool, { report, version, pdf, actor });
   return pdf;

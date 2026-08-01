@@ -195,12 +195,27 @@ describe('runningHeadings', () => {
     expect(runningHeadings(3, 0, [{ page: 2, label: '1. Only' }])).toEqual([null, null, '1. Only']);
   });
 
-  it('takes the last landmark when two begin on the same page', () => {
+  it('takes the first landmark when several begin on the same page', () => {
+    // Short sections stack several to a sheet. Labelling that sheet with the
+    // last of them names a heading further down the page than the header it
+    // sits above — a report whose page opened "1. Introduction and Scope" was
+    // headed "5. Allocation of Equity Value".
     const headings = runningHeadings(2, 0, [
       { page: 1, label: '1. First' },
       { page: 1, label: '2. Second' },
+      { page: 1, label: '3. Third' },
     ]);
-    expect(headings[1]).toBe('2. Second');
+    expect(headings[1]).toBe('1. First');
+  });
+
+  it('carries the last landmark of a crowded page onto the next one', () => {
+    // Page 1 opens with §1 and ends inside §3, so page 2 is still §3.
+    const headings = runningHeadings(3, 0, [
+      { page: 1, label: '1. First' },
+      { page: 1, label: '2. Second' },
+      { page: 1, label: '3. Third' },
+    ]);
+    expect(headings).toEqual([null, '1. First', '3. Third']);
   });
 
   it('does not depend on the landmarks arriving in order', () => {
@@ -311,12 +326,13 @@ describe('page furniture', () => {
     expect(occurrences(text, '1. Introduction')).toBeGreaterThan(1);
   });
 
-  it('labels a page by the section in effect at its foot', async () => {
-    // Two sections beginning on one page: the reader finishes that page inside
-    // the second, so that is what the head names.
+  it('labels a page by the section it opens with', async () => {
+    // Both of SAMPLE's sections begin on one page. The head belongs to the
+    // heading directly beneath it — naming the second would point the reader at
+    // something further down the sheet they are holding.
     const text = extractText(await renderReportPdf({ ...SAMPLE, include_toc: false }, { compress: false }));
-    expect(occurrences(text, '2. Methodology')).toBeGreaterThan(1);
-    expect(occurrences(text, '1. Introduction')).toBe(1);
+    expect(occurrences(text, '1. Introduction')).toBeGreaterThan(1);
+    expect(occurrences(text, '2. Methodology')).toBe(1);
   });
 
   it('leaves the cover free of the running head', async () => {

@@ -82,6 +82,10 @@ const RenderBody = z.object({
     .optional(),
   include_toc: z.boolean().optional(),
   confidentiality: z.string().max(120).nullable().optional(),
+  // Written to the PDF's CreationDate, so a report re-downloaded months later
+  // still says when it was produced rather than when the bytes were.
+  generated_at: z.coerce.date().optional(),
+  keywords: z.array(z.string().min(1).max(80)).max(20).optional(),
 });
 
 export function buildApp(): FastifyInstance {
