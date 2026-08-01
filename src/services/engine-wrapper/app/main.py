@@ -9,11 +9,13 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from typing import Literal
 from pydantic import BaseModel, Field
 
 from .engine.approaches import EngineInputError
 from .engine.compute import ENGINE_VERSION, compute
+from .engine.validate import split_issues, validate_payload
 from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
@@ -192,6 +194,7 @@ def root() -> dict:
             "/ready",
             "/docs",
             "/engine/v1/health",
+            "/engine/v1/validate",
             "/engine/v1/compute",
             "/engine/v1/sensitivity",
             "/engine/v1/market-data",
@@ -224,10 +227,60 @@ def engine_health() -> dict:
     return {"status": "ok", "engine_version": ENGINE_VERSION, "contract": "engine/v1"}
 
 
-@app.post("/engine/v1/compute")
-def engine_compute(request: ComputeRequest) -> dict:
+@app.post("/engine/v1/validate")
+def engine_validate(request: ComputeRequest) -> dict:
+    """Pre-flight: every problem with a payload at once, without computing.
+
+    Lets the caller show an analyst the full list of blocking errors and
+    review warnings — each with a dotted field path — before the compute →
+    fix → compute loop starts.
+    """
+    errors, warnings = split_issues(
+        validate_payload(
+            request.params,
+            request.inputs,
+            recompute=request.recompute,
+            prior_approaches=request.prior_approaches,
+            auto_volatility=request.auto_volatility,
+            auto_wacc=request.auto_wacc,
+            auto_comparables=request.auto_comparables,
+        )
+    )
+    return {
+        "engine_version": ENGINE_VERSION,
+        "ok": not errors,
+        "errors": [i.as_dict() for i in errors],
+        "warnings": [i.as_dict() for i in warnings],
+    }
+
+
+@app.post("/engine/v1/compute", response_model=None)
+def engine_compute(request: ComputeRequest) -> JSONResponse | dict:
+    # Pre-flight first: a payload with several problems reports all of them in
+    # one round trip instead of one per attempt. The structured issues ride
+    # alongside the string `detail` the client already understands.
+    errors, warnings = split_issues(
+        validate_payload(
+            request.params,
+            request.inputs,
+            recompute=request.recompute,
+            prior_approaches=request.prior_approaches,
+            auto_volatility=request.auto_volatility,
+            auto_wacc=request.auto_wacc,
+            auto_comparables=request.auto_comparables,
+        )
+    )
+    if errors:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": _issue_summary(errors),
+                "issues": [i.as_dict() for i in errors],
+                "warnings": [i.as_dict() for i in warnings],
+            },
+        )
     try:
-        return compute(
+        result = compute(
             request.params,
             request.inputs,
             recompute=request.recompute,
@@ -237,7 +290,20 @@ def engine_compute(request: ComputeRequest) -> dict:
             auto_comparables=request.auto_comparables,
         )
     except EngineInputError as exc:
+        # Validation missed it (autopilot-derived inputs, a deeper numeric
+        # guard); the fail-fast message is still the truth.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Successful runs carry their review warnings so the caller can persist
+    # them with the calculation and show a reviewer what to look at.
+    result["warnings"] = [i.as_dict() for i in warnings]
+    return result
+
+
+def _issue_summary(errors: list) -> str:
+    """One-line `detail` for clients that only read the string."""
+    head = errors[0].message
+    extra = len(errors) - 1
+    return head if extra <= 0 else f"{head} (and {extra} more input problem{'s' if extra > 1 else ''})"
 
 
 @app.post("/engine/v1/sensitivity")

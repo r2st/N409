@@ -12,7 +12,13 @@ import {
   listCalculations,
   type CalculationRow,
 } from '../repos/calculations.js';
-import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import {
+  InternalServiceError,
+  parseIssues,
+  postJson,
+  toProblem,
+  type UpstreamIssue,
+} from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -42,6 +48,15 @@ export interface EngineComputeResponse {
     fmv_per_share: number;
     [key: string]: unknown;
   };
+  /** Review warnings from the engine's pre-flight validator (non-blocking). */
+  warnings?: UpstreamIssue[];
+}
+
+export interface EngineValidateResponse {
+  engine_version: string;
+  ok: boolean;
+  errors: UpstreamIssue[];
+  warnings: UpstreamIssue[];
 }
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -172,6 +187,9 @@ export async function runCalculation(
         results: response.results,
         equityValue: response.results.equity_value,
         fmvPerShare: response.results.fmv_per_share,
+        // Review warnings travel with the run: a value that computes cleanly
+        // can still rest on an assumption a reviewer has to sign off on.
+        diagnostics: parseIssues(response.warnings),
         createdBy: args.createdBy,
       },
       args.actor,
@@ -186,6 +204,7 @@ export async function runCalculation(
           status: 'failed',
           inputs: payload,
           error: err.message,
+          diagnostics: err.issues,
           createdBy: args.createdBy,
         },
         args.actor,
@@ -262,6 +281,67 @@ export function registerCalculationRoutes(
       throw err;
     }
   });
+
+  /**
+   * Pre-flight: what would go wrong if we computed right now. Assembles the
+   * exact payload `POST /calculations` would send and asks the engine's
+   * validator for *every* problem — blocking errors and review warnings —
+   * each with the dotted field path that caused it. Nothing is persisted, so
+   * an analyst can check their work as often as they like.
+   */
+  app.post(
+    '/api/v1/valuations/:id/calculations/preflight',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
+      const { id } = req.params as { id: string };
+      await loadValuation(id);
+      const paramsRow = await findParams(deps.pool, id);
+      if (!paramsRow) throw problems.notFound();
+
+      const parsed = ComputeBody.safeParse(req.body ?? {});
+      if (!parsed.success) throw problems.unprocessable('Invalid inputs', { errors: parsed.error.issues });
+
+      const inputs = await buildCalculationInputs(deps.pool, id, paramsRow, parsed.data.inputs);
+
+      // A per-approach recalculation only needs the approach being recomputed;
+      // the rest are reused, so the validator checks the prior run instead.
+      let recompute: string[] | undefined;
+      let priorApproaches: Record<string, unknown> | undefined;
+      if (parsed.data.approach) {
+        recompute = [RECALC_APPROACHES[parsed.data.approach].engineKey];
+        const baseline = await latestSucceededCalculation(deps.pool, id);
+        const prior = baseline?.results?.approaches;
+        if (prior && typeof prior === 'object') priorApproaches = prior as Record<string, unknown>;
+      }
+
+      try {
+        const response = await postJson<EngineValidateResponse>(
+          'engine',
+          `${deps.engineUrl}/engine/v1/validate`,
+          {
+            params: engineParams(paramsRow),
+            inputs,
+            ...(recompute ? { recompute, prior_approaches: priorApproaches ?? {} } : {}),
+          },
+          { timeoutMs: 15_000 },
+        );
+        return {
+          ok: response.ok === true,
+          engine_version: response.engine_version,
+          errors: parseIssues(response.errors),
+          warnings: parseIssues(response.warnings),
+        };
+      } catch (err) {
+        if (err instanceof InternalServiceError) {
+          req.log.warn({ err }, 'engine preflight failed');
+          throw toProblem(err);
+        }
+        throw err;
+      }
+    },
+  );
 
   app.get('/api/v1/valuations/:id/calculations', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

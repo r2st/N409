@@ -67,6 +67,14 @@ export interface Problem {
   status?: number;
   detail?: string;
   errors?: Array<{ path?: Array<string | number>; message?: string }>;
+  /** Field-level engine pre-flight findings on a rejected compute. */
+  issues?: Array<{
+    code: string;
+    field: string;
+    message: string;
+    severity: 'error' | 'warning';
+    hint: string | null;
+  }>;
 }
 
 export class ApiError extends Error {

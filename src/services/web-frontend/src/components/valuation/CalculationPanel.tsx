@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
-import { formatMoney, type Calculation } from '../../lib/pipeline';
+import {
+  fieldLabel,
+  formatMoney,
+  type Calculation,
+  type EngineIssue,
+  type PreflightResult,
+} from '../../lib/pipeline';
 import { Button, EmptyState, ErrorNote, Spinner, StatCard } from '../ui';
 
 interface ApproachRow {
@@ -41,11 +47,43 @@ function approachRows(calc: Calculation): ApproachRow[] {
   }));
 }
 
+/**
+ * Blocking errors and review warnings from the engine's pre-flight validator,
+ * each anchored to the input that caused it.
+ */
+export function IssueList({ issues }: { issues: EngineIssue[] }) {
+  if (issues.length === 0) return null;
+  return (
+    <ul className="space-y-2">
+      {issues.map((issue, i) => {
+        const blocking = issue.severity === 'error';
+        return (
+          <li
+            key={`${issue.field}-${issue.code}-${i}`}
+            className={`rounded-md border-l-4 px-3 py-2 text-sm ${
+              blocking
+                ? 'border-red-500 bg-red-50 text-red-900'
+                : 'border-amber-500 bg-amber-50 text-amber-900'
+            }`}
+          >
+            <span className="font-semibold">{issue.field ? fieldLabel(issue.field) : 'Payload'}</span>
+            <span className="mx-1.5 opacity-50">—</span>
+            <span>{issue.message}</span>
+            {issue.hint && <p className="mt-1 text-xs opacity-80">{issue.hint}</p>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** Trigger engine computation and show the FMV breakdown. Ops-only. */
 export function CalculationPanel({ valuationId, currency }: { valuationId: string; currency: string }) {
   const [calculations, setCalculations] = useState<Calculation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'full' | RecalcApproach | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [preflight, setPreflight] = useState<PreflightResult | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -70,12 +108,36 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
         method: 'POST',
         body: { inputs: {}, ...(approach ? { approach } : {}) },
       });
+      setPreflight(null);
       await load();
     } catch (err) {
+      // A rejected payload comes back with the engine's field-level issues;
+      // show them where the pre-flight results go rather than as one string.
+      const issues = err instanceof ApiError ? (err.problem.issues ?? []) : [];
+      if (issues.length > 0) {
+        setPreflight({ ok: false, engine_version: '', errors: issues, warnings: [] });
+      }
       setError(err instanceof ApiError ? err.message : 'Computation failed.');
       await load();
     } finally {
       setBusy(null);
+    }
+  };
+
+  /** Dry run: what the engine would reject or flag, without persisting anything. */
+  const check = async () => {
+    setError(null);
+    setChecking(true);
+    try {
+      const result = await api<PreflightResult>(`/valuations/${valuationId}/calculations/preflight`, {
+        method: 'POST',
+        body: { inputs: {} },
+      });
+      setPreflight(result);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not check the inputs.');
+    } finally {
+      setChecking(false);
     }
   };
 
@@ -92,13 +154,40 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
       {error && <ErrorNote>{error}</ErrorNote>}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-        <Button onClick={() => void run()} disabled={busy !== null}>
+        <Button onClick={() => void run()} disabled={busy !== null || checking}>
           {busy === 'full' ? 'Computing…' : 'Run calculation'}
+        </Button>
+        <Button variant="secondary" onClick={() => void check()} disabled={busy !== null || checking}>
+          {checking ? 'Checking…' : 'Check inputs'}
         </Button>
         <p className="text-sm text-ink-500">
           Uses saved params + the latest AI extraction and comparables.
         </p>
       </div>
+
+      {preflight && (
+        <section className="space-y-3 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+          <div className="flex flex-wrap items-baseline gap-x-3">
+            <h3 className="overline text-ink-400">Input check</h3>
+            <span
+              className={`text-sm font-semibold ${
+                preflight.errors.length > 0
+                  ? 'text-red-700'
+                  : preflight.warnings.length > 0
+                    ? 'text-amber-700'
+                    : 'text-bond-700'
+              }`}
+            >
+              {preflight.errors.length > 0
+                ? `${preflight.errors.length} problem${preflight.errors.length > 1 ? 's' : ''} blocking the calculation`
+                : preflight.warnings.length > 0
+                  ? `Ready to compute · ${preflight.warnings.length} to review`
+                  : 'Ready to compute — no issues found'}
+            </span>
+          </div>
+          <IssueList issues={[...preflight.errors, ...preflight.warnings]} />
+        </section>
+      )}
 
       {latest && (
         <div className="flex flex-wrap items-center gap-2">
@@ -124,6 +213,14 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
             );
           })}
         </div>
+      )}
+
+      {/* Warnings recorded with the run itself — visible without re-checking. */}
+      {!preflight && latest && (latest.diagnostics?.length ?? 0) > 0 && (
+        <section className="space-y-3 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+          <h3 className="overline text-ink-400">Review points from the latest run</h3>
+          <IssueList issues={latest.diagnostics ?? []} />
+        </section>
       )}
 
       {latest && (

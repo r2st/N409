@@ -5,14 +5,48 @@ import { ApiProblem, probeReady as sharedProbeReady, problems } from '@n409/shar
  * problems: an upstream 4xx means our payload was incomplete (→ 422 to the
  * client); anything else is a 502 so an outage never reads as a valuation bug.
  */
+/**
+ * A structured input problem reported by an upstream service (the engine's
+ * pre-flight validator). `field` is a dotted path into the request payload, so
+ * the UI can point at the control the analyst has to fix.
+ */
+export interface UpstreamIssue {
+  code: string;
+  field: string;
+  message: string;
+  severity: 'error' | 'warning';
+  hint: string | null;
+}
+
 export class InternalServiceError extends Error {
   constructor(
     readonly service: string,
     readonly status: number | null,
     readonly detail: string,
+    /** Field-level issues when the upstream sent them; empty otherwise. */
+    readonly issues: UpstreamIssue[] = [],
   ) {
     super(`${service}: ${detail}`);
   }
+}
+
+/** Reads the engine's `issues`/`warnings` array off an error body, defensively. */
+export function parseIssues(value: unknown): UpstreamIssue[] {
+  if (!Array.isArray(value)) return [];
+  const issues: UpstreamIssue[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as Record<string, unknown>;
+    if (typeof item.message !== 'string') continue;
+    issues.push({
+      code: typeof item.code === 'string' ? item.code : 'unknown',
+      field: typeof item.field === 'string' ? item.field : '',
+      message: item.message,
+      severity: item.severity === 'warning' ? 'warning' : 'error',
+      hint: typeof item.hint === 'string' ? item.hint : null,
+    });
+  }
+  return issues;
 }
 
 /** A 4xx means our payload was wrong — retrying can't fix it. */
@@ -93,14 +127,16 @@ async function postJsonOnce<T>(
   const text = await res.text();
   if (!res.ok) {
     let detail = text.slice(0, 500);
+    let issues: UpstreamIssue[] = [];
     try {
-      const parsed = JSON.parse(text) as { detail?: unknown; title?: unknown };
+      const parsed = JSON.parse(text) as { detail?: unknown; title?: unknown; issues?: unknown };
       if (typeof parsed.detail === 'string') detail = parsed.detail;
       else if (typeof parsed.title === 'string') detail = parsed.title;
+      issues = parseIssues(parsed.issues);
     } catch {
       /* keep raw text */
     }
-    throw new InternalServiceError(service, res.status, detail);
+    throw new InternalServiceError(service, res.status, detail, issues);
   }
   try {
     return JSON.parse(text) as T;
@@ -112,7 +148,12 @@ async function postJsonOnce<T>(
 /** Converts an InternalServiceError to the client-facing ApiProblem. */
 export function toProblem(err: InternalServiceError): ApiProblem {
   if (err.status !== null && err.status >= 400 && err.status < 500) {
-    return problems.unprocessable(`${err.service} rejected the request: ${err.detail}`);
+    // Field-level issues ride along as a problem extension so the UI can
+    // anchor each message to the input that caused it.
+    return problems.unprocessable(
+      `${err.service} rejected the request: ${err.detail}`,
+      err.issues.length > 0 ? { issues: err.issues } : undefined,
+    );
   }
   return new ApiProblem({
     status: 502,

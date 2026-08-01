@@ -14,8 +14,19 @@ export interface CalculationRow {
   equity_value: string | null;
   fmv_per_share: string | null;
   error: string | null;
+  /** Engine pre-flight findings: blocking errors on a failed run, review
+   *  warnings on a successful one. Always an array. */
+  diagnostics: CalculationDiagnostic[];
   created_by: string | null;
   created_at: Date;
+}
+
+export interface CalculationDiagnostic {
+  code: string;
+  field: string;
+  message: string;
+  severity: 'error' | 'warning';
+  hint: string | null;
 }
 
 export async function createCalculation(
@@ -29,6 +40,7 @@ export async function createCalculation(
     equityValue?: number | null;
     fmvPerShare?: number | null;
     error?: string | null;
+    diagnostics?: CalculationDiagnostic[];
     createdBy: string;
   },
   actor: EventActor,
@@ -36,8 +48,8 @@ export async function createCalculation(
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<CalculationRow>(
       `INSERT INTO calculations
-         (id, valuation_id, engine_version, status, inputs, results, equity_value, fmv_per_share, error, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (id, valuation_id, engine_version, status, inputs, results, equity_value, fmv_per_share, error, diagnostics, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         newUlid(),
@@ -49,6 +61,7 @@ export async function createCalculation(
         args.equityValue ?? null,
         args.fmvPerShare ?? null,
         args.error ?? null,
+        JSON.stringify(args.diagnostics ?? []),
         args.createdBy,
       ],
     );

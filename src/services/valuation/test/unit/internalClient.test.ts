@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   InternalServiceError,
   internalAuthHeaders,
+  parseIssues,
   postJson,
   toProblem,
 } from '../../src/clients/internal.js';
@@ -118,5 +119,75 @@ describe('invalid JSON response handling', () => {
     expect(err).toBeInstanceOf(InternalServiceError);
     expect((err as InternalServiceError).detail).toBe('invalid JSON in response body');
     expect((err as InternalServiceError).status).toBe(200);
+  });
+});
+
+describe('structured upstream issues', () => {
+  it('carries the engine issue array onto the error and the problem', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse(422, {
+        detail: 'volatility is required (and 1 more input problem)',
+        issues: [
+          {
+            code: 'required',
+            field: 'inputs.volatility',
+            message: 'volatility is required',
+            severity: 'error',
+            hint: 'Run the volatility estimator.',
+          },
+          {
+            code: 'not_positive',
+            field: 'inputs.market.metric',
+            message: 'market.metric must be positive',
+            severity: 'error',
+            hint: null,
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = (await postJson('engine', 'http://x/y', {}, { retries: 0 }).catch(
+      (e: unknown) => e,
+    )) as InternalServiceError;
+    expect(err.issues).toHaveLength(2);
+    expect(err.issues[0]!.field).toBe('inputs.volatility');
+
+    const problem = toProblem(err);
+    expect(problem.status).toBe(422);
+    expect((problem.extensions as { issues: unknown[] }).issues).toHaveLength(2);
+  });
+
+  it('leaves issues empty when the upstream sends none', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(422, { detail: 'nope' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const err = (await postJson('engine', 'http://x/y', {}, { retries: 0 }).catch(
+      (e: unknown) => e,
+    )) as InternalServiceError;
+    expect(err.issues).toEqual([]);
+    expect(toProblem(err).extensions).toBeUndefined();
+  });
+});
+
+describe('parseIssues', () => {
+  it('drops entries that are not issue-shaped and defaults the rest', () => {
+    expect(
+      parseIssues([
+        null,
+        'nope',
+        { field: 'x' }, // no message
+        { message: 'bare' },
+        { message: 'warn me', severity: 'warning', code: 'c', field: 'f', hint: 'h' },
+      ]),
+    ).toEqual([
+      { code: 'unknown', field: '', message: 'bare', severity: 'error', hint: null },
+      { code: 'c', field: 'f', message: 'warn me', severity: 'warning', hint: 'h' },
+    ]);
+  });
+
+  it('returns an empty array for anything that is not a list', () => {
+    expect(parseIssues(undefined)).toEqual([]);
+    expect(parseIssues({ issues: [] })).toEqual([]);
   });
 });

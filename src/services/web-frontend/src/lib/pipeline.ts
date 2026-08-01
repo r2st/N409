@@ -148,6 +148,26 @@ export interface AiJob {
   completed_at: string | null;
 }
 
+/**
+ * One engine pre-flight finding. `field` is a dotted path into the compute
+ * payload (`params.dlom`, `inputs.income.discount_rate`), so a message can be
+ * traced back to the control that produced it.
+ */
+export interface EngineIssue {
+  code: string;
+  field: string;
+  message: string;
+  severity: 'error' | 'warning';
+  hint: string | null;
+}
+
+export interface PreflightResult {
+  ok: boolean;
+  engine_version: string;
+  errors: EngineIssue[];
+  warnings: EngineIssue[];
+}
+
 export interface Calculation {
   id: string;
   valuation_id: string;
@@ -158,7 +178,18 @@ export interface Calculation {
   equity_value: string | null;
   fmv_per_share: string | null;
   error: string | null;
+  /** Blocking errors on a failed run, review warnings on a successful one. */
+  diagnostics?: EngineIssue[];
   created_at: string;
+}
+
+/** Human label for a dotted engine field path: `inputs.income.discount_rate` → "Income · discount rate". */
+export function fieldLabel(field: string): string {
+  const parts = field.replace(/^(inputs|params)\./, '').split('.');
+  return parts
+    .map((part) => part.replace(/_/g, ' ').replace(/\[(\d+)\]/g, ' $1'))
+    .map((part, i) => (i === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join(' · ');
 }
 
 export interface ValuationParams {
