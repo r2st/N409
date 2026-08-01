@@ -20,6 +20,7 @@ import {
   type WorkbookCellInput,
 } from '../domain/workbook.js';
 import { toWaterfallInputs, type CapTableEntry, type CapTableValidation } from '../domain/capTable.js';
+import { OVERWRITE_FIELDS_BY_KEY } from '../domain/overwrites.js';
 import { toIsoDate, vestingStatus } from '../domain/vesting.js';
 import { cellRef, type XlsxColumn, type XlsxSheet, type XlsxValue } from './xlsx.js';
 
@@ -49,6 +50,38 @@ export interface WorkbookGrant {
   status: string;
 }
 
+/** The manual-override register, as the repo stores it. */
+export interface WorkbookOverwrite {
+  category: string;
+  field_key: string;
+  class: string;
+  value: unknown;
+  /** The pre-override engine/AI value, frozen on the first write. */
+  original_value: unknown;
+  reason: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  updated_at: Date | string | null;
+}
+
+/** The calculation run an auditor is tying to. */
+export interface WorkbookCalculation {
+  engine_version: string;
+  status: string;
+  inputs: Record<string, unknown> | null;
+  results: Record<string, unknown> | null;
+  equity_value: string | number | null;
+  fmv_per_share: string | number | null;
+  diagnostics: readonly {
+    code: string;
+    field: string;
+    message: string;
+    severity: string;
+    hint: string | null;
+  }[];
+  created_at: Date | string | null;
+}
+
 export interface ValuationWorkbookInput {
   valuation: WorkbookValuation;
   cells: readonly WorkbookCellInput[];
@@ -57,6 +90,10 @@ export interface ValuationWorkbookInput {
   /** Concluded FMV per share, when the valuation has one. Drives the waterfall. */
   fmvPerShare: number | null;
   generatedAt: Date;
+  /** Manual overrides. Absent (rather than empty) when not loaded. */
+  overwrites?: readonly WorkbookOverwrite[];
+  /** The latest succeeded run. Null when the valuation has never calculated. */
+  calculation?: WorkbookCalculation | null;
 }
 
 function asDate(value: Date | string | null): Date | null {
@@ -355,6 +392,231 @@ function grantsSheet(grants: readonly WorkbookGrant[], asOf: Date, currency: str
   return { name: 'Grants', titleLines, columns, rows };
 }
 
+/** One leaf of a flattened JSON document, addressed by its dotted path. */
+export interface FlatEntry {
+  path: string;
+  value: XlsxValue;
+}
+
+/**
+ * Nesting past this is treated as an opaque leaf and stringified. The engine's
+ * payloads are shallow; the cap exists so a malformed or self-referential blob
+ * cannot turn one export into an unbounded sheet.
+ */
+const MAX_FLATTEN_DEPTH = 8;
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) && !(v instanceof Date);
+
+/**
+ * Flattens an engine payload into one row per leaf, addressed by dotted path.
+ *
+ * Sorted by path rather than left in key order: auditors diff this year's
+ * workbook against last year's, and a stable order is what makes that diff mean
+ * "the assumption changed" instead of "the engine reordered its JSON".
+ *
+ * Arrays of scalars collapse to a single joined cell — a list of comparable
+ * tickers reads better on one row than on nine. Arrays of objects keep indexed
+ * paths, because their elements are records that deserve their own rows.
+ */
+export function flattenForAudit(source: Record<string, unknown> | null | undefined): FlatEntry[] {
+  const out: FlatEntry[] = [];
+
+  const walk = (value: unknown, path: string, depth: number): void => {
+    if (value === null || value === undefined) {
+      out.push({ path, value: null });
+      return;
+    }
+    if (depth >= MAX_FLATTEN_DEPTH) {
+      out.push({ path, value: JSON.stringify(value) ?? String(value) });
+      return;
+    }
+    if (value instanceof Date) {
+      out.push({ path, value });
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        out.push({ path, value: null });
+        return;
+      }
+      if (value.every((v) => !isPlainObject(v) && !Array.isArray(v))) {
+        out.push({
+          path,
+          value: value.map((v) => (v === null || v === undefined ? '' : String(v))).join('; '),
+        });
+        return;
+      }
+      value.forEach((v, i) => walk(v, `${path}[${i}]`, depth + 1));
+      return;
+    }
+    if (isPlainObject(value)) {
+      const keys = Object.keys(value);
+      if (keys.length === 0) {
+        out.push({ path, value: null });
+        return;
+      }
+      for (const key of keys) walk(value[key], path ? `${path}.${key}` : key, depth + 1);
+      return;
+    }
+    if (typeof value === 'number') {
+      out.push({ path, value: Number.isFinite(value) ? value : String(value) });
+      return;
+    }
+    if (typeof value === 'string' || typeof value === 'boolean') {
+      out.push({ path, value });
+      return;
+    }
+    out.push({ path, value: String(value) });
+  };
+
+  walk(source ?? {}, '', 0);
+  // The empty-object case walks to a single pathless row; drop it rather than
+  // emitting a blank line that reads as a missing assumption.
+  return out.filter((e) => e.path !== '').sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Renders an override value for a cell — these are user-supplied and untyped. */
+function overwriteCell(value: unknown): XlsxValue {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  return JSON.stringify(value) ?? String(value);
+}
+
+/**
+ * Assumptions: every input the engine consumed on the run being tied to, with
+ * the manually-overridden ones called out.
+ *
+ * The "Source" column is the point of the sheet. An auditor's first question
+ * about any assumption is whether a human set it, and answering that from the
+ * override register alone means cross-referencing two tabs by hand.
+ */
+function assumptionsSheet(
+  calculation: WorkbookCalculation,
+  overwrites: readonly WorkbookOverwrite[],
+): XlsxSheet {
+  const entries = flattenForAudit(calculation.inputs);
+
+  // An override on `discount_rate` should mark the input at `discount_rate` and
+  // also one nested at `valuation_params.discount_rate`, so match on the last
+  // path segment as well as the whole path.
+  const overriddenKeys = new Set(overwrites.map((o) => o.field_key));
+  const isOverridden = (path: string): boolean =>
+    overriddenKeys.has(path) || overriddenKeys.has(path.split('.').pop() ?? path);
+
+  const titleLines = [
+    'Assumptions consumed by the calculation being tied to.',
+    `Engine ${calculation.engine_version} · run ${asDate(calculation.created_at)?.toISOString() ?? 'unknown'}`,
+  ];
+
+  return {
+    // Not "Assumptions" — the model already has a tab by that name, and two
+    // near-identical tabs is worse than a longer one. This is the full register
+    // of what the engine consumed; that one is the methodology inputs.
+    name: 'Assumption register',
+    titleLines,
+    columns: [
+      { header: 'Assumption', width: 46, format: 'text' },
+      { header: 'Value', width: 30, format: 'number' },
+      { header: 'Source', width: 18, format: 'text' },
+    ],
+    rows: entries.map((e) => [e.path, e.value, isOverridden(e.path) ? 'manual override' : 'engine']),
+  };
+}
+
+/**
+ * The override register: what a human changed, from what, and why.
+ *
+ * `original_value` is the frozen pre-override value, so the before/after pair
+ * on each row is the whole evidentiary point — an override without its prior
+ * value is an assertion rather than a record.
+ */
+function overridesSheet(overwrites: readonly WorkbookOverwrite[]): XlsxSheet {
+  const rows: XlsxValue[][] = overwrites
+    .map((o) => {
+      const def = OVERWRITE_FIELDS_BY_KEY.get(o.field_key);
+      return {
+        category: o.category,
+        label: def?.label ?? o.field_key,
+        key: o.field_key,
+        row: [
+          o.category,
+          def?.label ?? o.field_key,
+          o.field_key,
+          overwriteCell(o.original_value),
+          overwriteCell(o.value),
+          o.reason,
+          o.updated_by ?? o.created_by,
+          asDate(o.updated_at),
+        ] as XlsxValue[],
+      };
+    })
+    .sort((a, b) => a.category.localeCompare(b.category) || a.label.localeCompare(b.label))
+    .map((o) => o.row);
+
+  return {
+    name: 'Overrides',
+    titleLines: [
+      'Every value an analyst set by hand, with the engine value it replaced.',
+      'An empty sheet means the model ran entirely on engine-derived inputs.',
+    ],
+    columns: [
+      { header: 'Category', width: 20, format: 'text' },
+      { header: 'Field', width: 32, format: 'text' },
+      { header: 'Field key', width: 26, format: 'text' },
+      { header: 'Engine value', width: 20, format: 'number' },
+      { header: 'Applied value', width: 20, format: 'number' },
+      { header: 'Reason', width: 44, format: 'text' },
+      { header: 'Set by', width: 28, format: 'text' },
+      { header: 'Set at', width: 20, format: 'date' },
+    ],
+    rows,
+  };
+}
+
+/**
+ * The calculation record: provenance, what it concluded, the full result
+ * payload, and any diagnostics the analyst proceeded past.
+ *
+ * The diagnostics matter as much as the numbers. A successful run can still
+ * carry review warnings, and a workbook that shows only the conclusion hides
+ * exactly the thing an auditor is looking for.
+ */
+function calculationSheet(calculation: WorkbookCalculation, currency: string): XlsxSheet {
+  const rows: XlsxValue[][] = [
+    ['Engine version', calculation.engine_version],
+    ['Status', calculation.status],
+    ['Run at', asDate(calculation.created_at)],
+    [`Concluded equity value (${currency})`, num(calculation.equity_value)],
+    [`Concluded FMV per share (${currency})`, num(calculation.fmv_per_share)],
+  ];
+
+  const results = flattenForAudit(calculation.results);
+  if (results.length > 0) {
+    rows.push([], ['Results', '']);
+    for (const r of results) rows.push([r.path, r.value]);
+  }
+
+  if (calculation.diagnostics.length > 0) {
+    rows.push([], ['Diagnostics', '']);
+    for (const d of calculation.diagnostics) {
+      rows.push([`${d.severity}: ${d.field || d.code}`, [d.message, d.hint].filter(Boolean).join(' — ')]);
+    }
+  }
+
+  return {
+    name: 'Calculation',
+    titleLines: ['The calculation run this workbook was generated from.'],
+    columns: [
+      { header: 'Field', width: 46, format: 'text' },
+      { header: 'Value', width: 40, format: 'number' },
+    ],
+    rows,
+  };
+}
+
 /** Cover sheet: what this file is, and what it was generated from. */
 function summarySheet(input: ValuationWorkbookInput): XlsxSheet {
   const { valuation: v } = input;
@@ -405,6 +667,21 @@ function summarySheet(input: ValuationWorkbookInput): XlsxSheet {
  */
 export function valuationWorkbookSheets(input: ValuationWorkbookInput): XlsxSheet[] {
   const sheets: XlsxSheet[] = [summarySheet(input)];
+
+  const overwrites = input.overwrites ?? [];
+
+  // Assumptions and the calculation record sit directly behind the cover, ahead
+  // of the model: an auditor reads what was assumed before what it produced.
+  if (input.calculation) {
+    sheets.push(
+      assumptionsSheet(input.calculation, overwrites),
+      calculationSheet(input.calculation, input.valuation.currency),
+    );
+  }
+
+  // Unlike the other optional sheets this one is emitted even when empty — for
+  // an override register, "nothing was overridden" is a finding, not a blank.
+  if (input.overwrites) sheets.push(overridesSheet(overwrites));
 
   for (const computed of computeWorkbook(input.cells)) {
     sheets.push(modelSheet(computed, input.valuation.currency));

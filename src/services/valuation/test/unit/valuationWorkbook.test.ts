@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  flattenForAudit,
   valuationWorkbookSheets,
   type ValuationWorkbookInput,
+  type WorkbookCalculation,
   type WorkbookGrant,
+  type WorkbookOverwrite,
 } from '../../src/export/valuationWorkbook.js';
 import { validateCapTable, type CapTableEntry } from '../../src/domain/capTable.js';
 import { computeWorkbook, type WorkbookCellInput } from '../../src/domain/workbook.js';
@@ -426,5 +429,237 @@ describe('valuationWorkbookSheets', () => {
     );
     expect(sheet(sheets, 'Cap table').columns.map((c) => c.header)).toContain('Invested (GBP)');
     expect(String(sheet(sheets, 'Income statement').rows[0]?.[0])).toBe('Revenue (GBP)');
+  });
+});
+
+/**
+ * The audit sheets (assumptions, overrides, calculation record). These are the
+ * sheets an auditor works from, so what is asserted here is provenance: that an
+ * assumption a human set is *labelled* as one, that an override carries the
+ * value it replaced, and that a warning on a successful run still reaches the
+ * file. A workbook that shows only conclusions is the failure mode.
+ */
+
+const CALCULATION: WorkbookCalculation = {
+  engine_version: '2.4.1',
+  status: 'succeeded',
+  inputs: {
+    discount_rate: 0.22,
+    valuation_params: { dlom: 0.185, time_to_liquidity_years: 3.5 },
+    market_comparables: { tickers: ['ABC', 'DEF', 'GHI'] },
+    company_info: { incorporation_state: 'DE' },
+  },
+  results: {
+    equity_value: 41_000_000,
+    allocation: { method: 'opm', volatility: 0.62 },
+  },
+  equity_value: '41000000',
+  fmv_per_share: '1.42',
+  diagnostics: [
+    {
+      code: 'HIGH_DLOM',
+      field: 'valuation_params.dlom',
+      message: 'DLOM above the usual range for this stage.',
+      severity: 'warning',
+      hint: 'Document the marketability analysis.',
+    },
+  ],
+  created_at: new Date('2026-03-01T12:00:00Z'),
+};
+
+const OVERWRITES: WorkbookOverwrite[] = [
+  {
+    category: 'valuation_params',
+    field_key: 'dlom',
+    class: 'numeric',
+    value: 0.185,
+    original_value: 0.14,
+    reason: 'Longer expected hold following the delayed Series C.',
+    created_by: 'analyst@n409.test',
+    updated_by: 'reviewer@n409.test',
+    updated_at: new Date('2026-02-20T10:30:00Z'),
+  },
+  {
+    category: 'company_info',
+    field_key: 'incorporation_state',
+    class: 'character',
+    value: 'DE',
+    original_value: 'CA',
+    reason: null,
+    created_by: 'analyst@n409.test',
+    updated_by: null,
+    updated_at: new Date('2026-02-18T09:00:00Z'),
+  },
+];
+
+describe('flattenForAudit', () => {
+  it('addresses nested leaves by dotted path', () => {
+    const flat = flattenForAudit({ a: { b: { c: 1 } }, d: 2 });
+    expect(flat).toEqual([
+      { path: 'a.b.c', value: 1 },
+      { path: 'd', value: 2 },
+    ]);
+  });
+
+  it('sorts by path so two runs of the same model diff cleanly', () => {
+    const one = flattenForAudit({ zeta: 1, alpha: 2, mid: 3 });
+    const two = flattenForAudit({ mid: 3, zeta: 1, alpha: 2 });
+    expect(one.map((e) => e.path)).toEqual(['alpha', 'mid', 'zeta']);
+    expect(one).toEqual(two);
+  });
+
+  it('joins a list of scalars onto one row but gives objects their own', () => {
+    const flat = flattenForAudit({
+      tickers: ['ABC', 'DEF'],
+      comps: [{ name: 'Acme' }, { name: 'Globex' }],
+    });
+    expect(flat).toEqual([
+      { path: 'comps[0].name', value: 'Acme' },
+      { path: 'comps[1].name', value: 'Globex' },
+      { path: 'tickers', value: 'ABC; DEF' },
+    ]);
+  });
+
+  it('keeps numbers and booleans typed rather than stringifying them', () => {
+    const flat = flattenForAudit({ rate: 0.22, applied: true, note: 'x' });
+    expect(flat.find((e) => e.path === 'rate')?.value).toBe(0.22);
+    expect(flat.find((e) => e.path === 'applied')?.value).toBe(true);
+    expect(flat.find((e) => e.path === 'note')?.value).toBe('x');
+  });
+
+  it('renders an absent, null or empty value as a blank cell, not the word null', () => {
+    expect(flattenForAudit(null)).toEqual([]);
+    expect(flattenForAudit({ a: null, b: [], c: {} })).toEqual([
+      { path: 'a', value: null },
+      { path: 'b', value: null },
+      { path: 'c', value: null },
+    ]);
+  });
+
+  it('stops descending at the depth cap instead of unbounding the sheet', () => {
+    // Ten levels deep — past the cap, so the tail arrives as one opaque leaf.
+    let nested: Record<string, unknown> = { leaf: 1 };
+    for (let i = 0; i < 10; i += 1) nested = { [`l${i}`]: nested };
+    const flat = flattenForAudit(nested);
+    expect(flat).toHaveLength(1);
+    expect(typeof flat[0]?.value).toBe('string');
+  });
+
+  it('does not choke on a NaN the engine may emit', () => {
+    expect(flattenForAudit({ x: Number.NaN })).toEqual([{ path: 'x', value: 'NaN' }]);
+  });
+});
+
+describe('audit sheets', () => {
+  const audited = () => valuationWorkbookSheets(input({ calculation: CALCULATION, overwrites: OVERWRITES }));
+
+  it('omits the assumption and calculation sheets when nothing has been calculated', () => {
+    const names = valuationWorkbookSheets(input()).map((s) => s.name);
+    expect(names).not.toContain('Assumption register');
+    expect(names).not.toContain('Calculation');
+    expect(names).not.toContain('Overrides');
+  });
+
+  it('puts assumptions and the calculation record directly behind the cover', () => {
+    const names = audited().map((s) => s.name);
+    expect(names.slice(0, 4)).toEqual(['Summary', 'Assumption register', 'Calculation', 'Overrides']);
+  });
+
+  it('marks each assumption as engine-derived or manually set', () => {
+    const rows = sheet(audited(), 'Assumption register').rows;
+    const sourceOf = (path: string) => rows.find((r) => r[0] === path)?.[2];
+
+    // Overridden by key, matched on the last path segment.
+    expect(sourceOf('valuation_params.dlom')).toBe('manual override');
+    expect(sourceOf('company_info.incorporation_state')).toBe('manual override');
+    // Untouched by any override.
+    expect(sourceOf('discount_rate')).toBe('engine');
+    expect(sourceOf('valuation_params.time_to_liquidity_years')).toBe('engine');
+  });
+
+  it('carries the engine value each override replaced, and why', () => {
+    const s = sheet(audited(), 'Overrides');
+    const dlom = s.rows.find((r) => r[2] === 'dlom');
+    expect(dlom?.[3]).toBe(0.14); // engine value
+    expect(dlom?.[4]).toBe(0.185); // applied value
+    expect(dlom?.[5]).toBe('Longer expected hold following the delayed Series C.');
+    // The last person to touch it, not the first.
+    expect(dlom?.[6]).toBe('reviewer@n409.test');
+  });
+
+  it('falls back to the creator when an override was never edited', () => {
+    const s = sheet(audited(), 'Overrides');
+    expect(s.rows.find((r) => r[2] === 'incorporation_state')?.[6]).toBe('analyst@n409.test');
+  });
+
+  it('names overridden fields by their registry label, not their key', () => {
+    const s = sheet(audited(), 'Overrides');
+    expect(s.rows.find((r) => r[2] === 'dlom')?.[1]).toBe('DLOM');
+    expect(s.rows.find((r) => r[2] === 'incorporation_state')?.[1]).toBe('State of incorporation');
+  });
+
+  it('falls back to the raw key for a field the registry does not know', () => {
+    // A retired or hand-inserted key must still appear rather than blanking the
+    // row — an override the register cannot name is exactly the one to surface.
+    const sheets = valuationWorkbookSheets(
+      input({
+        calculation: CALCULATION,
+        overwrites: [{ ...OVERWRITES[0]!, field_key: 'legacy_mystery_field' }],
+      }),
+    );
+    expect(sheet(sheets, 'Overrides').rows[0]?.[1]).toBe('legacy_mystery_field');
+  });
+
+  it('emits the override register even when nothing was overridden', () => {
+    // "Nothing was overridden" is a finding an auditor needs stated, so unlike
+    // the waterfall this sheet is not dropped when empty.
+    const sheets = valuationWorkbookSheets(input({ calculation: CALCULATION, overwrites: [] }));
+    expect(sheet(sheets, 'Overrides').rows).toEqual([]);
+    expect(sheet(sheets, 'Assumption register').rows.every((r) => r[2] === 'engine')).toBe(true);
+  });
+
+  it('records provenance and the concluded numbers on the calculation sheet', () => {
+    const rows = sheet(audited(), 'Calculation').rows;
+    const valueOf = (label: string) => rows.find((r) => r[0] === label)?.[1];
+    expect(valueOf('Engine version')).toBe('2.4.1');
+    expect(valueOf('Status')).toBe('succeeded');
+    expect(valueOf('Run at')).toEqual(new Date('2026-03-01T12:00:00Z'));
+    // Numeric, not the string the DB hands back — an auditor foots this column.
+    expect(valueOf('Concluded equity value (USD)')).toBe(41_000_000);
+    expect(valueOf('Concluded FMV per share (USD)')).toBe(1.42);
+  });
+
+  it('carries warnings from a successful run through to the file', () => {
+    const rows = sheet(audited(), 'Calculation').rows;
+    const warning = rows.find((r) => String(r[0]).startsWith('warning:'));
+    expect(warning?.[0]).toBe('warning: valuation_params.dlom');
+    expect(String(warning?.[1])).toContain('DLOM above the usual range');
+    expect(String(warning?.[1])).toContain('Document the marketability analysis.');
+  });
+
+  it('flattens the result payload onto the calculation sheet', () => {
+    const rows = sheet(audited(), 'Calculation').rows;
+    expect(rows.find((r) => r[0] === 'allocation.method')?.[1]).toBe('opm');
+    expect(rows.find((r) => r[0] === 'allocation.volatility')?.[1]).toBe(0.62);
+  });
+
+  it('uses the valuation currency on the concluded-value labels', () => {
+    const sheets = valuationWorkbookSheets(
+      input({
+        calculation: CALCULATION,
+        overwrites: OVERWRITES,
+        valuation: {
+          number: 'V-2',
+          company_name: 'Brit Co',
+          kind: 'emi',
+          state: 'published',
+          currency: 'GBP',
+          created_at: null,
+          published_at: null,
+        },
+      }),
+    );
+    const labels = sheet(sheets, 'Calculation').rows.map((r) => String(r[0]));
+    expect(labels).toContain('Concluded FMV per share (GBP)');
   });
 });

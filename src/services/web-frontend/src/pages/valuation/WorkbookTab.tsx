@@ -43,9 +43,10 @@ export function WorkbookTab() {
   if (!sheets || !sheet) return <Spinner />;
 
   /**
-   * The auditor workbook: model sheets plus cap table, waterfall and grants, with
-   * live formulas. Unsaved cells are deliberately not included — the export must
-   * match what the file of record says.
+   * The auditor workbook: the assumption register and calculation record, the
+   * manual-override log, then model sheets, cap table, waterfall and grants,
+   * with live formulas. Unsaved cells are deliberately not included — the export
+   * must match what the file of record says.
    */
   const downloadXlsx = async () => {
     setExporting(true);
@@ -135,8 +136,13 @@ export function WorkbookTab() {
               {drafts.size} unsaved {drafts.size === 1 ? 'cell' : 'cells'}
             </span>
           )}
-          <Button variant="secondary" onClick={() => void downloadXlsx()} disabled={exporting}>
-            {exporting ? 'Preparing…' : 'Export Excel'}
+          <Button
+            variant="secondary"
+            onClick={() => void downloadXlsx()}
+            disabled={exporting}
+            title="Assumptions, overrides, the calculation record, and every model sheet — for an auditor to tie to."
+          >
+            {exporting ? 'Preparing…' : 'Export auditor workbook'}
           </Button>
           <Button onClick={() => void save()} disabled={!dirty || busy}>
             {busy ? 'Saving…' : 'Save workbook'}

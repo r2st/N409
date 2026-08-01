@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { createGrant } from '../../src/repos/grants.js';
+import { createCalculation } from '../../src/repos/calculations.js';
 
 const dbUp = await isDbAvailable();
 
@@ -32,6 +33,24 @@ describe.skipIf(!dbUp)('XLSX export', () => {
       encoding: 'utf8',
       maxBuffer: 32 * 1024 * 1024,
     });
+  }
+
+  /**
+   * The worksheet part for a named sheet. Sheet parts are numbered by position,
+   * so addressing them by index hardcodes the sheet order into every assertion —
+   * adding a tab then breaks tests that have nothing to do with it.
+   */
+  function sheetNamed(payload: Buffer, name: string): string {
+    const workbook = unpack(payload, 'xl/workbook.xml');
+    const names = [...workbook.matchAll(/<sheet name="([^"]+)"/g)].map((m) => m[1]);
+    const index = names.indexOf(name);
+    if (index < 0) throw new Error(`no sheet named ${name}; got ${names.join(', ')}`);
+    return unpack(payload, `xl/worksheets/sheet${index + 1}.xml`);
+  }
+
+  /** Cell text, which this writer emits inline rather than via sharedStrings. */
+  function textsIn(sheetXml: string): string[] {
+    return [...sheetXml.matchAll(/<t xml:space="preserve">([^<]*)<\/t>/g)].map((m) => m[1] ?? '');
   }
 
   function entries(payload: Buffer): string[] {
@@ -226,8 +245,11 @@ describe.skipIf(!dbUp)('XLSX export', () => {
       for (const name of ['Summary', 'Income statement', 'Cap table', 'Waterfall', 'Grants']) {
         expect(workbook).toContain(`name="${name}"`);
       }
-      // Seven sheets means seven worksheet parts, not one reused seven times.
-      expect(entries(res.rawPayload)).toContain('xl/worksheets/sheet7.xml');
+      // The override register ships even with nothing in it — see the audit
+      // sheets block below.
+      expect(workbook).toContain('name="Overrides"');
+      // Eight sheets means eight worksheet parts, not one reused eight times.
+      expect(entries(res.rawPayload)).toContain('xl/worksheets/sheet8.xml');
     });
 
     it('delivers derived rows as live formulas, not frozen numbers', async () => {
@@ -236,8 +258,7 @@ describe.skipIf(!dbUp)('XLSX export', () => {
         url: `/api/v1/valuations/${valuationId}/workbook.xlsx`,
         headers: authHeader(ops.token),
       });
-      // sheet2 is the income statement (sheet1 is the summary).
-      const sheet = unpack(res.rawPayload, 'xl/worksheets/sheet2.xml');
+      const sheet = sheetNamed(res.rawPayload, 'Income statement');
       // Gross profit for FY (current): revenue on row 4, COGS on row 5.
       expect(sheet).toContain('<f>IF(COUNT(D4,D5)&lt;2,&quot;&quot;,D4-D5)</f>');
       // …with the computed value cached alongside it.
@@ -295,6 +316,131 @@ describe.skipIf(!dbUp)('XLSX export', () => {
       // Nothing to show means no sheet, rather than an empty tab that reads as a bug.
       expect(workbook).not.toContain('name="Cap table"');
       expect(workbook).not.toContain('name="Grants"');
+    });
+  });
+
+  /**
+   * The auditor sheets: what was assumed, what a human changed it from, and what
+   * the engine concluded. These are what a reviewer ties to, so the assertions
+   * are about provenance surviving the round-trip into the file — the values
+   * being present is not enough if the file cannot say where they came from.
+   */
+  describe('audit sheets', () => {
+    let valuationId: string;
+
+    beforeAll(async () => {
+      valuationId = await createValuation('Audited Analytics');
+
+      const put = await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${valuationId}/overwrites/dlom`,
+        headers: authHeader(ops.token),
+        payload: {
+          value: 0.185,
+          reason: 'Longer expected hold following the delayed Series C.',
+          original_value: 0.14,
+        },
+      });
+      expect(put.statusCode).toBe(200);
+
+      // Running the engine for real is a different subsystem; this test is about
+      // the export, so the run goes in through the repo.
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId,
+          engineVersion: '2.4.1',
+          status: 'succeeded',
+          inputs: { discount_rate: 0.22, valuation_params: { dlom: 0.185 } },
+          results: { allocation: { method: 'opm', volatility: 0.62 } },
+          equityValue: 41_000_000,
+          fmvPerShare: 1.42,
+          diagnostics: [
+            {
+              code: 'HIGH_DLOM',
+              field: 'valuation_params.dlom',
+              message: 'DLOM above the usual range for this stage.',
+              severity: 'warning',
+              hint: null,
+            },
+          ],
+          createdBy: ops.id,
+        },
+        { actorType: 'human', actorId: ops.id },
+      );
+    });
+
+    const fetchWorkbook = async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/workbook.xlsx`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      return res.rawPayload;
+    };
+
+    it('adds the assumption register, calculation record and override sheets', async () => {
+      const workbook = unpack(await fetchWorkbook(), 'xl/workbook.xml');
+      for (const name of ['Assumption register', 'Calculation', 'Overrides']) {
+        expect(workbook).toContain(`name="${name}"`);
+      }
+      // Distinct from the model's own methodology tab, which keeps its name.
+      expect(workbook).toContain('name="Assumptions"');
+    });
+
+    it('labels an overridden assumption as manually set, and the rest as engine', async () => {
+      const texts = textsIn(sheetNamed(await fetchWorkbook(), 'Assumption register'));
+      expect(texts).toContain('valuation_params.dlom');
+      expect(texts).toContain('manual override');
+      // The untouched assumption is on the same sheet, marked the other way.
+      expect(texts).toContain('discount_rate');
+      expect(texts).toContain('engine');
+    });
+
+    it('carries the replaced value and the stated reason into the file', async () => {
+      const sheet = sheetNamed(await fetchWorkbook(), 'Overrides');
+      const texts = textsIn(sheet);
+      expect(texts).toContain('Longer expected hold following the delayed Series C.');
+      // The registry label, not the raw key.
+      expect(texts).toContain('DLOM');
+      expect(texts).toContain('dlom');
+      // The engine value it replaced, as a real number rather than text.
+      expect(sheet).toContain('<v>0.14</v>');
+      expect(sheet).toContain('<v>0.185</v>');
+    });
+
+    it('records engine provenance and the warning the run carried', async () => {
+      const sheet = sheetNamed(await fetchWorkbook(), 'Calculation');
+      const texts = textsIn(sheet);
+      expect(texts).toContain('Engine version');
+      expect(texts).toContain('2.4.1');
+      // A successful run can still carry a warning; hiding it would defeat the
+      // point of the sheet.
+      expect(texts).toContain('warning: valuation_params.dlom');
+      expect(texts).toContain('DLOM above the usual range for this stage.');
+      expect(texts).toContain('allocation.method');
+      // The concluded numbers are footable, not strings.
+      expect(sheet).toContain('<v>41000000</v>');
+      expect(sheet).toContain('<v>1.42</v>');
+    });
+
+    it('is readable by the owning client, like the rest of the workbook', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/workbook.xlsx`,
+        headers: authHeader(client.token),
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('does not leak the register to another client', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/workbook.xlsx`,
+        headers: authHeader(otherClient.token),
+      });
+      expect(res.statusCode).toBe(404);
     });
   });
 });

@@ -19,6 +19,7 @@ import { findCapTable } from '../repos/capTables.js';
 import { listGrants } from '../repos/grants.js';
 import { listWorkbookCells } from '../repos/workbook.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
+import { listOverwrites } from '../repos/overwrites.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -200,11 +201,12 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       throw problems.notFound();
     }
 
-    const [cells, capTable, grants, calculation] = await Promise.all([
+    const [cells, capTable, grants, calculation, overwrites] = await Promise.all([
       listWorkbookCells(deps.pool, id),
       findCapTable(deps.pool, id),
       listGrants(deps.pool, id),
       latestSucceededCalculation(deps.pool, id),
+      listOverwrites(deps.pool, id),
     ]);
 
     const fmv = calculation?.fmv_per_share === null ? null : Number(calculation?.fmv_per_share);
@@ -217,6 +219,8 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       grants,
       fmvPerShare: fmv !== undefined && Number.isFinite(fmv) ? fmv : null,
       generatedAt,
+      overwrites,
+      calculation,
     });
 
     const stamp = generatedAt.toISOString().slice(0, 10);
