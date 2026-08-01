@@ -69,7 +69,17 @@ def _normalize(classes: list[dict]) -> list[dict]:
             seniority = raw.get("seniority", 1)
             if not isinstance(seniority, int) or isinstance(seniority, bool) or seniority < 1:
                 raise EngineInputError(f"'{name}': seniority must be an integer >= 1")
-            ratio = float(raw.get("conversion_ratio", 1.0) or 1.0)
+            # `raw.get(...) or 1.0` would quietly turn a conversion_ratio of 0
+            # into 1:1 and value the class as if it converted normally. Only an
+            # absent or null ratio defaults; anything present is validated.
+            raw_ratio = raw.get("conversion_ratio")
+            if raw_ratio is None:
+                ratio = 1.0
+            else:
+                try:
+                    ratio = float(raw_ratio)
+                except (TypeError, ValueError):
+                    raise EngineInputError(f"'{name}': conversion_ratio must be a number") from None
             if ratio <= 0:
                 raise EngineInputError(f"'{name}': conversion_ratio must be positive")
             cls.update(
