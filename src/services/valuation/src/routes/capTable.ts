@@ -16,6 +16,7 @@ import {
   type ColumnMapping,
 } from '../domain/capTable.js';
 import { findCapTable, saveCapTable } from '../repos/capTables.js';
+import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 
 /**
  * Cap-table integration (feature 9). Import a CSV (Carta / Pulley / generic)
@@ -23,6 +24,14 @@ import { findCapTable, saveCapTable } from '../repos/capTables.js';
  * ratios / option pool, store the structured result, and project it into the
  * waterfall-engine inputs. Owner + ops can import and view.
  */
+
+/**
+ * Upload cap is well under the document limit: a cap table is a few hundred
+ * rows, and an `.xlsx` is decompressed in memory before it is read.
+ */
+export const MAX_CAP_TABLE_UPLOAD_BYTES = 10 * 1024 * 1024;
+/** Matches the row cap on {@link ImportBody} so a preview cannot be rejected. */
+const MAX_UPLOAD_ROWS = 2000;
 
 const ImportBody = z.object({
   format: z.string().max(40).default('generic'),
@@ -82,6 +91,64 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const valuation = await loadReadable(deps.pool, id, principal);
     const table = await findCapTable(deps.pool, id);
     return { cap_table: table, can_edit: canEdit(principal, valuation) };
+  });
+
+  // Upload a spreadsheet and get back its sheets as raw rows. Nothing is
+  // persisted: the client picks a sheet, then feeds those rows to the preview
+  // and save endpoints below, so the mapping and validation path is identical
+  // for pasted CSV, uploaded CSV and uploaded Excel.
+  app.post('/api/v1/valuations/:id/cap-table/upload', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadReadable(deps.pool, id, principal);
+    if (!canEdit(principal, valuation))
+      throw problems.forbidden('Only the client or ops can import a cap table');
+
+    const file = await req.file({ limits: { fileSize: MAX_CAP_TABLE_UPLOAD_BYTES, files: 1 } });
+    if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
+
+    let buffer: Buffer;
+    try {
+      buffer = await file.toBuffer();
+    } catch {
+      throw problems.unprocessable(
+        `File exceeds the ${MAX_CAP_TABLE_UPLOAD_BYTES / (1024 * 1024)} MB limit`,
+      );
+    }
+    if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
+
+    const filename = file.filename ?? 'upload';
+    let sheets: Array<{ name: string; headers: string[]; rows: Record<string, string>[] }>;
+
+    if (looksLikeXlsx(buffer)) {
+      try {
+        sheets = readXlsx(buffer);
+      } catch (err) {
+        if (err instanceof XlsxReadError) throw problems.unprocessable(err.message, { filename });
+        throw err;
+      }
+      if (sheets.length === 0) throw problems.unprocessable('The workbook has no readable sheets');
+    } else if (/\.(xls|xlsm|xlsb|numbers|ods)$/i.test(filename)) {
+      // Legacy and non-OOXML spreadsheets have entirely different containers.
+      throw problems.unprocessable(
+        'Only .xlsx workbooks and CSV files can be imported — re-save this file as .xlsx or CSV',
+        { filename },
+      );
+    } else {
+      // Anything else is read as delimited text. A stray BOM would otherwise
+      // become part of the first header name and break the column mapping.
+      const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
+      const rows = parseCsv(text);
+      sheets = [{ name: filename, headers: Object.keys(rows[0] ?? {}), rows }];
+    }
+
+    const truncated = sheets.some((s) => s.rows.length > MAX_UPLOAD_ROWS);
+    return {
+      filename,
+      source: looksLikeXlsx(buffer) ? 'xlsx' : 'csv',
+      truncated,
+      sheets: sheets.map((s) => ({ ...s, rows: s.rows.slice(0, MAX_UPLOAD_ROWS) })),
+    };
   });
 
   // Parse + validate WITHOUT saving — powers the mapping preview.

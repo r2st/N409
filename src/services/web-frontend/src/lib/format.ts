@@ -116,6 +116,33 @@ export function formatMoney(
   }).format(n / 100);
 }
 
+/**
+ * Renders a major-unit amount as money, e.g. 2500.5 → "$2,500.50".
+ *
+ * Most of the app stores money as integer cents and uses {@link formatMoney}.
+ * Figures that arrive from a customer's own spreadsheet — cap-table share
+ * prices and invested amounts — are dollars as typed, so they need this
+ * instead; running them through formatMoney renders them 100× too small.
+ *
+ * Share prices are commonly sub-cent (a $0.0001 common par value), so the
+ * fraction digits widen for small amounts rather than flattening them to $0.00.
+ */
+export function formatAmount(
+  amount: string | number | null | undefined,
+  currency: string | null = 'USD',
+): string {
+  if (amount === null || amount === undefined || amount === '') return '—';
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return '—';
+  const small = n !== 0 && Math.abs(n) < 1;
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: currency || 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: small ? 6 : 2,
+  }).format(n);
+}
+
 export function formatNumber(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);

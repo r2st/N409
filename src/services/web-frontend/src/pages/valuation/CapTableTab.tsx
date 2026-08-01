@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { api, ApiError, type Problem } from '../../lib/api';
-import { formatMoney, formatNumber } from '../../lib/format';
+import { api, ApiError, apiUpload, type Problem } from '../../lib/api';
+import { formatAmount, formatNumber } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner } from '../../components/ui';
 import { CapTableSyncPanel } from '../../components/valuation/CapTableSyncPanel';
 
 /**
- * Cap-table integration (feature 9). Import a CSV (Carta / Pulley / generic),
- * map the columns, preview the validation, then save the structured table that
- * feeds the waterfall engine. Also renders the stored table + validation.
+ * Cap-table integration (feature 9). Import a spreadsheet (Carta / Pulley /
+ * generic) as .xlsx or CSV, map the columns, preview the validation, then save
+ * the structured table that feeds the waterfall engine. Also renders the stored
+ * table + validation.
+ *
+ * An uploaded file is parsed server-side into rows; pasted CSV is sent as text.
+ * Both converge on the same preview/save endpoints, so the mapping and
+ * validation behave identically whichever route the data arrived by.
  */
 
 interface Entry {
@@ -51,6 +56,17 @@ interface FormatPreset {
   key: string;
   label: string;
   mapping: Record<string, string>;
+}
+interface UploadedSheet {
+  name: string;
+  headers: string[];
+  rows: Record<string, string>[];
+}
+interface Upload {
+  filename: string;
+  source: 'xlsx' | 'csv';
+  truncated: boolean;
+  sheets: UploadedSheet[];
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -144,10 +160,10 @@ function EntriesTable({ entries, currency }: { entries: Entry[]; currency: strin
               <td className={`py-1.5 pr-3 font-medium ${TYPE_TONE[e.class_type] ?? ''}`}>{e.class_type}</td>
               <td className="py-1.5 pr-3 text-right">{formatNumber(e.shares)}</td>
               <td className="py-1.5 pr-3 text-right text-ink-500">
-                {e.price_per_share !== null ? formatMoney(e.price_per_share, currency) : '—'}
+                {e.price_per_share !== null ? formatAmount(e.price_per_share, currency) : '—'}
               </td>
               <td className="py-1.5 pr-3 text-right text-ink-500">
-                {e.invested_amount !== null ? formatMoney(e.invested_amount, currency) : '—'}
+                {e.invested_amount !== null ? formatAmount(e.invested_amount, currency) : '—'}
               </td>
               <td className="py-1.5 text-right text-ink-500">
                 {e.liquidation_multiple !== null ? `${e.liquidation_multiple}×` : '—'}
@@ -173,6 +189,8 @@ export function CapTableTab() {
   const [importing, setImporting] = useState(false);
   const [format, setFormat] = useState('generic');
   const [csv, setCsv] = useState('');
+  const [upload, setUpload] = useState<Upload | null>(null);
+  const [sheetIndex, setSheetIndex] = useState(0);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<{ entries: Entry[]; validation: Validation } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -198,15 +216,48 @@ export function CapTableTab() {
       .catch(() => {});
   }, [load]);
 
-  const headers = useMemo(() => csvHeaders(csv), [csv]);
+  const sheet = upload?.sheets[sheetIndex] ?? null;
+  const pastedHeaders = useMemo(() => csvHeaders(csv), [csv]);
+  // An uploaded file supersedes the textarea; the server already parsed it.
+  const headers = sheet ? sheet.headers : pastedHeaders;
   const currentPreset = formats.find((f) => f.key === format);
+  const hasInput = sheet ? sheet.rows.length > 0 : csv.trim() !== '';
 
-  const onFile = (e: ChangeEvent<HTMLInputElement>) => {
+  /** Preview and save send parsed rows for an upload, raw text for a paste. */
+  const importBody = () => (sheet ? { format, rows: sheet.rows, mapping } : { format, csv, mapping });
+
+  const resetImport = () => {
+    setUpload(null);
+    setSheetIndex(0);
+    setCsv('');
+    setMapping({});
+    setPreview(null);
+  };
+
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Clear the input so re-picking the same file after a failure re-fires.
+    e.target.value = '';
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setCsv(String(reader.result ?? ''));
-    reader.readAsText(file);
+    setError(null);
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await apiUpload<Upload>(`/valuations/${valuation.id}/cap-table/upload`, form);
+      setUpload(res);
+      // Land on the sheet most likely to hold the cap table rather than
+      // whichever tab happened to be first in the workbook.
+      const best = res.sheets.findIndex((s) => /cap|equity|shares|ownership/i.test(s.name));
+      setSheetIndex(best === -1 ? res.sheets.findIndex((s) => s.rows.length > 0) || 0 : best);
+      setCsv('');
+      setMapping({});
+      setPreview(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not read that file.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const runPreview = async () => {
@@ -215,7 +266,7 @@ export function CapTableTab() {
     try {
       const res = await api<{ entries: Entry[]; validation: Validation }>(
         `/valuations/${valuation.id}/cap-table/preview`,
-        { method: 'POST', body: { format, csv, mapping } },
+        { method: 'POST', body: importBody() },
       );
       setPreview(res);
     } catch (err) {
@@ -229,14 +280,9 @@ export function CapTableTab() {
     setError(null);
     setBusy(true);
     try {
-      await api(`/valuations/${valuation.id}/cap-table`, {
-        method: 'PUT',
-        body: { format, csv, mapping },
-      });
+      await api(`/valuations/${valuation.id}/cap-table`, { method: 'PUT', body: importBody() });
       setImporting(false);
-      setPreview(null);
-      setCsv('');
-      setMapping({});
+      resetImport();
       await load();
     } catch (err) {
       // A rejected import carries the same validation payload the preview
@@ -260,7 +306,13 @@ export function CapTableTab() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-xl font-semibold text-ink-900">Capitalization table</h2>
         {canEdit && (
-          <Button variant={importing ? 'secondary' : 'primary'} onClick={() => setImporting((s) => !s)}>
+          <Button
+            variant={importing ? 'secondary' : 'primary'}
+            onClick={() => {
+              if (importing) resetImport();
+              setImporting((s) => !s);
+            }}
+          >
             {importing ? 'Cancel import' : stored ? 'Re-import' : 'Import cap table'}
           </Button>
         )}
@@ -287,20 +339,73 @@ export function CapTableTab() {
                 ))}
               </Select>
             </Field>
-            <Field label="Upload CSV" hint="Or paste the CSV below.">
-              <input type="file" accept=".csv,text/csv" onChange={onFile} className="text-sm" />
+            <Field label="Upload Excel or CSV" hint="Or paste the CSV below.">
+              <input
+                type="file"
+                accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={(e) => void onFile(e)}
+                disabled={busy}
+                className="text-sm"
+              />
             </Field>
           </div>
 
-          <Field label="CSV content">
-            <textarea
-              value={csv}
-              onChange={(e) => setCsv(e.target.value)}
-              rows={6}
-              placeholder="class,shares,price&#10;Common Stock,8000000,0.10"
-              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
-            />
-          </Field>
+          {upload ? (
+            <div className="space-y-3 rounded-md border border-paper-300 bg-paper-50 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-semibold text-ink-800">{upload.filename}</span>
+                <span className="text-xs text-ink-400">
+                  {upload.source === 'xlsx' ? 'Excel workbook' : 'CSV'} ·{' '}
+                  {sheet ? `${sheet.rows.length} rows` : 'no rows'}
+                </span>
+                <button
+                  type="button"
+                  onClick={resetImport}
+                  className="ml-auto text-xs font-medium text-bond-700 underline"
+                >
+                  Remove
+                </button>
+              </div>
+              {upload.sheets.length > 1 && (
+                <Field label="Sheet">
+                  <Select
+                    value={String(sheetIndex)}
+                    onChange={(e) => {
+                      setSheetIndex(Number(e.target.value));
+                      setMapping({});
+                      setPreview(null);
+                    }}
+                  >
+                    {upload.sheets.map((s, i) => (
+                      <option key={s.name} value={i}>
+                        {s.name} ({s.rows.length} rows)
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {upload.truncated && (
+                <p className="text-xs text-amber-700">
+                  Only the first 2,000 rows were read. Split the file if the cap table is longer.
+                </p>
+              )}
+              {sheet?.rows.length === 0 && (
+                <p className="text-xs text-amber-700">
+                  This sheet has no data rows — pick another sheet from the workbook.
+                </p>
+              )}
+            </div>
+          ) : (
+            <Field label="CSV content">
+              <textarea
+                value={csv}
+                onChange={(e) => setCsv(e.target.value)}
+                rows={6}
+                placeholder="class,shares,price&#10;Common Stock,8000000,0.10"
+                className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
+              />
+            </Field>
+          )}
 
           {headers.length > 0 && (
             <div>
@@ -331,7 +436,7 @@ export function CapTableTab() {
           )}
 
           <div className="flex flex-wrap gap-3">
-            <Button variant="secondary" onClick={() => void runPreview()} disabled={busy || !csv.trim()}>
+            <Button variant="secondary" onClick={() => void runPreview()} disabled={busy || !hasInput}>
               {busy ? 'Working…' : 'Preview'}
             </Button>
             {preview && preview.validation.valid && (
@@ -355,7 +460,7 @@ export function CapTableTab() {
       {!stored && !importing ? (
         <EmptyState title="No cap table imported yet">
           {canEdit
-            ? 'Import a CSV from Carta, Pulley, or a generic export.'
+            ? 'Upload an Excel or CSV export from Carta, Pulley, or any generic source.'
             : 'The cap table will appear here once imported.'}
         </EmptyState>
       ) : (
@@ -384,7 +489,7 @@ export function CapTableTab() {
               <div className="rounded-md border border-paper-300 bg-paper-50 px-4 py-3">
                 <div className="overline text-ink-400">Preference stack</div>
                 <div className="tnum mt-1 font-display text-xl font-semibold text-ink-900">
-                  {formatMoney(stored.validation.summary.total_preference_stack, currency)}
+                  {formatAmount(stored.validation.summary.total_preference_stack, currency)}
                 </div>
               </div>
             </div>
