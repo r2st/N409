@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createUser } from '../../src/repos/users.js';
 import { hashPassword } from '../../src/auth/password.js';
-import { totp } from '../../src/auth/totp.js';
+import { totp, TOTP_PERIOD_SECONDS } from '../../src/auth/totp.js';
 import { authHeader, isDbAvailable, setupTestApp, type TestApp } from './helpers.js';
 import { newUlid } from '@n409/shared';
 
@@ -110,7 +110,11 @@ describe.skipIf(!dbUp)('login audit events', () => {
     const verify = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/auth/mfa/verify',
-      payload: { challenge: challenge.json().challenge, code: totp(secret) },
+      // The next step's code: confirming enrolment above spent the current one.
+      payload: {
+        challenge: challenge.json().challenge,
+        code: totp(secret, Date.now() + TOTP_PERIOD_SECONDS * 1000),
+      },
     });
     expect(verify.statusCode).toBe(200);
 

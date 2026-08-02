@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type pg from 'pg';
-import { confirmTotpEnrollment, disableTotp, regenerateBackupCodes } from '../../src/repos/mfa.js';
+import {
+  confirmTotpEnrollment,
+  consumeTotpCounter,
+  disableTotp,
+  regenerateBackupCodes,
+} from '../../src/repos/mfa.js';
 import { backupCodeMatches } from '../../src/auth/mfaCrypto.js';
 
 /**
@@ -115,6 +120,70 @@ describe('regenerateBackupCodes', () => {
   });
 });
 
+/**
+ * The RFC 6238 §5.2 replay guard (migration 0097). What matters here is the
+ * *shape* of the statement, not the round trip: a read-then-write would let two
+ * simultaneous submissions of the same code both observe the older counter and
+ * both succeed, which is exactly the phishing-proxy race the guard exists to
+ * lose. Only the database can settle that, so the claim has to be one
+ * conditional UPDATE.
+ */
+describe('consumeTotpCounter', () => {
+  /** Like fakePool, but with a settable rowCount so both verdicts are testable. */
+  function poolReturning(rowCount: number) {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+      calls.push({ sql, params });
+      return { rows: [], rowCount };
+    });
+    return { pool: { query, connect: vi.fn() } as unknown as pg.Pool, calls };
+  }
+
+  it('claims the step in a single conditional UPDATE, not a read then a write', async () => {
+    const { pool, calls } = poolReturning(1);
+    await consumeTotpCounter(pool, '01USER', 58_000_000);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.sql).toMatch(/UPDATE users/i);
+    expect(calls[0]!.sql).not.toMatch(/SELECT/i);
+    expect(calls[0]!.params).toEqual(['01USER', 58_000_000]);
+  });
+
+  it('guards on the stored counter, admitting the never-verified NULL case', async () => {
+    const { pool, calls } = poolReturning(1);
+    await consumeTotpCounter(pool, '01USER', 58_000_000);
+
+    const sql = calls[0]!.sql;
+    // Strictly greater: re-presenting the same step, or an older one still
+    // inside the ±1 skew window, has to lose.
+    expect(sql).toMatch(/totp_last_counter\s*<\s*\$2/i);
+    expect(sql).toMatch(/totp_last_counter IS NULL/i);
+    expect(sql).toMatch(/WHERE id = \$1/i);
+  });
+
+  it('accepts when the row moved and refuses when it did not', async () => {
+    const fresh = poolReturning(1);
+    expect(await consumeTotpCounter(fresh.pool, '01USER', 58_000_000)).toBe(true);
+
+    // No row matched: some other request already spent this step.
+    const replayed = poolReturning(0);
+    expect(await consumeTotpCounter(replayed.pool, '01USER', 58_000_000)).toBe(false);
+  });
+
+  it('treats a null rowCount as a refusal rather than an acceptance', async () => {
+    const calls: Array<{ sql: string }> = [];
+    const query = vi.fn(async (sql: string) => {
+      calls.push({ sql });
+      return { rows: [], rowCount: null };
+    });
+    const pool = { query, connect: vi.fn() } as unknown as pg.Pool;
+
+    // pg types rowCount as nullable; failing open here would silently disable
+    // the whole guard, so the default has to be "not claimed".
+    expect(await consumeTotpCounter(pool, '01USER', 58_000_000)).toBe(false);
+  });
+});
+
 describe('disableTotp', () => {
   it('wipes the secret, the codes and the trusted devices together', async () => {
     const { pool, calls } = fakePool();
@@ -124,6 +193,8 @@ describe('disableTotp', () => {
     expect(sql.some((s) => /totp_secret = NULL/i.test(s))).toBe(true);
     expect(sql.some((s) => /DELETE FROM mfa_backup_codes/i.test(s))).toBe(true);
     expect(sql.some((s) => /DELETE FROM mfa_trusted_devices/i.test(s))).toBe(true);
+    // The spent-step marker belongs to the secret being wiped, not to the user.
+    expect(sql.some((s) => /totp_last_counter = NULL/i.test(s))).toBe(true);
     expect(calls[0]!.sql.trim()).toBe('BEGIN');
     expect(calls.at(-1)!.sql.trim()).toBe('COMMIT');
   });

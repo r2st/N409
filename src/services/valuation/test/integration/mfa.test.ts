@@ -2,12 +2,23 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
 import { createUser } from '../../src/repos/users.js';
 import { hashPassword } from '../../src/auth/password.js';
-import { totp } from '../../src/auth/totp.js';
+import { totp, TOTP_PERIOD_SECONDS } from '../../src/auth/totp.js';
 import { authHeader, isDbAvailable, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
 const PASSWORD = 'mfa-password-1234';
+
+/**
+ * The code for the next time step. Confirming enrolment spends the step its
+ * code belongs to (migration 0097), so a login seconds later has to use the
+ * following code — which is the one the authenticator would be showing by the
+ * time a real user got to the login form. Tests that enrol and immediately log
+ * in are the only place the two collide.
+ */
+function nextStepCode(secret: string): string {
+  return totp(secret, Date.now() + TOTP_PERIOD_SECONDS * 1000);
+}
 
 /** Registers a password user directly and returns id/email/token. */
 async function seedPasswordUser(ctx: TestApp): Promise<{ id: string; email: string; token: string }> {
@@ -78,7 +89,7 @@ describe.skipIf(!dbUp)('MFA / 2FA (feature 2)', () => {
     const verify = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/auth/mfa/verify',
-      payload: { challenge: body.challenge, code: totp(secret) },
+      payload: { challenge: body.challenge, code: nextStepCode(secret) },
     });
     expect(verify.statusCode).toBe(200);
     expect(typeof verify.json().token).toBe('string');
@@ -99,6 +110,80 @@ describe.skipIf(!dbUp)('MFA / 2FA (feature 2)', () => {
       payload: { challenge: login.json().challenge, code: '000000' },
     });
     expect(verify.statusCode).toBe(401);
+  });
+
+  it('refuses a second-factor code that has already been used (RFC 6238 §5.2)', async () => {
+    const user = await seedPasswordUser(ctx);
+    const { secret } = await enroll(ctx, user.token);
+    const code = nextStepCode(secret);
+
+    const first = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: user.email, password: PASSWORD },
+    });
+    const accepted = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/mfa/verify',
+      payload: { challenge: first.json().challenge, code },
+    });
+    expect(accepted.statusCode).toBe(200);
+
+    // The same code is still inside its acceptance window here — that window is
+    // exactly where a real-time phishing proxy replays what the user typed.
+    const second = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: user.email, password: PASSWORD },
+    });
+    const replay = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/mfa/verify',
+      payload: { challenge: second.json().challenge, code },
+    });
+    expect(replay.statusCode).toBe(401);
+    expect(replay.json().token).toBeUndefined();
+  });
+
+  it('refuses the enrolment code at the login prompt straight afterwards', async () => {
+    const user = await seedPasswordUser(ctx);
+    // enroll() confirms with the current step's code; that step is now spent,
+    // so the very same code must not also buy a session.
+    const setup = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/account/mfa/setup',
+      headers: authHeader(user.token),
+    });
+    const { secret } = setup.json();
+    const enrolCode = totp(secret);
+    const confirm = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/account/mfa/confirm',
+      headers: authHeader(user.token),
+      payload: { code: enrolCode },
+    });
+    expect(confirm.statusCode).toBe(200);
+
+    const login = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: user.email, password: PASSWORD },
+    });
+    const verify = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/mfa/verify',
+      payload: { challenge: login.json().challenge, code: enrolCode },
+    });
+    expect(verify.statusCode).toBe(401);
+
+    // ...but the next code works, so the account is not bricked.
+    const recover = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/mfa/verify',
+      payload: { challenge: login.json().challenge, code: nextStepCode(secret) },
+    });
+    expect(recover.statusCode).toBe(200);
+    expect(typeof recover.json().token).toBe('string');
   });
 
   it('accepts a one-time backup code and then rejects its reuse', async () => {
@@ -143,7 +228,7 @@ describe.skipIf(!dbUp)('MFA / 2FA (feature 2)', () => {
     const verify = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/auth/mfa/verify',
-      payload: { challenge: login.json().challenge, code: totp(secret), remember_device: true },
+      payload: { challenge: login.json().challenge, code: nextStepCode(secret), remember_device: true },
     });
     const setCookie = verify.headers['set-cookie'];
     const deviceCookie = (Array.isArray(setCookie) ? setCookie : [setCookie])

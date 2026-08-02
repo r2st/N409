@@ -7,6 +7,7 @@ import {
   otpauthUri,
   totp,
   verifyTotp,
+  verifyTotpCounter,
   TOTP_PERIOD_SECONDS,
 } from '../../src/auth/totp.js';
 import {
@@ -83,6 +84,50 @@ describe('TOTP', () => {
     expect(uri).toContain('otpauth://totp/');
     expect(uri).toContain('secret=ABCDEF');
     expect(uri).toContain('issuer=N409');
+  });
+});
+
+/**
+ * The replay guard needs to know *which* step a code belongs to, not just that
+ * it was valid — the caller stores that counter and refuses anything not
+ * strictly greater (migration 0097, RFC 6238 §5.2).
+ */
+describe('verifyTotpCounter', () => {
+  const now = 1_700_000_000 * 1000;
+  const step = TOTP_PERIOD_SECONDS * 1000;
+  const currentCounter = Math.floor(now / 1000 / TOTP_PERIOD_SECONDS);
+
+  it('returns the counter of the current step', () => {
+    const secret = generateTotpSecret();
+    expect(verifyTotpCounter(secret, totp(secret, now), { atMs: now })).toBe(currentCounter);
+  });
+
+  it('reports the neighbour a skewed code actually belongs to, not the local one', () => {
+    const secret = generateTotpSecret();
+    // The point of returning a counter: a code accepted from the previous step
+    // must burn *that* step, otherwise it stays spendable for another 30s.
+    expect(verifyTotpCounter(secret, totp(secret, now - step), { atMs: now })).toBe(currentCounter - 1);
+    expect(verifyTotpCounter(secret, totp(secret, now + step), { atMs: now })).toBe(currentCounter + 1);
+  });
+
+  it('returns null rather than a counter for codes it rejects', () => {
+    const secret = generateTotpSecret();
+    expect(verifyTotpCounter(secret, totp(secret, now - 2 * step), { atMs: now })).toBeNull();
+    expect(verifyTotpCounter(secret, '12345', { atMs: now })).toBeNull();
+    expect(verifyTotpCounter(secret, 'abcdef', { atMs: now })).toBeNull();
+  });
+
+  it('agrees with the boolean wrapper it backs', () => {
+    const secret = generateTotpSecret();
+    for (const [code, expected] of [
+      [totp(secret, now), true],
+      [totp(secret, now - step), true],
+      [totp(secret, now - 2 * step), false],
+      ['000000', false],
+    ] as const) {
+      expect(verifyTotp(secret, code, { atMs: now })).toBe(expected);
+      expect(verifyTotpCounter(secret, code, { atMs: now }) !== null).toBe(expected);
+    }
   });
 });
 

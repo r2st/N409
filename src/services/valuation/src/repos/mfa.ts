@@ -54,11 +54,38 @@ export async function confirmTotpEnrollment(pool: pg.Pool, userId: string): Prom
   return codes;
 }
 
+/**
+ * Claim a TOTP time-step for this user, refusing one already used (migration
+ * 0097, RFC 6238 §5.2). Returns false when the code has been spent.
+ *
+ * The compare and the write are one conditional UPDATE rather than a read
+ * followed by a write, because the case worth defending against is precisely
+ * two submissions of the same code arriving together — a phishing proxy
+ * replaying what the user typed races the user's own login. Read-then-write
+ * would let both see an older counter and both succeed, which is the whole
+ * attack.
+ */
+export async function consumeTotpCounter(
+  pool: pg.Pool,
+  userId: string,
+  counter: number,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE users SET totp_last_counter = $2
+      WHERE id = $1 AND (totp_last_counter IS NULL OR totp_last_counter < $2)`,
+    [userId, counter],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 /** Fully disable 2FA: wipe the secret, backup codes and trusted devices. */
 export async function disableTotp(pool: pg.Pool, userId: string): Promise<void> {
   await withTransaction(pool, async (client) => {
     await client.query(
-      `UPDATE users SET totp_secret = NULL, totp_enabled = false, totp_confirmed_at = NULL WHERE id = $1`,
+      `UPDATE users
+          SET totp_secret = NULL, totp_enabled = false,
+              totp_confirmed_at = NULL, totp_last_counter = NULL
+        WHERE id = $1`,
       [userId],
     );
     await client.query('DELETE FROM mfa_backup_codes WHERE user_id = $1', [userId]);

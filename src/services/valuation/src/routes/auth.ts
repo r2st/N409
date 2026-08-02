@@ -22,9 +22,15 @@ import {
   DEVICE_TRUST_DAYS,
   type SessionCookieConfig,
 } from '../auth/cookies.js';
-import { verifyTotp } from '../auth/totp.js';
+import { verifyTotpCounter } from '../auth/totp.js';
 import { decryptSecret, backupCodeMatches } from '../auth/mfaCrypto.js';
-import { consumeBackupCode, isDeviceTrusted, listUnusedBackupCodeHashes, trustDevice } from '../repos/mfa.js';
+import {
+  consumeBackupCode,
+  consumeTotpCounter,
+  isDeviceTrusted,
+  listUnusedBackupCodeHashes,
+  trustDevice,
+} from '../repos/mfa.js';
 import type { GoogleOidc } from '../auth/google.js';
 import {
   bumpSessionEpoch,
@@ -348,7 +354,12 @@ export function registerAuthRoutes(
 
     let ok = false;
     if (parsed.data.code) {
-      ok = verifyTotp(decryptSecret(user.totp_secret), parsed.data.code);
+      // A TOTP code is good for one login (RFC 6238 §5.2), so claiming its time
+      // step is part of verifying it, not a step after it — otherwise the code
+      // stays usable for the rest of its ±1-step window and a phishing proxy
+      // can replay what the user just typed.
+      const counter = verifyTotpCounter(decryptSecret(user.totp_secret), parsed.data.code);
+      ok = counter !== null && (await consumeTotpCounter(deps.pool, user.id, counter));
     } else if (parsed.data.backup_code) {
       const hashes = await listUnusedBackupCodeHashes(deps.pool, user.id);
       const matched = backupCodeMatches(parsed.data.backup_code, hashes);

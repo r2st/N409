@@ -90,18 +90,34 @@ export function totp(secretBase32: string, atMs: number = Date.now()): string {
 /**
  * Constant-time verification of a submitted code, accepting the adjacent steps
  * (default ±1) to tolerate clock skew and the moment-of-submission boundary.
+ * Returns the time-step counter the code matched, or null if none did.
+ *
+ * Callers authenticating a user want the counter, not just the verdict: RFC
+ * 6238 §5.2 requires a code to be accepted once, and "once" is per counter.
+ * Every step in the window is checked even after a match so the work does not
+ * depend on which step matched.
  */
-export function verifyTotp(
+export function verifyTotpCounter(
   secretBase32: string,
   token: string,
   { window = 1, atMs = Date.now() }: { window?: number; atMs?: number } = {},
-): boolean {
+): number | null {
   const submitted = token.replace(/\s+/g, '');
-  if (!/^\d{6}$/.test(submitted)) return false;
+  if (!/^\d{6}$/.test(submitted)) return null;
   const counter = Math.floor(atMs / 1000 / TOTP_PERIOD_SECONDS);
+  let matched: number | null = null;
   for (let i = -window; i <= window; i++) {
     const candidate = hotp(secretBase32, counter + i);
-    if (timingSafeEqual(Buffer.from(candidate), Buffer.from(submitted))) return true;
+    if (timingSafeEqual(Buffer.from(candidate), Buffer.from(submitted))) matched = counter + i;
   }
-  return false;
+  return matched;
+}
+
+/** Whether a code is currently valid, ignoring replay. */
+export function verifyTotp(
+  secretBase32: string,
+  token: string,
+  opts: { window?: number; atMs?: number } = {},
+): boolean {
+  return verifyTotpCounter(secretBase32, token, opts) !== null;
 }

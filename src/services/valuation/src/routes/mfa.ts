@@ -7,9 +7,10 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { findUserById } from '../repos/users.js';
 import { verifyPassword } from '../auth/password.js';
 import { decryptSecret } from '../auth/mfaCrypto.js';
-import { generateTotpSecret, otpauthUri, verifyTotp } from '../auth/totp.js';
+import { generateTotpSecret, otpauthUri, verifyTotpCounter } from '../auth/totp.js';
 import {
   confirmTotpEnrollment,
+  consumeTotpCounter,
   countUnusedBackupCodes,
   disableTotp,
   regenerateBackupCodes,
@@ -75,7 +76,10 @@ export function registerMfaRoutes(
     if (!user) throw problems.unauthorized();
     if (user.totp_enabled) throw problems.conflict('2FA is already enabled');
     if (!user.totp_secret) throw problems.badRequest('Start setup first — no pending 2FA enrolment');
-    if (!verifyTotp(decryptSecret(user.totp_secret), parsed.data.code))
+    // Spend the time step here too: the code that finishes enrolment would
+    // otherwise still be live at the login prompt a few seconds later.
+    const counter = verifyTotpCounter(decryptSecret(user.totp_secret), parsed.data.code);
+    if (counter === null || !(await consumeTotpCounter(deps.pool, user.id, counter)))
       throw problems.badRequest('That code is incorrect — check your authenticator and try again');
 
     const backupCodes = await confirmTotpEnrollment(deps.pool, user.id);
