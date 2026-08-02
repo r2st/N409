@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import { ThemeToggleButton } from './ThemeToggle';
+import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { Wordmark } from './Logo';
 import { COMPARISONS, PRODUCTS } from '../lib/marketing';
 import { siteConfig } from '../lib/siteConfig';
@@ -53,6 +54,20 @@ function ProductsMenu({ onNavigate }: { onNavigate?: () => void }) {
 export function MarketingHeader() {
   const [productsOpen, setProductsOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const mobileButtonRef = useRef<HTMLButtonElement>(null);
+
+  /* Escape dismisses the mobile menu and returns focus to its trigger — see the
+     same note in AppLayout. */
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setMobileOpen(false);
+      mobileButtonRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileOpen]);
 
   return (
     <header className="sticky top-0 z-40 border-b border-paper-300 bg-paper-50/95 backdrop-blur">
@@ -113,8 +128,11 @@ export function MarketingHeader() {
         <div className="flex items-center md:hidden">
           <ThemeToggleButton />
           <button
+            ref={mobileButtonRef}
             className="cursor-pointer rounded-md p-2 text-ink-700"
             aria-label="Toggle menu"
+            aria-expanded={mobileOpen}
+            aria-controls="marketing-mobile-menu"
             onClick={() => setMobileOpen((v) => !v)}
           >
             <svg
@@ -132,7 +150,7 @@ export function MarketingHeader() {
       </div>
 
       {mobileOpen && (
-        <div className="border-t border-paper-300 bg-surface px-5 py-4 md:hidden">
+        <div id="marketing-mobile-menu" className="border-t border-paper-300 bg-surface px-5 py-4 md:hidden">
           <ProductsMenu onNavigate={() => setMobileOpen(false)} />
           <div className="mt-3 flex flex-col gap-2 border-t border-paper-200 pt-3">
             <Link
@@ -275,8 +293,9 @@ export function MarketingFooter() {
 export function MarketingLayout() {
   return (
     <div className="flex min-h-screen flex-col bg-paper-50">
+      <SkipLink />
       <MarketingHeader />
-      <main className="flex-1">
+      <main {...mainContentTargetProps} className={`flex-1 ${mainContentTargetProps.className}`}>
         <Outlet />
       </main>
       <MarketingFooter />

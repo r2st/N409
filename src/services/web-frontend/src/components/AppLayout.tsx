@@ -1,7 +1,8 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { PageSkeleton } from './ui';
+import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, effectiveUser, isFirmAdmin, isOps, isPartner, scopeLabel } from '../lib/rbac';
@@ -249,17 +250,41 @@ export function AppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const close = () => setMenuOpen(false);
   const unread = useUnreadCount();
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  /*
+   * The mobile drawer covers the viewport, so Escape has to dismiss it — and
+   * dismissing it has to hand focus back to the control that opened it, or the
+   * next Tab restarts from the top of the document. Both are keyboard-only
+   * failures that never show up in a mouse walkthrough.
+   */
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setMenuOpen(false);
+      menuButtonRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [menuOpen]);
 
   // Nav gating follows the effective user so "User view" hides the Operations
   // and Administration sections; the ViewModeToggle keeps using the real user.
   const eff = effectiveUser(user, viewMode);
   const roleTag = isOps(eff) ? 'Operations' : isPartner(eff) ? 'Partner' : 'Client';
 
-  const nav = (
+  /*
+   * The sidebar and the mobile drawer render the same links, and both are in
+   * the DOM at once (the sidebar is `hidden lg:flex`, not unmounted). Two
+   * unlabelled `<nav>` landmarks are indistinguishable in a screen reader's
+   * landmark list, so each gets its own name.
+   */
+  const renderNav = (label: string) => (
     // min-h-0 lets this flex child shrink below its content height so
     // overflow-y-auto can take over; without it the nav grows past the fixed
     // sidebar and pushes the user card below the viewport (bottom items hidden).
-    <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
+    <nav aria-label={label} className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
       <ViewModeToggle onNavigate={close} />
       <PaletteTrigger onNavigate={close} />
       <div className="overline mt-3 mb-2 px-3 text-chrome-faint/80">Workspace</div>
@@ -368,21 +393,26 @@ export function AppLayout() {
 
   return (
     <div className="min-h-screen bg-paper-100 lg:flex">
+      <SkipLink />
+
       {/* Desktop sidebar */}
-      <aside className="ledger-grid fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-chrome-900 lg:flex">
+      <div className="ledger-grid fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-chrome-900 lg:flex">
         <div className="px-6 py-6">
           <Wordmark light />
         </div>
-        {nav}
+        {renderNav('Main')}
         {themeRow}
         {userCard}
-      </aside>
+      </div>
 
       {/* Mobile top bar + drawer */}
       <div className="sticky top-0 z-30 flex items-center justify-between bg-chrome-900 px-4 py-3 lg:hidden">
         <Wordmark light />
         <button
+          ref={menuButtonRef}
           aria-label="Toggle navigation"
+          aria-expanded={menuOpen}
+          aria-controls="mobile-nav-drawer"
           onClick={() => setMenuOpen((v) => !v)}
           className="rounded-md p-2 text-chrome-fg hover:bg-chrome-800"
         >
@@ -396,14 +426,20 @@ export function AppLayout() {
         </button>
       </div>
       {menuOpen && (
-        <div className="ledger-grid fixed inset-x-0 top-[52px] z-20 flex max-h-[calc(100dvh-52px)] flex-col overflow-y-auto bg-chrome-900 pb-2 shadow-lift lg:hidden">
-          {nav}
+        <div
+          id="mobile-nav-drawer"
+          className="ledger-grid fixed inset-x-0 top-[52px] z-20 flex max-h-[calc(100dvh-52px)] flex-col overflow-y-auto bg-chrome-900 pb-2 shadow-lift lg:hidden"
+        >
+          {renderNav('Mobile')}
           {themeRow}
           {userCard}
         </div>
       )}
 
-      <main className="min-w-0 flex-1 lg:ml-64">
+      <main
+        {...mainContentTargetProps}
+        className={`min-w-0 flex-1 lg:ml-64 ${mainContentTargetProps.className}`}
+      >
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
           {/*
            * The app's only Suspense boundary used to sit above the router, so

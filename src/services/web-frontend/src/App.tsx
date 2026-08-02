@@ -5,6 +5,7 @@ import { RequireRole } from './components/RequireRole';
 import { useAuth } from './lib/auth';
 import { canManageUsers, canUseFirmConsole, isFirmAdmin, isOps, isPartner } from './lib/rbac';
 import { MarketingFooter, MarketingHeader, MarketingLayout } from './components/MarketingLayout';
+import { SkipLink, mainContentTargetProps } from './components/SkipLink';
 import { LandingPage } from './pages/marketing/LandingPage';
 
 /**
@@ -153,8 +154,9 @@ function HomeGate() {
   if (status === 'anonymous') {
     return (
       <div className="flex min-h-screen flex-col bg-paper-50">
+        <SkipLink />
         <MarketingHeader />
-        <main className="flex-1">
+        <main {...mainContentTargetProps} className={`flex-1 ${mainContentTargetProps.className}`}>
           <LandingPage />
         </main>
         <MarketingFooter />
