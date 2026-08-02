@@ -124,3 +124,81 @@ def test_market_feed_endpoint_multiples_and_financials():
     f = client.post("/engine/v1/market-feed", json={"kind": "financials", "ticker": "DDOG"})
     assert f.status_code == 200
     assert f.json()["beta"] == 1.1
+
+
+# ── Provider NaN handling ────────────────────────────────────────────────────
+# `yfinance`'s `.info` is pandas-backed, so a metric the provider does not have
+# for a ticker arrives as `nan`, not as an absent key. NaN passes every check
+# meant to stop it — `float(nan)` succeeds and `isinstance(nan, float)` is True
+# — so before `_safe_float` excluded it, one comp missing one multiple pulled
+# the median for *every* comp to NaN and the endpoint answered 200 with null.
+
+NAN = float("nan")
+
+
+class NanInfoProvider:
+    """A ticker whose enterpriseToRevenue is missing, pandas-style."""
+
+    def __init__(self, missing_for=("DT",)):
+        self.missing_for = set(missing_for)
+
+    def prices(self, ticker, start, end):
+        return [{"date": "2026-01-02", "open": 1.0, "high": 2.0, "low": 0.9, "close": 1.5}]
+
+    def info(self, ticker):
+        return {
+            "enterpriseToRevenue": NAN if ticker in self.missing_for else 6.0,
+            "enterpriseToEbitda": 15.0,
+            "trailingPE": 20.0,
+            "forwardPE": 18.0,
+            "priceToSalesTrailing12Months": 5.0,
+            "priceToBook": 3.0,
+        }
+
+    def financials(self, ticker):
+        return {"market_cap": 1e9, "total_revenue": 2e8, "ebitda": 5e7, "beta": NAN}
+
+
+def test_one_missing_multiple_does_not_poison_the_median():
+    c = MarketFeedClient(provider=NanInfoProvider(missing_for=("DT",)))
+    out = c.get_company_multiples(["DDOG", "DT", "NET"], metrics=["ev_revenue", "ev_ebitda"])
+
+    # DDOG and NET both report 6.0; DT has no data. The median is theirs alone.
+    assert out["median"]["ev_revenue"] == 6.0
+    assert out["median"]["ev_ebitda"] == 15.0
+
+
+def test_a_missing_multiple_is_reported_as_absent_not_as_nan():
+    c = MarketFeedClient(provider=NanInfoProvider(missing_for=("DT",)))
+    out = c.get_company_multiples(["DDOG", "DT"], metrics=["ev_revenue"])
+
+    assert out["companies"]["DT"]["ev_revenue"] is None
+    assert out["companies"]["DDOG"]["ev_revenue"] == 6.0
+
+
+def test_every_ticker_missing_a_metric_omits_it_from_the_median():
+    c = MarketFeedClient(provider=NanInfoProvider(missing_for=("DDOG", "DT")))
+    out = c.get_company_multiples(["DDOG", "DT"], metrics=["ev_revenue", "ev_ebitda"])
+
+    # No usable ev_revenue anywhere — omitted rather than reported as null.
+    assert "ev_revenue" not in out["median"]
+    assert out["median"]["ev_ebitda"] == 15.0
+
+
+def test_nan_financials_are_dropped_rather_than_returned():
+    c = MarketFeedClient(provider=NanInfoProvider())
+    out = c.get_company_financials("DDOG")
+    assert out["beta"] is None
+
+
+def test_no_median_is_ever_nan_over_http():
+    """The property the guard exists to protect, at the boundary."""
+    import json
+    import math as _math
+
+    c = MarketFeedClient(provider=NanInfoProvider(missing_for=("DT",)))
+    out = c.get_company_multiples(["DDOG", "DT"], metrics=["ev_revenue", "ev_ebitda"])
+    for metric, value in out["median"].items():
+        assert _math.isfinite(value), f"median[{metric}] is {value!r}"
+    # And the payload is serialisable as strict JSON — NaN is not valid JSON.
+    json.dumps(out, allow_nan=False)

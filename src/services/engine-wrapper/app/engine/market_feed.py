@@ -27,6 +27,7 @@ and ``info``; the default is the yfinance-backed one, and tests inject a stub.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
 __all__ = ["MarketFeedClient", "YFinanceProvider", "default_provider", "UNSET"]
@@ -148,7 +149,15 @@ class MarketFeedClient:
         key = ("financials", ticker)
 
         def produce(p):
-            return {"source": "yfinance", "ticker": ticker, **p.financials(ticker)}
+            # Same pandas-NaN treatment the multiples get: a field the provider
+            # doesn't have for this ticker comes back as `nan`, and passing it
+            # on means `beta: NaN`, which is not valid JSON and reaches the
+            # caller as an indistinguishable `null` anyway. Say None and mean it.
+            return {
+                "source": "yfinance",
+                "ticker": ticker,
+                **_drop_non_finite(p.financials(ticker)),
+            }
 
         return self._cached(key, produce, fallback)
 
@@ -201,13 +210,37 @@ class MarketFeedClient:
         }
 
 
+def _drop_non_finite(mapping) -> dict:
+    """Replace NaN/Inf values with None, leaving non-numeric fields untouched."""
+    if not isinstance(mapping, Mapping):
+        return dict(mapping)
+    return {
+        k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+        for k, v in mapping.items()
+    }
+
+
 def _safe_float(value):
+    """Coerce a provider field to a float, or None when it isn't usable.
+
+    NaN counts as not usable, and has to be rejected here rather than left to
+    the caller. ``yfinance``'s ``.info`` is pandas-backed, so a missing metric
+    routinely arrives as ``nan`` rather than as an absent key — and ``nan``
+    passes every check downstream that is meant to stop it: ``float(nan)``
+    succeeds, and ``isinstance(nan, float)`` is True, so it is counted as a
+    ticker that returned a usable value. It then reaches ``_median``, where a
+    single one does not merely null out its own ticker but drags the median
+    for *every* ticker to NaN — five comps with one missing multiple report no
+    multiple at all, as a 200 with `null` in it. Excluded here instead, so the
+    median is taken over the comps that actually have data.
+    """
     try:
         if value is None:
             return None
-        return float(value)
+        out = float(value)
     except (TypeError, ValueError):
         return None
+    return out if math.isfinite(out) else None
 
 
 def _median(values: list[float]) -> float:
