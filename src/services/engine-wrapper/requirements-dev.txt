@@ -2,3 +2,7 @@
 pytest>=8.3
 pytest-cov>=6.0
 httpx>=0.28
+# Mutation testing of the numeric core — see docs/mutation-testing.md. Coverage
+# says a line ran; this says the line's *value* was checked. Not in CI's default
+# path (a full run is minutes, not seconds); run it when you touch app/engine/.
+mutmut>=3.7
