@@ -68,6 +68,25 @@ export async function runDueAutoEmails(deps: {
   }
 }
 
+/**
+ * The scan's clock, read from the database.
+ *
+ * Every timestamp the scan compares against is written by Postgres —
+ * `state_entered_at` is `valuation_events.occurred_at` or `valuations.created_at`,
+ * and the prior send times are `auto_email_sends.sent_at`. Taking `now` from
+ * this process instead compared two clocks that are not the same clock, and
+ * the app server and the database are not required to be the same machine.
+ *
+ * A database even a few milliseconds ahead makes a campaign with
+ * `delay_hours: 0` not yet due at the instant its own valuation was created:
+ * `now - state_entered_at` is negative, so the message is skipped. Against a
+ * container clock 13ms ahead that stopped being a race and became every pass.
+ */
+async function dbNow(db: pg.PoolClient): Promise<Date> {
+  const { rows } = await db.query<{ now: Date }>('SELECT now() AS now');
+  return rows[0]!.now;
+}
+
 async function scan(
   db: pg.PoolClient,
   deps: {
@@ -77,7 +96,9 @@ async function scan(
     now?: Date;
   },
 ): Promise<{ queued: number; skipped: number }> {
-  const now = deps.now ?? new Date();
+  // Read once, before the candidate query, so the whole pass judges every
+  // campaign against one instant.
+  const now = deps.now ?? (await dbNow(db));
   let queued = 0;
   let skipped = 0;
 
