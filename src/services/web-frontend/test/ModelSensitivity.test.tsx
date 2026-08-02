@@ -81,4 +81,68 @@ describe('ModelSensitivityPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
     await screen.findByText(/operations-only/i, {}, { timeout: 5000 });
   });
+
+  // The engine degrades a variation it rejects to a null FMV *and says why*
+  // (sensitivity.py `_fmv`). The panel used to drop the reason on the floor,
+  // so the commonest case — a stressed discount rate crossing terminal growth
+  // — read as a broken run rather than as a bound of the model.
+  it('says why a variation did not compute instead of showing a bare dash', async () => {
+    const baseTwoWay = RESULT.two_way[0]!;
+    const withErrors = {
+      ...RESULT,
+      one_way: [
+        {
+          parameter: 'discount_rate',
+          base_value: 0.3,
+          points: [
+            {
+              value: 0.024,
+              fmv_per_share: null,
+              equity_value: null,
+              delta_from_base: null,
+              error: 'discount_rate (0.024) must exceed terminal_growth (0.03)',
+            },
+            { value: 0.3, fmv_per_share: 2.05, equity_value: 20_000_000, delta_from_base: 0 },
+            { value: 0.576, fmv_per_share: 1.4, equity_value: 15_000_000, delta_from_base: -0.32 },
+          ],
+        },
+      ],
+      two_way: [
+        {
+          ...baseTwoWay,
+          rows: [
+            [
+              { fmv_per_share: null, delta_from_base: null, error: 'volatility must be positive' },
+              { fmv_per_share: 1.8, delta_from_base: -0.12 },
+              { fmv_per_share: 1.9, delta_from_base: -0.07 },
+            ],
+            ...baseTwoWay.rows.slice(1),
+          ],
+        },
+      ],
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ sensitivity: withErrors }));
+    render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" />);
+
+    await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
+    await screen.findByText(/Base FMV/i, {}, { timeout: 5000 });
+
+    // A visible footnote under the one-way table, counted and de-duplicated,
+    // so the reason does not depend on hovering.
+    expect(screen.getByText(/1 of 3 variations did not compute/i)).toHaveTextContent(
+      'discount_rate (0.024) must exceed terminal_growth (0.03)',
+    );
+
+    // …and the heatmap's blank cell carries its own reason.
+    const blank = screen.getByTitle('volatility must be positive');
+    expect(blank).toHaveTextContent('volatility must be positive');
+  });
+
+  it('adds no footnote when every variation computed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ sensitivity: RESULT }));
+    render(<ModelSensitivityPanel valuationId="01JZZZZZZZZZZZZZZZZZZZZZZZ" />);
+    await userEvent.click(screen.getByRole('button', { name: /run model sensitivity/i }));
+    await screen.findByText(/Base FMV/i, {}, { timeout: 5000 });
+    expect(screen.queryByText(/did not compute/i)).not.toBeInTheDocument();
+  });
 });

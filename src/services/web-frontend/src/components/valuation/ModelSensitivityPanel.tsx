@@ -128,6 +128,13 @@ export function ModelSensitivityPanel({ valuationId }: { valuationId: string }) 
             <div className="grid gap-6 lg:grid-cols-2">
               {result.one_way.map((table) => {
                 const meta = PARAM_META[table.parameter];
+                // The engine degrades a variation it rejects to a null FMV and
+                // says why (sensitivity.py `_fmv`). Without the reason the row
+                // is just a dash, and the usual cause — a stressed discount
+                // rate crossing terminal growth — looks like a broken run
+                // rather than a bound of the model.
+                const failed = table.points.filter((p) => p.error);
+                const reasons = [...new Set(failed.map((p) => p.error as string))];
                 return (
                   <div key={table.parameter}>
                     <h3 className="mb-2 font-display text-base font-semibold text-ink-900">{meta.label}</h3>
@@ -153,8 +160,9 @@ export function ModelSensitivityPanel({ valuationId }: { valuationId: string }) 
                                 >
                                   {meta.fmt(p.value)}
                                 </td>
-                                <td className="tnum px-4 py-2 text-right text-ink-900">
+                                <td className="tnum px-4 py-2 text-right text-ink-900" title={p.error}>
                                   {money(p.fmv_per_share, result.currency)}
+                                  {p.error && <span className="sr-only">{p.error}</span>}
                                 </td>
                                 <td className={`tnum px-4 py-2 text-right ${deltaClass(p.delta_from_base)}`}>
                                   {p.delta_from_base === null
@@ -167,6 +175,12 @@ export function ModelSensitivityPanel({ valuationId }: { valuationId: string }) 
                         </tbody>
                       </table>
                     </div>
+                    {reasons.length > 0 && (
+                      <p className="mt-2 text-xs text-ink-500">
+                        {failed.length} of {table.points.length} variations did not compute:{' '}
+                        {reasons.join('; ')}
+                      </p>
+                    )}
                   </div>
                 );
               })}
@@ -177,7 +191,7 @@ export function ModelSensitivityPanel({ valuationId }: { valuationId: string }) 
             const rowMeta = PARAM_META[tw.row_parameter];
             const colMeta = PARAM_META[tw.col_parameter];
             const cells: HeatCell[][] = tw.rows.map((row) =>
-              row.map((c) => ({ value: c.fmv_per_share, delta: c.delta_from_base })),
+              row.map((c) => ({ value: c.fmv_per_share, delta: c.delta_from_base, note: c.error })),
             );
             return (
               <Heatmap

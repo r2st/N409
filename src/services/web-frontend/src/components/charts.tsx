@@ -9,6 +9,13 @@ export interface PieSlice {
 export interface HeatCell {
   value: number | null;
   delta: number | null;
+  /**
+   * Why this cell has no value. A blank cell is not self-explanatory — the
+   * producer usually knows exactly why (the engine rejects a variation that
+   * drives the discount rate below terminal growth, say) and that reason is
+   * worth more to the reader than the em dash standing in for it.
+   */
+  note?: string;
 }
 
 export interface HeatmapProps {
@@ -66,14 +73,20 @@ export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells
                 <td className="tnum px-4 py-2.5 font-semibold text-ink-700">{rowValues[i]}</td>
                 {row.map((cell, j) => {
                   const style = shade(cell.delta);
+                  // A reason only ever explains a *missing* value; where there
+                  // is a number, the delta is the more useful hover.
+                  const reason = cell.value === null ? cell.note : undefined;
                   return (
                     <td
                       key={j}
                       className="tnum px-4 py-2.5 text-right"
                       style={{ backgroundColor: style.background, color: style.color }}
-                      title={cell.delta === null ? 'n/a' : `${(cell.delta * 100).toFixed(1)}%`}
+                      title={reason ?? (cell.delta === null ? 'n/a' : `${(cell.delta * 100).toFixed(1)}%`)}
                     >
                       {cell.value === null ? '—' : format(cell.value)}
+                      {/* `title` is hover-only and never reaches a screen reader,
+                          which would otherwise be read an unexplained dash. */}
+                      {reason && <span className="sr-only">{reason}</span>}
                     </td>
                   );
                 })}
