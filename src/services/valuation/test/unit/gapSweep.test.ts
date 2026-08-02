@@ -83,4 +83,22 @@ describe('managed template merge (gap 6)', () => {
     expect(content.sections[0]!.heading).toBe('Report');
     expect(content.sections[0]!.html).not.toContain('script');
   });
+
+  it('keeps an unclosed trailing <h1> with the body it opens', () => {
+    const content = contentFromManagedTemplate(
+      { name: 'T', body: '<h1>Done</h1><p>Closed.</p><h1>Dangling<p>Trailing.</p>' },
+      vars,
+    );
+    expect(content.sections.map((s) => s.heading)).toEqual(['Done']);
+    expect(content.sections[0]!.html).toBe('<p>Closed.</p><h1>Dangling<p>Trailing.</p>');
+  });
+
+  it('splits a body whose headings are never closed in linear time', () => {
+    // The split is paid on every report generated from the template, not once
+    // by whoever saved it, so a quadratic scan here bills the wrong person.
+    const body = '<h1>'.repeat(250_000);
+    const started = performance.now();
+    contentFromManagedTemplate({ name: 'T', body }, vars);
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
 });

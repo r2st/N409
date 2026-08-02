@@ -46,6 +46,31 @@ describe('sanitizeHtml', () => {
     });
     expect(content.sections[0]!.html).toBe('<p>a</p>');
   });
+
+  it('leaves an unterminated comment or raw-text element where it stands', () => {
+    // No `-->` to be found: the marker is text from there on, and the tags
+    // after it still face the whitelist.
+    expect(sanitizeHtml('a<!--b<p>c')).toBe('a<!--b<p>c');
+    // `<script>` with no `</script>`: the body is not a raw-text span, so the
+    // open tag is dropped as a non-whitelisted tag and its text survives.
+    expect(sanitizeHtml('<p>ok</p><script>alert(1)')).toBe('<p>ok</p>alert(1)');
+    // A missing `</script>` says nothing about a `</style>` still to come.
+    expect(sanitizeHtml('<script>a<style>b</style>c')).toBe('ac');
+  });
+
+  it('sanitizes markers that are never closed in linear time', () => {
+    // A section is capped at 100,000 characters and a report takes 50 of them.
+    // Under the lazy-regex sanitizer this body was quadratic — every `<!--` a
+    // candidate start, each rescanning to the end before failing — and held
+    // the event loop for tens of seconds on a single save. Well under a second
+    // here; the ceiling is loose so a slow CI box does not flake it.
+    for (const marker of ['<!--', '<script>', '<style>', '<h1>']) {
+      const body = marker.repeat(Math.ceil((50 * 100_000) / marker.length));
+      const started = performance.now();
+      sanitizeHtml(body);
+      expect(performance.now() - started).toBeLessThan(3_000);
+    }
+  });
 });
 
 describe('report templates', () => {

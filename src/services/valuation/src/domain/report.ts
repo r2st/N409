@@ -46,15 +46,78 @@ export const ALLOWED_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Cutting a `open … close` span with one lazy regex — `<!--[\s\S]*?-->` — is
+ * quadratic on input that opens spans it never closes: every `<!--` is a
+ * candidate start, and with no `-->` to be found each one rescans to the end of
+ * the input before failing.
+ *
+ * That matters here because the span markers are the cheapest bytes an author
+ * can send. A report section is capped at 100,000 characters and a report takes
+ * 50 of them, and 50 sections of `<!--` — the largest body the schema accepts —
+ * held the event loop for 43 seconds on one `PUT .../report`. Nothing
+ * allocates, so no memory bound sees it; the scan is synchronous, so no request
+ * timeout interrupts it; and the stall lands on every other request the process
+ * is serving. The same body then costs a viewer's browser the same 43 seconds,
+ * because the editor sanitizes what it renders too.
+ *
+ * The two below scan forward instead. A closing marker only ever moves later in
+ * the input, so a search that comes back empty has settled the question for
+ * every opening marker after it too — that is what makes a missing close cost
+ * one pass rather than one per candidate.
+ */
+
+/** Remove `<!-- … -->` spans, leaving an unterminated comment where it stands. */
+function stripComments(html: string): string {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const start = html.indexOf('<!--', at);
+    if (start === -1) break;
+    const end = html.indexOf('-->', start + 4);
+    if (end === -1) break; // no `-->` remains for this `<!--` or for any after it
+    out += html.slice(at, start);
+    at = end + 3;
+  }
+  return out + html.slice(at);
+}
+
+const RAW_TEXT_OPEN = /<(script|style)\b[^>]*>/gi;
+const RAW_TEXT_CLOSE = { script: /<\/script\s*>/gi, style: /<\/style\s*>/gi };
+
+/** Remove `<script>…</script>` and `<style>…</style>` bodies, open tag included. */
+function stripRawText(html: string): string {
+  // Tracked per name, because failing to find `</script>` says nothing about
+  // whether a `</style>` is still to come.
+  const unclosed = new Set<string>();
+  let out = '';
+  let at = 0;
+  RAW_TEXT_OPEN.lastIndex = 0;
+  let open: RegExpExecArray | null;
+  while ((open = RAW_TEXT_OPEN.exec(html)) !== null) {
+    const name = open[1]!.toLowerCase() as keyof typeof RAW_TEXT_CLOSE;
+    if (unclosed.has(name)) continue;
+    const closeRe = RAW_TEXT_CLOSE[name];
+    closeRe.lastIndex = open.index + open[0].length;
+    const close = closeRe.exec(html);
+    if (close === null) {
+      unclosed.add(name);
+      continue;
+    }
+    out += html.slice(at, open.index);
+    at = close.index + close[0].length;
+    RAW_TEXT_OPEN.lastIndex = at;
+  }
+  return out + html.slice(at);
+}
+
+/**
  * Reduces arbitrary editor HTML to the whitelist: script/style bodies are
  * removed outright, allowed tags are kept with all attributes stripped —
  * except <a>, which keeps a validated http(s)/mailto href (gap 9) —
  * anything else is dropped (its text content survives).
  */
 export function sanitizeHtml(html: string): string {
-  return html
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
+  return stripComments(stripRawText(html))
     .replace(
       /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g,
       (_m, close: string, name: string, attrs: string) => {
@@ -311,6 +374,36 @@ export function instantiateTemplate(template: ReportTemplate, vars: ReportTempla
   };
 }
 
+const H1_OPEN = /<h1[^>]*>/gi;
+const H1_CLOSE = /<\/h1\s*>/gi;
+
+/**
+ * `split(/<h1[^>]*>([\s\S]*?)<\/h1\s*>/gi)` — the alternating
+ * `[before, heading, body, heading, body, …]` that shape produces, scanned
+ * forward so an unclosed `<h1>` costs one pass rather than one per candidate.
+ *
+ * A template body is ops-authored and capped at a megabyte, so this is not the
+ * open door `sanitizeHtml` was. It is the same collapse though, and worse
+ * placed: the cost is paid on every report generated from the template, by
+ * whoever generates it, not once by whoever saved it.
+ */
+function splitOnH1(html: string): string[] {
+  const parts: string[] = [];
+  let at = 0;
+  H1_OPEN.lastIndex = 0;
+  let open: RegExpExecArray | null;
+  while ((open = H1_OPEN.exec(html)) !== null) {
+    H1_CLOSE.lastIndex = open.index + open[0].length;
+    const close = H1_CLOSE.exec(html);
+    if (close === null) break; // no `</h1>` remains for this one or for any after it
+    parts.push(html.slice(at, open.index), html.slice(open.index + open[0].length, close.index));
+    at = close.index + close[0].length;
+    H1_OPEN.lastIndex = at;
+  }
+  parts.push(html.slice(at));
+  return parts;
+}
+
 /**
  * Managed-template merge (gap 6): a DB template's body becomes the report
  * content. Top-level <h1>Heading</h1> markers split the body into sections;
@@ -323,7 +416,7 @@ export function contentFromManagedTemplate(
   vars: ReportTemplateVars,
 ): ReportContent {
   const filled = fillTemplateVars(template.body, vars);
-  const parts = filled.split(/<h1[^>]*>([\s\S]*?)<\/h1\s*>/gi);
+  const parts = splitOnH1(filled);
   const sections: ReportSection[] = [];
   // parts = [before-first-h1, heading1, body1, heading2, body2, …]
   const preamble = parts.length > 1 ? parts[0]?.trim() : '';
