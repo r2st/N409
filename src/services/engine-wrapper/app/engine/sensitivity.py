@@ -122,8 +122,22 @@ def _apply(name: str, value: float, params: dict, inputs: dict) -> None:
 
 
 def _steps(base: float, span: float, steps: int) -> list[float]:
-    """`steps` evenly spaced points spanning base·(1±span). Falls back to
-    additive spacing around a zero base (multiplicative would collapse)."""
+    """`steps` evenly spaced points spanning base·(1±span), always ascending.
+
+    Falls back to additive spacing around a zero base (multiplicative would
+    collapse).
+
+    The endpoints have to be ordered rather than assumed. Multiplying a
+    *negative* base by (1−span) gives the larger of the two — a terminal growth
+    of −2% spans −0.016 … −0.024 — so taken in the written order the axis runs
+    downwards, and it is the one lever where a negative base is ordinary:
+    a business in runoff is priced on a declining terminal growth. Every other
+    lever (volatility, discount rate, multiple, time to exit) is positive by
+    construction and ascends, so the table for that one lever came out reading
+    backwards against the rest. `row_values`/`col_values` are rendered straight
+    into the axis labels, and the cells travel with them, so a two-way heatmap
+    against growth was mirrored rather than merely relabelled.
+    """
     if steps < 1:
         raise EngineInputError("steps must be >= 1")
     if steps == 1:
@@ -131,7 +145,7 @@ def _steps(base: float, span: float, steps: int) -> list[float]:
     if base == 0:
         lo, hi = -span, span
     else:
-        lo, hi = base * (1 - span), base * (1 + span)
+        lo, hi = sorted((base * (1 - span), base * (1 + span)))
     return [round(lo + (hi - lo) * i / (steps - 1), 8) for i in range(steps)]
 
 

@@ -230,3 +230,93 @@ def test_repeated_runs_are_identical():
     first = sensitivity(PARAMS, inputs, two_way=[["volatility", "growth_rate"]], steps=5)
     second = sensitivity(PARAMS, inputs, two_way=[["volatility", "growth_rate"]], steps=5)
     assert first == second
+
+
+# ── Axis direction ───────────────────────────────────────────────────────────
+# `_steps` derives its endpoints as base·(1−span) and base·(1+span). For a
+# negative base the first of those is the *larger*, so taken in the written
+# order the axis ran downwards. Terminal growth is the one lever where a
+# negative base is ordinary — a business in runoff is priced on a declining
+# terminal growth — while every other lever is positive by construction, so
+# that one table read backwards against the rest of the run. The values were
+# right; their order was not, and both the one-way table and the two-way
+# heatmap are rendered in exactly the order the engine emits them.
+
+from app.engine.sensitivity import _steps  # noqa: E402
+
+DECLINING = {
+    **INPUTS,
+    "income": {
+        "free_cash_flows": [500_000, 1_000_000, 2_000_000],
+        "discount_rate": 0.3,
+        "terminal_growth": -0.02,
+    },
+}
+
+
+@pytest.mark.parametrize("base", [0.6, 5.0, 0.03, 0.0, -0.02, -0.30, -7.0])
+def test_steps_always_ascend(base):
+    values = _steps(base, 0.20, 5)
+    assert values == sorted(values), f"axis for base={base} runs backwards"
+
+
+@pytest.mark.parametrize("base", [0.6, 0.03, -0.02, -0.30])
+def test_steps_stay_centred_on_the_base(base):
+    """Reordering must not move the base off the middle point."""
+    values = _steps(base, 0.20, 5)
+    assert values[2] == pytest.approx(base)
+    # …and the span is still ±20% of the base, in magnitude.
+    assert min(values) == pytest.approx(base - abs(base) * 0.20)
+    assert max(values) == pytest.approx(base + abs(base) * 0.20)
+
+
+def test_one_way_growth_axis_ascends_for_a_declining_business():
+    table = sensitivity(PARAMS, DECLINING, parameters=["growth_rate"], steps=5)["one_way"][0]
+    assert table["base_value"] == pytest.approx(-0.02)
+    values = [p["value"] for p in table["points"]]
+    assert values == sorted(values)
+    assert values[0] == pytest.approx(-0.024)
+    assert values[-1] == pytest.approx(-0.016)
+    # The base still sits in the middle, so its delta is the zero point.
+    assert table["points"][2]["delta_from_base"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_fmv_rises_with_growth_even_when_growth_is_negative():
+    """The monotonicity the positive-base tables are held to, at a negative base.
+
+    This is what the ordering bug actually broke: less-negative terminal growth
+    is worth more, so a correctly ordered axis has FMV ascending alongside it.
+    Before the fix the axis descended and this ran the other way.
+    """
+    table = sensitivity(PARAMS, DECLINING, parameters=["growth_rate"], steps=5)["one_way"][0]
+    fmvs = [p["fmv_per_share"] for p in table["points"]]
+    assert all(f is not None for f in fmvs)
+    assert fmvs == sorted(fmvs)
+
+
+def test_two_way_growth_axis_is_not_mirrored():
+    """`row_values` label the rows, and the rows must travel with the labels."""
+    tw = sensitivity(
+        PARAMS, DECLINING, parameters=[], two_way=[["growth_rate", "volatility"]], steps=5
+    )["two_way"][0]
+
+    assert tw["row_values"] == sorted(tw["row_values"])
+    assert tw["col_values"] == sorted(tw["col_values"])
+    # Centre cell is both levers at base → the zero point of the heatmap.
+    assert tw["rows"][2][2]["delta_from_base"] == pytest.approx(0.0, abs=1e-9)
+    # Down any column, FMV rises with growth; across any row, with volatility.
+    for c in range(5):
+        column = [tw["rows"][r][c]["fmv_per_share"] for r in range(5)]
+        assert column == sorted(column), f"column {c} is mirrored"
+    for r in range(5):
+        row = [cell["fmv_per_share"] for cell in tw["rows"][r]]
+        assert row == sorted(row), f"row {r} is mirrored"
+
+
+def test_every_drivable_lever_emits_an_ascending_axis():
+    """Stated as the property, so a new lever inherits it."""
+    out = sensitivity(PARAMS, DECLINING, steps=5)
+    assert out["one_way"], "no levers were driven — this test would be vacuous"
+    for table in out["one_way"]:
+        values = [p["value"] for p in table["points"]]
+        assert values == sorted(values), f"{table['parameter']} axis runs backwards"
