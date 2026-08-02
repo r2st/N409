@@ -12,6 +12,7 @@ import {
   probeReady,
   registerHealth,
   registerProblemHandler,
+  trustedProxies,
 } from '@n409/shared';
 
 // Analytics hosts the SPA loads *after* cookie consent (§23/§25). Allowed in
@@ -150,6 +151,12 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
     // id that ties the whole chain together is minted. Honouring an inbound
     // header lets a load balancer or a synthetic check supply its own.
     requestIdHeader: 'x-request-id',
+    // Caddy terminates TLS and dials this service, so the socket peer is Caddy
+    // on every request. This is also the hop that decides the client identity
+    // for the whole estate: the proxy below restamps X-Forwarded-For from the
+    // address resolved here, so the valuation service inherits this answer
+    // rather than forming its own from a header it cannot vouch for.
+    trustProxy: trustedProxies(),
   }) as unknown as FastifyInstance;
   const staticRoot = opts.staticRoot ?? process.env.WEB_STATIC_ROOT ?? defaultStaticRoot;
   const hasStatic = existsSync(staticRoot);
@@ -236,6 +243,21 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
       rewriteRequestHeaders: (req, headers) => ({
         ...headers,
         [REQUEST_ID_HEADER]: String(req.id),
+        // Collapse the forwarded chain to the one address this hop resolved.
+        //
+        // Passing the inbound header through unchanged is not enough. A request
+        // that arrives without one — anything reaching the published port 3000
+        // directly rather than through Caddy — would forward none, and the
+        // valuation service would fall back to its socket peer, which is this
+        // process: every such client sharing a single throttle bucket again,
+        // for the one route class that skipped the proxy we control.
+        //
+        // Restamping also drops whatever the client prepended. `req.ip` is
+        // already the rightmost address no trusted hop vouched for, so what is
+        // sent on is the answer this hop reached, not the raw claim it started
+        // from — and the valuation service, whose peer is loopback and trusted,
+        // reads exactly that. One place decides who the client is.
+        'x-forwarded-for': req.ip,
       }),
     },
   });

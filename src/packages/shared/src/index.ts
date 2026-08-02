@@ -6,6 +6,7 @@ export { registerHealth, probeReady, type ReadinessCheck } from './health.js';
 export { buildInfo, readBuildInfo, resetBuildInfoCache, UNKNOWN_BUILD, type BuildInfo } from './build.js';
 export { installCrashHandlers, type CrashHandlerLogger, type CrashHandlerOptions } from './crash.js';
 export { listenHost, DEFAULT_LISTEN_HOST } from './listen.js';
+export { trustedProxies, DEFAULT_TRUSTED_PROXIES } from './clientIp.js';
 export { newUlid, isUlid } from './ids.js';
 export {
   REQUEST_ID_HEADER,

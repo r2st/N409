@@ -67,6 +67,7 @@ describe('web service', () => {
         google: false,
         sawAuth: req.headers.authorization ?? null,
         sawRequestId: req.headers['x-request-id'] ?? null,
+        sawForwardedFor: req.headers['x-forwarded-for'] ?? null,
       }));
       await upstream.listen({ port: 0, host: '127.0.0.1' });
       const addr = upstream.server.address();
@@ -124,6 +125,54 @@ describe('web service', () => {
         // Fastify resolves req.id from the same header, so the id in this
         // service's own log lines and the one forwarded are one value.
         expect(res.json().sawRequestId).toBe('edge-trace-2');
+        await app.close();
+      });
+    });
+
+    describe('client-ip propagation', () => {
+      /**
+       * This hop decides who the client is for the whole estate. Caddy dials it
+       * over a private address, so the socket peer is never the caller; the
+       * valuation service behind it is one hop further removed still, with
+       * loopback as its peer. Everything downstream that keys on an address —
+       * fourteen rate limits and the login audit trail — reads whatever is
+       * settled here.
+       */
+      const proxied = (app: ReturnType<typeof buildApp>, forwardedFor?: string) =>
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/providers',
+          ...(forwardedFor ? { headers: { 'x-forwarded-for': forwardedFor } } : {}),
+        });
+
+      it('forwards the address the trusted hop reported', async () => {
+        const app = buildApp({ staticRoot: '/nonexistent', valuationUrl: upstreamUrl });
+        const res = await proxied(app, '203.0.113.9');
+        expect(res.json().sawForwardedFor).toBe('203.0.113.9');
+        await app.close();
+      });
+
+      it('reduces a forged chain to the address it actually resolved', async () => {
+        // Caddy appends rather than replaces, so anything the client sent
+        // survives to the left of their real address. Passing the header
+        // through untouched would leave the valuation service to pick from a
+        // list containing a value the caller chose. It gets one address, and
+        // not that one.
+        const app = buildApp({ staticRoot: '/nonexistent', valuationUrl: upstreamUrl });
+        const res = await proxied(app, '10.9.9.9, 203.0.113.9');
+        expect(res.json().sawForwardedFor).toBe('203.0.113.9');
+        await app.close();
+      });
+
+      it('stamps an address even when the request arrived without one', async () => {
+        // Port 3000 is open to the internet, so not every request comes via
+        // Caddy. Forwarding no header at all would leave the valuation service
+        // falling back to its socket peer — this process — putting every
+        // direct-to-3000 caller back in a single shared throttle bucket.
+        const app = buildApp({ staticRoot: '/nonexistent', valuationUrl: upstreamUrl });
+        const res = await proxied(app);
+        expect(res.json().sawForwardedFor).toBeTruthy();
+        expect(res.json().sawForwardedFor).not.toContain(',');
         await app.close();
       });
     });

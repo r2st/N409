@@ -61,6 +61,42 @@ BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the dep
 # On the ai unit (set in the unit file, not .env): APP_ENV=production
 ```
 
+### Client addresses behind the proxy (`TRUSTED_PROXIES`)
+
+Nothing reaches the services from a browser directly: Caddy dials web, and web
+proxies `/api` to valuation over loopback. Left at Fastify's default, `req.ip`
+is therefore the *socket peer* — Caddy at web, and web itself at valuation —
+which is the same value for every request on the internet. Fourteen throttles
+key on it (contact, the client-intake / auditor / board portals, SCIM, and eight
+in the auth routes), so they were fourteen **global** limits rather than
+per-client ones: five contact submissions per ten minutes for everybody
+together, and one caller able to spend the whole platform's budget and lock out
+the rest. The login audit trail recorded the proxy on every row for the same
+reason.
+
+Both Node services now resolve the caller through the hops we run.
+`TRUSTED_PROXIES` overrides which those are — a comma-separated list of
+addresses, CIDRs, or proxy-addr presets:
+
+```
+# Default, and correct for this box — no need to set it:
+TRUSTED_PROXIES=loopback, linklocal, uniquelocal
+```
+
+The default deliberately spans both documented topologies, because they differ:
+the note below says Caddy reaches web over loopback, while `infra/caddy/` dials
+`host.docker.internal` from a container, which arrives from the Docker bridge
+(172.17/16). `uniquelocal` covers RFC1918 and so covers the bridge; `loopback`
+covers the same-host case and the web→valuation hop. Neither range is routable
+from the internet, so a direct connection to the published port 3000 still
+resolves to its own source address.
+
+`TRUSTED_PROXIES=none` trusts no hop (`req.ip` stays the socket peer) — correct
+only for a service exposed with nothing in front. **`true` / `all` / `*` are
+refused at boot**: they make `req.ip` the client's own header, so every rate
+limit becomes self-exempting and every audit row becomes a claim. If a service
+will not start with that message, name the hops instead of widening the trust.
+
 ### Email delivery
 
 `EMAIL_MODE` accepts only `smtp` | `log` | `off` (`config.ts`) — there is no

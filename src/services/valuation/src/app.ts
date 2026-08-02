@@ -3,7 +3,13 @@ import multipart from '@fastify/multipart';
 import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
 import type pg from 'pg';
-import { bindRequestId, createLogger, registerHealth, registerProblemHandler } from '@n409/shared';
+import {
+  bindRequestId,
+  createLogger,
+  registerHealth,
+  registerProblemHandler,
+  trustedProxies,
+} from '@n409/shared';
 import type { Config } from './config.js';
 import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
@@ -163,6 +169,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   const app = Fastify({
     loggerInstance: createLogger({ service: 'valuation', level: config.LOG_LEVEL }),
     requestIdHeader: 'x-request-id',
+    // Nothing reaches this service directly: the web BFF proxies /api to it over
+    // loopback. Without this the socket peer is 127.0.0.1 on every request, so
+    // the fourteen throttles keyed on `req.ip` — contact, the three public
+    // portals, SCIM, and eight in the auth routes — all shared one bucket, and
+    // one client could spend the whole platform's budget. See clientIp.ts for
+    // why the hops are named rather than trusted wholesale.
+    trustProxy: trustedProxies(),
   }) as unknown as FastifyInstance;
 
   // Bind the request id before anything else runs, so the engine/AI calls this
