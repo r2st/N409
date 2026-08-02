@@ -3,7 +3,8 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { problems } from '@n409/shared';
 import { randomBytes } from 'node:crypto';
-import { hashPassword, verifyPassword, verifyPasswordOrDecoy } from '../auth/password.js';
+import { hashPassword, verifyPasswordOrDecoy } from '../auth/password.js';
+import { verifyReauthPassword } from '../auth/reauth.js';
 import {
   signMfaChallenge,
   signOidcState,
@@ -559,7 +560,7 @@ export function registerAuthRoutes(
     if (!user) throw problems.unauthorized();
     if (!user.password_digest)
       throw problems.badRequest('This account signs in with Google SSO and has no password');
-    if (!(await verifyPassword(parsed.data.current_password, user.password_digest)))
+    if (!(await verifyReauthPassword(user.id, parsed.data.current_password, user.password_digest)))
       throw problems.badRequest('Current password is incorrect');
 
     await setPasswordDigest(deps.pool, user.id, await hashPassword(parsed.data.new_password));

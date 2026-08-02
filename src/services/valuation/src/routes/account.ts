@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { signSession, type JwtConfig } from '../auth/jwt.js';
 import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
-import { verifyPassword } from '../auth/password.js';
+import { verifyReauthPassword } from '../auth/reauth.js';
 import { USER_ADMIN_ROLES } from '../domain/roles.js';
 import {
   bumpSessionEpoch,
@@ -146,7 +146,7 @@ export function registerAccountRoutes(
           throw problems.unprocessable('Your current password is required to change your email', {
             errors: [{ path: ['current_password'] }],
           });
-        if (!(await verifyPassword(current_password, user.password_digest)))
+        if (!(await verifyReauthPassword(user.id, current_password, user.password_digest)))
           throw problems.badRequest('Current password is incorrect');
       } else {
         throw problems.badRequest('This account signs in with Google SSO — its email is managed by Google');
@@ -248,7 +248,7 @@ export function registerAccountRoutes(
         throw problems.unprocessable('Your current password is required to close your account', {
           errors: [{ path: ['current_password'] }],
         });
-      if (!(await verifyPassword(parsed.data.current_password, user.password_digest)))
+      if (!(await verifyReauthPassword(user.id, parsed.data.current_password, user.password_digest)))
         throw problems.badRequest('Current password is incorrect');
     }
 

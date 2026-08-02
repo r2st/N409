@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import { problems } from '@n409/shared';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findUserById } from '../repos/users.js';
-import { verifyPassword } from '../auth/password.js';
+import { verifyReauthPassword } from '../auth/reauth.js';
 import { decryptSecret } from '../auth/mfaCrypto.js';
 import { generateTotpSecret, otpauthUri, verifyTotpCounter } from '../auth/totp.js';
 import {
@@ -98,7 +98,7 @@ export function registerMfaRoutes(
     if (!user.totp_enabled) return { enabled: false };
     if ((await deps.settings?.get('require_mfa')) ?? false)
       throw problems.forbidden('An administrator requires 2FA — it cannot be disabled');
-    if (!user.password_digest || !(await verifyPassword(parsed.data.password, user.password_digest)))
+    if (!(await verifyReauthPassword(user.id, parsed.data.password, user.password_digest)))
       throw problems.badRequest('Password is incorrect');
 
     await disableTotp(deps.pool, user.id);
@@ -114,7 +114,7 @@ export function registerMfaRoutes(
     const user = await findUserById(deps.pool, principal.id);
     if (!user) throw problems.unauthorized();
     if (!user.totp_enabled) throw problems.badRequest('2FA is not enabled');
-    if (!user.password_digest || !(await verifyPassword(parsed.data.password, user.password_digest)))
+    if (!(await verifyReauthPassword(user.id, parsed.data.password, user.password_digest)))
       throw problems.badRequest('Password is incorrect');
 
     return { backup_codes: await regenerateBackupCodes(deps.pool, user.id) };
