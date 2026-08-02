@@ -12,7 +12,7 @@
  */
 
 import type { CapTableEntry, CapTableClassType } from '../domain/capTable.js';
-import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, withDeadline } from './deadline.js';
+import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
 
 export const CAP_TABLE_PROVIDERS = ['carta', 'pulley'] as const;
 export type CapTableProvider = (typeof CAP_TABLE_PROVIDERS)[number];
@@ -111,7 +111,7 @@ export async function exchangeCode(
   if (!res.ok) {
     throw new Error(`${CAP_TABLE_PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
   }
-  const body = (await res.json()) as TokenResponse;
+  const body = (await readJson(res, CAP_TABLE_PROVIDER_LABELS[provider])) as TokenResponse;
   if (!body.access_token) {
     throw new Error(`${CAP_TABLE_PROVIDER_LABELS[provider]} returned no access token`);
   }
@@ -277,7 +277,7 @@ export async function fetchCapTable(
   if (!res.ok) {
     throw new Error(`${CAP_TABLE_PROVIDER_LABELS[provider]} cap-table fetch failed (${res.status})`);
   }
-  const payload = (await res.json()) as Record<string, unknown>;
+  const payload = await readJson(res, CAP_TABLE_PROVIDER_LABELS[provider]);
   const entries = provider === 'carta' ? mapCarta(payload) : mapPulley(payload);
   return {
     provider,

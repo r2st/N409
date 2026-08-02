@@ -47,3 +47,47 @@ export async function withDeadline<T>(
     throw err;
   }
 }
+
+/**
+ * Reads a provider's JSON body, and makes a non-JSON answer say so.
+ *
+ * A 2xx is not a promise of JSON. When a provider's gateway or an ingress in
+ * front of it serves an HTML error page — or a body arrives truncated — the
+ * `res.json()` that every one of these clients does unguarded rejects with the
+ * parser's own wording, and the route's catch-all forwards it verbatim:
+ * `Sync failed: Unexpected token '<', "<html><hea"... is not valid JSON`.
+ * That is the same complaint `withDeadline` exists to fix — the analyst is
+ * shown a parser's internals and told nothing about which provider misbehaved
+ * — so it gets the same treatment.
+ *
+ * The cast the call sites use (`as TokenResponse`, `as Record<string, unknown>`)
+ * is a compile-time assertion with no runtime force, so `null` and arrays reach
+ * property reads that then throw `Cannot read properties of null`. Requiring an
+ * object here means a caller's `body.access_token` is a miss, not a crash.
+ */
+export async function readJson(res: Response, label: string): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(`${label} returned a non-JSON response`);
+  }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error(`${label} returned an unexpected response body`);
+  }
+  return body as Record<string, unknown>;
+}
+
+/**
+ * The array-bodied variant — Xero's `/connections` answers with a bare list.
+ * Returns `[]` rather than throwing: every caller treats the connections list
+ * as best-effort org identification, not as a reason to fail the connection.
+ */
+export async function readJsonArray(res: Response): Promise<unknown[]> {
+  try {
+    const body: unknown = await res.json();
+    return Array.isArray(body) ? body : [];
+  } catch {
+    return [];
+  }
+}

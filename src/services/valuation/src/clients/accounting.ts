@@ -11,7 +11,7 @@
  * All HTTP goes through an injectable fetch so tests never touch the network.
  */
 
-import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, withDeadline } from './deadline.js';
+import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, readJson, readJsonArray, withDeadline } from './deadline.js';
 
 export const ACCOUNTING_PROVIDERS = ['xero', 'quickbooks', 'freshbooks', 'netsuite', 'sage', 'wave'] as const;
 export type AccountingProvider = (typeof ACCOUNTING_PROVIDERS)[number];
@@ -143,7 +143,7 @@ export async function exchangeCode(
   if (!res.ok) {
     throw new Error(`${PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
   }
-  const body = (await res.json()) as TokenResponse;
+  const body = (await readJson(res, PROVIDER_LABELS[provider])) as TokenResponse;
   if (!body.access_token) throw new Error(`${PROVIDER_LABELS[provider]} returned no access token`);
 
   const tokens: TokenSet = {
@@ -162,7 +162,10 @@ export async function exchangeCode(
         }),
       );
       if (conns.ok) {
-        const list = (await conns.json()) as Array<{ tenantId?: string; tenantName?: string }>;
+        const list = (await readJsonArray(conns)) as Array<{
+          tenantId?: string;
+          tenantName?: string;
+        }>;
         tokens.externalOrgId = list[0]?.tenantId ?? null;
         tokens.externalOrgName = list[0]?.tenantName ?? null;
       }
@@ -276,7 +279,7 @@ export async function fetchFinancials(
       }),
     );
     if (!res.ok) throw new Error(`Xero report fetch failed (${res.status})`);
-    return { ...parseXeroProfitAndLoss(await res.json()), provider };
+    return { ...parseXeroProfitAndLoss(await readJson(res, PROVIDER_LABELS[provider])), provider };
   }
   if (provider === 'quickbooks') {
     // Held in a local because TypeScript drops the narrowing above once the
@@ -293,7 +296,10 @@ export async function fetchFinancials(
       ),
     );
     if (!res.ok) throw new Error(`QuickBooks report fetch failed (${res.status})`);
-    return { ...parseQuickBooksProfitAndLoss(await res.json()), provider };
+    return {
+      ...parseQuickBooksProfitAndLoss(await readJson(res, PROVIDER_LABELS[provider])),
+      provider,
+    };
   }
   throw new Error(`${PROVIDER_LABELS[provider]} import is not supported yet`);
 }

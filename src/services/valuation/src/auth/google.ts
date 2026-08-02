@@ -1,5 +1,7 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 
+import { readJson } from '../clients/deadline.js';
+
 /**
  * Google OIDC SSO (issue #3). Plain OAuth2 authorization-code flow against
  * Google's published endpoints; the key resolver and fetch are injectable so
@@ -59,7 +61,7 @@ export class GoogleOidc {
     if (!res.ok) {
       throw new Error(`Google token exchange failed: ${res.status}`);
     }
-    const body = (await res.json()) as { id_token?: string };
+    const body = (await readJson(res, 'Google')) as { id_token?: string };
     if (!body.id_token) throw new Error('Google token response missing id_token');
     return body.id_token;
   }

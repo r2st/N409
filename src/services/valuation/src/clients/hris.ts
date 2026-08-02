@@ -6,7 +6,7 @@
  * injectable fetch.
  */
 
-import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, withDeadline } from './deadline.js';
+import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
 
 export const HRIS_PROVIDERS = ['rippling', 'gusto', 'deel'] as const;
 export type HrisProvider = (typeof HRIS_PROVIDERS)[number];
@@ -107,7 +107,7 @@ export async function exchangeCode(
     }),
   );
   if (!res.ok) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
-  const body = (await res.json()) as TokenResponse;
+  const body = (await readJson(res, HRIS_PROVIDER_LABELS[provider])) as TokenResponse;
   if (!body.access_token) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} returned no access token`);
   return {
     accessToken: body.access_token,
@@ -241,7 +241,7 @@ export async function fetchRosterAndGrants(
     }),
   );
   if (!res.ok) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} roster fetch failed (${res.status})`);
-  const payload = (await res.json()) as Record<string, unknown>;
+  const payload = await readJson(res, HRIS_PROVIDER_LABELS[provider]);
   const { roster, grants } = mapEmployees(payload);
   return {
     provider,
