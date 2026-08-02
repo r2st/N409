@@ -17,6 +17,10 @@
  */
 
 import { normCdf } from './sensitivity.js';
+// Shared with the vesting timeline: an amortization bucket and a vesting
+// cadence point have to land on the same date, or the expense schedule and the
+// vesting schedule disagree about which period a tranche belongs to.
+import { addMonths } from './vesting.js';
 
 export type Asc718CompanyType = 'private' | 'public';
 
@@ -123,13 +127,6 @@ export interface AmortizationPeriod {
   cumulative: number;
   /** Unrecognized cost remaining after this period. */
   remaining: number;
-}
-
-/** Add whole months to a bare YYYY-MM-DD date (UTC, day clamped by JS). */
-function addMonths(isoDate: string, months: number): string {
-  const d = new Date(`${isoDate.slice(0, 10)}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;

@@ -127,11 +127,38 @@ export interface VestingPoint {
   cumulativeVested: number;
 }
 
-/** Add `months` to an ISO date, clamping the day of month. */
-function addMonths(start: string | Date, months: number): string {
-  const d = new Date(`${toIsoDate(start)}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
+/** Last day of `month` (0-11) in `year`, as a day-of-month. */
+function daysInMonth(year: number, month: number): number {
+  // Day 0 of the following month is the last day of this one. Set through
+  // setUTCFullYear rather than Date.UTC so a year below 100 stays itself.
+  const probe = new Date(0);
+  probe.setUTCFullYear(year, month + 1, 0);
+  return probe.getUTCDate();
+}
+
+/**
+ * Add `months` to an ISO date, clamping the day of month.
+ *
+ * `setUTCMonth(getUTCMonth() + n)` does not clamp, it overflows: 31 January
+ * plus one month is 31 February, which JS rolls into 3 March. A grant vesting
+ * from month-end therefore produced a timeline whose first cadence point
+ * landed in March and whose second landed in March as well — February never
+ * appeared, and two periods shared a month. Month-end grant dates are not an
+ * edge case in this domain; boards routinely date grants to the last day of a
+ * quarter.
+ */
+export function addMonths(start: string | Date, months: number): string {
+  const iso = toIsoDate(start);
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return iso;
+  // Zero-based month index counted from January of year `y`, so a negative
+  // `months` borrows years correctly rather than landing on month -1.
+  const absolute = m! - 1 + Math.trunc(months);
+  const year = y! + Math.floor(absolute / 12);
+  const month = ((absolute % 12) + 12) % 12;
+  const out = new Date(0);
+  out.setUTCFullYear(year, month, Math.min(d!, daysInMonth(year, month)));
+  return out.toISOString().slice(0, 10);
 }
 
 /**

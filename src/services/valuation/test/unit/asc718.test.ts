@@ -68,6 +68,32 @@ describe('straight-line amortization schedule', () => {
     expect(schedule).toHaveLength(12);
     expect(schedule[0]!.expense).toBeCloseTo(100, 2);
   });
+
+  it('buckets a month-end grant into one period per calendar month', () => {
+    // Overflowing month arithmetic ended period 0 on 3 March and period 1 on
+    // 31 March: February carried no expense and March carried two periods,
+    // which is not something an auditor can tie to a monthly GL close.
+    const schedule = amortizationSchedule(1200, '2026-01-31', 12, 1);
+    expect(schedule).toHaveLength(12);
+    expect(schedule.map((p) => p.endDate.slice(0, 7))).toEqual([
+      '2026-02',
+      '2026-03',
+      '2026-04',
+      '2026-05',
+      '2026-06',
+      '2026-07',
+      '2026-08',
+      '2026-09',
+      '2026-10',
+      '2026-11',
+      '2026-12',
+      '2027-01',
+    ]);
+    // Each period picks up where the previous one left off, with no gap.
+    for (let i = 1; i < schedule.length; i++) {
+      expect(schedule[i]!.startDate).toBe(schedule[i - 1]!.endDate);
+    }
+  });
 });
 
 describe('asc718Grant', () => {

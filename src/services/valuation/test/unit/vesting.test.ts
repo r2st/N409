@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addMonths,
   defaultScenarioFmvs,
   exerciseScenarios,
   monthsElapsed,
@@ -18,6 +19,52 @@ const standard: VestingSchedule = {
 };
 
 describe('vesting', () => {
+  describe('addMonths', () => {
+    it('clamps the day of month instead of overflowing into the next', () => {
+      // `setUTCMonth(+1)` on 31 January produces 31 February, which JS rolls
+      // into 3 March — so February was skipped and March claimed twice.
+      expect(addMonths('2026-01-31', 1)).toBe('2026-02-28');
+      expect(addMonths('2026-01-31', 2)).toBe('2026-03-31');
+      expect(addMonths('2026-03-31', 1)).toBe('2026-04-30');
+      expect(addMonths('2026-08-31', 6)).toBe('2027-02-28');
+      // Clamping is to the *target* month, so a leap February keeps its 29th.
+      expect(addMonths('2024-01-31', 1)).toBe('2024-02-29');
+    });
+
+    it('walks month-ends in order, one per calendar month', () => {
+      const dates = Array.from({ length: 13 }, (_, m) => addMonths('2026-01-31', m));
+      expect(dates).toEqual([
+        '2026-01-31',
+        '2026-02-28',
+        '2026-03-31',
+        '2026-04-30',
+        '2026-05-31',
+        '2026-06-30',
+        '2026-07-31',
+        '2026-08-31',
+        '2026-09-30',
+        '2026-10-31',
+        '2026-11-30',
+        '2026-12-31',
+        '2027-01-31',
+      ]);
+      expect(new Set(dates.map((d) => d.slice(0, 7))).size).toBe(dates.length);
+    });
+
+    it('borrows a year on negative and year-crossing offsets', () => {
+      expect(addMonths('2026-01-31', -1)).toBe('2025-12-31');
+      expect(addMonths('2026-03-31', -1)).toBe('2026-02-28');
+      expect(addMonths('2026-01-15', -13)).toBe('2024-12-15');
+      expect(addMonths('2026-01-31', 12)).toBe('2027-01-31');
+    });
+
+    it('returns an unparseable date unchanged rather than throwing', () => {
+      // The old form reached `toISOString()` on an Invalid Date, which throws
+      // RangeError rather than producing a date.
+      expect(addMonths('not-a-date', 1)).toBe('not-a-date');
+    });
+  });
+
   describe('monthsElapsed', () => {
     it('counts whole months, gated on day-of-month', () => {
       expect(monthsElapsed('2024-01-15', new Date('2024-01-14T00:00:00Z'))).toBe(0);
@@ -96,6 +143,25 @@ describe('vesting', () => {
       expect(preCliff.every((p) => p.cumulativeVested === 0)).toBe(true);
       const atCliff = points.find((p) => p.monthOffset === 12);
       expect(atCliff?.cumulativeVested).toBe(12000);
+    });
+
+    it('gives a month-end grant one cadence point per calendar month', () => {
+      // Boards routinely date grants to the last day of a quarter, so this is
+      // not an edge case. Overflowing month arithmetic put offset 1 and offset
+      // 2 both in March and dropped February from the chart entirely.
+      const points = vestingTimeline({ ...standard, vestingStartDate: '2026-01-31' });
+      const months = points.map((p) => p.date.slice(0, 7));
+      expect(new Set(months).size).toBe(months.length);
+      expect(points.slice(0, 4).map((p) => p.date)).toEqual([
+        '2026-01-31',
+        '2026-02-28',
+        '2026-03-31',
+        '2026-04-30',
+      ]);
+      // Dates advance in step with the offsets they are labelled with.
+      for (let i = 1; i < points.length; i++) {
+        expect(points[i]!.date > points[i - 1]!.date).toBe(true);
+      }
     });
   });
 
