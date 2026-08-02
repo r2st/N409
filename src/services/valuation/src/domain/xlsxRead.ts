@@ -55,12 +55,27 @@ const XML_ENTITIES: Record<string, string> = {
   apos: "'",
 };
 
+/**
+ * Is this a code point `String.fromCodePoint` will accept — a Unicode scalar
+ * value? Past U+10FFFF it throws a `RangeError` rather than returning anything,
+ * and surrogates are the halves of a pair rather than characters in their own
+ * right. XML forbids both in a character reference, and a lone surrogate does
+ * not survive the trip through UTF-8 into the database either.
+ */
+function isScalarValue(code: number): boolean {
+  if (!Number.isInteger(code) || code <= 0 || code > 0x10ffff) return false;
+  return code < 0xd800 || code > 0xdfff;
+}
+
 /** Resolve the five predefined entities plus numeric character references. */
 export function decodeXmlText(text: string): string {
   return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
     if (body.startsWith('#')) {
       const code = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : Number(body.slice(1));
-      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : match;
+      // An out-of-range reference is left as written, like an unknown named
+      // entity — the alternative is a RangeError escaping a parser whose whole
+      // contract is to raise XlsxReadError so the upload answers 422, not 500.
+      return isScalarValue(code) ? String.fromCodePoint(code) : match;
     }
     return XML_ENTITIES[body] ?? match;
   });

@@ -98,6 +98,41 @@ describe('xlsxRead', () => {
       expect(decodeXmlText('&unknown; stays')).toBe('&unknown; stays');
     });
 
+    it('leaves a numeric reference that is not a character as written', () => {
+      // String.fromCodePoint throws past U+10FFFF, and that RangeError is not an
+      // XlsxReadError — it escaped the parser and turned a bad upload into a 500.
+      // Astral characters are real and must still decode.
+      expect(decodeXmlText('&#x1F600;')).toBe('😀');
+      expect(decodeXmlText('&#1114111;')).toBe('\u{10FFFF}');
+      expect(decodeXmlText('Acme &#1114112; Inc')).toBe('Acme &#1114112; Inc');
+      expect(decodeXmlText('&#99999999;')).toBe('&#99999999;');
+      expect(decodeXmlText('&#x7FFFFFFF;')).toBe('&#x7FFFFFFF;');
+      // Half of a surrogate pair is not a character either, and would not
+      // survive the trip through UTF-8 into the database.
+      expect(decodeXmlText('&#xD800;')).toBe('&#xD800;');
+      expect(decodeXmlText('&#xDFFF;')).toBe('&#xDFFF;');
+    });
+
+    it('reads a workbook carrying an out-of-range reference rather than throwing', () => {
+      const [sheet] = readXlsx(
+        buildWorkbook({
+          sheets: [
+            {
+              name: 'S',
+              data:
+                '<?xml version="1.0"?><worksheet><sheetData>' +
+                '<row><c r="A1" t="inlineStr"><is><t>class</t></is></c>' +
+                '<c r="B1" t="inlineStr"><is><t>shares</t></is></c></row>' +
+                '<row><c r="A2" t="inlineStr"><is><t>Acme &#99999999; Inc</t></is></c>' +
+                '<c r="B2"><v>100</v></c></row>' +
+                '</sheetData></worksheet>',
+            },
+          ],
+        }),
+      );
+      expect(sheet!.rows).toEqual([{ class: 'Acme &#99999999; Inc', shares: '100' }]);
+    });
+
     it('converts column references to indices', () => {
       expect(columnIndex('A1')).toBe(0);
       expect(columnIndex('Z9')).toBe(25);
