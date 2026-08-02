@@ -31,6 +31,7 @@ Monorepo layout: `src/packages/shared` (logger/OTel/problem+json/health/ULIDs),
 | [system-design.md](./docs/system-design.md) | Component/infra design, workflow, observability, migration |
 | [database-design.md](./docs/database-design.md) | PostgreSQL schema (ER + tables) |
 | [api-design.md](./docs/api-design.md) | Client/Partner/Internal REST APIs + engine & AI contracts |
+| [engine-numeric-invariants.md](./docs/engine-numeric-invariants.md) | Rules the compute engine holds to, and why NaN defeats ordinary validation |
 | [implementation-plan.md](./docs/implementation-plan.md) | Milestones M0–M7 + GitHub issues #1–#34 |
 
 ## What 409.ai is (one paragraph)
@@ -44,7 +45,7 @@ a workflow-driven back-office. Partners (accounting & cap-table platforms) submi
 
 ## Layout
 ```
-docs/    # the 9 design documents (+ this index)
+docs/    # the design documents (+ this index)
 src/     # application code (Phase 2)
 tests/   # tests (Phase 2)
 keys/    # project brief + credentials — gitignored, never committed
