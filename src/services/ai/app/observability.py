@@ -14,6 +14,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import time
 import uuid
 
@@ -23,7 +24,70 @@ REQUEST_ID_HEADER = "x-request-id"
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
 
 # Keys the formatter promotes from ``logging`` extras onto the JSON line.
+# An allowlist, not a passthrough: a caller cannot widen what gets logged by
+# adding a key to ``extra``.
 _EXTRA_KEYS = ("http_method", "path", "status", "duration_ms", "event")
+
+# ── Redaction ────────────────────────────────────────────────────────────────
+# The TS services redact through pino's `redact` paths (packages/shared logger),
+# which works because pino logs structured objects with known field names. The
+# free-text fields here — the message a caller formatted, and the traceback of
+# an exception nobody caught — have no field names to key off, so they are
+# matched by shape instead.
+#
+# Not a replacement for app/anonymize.py, which redacts document text before it
+# reaches an external LLM and can afford to be aggressive. This is a safety net
+# on the way to disk: it catches the identifiers that are unambiguous by shape,
+# and deliberately leaves alone the bare numbers a valuation log is full of
+# (share counts, dollar amounts) rather than mangling every line to catch a
+# phone number that was never there.
+_REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "[EMAIL]"),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[SSN]"),
+    (re.compile(r"\b\d{2}-\d{7}\b"), "[EIN]"),
+    # Phone-shaped only: an area code in parentheses or followed by a
+    # separator, so a 10-digit share count is untouched.
+    (
+        re.compile(
+            r"""(?<![\d.,$-])
+                (?:\+\d{1,3}[\s.-]?)?
+                (?:\(\d{3}\)[\s.-]?|\d{3}[\s.-])
+                \d{3}[\s.-]\d{4}
+                (?!\d)(?![.,]\d)""",
+            re.VERBOSE,
+        ),
+        "[PHONE]",
+    ),
+    # Credentials that reached a message or a URL. `Bearer …` and `sk-…` are
+    # the two shapes this estate actually produces (internal token, OpenRouter).
+    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]+=*", re.IGNORECASE), "Bearer [REDACTED]"),
+    (re.compile(r"\bsk-[A-Za-z0-9._-]{16,}"), "[API_KEY]"),
+    # Query-string credentials, e.g. an upstream URL in a traceback.
+    (
+        re.compile(r"(?i)\b(api[_-]?key|token|secret|password)=[^&\s\"']+"),
+        r"\1=[REDACTED]",
+    ),
+)
+
+# Secrets whose literal value must never appear, whatever shape it happens to
+# have. Read per-line from the environment so a rotation takes effect without a
+# restart — the same reason internal_auth reads its token per-request.
+_SECRET_ENV_VARS = ("INTERNAL_SERVICE_TOKEN", "OPENROUTER_API_KEY")
+
+# Below this, a "secret" is either unset or too short to match without hitting
+# ordinary words.
+_MIN_SECRET_LEN = 8
+
+
+def redact(text: str) -> str:
+    """Strike identifiers and credentials from a free-text log field."""
+    for pattern, replacement in _REDACTIONS:
+        text = pattern.sub(replacement, text)
+    for name in _SECRET_ENV_VARS:
+        value = os.environ.get(name) or ""
+        if len(value) >= _MIN_SECRET_LEN and value in text:
+            text = text.replace(value, "[REDACTED]")
+    return text
 
 
 def current_request_id() -> str:
@@ -42,21 +106,33 @@ def _level_for(status: int) -> int:
 class JsonLogFormatter(logging.Formatter):
     """One JSON object per line, with the active request id attached."""
 
+    def __init__(self, service: str | None = None) -> None:
+        super().__init__()
+        self.service = service
+
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, object] = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created))
             + f".{int(record.msecs):03d}Z",
             "level": record.levelname.lower(),
             "logger": record.name,
-            "msg": record.getMessage(),
+            "msg": redact(record.getMessage()),
             "request_id": _request_id.get(),
         }
+        # Matches pino's `base: { service }` on the TS side, so one aggregator
+        # query can filter across the whole estate. `logger` is the module
+        # within the service and is not a substitute — both the AI service and
+        # the engine log under "limits" and "ratelimit".
+        if self.service:
+            payload["service"] = self.service
         for key in _EXTRA_KEYS:
             value = getattr(record, key, None)
             if value is not None:
-                payload[key] = value
+                payload[key] = redact(value) if isinstance(value, str) else value
         if record.exc_info:
-            payload["exc"] = self.formatException(record.exc_info)
+            # The traceback carries the exception's own message, which in this
+            # tier can quote the input that caused it.
+            payload["exc"] = redact(self.formatException(record.exc_info))
         return json.dumps(payload, default=str)
 
 
@@ -64,7 +140,7 @@ def configure_logging(service: str, level: str | None = None) -> None:
     """Installs the JSON formatter on the root logger (idempotent)."""
     log_level = (level or os.environ.get("LOG_LEVEL") or "info").upper()
     handler = logging.StreamHandler()
-    handler.setFormatter(JsonLogFormatter())
+    handler.setFormatter(JsonLogFormatter(service))
     root = logging.getLogger()
     root.handlers.clear()
     root.addHandler(handler)
