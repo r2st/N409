@@ -151,6 +151,113 @@ def test_convertible_deep_in_the_money_tracks_parity():
     assert v["fair_value"] == pytest.approx(v["parity"], rel=0.05)
 
 
+def test_convertible_with_no_conversion_right_prices_as_a_straight_bond():
+    """The invariant that pins the tree's coupon schedule.
+
+    With conversion_ratio = 0 the note can never convert, so the whole
+    Tsiveriotis-Fernandes tree collapses to a bond discounted at r + spread and
+    the answer is analytic. It was not matching: the coupon due at maturity was
+    counted once inside the terminal redemption value and again on the last
+    rollback step, so every coupon-bearing convertible was overpriced by a full
+    coupon's present value — 2.2% of face here, and more as the coupon rises.
+    A convertible that is worth more than its own contractual cash flows also
+    reports a negative option value the moment conversion is out of the money.
+    """
+    import math
+
+    face, coupon_rate, freq, years, rf, spread = 1000.0, 0.05, 2, 3.0, 0.04, 0.02
+    risky = rf + spread
+    coupon = face * coupon_rate / freq
+    analytic = sum(
+        coupon * math.exp(-risky * (k / freq)) for k in range(1, round(years * freq) + 1)
+    ) + face * math.exp(-risky * years)
+
+    for steps in (60, 150, 600):
+        v = convertible_note(
+            face=face,
+            coupon_rate=coupon_rate,
+            frequency=freq,
+            maturity_years=years,
+            conversion_ratio=0.0,
+            stock_price=10.0,
+            volatility=0.4,
+            risk_free_rate=rf,
+            credit_spread=spread,
+            steps=steps,
+        )
+        assert v["fair_value"] == pytest.approx(analytic, rel=1e-4)
+        # Nothing to convert into, so none of the value is optionality.
+        assert v["option_value"] == pytest.approx(0.0, abs=1e-4)
+
+
+@pytest.mark.parametrize(
+    "coupon_rate,freq,years",
+    [(0.0, 2, 3.0), (0.08, 4, 5.0), (0.06, 1, 7.0), (0.05, 12, 2.0), (0.04, 2, 0.5)],
+)
+def test_convertible_pays_exactly_the_contractual_coupons(coupon_rate, freq, years):
+    """Every schedule shape, not just the one the double-count was found on.
+
+    Monthly coupons and a half-year maturity are the two ends that a
+    steps-per-coupon heuristic gets wrong: at frequency 12 several coupons can
+    share a tree step, and at half a year there is exactly one coupon and it
+    falls on maturity.
+    """
+    import math
+
+    face, rf, spread = 1000.0, 0.03, 0.03
+    risky = rf + spread
+    coupon = face * coupon_rate / freq
+    n_coupons = max(1, round(years * freq))
+    analytic = sum(
+        coupon * math.exp(-risky * (k / freq)) for k in range(1, n_coupons + 1)
+    ) + face * math.exp(-risky * years)
+
+    v = convertible_note(
+        face=face,
+        coupon_rate=coupon_rate,
+        frequency=freq,
+        maturity_years=years,
+        conversion_ratio=0.0,
+        stock_price=10.0,
+        volatility=0.35,
+        risk_free_rate=rf,
+        credit_spread=spread,
+        steps=600,
+    )
+    assert v["fair_value"] == pytest.approx(analytic, rel=1e-3)
+
+
+def test_convertible_coupon_stream_is_worth_its_present_value():
+    """Raising the coupon adds exactly the PV of the extra coupons, no more.
+
+    Stated as a difference, this isolates the coupon leg from the bond floor
+    and from any conversion value, and it is the form the double-count broke
+    most visibly: an extra coupon at maturity was worth a whole undiscounted
+    coupon more than it should have been.
+    """
+    import math
+
+    face, freq, years, rf, spread = 1000.0, 2, 4.0, 0.03, 0.02
+    risky = rf + spread
+    base = dict(
+        face=face,
+        frequency=freq,
+        maturity_years=years,
+        conversion_ratio=0.0,
+        stock_price=10.0,
+        volatility=0.3,
+        risk_free_rate=rf,
+        credit_spread=spread,
+        steps=800,
+    )
+    zero = convertible_note(coupon_rate=0.0, **base)["fair_value"]
+    paying = convertible_note(coupon_rate=0.06, **base)["fair_value"]
+
+    coupon = face * 0.06 / freq
+    expected = sum(coupon * math.exp(-risky * (k / freq)) for k in range(1, round(years * freq) + 1))
+    assert paying - zero == pytest.approx(expected, rel=1e-3)
+
+
 def test_higher_credit_spread_lowers_a_debt_like_convertible():
     base = dict(
         face=1000, coupon_rate=0.04, frequency=2, maturity_years=5,

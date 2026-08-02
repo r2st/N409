@@ -357,27 +357,43 @@ def convertible_note(
     p = (math.exp((r - q) * dt) - d) / (u - d)
     p = min(max(p, 0.0), 1.0)
     coupon_per_period = f * _num(coupon_rate, "coupon_rate", minimum=0.0) / m
-    # A coupon lands on steps whose time crosses a payment boundary.
-    steps_per_coupon = n / (t * m) if t * m > 0 else n
+
+    # Coupon dates come from the same schedule `yield_dcf` discounts, so the
+    # tree and the DCF price the same instrument's cash flows. `coupons_at[k]`
+    # is how many coupons the holder receives at step k; two can share a step
+    # only when the tree is coarser than the coupon frequency, and dropping one
+    # there would silently underprice the note.
+    n_coupons = max(1, round(t * m))
+    coupons_at = [0] * (n + 1)
+    for k in range(1, n_coupons + 1):
+        coupons_at[min(n, max(1, round((k / m) / dt)))] += 1
 
     prices = [s0 * u**j * d ** (n - j) for j in range(n + 1)]
-    redeem = f + coupon_per_period
+    # Redemption at maturity is face plus the coupon due that day, if one is.
+    # That coupon is then struck from the rollback schedule: counting a payment
+    # both in the terminal payoff and again on the last step paid the final
+    # coupon twice, which on a 3-year 5% semiannual note discounted at 6%
+    # overpriced the whole instrument by 2.2% — the coupon itself, present
+    # valued — and grew with the coupon rate.
+    final_coupon = coupon_per_period if coupons_at[n] > 0 else 0.0
+    coupons_at[n] = max(0, coupons_at[n] - 1)
+    redeem = f + final_coupon
     U = [max(kappa * s, redeem) for s in prices]
     B = [0.0 if kappa * s >= redeem else redeem for s in prices]
-
-    def is_coupon_step(i: int) -> bool:
-        # True if a coupon boundary falls in (i, i+1].
-        return math.floor((i + 1) / steps_per_coupon) > math.floor(i / steps_per_coupon)
 
     for i in range(n - 1, -1, -1):
         newU = [0.0] * (i + 1)
         newB = [0.0] * (i + 1)
-        add_coupon = coupon_per_period if is_coupon_step(i) else 0.0
+        add_coupon = coupon_per_period * coupons_at[i + 1]
         for j in range(i + 1):
             s = s0 * u**j * d ** (i - j)
             eB = p * B[j + 1] + (1 - p) * B[j]
             # Debt part discounts at the risky rate; equity part (U−B) at rf.
-            b_cont = disc_risky * eB + add_coupon
+            # The coupon is inside the discount because it is paid at step i+1,
+            # not at i — adding it undiscounted made every coupon arrive one
+            # step early, an error that shrinks with dt but always favours the
+            # holder.
+            b_cont = disc_risky * (eB + add_coupon)
             equity_part = disc_rf * (p * (U[j + 1] - B[j + 1]) + (1 - p) * (U[j] - B[j]))
             u_cont = equity_part + b_cont
             conv = kappa * s
