@@ -81,6 +81,86 @@ describe('trustedProxies', () => {
     });
   });
 
+  describe('blanket trust spelled as a CIDR is refused too', () => {
+    // The keyword guard above only reads words. proxy-addr is happy to compile
+    // `0.0.0.0/1` and `128.0.0.0/1`, they tile the entire IPv4 space between
+    // them, and the result is `trustProxy: true` reached by a route the guard
+    // never looked at — every hop trusted, so `req.ip` is whatever the client
+    // put leftmost in X-Forwarded-For. None of these values *looks* like
+    // blanket trust, which is exactly why they have to be refused by number.
+
+    it('refuses the two halves that tile the whole IPv4 space', () => {
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '0.0.0.0/1, 128.0.0.0/1' })).toThrow(
+        /spans .* addresses of routable space/,
+      );
+      // Either half alone is already most of the internet.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '128.0.0.0/1' })).toThrow(/128\.0\.0\.0\/1/);
+    });
+
+    it('refuses a single block wide enough to cover the caller', () => {
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '198.0.0.0/4' })).toThrow(/routable space/);
+    });
+
+    it('refuses all-global-unicast IPv6', () => {
+      // 2000::/3 is every globally routable IPv6 address there is.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '2000::/3' })).toThrow(/routable space/);
+    });
+
+    it('refuses a wide block hidden behind specific ones', () => {
+      expect(() => trustedProxies({ TRUSTED_PROXIES: 'loopback, 10.0.0.7, 64.0.0.0/2' })).toThrow(
+        /64\.0\.0\.0\/2/,
+      );
+    });
+
+    it('says how to fix it rather than just refusing', () => {
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '0.0.0.0/1' })).toThrow(/loopback/);
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '0.0.0.0/1' })).toThrow(/TRUSTED_PROXIES=true/);
+    });
+
+    it('leaves real proxy fleets alone', () => {
+      // The check is breadth, not routability — operators do legitimately put a
+      // public load balancer in front. A CDN's widest advertised IPv4 block is
+      // about a /13 and an ISP IPv6 allocation about a /32; both must pass, or
+      // the guard just teaches people to set TRUSTED_PROXIES=none.
+      expect(trustedProxies({ TRUSTED_PROXIES: '104.16.0.0/13' })).toEqual(['104.16.0.0/13']);
+      expect(trustedProxies({ TRUSTED_PROXIES: '172.31.0.0/16, 2400:cb00::/32' })).toEqual([
+        '172.31.0.0/16',
+        '2400:cb00::/32',
+      ]);
+      // A bare address is one host, however it is written.
+      expect(trustedProxies({ TRUSTED_PROXIES: '203.0.113.9, ::1, ::ffff:10.0.0.1' })).toEqual([
+        '203.0.113.9',
+        '::1',
+        '::ffff:10.0.0.1',
+      ]);
+    });
+
+    it('exempts non-routable blocks at any width, since the default is one', () => {
+      // `uniquelocal` *is* 10/8 plus fc00::/7. Refusing the literal spelling
+      // while shipping the preset would only teach operators that the preset is
+      // the way around the check.
+      expect(trustedProxies({ TRUSTED_PROXIES: '10.0.0.0/8' })).toEqual(['10.0.0.0/8']);
+      expect(trustedProxies({ TRUSTED_PROXIES: 'fc00::/7' })).toEqual(['fc00::/7']);
+      expect(trustedProxies({ TRUSTED_PROXIES: '127.0.0.0/8, 100.64.0.0/10' })).toEqual([
+        '127.0.0.0/8',
+        '100.64.0.0/10',
+      ]);
+      // …but a block that merely *starts* in private space and runs out of it
+      // is not exempt: 10.0.0.0/6 reaches 11.x, which is routable.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '10.0.0.0/6' })).toThrow(/routable space/);
+    });
+
+    it('still hands the named presets through untouched', () => {
+      // They are fixed strings this file chose, not operator-supplied breadth,
+      // and proxy-addr is what validates them.
+      expect(trustedProxies({ TRUSTED_PROXIES: 'loopback, uniquelocal' })).toEqual([
+        'loopback',
+        'uniquelocal',
+      ]);
+      expect(trustedProxies({})).toEqual(['loopback', 'linklocal', 'uniquelocal']);
+    });
+  });
+
   it('refuses a value that is only separators instead of silently defaulting', () => {
     // ",," is a typo, not a request for the default. Quietly restoring full
     // default trust would hide it for as long as the deployment survives.

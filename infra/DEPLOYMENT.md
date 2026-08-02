@@ -97,6 +97,17 @@ refused at boot**: they make `req.ip` the client's own header, so every rate
 limit becomes self-exempting and every audit row becomes a claim. If a service
 will not start with that message, name the hops instead of widening the trust.
 
+**A wide CIDR is refused for the same reason**, because it says the same thing
+without looking like it. `0.0.0.0/1, 128.0.0.0/1` tiles the whole IPv4 space and
+is therefore exactly `true`; `2000::/3` is every routable IPv6 address; a single
+`198.0.0.0/4` already covers enough of the internet to hand the forgery to
+anyone inside it. The rule is breadth, not routability — a trusted-proxy list
+names hops you operate, so IPv4 entries must be `/8` or tighter and IPv6 entries
+`/32` or tighter. Real fleets are unaffected (a CDN's widest IPv4 block is about
+a `/13`, an ISP IPv6 allocation about a `/32`), and blocks lying wholly inside
+non-routable space — `10.0.0.0/8`, `fc00::/7`, `127.0.0.0/8` — are exempt at any
+width, since that is what `uniquelocal` and `loopback` already are.
+
 ### Email delivery
 
 `EMAIL_MODE` accepts only `smtp` | `log` | `off` (`config.ts`) — there is no
