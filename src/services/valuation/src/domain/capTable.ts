@@ -90,16 +90,34 @@ export function presetByKey(key: string): FormatPreset | undefined {
   return FORMAT_PRESETS.find((p) => p.key === key);
 }
 
-/** Parse a money/number cell: strips $, commas and whitespace; '' → null. */
+/**
+ * Parse a money/number cell: strips $, commas and whitespace; '' → null.
+ *
+ * A fully parenthesised figure is negative — that is what `(500,000)` means in
+ * every accounting export a cap table arrives from. Discarding the parentheses
+ * instead, as this did, turned a 500,000-share repurchase into a 500,000-share
+ * holding: `-500000` is rejected by `validateCapTable` as a bad share count,
+ * but `(500000)` sailed through as a legitimate position and inflated the
+ * fully-diluted count that divides the equity value into a per-share figure.
+ *
+ * An unbalanced parenthesis is now unparseable rather than silently positive:
+ * `(500000` says the cell was not understood, and null is the honest answer.
+ */
 export function parseNumericCell(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  const cleaned = String(value)
-    .replace(/[$,\s]/g, '')
-    .replace(/[()]/g, '');
+  let cleaned = String(value).replace(/[$,\s]/g, '');
   if (cleaned === '') return null;
+  let negated = false;
+  if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
+    negated = true;
+    cleaned = cleaned.slice(1, -1);
+    if (cleaned === '') return null;
+  }
   const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
+  if (!Number.isFinite(n)) return null;
+  // `n !== 0` keeps `(0)` from becoming -0, which formats as "-0".
+  return negated && n !== 0 ? -n : n;
 }
 
 /** Infer the class type from the security name when it isn't a column. */

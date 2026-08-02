@@ -19,6 +19,23 @@ describe('capTable', () => {
       expect(parseNumericCell('n/a')).toBeNull();
       expect(parseNumericCell(42)).toBe(42);
     });
+
+    it('reads accounting parentheses as a negative', () => {
+      // The parentheses used to be stripped, so a repurchase row exported in
+      // accounting notation became a positive holding of the same size.
+      expect(parseNumericCell('(500,000)')).toBe(-500000);
+      expect(parseNumericCell('$(1,234.50)')).toBe(-1234.5);
+      expect(parseNumericCell('(0)')).toBe(0);
+      expect(Object.is(parseNumericCell('(0)'), -0)).toBe(false);
+      // Agrees with the sign the same figure carries written out.
+      expect(parseNumericCell('(500,000)')).toBe(parseNumericCell('-500,000'));
+    });
+
+    it('rejects an unbalanced parenthesis instead of guessing', () => {
+      expect(parseNumericCell('(500000')).toBeNull();
+      expect(parseNumericCell('500000)')).toBeNull();
+      expect(parseNumericCell('()')).toBeNull();
+    });
   });
 
   describe('inferClassType', () => {
@@ -78,6 +95,23 @@ describe('capTable', () => {
         { class: 'Total', shares: '' },
       ];
       expect(parseCapTable(rows, presetByKey('generic')!.mapping)).toHaveLength(1);
+    });
+
+    it('flags a parenthesised share count instead of inflating the table', () => {
+      // An accounting-notation repurchase row. Stripping the parentheses made
+      // it a positive 500,000-share holding, which passed validation and
+      // inflated the fully-diluted count that sets the per-share value.
+      const rows = [
+        { class: 'Common Stock', shares: '8,000,000', price: '0.10' },
+        { class: 'Common Stock — repurchase', shares: '(500,000)' },
+      ];
+      const entries = parseCapTable(rows, presetByKey('generic')!.mapping);
+      expect(entries[1]!.shares).toBe(-500_000);
+
+      const v = validateCapTable(entries);
+      expect(v.valid).toBe(false);
+      expect(v.issues.some((i) => i.code === 'bad_shares')).toBe(true);
+      expect(v.summary.fully_diluted_shares).not.toBe(8_500_000);
     });
   });
 
