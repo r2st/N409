@@ -77,17 +77,19 @@ function tables(): Table[] {
       let inHead = false;
       let sawHead = false;
       for (let j = i; j < Math.min(lines.length, i + 80); j++) {
-        if (/<\/table>/.test(lines[j])) break;
-        if (/<thead/.test(lines[j])) inHead = sawHead = true;
-        if (inHead) columns += [...lines[j].matchAll(/<th[\s>/]/g)].length;
-        if (/<\/thead>/.test(lines[j])) break;
+        const row = lines[j] ?? '';
+        if (/<\/table>/.test(row)) break;
+        if (/<thead/.test(row)) inHead = sawHead = true;
+        if (inHead) columns += [...row.matchAll(/<th[\s>/]/g)].length;
+        if (/<\/thead>/.test(row)) break;
       }
       if (!sawHead) {
         let inRow = false;
         for (let j = i; j < Math.min(lines.length, i + 60); j++) {
-          if (/<tr[\s>]/.test(lines[j])) inRow = true;
-          if (inRow) columns += [...lines[j].matchAll(/<td[\s>]/g)].length;
-          if (inRow && /<\/tr>/.test(lines[j])) break;
+          const row = lines[j] ?? '';
+          if (/<tr[\s>]/.test(row)) inRow = true;
+          if (inRow) columns += [...row.matchAll(/<td[\s>]/g)].length;
+          if (inRow && /<\/tr>/.test(row)) break;
         }
       }
       found.push({
@@ -123,9 +125,9 @@ describe('app data tables stay within a 375px viewport', () => {
     // Four columns is where the measurements crossed over: the six-column ESPP
     // table needed 446px and the ASC 820 hierarchy 405px, while every table
     // that fit was carrying wrapping text rather than money.
-    const offenders = TABLES.filter((t) => t.columns >= 4 && !t.scrolls)
-      .map((t) => `${t.file}:${t.line} (${t.columns} columns)`)
-      .filter((key) => !NARROW_ENOUGH.has(key.split(' ')[0]));
+    const offenders = TABLES.filter(
+      (t) => t.columns >= 4 && !t.scrolls && !NARROW_ENOUGH.has(`${t.file}:${t.line}`),
+    ).map((t) => `${t.file}:${t.line} (${t.columns} columns)`);
     expect(offenders).toEqual([]);
   });
 
@@ -141,9 +143,11 @@ describe('app data tables stay within a 375px viewport', () => {
     // An allowlist entry whose table has moved or gone is worse than no entry:
     // it silently stops covering anything.
     for (const where of NARROW_ENOUGH.keys()) {
-      const [file, line] = where.split(':');
+      const at = where.lastIndexOf(':');
+      const file = where.slice(0, at);
+      const line = Number(where.slice(at + 1));
       expect(
-        TABLES.some((t) => t.file === file && t.line === Number(line)),
+        TABLES.some((t) => t.file === file && t.line === line),
         `allowlist entry ${where} matches no table — re-measure and update it`,
       ).toBe(true);
     }

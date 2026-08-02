@@ -12,6 +12,7 @@
  */
 
 import type { CapTableEntry, CapTableClassType } from '../domain/capTable.js';
+import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, withDeadline } from './deadline.js';
 
 export const CAP_TABLE_PROVIDERS = ['carta', 'pulley'] as const;
 export type CapTableProvider = (typeof CAP_TABLE_PROVIDERS)[number];
@@ -90,20 +91,23 @@ export async function exchangeCode(
   fetchFn: FetchFn = fetch,
 ): Promise<TokenSet> {
   const e = ENDPOINTS[provider];
-  const res = await fetchFn(e.tokenUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      accept: 'application/json',
-    },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-      client_id: creds.clientId,
-      client_secret: creds.clientSecret,
-    }).toString(),
-  });
+  const res = await withDeadline(CAP_TABLE_PROVIDER_LABELS[provider], OAUTH_TIMEOUT_MS, (signal) =>
+    fetchFn(e.tokenUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        accept: 'application/json',
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+      }).toString(),
+      signal,
+    }),
+  );
   if (!res.ok) {
     throw new Error(`${CAP_TABLE_PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
   }
@@ -264,9 +268,12 @@ export async function fetchCapTable(
     provider === 'carta'
       ? `${e.apiBase}/v1/companies/${company}/capitalization`
       : `${e.apiBase}/v1/companies/${company}/cap-table`;
-  const res = await fetchFn(url, {
-    headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
-  });
+  const res = await withDeadline(CAP_TABLE_PROVIDER_LABELS[provider], IMPORT_TIMEOUT_MS, (signal) =>
+    fetchFn(url, {
+      headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
+      signal,
+    }),
+  );
   if (!res.ok) {
     throw new Error(`${CAP_TABLE_PROVIDER_LABELS[provider]} cap-table fetch failed (${res.status})`);
   }

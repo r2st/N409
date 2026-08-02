@@ -11,6 +11,8 @@
  * All HTTP goes through an injectable fetch so tests never touch the network.
  */
 
+import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, withDeadline } from './deadline.js';
+
 export const ACCOUNTING_PROVIDERS = ['xero', 'quickbooks', 'freshbooks', 'netsuite', 'sage', 'wave'] as const;
 export type AccountingProvider = (typeof ACCOUNTING_PROVIDERS)[number];
 
@@ -122,19 +124,22 @@ export async function exchangeCode(
   fetchFn: FetchFn = fetch,
 ): Promise<TokenSet> {
   const e = ENDPOINTS[provider];
-  const res = await fetchFn(e.tokenUrl, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      accept: 'application/json',
-      authorization: `Basic ${Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString('base64')}`,
-    },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-    }).toString(),
-  });
+  const res = await withDeadline(PROVIDER_LABELS[provider], OAUTH_TIMEOUT_MS, (signal) =>
+    fetchFn(e.tokenUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        accept: 'application/json',
+        authorization: `Basic ${Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString('base64')}`,
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+      }).toString(),
+      signal,
+    }),
+  );
   if (!res.ok) {
     throw new Error(`${PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
   }
@@ -150,9 +155,12 @@ export async function exchangeCode(
   // Xero identifies the org via a separate connections call.
   if (provider === 'xero') {
     try {
-      const conns = await fetchFn('https://api.xero.com/connections', {
-        headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
-      });
+      const conns = await withDeadline(PROVIDER_LABELS[provider], OAUTH_TIMEOUT_MS, (signal) =>
+        fetchFn('https://api.xero.com/connections', {
+          headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
+          signal,
+        }),
+      );
       if (conns.ok) {
         const list = (await conns.json()) as Array<{ tenantId?: string; tenantName?: string }>;
         tokens.externalOrgId = list[0]?.tenantId ?? null;
@@ -257,21 +265,32 @@ export async function fetchFinancials(
   fetchFn: FetchFn = fetch,
 ): Promise<ImportedFinancials> {
   if (provider === 'xero') {
-    const res = await fetchFn('https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss', {
-      headers: {
-        authorization: `Bearer ${tokens.accessToken}`,
-        accept: 'application/json',
-        ...(tokens.externalOrgId ? { 'xero-tenant-id': tokens.externalOrgId } : {}),
-      },
-    });
+    const res = await withDeadline(PROVIDER_LABELS[provider], IMPORT_TIMEOUT_MS, (signal) =>
+      fetchFn('https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss', {
+        headers: {
+          authorization: `Bearer ${tokens.accessToken}`,
+          accept: 'application/json',
+          ...(tokens.externalOrgId ? { 'xero-tenant-id': tokens.externalOrgId } : {}),
+        },
+        signal,
+      }),
+    );
     if (!res.ok) throw new Error(`Xero report fetch failed (${res.status})`);
     return { ...parseXeroProfitAndLoss(await res.json()), provider };
   }
   if (provider === 'quickbooks') {
-    if (!tokens.externalOrgId) throw new Error('QuickBooks connection is missing its realm id');
-    const res = await fetchFn(
-      `https://quickbooks.api.intuit.com/v3/company/${encodeURIComponent(tokens.externalOrgId)}/reports/ProfitAndLoss`,
-      { headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' } },
+    // Held in a local because TypeScript drops the narrowing above once the
+    // property is read inside a callback.
+    const realmId = tokens.externalOrgId;
+    if (!realmId) throw new Error('QuickBooks connection is missing its realm id');
+    const res = await withDeadline(PROVIDER_LABELS[provider], IMPORT_TIMEOUT_MS, (signal) =>
+      fetchFn(
+        `https://quickbooks.api.intuit.com/v3/company/${encodeURIComponent(realmId)}/reports/ProfitAndLoss`,
+        {
+          headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
+          signal,
+        },
+      ),
     );
     if (!res.ok) throw new Error(`QuickBooks report fetch failed (${res.status})`);
     return { ...parseQuickBooksProfitAndLoss(await res.json()), provider };

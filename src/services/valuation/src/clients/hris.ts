@@ -6,6 +6,8 @@
  * injectable fetch.
  */
 
+import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, withDeadline } from './deadline.js';
+
 export const HRIS_PROVIDERS = ['rippling', 'gusto', 'deel'] as const;
 export type HrisProvider = (typeof HRIS_PROVIDERS)[number];
 
@@ -90,17 +92,20 @@ export async function exchangeCode(
   fetchFn: FetchFn = fetch,
 ): Promise<TokenSet> {
   const e = ENDPOINTS[provider];
-  const res = await fetchFn(e.tokenUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-    body: new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: redirectUri,
-      client_id: creds.clientId,
-      client_secret: creds.clientSecret,
-    }).toString(),
-  });
+  const res = await withDeadline(HRIS_PROVIDER_LABELS[provider], OAUTH_TIMEOUT_MS, (signal) =>
+    fetchFn(e.tokenUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+      }).toString(),
+      signal,
+    }),
+  );
   if (!res.ok) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} token exchange failed (${res.status})`);
   const body = (await res.json()) as TokenResponse;
   if (!body.access_token) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} returned no access token`);
@@ -229,9 +234,12 @@ export async function fetchRosterAndGrants(
   fetchFn: FetchFn = fetch,
 ): Promise<HrisPull> {
   const e = ENDPOINTS[provider];
-  const res = await fetchFn(`${e.apiBase}/v1/employees?include=equity`, {
-    headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
-  });
+  const res = await withDeadline(HRIS_PROVIDER_LABELS[provider], IMPORT_TIMEOUT_MS, (signal) =>
+    fetchFn(`${e.apiBase}/v1/employees?include=equity`, {
+      headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
+      signal,
+    }),
+  );
   if (!res.ok) throw new Error(`${HRIS_PROVIDER_LABELS[provider]} roster fetch failed (${res.status})`);
   const payload = (await res.json()) as Record<string, unknown>;
   const { roster, grants } = mapEmployees(payload);
