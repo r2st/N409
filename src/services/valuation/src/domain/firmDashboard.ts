@@ -144,7 +144,13 @@ export function classifyAttention(row: FirmValuationRow, now: Date): AttentionIt
 
   if (due) {
     const days = daysBetween(now, due);
-    if (days <= DUE_SOON_DAYS) {
+    // `<`, not `<=`. `days` is the floor of the gap, so `days <= 7` admits
+    // everything up to 7.999 days out — an eight-day window wearing a seven-day
+    // name. The chip above this list is counted in SQL by `due_date < now() +
+    // 7 days`, which is exactly `days < 7`, so the two rendered side by side on
+    // the same dashboard disagreed for every deadline in the eighth day: the
+    // count said three and the list underneath it showed five.
+    if (days < DUE_SOON_DAYS) {
       return {
         ...base,
         reason: 'due_soon',

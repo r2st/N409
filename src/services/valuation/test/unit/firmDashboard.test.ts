@@ -153,6 +153,33 @@ describe('classifyAttention — due soon', () => {
   it('says "Due today" for a deadline later the same day', () => {
     expect(classifyAttention(row({ due_date: daysFromNow(0.25) }), NOW)!.detail).toBe('Due today');
   });
+
+  it('closes the window at exactly DUE_SOON_DAYS, as the summary count does', () => {
+    // `days` is the floor of the gap, so `days <= DUE_SOON_DAYS` stretched a
+    // seven-day window across the whole of the eighth day. The chip beside this
+    // list is counted in SQL by `due_date < now() + '7 days'`, and the two are
+    // rendered together on the firm dashboard — every deadline in here made the
+    // list without making the count.
+    const reasonAt = (days: number) => classifyAttention(row({ due_date: daysFromNow(days) }), NOW)?.reason;
+
+    expect(reasonAt(DUE_SOON_DAYS - 0.01)).toBe('due_soon');
+    expect(reasonAt(DUE_SOON_DAYS)).toBeUndefined();
+    expect(reasonAt(DUE_SOON_DAYS + 0.5)).toBeUndefined();
+    expect(reasonAt(DUE_SOON_DAYS + 0.999)).toBeUndefined();
+  });
+
+  it('reports a whole number of days that never exceeds the window', () => {
+    // Every flagged deadline must be describable as "Due in N days" with N
+    // inside the window — the old bound could report "Due in 7 days" from a
+    // seven-day window that had already closed.
+    for (let hours = 1; hours <= DUE_SOON_DAYS * 24 + 24; hours += 1) {
+      const item = classifyAttention(row({ due_date: daysFromNow(hours / 24) }), NOW);
+      if (item?.reason === 'due_soon') {
+        expect(item.days).toBeGreaterThanOrEqual(0);
+        expect(item.days).toBeLessThan(DUE_SOON_DAYS);
+      }
+    }
+  });
 });
 
 describe('rankAttention', () => {
