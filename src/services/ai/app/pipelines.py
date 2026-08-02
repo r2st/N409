@@ -11,7 +11,7 @@ import json
 from dataclasses import replace
 from typing import Any
 
-from .anonymize import Redactor, anonymization_enforced
+from .anonymize import Redactor
 from .documents import DocText, extract_texts, render_corpus
 from .openrouter import LlmResult, chat, extract_json
 
@@ -110,14 +110,11 @@ def _redactor(payload: dict) -> Redactor:
     disagree about whether redaction is on or which entities are known. In
     production the anonymize=false escape hatch is ignored (audit B-1 P1).
     """
-    options = payload.get("options") or {}
-    enforced = anonymization_enforced()
     companies, people = _known_entities(payload)
-    return Redactor(
+    return Redactor.for_request(
+        payload.get("options"),
         company_names=companies,
         person_names=people,
-        applied=enforced or bool(options.get("anonymize", True)),
-        enforced=enforced,
     )
 
 

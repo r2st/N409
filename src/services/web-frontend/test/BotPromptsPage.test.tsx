@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { BotPromptsPage } from '../src/pages/BotPromptsPage';
+import { BotPromptsPage, describeRedactions } from '../src/pages/BotPromptsPage';
 import type { BotPrompt } from '../src/pages/BotPromptsPage';
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -30,6 +30,39 @@ function mockApi(overrides: Record<string, (init?: RequestInit) => Response> = {
     throw new Error(`unexpected fetch ${path}`);
   });
 }
+
+describe('describeRedactions', () => {
+  it('is null when there is nothing to say', () => {
+    expect(describeRedactions(undefined)).toBeNull();
+    expect(describeRedactions({})).toBeNull();
+    // A category present but zero is the same as absent — a "0 email
+    // addresses" notice would read as a warning about nothing.
+    expect(describeRedactions({ emails: 0 })).toBeNull();
+  });
+
+  it('agrees in number with what it counted', () => {
+    expect(describeRedactions({ emails: 1 })).toBe('1 email address');
+    expect(describeRedactions({ emails: 3 })).toBe('3 email addresses');
+    expect(describeRedactions({ ssns: 1 })).toBe('1 SSN');
+  });
+
+  it('joins categories as a sentence, not a list', () => {
+    // Keys deliberately out of alphabetical order: the AI service builds its
+    // counts in whatever order its detectors happened to fire, and a notice
+    // that reshuffles itself between two runs of the same prompt reads as the
+    // redaction having changed when only the input did.
+    expect(describeRedactions({ phones: 1, emails: 2 })).toBe('2 email addresses and 1 phone number');
+    expect(describeRedactions({ phones: 1, emails: 1, names: 1 })).toBe(
+      '1 email address, 1 name and 1 phone number',
+    );
+  });
+
+  it('names a category it has never heard of rather than dropping it', () => {
+    // The AI service can add a detector without this page shipping first, and
+    // a silently omitted category is exactly the kind of thing ops needs told.
+    expect(describeRedactions({ passports: 2 })).toBe('2 passports');
+  });
+});
 
 describe('BotPromptsPage', () => {
   beforeEach(() => {
@@ -66,6 +99,49 @@ describe('BotPromptsPage', () => {
       const body = JSON.parse(String((patchCall![1] as RequestInit).body));
       expect(body.system_prompt).toBe('Extract only. JSON only. Be terse.');
       expect(body.model).toBeNull();
+    });
+  });
+
+  // The dry-run box redacts what ops pastes into it before the AI service
+  // sends it on. Someone tuning prompt wording is then reading the model's
+  // answer to text they only *think* they sent — so what was struck has to be
+  // on screen next to the answer, or the next twenty minutes go into rewording
+  // a prompt that handled the input fine.
+  describe('the redaction notice on a dry run', () => {
+    const runTest = async (test: unknown) => {
+      const user = userEvent.setup();
+      mockApi({ '/test': () => jsonResponse({ test }) });
+      render(<BotPromptsPage />);
+      await user.click(await screen.findByText('Test this prompt'));
+      await user.type(screen.getByPlaceholderText(/Company: Acme/), 'Acme, ada@acme.io');
+      await user.click(screen.getByRole('button', { name: 'Run test' }));
+      return screen.findByText('{"ok": true}');
+    };
+
+    it('names what was struck, in the words of the thing struck', async () => {
+      await runTest({
+        model: 'a/b',
+        content: '{"ok": true}',
+        anonymization: { applied: true, redacted: { emails: 2, phones: 1 }, enforced: false },
+      });
+      expect(
+        screen.getByText(/Redacted before sending: 2 email addresses and 1 phone number\./),
+      ).toBeInTheDocument();
+    });
+
+    it('says nothing when nothing was struck', async () => {
+      await runTest({
+        model: 'a/b',
+        content: '{"ok": true}',
+        anonymization: { applied: true, redacted: {}, enforced: false },
+      });
+      expect(screen.queryByText(/Redacted before sending/)).not.toBeInTheDocument();
+    });
+
+    it('still shows the response when the service reports no redaction at all', async () => {
+      // An older AI service, mid-deploy, omits the field entirely.
+      await runTest({ model: 'a/b', content: '{"ok": true}' });
+      expect(screen.queryByText(/Redacted before sending/)).not.toBeInTheDocument();
     });
   });
 

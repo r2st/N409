@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents import AGENT_PIPELINES
+from .anonymize import Redactor
 from .errors import install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
@@ -141,11 +142,16 @@ class TestRequest(BaseModel):
     system: str
     user: str
     model: str | None = None
+    # Same escape hatch the pipelines expose, and ignored in production for the
+    # same reason. Nested under `options` so one shape means one thing across
+    # both routes.
+    options: dict = Field(default_factory=dict)
 
 
 class TestResponse(BaseModel):
     model: str
     content: str
+    anonymization: dict = Field(default_factory=dict)
 
 
 @app.get("/")
@@ -205,12 +211,28 @@ def models() -> dict:
 
 @app.post("/ai/v1/test", response_model=TestResponse)
 def test_prompt(request: TestRequest) -> TestResponse:
-    """Dry-run a prompt (Bot Prompts 'test' button) — no persistence, no documents."""
+    """Dry-run a prompt (Bot Prompts 'test' button) — no persistence, no documents.
+
+    Redacted like any other prompt. "No documents" is not the same as no client
+    data: the point of the box is to iterate on prompt wording against input
+    that behaves like the real thing, so what ops pastes into it *is* a chunk of
+    somebody's cap table or a founder's business overview. This was the one
+    route left that reached OpenRouter without passing anything through the
+    redactor, and being ad-hoc and unpersisted made it the one nothing recorded
+    either.
+
+    Without the subject company on the request there is no known-entity list, so
+    only the regex layer applies here — emails, phones, SSN/EIN, addresses,
+    honorific-led names. The report says what was struck rather than merely that
+    redaction ran, because an operator tuning prompt wording has to be able to
+    tell "the model handled this badly" from "the model never saw it".
+    """
+    red = Redactor.for_request(request.options)
     try:
-        llm = chat(request.system, request.user, model=request.model)
+        llm = chat(red.text(request.system), red.text(request.user), model=request.model)
     except OpenRouterError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return TestResponse(model=llm.model, content=llm.content)
+    return TestResponse(model=llm.model, content=llm.content, anonymization=red.report())
 
 
 @app.post("/ai/v1/pipelines/{pipeline}", response_model=PipelineResponse)

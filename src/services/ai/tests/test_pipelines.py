@@ -277,7 +277,13 @@ def test_test_endpoint_runs_prompt(monkeypatch, client):
         json={"system": "JSON only.", "user": "What is the answer?", "model": "stub/model-x"},
     )
     assert resp.status_code == 200
-    assert resp.json() == {"model": "stub/model-x", "content": '{"answer": 42}'}
+    assert resp.json() == {
+        "model": "stub/model-x",
+        "content": '{"answer": 42}',
+        # Nothing identifying in this prompt, but the report is unconditional:
+        # see test_prompt_redaction.py for the dry-run box's redaction.
+        "anonymization": {"applied": True, "redacted": {}, "enforced": False},
+    }
     assert chat.calls[0] == {"system": "JSON only.", "user": "What is the answer?", "model": "stub/model-x"}
 
 

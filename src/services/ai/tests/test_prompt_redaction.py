@@ -25,10 +25,11 @@ import base64
 import json
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app import pipelines
 from app.agents import AGENT_PIPELINES, _common, comp_selection
-from app.main import ALL_PIPELINES
+from app.main import ALL_PIPELINES, app
 from app.openrouter import LlmResult
 
 # One payload carrying every identifying thing a real request carries, so a
@@ -329,3 +330,163 @@ def test_production_ignores_the_escape_hatch_for_every_runner(monkeypatch, promp
 def test_a_request_with_nothing_to_redact_still_reports(prompts):
     _, result = pipelines.run_explain({"valuation": {"kind": "409a"}})
     assert result["anonymization"] == {"applied": True, "redacted": {}, "enforced": False}
+
+
+# ── Each layer, on its own ───────────────────────────────────────────────────
+#
+# Everything above goes through `_ask`, which redacts whatever it is handed.
+# That makes the gate a backstop that hides the layers behind it: strike the
+# redaction off the document bodies or off `business_overview` and every
+# assertion above still passes, because the gate catches what they missed.
+#
+# Defence in depth is only depth if each layer is load-bearing on its own. A
+# new agent that calls `chat` directly — the shape every agent had before this
+# round — is caught by the assembly-site redaction and nothing else. So these
+# assert on the intermediate values rather than on the outbound prompt.
+
+
+def test_document_bodies_are_redacted_before_anything_assembles_them():
+    docs, report = pipelines._load_docs(payload())
+    assert not _leaks(docs[0].text)
+    assert DOC_BODY_MARKER in docs[0].text  # the figures it exists for survive
+    assert report["redacted"]["emails"] == 1
+
+
+def test_the_corpus_hands_back_the_document_under_the_name_it_showed():
+    red = pipelines._redactor(payload())
+    docs, _ = pipelines._load_docs(payload(), red)
+    corpus, by_shown = pipelines._corpus(docs, red, 45_000)
+    assert not _leaks(corpus)
+    # Keyed on the redacted name — the only one the model can echo back. Keyed
+    # on the real one, every lookup misses and every summary silently falls
+    # back to the model's own spelling.
+    assert list(by_shown) == [SHOWN_FILENAME]
+    assert by_shown[SHOWN_FILENAME].filename == FILENAME
+
+
+def test_the_corpus_truncates_after_redacting_not_before():
+    # Redaction changes the text's length, so a limit applied to the raw corpus
+    # cuts at a different point than the same limit applied to what is sent.
+    # The cheap way to get this wrong is to truncate first and redact the
+    # result — which would also cut a name in half and leave the stub of it in.
+    red = pipelines._redactor(payload())
+    docs, _ = pipelines._load_docs(payload(), red)
+    corpus, _ = pipelines._corpus(docs, red, 60)
+    assert len(corpus) == 60
+    assert not _leaks(corpus)
+
+
+def test_the_overview_is_struck_where_it_is_assembled_not_only_at_the_gate(monkeypatch):
+    # Pinned through the one runner that interpolates it, with the gate removed
+    # so only the assembly-site redaction can be what cleans it.
+    sent = {}
+
+    def bare_chat(system, user, *, model=None, client=None):
+        sent["user"] = user
+        return LlmResult(model="m", content=json.dumps(_STUB))
+
+    monkeypatch.setattr(pipelines, "_ask", lambda red, s, u, m: bare_chat(s, u, model=m))
+    pipelines.run_comparables(payload())
+    assert not _leaks(sent["user"])
+
+
+# ── The dry-run box ──────────────────────────────────────────────────────────
+#
+# `/ai/v1/test` is the Bot Prompts "test" button: ops pastes a sample user
+# message and sees what the model says. It reached OpenRouter without passing
+# through any of the above, and being unpersisted meant nothing recorded that
+# it had. "No documents" is not "no client data" — the sample is only useful if
+# it behaves like the real input, which means it *is* real input.
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
+
+
+@pytest.fixture
+def dry_run(monkeypatch):
+    from app import main
+
+    sent: list[dict] = []
+
+    def fake_chat(system, user, *, model=None, client=None):
+        sent.append({"system": system, "user": user})
+        return LlmResult(model="stub/model-x", content="ok")
+
+    monkeypatch.setattr(main, "chat", fake_chat)
+    return sent
+
+
+def test_the_dry_run_box_redacts_what_ops_pasted(dry_run, client):
+    resp = client.post(
+        "/ai/v1/test",
+        json={"system": "You are a valuation analyst.", "user": OVERVIEW},
+    )
+    assert resp.status_code == 200
+    sent = dry_run[0]["user"]
+    assert EMAIL not in sent and PHONE not in sent
+    assert "[EMAIL]" in sent and "[PHONE]" in sent
+
+
+def test_the_dry_run_box_cannot_strike_a_company_it_was_never_told_about(dry_run, client):
+    """The limit of this route, asserted rather than assumed.
+
+    A pipeline run knows its subject company and its known people, and strikes
+    them by name — that is the reliable half of redaction. A prompt dry-run is
+    not attached to a valuation, so there is nobody to ask, and only the regex
+    layer applies: emails, phones, SSN/EIN, addresses, honorific-led names.
+
+    Inferring company names from shape instead is a change to the shared
+    detector, and one that costs accuracy everywhere it fires — over-redaction
+    turns the document the model is meant to reason about into nonsense. So the
+    gap is left open deliberately, and the response reports what was struck so
+    ops can see for themselves what did and did not go out.
+    """
+    client.post("/ai/v1/test", json={"system": "s", "user": OVERVIEW})
+    assert SHORT in dry_run[0]["user"]
+    assert FOUNDER in dry_run[0]["user"]
+
+
+def test_the_dry_run_box_redacts_the_prompt_being_tested_too(dry_run, client):
+    # The system prompt is the thing under test here, so it is the string most
+    # likely to have had a real example pasted into it.
+    client.post("/ai/v1/test", json={"system": f"Value {COMPANY}, reachable at {EMAIL}.", "user": "go"})
+    assert EMAIL not in dry_run[0]["system"]
+
+
+def test_the_dry_run_box_says_what_it_struck(dry_run, client):
+    # An operator tuning wording has to be able to tell "the model handled this
+    # badly" from "the model never saw it".
+    resp = client.post("/ai/v1/test", json={"system": "s", "user": OVERVIEW})
+    anon = resp.json()["anonymization"]
+    assert anon["applied"] is True
+    assert anon["redacted"]["emails"] == 1
+    assert anon["redacted"]["phones"] == 1
+
+
+def test_the_dry_run_box_leaves_the_wording_being_tested_alone(dry_run, client):
+    resp = client.post("/ai/v1/test", json={"system": "Answer in JSON only.", "user": "2+2?"})
+    assert dry_run[0] == {"system": "Answer in JSON only.", "user": "2+2?"}
+    assert resp.json()["anonymization"]["redacted"] == {}
+
+
+def test_the_dry_run_box_honours_the_escape_hatch_outside_production(monkeypatch, dry_run, client):
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ANONYMIZE_ENFORCE", raising=False)
+    client.post(
+        "/ai/v1/test",
+        json={"system": "s", "user": OVERVIEW, "options": {"anonymize": False}},
+    )
+    assert EMAIL in dry_run[0]["user"]
+
+
+def test_production_ignores_the_escape_hatch_in_the_dry_run_box(monkeypatch, dry_run, client):
+    # The route the pipelines' enforcement test does not reach.
+    monkeypatch.setenv("APP_ENV", "production")
+    resp = client.post(
+        "/ai/v1/test",
+        json={"system": "s", "user": OVERVIEW, "options": {"anonymize": False}},
+    )
+    assert EMAIL not in dry_run[0]["user"] and PHONE not in dry_run[0]["user"]
+    assert resp.json()["anonymization"]["enforced"] is True

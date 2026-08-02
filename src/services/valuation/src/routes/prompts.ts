@@ -45,6 +45,14 @@ const RevertBody = z.object({
 export interface AiTestResponse {
   model: string;
   content: string;
+  /**
+   * What the AI service struck out of this dry run before sending it. Ops
+   * pastes sample input that behaves like the real thing, which means it is
+   * real client data; the box redacts it like any other prompt. Surfaced
+   * rather than swallowed so someone tuning prompt wording can tell "the model
+   * handled this badly" from "the model never saw it".
+   */
+  anonymization?: { applied: boolean; redacted: Record<string, number>; enforced?: boolean };
 }
 
 export interface AiModelsResponse {

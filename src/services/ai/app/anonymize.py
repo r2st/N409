@@ -312,6 +312,32 @@ class Redactor:
     threaded through everything the request emits.
     """
 
+    @classmethod
+    def for_request(
+        cls,
+        options: dict | None,
+        *,
+        company_names: list[str] | None = None,
+        person_names: list[str] | None = None,
+    ) -> Redactor:
+        """The policy for one inbound request: on by default, switchable off by
+        ``options.anonymize``, and not switchable off in production (audit
+        B-1 P1).
+
+        Every route that sends text to OpenRouter builds its Redactor here.
+        The rule is one sentence long and still worth centralising, because the
+        failure mode of a second copy is not a wrong answer — it is a route
+        that quietly honours ``anonymize: false`` in production while the
+        pipelines beside it do not.
+        """
+        enforced = anonymization_enforced()
+        return cls(
+            company_names=company_names,
+            person_names=person_names,
+            applied=enforced or bool((options or {}).get("anonymize", True)),
+            enforced=enforced,
+        )
+
     def __init__(
         self,
         *,

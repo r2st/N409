@@ -25,6 +25,43 @@ export interface PromptVersion {
   created_at: string;
 }
 
+export interface AiTestResult {
+  model: string;
+  content: string;
+  anonymization?: { applied: boolean; redacted: Record<string, number>; enforced?: boolean };
+}
+
+const REDACTION_LABELS: Record<string, [string, string]> = {
+  emails: ['email address', 'email addresses'],
+  phones: ['phone number', 'phone numbers'],
+  ssns: ['SSN', 'SSNs'],
+  eins: ['EIN', 'EINs'],
+  addresses: ['address', 'addresses'],
+  names: ['name', 'names'],
+  companies: ['company name', 'company names'],
+};
+
+/**
+ * "2 email addresses and a phone number", or null when nothing was struck.
+ *
+ * Spelled out rather than shown as a count, because this is the one place the
+ * number has to change a decision: someone iterating on prompt wording is
+ * reading the model's answer to text they only think they sent, and "3" does
+ * not tell them which of their sample's details never arrived.
+ */
+export function describeRedactions(redacted: Record<string, number> | undefined): string | null {
+  const parts = Object.entries(redacted ?? {})
+    .filter(([, n]) => n > 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([kind, n]) => {
+      const [one, many] = REDACTION_LABELS[kind] ?? [kind, kind];
+      return n === 1 ? `1 ${one}` : `${n} ${many}`;
+    });
+  const last = parts.pop();
+  if (last === undefined) return null;
+  return parts.length === 0 ? last : `${parts.join(', ')} and ${last}`;
+}
+
 /** Unified line diff of a version's system prompt against the live content. */
 function VersionDiff({ from, to }: { from: string; to: string }) {
   const lines = diffLines(from, to);
@@ -172,7 +209,7 @@ function PromptCard({
 
   const [testInput, setTestInput] = useState('');
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ model: string; content: string } | null>(null);
+  const [testResult, setTestResult] = useState<AiTestResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
 
   const dirty =
@@ -205,10 +242,10 @@ function PromptCard({
     setTestError(null);
     setTestResult(null);
     try {
-      const { test } = await api<{ test: { model: string; content: string } }>(
-        `/admin/prompts/${prompt.id}/test`,
-        { method: 'POST', body: { input: testInput } },
-      );
+      const { test } = await api<{ test: AiTestResult }>(`/admin/prompts/${prompt.id}/test`, {
+        method: 'POST',
+        body: { input: testInput },
+      });
       setTestResult(test);
     } catch (err) {
       setTestError(err instanceof ApiError ? err.message : 'The test run failed.');
@@ -278,7 +315,7 @@ function PromptCard({
         <div className="mt-3 space-y-3">
           <Field
             label="Sample input"
-            hint="Sent as the user message against the saved system prompt — nothing is persisted."
+            hint="Sent as the user message against the saved system prompt — nothing is persisted. PII is redacted first, and what was struck is reported with the response."
           >
             <textarea
               className={`${inputClass} min-h-24 text-sm`}
@@ -299,6 +336,14 @@ function PromptCard({
           {testResult && (
             <div className="rounded-md border border-paper-300 bg-paper-50 p-4">
               <div className="overline mb-2 text-ink-400">Response · {testResult.model}</div>
+              {(() => {
+                const struck = describeRedactions(testResult.anonymization?.redacted);
+                return struck ? (
+                  <p className="mb-2 text-xs text-ink-500">
+                    Redacted before sending: {struck}. The model answered the redacted text.
+                  </p>
+                ) : null;
+              })()}
               <pre className="max-h-80 overflow-auto text-xs whitespace-pre-wrap text-ink-800">
                 {testResult.content}
               </pre>

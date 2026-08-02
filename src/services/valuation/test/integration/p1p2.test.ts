@@ -46,7 +46,13 @@ describe.skipIf(!dbUp)('P1/P2 features API', () => {
     aiStub = await startStub({
       '/ai/v1/test': (body) => {
         lastTestPayload = body as Record<string, unknown>;
-        return { body: { model: 'stub/model-a', content: '{"ok": true}' } };
+        return {
+          body: {
+            model: 'stub/model-a',
+            content: '{"ok": true}',
+            anonymization: { applied: true, redacted: { emails: 2 }, enforced: false },
+          },
+        };
       },
     });
     engineStub = await startStub({
@@ -182,7 +188,14 @@ describe.skipIf(!dbUp)('P1/P2 features API', () => {
         payload: { input: 'Company: Acme. Docs: cap_table.csv' },
       });
       expect(res.statusCode).toBe(200);
-      expect(res.json().test).toEqual({ model: 'stub/model-a', content: '{"ok": true}' });
+      expect(res.json().test).toEqual({
+        model: 'stub/model-a',
+        content: '{"ok": true}',
+        // Passed through, not summarised away: ops is reading the model's
+        // answer to text the AI service redacted on the way out, and has to be
+        // told which parts of their sample never arrived.
+        anonymization: { applied: true, redacted: { emails: 2 }, enforced: false },
+      });
       expect(lastTestPayload).toMatchObject({
         system: 'Extract numbers. JSON only.',
         user: 'Company: Acme. Docs: cap_table.csv',
