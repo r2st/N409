@@ -243,3 +243,99 @@ def test_no_money_field_is_ever_null_on_a_200():
     body = r.json()
     for field in ("prior_equity_value", "rolled_equity_value", "annual_accretion"):
         assert isinstance(body[field], (int, float)), f"{field} came back as {body[field]!r}"
+
+
+# ── The pre-populated inputs must actually reproduce the rolled value ─────────
+#
+# `pre_populated_inputs` is documented as "ready to hand to compute". It was
+# not: `compute` backsolves whenever `last_round_price_per_share` is present and
+# demotes `last_round_post_money` to a starting guess, so the prior round's
+# price — carried forward untouched — discarded the whole roll-forward.
+
+_PRIOR_INPUTS = {
+    "valuation_date": "2025-01-01",
+    "last_round_post_money": 10_000_000.0,
+    "last_round_price_per_share": 1.25,
+    "last_round_class": "Series A",
+    "shares_outstanding_common": 8_000_000.0,
+    "shares_outstanding_preferred": 2_000_000.0,
+    "liquidation_preference": 2_500_000.0,
+    "volatility": 0.6,
+}
+_PARAMS = {
+    "weight_asset": 0.0,
+    "weight_opm": 1.0,
+    "weight_income": 0.0,
+    "weight_market": 0.0,
+    "dlom": 0.2,
+    "dloc": 0.0,
+}
+
+
+def test_stale_round_price_is_dropped_from_pre_populated_inputs():
+    out = roll_forward(
+        {"results": {"equity_value": 10_000_000.0}},
+        prior_valuation_date="2025-01-01",
+        new_valuation_date="2026-01-01",
+        prior_inputs=_PRIOR_INPUTS,
+        annual_accretion=0.30,
+    )
+    pre = out["pre_populated_inputs"]
+    assert "last_round_price_per_share" not in pre
+    assert "last_round_class" not in pre
+    # Everything else the prior run carried is still there.
+    assert pre["shares_outstanding_common"] == 8_000_000.0
+    assert pre["volatility"] == 0.6
+
+
+def test_compute_on_pre_populated_inputs_reproduces_the_rolled_value():
+    """The property the drop exists to protect."""
+    from app.engine.compute import compute
+
+    out = roll_forward(
+        {"results": {"equity_value": 10_000_000.0}},
+        prior_valuation_date="2025-01-01",
+        new_valuation_date="2026-01-01",
+        prior_inputs=_PRIOR_INPUTS,
+        annual_accretion=0.30,
+    )
+    rolled = out["rolled_equity_value"]
+    assert rolled == pytest.approx(10_000_000 * 1.30 ** (365 / 365.25), rel=1e-4)
+
+    results = compute(_PARAMS, out["pre_populated_inputs"])["results"]
+    assert results["equity_value"] == pytest.approx(rolled)
+    assert results["approaches"]["opm_backsolve"]["method"] == "post_money"
+
+
+def test_a_new_round_price_in_updated_inputs_is_kept():
+    # A price supplied for the *new* date is a live market observation, not a
+    # stale one, so the backsolve should still calibrate to it.
+    out = roll_forward(
+        {"results": {"equity_value": 10_000_000.0}},
+        prior_valuation_date="2025-01-01",
+        new_valuation_date="2026-01-01",
+        prior_inputs=_PRIOR_INPUTS,
+        updated_inputs={"last_round_price_per_share": 2.10},
+        new_round_post_money=20_000_000.0,
+    )
+    pre = out["pre_populated_inputs"]
+    assert pre["last_round_price_per_share"] == 2.10
+    assert pre["last_round_class"] == "Series A"  # kept alongside the live price
+
+
+def test_adjustments_survive_into_the_computed_value():
+    # An impairment that compute silently ignored is the sharpest form of the
+    # bug: the analyst marks the company down and the FMV does not move.
+    from app.engine.compute import compute
+
+    out = roll_forward(
+        {"results": {"equity_value": 10_000_000.0}},
+        prior_valuation_date="2025-01-01",
+        new_valuation_date="2025-01-01",
+        prior_inputs=_PRIOR_INPUTS,
+        annual_accretion=0.0,
+        value_adjustments=[{"label": "down round mark", "pct": -0.40}],
+    )
+    assert out["rolled_equity_value"] == pytest.approx(6_000_000.0)
+    results = compute(_PARAMS, out["pre_populated_inputs"])["results"]
+    assert results["equity_value"] == pytest.approx(6_000_000.0)

@@ -183,6 +183,23 @@ def roll_forward(
         "valuation_date": d1.isoformat(),
         "last_round_post_money": round(equity, 2),
     }
+    # `compute` only treats `last_round_post_money` as the anchor when there is
+    # no round price to calibrate against: given a `last_round_price_per_share`
+    # it root-finds the equity value that reprices that class and uses the
+    # post-money as nothing more than a starting guess. So carrying the *prior*
+    # round's price into these inputs threw the entire roll-forward away — the
+    # accretion, any new round and every adjustment above — and re-derived a
+    # value off the stale price, which is not even the prior valuation: a
+    # backsolve to a $1.25 round returned about half the prior equity value in
+    # the case that found this.
+    #
+    # That price is a market observation this roll-forward has superseded.
+    # Only one supplied in `updated_inputs` describes the new date, so that one
+    # is kept; otherwise the price goes, and `last_round_class` with it, since
+    # naming the class to reprice means nothing without a price to reprice to.
+    if updated_inputs.get("last_round_price_per_share") is None:
+        pre_populated.pop("last_round_price_per_share", None)
+        pre_populated.pop("last_round_class", None)
 
     return {
         "prior_valuation_date": d0.isoformat(),
