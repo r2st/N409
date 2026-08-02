@@ -3,7 +3,16 @@ import type { ChangeEvent } from 'react';
 import { api, ApiError, apiUpload, type Problem } from '../../lib/api';
 import { formatAmount, formatNumber } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  LoadingBlock,
+  Select,
+  Skeleton,
+  SkeletonTable,
+} from '../../components/ui';
 import { CapTableSyncPanel } from '../../components/valuation/CapTableSyncPanel';
 
 /**
@@ -299,7 +308,18 @@ export function CapTableTab() {
     }
   };
 
-  if (loading) return <Spinner />;
+  if (loading)
+    return (
+      <LoadingBlock label="Loading cap table…" className="max-w-4xl space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3" aria-hidden>
+          <Skeleton className="h-6 w-56" />
+          <Skeleton className="h-[38px] w-36" />
+        </div>
+        <div className="rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
+          <SkeletonTable columns={5} rows={7} />
+        </div>
+      </LoadingBlock>
+    );
 
   return (
     <div className="max-w-4xl space-y-6">

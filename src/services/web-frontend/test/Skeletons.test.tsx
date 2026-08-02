@@ -1,10 +1,13 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import {
   LoadingBlock,
   PageSkeleton,
   Skeleton,
+  SkeletonCardList,
+  SkeletonDividedList,
+  SkeletonStatStrip,
   SkeletonTable,
   SkeletonText,
   StatCardSkeleton,
@@ -24,6 +27,14 @@ const clientUser = {
   first_name: 'Cleo',
   last_name: 'Client',
   roles: ['valuation_user'],
+} as unknown as User;
+
+const opsUser = {
+  id: '01N409USER00000000000000OP',
+  email: 'ops@example.com',
+  first_name: 'Otto',
+  last_name: 'Ops',
+  roles: ['admin'],
 } as unknown as User;
 
 /**
@@ -93,6 +104,45 @@ describe('skeleton geometry', () => {
     expect(card.className).toContain('border-paper-300');
     expect(card.className).toContain('shadow-card');
   });
+
+  it('draws a card list as n separately bordered cards', () => {
+    const { container } = render(<SkeletonCardList rows={4} lines={2} badges={2} />);
+    const cards = container.querySelectorAll('.shadow-card');
+    expect(cards).toHaveLength(4);
+    // One title line + one meta line + two badge pills per card.
+    expect(cards[0]!.querySelectorAll('.skeleton')).toHaveLength(4);
+  });
+
+  it('draws a divided list as one box with rules, not n shadows', () => {
+    // The distinction is the point of having both: Documents and Tasks render
+    // a single bordered container, so n cards would be the wrong picture.
+    const { container } = render(<SkeletonDividedList rows={4} />);
+    const boxes = container.querySelectorAll('.shadow-card');
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0]!.className).toContain('divide-y');
+    expect(boxes[0]!.children).toHaveLength(4);
+  });
+
+  it('draws the stat strip unboxed, so it sits where a bare <dl> will', () => {
+    const { container } = render(<SkeletonStatStrip count={3} />);
+    expect(container.querySelectorAll('.shadow-card')).toHaveLength(0);
+    expect(container.firstElementChild!.children).toHaveLength(3);
+  });
+
+  it('keeps the new list primitives out of the accessibility tree', () => {
+    const { container } = render(
+      <>
+        <SkeletonCardList rows={2} />
+        <SkeletonDividedList rows={2} />
+        <SkeletonStatStrip count={2} />
+      </>,
+    );
+    for (const block of container.querySelectorAll('.skeleton')) {
+      expect(block.closest('[aria-hidden]')).not.toBeNull();
+    }
+    // None of them owns a live region — that belongs to the LoadingBlock above.
+    expect(screen.queryByRole('status')).toBeNull();
+  });
 });
 
 describe('dashboard loading state', () => {
@@ -143,5 +193,116 @@ describe('dashboard loading state', () => {
     await waitFor(() => expect(screen.getByText('Total')).toBeInTheDocument());
     expect(screen.queryByText('Loading your dashboard…')).toBeNull();
     expect(container.querySelectorAll('.skeleton')).toHaveLength(0);
+  });
+});
+
+/**
+ * The analytics pivot is a second, independent fetch that only ops and partners
+ * make. It used to pop in with nothing holding its place; now it has one, which
+ * makes *taking the placeholder down again* the thing worth pinning — the pivot
+ * is null both while it loads and when it fails, so a placeholder keyed off the
+ * data alone would stay up forever on an error.
+ */
+describe('dashboard analytics loading state', () => {
+  const valuations = [
+    {
+      id: '01N409VAL000000000000000AA',
+      company_name: 'Acme',
+      kind: '409a',
+      state: 'started',
+      waiting_on_client: false,
+      created_at: '2026-06-01T00:00:00Z',
+      due_date: null,
+    },
+  ] as unknown as Valuation[];
+
+  const analytics = {
+    total: 1,
+    by_kind: [{ kind: '409a', open: 1, in_review: 0, drafted: 0, published: 0, closed: 0, total: 1 }],
+    by_source: { direct: 1 },
+    by_state: { started: 1 },
+  };
+
+  /** Routes the two dashboard fetches; `stats` decides the pivot's fate. */
+  const mockFetch = (stats: 'ok' | 'fail', gate?: Promise<void>) =>
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/stats/dashboard')) {
+        if (gate) await gate;
+        if (stats === 'fail') {
+          return new Response(JSON.stringify({ title: 'boom' }), {
+            status: 500,
+            headers: { 'content-type': 'application/problem+json' },
+          });
+        }
+        return new Response(JSON.stringify(analytics), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ valuations, total: 1 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+  beforeEach(() => {
+    mockUser = opsUser;
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('holds the pivot’s place while it loads, then shows it', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockFetch('ok', gate);
+
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(screen.getByText('Loading analytics…')).toBeInTheDocument());
+
+    release!();
+    await waitFor(() => expect(screen.getByLabelText('Product pivot')).toBeInTheDocument());
+    expect(screen.queryByText('Loading analytics…')).toBeNull();
+  });
+
+  it('takes the placeholder down when the pivot fails', async () => {
+    mockFetch('fail');
+
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    // The rest of the dashboard still arrives …
+    await waitFor(() => expect(screen.getByText('Total')).toBeInTheDocument());
+    // … and the analytics placeholder does not outlive the failed request.
+    await waitFor(() => expect(screen.queryByText('Loading analytics…')).toBeNull());
+    expect(screen.queryByLabelText('Product pivot')).toBeNull();
+  });
+
+  it('keeps the loaded pivot on screen while a date-range change refetches', async () => {
+    // Collapsing a table the reader is comparing against back to grey blocks
+    // is worse than a moment of staleness.
+    mockFetch('ok');
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByLabelText('Product pivot')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Analytics from'), { target: { value: '2026-01-01' } });
+
+    expect(screen.getByLabelText('Product pivot')).toBeInTheDocument();
+    expect(screen.queryByText('Loading analytics…')).toBeNull();
   });
 });

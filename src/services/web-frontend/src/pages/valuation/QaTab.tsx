@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Spinner } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
 
 type QaStatus = 'pass' | 'warn' | 'fail';
 
@@ -91,7 +91,21 @@ export function QaTab() {
   };
 
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
-  if (!data) return <Spinner />;
+  // Gate banner, the two run buttons, then the latest review panel.
+  if (!data)
+    return (
+      <LoadingBlock label="Loading QA…" className="space-y-6">
+        <Skeleton className="h-[46px] w-full rounded-md" />
+        <div className="flex gap-2" aria-hidden>
+          <Skeleton className="h-[38px] w-32" />
+          <Skeleton className="h-[38px] w-52" />
+        </div>
+        <div className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card" aria-hidden>
+          <Skeleton className="h-5 w-48" />
+          <SkeletonText lines={4} className="mt-4" />
+        </div>
+      </LoadingBlock>
+    );
 
   const latest = data.reviews[0] ?? null;
 

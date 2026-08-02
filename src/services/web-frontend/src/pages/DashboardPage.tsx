@@ -22,6 +22,7 @@ import {
   KindBadge,
   LoadingBlock,
   Skeleton,
+  SkeletonCardList,
   SkeletonTable,
   StatCard,
   StatCardSkeleton,
@@ -40,6 +41,9 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [valuations, setValuations] = useState<Valuation[] | null>(null);
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
+  // Tracked apart from `analytics`, which is also null when the pivot failed —
+  // keyed off the data alone, a failed fetch would leave placeholders up for good.
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState({ from: '', to: '' });
 
@@ -59,9 +63,18 @@ export function DashboardPage() {
     const q = new URLSearchParams();
     if (range.from) q.set('created_from', range.from);
     if (range.to) q.set('created_to', range.to);
+    // `cancelled` guards both the state writes: typing through a date range
+    // fires several of these, and without it the slowest response wins rather
+    // than the newest one.
+    let cancelled = false;
+    setAnalyticsLoading(true);
     api<DashboardAnalytics>(`/stats/dashboard?${q}`)
-      .then(setAnalytics)
-      .catch(() => setAnalytics(null));
+      .then((data) => !cancelled && setAnalytics(data))
+      .catch(() => !cancelled && setAnalytics(null))
+      .finally(() => !cancelled && setAnalyticsLoading(false));
+    return () => {
+      cancelled = true;
+    };
   }, [range, showAnalytics]);
 
   const stats = valuations ? computeStats(valuations) : null;
@@ -123,9 +136,9 @@ export function DashboardPage() {
             ))}
           </div>
           <Skeleton className="mt-10 h-2.5 w-32" />
-          <div className="mt-4 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
-            <SkeletonTable columns={4} rows={5} />
-          </div>
+          {/* Recent valuations is a card list, not a table — placing a table
+              here would promise a shape the data never takes. */}
+          <SkeletonCardList className="mt-4" rows={5} lines={2} badges={2} />
         </LoadingBlock>
       )}
 
@@ -170,6 +183,39 @@ export function DashboardPage() {
                   )}
                 </div>
               </div>
+
+              {/*
+               * First load only. A range change keeps the pivot that is already
+               * on screen rather than collapsing it to placeholders — the reader
+               * is comparing against what it said a moment ago.
+               */}
+              {analyticsLoading && !analytics && (
+                <LoadingBlock label="Loading analytics…">
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    {Array.from({ length: 2 }, (_, i) => (
+                      <div
+                        key={i}
+                        className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+                        aria-hidden
+                      >
+                        <Skeleton className="h-2.5 w-24" />
+                        <div className="mt-5 flex items-center gap-6">
+                          <Skeleton className="h-28 w-28 shrink-0 rounded-full" />
+                          <div className="min-w-0 flex-1 space-y-2.5">
+                            {Array.from({ length: 4 }, (_, j) => (
+                              <Skeleton key={j} className="h-3 w-full" />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
+                    {/* Product column + five group columns + total. */}
+                    <SkeletonTable columns={7} rows={4} />
+                  </div>
+                </LoadingBlock>
+              )}
 
               {analytics && (
                 <>

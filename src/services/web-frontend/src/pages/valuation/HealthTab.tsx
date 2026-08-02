@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, EmptyState, ErrorNote, Spinner } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
 
 type Severity = 'ok' | 'info' | 'warning' | 'error';
 type Category = 'methodology' | 'assumptions' | 'completeness' | 'mathematical' | 'temporal';
@@ -101,7 +101,17 @@ export function HealthTab() {
   };
 
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
-  if (!data) return <Spinner />;
+  if (!data)
+    return (
+      <LoadingBlock label="Loading health checks…" className="space-y-6">
+        <Skeleton className="h-[46px] w-full rounded-md" />
+        <Skeleton className="h-[38px] w-44" />
+        <div className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card" aria-hidden>
+          <Skeleton className="h-5 w-48" />
+          <SkeletonText lines={4} className="mt-4" />
+        </div>
+      </LoadingBlock>
+    );
 
   const latest = data.health_checks[0] ?? null;
   const noCalc = data.latest_calculation_id === null;

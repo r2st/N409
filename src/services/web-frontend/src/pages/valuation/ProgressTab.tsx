@@ -4,7 +4,7 @@ import { api, ApiError, getToken } from '../../lib/api';
 import { downloadPdf } from '../../lib/m2';
 import { formatDate, formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { ErrorNote, Spinner } from '../../components/ui';
+import { ErrorNote, LoadingBlock, Skeleton, SkeletonStatStrip, SkeletonText } from '../../components/ui';
 
 interface ProgressStage {
   key: string;
@@ -180,7 +180,31 @@ export function ProgressTab() {
   }, [valuation.id]);
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
-  if (!progress) return <Spinner />;
+  if (!progress)
+    return (
+      <LoadingBlock label="Loading progress…" className="space-y-8">
+        <div className="grid gap-6 lg:grid-cols-[2fr_1fr] lg:items-start">
+          <div className="space-y-5" aria-hidden>
+            <Skeleton className="h-3 w-full rounded-full" />
+            <SkeletonStatStrip count={3} className="sm:grid-cols-3" />
+          </div>
+          <Skeleton className="h-32 w-full rounded-lg" />
+        </div>
+        <Skeleton className="h-16 w-full rounded-lg" />
+        <div className="grid gap-8 lg:grid-cols-2">
+          {Array.from({ length: 2 }, (_, i) => (
+            <div
+              key={i}
+              className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+              aria-hidden
+            >
+              <Skeleton className="h-2.5 w-36" />
+              <SkeletonText lines={5} className="mt-4" />
+            </div>
+          ))}
+        </div>
+      </LoadingBlock>
+    );
 
   const missing = progress.checklist.filter((c) => !c.uploaded);
   const base = `/valuations/${valuation.id}`;

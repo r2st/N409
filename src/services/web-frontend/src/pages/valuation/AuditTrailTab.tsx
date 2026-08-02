@@ -3,7 +3,7 @@ import { api, ApiError, getToken } from '../../lib/api';
 import { downloadPdf } from '../../lib/m2';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { ErrorNote, Spinner } from '../../components/ui';
+import { ErrorNote, LoadingBlock, Skeleton, SkeletonCardList, SkeletonStatStrip } from '../../components/ui';
 
 /**
  * Per-valuation change history (GET /valuations/:id/audit-trail). The event
@@ -137,7 +137,20 @@ export function AuditTrailTab() {
   }, [load]);
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
-  if (!data) return <Spinner />;
+  // Summary strip, filter row and a page of entry cards — the whole shape is
+  // fixed, only the numbers in it are not.
+  if (!data)
+    return (
+      <LoadingBlock label="Loading change history…" className="space-y-6">
+        <SkeletonStatStrip count={4} />
+        <div className="flex flex-wrap items-end gap-4" aria-hidden>
+          <Skeleton className="h-[34px] w-40" />
+          <Skeleton className="h-[34px] w-40" />
+          <Skeleton className="ml-auto h-[34px] w-52" />
+        </div>
+        <SkeletonCardList rows={6} lines={2} badges={1} />
+      </LoadingBlock>
+    );
 
   const pages = Math.max(1, Math.ceil(data.total / data.per_page));
 

@@ -6,7 +6,18 @@ import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
 import { HrisSyncPanel } from '../../components/valuation/HrisSyncPanel';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  LoadingBlock,
+  Select,
+  Skeleton,
+  SkeletonCardList,
+  Spinner,
+  TextInput,
+} from '../../components/ui';
 
 /**
  * Grant management (feature 6). Ops issue option grants at the board-adopted
@@ -250,7 +261,16 @@ export function GrantsTab() {
     }
   };
 
-  if (!grants) return <Spinner />;
+  if (!grants)
+    return (
+      <LoadingBlock label="Loading grants…" className="max-w-4xl space-y-6">
+        <div className="space-y-2" aria-hidden>
+          <Skeleton className="h-6 w-44" />
+          <Skeleton className="h-3.5 w-96 max-w-full" />
+        </div>
+        <SkeletonCardList rows={5} lines={2} badges={1} />
+      </LoadingBlock>
+    );
 
   return (
     <div className="max-w-4xl space-y-6">

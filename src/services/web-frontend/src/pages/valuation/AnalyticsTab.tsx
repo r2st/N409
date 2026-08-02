@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
 import { LineChart } from '../../components/charts';
-import { EmptyState, ErrorNote, Spinner } from '../../components/ui';
+import { EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
 
 interface Point {
   as_of: string;
@@ -49,7 +49,32 @@ export function AnalyticsTab() {
   }, [valuation.id]);
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
-  if (!data) return <Spinner />;
+  // Four trend charts on a two-column grid, then the benchmark panel.
+  if (!data)
+    return (
+      <LoadingBlock label="Loading analytics…" className="max-w-5xl space-y-6">
+        <div aria-hidden>
+          <Skeleton className="h-6 w-36" />
+          <Skeleton className="mt-2 h-3.5 w-80 max-w-full" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div
+              key={i}
+              className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+              aria-hidden
+            >
+              <Skeleton className="h-2.5 w-28" />
+              <Skeleton className="mt-4 h-36 w-full" />
+            </div>
+          ))}
+        </div>
+        <div className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card" aria-hidden>
+          <Skeleton className="h-2.5 w-56" />
+          <SkeletonText lines={3} className="mt-4" />
+        </div>
+      </LoadingBlock>
+    );
 
   const { series, benchmark, count } = data.analytics;
 

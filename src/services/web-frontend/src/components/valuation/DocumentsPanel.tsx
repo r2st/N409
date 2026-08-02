@@ -9,7 +9,7 @@ import {
   type DocumentKind,
   type ValuationDocument,
 } from '../../lib/pipeline';
-import { Button, EmptyState, ErrorNote, Select, Spinner } from '../ui';
+import { Button, EmptyState, ErrorNote, LoadingBlock, Select, Skeleton, SkeletonDividedList } from '../ui';
 
 /** Per-valuation document intake: drag-and-drop upload, list by kind, download, delete. */
 export function DocumentsPanel({ valuationId }: { valuationId: string }) {
@@ -90,7 +90,18 @@ export function DocumentsPanel({ valuationId }: { valuationId: string }) {
     }
   };
 
-  if (!documents && !error) return <Spinner />;
+  // Controls, dropzone and the file list — all fixed; only the rows are unknown.
+  if (!documents && !error)
+    return (
+      <LoadingBlock label="Loading documents…" className="space-y-5">
+        <div className="flex flex-wrap items-end gap-3" aria-hidden>
+          <Skeleton className="h-[62px] w-56" />
+          <Skeleton className="h-[38px] w-32" />
+        </div>
+        <Skeleton className="h-[90px] w-full rounded-lg" />
+        <SkeletonDividedList rows={4} lines={2} badges={1} />
+      </LoadingBlock>
+    );
 
   return (
     <div className="space-y-5">

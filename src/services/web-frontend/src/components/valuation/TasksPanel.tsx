@@ -12,7 +12,17 @@ import {
   type ReviewTaskKind,
   type ReviewTaskStatus,
 } from '../../lib/pipeline';
-import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  LoadingBlock,
+  Select,
+  Skeleton,
+  SkeletonDividedList,
+  TextInput,
+} from '../ui';
 
 export function TaskStatusBadge({ task }: { task: Pick<ReviewTask, 'status' | 'overdue'> }) {
   const tone =
@@ -94,7 +104,21 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
     }
   };
 
-  if (!tasks && !error) return <Spinner />;
+  if (!tasks && !error)
+    return (
+      <LoadingBlock label="Loading review tasks…" className="space-y-6">
+        {/* The new-task form is a fixed four-field row above the list. */}
+        <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card" aria-hidden>
+          <Skeleton className="h-2.5 w-28" />
+          <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_11rem_7rem_auto]">
+            {Array.from({ length: 4 }, (_, i) => (
+              <Skeleton key={i} className="h-[62px] w-full" />
+            ))}
+          </div>
+        </div>
+        <SkeletonDividedList rows={4} lines={2} badges={1} />
+      </LoadingBlock>
+    );
 
   return (
     <div className="space-y-6">

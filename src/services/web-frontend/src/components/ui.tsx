@@ -382,6 +382,113 @@ export function TableSkeleton({
   );
 }
 
+/** One list row: a title line, `lines - 1` meta lines, `badges` pills at the end. */
+function SkeletonListRow({
+  index,
+  lines,
+  badges,
+  className,
+}: {
+  index: number;
+  lines: number;
+  badges: number;
+  className: string;
+}) {
+  return (
+    <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${className}`}>
+      <div className="min-w-0 flex-1 space-y-2">
+        <Skeleton className="h-4 w-48 max-w-full" />
+        {Array.from({ length: Math.max(0, lines - 1) }, (_, i) => (
+          <Skeleton key={i} className={`h-3 ${LINE_WIDTHS[(index + i) % LINE_WIDTHS.length]}`} />
+        ))}
+      </div>
+      {Array.from({ length: badges }, (_, b) => (
+        <Skeleton key={b} className="h-5 w-20 rounded-full" />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The card-list picture: `rows` separately bordered cards at `space-y-3`.
+ * Matches the geometry several of the app's list surfaces actually use — the
+ * dashboard's recent valuations, the change-log entries, grants — which are
+ * cards, not tables. No live region of its own, for the same reason as
+ * `SkeletonTable`: it composes into a larger placeholder.
+ */
+export function SkeletonCardList({
+  rows = 4,
+  lines = 2,
+  badges = 0,
+  className = '',
+}: {
+  rows?: number;
+  lines?: number;
+  badges?: number;
+  className?: string;
+}) {
+  return (
+    <div aria-hidden className={`space-y-3 ${className}`}>
+      {Array.from({ length: rows }, (_, r) => (
+        <SkeletonListRow
+          key={r}
+          index={r}
+          lines={lines}
+          badges={badges}
+          className="rounded-lg border border-paper-300 bg-surface px-5 py-4 shadow-card"
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The other list shape in use: one bordered box with rules between the rows,
+ * rather than separate cards. Documents and review tasks are drawn this way,
+ * and a `SkeletonCardList` behind them would draw n shadows where the loaded
+ * list has one.
+ */
+export function SkeletonDividedList({
+  rows = 4,
+  lines = 2,
+  badges = 0,
+  className = '',
+}: {
+  rows?: number;
+  lines?: number;
+  badges?: number;
+  className?: string;
+}) {
+  return (
+    <div
+      aria-hidden
+      className={`divide-y divide-paper-300 rounded-lg border border-paper-300 bg-surface shadow-card ${className}`}
+    >
+      {Array.from({ length: rows }, (_, r) => (
+        <SkeletonListRow key={r} index={r} lines={lines} badges={badges} className="px-5 py-4" />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A row of bare label/figure pairs — the `<dl>` summary strips that head the
+ * change log and the health tab, which are unboxed and so would sit wrong
+ * behind `StatCardSkeleton`'s bordered card.
+ */
+export function SkeletonStatStrip({ count = 4, className = '' }: { count?: number; className?: string }) {
+  return (
+    <div aria-hidden className={`grid grid-cols-2 gap-4 sm:grid-cols-4 ${className}`}>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i}>
+          <Skeleton className="h-2.5 w-24 max-w-full" />
+          <Skeleton className="mt-2 h-6 w-16" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Route-level fallback for a page chunk that has not downloaded yet — a page
  * heading and a body block, at the position the real page's heading occupies.
