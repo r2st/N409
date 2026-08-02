@@ -22,6 +22,7 @@ forward:
 
 from __future__ import annotations
 
+import math
 from datetime import date
 
 from .errors import EngineInputError
@@ -43,12 +44,24 @@ def _parse_date(value, name: str) -> date:
 
 
 def _num(value, name: str):
+    """Coerce to a finite float, or None when absent.
+
+    The finiteness check is not optional politeness: every figure here is
+    multiplied or added into the rolling equity value, and NaN defeats the
+    range guards that follow it — ``NaN <= 0`` is False, so a NaN accretion
+    rate satisfies "rolled equity value is not positive" and rolls all the way
+    out to the client as a 200 whose ``rolled_equity_value`` is ``null``.
+    Same guard, same reason, as ``debt_valuation._num`` and ``waterfall._finite``.
+    """
     if value is None:
         return None
     try:
-        return float(value)
+        out = float(value)
     except (TypeError, ValueError):
         raise EngineInputError(f"{name} must be a number") from None
+    if not math.isfinite(out):
+        raise EngineInputError(f"{name} must be finite")
+    return out
 
 
 def _prior_equity_value(prior_results: dict) -> float:
@@ -109,10 +122,17 @@ def roll_forward(
         steps.append({"step": "new_round_post_money", "value": round(equity, 2)})
         accretion_rate = 0.0
     else:
-        rate = annual_accretion
+        rate = _num(annual_accretion, "annual_accretion")
         if rate is None:
             rate = _prior_required_return(prior_results, prior_inputs)
         accretion_rate = float(rate)
+        # A rate of -100% or worse is not a valuation input, it is a typo — and
+        # left alone it is worse than wrong: `(1 + rate) ** years` with a
+        # negative base and a fractional exponent returns a *complex* number in
+        # Python, which then blows up in `round()` as a 500 rather than telling
+        # the caller their rate was out of range.
+        if accretion_rate <= -1.0:
+            raise EngineInputError("annual_accretion must be greater than -1 (i.e. > -100%)")
         factor = (1.0 + accretion_rate) ** years_elapsed
         equity = equity * factor
         steps.append(
@@ -139,6 +159,10 @@ def roll_forward(
             raise EngineInputError(f"value_adjustment '{label}' needs pct or amount")
         steps.append({"step": "adjustment", "label": label, "value": round(equity, 2)})
 
+    # Finiteness first: every individual input is finite by now, but the
+    # arithmetic above can still overflow to inf, and `inf <= 0` is False.
+    if not math.isfinite(equity):
+        raise EngineInputError("rolled equity value is not finite after adjustments")
     if equity <= 0:
         raise EngineInputError("rolled equity value is not positive after adjustments")
 
@@ -181,7 +205,12 @@ def _prior_required_return(prior_results: dict, prior_inputs: dict) -> float:
     if isinstance(approaches, dict):
         income = approaches.get("income")
         if isinstance(income, dict) and income.get("discount_rate"):
-            return float(income["discount_rate"])
+            # Through `_num`, not a bare `float()`: this reads out of a stored
+            # prior result, so a corrupt or hand-edited one should be a 400
+            # naming the field, not a ValueError escaping as a 500.
+            dr = _num(income["discount_rate"], "prior_results.approaches.income.discount_rate")
+            if dr is not None:
+                return dr
     income_in = prior_inputs.get("income") if isinstance(prior_inputs, dict) else None
     if isinstance(income_in, dict):
         dr = _num(income_in.get("discount_rate"), "income.discount_rate")
