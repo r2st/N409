@@ -229,3 +229,92 @@ def test_an_entity_does_not_match_inside_a_longer_word():
     redacted, counts = redact("MegaAcme and Acmex and Acme", company_names=["Acme"])
     assert redacted == "MegaAcme and Acmex and [COMPANY]"
     assert counts.get("companies") == 1
+
+
+# ── The company under its own name, without the legal suffix ─────────────────
+#
+# The only company name that always comes through is `valuation.company_name`,
+# the registered one: "Acme Robotics, Inc." A document names the company that
+# way once, on the cover, and then calls it "Acme Robotics" for thirty pages.
+# Matching only the registered form struck the first mention and left every
+# other one — the most identifying field on a 409A, sent to an external model.
+
+
+def test_redacts_the_company_without_its_corporate_suffix():
+    text = "Acme Robotics reported revenue of $5,000,000. The board of Acme Robotics met in June."
+    redacted, counts = redact(text, company_names=["Acme Robotics, Inc."])
+    assert "Acme" not in redacted and "Robotics" not in redacted
+    assert counts.get("companies") == 2
+
+
+def test_strikes_both_the_registered_name_and_the_short_one():
+    text = "Acme Robotics, Inc. (“Acme Robotics”) is the issuer."
+    redacted, counts = redact(text, company_names=["Acme Robotics, Inc."])
+    assert "Acme" not in redacted
+    # The registered form is matched first, so each mention costs one match
+    # rather than the long name being left stranded behind the short one.
+    assert counts.get("companies") == 2
+
+
+def test_short_form_is_taken_from_every_suffix_style():
+    for name, prose in [
+        ("Widgets Ltd.", "Widgets grew."),
+        ("Northstar Capital L.L.C.", "Northstar Capital grew."),
+        ("Volvo AB", "Volvo grew."),
+        ("Acme Robotics L.P.", "Acme Robotics grew."),
+        ("Foo Co.", "Foo grew."),
+    ]:
+        redacted, counts = redact(prose, company_names=[name])
+        assert redacted == "[COMPANY] grew.", name
+        assert counts.get("companies") == 1, name
+
+
+def test_the_comma_before_a_suffix_is_the_record_s_house_style_not_the_name():
+    # The certificate says "Acme Robotics, Inc."; the minutes say it without
+    # the comma. Both are the same company.
+    redacted, counts = redact("Acme Robotics Inc. filed.", company_names=["Acme Robotics, Inc."])
+    assert redacted == "[COMPANY] filed."
+    assert counts.get("companies") == 1
+
+
+def test_a_generic_one_word_stem_is_not_struck_on_its_own():
+    # "Systems, Inc." must not turn every "systems" in an engineering memo into
+    # [COMPANY]: the model is being asked to reason about the business, and a
+    # document redacted into nonsense produces a worse valuation narrative.
+    text = "Our systems integration revenue rose. Systems, Inc. is the filer."
+    redacted, counts = redact(text, company_names=["Systems, Inc."])
+    assert "Our systems integration revenue rose." in redacted
+    assert counts.get("companies") == 1
+
+
+def test_a_distinctive_one_word_name_still_loses_its_suffix():
+    # The flip side: "Stripe" is a name before it is a word.
+    redacted, counts = redact("Stripe processed payments.", company_names=["Stripe, Inc."])
+    assert redacted == "[COMPANY] processed payments."
+    assert counts.get("companies") == 1
+
+
+def test_a_suffix_inside_a_single_word_is_not_a_suffix():
+    # "Metacorp" does not become "Meta", and "Telco" does not become "Tel".
+    for name, word in [("Metacorp", "Metacorp"), ("Telco", "Telco"), ("Vinco", "Vinco")]:
+        redacted, _ = redact(f"{word} and Meta and Tel and Vin.", company_names=[name])
+        assert "and Meta and Tel and Vin." in redacted, name
+
+
+def test_a_stem_too_short_to_be_distinctive_is_left_alone():
+    redacted, counts = redact("AB testing improved.", company_names=["AB, Inc."])
+    assert redacted == "AB testing improved."
+    assert "companies" not in counts
+
+
+def test_person_names_are_not_stripped_of_a_trailing_word():
+    # A person is not "Ada Lovelace, Inc." — but plenty of real surnames are
+    # spelled like a corporate suffix ("Sá", "Ab", "Co"), and suffix-stripping
+    # those would reduce the person to their given name and then strike every
+    # unrelated Maria in the document.
+    text = "Maria Sa signed the consent. Maria Rodrigues also attended."
+    redacted, counts = redact(text, person_names=["Maria Sa"])
+    assert "Maria Rodrigues also attended." in redacted
+    assert "Maria Sa" not in redacted
+    assert counts.get("names") == 1
+

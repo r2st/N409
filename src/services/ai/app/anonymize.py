@@ -96,6 +96,104 @@ _TRAILING_PUNCT = re.compile(r"[.,;:]+$")
 _WHITESPACE_RUN = re.compile(r"\s+")
 
 
+def _optional_comma(part: str) -> str:
+    """One whitespace-separated piece of a name, with a trailing comma optional."""
+    if len(part) > 1 and part.endswith(","):
+        return re.escape(part[:-1]) + ",?"
+    return re.escape(part)
+
+
+# Corporate suffixes, longest first so "L.L.C" is stripped rather than the "C"
+# of it. A document names the company in full once, on the cover, and then
+# calls it "Acme Robotics" for thirty pages — so the suffix-less form has to be
+# struck too, or the most identifying field on a 409A survives every mention
+# but one.
+#
+# Written without a trailing full stop, because these are compared against a
+# stem that has already had its trailing punctuation removed; an entry spelled
+# "l.l.c." would never match anything.
+_CORP_SUFFIXES = (
+    "incorporated",
+    "corporation",
+    "s.a.r.l",
+    "limited",
+    "company",
+    "pty ltd",
+    "pte ltd",
+    "l.l.c",
+    "l.l.p",
+    "gmbh",
+    "corp",
+    "inc",
+    "llc",
+    "llp",
+    "ltd",
+    "plc",
+    "srl",
+    "spa",
+    "l.p",
+    "lp",
+    "co",
+    "ag",
+    "nv",
+    "bv",
+    "sa",
+    "oy",
+    "ab",
+)
+
+# A stem that is only one of these is a common noun before it is a name.
+# "Systems, Inc." must not turn every "systems" in an engineering memo into
+# [COMPANY]: over-redaction is not free here, because the model is being asked
+# to reason about the business and a document redacted into nonsense produces
+# a worse valuation narrative. Multi-word stems are distinctive enough to keep
+# ("Advanced Systems" is a name; "systems" is a word), and a distinctive
+# one-word name — "Stripe", "Palantir" — is exactly what must still be struck.
+_GENERIC_STEMS = frozenset(
+    {
+        "capital",
+        "company",
+        "enterprises",
+        "group",
+        "holdings",
+        "industries",
+        "labs",
+        "partners",
+        "solutions",
+        "systems",
+        "technologies",
+        "ventures",
+    }
+)
+
+
+def _short_form(value: str) -> str | None:
+    """`value` without its corporate suffix, when that is still a safe thing to
+    strike — otherwise None.
+
+    "Acme Robotics, Inc." -> "Acme Robotics". Returns None when nothing was
+    stripped, when the remainder is too short to be distinctive, or when a
+    one-word remainder is a common noun (see `_GENERIC_STEMS`).
+    """
+    stem = _TRAILING_PUNCT.sub("", value).strip()
+    lowered = stem.lower()
+    for suffix in _CORP_SUFFIXES:
+        # Match on the suffix as a whole trailing word, so "Metacorp" does not
+        # lose a "corp" from the middle of a single word.
+        if not lowered.endswith(suffix):
+            continue
+        head = stem[: len(stem) - len(suffix)]
+        if head and not _WHITESPACE_RUN.match(head[-1]) and head[-1] not in ",.":
+            continue  # the suffix ran into the previous word — not a suffix
+        head = _TRAILING_PUNCT.sub("", head.strip()).strip()
+        if len(head) < _MIN_ENTITY_LEN:
+            return None
+        if " " not in head and head.lower() in _GENERIC_STEMS:
+            return None
+        return head
+    return None
+
+
 def _entity_pattern(value: str) -> re.Pattern[str]:
     """A whole-entity matcher for one known name.
 
@@ -115,10 +213,15 @@ def _entity_pattern(value: str) -> re.Pattern[str]:
     * a run of whitespace in the name matches any run in the text, since
       extraction wraps lines and doubles spaces mid-name;
     * trailing punctuation on the name is optional, so "Acme Robotics, Inc."
-      also strikes a document that writes "Acme Robotics, Inc".
+      also strikes a document that writes "Acme Robotics, Inc";
+    * an internal comma is optional too. The comma before a corporate suffix is
+      a house style, not part of the name: the certificate of incorporation
+      says "Acme Robotics, Inc." and the board minutes say "Acme Robotics Inc."
+      Requiring it literally meant the registered name matched only documents
+      that punctuated it the same way the valuation record does.
 
-    Both only ever widen the match to text that still contains the whole
-    distinctive name, so neither can redact something unrelated.
+    All three only ever widen the match to text that still contains the whole
+    distinctive name, so none of them can redact something unrelated.
     """
     stem = _TRAILING_PUNCT.sub("", value)
     tail = value[len(stem) :]
@@ -128,7 +231,7 @@ def _entity_pattern(value: str) -> re.Pattern[str]:
     # Split the raw value, not an escaped copy: re.escape backslashes some
     # separators, and rewriting inside that yields a pattern matching a literal
     # backslash.
-    body = r"\s+".join(re.escape(part) for part in _WHITESPACE_RUN.split(stem) if part)
+    body = r"\s+".join(_optional_comma(part) for part in _WHITESPACE_RUN.split(stem) if part)
     if tail:
         body += f"(?:{re.escape(tail)})?"
 
@@ -143,11 +246,15 @@ def _redact_entities(text: str, entities: list[str], label: str) -> tuple[str, i
     first so "Acme Robotics Inc" is caught before "Acme"."""
     total = 0
     placeholder = _PLACEHOLDERS[label]
-    for value in sorted(
-        {e.strip() for e in entities if e and len(e.strip()) >= _MIN_ENTITY_LEN},
-        key=len,
-        reverse=True,
-    ):
+    candidates = {e.strip() for e in entities if e and len(e.strip()) >= _MIN_ENTITY_LEN}
+    if label == "companies":
+        # Only companies: a person is not "Ada Lovelace, Inc.", and stripping a
+        # trailing word off a person's name would strike their surname alone.
+        # Longest-first ordering below means the full name is always struck
+        # before the short form, so a document using both spends one match on
+        # each rather than leaving "…, Inc." stranded after "[COMPANY]".
+        candidates |= {s for s in (_short_form(e) for e in candidates) if s}
+    for value in sorted(candidates, key=len, reverse=True):
         text, n = _entity_pattern(value).subn(placeholder, text)
         total += n
     return text, total
