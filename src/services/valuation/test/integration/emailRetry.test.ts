@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { retryFailedEmails } from '../../src/hooks/emailRetry.js';
 import { enqueueEmail, listOutbox, markEmail, type EmailOutboxRow } from '../../src/repos/emailOutbox.js';
@@ -27,6 +27,13 @@ async function seedFailedEmail(
   return { ...email, status: 'failed', attempts: email.attempts + 1, error: 'smtp connect refused' };
 }
 
+/** The row with this id, whatever else the outbox is holding. */
+async function outboxRow(ctx: TestApp, id: string): Promise<EmailOutboxRow> {
+  const row = (await listOutbox(ctx.pool, { limit: 500 })).find((e) => e.id === id);
+  if (!row) throw new Error(`outbox row ${id} not found`);
+  return row;
+}
+
 describe.skipIf(!dbUp)('retryFailedEmails', () => {
   let ctx: TestApp;
 
@@ -34,6 +41,15 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     ctx = await setupTestApp();
   });
   afterAll(async () => ctx?.teardown());
+
+  // The app, and so the outbox, is shared by every case in this describe.
+  // Each one reasons about which rows a sweep picks up, so it has to start
+  // from an outbox with nothing retryable left behind by the last: a case that
+  // leaves a 'failed' row behind is otherwise swept again by the next, whose
+  // own row is then not the only thing the transport was handed.
+  beforeEach(async () => {
+    await ctx.pool.query(`UPDATE email_outbox SET status = 'sent', claimed_at = NULL`);
+  });
 
   it('resends a failed row and marks it sent', async () => {
     const email = await seedFailedEmail(ctx);
@@ -49,21 +65,20 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     expect(result.sent).toBeGreaterThanOrEqual(1);
     expect(delivered?.id).toBe(email.id);
 
-    const [row] = await listOutbox(ctx.pool, { status: 'sent', limit: 500 });
-    expect(row?.id).toBe(email.id);
+    // By id, not by position: listOutbox orders newest-first over the whole
+    // table, so asserting on the first 'sent' row pins this case to the order
+    // the file's other cases happen to run in.
+    expect((await outboxRow(ctx, email.id)).status).toBe('sent');
   });
 
   it('leaves the row failed and increments attempts when the retry itself fails', async () => {
     const email = await seedFailedEmail(ctx, { toEmail: 'retry-fail@test.example.com' });
-    const before = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find(
-      (e) => e.id === email.id,
-    )!;
+    const before = await outboxRow(ctx, email.id);
 
     await retryFailedEmails({ pool: ctx.pool, transport: failingTransport });
 
-    const after = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find(
-      (e) => e.id === email.id,
-    )!;
+    const after = await outboxRow(ctx, email.id);
+    expect(after.status).toBe('failed');
     expect(after.attempts).toBe(before.attempts + 1);
   });
 
@@ -77,9 +92,9 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     // Fail it up to the cap.
     for (let i = 0; i < 3; i++) await markEmail(ctx.pool, email.id, 'failed', 'boom');
 
-    // Other tests in this file leave their own 'failed' rows behind, so
-    // track *which* ids the transport was asked to deliver rather than a
-    // bare boolean — this row's id must not be among them.
+    // Track *which* ids the transport was asked to deliver rather than a bare
+    // boolean: "the sweep delivered nothing" would also pass if the sweep had
+    // simply found nothing to do, which is not what this pins.
     const deliveredIds: string[] = [];
     const transport: EmailTransport = {
       async send(e) {
@@ -89,9 +104,8 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     await retryFailedEmails({ pool: ctx.pool, transport, maxAttempts: 3 });
     expect(deliveredIds).not.toContain(email.id);
 
-    const row = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find(
-      (e) => e.id === email.id,
-    )!;
+    const row = await outboxRow(ctx, email.id);
+    expect(row.status).toBe('failed');
     expect(row.attempts).toBe(3);
   });
 
@@ -116,10 +130,10 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     });
     expect(deliveredIds).not.toContain(email.id);
 
-    const row = (await listOutbox(ctx.pool, { status: 'failed', limit: 500 })).find(
-      (e) => e.id === email.id,
-    )!;
+    const row = await outboxRow(ctx, email.id);
     expect(row.status).toBe('failed');
+    // Nothing tried to deliver it, so nothing may have spent one of its tries.
+    expect(row.attempts).toBe(1);
   });
 });
 
