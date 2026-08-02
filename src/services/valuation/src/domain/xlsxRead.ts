@@ -152,8 +152,11 @@ function continuesName(code: number): boolean {
  * element still matches on `>` alone, so the scan continues looking for those.
  * The regex arrived at that by backtracking to a later start; here it is the
  * `closable` flag, and a differential run over both settled the parity.
+ *
+ * `closed` distinguishes the two forms, which callers that want a container's
+ * contents need: `<v/>` is an empty element, not a `<v>` holding nothing.
  */
-function* elements(xml: string, tag: string): Generator<{ tag: string; inner: string }> {
+function* elements(xml: string, tag: string): Generator<{ tag: string; inner: string; closed: boolean }> {
   const open = `<${tag}`;
   const close = `</${tag}>`;
   let at = 0;
@@ -170,7 +173,7 @@ function* elements(xml: string, tag: string): Generator<{ tag: string; inner: st
     const tagEnd = xml.indexOf('>', nameEnd);
     if (tagEnd === -1) return; // left open at the end of the part, as is all that follows
     if (xml.charCodeAt(tagEnd - 1) === 0x2f) {
-      yield { tag: xml.slice(nameEnd, tagEnd - 1), inner: '' }; // <tag ... />
+      yield { tag: xml.slice(nameEnd, tagEnd - 1), inner: '', closed: false }; // <tag ... />
       at = tagEnd + 1;
       continue;
     }
@@ -187,9 +190,35 @@ function* elements(xml: string, tag: string): Generator<{ tag: string; inner: st
       at = tagEnd + 1;
       continue;
     }
-    yield { tag: xml.slice(nameEnd, tagEnd), inner: xml.slice(tagEnd + 1, closeAt) };
+    yield { tag: xml.slice(nameEnd, tagEnd), inner: xml.slice(tagEnd + 1, closeAt), closed: true };
     at = closeAt + close.length;
   }
+}
+
+/**
+ * Contents of the first `<tag>...</tag>` in the part, or undefined when the
+ * part holds no closed one.
+ *
+ * This is the single-element counterpart to `elements`, and it exists for the
+ * same reason. Reaching for one container by regex — `<tag\b[^>]*>([\s\S]*?)
+ * </tag>` — is quadratic exactly as the iterating form was: every `<tag` is a
+ * candidate start, and with no `</tag>` to be found each one rescans to the end
+ * of the part before failing. The shape hid here longer because a lone `.exec`
+ * reads like it looks at the input once.
+ *
+ * It is the cheaper of the two to reach. Measured, 2 MB of `<sheetData>` opens
+ * held the event loop for 69 seconds, and deflate to 4 KB on the wire; at the
+ * ZIP reader's 16 MB floor on inflation — which every upload gets, whatever its
+ * size — that is a little over an hour, and at its 128 MB ceiling, days.
+ *
+ * The generator is lazy, so returning at the first closed element reads no
+ * further than that element's `</tag>`, and an absent one costs a single pass.
+ */
+function pairedInner(xml: string, tag: string): string | undefined {
+  for (const el of elements(xml, tag)) {
+    if (el.closed) return el.inner;
+  }
+  return undefined;
 }
 
 /** Concatenate the `<t>` runs inside a shared-string or inline-string item. */
@@ -225,7 +254,7 @@ function parseDateStyles(part: Buffer | undefined): boolean[] {
     if (Number.isFinite(id) && /[dmyhs]/i.test(bare)) dateFormatIds.add(id);
   }
 
-  const cellXfs = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(xml)?.[1] ?? '';
+  const cellXfs = pairedInner(xml, 'cellXfs') ?? '';
   const isDate: boolean[] = [];
   for (const { tag } of elements(cellXfs, 'xf')) {
     isDate.push(dateFormatIds.has(Number(attr(tag, 'numFmtId') ?? '0')));
@@ -273,7 +302,7 @@ function cellText(tag: string, inner: string, shared: string[], dateStyles: bool
   if (type === 'inlineStr') return textRuns(inner).trim();
   if (type === 'e') return ''; // #REF!, #N/A — treated as blank, not as text
 
-  const raw = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(inner)?.[1];
+  const raw = pairedInner(inner, 'v');
   if (raw === undefined) return type === 'str' ? textRuns(inner).trim() : '';
   const value = decodeXmlText(raw).trim();
 
@@ -314,7 +343,7 @@ function parseSheetGrid(
   dateStyles: boolean[],
   budget: { remaining: number },
 ): string[][] {
-  const sheetData = /<sheetData\b[^>]*>([\s\S]*?)<\/sheetData>/.exec(xml)?.[1] ?? '';
+  const sheetData = pairedInner(xml, 'sheetData') ?? '';
   const grid: string[][] = [];
 
   for (const { inner: rowXml } of elements(sheetData, 'row')) {

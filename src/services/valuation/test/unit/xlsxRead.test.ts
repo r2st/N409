@@ -443,6 +443,95 @@ describe('xlsxRead', () => {
       ).toEqual([{ class: 'Common Stock', shares: '7' }]);
     });
 
+    /**
+     * The same quadratic shape survived the iterating scan's rewrite in the three
+     * places that reached for a *single* container by regex — `<sheetData>`,
+     * `<cellXfs>` and a cell's `<v>`. A lone `.exec` reads like it looks at the
+     * input once, which is what hid them; it does not, when the closing tag is
+     * never found and every opening one is a candidate start.
+     *
+     * These are cheaper to reach than the iterating case. Measured against the
+     * regex, 2 MB of `<sheetData>` opens held the event loop for 69 seconds and
+     * deflate to 4 KB on the wire; the ZIP reader's floor on inflation is 16 MB,
+     * which every upload gets whatever its size, and that is a little over an
+     * hour. The fixtures below run in single-digit milliseconds now.
+     */
+    it('finds sheetData in a part of unclosed opens in linear time', () => {
+      const started = Date.now();
+      expect(() =>
+        readXlsx(
+          buildWorkbook({
+            sheets: [{ name: 'S', data: `<?xml version="1.0"?><worksheet>${'<sheetData>'.repeat(100_000)}` }],
+          }),
+        ),
+      ).not.toThrow();
+      expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
+    it('reads a cell value past unclosed value opens in linear time', () => {
+      // Bounded by the cell's `</c>` rather than the part, so the fixture is one
+      // `<c>` — but a sheet may hold as many of them as the budget allows rows.
+      const started = Date.now();
+      expect(() => readSheet(`<row><c r="A1">${'<v>'.repeat(100_000)}</c></row>`)).not.toThrow();
+      expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
+    it('reads the style table past unclosed opens in linear time', () => {
+      // styles.xml is a part of the upload like any other, and the date-format
+      // classification it drives runs before a single cell is read.
+      const started = Date.now();
+      expect(() =>
+        readXlsx(
+          buildZip([
+            {
+              name: 'xl/workbook.xml',
+              data: '<?xml version="1.0"?><workbook><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+            },
+            {
+              name: 'xl/_rels/workbook.xml.rels',
+              data: '<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+            },
+            {
+              name: 'xl/styles.xml',
+              data: `<?xml version="1.0"?><styleSheet>${'<cellXfs>'.repeat(100_000)}`,
+            },
+            { name: 'xl/worksheets/sheet1.xml', data: sheetWith('<row/>') },
+          ]),
+        ),
+      ).not.toThrow();
+      expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
+    it('treats an empty value element as empty, not as serial zero', () => {
+      // `<v/>` must stay blank rather than become a value, and B2 is date-styled
+      // because that is the direction the mistake runs: an empty string read as
+      // a held value is `Number('')`, which is serial 0 and renders as
+      // 1899-12-30 in a cap table. Both the regex and the scan get this right —
+      // the regex found no `</v>` and the scan finds no closed `<v>` — so this
+      // pins the agreement rather than a change.
+      //
+      // Where the two genuinely part is a self-closing `<v/>` followed by a
+      // stray `</v>` later in the same cell: `[^>]*` swallows the `/`, so the
+      // regex read the empty element as an open tag and paired it with that
+      // close, taking the text between as the cell's value. The scan does not.
+      // A differential run over both put every other input in agreement.
+      const [sheet] = readSheet(
+        '<row><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>3</v></c></row>' +
+          '<row><c r="A2" t="s"><v>4</v></c><c r="B2" s="1"><v/></c></row>',
+      );
+      expect(sheet!.headers).toEqual(['class', 'round closed']);
+      expect(sheet!.rows).toEqual([{ class: 'Common Stock', 'round closed': '' }]);
+
+      // The divergence itself, pinned so it stays deliberate. The regex read
+      // this cell as the date 2024-03-01; an empty element holds nothing, and
+      // text loose in a `<c>` is not a value.
+      const [stray] = readSheet(
+        '<row><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>3</v></c></row>' +
+          '<row><c r="A2" t="s"><v>4</v></c><c r="B2" s="1"><v/>45352</v></c></row>',
+      );
+      expect(stray!.rows).toEqual([{ class: 'Common Stock', 'round closed': '' }]);
+    });
+
     it('leaves a realistic cap-table import untouched', () => {
       // 2,000 rows is what the upload route truncates at, and 20 columns is wide
       // for a real export — the guard has to be invisible here or it has broken
