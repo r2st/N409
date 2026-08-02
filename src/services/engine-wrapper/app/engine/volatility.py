@@ -38,6 +38,36 @@ __all__ = [
 TRADING_DAYS_PER_YEAR = 252
 _METHODS = ("historical", "ewma", "parkinson")
 
+# Annualisation factors that make sense: 1 (already annual) through hourly
+# trading (252 days × ~7 hours). The cap is not physics, it is a bound that
+# keeps a typo from producing a four-digit "volatility" that reads as real.
+_MAX_PERIODS_PER_YEAR = 8760
+
+# Below this, a comp's measured volatility is indistinguishable from "the
+# series never moved" — 0.01% annualized is far under any traded equity.
+_MIN_MEANINGFUL_VOLATILITY = 1e-4
+
+
+def _check_periods(periods_per_year: int) -> int:
+    """Validate the annualisation factor (audit — volatility edge cases).
+
+    ``σ_annual = σ_period · √periods`` is the only use of this number, and it
+    arrives straight off the wire as an unbounded ``int``. Left unchecked:
+
+    - a negative value reaches ``math.sqrt`` and raises a bare ``ValueError``,
+      which surfaces as a 500 instead of the 422 a bad input deserves;
+    - zero annualises every estimate to exactly 0.0 and returns 200, and the
+      zero is only rejected much later by the OPM — as "volatility is
+      required", an error naming the wrong field entirely.
+    """
+    if isinstance(periods_per_year, bool) or not isinstance(periods_per_year, int):
+        raise EngineInputError("periods_per_year must be an integer")
+    if periods_per_year < 1:
+        raise EngineInputError("periods_per_year must be a positive integer")
+    if periods_per_year > _MAX_PERIODS_PER_YEAR:
+        raise EngineInputError(f"periods_per_year must be <= {_MAX_PERIODS_PER_YEAR}")
+    return periods_per_year
+
 
 def _clean_series(values, name: str) -> list[float]:
     if not isinstance(values, (list, tuple)):
@@ -76,6 +106,7 @@ def historical_volatility(
     periods_per_year: int = TRADING_DAYS_PER_YEAR,
 ) -> float:
     """Annualized close-to-close volatility: stdev(log returns)·√periods."""
+    _check_periods(periods_per_year)
     returns = _log_returns(_clean_series(prices, "prices"), "prices")
     if len(returns) < 2:
         raise EngineInputError("historical volatility needs at least 3 prices")
@@ -94,6 +125,7 @@ def ewma_volatility(
     σ²_t = λ·σ²_{t-1} + (1−λ)·r²_t, seeded with the sample variance so the
     recursion starts from a sensible level rather than a single squared return.
     """
+    _check_periods(periods_per_year)
     if not 0.0 < lambda_ < 1.0:
         raise EngineInputError("ewma lambda_ must be in (0, 1)")
     returns = _log_returns(_clean_series(prices, "prices"), "prices")
@@ -115,6 +147,7 @@ def parkinson_volatility(
 
     σ²_daily = (1 / 4ln2)·mean( ln(High/Low)² ).  Annualized as σ·√periods.
     """
+    _check_periods(periods_per_year)
     high_series = _clean_series(highs, "highs")
     low_series = _clean_series(lows, "lows")
     if len(high_series) != len(low_series):
@@ -208,13 +241,36 @@ def estimate_volatility(
 
     companies: list[dict] = []
     vols: list[float] = []
+    excluded: list[dict] = []
     for company in comparables:
         if not isinstance(company, dict):
             raise EngineInputError("each comparable must be an object")
         vol = _company_volatility(company, method, periods_per_year)
         ticker = str(company.get("ticker") or f"comp{len(companies) + 1}")
-        companies.append({"ticker": ticker, "volatility": round(vol, 4)})
+        degenerate = vol <= _MIN_MEANINGFUL_VOLATILITY
+        companies.append(
+            {"ticker": ticker, "volatility": round(vol, 4), "used": not degenerate}
+        )
+        if degenerate:
+            # A comp whose whole window has no measurable movement is a data
+            # problem, not a company with no risk — a stale feed, a padded
+            # series, a suspended listing. Left in, it drags the median toward
+            # zero (three flat comps out of five put the median *exactly* on
+            # zero), and the dispersion grade stays quiet about it because a
+            # tight cluster of zeros looks like agreement. Excluded and named.
+            excluded.append({"ticker": ticker, "reason": "no measurable price movement"})
+            continue
         vols.append(vol)
+
+    if not vols:
+        if manual_override is not None:
+            # The analyst pinned a value; the dead comps cost nothing.
+            vols = [float(manual_override)]
+        else:
+            raise EngineInputError(
+                "no comparable had measurable price movement — check the price series "
+                "or provide manual_override"
+            )
 
     median_vol = statistics.median(vols)
     mean_vol = statistics.fmean(vols)
@@ -231,8 +287,12 @@ def estimate_volatility(
         "coefficient_of_variation": round(cv, 4),
         "confidence": "manual" if manual_override is not None else confidence,
         "manual_override": round(float(manual_override), 4) if manual_override is not None else None,
-        "company_count": len(companies),
+        # Counts the comps the recommendation actually rests on. `companies`
+        # still lists every one, each flagged `used`, so the exclusion is
+        # auditable rather than silent.
+        "company_count": len(vols),
         "companies": companies,
+        "excluded_companies": excluded,
         "time_to_exit_years": time_to_exit_years,
         "periods_per_year": periods_per_year,
     }
