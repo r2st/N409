@@ -318,3 +318,84 @@ def test_person_names_are_not_stripped_of_a_trailing_word():
     assert "Maria Sa" not in redacted
     assert counts.get("names") == 1
 
+
+def test_short_form_redacted_through_pipeline(monkeypatch):
+    captured: dict = {}
+    _mock_chat(monkeypatch, captured)
+    payload = {
+        "valuation": {"company_name": "Zephyr Dynamics, Inc."},
+        "documents": [_doc("Zephyr Dynamics builds robots. Zephyr Dynamics, Inc. is the filer.")],
+    }
+    _, result = pipelines.run_missing_data(payload)
+    assert "Zephyr" not in captured["user"]
+    assert result["anonymization"]["redacted"].get("companies") == 2
+
+
+# ── The prompt around the documents ──────────────────────────────────────────
+#
+# Every pipeline opens with "Company: …" read straight off the valuation
+# record. Striking the name out of the documents and printing it on the line
+# above them protects nothing: a model handed "Company: Acme Robotics, Inc."
+# and a document reading "[COMPANY] holds 2,000,000 shares" has been told what
+# the placeholder stands for, and the cap table is re-identified in one step.
+
+_DOC_PIPELINES = ["run_missing_data", "run_extract", "run_comparables", "run_summarize"]
+_ALL_PIPELINES = _DOC_PIPELINES + ["run_qa", "run_explain"]
+
+
+def _payload(**over) -> dict:
+    payload = {
+        "valuation": {"company_name": "Zephyr Dynamics, Inc.", "kind": "409a", "currency": "USD"},
+        "documents": [_doc("Zephyr Dynamics, Inc. holds 2,000,000 shares.")],
+    }
+    payload.update(over)
+    return payload
+
+
+def test_no_pipeline_names_the_company_in_its_prompt(monkeypatch):
+    for name in _ALL_PIPELINES:
+        captured: dict = {}
+        _mock_chat(monkeypatch, captured)
+        getattr(pipelines, name)(_payload())
+        assert "Zephyr" not in captured["user"], name
+        assert "[COMPANY]" in captured["user"], name
+
+
+def test_the_placeholder_does_not_cost_the_model_the_rest_of_the_header(monkeypatch):
+    # Only the name goes; kind and currency are not identifying and the model
+    # needs them to reason about the engagement at all.
+    captured: dict = {}
+    _mock_chat(monkeypatch, captured)
+    pipelines.run_qa(_payload())
+    assert "409a valuation" in captured["user"] and "USD" in captured["user"]
+
+
+def test_switching_redaction_off_restores_the_real_name(monkeypatch):
+    # The caller that opts out is asking for the real thing, and says so.
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ANONYMIZE_ENFORCE", raising=False)
+    for name in _ALL_PIPELINES:
+        captured: dict = {}
+        _mock_chat(monkeypatch, captured)
+        getattr(pipelines, name)(_payload(options={"anonymize": False}))
+        assert "Zephyr Dynamics, Inc." in captured["user"], name
+
+
+def test_production_keeps_the_placeholder_even_when_asked_not_to(monkeypatch):
+    # The anonymize=false escape hatch is ignored in production (audit B-1 P1),
+    # and the header has to be ignored along with the documents — otherwise the
+    # enforcement leaves the most identifying field in the one place it looked
+    # like it was protecting.
+    monkeypatch.setenv("APP_ENV", "production")
+    for name in _ALL_PIPELINES:
+        captured: dict = {}
+        _mock_chat(monkeypatch, captured)
+        getattr(pipelines, name)(_payload(options={"anonymize": False}))
+        assert "Zephyr" not in captured["user"], name
+
+
+def test_a_valuation_with_no_company_name_still_renders(monkeypatch):
+    captured: dict = {}
+    _mock_chat(monkeypatch, captured)
+    pipelines.run_explain({"valuation": {"kind": "409a"}})
+    assert "Company:" in captured["user"]

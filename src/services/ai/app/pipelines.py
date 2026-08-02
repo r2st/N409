@@ -101,6 +101,40 @@ def _known_entities(payload: dict) -> tuple[list[str], list[str]]:
     return companies, people
 
 
+def _anonymization_state(payload: dict) -> tuple[bool, bool]:
+    """(redaction applies, redaction is enforced) for this request.
+
+    Both the document text and the prompt around it have to agree on this, so
+    it is decided in one place rather than per-caller.
+    """
+    options = payload.get("options") or {}
+    enforced = anonymization_enforced()
+    return enforced or bool(options.get("anonymize", True)), enforced
+
+
+def _subject(payload: dict) -> str:
+    """How the prompt may name the company.
+
+    Every pipeline opens its prompt with "Company: …" taken straight off the
+    valuation record. Redacting the same name out of the documents and then
+    printing it in the line above them protects nothing: a model handed
+    "Company: Acme Robotics, Inc." and a document reading "[COMPANY] holds
+    2,000,000 shares" has been told exactly what the placeholder stands for,
+    and the cap table is re-identified in one step. The point of the redaction
+    is that the subject of a confidential 409A does not leave the trust
+    boundary, so when it is on, the header is a placeholder too.
+
+    Left as-is when redaction is switched off, which is the case that is
+    already saying it wants the real thing — and which production cannot
+    reach (audit B-1 P1).
+    """
+    valuation = payload.get("valuation") or {}
+    name = valuation.get("company_name")
+    if name and _anonymization_state(payload)[0]:
+        return "[COMPANY]"
+    return str(name)
+
+
 def _load_docs(payload: dict) -> tuple[list[DocText], dict]:
     """Extract document texts, redacting PII first (remaining-gaps §2 — the
     cap-table anonymization step) unless options.anonymize is switched off.
@@ -110,9 +144,8 @@ def _load_docs(payload: dict) -> tuple[list[DocText], dict]:
     boundary. In production the anonymize=false escape hatch is ignored
     (audit B-1 P1)."""
     docs = extract_texts(payload.get("documents") or [])
-    options = payload.get("options") or {}
-    enforced = anonymization_enforced()
-    if not enforced and not options.get("anonymize", True):
+    applied, enforced = _anonymization_state(payload)
+    if not applied:
         return docs, {"applied": False, "redacted": {}}
     companies, people = _known_entities(payload)
     totals: dict[str, int] = {}
@@ -161,7 +194,7 @@ def run_missing_data(payload: dict) -> tuple[str, dict]:
         "uploaded and identify what is still missing to complete a defensible "
         "valuation. Respond ONLY with JSON.",
     )
-    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation)
+    user = f"""Company: {_subject(payload)} ({valuation.get("kind")} valuation)
 Params already set: {_params_summary(params)}
 Uploaded documents:
 {render_corpus(docs)[:30000]}
@@ -198,7 +231,7 @@ def run_extract(payload: dict) -> tuple[str, dict]:
         "ONLY values explicitly present in the documents. Never invent numbers. "
         "All monetary amounts in plain units (dollars, not thousands). Respond ONLY with JSON.",
     )
-    user = f"""Company: {valuation.get("company_name")} (currency {valuation.get("currency", "USD")})
+    user = f"""Company: {_subject(payload)} (currency {valuation.get("currency", "USD")})
 Documents:
 {render_corpus(docs)[:45000]}
 
@@ -254,7 +287,7 @@ def run_comparables(payload: dict) -> tuple[str, dict]:
         "estimates. Respond ONLY with JSON.",
     )
     overview = params.get("business_overview") or ""
-    user = f"""Company: {valuation.get("company_name")}
+    user = f"""Company: {_subject(payload)}
 Business overview: {overview or "(none provided)"}
 Countries served: {valuation.get("service_countries")}
 Document excerpts (for business context only):
@@ -305,7 +338,7 @@ def run_summarize(payload: dict) -> tuple[str, dict]:
         "is, what it says, and the figures that matter for a valuation. "
         "Never invent numbers. Respond ONLY with JSON.",
     )
-    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation)
+    user = f"""Company: {_subject(payload)} ({valuation.get("kind")} valuation)
 Documents:
 {render_corpus(docs)[:45000]}
 
@@ -383,7 +416,7 @@ def run_qa(payload: dict) -> tuple[str, dict]:
         "auditor challenge. Do not repeat findings the deterministic checks "
         "already flagged. Respond ONLY with JSON.",
     )
-    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
+    user = f"""Company: {_subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Params: {_params_summary(params)}
 Calculation under review: {_calculation_summary(payload)}
 Deterministic checks already run: {json.dumps(checks, default=str)[:8000]}
@@ -437,7 +470,7 @@ def run_explain(payload: dict) -> tuple[str, dict]:
         "the provided data — never invent figures. This is not legal, tax or "
         "financial advice and must not read as such. Respond ONLY with JSON.",
     )
-    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
+    user = f"""Company: {_subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Params: {_params_summary(params)}
 Calculation: {_calculation_summary(payload)}
 
