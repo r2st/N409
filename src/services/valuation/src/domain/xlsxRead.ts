@@ -29,6 +29,18 @@ export interface XlsxSheetData {
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 const MS_PER_DAY = 86_400_000;
 
+/** Index of XFD, the last column a worksheet has (ECMA-376 §18.3; 16,384 columns). */
+export const MAX_COLUMN = 16_383;
+
+/**
+ * Total cells the grids for one workbook may occupy, counting the blanks a
+ * sparse ref pads through. Generous next to anything the cap-table route will
+ * accept — it truncates at 2,000 rows, and real exports run to tens of columns,
+ * so this is two orders of magnitude above a large legitimate import — while
+ * still bounding the array slots a single upload can allocate.
+ */
+export const MAX_GRID_CELLS = 2_000_000;
+
 /**
  * Built-in number formats that denote a date or time (ECMA-376 §18.8.30).
  * Anything else numeric is rendered as a plain number.
@@ -192,8 +204,24 @@ function cellText(tag: string, inner: string, shared: string[], dateStyles: bool
   return value;
 }
 
-/** Rows of raw cell strings, positioned by column reference. */
-function parseSheetGrid(xml: string, shared: string[], dateStyles: boolean[]): string[][] {
+/**
+ * Rows of raw cell strings, positioned by column reference.
+ *
+ * A `<c>` with an explicit ref jumps past the empty columns before it, and the
+ * grid is padded to reach it — so the cost of a cell is set by the *reference*,
+ * not by the bytes that carry it. Both bounds below exist because of that gap;
+ * neither is redundant, and the ZIP reader's decompression budget catches
+ * neither, because both attacks fit comfortably inside it.
+ *
+ * `budget` is spent across the whole workbook rather than per sheet, since the
+ * sheets are parsed into memory together.
+ */
+function parseSheetGrid(
+  xml: string,
+  shared: string[],
+  dateStyles: boolean[],
+  budget: { remaining: number },
+): string[][] {
   const sheetData = /<sheetData\b[^>]*>([\s\S]*?)<\/sheetData>/.exec(xml)?.[1] ?? '';
   const grid: string[][] = [];
 
@@ -204,6 +232,28 @@ function parseSheetGrid(xml: string, shared: string[], dateStyles: boolean[]): s
       // `<c>` elements are sparse: an explicit ref jumps past empty columns.
       const ref = attr(tag, 'r');
       const column = (ref ? columnIndex(ref) : null) ?? nextColumn;
+
+      // A ref is just letters, and nothing in the format bounds how many. `AAAAAAA1`
+      // is eight bytes asking for column 321,272,406; enough letters and the index is
+      // Infinity. Excel cannot write past XFD, so anything beyond it is not a workbook
+      // that lost precision — it is a file that was never one.
+      if (column > MAX_COLUMN) {
+        throw new XlsxReadError(
+          `Cell reference "${ref}" is past column XFD, the last column a worksheet has`,
+        );
+      }
+
+      // Refs within XFD are still not self-limiting: one legal `<c r="XFD1"/>` costs a
+      // row 16,384 slots for ~26 bytes of XML, so a merely large sheet of them multiplies
+      // to the same place. What bounds the grid is its total width across every row.
+      const growth = Math.max(0, column + 1 - cells.length);
+      if (growth > budget.remaining) {
+        throw new XlsxReadError(
+          `Worksheet needs more than ${MAX_GRID_CELLS.toLocaleString('en-US')} cells to lay out`,
+        );
+      }
+      budget.remaining -= growth;
+
       while (cells.length < column) cells.push('');
       cells[column] = cellText(tag, inner, shared, dateStyles);
       nextColumn = column + 1;
@@ -264,8 +314,9 @@ export function readXlsx(buf: Buffer): XlsxSheetData[] {
   const shared = parseSharedStrings(parts.get('xl/sharedStrings.xml'));
   const dateStyles = parseDateStyles(parts.get('xl/styles.xml'));
 
+  const budget = { remaining: MAX_GRID_CELLS };
   return parseSheetIndex(parts).map(({ name, path }) => {
-    const grid = parseSheetGrid(parts.get(path)!.toString('utf8'), shared, dateStyles);
+    const grid = parseSheetGrid(parts.get(path)!.toString('utf8'), shared, dateStyles, budget);
     const { headers, rows } = gridToRows(grid);
     return { name, headers, rows };
   });

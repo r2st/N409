@@ -7,6 +7,7 @@ import {
   excelSerialToIso,
   gridToRows,
   looksLikeXlsx,
+  MAX_COLUMN,
   readXlsx,
   XlsxReadError,
 } from '../../src/domain/xlsxRead.js';
@@ -252,6 +253,101 @@ describe('xlsxRead', () => {
     it('rejects a file that is not a workbook', () => {
       expect(() => readXlsx(Buffer.from('class,shares\nCommon,10'))).toThrow(XlsxReadError);
       expect(() => readXlsx(buildZip([{ name: 'notes.txt', data: 'hi' }]))).toThrow(/not an excel workbook/i);
+    });
+  });
+
+  /**
+   * A `<c>` with an explicit ref is padded up to from the previous cell, so what
+   * a cell costs is set by its *reference*, not by the bytes carrying it. Both
+   * fixtures below are small — the first is a few hundred bytes — and before
+   * these bounds each one grew the grid until V8 aborted the process outright.
+   * That is an uncatchable `FATAL ERROR`, not a 4xx: it takes down the whole
+   * service and every in-flight request on it. The ZIP reader's decompression
+   * budget does not help, because neither archive is large enough to trip it.
+   */
+  describe('grid bounds', () => {
+    const sheetWith = (cells: string) =>
+      `<?xml version="1.0"?><worksheet><sheetData>${cells}</sheetData></worksheet>`;
+    const readSheet = (cells: string) =>
+      readXlsx(buildWorkbook({ sheets: [{ name: 'S', data: sheetWith(cells) }] }));
+
+    it('refuses a reference past the last column a worksheet has', () => {
+      // Eight bytes of ref asking for column 321,272,406.
+      expect(() => readSheet('<row><c r="AAAAAAA1" t="s"><v>0</v></c></row>')).toThrow(XlsxReadError);
+      expect(() => readSheet('<row><c r="AAAAAAA1" t="s"><v>0</v></c></row>')).toThrow(/past column XFD/i);
+    });
+
+    it('refuses a reference whose index is not even finite', () => {
+      // Enough letters and the index overflows to Infinity, which padded a grid
+      // in a loop that had no end rather than merely a large one.
+      const ref = `${'Z'.repeat(300)}1`;
+      expect(columnIndex(ref)).toBe(Infinity);
+      expect(() => readSheet(`<row><c r="${ref}" t="s"><v>0</v></c></row>`)).toThrow(/past column XFD/i);
+    });
+
+    it('accepts XFD itself, which is a real column', () => {
+      // The bound is off-by-one sensitive in the direction that breaks files, so
+      // pin the boundary itself: XFD is the last legal column and must still read.
+      expect(columnIndex('XFD1')).toBe(MAX_COLUMN);
+
+      const [sheet] = readSheet(
+        `<row><c r="A1" t="s"><v>0</v></c><c r="XFD1" t="s"><v>1</v></c></row>` +
+          `<row><c r="A2" t="s"><v>4</v></c><c r="XFD2" t="s"><v>5</v></c></row>`,
+      );
+      // The 16,382 blanks padded between them are dropped from the returned
+      // headers, so what shows the far cell arrived is its value, keyed by the
+      // header that shares its column.
+      expect(sheet!.headers).toEqual(['class', 'shares']);
+      expect(sheet!.rows).toEqual([{ class: 'Common Stock', shares: 'Series A Preferred' }]);
+    });
+
+    it('bounds the total grid, since legal references still multiply per row', () => {
+      // Every ref here is XFD — entirely legal, and the per-row cost is why a
+      // column bound alone is not enough: each of these rows is ~26 bytes and
+      // claims 16,384 slots, so a merely large sheet reaches the same place.
+      const rows = '<row><c r="XFD1" t="s"><v>0</v></c></row>'.repeat(200);
+      expect(() => readSheet(rows)).toThrow(XlsxReadError);
+      expect(() => readSheet(rows)).toThrow(/more than [\d,]+ cells/i);
+    });
+
+    it('spends the budget across the workbook, not per sheet', () => {
+      // Sheets are parsed into memory together, so a per-sheet budget would let
+      // n sheets cost n times the limit. Each of these is inside it; the set is not.
+      const sheet = { data: sheetWith('<row><c r="XFD1" t="s"><v>0</v></c></row>'.repeat(80)) };
+      expect(() =>
+        readXlsx(
+          buildWorkbook({
+            sheets: Array.from({ length: 4 }, (_, i) => ({ name: `S${i}`, ...sheet })),
+          }),
+        ),
+      ).toThrow(/more than [\d,]+ cells/i);
+    });
+
+    it('leaves a realistic cap-table import untouched', () => {
+      // 2,000 rows is what the upload route truncates at, and 20 columns is wide
+      // for a real export — the guard has to be invisible here or it has broken
+      // the feature it protects.
+      const rows = Array.from(
+        { length: 2000 },
+        (_, r) =>
+          `<row r="${r + 2}">` +
+          Array.from(
+            { length: 20 },
+            (_, c) => `<c r="${String.fromCharCode(65 + c)}${r + 2}" t="s"><v>${c % 8}</v></c>`,
+          ).join('') +
+          '</row>',
+      ).join('');
+      const header =
+        '<row r="1">' +
+        Array.from(
+          { length: 20 },
+          (_, c) => `<c r="${String.fromCharCode(65 + c)}1" t="inlineStr"><is><t>h${c}</t></is></c>`,
+        ).join('') +
+        '</row>';
+
+      const [sheet] = readSheet(header + rows);
+      expect(sheet!.headers).toHaveLength(20);
+      expect(sheet!.rows).toHaveLength(2000);
     });
   });
 });
