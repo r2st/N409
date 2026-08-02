@@ -250,11 +250,9 @@ describe('BUILD_SHA', () => {
 
 describe('files deleted since the last deploy', () => {
   function deployWithPrevSha(prev: string) {
-    return deploy(
-      ['--apply'],
-      {},
-      [`[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${prev}\\n'; exit 0; }`],
-    );
+    return deploy(['--apply'], {}, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${prev}\\n'; exit 0; }`,
+    ]);
   }
 
   it('are removed from the host', () => {
@@ -324,11 +322,9 @@ describe('python dependencies', () => {
 
   it('installs only when requirements.txt actually moved', () => {
     const prev = commitRequirements();
-    const run = deploy(
-      ['--apply'],
-      {},
-      [`[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${prev}\\n'; exit 0; }`],
-    );
+    const run = deploy(['--apply'], {}, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${prev}\\n'; exit 0; }`,
+    ]);
     expect(run.remote.some((c) => c.includes('pip install -r requirements.txt'))).toBe(true);
   });
 
@@ -337,11 +333,9 @@ describe('python dependencies', () => {
     writeFileSync(path.join(repo, 'keep.txt'), 'edited\n');
     git('add', '-A');
     git('commit', '-qm', 'unrelated change');
-    const run = deploy(
-      ['--apply'],
-      {},
-      [`[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${prev}\\n'; exit 0; }`],
-    );
+    const run = deploy(['--apply'], {}, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${prev}\\n'; exit 0; }`,
+    ]);
     expect(run.remote.some((c) => c.includes('pip install'))).toBe(false);
   });
 });
@@ -368,36 +362,28 @@ describe('post-deploy verification', () => {
   it('fails the deploy when /health reports a different commit', () => {
     // The whole point of BUILD_SHA: catching the deploy where the build or the
     // restart silently did not take.
-    const run = deploy(
-      ['--apply'],
-      { SKIP_VERIFY: '0' },
-      ['[[ "$*" == *"/health"* ]] && { printf \'{"build_sha":"deadbeef"}\'; exit 0; }'],
-    );
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      '[[ "$*" == *"/health"* ]] && { printf \'{"build_sha":"deadbeef"}\'; exit 0; }',
+    ]);
     expect(run.status).not.toBe(0);
     expect(run.stderr).toContain('/health reports');
   });
 
   it('passes when the live commit matches', () => {
     const sha = git('rev-parse', 'HEAD');
-    const run = deploy(
-      ['--apply'],
-      { SKIP_VERIFY: '0' },
-      [`[[ "$*" == *"/health"* ]] && { printf '{"build_sha":"${sha}"}'; exit 0; }`],
-    );
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      `[[ "$*" == *"/health"* ]] && { printf '{"build_sha":"${sha}"}'; exit 0; }`,
+    ]);
     expect(run.status).toBe(0);
     expect(run.stderr).toContain('verified live');
   });
 
   it('fails when /ready is not passing', () => {
     const sha = git('rev-parse', 'HEAD');
-    const run = deploy(
-      ['--apply'],
-      { SKIP_VERIFY: '0' },
-      [
-        `[[ "$*" == *"/health"* ]] && { printf '{"build_sha":"${sha}"}'; exit 0; }`,
-        '[[ "$*" == *"/ready"* ]] && exit 22',
-      ],
-    );
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      `[[ "$*" == *"/health"* ]] && { printf '{"build_sha":"${sha}"}'; exit 0; }`,
+      '[[ "$*" == *"/ready"* ]] && exit 22',
+    ]);
     expect(run.status).not.toBe(0);
     expect(run.stderr).toContain('/ready is not passing');
   });
