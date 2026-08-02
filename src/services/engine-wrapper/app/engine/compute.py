@@ -84,7 +84,14 @@ def _time_to_exit(params: dict, inputs: dict) -> float:
     if exit_timeline:
         try:
             exit_date = date.fromisoformat(str(exit_timeline)[:10])
-            valuation_date = date.fromisoformat(str(inputs.get("valuation_date") or date.today()))
+            # `[:10]` on both, as `validate._check_dates` does on both. Only
+            # `exit_timeline` was truncated here, so a `valuation_date` carrying
+            # a time — the shape a timestamp column serialises to, and one
+            # `_check_dates` accepts without complaint — passed preflight
+            # validation clean and then failed the calculation it had just
+            # cleared. `date.fromisoformat` rejects a datetime string outright.
+            raw_valuation = inputs.get("valuation_date") or date.today()
+            valuation_date = date.fromisoformat(str(raw_valuation)[:10])
             return max((exit_date - valuation_date).days / 365.25, 0.0)
         except ValueError:
             raise EngineInputError("exit_timeline / valuation_date must be YYYY-MM-DD") from None

@@ -214,3 +214,38 @@ def test_recompute_via_api():
     res = r.json()["results"]
     assert res["recomputed"] == ["opm_backsolve"]
     assert res["approaches"]["income"]["reused"] is True
+
+
+# ── valuation_date with a time component ──────────────────────────────────────
+#
+# `validate._check_dates` truncates both dates to `[:10]`; `_time_to_exit`
+# truncated only `exit_timeline`, so a `valuation_date` carrying a time cleared
+# preflight validation and then failed the calculation it had just cleared.
+
+@pytest.mark.parametrize(
+    "stamped",
+    [
+        "2026-06-30T00:00:00",
+        "2026-06-30T00:00:00.000Z",
+        "2026-06-30T13:45:12+00:00",
+    ],
+)
+def test_valuation_date_with_a_time_matches_the_plain_date(stamped):
+    from app.engine.validate import split_issues, validate_payload
+
+    errors, _ = split_issues(validate_payload(PARAMS, {**INPUTS, "valuation_date": stamped}))
+    assert errors == []  # validation has always accepted this shape
+
+    stamped_out = compute(PARAMS, {**INPUTS, "valuation_date": stamped})["results"]
+    plain_out = compute(PARAMS, INPUTS)["results"]
+    assert stamped_out["assumptions"]["time_to_exit_years"] == (
+        plain_out["assumptions"]["time_to_exit_years"]
+    )
+    assert stamped_out["fmv_per_share"] == plain_out["fmv_per_share"]
+
+
+def test_a_genuinely_unparseable_valuation_date_is_still_rejected():
+    from app.engine.approaches import EngineInputError
+
+    with pytest.raises(EngineInputError, match="must be YYYY-MM-DD"):
+        compute(PARAMS, {**INPUTS, "valuation_date": "30/06/2026"})
