@@ -18,36 +18,155 @@ export interface RateLimitResult {
   resetAt: number;
 }
 
+/**
+ * The bounding shared by the counters below.
+ *
+ * Both of them key on `req.ip` on the public routes — contact, the three
+ * portals, SCIM — so the map is sized by whoever is calling, and every concern
+ * SlidingWindowRateLimiter documents at length applies here identically. It did
+ * not use to: until the services learned to resolve the client through the
+ * proxy, `req.ip` was the peer address, so these maps held exactly one key and
+ * no amount of traffic could grow them. Making the limits per-client is what
+ * turned "sized by the caller" from a description into a risk, so the same
+ * three mechanisms have to come with it:
+ *
+ *  1. Per-entry expiry, so a sweep can drop an entry without consulting the
+ *     caller's limit.
+ *  2. A sweep triggered by size *or* elapsed time, but never more often than
+ *     `minSweepIntervalMs`. This is the mechanism the old code was missing
+ *     outright: it swept on every new key, with no floor on the interval and
+ *     nothing to collect while the windows were still open, so past ~10k keys
+ *     each new caller paid a full scan and the map kept growing — quadratic
+ *     work on an input the caller chooses. The ten-minute contact window is the
+ *     worst case, because nothing expires for ten minutes.
+ *  3. A hard key ceiling, enforced on every call, because memory cannot wait
+ *     for the next sweep. Eviction is least-recently-touched, which is why
+ *     `put` re-inserts: the Map's own iteration order then *is* LRU order.
+ *     Evicting does hand that key a fresh window, and LRU decides who pays —
+ *     the keys a spray keeps touching sit at the back and survive, so a flood
+ *     of one-shot keys cannot wash out the entry that is actually tracking it.
+ */
+interface BoundedEntry {
+  /** When this entry stops being able to deny anything. */
+  expiresAt: number;
+}
+
+class BoundedWindowStore<T extends BoundedEntry> {
+  private entries = new Map<string, T>();
+  private lastSweep = 0;
+  private sweepCount = 0;
+
+  constructor(
+    private readonly sweepAtKeys = 5_000,
+    private readonly maxKeys = 50_000,
+    private readonly sweepEveryMs = 60 * 60 * 1000,
+    private readonly minSweepIntervalMs = 1_000,
+  ) {}
+
+  /** Tracked keys — for tests and diagnostics. */
+  get size(): number {
+    return this.entries.size;
+  }
+
+  /** Full sweeps performed — for tests and diagnostics. */
+  get sweeps(): number {
+    return this.sweepCount;
+  }
+
+  /** The live entry for `key`, or undefined if absent or expired. */
+  live(key: string, now: number): T | undefined {
+    const entry = this.entries.get(key);
+    if (!entry || now >= entry.expiresAt) return undefined;
+    return entry;
+  }
+
+  /**
+   * Write `key`, moving it to the back of the LRU order.
+   *
+   * Called on the denied path too, deliberately. An entry that is currently
+   * refusing requests is the most important one in the map — dropping it as
+   * "idle" would hand the caller being refused a brand new window.
+   */
+  put(key: string, entry: T): void {
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+  }
+
+  /** Run the expiry sweep and enforce the ceiling. Call once per request. */
+  bound(now: number, incomingKey: string): void {
+    const crowded = this.entries.size >= this.sweepAtKeys;
+    const overdue = now - this.lastSweep >= this.sweepEveryMs;
+    if ((crowded || overdue) && now - this.lastSweep >= this.minSweepIntervalMs) {
+      this.lastSweep = now;
+      this.sweepCount += 1;
+      for (const [key, entry] of this.entries) {
+        if (entry.expiresAt <= now) this.entries.delete(key);
+      }
+    }
+
+    // Leave room for the key this call is about to write, so `maxKeys` bounds
+    // the map rather than the map-before-the-insert.
+    const ceiling = Math.max(0, this.maxKeys - (this.entries.has(incomingKey) ? 0 : 1));
+    while (this.entries.size > ceiling) {
+      // The front of the Map is least recently touched. Never the incoming key:
+      // evicting it here would hand this very request a fresh window.
+      let victim: string | undefined;
+      for (const key of this.entries.keys()) {
+        if (key !== incomingKey) {
+          victim = key;
+          break;
+        }
+      }
+      if (victim === undefined) break;
+      this.entries.delete(victim);
+    }
+  }
+}
+
 export class FixedWindowRateLimiter {
-  private windows = new Map<string, { start: number; count: number }>();
+  private store: BoundedWindowStore<{ expiresAt: number; count: number }>;
 
   constructor(
     readonly limit: number,
     readonly windowMs: number,
-  ) {}
+    /** Overridable so tests can reach the bounds without minting 50k keys. */
+    bounds?: { sweepAtKeys?: number; maxKeys?: number; sweepEveryMs?: number; minSweepIntervalMs?: number },
+  ) {
+    this.store = new BoundedWindowStore(
+      bounds?.sweepAtKeys,
+      bounds?.maxKeys,
+      bounds?.sweepEveryMs,
+      bounds?.minSweepIntervalMs,
+    );
+  }
+
+  /** Tracked keys — for tests and diagnostics. */
+  get size(): number {
+    return this.store.size;
+  }
+
+  /** Full sweeps performed — for tests and diagnostics. */
+  get sweeps(): number {
+    return this.store.sweeps;
+  }
 
   check(key: string, now: number = Date.now()): RateLimitResult {
-    const window = this.windows.get(key);
-    if (!window || now - window.start >= this.windowMs) {
-      this.windows.set(key, { start: now, count: 1 });
-      this.sweep(now);
-      return { allowed: true, limit: this.limit, remaining: this.limit - 1, resetAt: now + this.windowMs };
+    this.store.bound(now, key);
+    const window = this.store.live(key, now);
+    if (!window) {
+      const expiresAt = now + this.windowMs;
+      this.store.put(key, { expiresAt, count: 1 });
+      return { allowed: true, limit: this.limit, remaining: this.limit - 1, resetAt: expiresAt };
     }
 
-    const resetAt = window.start + this.windowMs;
+    const resetAt = window.expiresAt;
     if (window.count >= this.limit) {
+      this.store.put(key, window);
       return { allowed: false, limit: this.limit, remaining: 0, resetAt };
     }
     window.count += 1;
+    this.store.put(key, window);
     return { allowed: true, limit: this.limit, remaining: this.limit - window.count, resetAt };
-  }
-
-  /** Drop expired windows so idle keys don't accumulate forever. */
-  private sweep(now: number): void {
-    if (this.windows.size < 10_000) return;
-    for (const [key, window] of this.windows) {
-      if (now - window.start >= this.windowMs) this.windows.delete(key);
-    }
   }
 }
 
@@ -62,30 +181,51 @@ export class FixedWindowRateLimiter {
  * the route offline, which is a worse failure than letting one through.
  */
 export class WeightedWindowRateLimiter {
-  private windows = new Map<string, { start: number; spent: number }>();
+  private store: BoundedWindowStore<{ expiresAt: number; spent: number }>;
 
   constructor(
     /** Cost units available per window. */
     readonly budget: number,
     readonly windowMs: number,
-  ) {}
+    /** Overridable so tests can reach the bounds without minting 50k keys. */
+    bounds?: { sweepAtKeys?: number; maxKeys?: number; sweepEveryMs?: number; minSweepIntervalMs?: number },
+  ) {
+    this.store = new BoundedWindowStore(
+      bounds?.sweepAtKeys,
+      bounds?.maxKeys,
+      bounds?.sweepEveryMs,
+      bounds?.minSweepIntervalMs,
+    );
+  }
+
+  /** Tracked keys — for tests and diagnostics. */
+  get size(): number {
+    return this.store.size;
+  }
+
+  /** Full sweeps performed — for tests and diagnostics. */
+  get sweeps(): number {
+    return this.store.sweeps;
+  }
 
   /** Charge `cost` units to `key`. `remaining` is budget left, not requests. */
   consume(key: string, cost: number, now: number = Date.now()): RateLimitResult {
-    const window = this.windows.get(key);
-    if (!window || now - window.start >= this.windowMs) {
-      this.windows.set(key, { start: now, spent: cost });
-      this.sweep(now);
+    this.store.bound(now, key);
+    const window = this.store.live(key, now);
+    if (!window) {
+      const expiresAt = now + this.windowMs;
+      this.store.put(key, { expiresAt, spent: cost });
       return {
         allowed: true,
         limit: this.budget,
         remaining: Math.max(0, this.budget - cost),
-        resetAt: now + this.windowMs,
+        resetAt: expiresAt,
       };
     }
 
-    const resetAt = window.start + this.windowMs;
+    const resetAt = window.expiresAt;
     if (window.spent + cost > this.budget) {
+      this.store.put(key, window);
       return {
         allowed: false,
         limit: this.budget,
@@ -94,6 +234,7 @@ export class WeightedWindowRateLimiter {
       };
     }
     window.spent += cost;
+    this.store.put(key, window);
     return {
       allowed: true,
       limit: this.budget,
@@ -104,16 +245,9 @@ export class WeightedWindowRateLimiter {
 
   /** Units already spent in the current window — for tests and diagnostics. */
   spent(key: string, now: number = Date.now()): number {
-    const window = this.windows.get(key);
-    if (!window || now - window.start >= this.windowMs) return 0;
-    return window.spent;
-  }
-
-  private sweep(now: number): void {
-    if (this.windows.size < 10_000) return;
-    for (const [key, window] of this.windows) {
-      if (now - window.start >= this.windowMs) this.windows.delete(key);
-    }
+    // A read, so it neither bounds nor touches: asking what a key has spent
+    // must not change which key gets evicted next.
+    return this.store.live(key, now)?.spent ?? 0;
   }
 }
 

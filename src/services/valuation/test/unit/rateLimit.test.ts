@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { FixedWindowRateLimiter, SlidingWindowRateLimiter } from '../../src/plugins/rateLimit.js';
+import {
+  FixedWindowRateLimiter,
+  SlidingWindowRateLimiter,
+  WeightedWindowRateLimiter,
+} from '../../src/plugins/rateLimit.js';
 
 /** Improvement 6 — per-API-key rate limiting for the partner API. */
 
@@ -39,6 +43,147 @@ describe('FixedWindowRateLimiter', () => {
     expect(first.resetAt).toBe(10_100);
     // second request later in the same window keeps the original boundary
     expect(limiter.check('key', 5_000).resetAt).toBe(10_100);
+  });
+
+  // ── The map is sized by whoever is calling ────────────────────────────────
+  //
+  // These limiters key on `req.ip` on the public routes (contact, the three
+  // portals, SCIM). That only became load-bearing when the services learned to
+  // resolve the client through the proxy: before that `req.ip` was the peer
+  // address, so the map held one key and no traffic could grow it. Now a caller
+  // choosing distinct source addresses chooses the map size, which is the same
+  // position SlidingWindowRateLimiter was already hardened for.
+
+  it('does not rescan the whole map on every new key once it is crowded', () => {
+    // The old sweep ran on every *new* key with no floor on the interval, and
+    // found nothing to collect while the windows were still open — so past the
+    // threshold each new caller paid a full scan and the map kept growing. The
+    // ten-minute contact window is the worst case: nothing expires for ten
+    // minutes, so the scan is pure waste for the whole of it.
+    const limiter = new FixedWindowRateLimiter(5, 10 * 60_000, { sweepAtKeys: 10, maxKeys: 50_000 });
+    for (let i = 0; i < 20; i += 1) limiter.check(`ip:${i}`, 0);
+    const before = limiter.sweeps;
+    for (let i = 0; i < 500; i += 1) limiter.check(`ip:x${i}`, 0);
+    expect(limiter.sweeps - before).toBe(0);
+  });
+
+  it('still collects expired windows once the interval has passed', () => {
+    // Throttling the sweep must not turn it off.
+    const limiter = new FixedWindowRateLimiter(5, 60_000, { sweepAtKeys: 10 });
+    for (let i = 0; i < 20; i += 1) limiter.check(`ip:${i}`, 0);
+    expect(limiter.size).toBe(20);
+    limiter.check('ip:later', 120_000);
+    expect(limiter.size).toBe(1);
+  });
+
+  it('holds a hard ceiling when keys are minted faster than they expire', () => {
+    // Every window is live for ten minutes, so the expiry sweep can free
+    // nothing — this is the spray-distinct-addresses case, and without a
+    // ceiling the map grows until the process dies.
+    const limiter = new FixedWindowRateLimiter(5, 10 * 60_000, { sweepAtKeys: 10, maxKeys: 25 });
+    for (let i = 0; i < 5_000; i += 1) limiter.check(`ip:${i}`, i);
+    expect(limiter.size).toBeLessThanOrEqual(25);
+  });
+
+  it('evicts the idle keys, not the one the flood keeps touching', () => {
+    // The eviction hands its victim a fresh window, so which key is chosen is
+    // the whole question. A flood of one-shot addresses must not wash out the
+    // entry that is tracking the flood — here, the shared key every one of
+    // those requests also charges.
+    const limiter = new FixedWindowRateLimiter(3, 10 * 60_000, { sweepAtKeys: 10, maxKeys: 20 });
+    for (let i = 0; i < 3; i += 1) limiter.check('scim:shared', i);
+    // Now spray far past the ceiling, touching the shared key throughout.
+    for (let i = 0; i < 500; i += 1) {
+      limiter.check(`ip:${i}`, 100 + i);
+      limiter.check('scim:shared', 100 + i);
+    }
+    // Still refused: its window survived the spray rather than being reset.
+    expect(limiter.check('scim:shared', 700).allowed).toBe(false);
+  });
+
+  it('never evicts the key the current call is about', () => {
+    // Otherwise the ceiling becomes the bypass: overflow the map and the very
+    // request being checked is handed a brand new window.
+    const limiter = new FixedWindowRateLimiter(1, 10 * 60_000, { sweepAtKeys: 5, maxKeys: 1 });
+    expect(limiter.check('ip:me', 0).allowed).toBe(true);
+    expect(limiter.check('ip:me', 1).allowed).toBe(false);
+    expect(limiter.check('ip:me', 2).allowed).toBe(false);
+  });
+
+  it('keeps a denied key hot so it is not shed as idle', () => {
+    // A key that is currently refusing requests is the most important one in
+    // the map. If the denied path did not touch it, LRU would read it as the
+    // stalest entry — it stops being written to precisely when it starts
+    // denying — and evicting it returns a fresh window to the caller being
+    // refused.
+    const limiter = new FixedWindowRateLimiter(1, 10 * 60_000, { sweepAtKeys: 100, maxKeys: 3 });
+    limiter.check('ip:noisy', 0);
+    expect(limiter.check('ip:noisy', 1).allowed).toBe(false);
+    // Enough other traffic to cycle the ceiling many times over. The assertion
+    // is that the refusal never lapses — checking only the *final* state would
+    // pass even if the key were evicted and re-admitted along the way, since
+    // the request that re-admits it opens a fresh window that the next one is
+    // refused by. The bypass is the gap in the middle, not the end state.
+    let admitted = 0;
+    for (let i = 0; i < 50; i += 1) {
+      limiter.check(`ip:other${i}`, 10 + i);
+      if (limiter.check('ip:noisy', 10 + i).allowed) admitted += 1;
+    }
+    expect(admitted).toBe(0);
+    expect(limiter.check('ip:noisy', 200).allowed).toBe(false);
+  });
+});
+
+describe('WeightedWindowRateLimiter', () => {
+  it('charges cost against the budget and refuses when it would overrun', () => {
+    const limiter = new WeightedWindowRateLimiter(100, 60_000);
+    expect(limiter.consume('u1', 60, 0)).toMatchObject({ allowed: true, remaining: 40 });
+    expect(limiter.consume('u1', 60, 1)).toMatchObject({ allowed: false, remaining: 40 });
+    // The refused request must not have been charged.
+    expect(limiter.spent('u1', 1)).toBe(60);
+  });
+
+  it('admits a single request whose cost exceeds the whole budget', () => {
+    // Documented behaviour: otherwise raising a route's cost past the budget
+    // silently takes the route offline, which is the worse failure.
+    const limiter = new WeightedWindowRateLimiter(10, 60_000);
+    expect(limiter.consume('u1', 999, 0).allowed).toBe(true);
+    expect(limiter.consume('u1', 1, 1).allowed).toBe(false);
+  });
+
+  it('resets the budget after the window elapses', () => {
+    const limiter = new WeightedWindowRateLimiter(10, 1_000);
+    expect(limiter.consume('u1', 10, 0).allowed).toBe(true);
+    expect(limiter.consume('u1', 10, 999).allowed).toBe(false);
+    expect(limiter.consume('u1', 10, 1_000).allowed).toBe(true);
+    expect(limiter.spent('u1', 1_000)).toBe(10);
+  });
+
+  it('reports nothing spent once the window has passed', () => {
+    const limiter = new WeightedWindowRateLimiter(10, 1_000);
+    limiter.consume('u1', 7, 0);
+    expect(limiter.spent('u1', 500)).toBe(7);
+    expect(limiter.spent('u1', 1_000)).toBe(0);
+  });
+
+  it('bounds its map the same way, since it shares the mechanism', () => {
+    const limiter = new WeightedWindowRateLimiter(100, 10 * 60_000, { sweepAtKeys: 10, maxKeys: 25 });
+    for (let i = 0; i < 5_000; i += 1) limiter.consume(`u${i}`, 1, i);
+    expect(limiter.size).toBeLessThanOrEqual(25);
+  });
+
+  it('does not let a spent() read reorder the eviction queue', () => {
+    // `spent` is a diagnostic. If it touched the LRU order, reading the map
+    // would change which key is dropped next — and it is called from tests and
+    // instrumentation, not from the throttle decision.
+    const limiter = new WeightedWindowRateLimiter(100, 10 * 60_000, { sweepAtKeys: 100, maxKeys: 2 });
+    limiter.consume('first', 1, 0);
+    limiter.consume('second', 1, 1);
+    limiter.spent('first', 2); // would promote 'first' if it touched
+    limiter.consume('third', 1, 3); // forces one eviction
+    // 'first' was least recently *written*, so it is the one that goes.
+    expect(limiter.spent('first', 4)).toBe(0);
+    expect(limiter.spent('second', 4)).toBe(1);
   });
 });
 
