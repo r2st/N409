@@ -280,9 +280,23 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
           }
         }
       } catch (err) {
-        req.log.error({ err, type }, 'billing webhook handling failed');
-        // 200 anyway so Stripe doesn't hammer retries on a transient DB blip;
-        // the event id is logged for manual reconciliation.
+        // Log here for the type context, then let it out as a 5xx.
+        //
+        // This used to answer 200 on any failure, reasoning that a retry storm
+        // was worse than a dropped event. It has the trade backwards: Stripe
+        // treats 200 as "handled" and never redelivers, so a transient DB blip
+        // — the one failure that would certainly have succeeded on a retry —
+        // became permanent, silent loss of a paid invoice, with a log line
+        // nobody reads as the only trace. That is how the invoice-numbering
+        // collision stayed invisible for as long as it did.
+        //
+        // Stripe's redelivery is the recovery mechanism for exactly this, and
+        // it backs off rather than hammering. Handlers above are idempotent
+        // (findInvoiceByStripeId, ON CONFLICT, upsert), so a redelivery of an
+        // event that partly landed is safe. A genuinely permanent failure now
+        // ends up visible in the Stripe dashboard instead of only in our logs.
+        req.log.error({ err, type }, 'billing webhook handling failed — returning 5xx for redelivery');
+        throw err;
       }
       return reply.send({ received: true });
     });

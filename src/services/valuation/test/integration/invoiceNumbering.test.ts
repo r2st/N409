@@ -120,6 +120,43 @@ describe.skipIf(!dbUp)('invoice numbering under concurrency', () => {
     expect(rows[0]!.n).toBe('1');
   });
 
+  it('asks Stripe to redeliver when handling fails, rather than acking the loss', async () => {
+    // The handler used to answer 200 on any error. Stripe reads 200 as
+    // "handled" and never redelivers, so a transient failure became permanent
+    // loss of a paid invoice. A 5xx is what makes Stripe try again.
+    const stripeId = `in_failing_${newSuffix()}`;
+    const payload = paidEvent(stripeId);
+
+    // Break the write the handler depends on, without touching the signature
+    // path — the failure has to happen during handling, not validation.
+    const original = ctx.pool.query.bind(ctx.pool);
+    const failing = (...args: unknown[]) => {
+      const sql = typeof args[0] === 'string' ? args[0] : ((args[0] as { text?: string })?.text ?? '');
+      if (sql.includes('INSERT INTO invoices')) return Promise.reject(new Error('connection terminated'));
+      return (original as (...a: unknown[]) => unknown)(...args);
+    };
+    (ctx.pool as unknown as { query: unknown }).query = failing;
+    try {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/billing/webhook',
+        headers: { 'stripe-signature': stripeSig(payload), 'content-type': 'application/json' },
+        payload,
+      });
+      expect(res.statusCode).toBeGreaterThanOrEqual(500);
+    } finally {
+      (ctx.pool as unknown as { query: unknown }).query = original;
+    }
+
+    // Nothing was recorded, which is the point: the event is still outstanding
+    // and Stripe will bring it back rather than it being silently gone.
+    const { rows } = await ctx.pool.query<{ n: string }>(
+      'SELECT count(*)::text AS n FROM invoices WHERE stripe_invoice_id = $1',
+      [stripeId],
+    );
+    expect(rows[0]!.n).toBe('0');
+  });
+
   it('returns the existing invoice when the same Stripe invoice is created twice', async () => {
     // createInvoice's signature promises an InvoiceRow. On the ON CONFLICT path
     // it used to return undefined behind a non-null assertion, so a caller
