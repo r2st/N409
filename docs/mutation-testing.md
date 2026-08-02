@@ -73,7 +73,21 @@ defect this codebase keeps reintroducing.
 ## Baseline
 
 At the time this harness landed: **10,422 mutants, 6,321 killed, 4,015 survived
-(61% score)**. Of the survivors, ~1,559 are string-literal noise and ~2,279
-change a numeric decision. That second number is the backlog worth working
-through, highest-consequence module first — `compute`, `waterfall`, `approaches`
-and `pwerm` decide the FMV per share that goes on the report.
+(61.1%)**. Of the survivors, ~1,559 were string-literal noise and ~2,279 changed
+a numeric decision. That second number is the backlog worth working through,
+highest-consequence module first — `compute`, `waterfall`, `approaches` and
+`pwerm` decide the FMV per share that goes on the report.
+
+After the first pass over it (`test_allocation_properties.py` and
+`test_boundary_inputs.py`, 28 tests): **6,376 killed, 3,960 survived (61.7%)**.
+
+Fifty-five mutants for twenty-eight tests is a fair exchange rate, and it is
+worth being clear about why the score barely moved: the tests that closed real
+gaps were boundary cases, and each boundary is one or two mutants. The bulk of
+what remains is message strings and clamps no reachable input can hit. Reporting
+this as "+0.5%" would be true and useless — the useful statement is that
+thirteen structural invariants now hold over a few hundred generated cap tables,
+and that no invariant failed when it was first run, which is evidence about the
+engine rather than about the score.
+
+Do not chase the number. Read the survivors.
