@@ -52,6 +52,15 @@ jobs:
       - name: Coverage (web-frontend)
         run: npx vitest run --coverage --coverage.reporter=text-summary
         working-directory: src/services/web-frontend
+      # `web` and `report` had no floor at all until now — the BFF is the only
+      # service the public internet reaches directly, and `report` renders the
+      # document the client and their auditor actually read.
+      - name: Coverage (web)
+        run: npx vitest run --coverage --coverage.reporter=text-summary
+        working-directory: src/services/web
+      - name: Coverage (report)
+        run: npx vitest run --coverage --coverage.reporter=text-summary
+        working-directory: src/services/report
 
   python:
     name: Test (Python services)
