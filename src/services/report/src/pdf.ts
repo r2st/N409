@@ -380,6 +380,136 @@ function trimRuns(runs: Run[]): Run[] {
   return result.filter((r) => r.text.length > 0);
 }
 
+// ── document structure (tagging) ──────────────────────────────────────────────
+
+/**
+ * The report is a *tagged* PDF: alongside the drawing instructions it carries a
+ * structure tree naming what each run of content is — a heading, a paragraph, a
+ * table cell, a figure — and in what order it is meant to be read.
+ *
+ * Without one, a PDF is a bag of positioned glyphs. Assistive technology has to
+ * guess the reading order from coordinates, which on this report's two-column
+ * cover facts and banded tables guesses wrong; a table stops being a table and
+ * becomes rows of unrelated numbers, and the charts, being vector paths, are
+ * simply absent. The structure tree is also what lets a reader reflow the
+ * document on a phone and what a corporate accessibility checker looks for.
+ *
+ * We stop short of *claiming* PDF/UA-1 conformance in the metadata. pdfkit will
+ * stamp that claim on request, but conformance also requires every font to be
+ * embedded, and these are the standard-14 faces, which by definition are not. A
+ * false conformance claim is worse than none: it tells a procurement reviewer
+ * not to check the thing that would have failed.
+ */
+type Struct = PDFKit.PDFStructureElement;
+
+/**
+ * The bits of pdfkit's runtime surface that `@types/pdfkit` does not declare.
+ *
+ * Structure *attributes* (`/A`) have no typed accessor — pdfkit's own table
+ * renderer reaches through `structElement.dictionary.data.A` to set them, and
+ * `PDFReference.end()` is typed as requiring a chunk when the implementation
+ * treats it as optional. Narrowed to exactly what is used, so a pdfkit upgrade
+ * that moves either one fails to compile rather than silently doing nothing.
+ */
+interface StructDictionary {
+  dictionary: { data: Record<string, unknown> };
+}
+interface AttributeRef {
+  end(): void;
+}
+
+interface StructOptions {
+  /** Replaces the element's content for a screen reader — figures, mainly. */
+  alt?: string;
+  title?: string;
+  lang?: string;
+  /** The text this content really says, when the glyphs differ from it. */
+  actual?: string;
+  /**
+   * Standard structure *attributes* (`/A`), which are a different dictionary
+   * from the options above and which pdfkit exposes only on the raw reference —
+   * `{ O: 'Table', Scope: 'Column' }` on a header cell, for instance.
+   */
+  attributes?: Record<string, unknown>;
+}
+
+/**
+ * Runs `body`, tagging everything it draws as one `type` element under `parent`.
+ *
+ * pdfkit runs a structure element's closure the moment the element is attached
+ * to an attached parent, so the drawing happens in place — call order is
+ * document order, which is exactly what the reading order has to be.
+ */
+function tagged<T>(
+  doc: PDFKit.PDFDocument,
+  parent: Struct,
+  type: string,
+  options: StructOptions,
+  body: () => T,
+): T {
+  let out!: T;
+  const { attributes, ...structOptions } = options;
+  const element = doc.struct(type, structOptions, () => {
+    out = body();
+  });
+  // The attribute reference has to exist before the element is flushed, which
+  // `end()` triggers, and be ended after it — the order pdfkit's own table
+  // renderer uses.
+  const attributeRef = attributes ? (doc.ref(attributes) as unknown as AttributeRef) : null;
+  if (attributeRef) (element as unknown as StructDictionary).dictionary.data.A = attributeRef;
+  parent.add(element);
+  element.end();
+  attributeRef?.end();
+  return out;
+}
+
+/**
+ * A structure element that will be filled in later; caller must `.end()` it.
+ *
+ * Takes no `attributes`: they have to be attached before the element is ended,
+ * and an element opened here is ended somewhere else entirely. Accepting them
+ * and dropping them silently is the trap this signature exists to close.
+ */
+function openTag(
+  doc: PDFKit.PDFDocument,
+  parent: Struct,
+  type: string,
+  options: Omit<StructOptions, 'attributes'> = {},
+): Struct {
+  const element = doc.struct(type, options);
+  parent.add(element);
+  return element;
+}
+
+/**
+ * Marks everything `body` draws as an artifact — page furniture and decoration
+ * that carries no meaning and must stay out of the reading order.
+ *
+ * This matters most for the running heads and footers. They are real text, and
+ * untagged they would be announced on every page: a reader would hear the
+ * company name, the report title, "Confidential" and a page number between
+ * every two paragraphs of the analysis.
+ */
+function artifact(doc: PDFKit.PDFDocument, body: () => void): void {
+  doc.markContent('Artifact');
+  try {
+    body();
+  } finally {
+    doc.endMarkedContent();
+  }
+}
+
+/**
+ * Structure type for a heading at `depth`, where 1 is a top-level section.
+ *
+ * PDF defines H1–H6 and expects them not to skip levels. The section heading is
+ * H1, so an `<h1>` inside a section's prose is a level below it, and anything
+ * deeper than H6 is clamped rather than emitted as an undefined type.
+ */
+export function headingTag(depth: number): string {
+  return `H${Math.min(6, Math.max(1, Math.round(depth)))}`;
+}
+
 // ── pdfkit layout ─────────────────────────────────────────────────────────────
 
 const FONTS = {
@@ -682,6 +812,136 @@ export function linePlot(points: readonly ChartPoint[]): LinePlot {
   };
 }
 
+// ── chart alternative text ────────────────────────────────────────────────────
+
+/**
+ * Points named individually in a chart's alternative text before it summarises
+ * the rest.
+ *
+ * A comparable-company set runs to thirty names. Read aloud in full, the
+ * alternative text for one chart is longer than the section it illustrates, and
+ * a listener has no way to skip it — alt text is announced as a single unit.
+ * Twelve is about as much as is worth hearing before the shape of the data is
+ * clearer from the surrounding prose.
+ */
+export const ALT_MAX_POINTS = 12;
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+const altPoint = (p: { label: string; value: number; display?: string }) =>
+  `${p.label} ${p.display ?? formatChartValue(p.value)}`;
+
+/**
+ * A step label that already states its own direction.
+ *
+ * The engine labels its discount steps "Less DLOC 5.0%" — prefixing that with
+ * our own word produces "less Less DLOC", which is what a listener actually
+ * hears. Matched on the label rather than assumed either way, because a chart
+ * assembled elsewhere may well pass a bare "DLOM".
+ */
+const SIGNED_LABEL = /^(less|plus|minus|add|deduct|discount)\b/i;
+
+/**
+ * A figure with any leading negative sign removed.
+ *
+ * Waterfall steps are announced as "less X" / "plus X", so the sign is already
+ * spoken; the engine also formats its reductions with a leading U+2212, and
+ * leaving both in place says "less minus forty-five cents". Accounting
+ * parentheses are the same sign in another notation and are stripped too.
+ */
+export function unsignedFigure(display: string): string {
+  const trimmed = display.trim();
+  const bracketed = /^\((.*)\)$/.exec(trimmed);
+  if (bracketed) return bracketed[1]!.trim();
+  return trimmed.replace(/^[-−–—+]\s*/, '');
+}
+
+/** Semicolon-separated points, truncated to ALT_MAX_POINTS with a count of the rest. */
+function altPoints(points: ReadonlyArray<{ label: string; value: number; display?: string }>): string {
+  if (points.length === 0) return 'no data';
+  const shown = points.slice(0, ALT_MAX_POINTS).map(altPoint);
+  const omitted = points.length - shown.length;
+  return omitted > 0 ? `${shown.join('; ')}; and ${plural(omitted, 'further point')}` : shown.join('; ');
+}
+
+/**
+ * What a screen reader says in place of a chart.
+ *
+ * The charts are vector paths — lines, arcs and filled rectangles with the value
+ * labels drawn as separate, positioned text runs. To assistive technology that
+ * is either silence or a stream of unanchored numbers, and either way the
+ * reader loses the one thing the chart was there to show. A 409A report is
+ * delivered to boards, auditors and regulators, some of whom read it with a
+ * screen reader; the conclusion of value must not be reachable only by eye.
+ *
+ * Each shape is described the way it is read rather than the way it is drawn:
+ * a waterfall is a starting value, signed steps and a total, not eleven
+ * rectangles. The `note` is appended because it is the chart's caption and
+ * routinely carries the qualification the numbers need.
+ */
+export function chartAltText(spec: ChartSpec): string {
+  const tail = spec.note ? ` ${spec.note.replace(/\.?\s*$/, '')}.` : '';
+  switch (spec.type) {
+    case 'bar':
+      return `Bar chart. ${spec.title}. ${plural(spec.points.length, 'bar')}: ${altPoints(spec.points)}.${tail}`;
+    case 'donut': {
+      const segments = donutSegments(spec.slices);
+      if (segments.length === 0) return `Donut chart. ${spec.title}. No positive values to plot.${tail}`;
+      const parts = segments
+        .slice(0, ALT_MAX_POINTS)
+        .map((s) => `${s.label} ${s.display} (${(s.fraction * 100).toFixed(1)}%)`);
+      const omitted = segments.length - parts.length;
+      const list =
+        omitted > 0 ? `${parts.join('; ')}; and ${plural(omitted, 'further segment')}` : parts.join('; ');
+      const centre = spec.center ? ` Centre: ${spec.center}.` : '';
+      return `Donut chart. ${spec.title}. ${plural(segments.length, 'segment')}: ${list}.${centre}${tail}`;
+    }
+    case 'line': {
+      const plot = linePlot(spec.points);
+      if (plot.points.length === 0) return `Line chart. ${spec.title}. No data to plot.${tail}`;
+      const first = plot.points[0]!;
+      const last = plot.points[plot.points.length - 1]!;
+      // A trend is the question a reader asks of a time series, so it is stated
+      // outright rather than left to be inferred from the enumerated points.
+      const direction =
+        plot.points.length < 2 || last.value === first.value
+          ? 'unchanged'
+          : last.value > first.value
+            ? 'rising'
+            : 'falling';
+      const trend =
+        plot.points.length < 2
+          ? ''
+          : ` Overall ${direction} from ${first.display} at ${first.label} to ${last.display} at ${last.label}.`;
+      return `Line chart. ${spec.title}. ${plural(plot.points.length, 'point')}: ${altPoints(plot.points)}.${trend}${tail}`;
+    }
+    case 'waterfall': {
+      const columns = waterfallColumns(
+        spec.start,
+        spec.steps,
+        spec.end_label,
+        spec.end_value,
+        spec.end_display,
+      );
+      const start = columns[0]!;
+      const end = columns[columns.length - 1]!;
+      // Signed steps read as "less X" / "plus X": a discount for lack of
+      // marketability is the whole point of the chart and has to be audible as
+      // a reduction, not as a bar of some height.
+      const steps = spec.steps.slice(0, ALT_MAX_POINTS).map((s) => {
+        const figure = unsignedFigure(s.display ?? formatChartValue(Math.abs(s.value)));
+        const prefix = SIGNED_LABEL.test(s.label.trim()) ? '' : s.value < 0 ? 'less ' : 'plus ';
+        return `${prefix}${s.label} ${figure}`;
+      });
+      const omitted = spec.steps.length - steps.length;
+      const body =
+        omitted > 0 ? `${steps.join('; ')}; and ${plural(omitted, 'further step')}` : steps.join('; ');
+      const middle = steps.length > 0 ? ` ${body};` : '';
+      return `Waterfall chart. ${spec.title}. Starts at ${start.label} ${start.display};${middle} ends at ${end.label} ${end.display}.${tail}`;
+    }
+  }
+}
+
 /** Vertical space a chart needs, so pagination can decide before drawing. */
 export function chartHeight(spec: ChartSpec): number {
   const title = 20;
@@ -726,28 +986,47 @@ function chartColor(kind: WaterfallColumn['kind'], accent: string): string {
   return accent;
 }
 
-function renderChart(doc: PDFKit.PDFDocument, spec: ChartSpec, usable: number, accent: string): void {
+/**
+ * One chart, tagged as a single `Figure` carrying the alternative text.
+ *
+ * The whole chart — title, plot and caption — sits inside the figure rather
+ * than the plot alone, because `Alt` substitutes for everything the element
+ * encloses and `chartAltText` already restates the title and the note. Splitting
+ * them would have the title read twice and the caption orphaned from the data
+ * it qualifies.
+ */
+function renderChart(
+  doc: PDFKit.PDFDocument,
+  spec: ChartSpec,
+  usable: number,
+  accent: string,
+  parent: Struct,
+): void {
+  // Outside the figure: a page break inside a marked-content region is legal but
+  // pointless here, and the reserve has to be taken before the tag opens.
   ensureRoom(doc, chartHeight(spec));
-  const left = doc.page.margins.left;
-  doc.font(FONTS.bold).fontSize(10.5).fillColor(CHART_INK).text(spec.title, left, doc.y, { width: usable });
-  doc.moveDown(0.4);
+  tagged(doc, parent, 'Figure', { alt: chartAltText(spec) }, () => {
+    const left = doc.page.margins.left;
+    doc.font(FONTS.bold).fontSize(10.5).fillColor(CHART_INK).text(spec.title, left, doc.y, { width: usable });
+    doc.moveDown(0.4);
 
-  if (spec.type === 'bar') renderBarChart(doc, spec, usable, accent);
-  else if (spec.type === 'donut') renderDonutChart(doc, spec, usable, accent);
-  else if (spec.type === 'line') renderLineChart(doc, spec, usable, accent);
-  else renderWaterfallChart(doc, spec, usable, accent);
+    if (spec.type === 'bar') renderBarChart(doc, spec, usable, accent);
+    else if (spec.type === 'donut') renderDonutChart(doc, spec, usable, accent);
+    else if (spec.type === 'line') renderLineChart(doc, spec, usable, accent);
+    else renderWaterfallChart(doc, spec, usable, accent);
 
-  if (spec.note) {
-    doc
-      .font(FONTS.italic)
-      .fontSize(8.5)
-      .fillColor('#777777')
-      .text(spec.note, left, doc.y + 4, {
-        width: usable,
-      });
-  }
-  doc.x = left;
-  doc.moveDown(1);
+    if (spec.note) {
+      doc
+        .font(FONTS.italic)
+        .fontSize(8.5)
+        .fillColor('#777777')
+        .text(spec.note, left, doc.y + 4, {
+          width: usable,
+        });
+    }
+    doc.x = left;
+    doc.moveDown(1);
+  });
 }
 
 function renderBarChart(
@@ -1085,34 +1364,49 @@ function renderSummaryPage(
   summary: ReportPdfSummary,
   usable: number,
   accent: string,
+  parent: Struct,
   destination?: string,
 ): void {
   const left = doc.page.margins.left;
-  doc.font(FONTS.bold).fontSize(16).fillColor('#111111').text(SUMMARY_HEADING, left, doc.y, { destination });
+  tagged(doc, parent, 'H1', {}, () => {
+    doc
+      .font(FONTS.bold)
+      .fontSize(16)
+      .fillColor('#111111')
+      .text(SUMMARY_HEADING, left, doc.y, { destination });
+  });
   doc.moveDown(0.8);
 
   // Headline: the one number the engagement exists to produce.
   const boxTop = doc.y;
   const boxHeight = summary.headline.note ? 78 : 66;
-  doc.rect(left, boxTop, usable, boxHeight).fillColor('#f6f5f2').fill();
-  doc.rect(left, boxTop, 4, boxHeight).fillColor(accent).fill();
-  doc
-    .font(FONTS.regular)
-    .fontSize(9.5)
-    .fillColor('#666666')
-    .text(summary.headline.label.toUpperCase(), left + 18, boxTop + 12, { width: usable - 36 });
-  doc
-    .font(FONTS.bold)
-    .fontSize(26)
-    .fillColor('#111111')
-    .text(summary.headline.value, left + 18, boxTop + 26, { width: usable - 36 });
-  if (summary.headline.note) {
+  artifact(doc, () => {
+    doc.rect(left, boxTop, usable, boxHeight).fillColor('#f6f5f2').fill();
+    doc.rect(left, boxTop, 4, boxHeight).fillColor(accent).fill();
+  });
+  // Label and value are drawn as two positioned runs a long way apart in
+  // point size; tagged separately they would be read as two unrelated
+  // fragments, so the pair is one paragraph whose ActualText is the sentence a
+  // sighted reader assembles from the layout.
+  tagged(doc, parent, 'P', { actual: summaryFigureText(summary.headline) }, () => {
     doc
-      .font(FONTS.italic)
-      .fontSize(8.5)
-      .fillColor('#777777')
-      .text(summary.headline.note, left + 18, boxTop + 60, { width: usable - 36, lineBreak: false });
-  }
+      .font(FONTS.regular)
+      .fontSize(9.5)
+      .fillColor('#666666')
+      .text(summary.headline.label.toUpperCase(), left + 18, boxTop + 12, { width: usable - 36 });
+    doc
+      .font(FONTS.bold)
+      .fontSize(26)
+      .fillColor('#111111')
+      .text(summary.headline.value, left + 18, boxTop + 26, { width: usable - 36 });
+    if (summary.headline.note) {
+      doc
+        .font(FONTS.italic)
+        .fontSize(8.5)
+        .fillColor('#777777')
+        .text(summary.headline.note, left + 18, boxTop + 60, { width: usable - 36, lineBreak: false });
+    }
+  });
   doc.x = left;
   doc.y = boxTop + boxHeight + 18;
 
@@ -1127,25 +1421,29 @@ function renderSummaryPage(
       let rowHeight = 0;
       row.forEach((figure, c) => {
         const x = left + c * columnWidth;
-        doc
-          .font(FONTS.regular)
-          .fontSize(8)
-          .fillColor('#888888')
-          .text(figure.label.toUpperCase(), x, rowTop, { width: columnWidth - 12 });
-        doc
-          .font(FONTS.bold)
-          .fontSize(12)
-          .fillColor('#111111')
-          .text(figure.value, x, rowTop + 11, { width: columnWidth - 12 });
-        let bottom = rowTop + 27;
-        if (figure.note) {
+        // Three figures side by side are three columns of a visual grid, and
+        // read by coordinate they interleave: every label, then every value.
+        // One element per figure fixes the order and keeps each value with the
+        // label that names it.
+        const bottom = tagged(doc, parent, 'P', { actual: summaryFigureText(figure) }, () => {
+          doc
+            .font(FONTS.regular)
+            .fontSize(8)
+            .fillColor('#888888')
+            .text(figure.label.toUpperCase(), x, rowTop, { width: columnWidth - 12 });
+          doc
+            .font(FONTS.bold)
+            .fontSize(12)
+            .fillColor('#111111')
+            .text(figure.value, x, rowTop + 11, { width: columnWidth - 12 });
+          if (!figure.note) return rowTop + 27;
           doc
             .font(FONTS.regular)
             .fontSize(8)
             .fillColor('#777777')
-            .text(figure.note, x, bottom, { width: columnWidth - 12 });
-          bottom = doc.y;
-        }
+            .text(figure.note, x, rowTop + 27, { width: columnWidth - 12 });
+          return doc.y;
+        });
         rowHeight = Math.max(rowHeight, bottom - rowTop);
       });
       doc.x = left;
@@ -1155,15 +1453,23 @@ function renderSummaryPage(
 
   if (summary.statement) {
     doc.moveDown(0.2);
-    doc
-      .font(FONTS.regular)
-      .fontSize(10.5)
-      .fillColor('#222222')
-      .text(summary.statement, left, doc.y, { width: usable, lineGap: 2, align: 'left' });
+    tagged(doc, parent, 'P', {}, () => {
+      doc
+        .font(FONTS.regular)
+        .fontSize(10.5)
+        .fillColor('#222222')
+        .text(summary.statement!, left, doc.y, { width: usable, lineGap: 2, align: 'left' });
+    });
     doc.moveDown(1);
   }
 
-  for (const chart of summary.charts ?? []) renderChart(doc, chart, usable, accent);
+  for (const chart of summary.charts ?? []) renderChart(doc, chart, usable, accent, parent);
+}
+
+/** A summary figure as one spoken sentence, for the element's ActualText. */
+export function summaryFigureText(figure: SummaryFigure): string {
+  const label = figure.label.replace(/[:\s]+$/, '');
+  return figure.note ? `${label}: ${figure.value}. ${figure.note}` : `${label}: ${figure.value}`;
 }
 
 export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions = {}): Promise<Buffer> {
@@ -1194,6 +1500,12 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     },
     lang: 'en-US',
     displayTitle: true,
+    // See the "document structure (tagging)" section: this is what carries the
+    // reading order and the element roles out to assistive technology.
+    tagged: true,
+    // The structure tree, marked content and /Lang all postdate 1.3, which is
+    // pdfkit's default and what the file previously declared itself to be.
+    pdfVersion: '1.7',
   });
 
   const chunks: Buffer[] = [];
@@ -1205,6 +1517,16 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
 
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
+  /*
+   * Root of the structure tree. Everything with meaning hangs off this in the
+   * order it is meant to be read, which is not the order it is drawn: the
+   * contents pages are reserved now and filled in at the very end, once the
+   * section page numbers are known, so their element is opened here — in
+   * reading order — and populated later.
+   */
+  const docStruct = doc.struct('Document');
+  doc.addStructure(docStruct);
+
   // Cover
   const brandColor = /^#[0-9a-fA-F]{6}$/.test(input.branding?.brand_color ?? '')
     ? input.branding!.brand_color!
@@ -1213,7 +1535,7 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   // A colour band across the head of the cover. The rule under the title said
   // "branded" only to someone looking for it; a band is the first thing seen,
   // and it is the firm's colour rather than ours on a white-label report.
-  doc.rect(0, 0, doc.page.width, 10).fillColor(brandColor).fill();
+  artifact(doc, () => doc.rect(0, 0, doc.page.width, 10).fillColor(brandColor).fill());
 
   // The title block is anchored rather than floated. Stacking moveDown()s meant
   // a two-line title or a tall logo pushed the meta block down the page, so no
@@ -1221,53 +1543,72 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   const COVER_TITLE_TOP = 250;
   if (input.branding?.logo) {
     try {
-      // Centered partner logo above the title, capped to a 140×56pt box.
-      doc.image(input.branding.logo, doc.page.width / 2 - 70, COVER_TITLE_TOP - 110, {
-        fit: [140, 56],
-        align: 'center',
-        valign: 'center',
+      // Centered partner logo above the title, capped to a 140×56pt box. The
+      // firm's name is set in words directly below, so the mark itself carries
+      // no information a reader would otherwise miss — an artifact, not a
+      // figure needing alternative text that would only repeat the next line.
+      artifact(doc, () => {
+        doc.image(input.branding!.logo!, doc.page.width / 2 - 70, COVER_TITLE_TOP - 110, {
+          fit: [140, 56],
+          align: 'center',
+          valign: 'center',
+        });
       });
     } catch {
       // Undecodable image bytes — render the cover without the logo.
     }
   }
   doc.y = COVER_TITLE_TOP;
-  doc.font(FONTS.bold).fontSize(26).fillColor(INK.strong).text(input.title, doc.page.margins.left, doc.y, {
-    width: usable,
-    align: 'center',
+  // The document title proper. `Title` rather than `H1`: the section headings
+  // are the H1s, and a cover title is not a level in that outline.
+  tagged(doc, docStruct, 'Title', {}, () => {
+    doc.font(FONTS.bold).fontSize(26).fillColor(INK.strong).text(input.title, doc.page.margins.left, doc.y, {
+      width: usable,
+      align: 'center',
+    });
   });
   doc.moveDown(0.5);
-  doc.font(FONTS.regular).fontSize(14).fillColor('#444444').text(input.company_name, { align: 'center' });
+  tagged(doc, docStruct, 'P', {}, () => {
+    doc.font(FONTS.regular).fontSize(14).fillColor('#444444').text(input.company_name, { align: 'center' });
+  });
   if (input.branding) {
     doc.moveDown(0.4);
-    doc
-      .font(FONTS.italic)
-      .fontSize(10.5)
-      .fillColor(INK.muted)
-      .text(`Prepared in partnership with ${input.branding.partner_name}`, { align: 'center' });
+    tagged(doc, docStruct, 'P', {}, () => {
+      doc
+        .font(FONTS.italic)
+        .fontSize(10.5)
+        .fillColor(INK.muted)
+        .text(`Prepared in partnership with ${input.branding!.partner_name}`, { align: 'center' });
+    });
   }
   doc.moveDown(1.6);
   const ruleY = doc.y;
-  doc
-    .moveTo(doc.page.margins.left + usable / 4, ruleY)
-    .lineTo(doc.page.margins.left + (3 * usable) / 4, ruleY)
-    .lineWidth(input.branding ? 1.2 : 0.5)
-    .strokeColor(brandColor)
-    .stroke();
+  artifact(doc, () => {
+    doc
+      .moveTo(doc.page.margins.left + usable / 4, ruleY)
+      .lineTo(doc.page.margins.left + (3 * usable) / 4, ruleY)
+      .lineWidth(input.branding ? 1.2 : 0.5)
+      .strokeColor(brandColor)
+      .stroke();
+  });
 
   // Cover facts sit in a fixed block low on the page, so a long title grows
   // into the space above them instead of shunting them towards the footer.
   doc.y = Math.max(doc.y + 24, doc.page.height - 250);
   for (const item of input.meta) {
-    doc
-      .font(FONTS.bold)
-      .fontSize(9)
-      .fillColor(INK.faint)
-      .text(item.label.toUpperCase(), doc.page.margins.left, doc.y, { width: usable, align: 'center' })
-      .font(FONTS.regular)
-      .fontSize(11)
-      .fillColor(INK.strong)
-      .text(item.value, { width: usable, align: 'center' });
+    // Label and value are a stacked pair — one element, spoken as one fact, so
+    // "Valuation date" cannot be read apart from the date it labels.
+    tagged(doc, docStruct, 'P', { actual: `${item.label.replace(/[:\s]+$/, '')}: ${item.value}` }, () => {
+      doc
+        .font(FONTS.bold)
+        .fontSize(9)
+        .fillColor(INK.faint)
+        .text(item.label.toUpperCase(), doc.page.margins.left, doc.y, { width: usable, align: 'center' })
+        .font(FONTS.regular)
+        .fontSize(11)
+        .fillColor(INK.strong)
+        .text(item.value, { width: usable, align: 'center' });
+    });
     doc.moveDown(0.7);
   }
 
@@ -1285,6 +1626,9 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   const wantsToc = input.include_toc ?? input.sections.length >= TOC_MIN_SECTIONS;
   const tocPages: number[] = [];
   let tocLayout: TocCapacity | null = null;
+  // Opened in reading order, populated after the last section. Left null when
+  // there is no contents, so an empty TOC element is never emitted.
+  let tocStruct: Struct | null = null;
   if (wantsToc && input.sections.length > 0) {
     const entryCount = input.sections.length + (input.summary ? 1 : 0);
     tocLayout = tocCapacity(doc);
@@ -1294,6 +1638,7 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
       tocPages.push(currentPageIndex(doc));
       if (i === 0) outline.addItem(TOC_HEADING);
     }
+    tocStruct = openTag(doc, docStruct, 'TOC');
   }
 
   // Executive summary — after the contents, before §1.
@@ -1302,7 +1647,9 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     doc.addPage();
     summaryPage = currentPageIndex(doc);
     outline.addItem(SUMMARY_HEADING);
-    renderSummaryPage(doc, input.summary, usable, brandColor, SUMMARY_DESTINATION);
+    const summaryStruct = openTag(doc, docStruct, 'Sect');
+    renderSummaryPage(doc, input.summary, usable, brandColor, summaryStruct, SUMMARY_DESTINATION);
+    summaryStruct.end();
   }
 
   // Sections
@@ -1315,35 +1662,44 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     // Both the bookmark and the destination bind to the page that is current
     // now, which is why they are created here and not in a later pass.
     outline.addItem(`${idx + 1}. ${section.heading}`);
-    doc
-      .font(FONTS.bold)
-      .fontSize(16)
-      .fillColor(INK.strong)
-      .text(`${idx + 1}. ${section.heading}`, doc.page.margins.left, doc.y, {
-        width: usable,
-        destination: sectionDestination(idx),
-      });
+    // Sect per section, mirroring the outline: it is what lets a reader jump
+    // by section rather than paging through, the same way the bookmarks do
+    // for a sighted one.
+    const sectionStruct = openTag(doc, docStruct, 'Sect', { title: section.heading });
+    tagged(doc, sectionStruct, 'H1', {}, () => {
+      doc
+        .font(FONTS.bold)
+        .fontSize(16)
+        .fillColor(INK.strong)
+        .text(`${idx + 1}. ${section.heading}`, doc.page.margins.left, doc.y, {
+          width: usable,
+          destination: sectionDestination(idx),
+        });
+    });
     // A rule in the brand colour under each section heading, so the reader can
     // find where a section begins while flipping rather than reading.
     doc.y += 6;
-    doc
-      .moveTo(doc.page.margins.left, doc.y)
-      .lineTo(doc.page.margins.left + usable, doc.y)
-      .lineWidth(1)
-      .strokeColor(brandColor)
-      .stroke();
+    artifact(doc, () => {
+      doc
+        .moveTo(doc.page.margins.left, doc.y)
+        .lineTo(doc.page.margins.left + usable, doc.y)
+        .lineWidth(1)
+        .strokeColor(brandColor)
+        .stroke();
+    });
     doc.x = doc.page.margins.left;
     doc.moveDown(0.8);
     const blocks = htmlToBlocks(section.html);
-    blocks.forEach((block, i) => renderBlock(doc, block, usable, blocks[i + 1]));
+    blocks.forEach((block, i) => renderBlock(doc, block, usable, sectionStruct, blocks[i + 1]));
     for (const chart of section.charts ?? []) {
-      renderChart(doc, chart, usable, brandColor);
+      renderChart(doc, chart, usable, brandColor, sectionStruct);
     }
+    sectionStruct.end();
   });
 
   const range = doc.bufferedPageRange();
 
-  if (tocPages.length > 0 && tocLayout) {
+  if (tocPages.length > 0 && tocLayout && tocStruct) {
     const entries: TocEntry[] = input.sections.map((section, idx) => ({
       heading: section.heading,
       number: `${idx + 1}.`,
@@ -1359,7 +1715,8 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
         destination: SUMMARY_DESTINATION,
       });
     }
-    renderTableOfContents(doc, entries, usable, tocPages, tocLayout);
+    renderTableOfContents(doc, entries, usable, tocPages, tocLayout, tocStruct);
+    tocStruct.end();
   }
 
   // Page furniture. Both bands are stamped after layout, when the total page
@@ -1384,49 +1741,60 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
 
     // Running head: what the reader is holding, and where they are in it. The
     // cover carries its own title block and would only be cluttered by it.
+    // All of it is page furniture: repeated on every sheet, carrying nothing
+    // the body does not already say. Marked as artifacts it is skipped by a
+    // screen reader instead of interrupting the analysis once per page.
     const heading = headings[i - range.start];
     if (i > range.start && heading) {
-      doc
-        .font(FONTS.regular)
-        .fontSize(8)
-        .fillColor(INK.faint)
-        .text(input.company_name, doc.page.margins.left, 42, {
-          width: usable / 2,
-          lineBreak: false,
-        });
-      doc
-        .font(FONTS.regular)
-        .fontSize(8)
-        .fillColor(INK.faint)
-        .text(heading, doc.page.margins.left + usable / 2, 42, {
-          width: usable / 2,
-          align: 'right',
-          lineBreak: false,
-          ellipsis: true,
-        });
-      doc
-        .moveTo(doc.page.margins.left, 56)
-        .lineTo(doc.page.margins.left + usable, 56)
-        .lineWidth(0.5)
-        .strokeColor(INK.hair)
-        .stroke();
+      artifact(doc, () => {
+        doc
+          .font(FONTS.regular)
+          .fontSize(8)
+          .fillColor(INK.faint)
+          .text(input.company_name, doc.page.margins.left, 42, {
+            width: usable / 2,
+            lineBreak: false,
+          });
+        doc
+          .font(FONTS.regular)
+          .fontSize(8)
+          .fillColor(INK.faint)
+          .text(heading, doc.page.margins.left + usable / 2, 42, {
+            width: usable / 2,
+            align: 'right',
+            lineBreak: false,
+            ellipsis: true,
+          });
+        doc
+          .moveTo(doc.page.margins.left, 56)
+          .lineTo(doc.page.margins.left + usable, 56)
+          .lineWidth(0.5)
+          .strokeColor(INK.hair)
+          .stroke();
+      });
     }
 
     const parts = [`${input.company_name} — ${input.title}`];
     if (confidentiality) parts.push(confidentiality);
     parts.push(`Page ${i - range.start + 1} of ${range.count}`);
-    doc
-      .font(FONTS.regular)
-      .fontSize(8)
-      .fillColor(INK.faint)
-      .text(parts.join(' · '), doc.page.margins.left, doc.page.height - 46, {
-        width: usable,
-        align: 'center',
-        lineBreak: false,
-      });
+    artifact(doc, () => {
+      doc
+        .font(FONTS.regular)
+        .fontSize(8)
+        .fillColor(INK.faint)
+        .text(parts.join(' · '), doc.page.margins.left, doc.page.height - 46, {
+          width: usable,
+          align: 'center',
+          lineBreak: false,
+        });
+    });
     doc.page.margins.bottom = bottom;
     doc.page.margins.top = top;
   }
+
+  // Ended after the page furniture, because the contents pages are populated
+  // above and their elements are children of this one.
+  docStruct.end();
 
   doc.end();
   return done;
@@ -1597,6 +1965,7 @@ function renderTableOfContents(
   usable: number,
   pages: readonly number[],
   capacity: TocCapacity,
+  parent: Struct,
 ): void {
   let slot = 0;
   let remaining = capacity.first;
@@ -1606,7 +1975,9 @@ function renderTableOfContents(
     doc.x = doc.page.margins.left;
     doc.y = doc.page.margins.top;
     if (withHeading) {
-      doc.font(FONTS.bold).fontSize(16).fillColor(INK.strong).text(TOC_HEADING);
+      tagged(doc, parent, 'H1', {}, () => {
+        doc.font(FONTS.bold).fontSize(16).fillColor(INK.strong).text(TOC_HEADING);
+      });
       doc.moveDown(1);
     }
   };
@@ -1632,23 +2003,29 @@ function renderTableOfContents(
     const y = doc.y;
     const goTo = entry.destination;
 
-    doc.font(FONTS.regular).fontSize(11).fillColor('#222222');
-    const labelWidth = doc.widthOfString(label);
-    doc.text(label, left, y, { width: usable - numberWidth, lineBreak: false, goTo });
+    // One TOCI per entry, spoken via ActualText. The dot leader is sixty
+    // literal full stops: left as content a screen reader reads them out, and
+    // an entry becomes "Introduction dot dot dot dot … three". ActualText
+    // substitutes the sentence the layout is drawing instead.
+    tagged(doc, parent, 'TOCI', { actual: `${label}, page ${page}` }, () => {
+      doc.font(FONTS.regular).fontSize(11).fillColor('#222222');
+      const labelWidth = doc.widthOfString(label);
+      doc.text(label, left, y, { width: usable - numberWidth, lineBreak: false, goTo });
 
-    const leaderStart = left + labelWidth + 4;
-    const leaderEnd = left + usable - numberWidth - 4;
-    if (leaderEnd > leaderStart) {
-      const dotWidth = doc.widthOfString('.');
-      const dots = '.'.repeat(Math.max(0, Math.floor((leaderEnd - leaderStart) / dotWidth)));
-      doc.fillColor('#bbbbbb').text(dots, leaderStart, y, { lineBreak: false });
-    }
+      const leaderStart = left + labelWidth + 4;
+      const leaderEnd = left + usable - numberWidth - 4;
+      if (leaderEnd > leaderStart) {
+        const dotWidth = doc.widthOfString('.');
+        const dots = '.'.repeat(Math.max(0, Math.floor((leaderEnd - leaderStart) / dotWidth)));
+        doc.fillColor('#bbbbbb').text(dots, leaderStart, y, { lineBreak: false });
+      }
 
-    doc.fillColor('#222222').text(page, left + usable - numberWidth, y, {
-      width: numberWidth,
-      align: 'right',
-      lineBreak: false,
-      goTo,
+      doc.fillColor('#222222').text(page, left + usable - numberWidth, y, {
+        width: numberWidth,
+        align: 'right',
+        lineBreak: false,
+        goTo,
+      });
     });
     doc.y = y + TOC_ENTRY_HEIGHT;
     doc.x = left;
@@ -1699,7 +2076,13 @@ function openingHeight(doc: PDFKit.PDFDocument, block: Block | undefined, usable
   }
 }
 
-function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number, next?: Block): void {
+function renderBlock(
+  doc: PDFKit.PDFDocument,
+  block: Block,
+  usable: number,
+  parent: Struct,
+  next?: Block,
+): void {
   switch (block.type) {
     case 'heading': {
       const size = block.level === 1 ? 14 : block.level === 2 ? 12.5 : 11.5;
@@ -1714,8 +2097,11 @@ function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number, next
       // against the block that actually follows, because "enough for two lines
       // of prose" is not enough for a table's header row.
       ensureRoom(doc, headingHeight + openingHeight(doc, next, usable));
-      doc.font(FONTS.bold).fontSize(size).fillColor(INK.strong);
-      doc.text(text, doc.page.margins.left, doc.y, { width: usable });
+      // The section's own heading is H1, so prose headings start a level below.
+      tagged(doc, parent, headingTag(block.level + 1), {}, () => {
+        doc.font(FONTS.bold).fontSize(size).fillColor(INK.strong);
+        doc.text(text, doc.page.margins.left, doc.y, { width: usable });
+      });
       doc.moveDown(0.3);
       break;
     }
@@ -1723,11 +2109,21 @@ function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number, next
       const indent = block.quote ? 18 : 0;
       const { lines, lineHeight } = bodyLines(doc, block.runs, usable - indent);
       keepLinesTogether(doc, lines, lineHeight);
-      renderRuns(doc, block.runs, { indent, width: usable });
+      // A pull quote is a BlockQuote wrapping its paragraph, not a paragraph
+      // that happens to be indented — the indent is the only thing a sighted
+      // reader has to go on, and it is invisible to everyone else.
+      const host = block.quote ? openTag(doc, parent, 'BlockQuote') : parent;
+      tagged(doc, host, 'P', {}, () => {
+        renderRuns(doc, block.runs, { indent, width: usable });
+      });
+      if (host !== parent) host.end();
       doc.moveDown(0.7);
       break;
     }
     case 'list': {
+      // L > LI > (Lbl, LBody) is the structure a screen reader announces as a
+      // list of n items; without it the bullets are read aloud as text.
+      const list = openTag(doc, parent, 'L');
       block.items.forEach((item, idx) => {
         const marker = block.ordered ? `${idx + 1}. ` : '•  ';
         // The marker is drawn inline with the item, so a break inside the item
@@ -1736,29 +2132,41 @@ function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number, next
         const markerWidth = doc.widthOfString(marker);
         const { lines, lineHeight } = bodyLines(doc, item, usable - 10 - markerWidth);
         keepLinesTogether(doc, lines, lineHeight);
-        doc
-          .font(FONTS.regular)
-          .fontSize(BODY_FONT_SIZE)
-          .fillColor(INK.body)
-          .text(marker, doc.page.margins.left + 10, doc.y, {
-            continued: true,
-            width: usable - 10,
-            lineGap: BODY_LINE_GAP,
-          });
-        item.forEach((run, runIdx) => {
-          const last = runIdx === item.length - 1;
+        const li = openTag(doc, list, 'LI');
+        // Marker and text are one continued run — pdfkit holds the last line
+        // open until a call that does not continue, so the bullet's glyphs are
+        // not necessarily emitted before the body's. Splitting Lbl from LBody
+        // would therefore risk an empty Lbl and a marker filed under the body,
+        // which reads no better than the LBody-only structure and validates
+        // worse. Lbl is optional; LBody alone is correct, and the bullet is
+        // announced as part of the item either way.
+        tagged(doc, li, 'LBody', {}, () => {
           doc
-            .font(fontFor(run))
-            .text(run.text, { continued: !last, underline: run.underline, lineGap: BODY_LINE_GAP });
+            .font(FONTS.regular)
+            .fontSize(BODY_FONT_SIZE)
+            .fillColor(INK.body)
+            .text(marker, doc.page.margins.left + 10, doc.y, {
+              continued: true,
+              width: usable - 10,
+              lineGap: BODY_LINE_GAP,
+            });
+          item.forEach((run, runIdx) => {
+            const last = runIdx === item.length - 1;
+            doc
+              .font(fontFor(run))
+              .text(run.text, { continued: !last, underline: run.underline, lineGap: BODY_LINE_GAP });
+          });
+          if (item.length === 0) doc.text('', { continued: false });
         });
-        if (item.length === 0) doc.text('', { continued: false });
+        li.end();
         doc.moveDown(0.2);
       });
+      list.end();
       doc.moveDown(0.5);
       break;
     }
     case 'table': {
-      renderTable(doc, block, usable);
+      renderTable(doc, block, usable, parent);
       break;
     }
   }
@@ -1843,6 +2251,7 @@ function renderTable(
   doc: PDFKit.PDFDocument,
   block: Extract<Block, { type: 'table' }>,
   usable: number,
+  parent: Struct,
 ): void {
   const left = doc.page.margins.left;
   const { widths, aligns, offsets, heightOf } = tableGeometry(doc, block, usable);
@@ -1850,46 +2259,72 @@ function renderTable(
   const headerRows = block.rows.slice(0, block.headerRows);
   const bodyRows = block.rows.slice(block.headerRows);
 
+  // The header plus one body row is the smallest fragment worth leaving on a
+  // page; anything less is a stub the reader has to turn back from. Taken
+  // before the Table element opens, so the reserve cannot break the row that
+  // opens it.
+  ensureRoom(doc, tableLeadHeight(doc, block, usable));
+
+  // Table > TR > TH/TD. This is the single biggest structural gain in the
+  // report: a cap table or a comparable-company set read without it is a
+  // sequence of numbers with no association to the column that names them, and
+  // a screen reader can no longer answer "what is this figure?".
+  const table = openTag(doc, parent, 'Table');
+  // Header cells declare the axis they head. /Scope Column is what lets a
+  // reader ask for the heading of the cell they are on; every header row here
+  // spans the columns, so Column is right and Row never applies.
+  const headerCell: StructOptions = { attributes: { O: 'Table', Scope: 'Column' } };
+
   const drawRow = (row: string[], bold: boolean, fill: string | null): number => {
     const height = heightOf(row, bold);
     const y = doc.y;
-    if (fill) doc.rect(left, y, usable, height).fillColor(fill).fill();
+    // The zebra band is decoration; tagged, it would be an empty cell in the row.
+    if (fill) artifact(doc, () => doc.rect(left, y, usable, height).fillColor(fill).fill());
+    const tr = openTag(doc, table, 'TR');
     row.forEach((cell, c) => {
       const width = widths[c] ?? usable;
-      doc
-        .font(bold ? FONTS.bold : FONTS.regular)
-        .fontSize(TABLE_FONT_SIZE)
-        .fillColor(bold ? INK.strong : INK.body)
-        .text(cell, left + (offsets[c] ?? 0) + TABLE_PADDING, y + TABLE_PADDING, {
-          width: width - TABLE_PADDING * 2,
-          align: aligns[c] ?? 'left',
-          lineGap: 1,
-        });
+      tagged(doc, tr, bold ? 'TH' : 'TD', bold ? headerCell : {}, () => {
+        doc
+          .font(bold ? FONTS.bold : FONTS.regular)
+          .fontSize(TABLE_FONT_SIZE)
+          .fillColor(bold ? INK.strong : INK.body)
+          .text(cell, left + (offsets[c] ?? 0) + TABLE_PADDING, y + TABLE_PADDING, {
+            width: width - TABLE_PADDING * 2,
+            align: aligns[c] ?? 'left',
+            lineGap: 1,
+          });
+      });
     });
+    tr.end();
     doc.y = y + height;
     doc.x = left;
     return height;
   };
 
   const rule = (weight: number, color: string) => {
-    doc
-      .moveTo(left, doc.y)
-      .lineTo(left + usable, doc.y)
-      .lineWidth(weight)
-      .strokeColor(color)
-      .stroke();
+    artifact(doc, () => {
+      doc
+        .moveTo(left, doc.y)
+        .lineTo(left + usable, doc.y)
+        .lineWidth(weight)
+        .strokeColor(color)
+        .stroke();
+    });
   };
 
   const drawHeader = (continued: boolean) => {
     if (headerRows.length === 0) return;
     if (continued) {
       // Without this a repeated header reads as a second, unrelated table
-      // beginning at the top of the page.
-      doc
-        .font(FONTS.italic)
-        .fontSize(8)
-        .fillColor(INK.hint)
-        .text(TABLE_CONTINUED, left, doc.y, { width: usable });
+      // beginning at the top of the page. It is a printing artifact of the
+      // break, not part of the table's data, so it stays out of the structure.
+      artifact(doc, () => {
+        doc
+          .font(FONTS.italic)
+          .fontSize(8)
+          .fillColor(INK.hint)
+          .text(TABLE_CONTINUED, left, doc.y, { width: usable });
+      });
       doc.y += 2;
       doc.x = left;
     }
@@ -1897,10 +2332,6 @@ function renderTable(
     for (const row of headerRows) drawRow(row, true, INK.band);
     rule(0.8, INK.muted);
   };
-
-  // The header plus one body row is the smallest fragment worth leaving on a
-  // page; anything less is a stub the reader has to turn back from.
-  ensureRoom(doc, tableLeadHeight(doc, block, usable));
 
   drawHeader(false);
   if (headerRows.length === 0) rule(0.8, INK.muted);
@@ -1916,6 +2347,7 @@ function renderTable(
   });
 
   rule(0.8, INK.muted);
+  table.end();
   doc.y += 2;
   doc.moveDown(0.7);
 }
