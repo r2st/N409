@@ -21,7 +21,6 @@ rather than failing the whole request.
 
 from __future__ import annotations
 
-import copy
 import statistics
 
 from .compute import _time_to_exit, compute
@@ -72,8 +71,29 @@ def _base_value(name: str, params: dict, inputs: dict) -> float | None:
     raise EngineInputError(f"unknown sensitivity parameter '{name}'")
 
 
+def _variant(inputs: dict) -> dict:
+    """A copy of ``inputs`` that ``_apply`` may write a lever into.
+
+    Deliberately shallow. A two-way table at the maximum 21 steps is 441 cells,
+    each needing its own payload, and a real 409A payload carries a cap table,
+    projections and comparable price series — deep-copying it per cell was
+    about two thirds of the wall time of a sensitivity run and bought nothing,
+    because nothing downstream writes through the shared references:
+
+    * ``_apply`` only ever rebinds a top-level key, and rebuilds the ``income``
+      and ``market`` sub-dicts with ``dict(...)`` before touching them.
+    * ``compute`` treats its ``inputs`` as read-only — the one place it writes
+      (``_apply_auto_engines``) shallow-copies first and likewise rebuilds each
+      nested dict it modifies.
+
+    ``test_sensitivity_does_not_mutate_the_callers_payload`` holds that second
+    property to account, so this stays safe if ``compute`` changes.
+    """
+    return dict(inputs)
+
+
 def _apply(name: str, value: float, params: dict, inputs: dict) -> None:
-    """Set a lever to ``value`` on an already-deep-copied inputs dict."""
+    """Set a lever to ``value`` on a private copy of the inputs (see ``_variant``)."""
     if name == "volatility":
         inputs["volatility"] = value
     elif name == "discount_rate":
@@ -128,7 +148,7 @@ def _one_way(
 ) -> dict:
     points = []
     for value in _steps(base_value, span, steps):
-        mutated = copy.deepcopy(inputs)
+        mutated = _variant(inputs)
         _apply(name, value, params, mutated)
         fmv, equity, error = _fmv(params, mutated)
         points.append(
@@ -148,25 +168,21 @@ def _one_way(
 def _two_way(
     row: str,
     col: str,
+    row_base: float,
+    col_base: float,
     params: dict,
     inputs: dict,
     base_fmv: float,
     span: float,
     steps: int,
 ) -> dict:
-    row_base = _base_value(row, params, inputs)
-    col_base = _base_value(col, params, inputs)
-    if row_base is None or col_base is None:
-        raise EngineInputError(
-            f"two-way [{row} × {col}] needs both levers present in the payload"
-        )
     row_values = _steps(row_base, span, steps)
     col_values = _steps(col_base, span, steps)
     rows = []
     for rv in row_values:
         cells = []
         for cv in col_values:
-            mutated = copy.deepcopy(inputs)
+            mutated = _variant(inputs)
             _apply(row, rv, params, mutated)
             _apply(col, cv, params, mutated)
             fmv, _equity, error = _fmv(params, mutated)
@@ -216,8 +232,14 @@ def sensitivity(
     if base_error is not None or base_fmv is None:
         raise EngineInputError(f"base valuation does not compute: {base_error or 'no FMV'}")
 
+    # Every lever's base, resolved once. `time_to_exit` in particular re-parses
+    # dates out of the payload, and this used to be recomputed a dozen-odd
+    # times per request — once per lever, twice more per lever for the `base`
+    # block, and twice per two-way pair.
+    bases: dict[str, float | None] = {p: _base_value(p, params, inputs) for p in PARAMETERS}
+
     if parameters is None:
-        selected = [p for p in PARAMETERS if _base_value(p, params, inputs) is not None]
+        selected = [p for p in PARAMETERS if bases[p] is not None]
     else:
         unknown = set(parameters) - set(PARAMETERS)
         if unknown:
@@ -227,7 +249,7 @@ def sensitivity(
     one_way = []
     skipped = []
     for name in selected:
-        base_value = _base_value(name, params, inputs)
+        base_value = bases[name]
         if base_value is None:
             skipped.append(name)
             continue
@@ -246,20 +268,19 @@ def sensitivity(
         # An undrivable lever (not present in this payload) is skipped, not an
         # error — the caller can request a default pair set without knowing
         # which levers the valuation actually exercises.
-        if _base_value(row, params, inputs) is None or _base_value(col, params, inputs) is None:
+        row_base, col_base = bases[row], bases[col]
+        if row_base is None or col_base is None:
             skipped_two_way.append([row, col])
             continue
-        two_way_tables.append(_two_way(row, col, params, inputs, base_fmv, span, steps))
+        two_way_tables.append(
+            _two_way(row, col, row_base, col_base, params, inputs, base_fmv, span, steps)
+        )
 
     return {
         "base": {
             "fmv_per_share": base_fmv,
             "equity_value": base_equity,
-            "parameters": {
-                p: _base_value(p, params, inputs)
-                for p in PARAMETERS
-                if _base_value(p, params, inputs) is not None
-            },
+            "parameters": {p: v for p, v in bases.items() if v is not None},
         },
         "span": span,
         "steps": steps,

@@ -140,3 +140,93 @@ def test_api_sensitivity():
 def test_api_sensitivity_bad_request_is_422():
     resp = client.post("/engine/v1/sensitivity", json={"params": {"weight_opm": 0.5}, "inputs": {}})
     assert resp.status_code == 422
+
+
+# ── Payload isolation ────────────────────────────────────────────────────────
+# `_variant` hands each cell a *shallow* copy of the inputs, which is only safe
+# while nothing downstream writes through the shared references. These tests
+# hold that to account: if `_apply` or `compute` ever starts mutating a nested
+# structure in place, the per-cell copies stop isolating and every later cell
+# in the run inherits the earlier ones' levers.
+
+import copy as _copy
+
+from app.engine.sensitivity import _apply, _variant
+
+# A payload whose nested structures are worth protecting: sub-dicts, lists, and
+# a list-of-dicts hanging off the top level.
+NESTED_INPUTS = {
+    **INPUTS,
+    "share_classes": [
+        {"name": "Common", "kind": "common", "shares": 8_000_000},
+        {"name": "Series A", "kind": "preferred", "shares": 2_000_000, "preference": 5_000_000},
+    ],
+    "income": {"free_cash_flows": [500_000, 1_000_000, 2_000_000], "discount_rate": 0.3, "terminal_growth": 0.03},
+    "market": {"metric": 4_000_000, "multiples": [4.0, 6.0]},
+}
+
+
+def test_sensitivity_does_not_mutate_the_callers_payload():
+    params, inputs = _copy.deepcopy(PARAMS), _copy.deepcopy(NESTED_INPUTS)
+    before = _copy.deepcopy(inputs)
+    params_before = _copy.deepcopy(params)
+
+    sensitivity(
+        params,
+        inputs,
+        two_way=[["volatility", "discount_rate"], ["exit_multiple", "growth_rate"]],
+        steps=5,
+    )
+
+    assert inputs == before, "sensitivity wrote through to the caller's inputs"
+    assert params == params_before, "sensitivity wrote through to the caller's params"
+
+
+@pytest.mark.parametrize("name,value", [
+    ("volatility", 0.75),
+    ("discount_rate", 0.35),
+    ("growth_rate", 0.05),
+    ("time_to_exit", 4.0),
+    ("exit_multiple", 7.0),
+])
+def test_apply_isolates_every_lever_from_the_original(name, value):
+    original = _copy.deepcopy(NESTED_INPUTS)
+    variant = _variant(original)
+    _apply(name, value, PARAMS, variant)
+
+    assert original == NESTED_INPUTS, f"applying {name} leaked into the source payload"
+    assert variant != original, f"applying {name} did not change the variant"
+
+
+@pytest.mark.parametrize("name,value", [
+    ("volatility", 0.75),
+    ("discount_rate", 0.35),
+    ("growth_rate", 0.05),
+    ("time_to_exit", 4.0),
+    ("exit_multiple", 7.0),
+])
+def test_shallow_variant_matches_a_deep_copy(name, value):
+    """The optimisation is only worth having if it is a no-op on the result."""
+    shallow = _variant(NESTED_INPUTS)
+    deep = _copy.deepcopy(NESTED_INPUTS)
+    _apply(name, value, PARAMS, shallow)
+    _apply(name, value, PARAMS, deep)
+    assert shallow == deep
+
+
+def test_cells_do_not_inherit_each_others_levers():
+    """A two-way table's cells must be independent, not cumulative."""
+    out = sensitivity(PARAMS, NESTED_INPUTS, two_way=[["volatility", "discount_rate"]], steps=3)
+    table = out["two_way"][0]
+    # The centre cell holds both levers at their base, so it must reproduce the
+    # base FMV exactly. It would not if the preceding cells had leaked into it.
+    centre = table["rows"][1][1]
+    assert centre["fmv_per_share"] == pytest.approx(out["base"]["fmv_per_share"])
+    assert centre["delta_from_base"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_repeated_runs_are_identical():
+    inputs = _copy.deepcopy(NESTED_INPUTS)
+    first = sensitivity(PARAMS, inputs, two_way=[["volatility", "growth_rate"]], steps=5)
+    second = sensitivity(PARAMS, inputs, two_way=[["volatility", "growth_rate"]], steps=5)
+    assert first == second
