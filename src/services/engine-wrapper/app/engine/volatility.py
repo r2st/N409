@@ -45,9 +45,16 @@ def _clean_series(values, name: str) -> list[float]:
     out: list[float] = []
     for v in values:
         try:
-            out.append(float(v))
+            price = float(v)
         except (TypeError, ValueError):
             raise EngineInputError(f"{name} must contain only numbers") from None
+        # A NaN price survives the positivity check below (`NaN <= 0` is False)
+        # and makes every log return NaN; statistics.stdev then raises a bare
+        # ValueError, which reaches the caller as a 500 rather than as the 422
+        # a bad price series deserves.
+        if not math.isfinite(price):
+            raise EngineInputError(f"{name} must contain only finite numbers")
+        out.append(price)
     return out
 
 

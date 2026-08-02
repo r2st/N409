@@ -24,6 +24,8 @@ are captured by the slope algebra rather than modeled as a cash inflow.
 
 from __future__ import annotations
 
+import math
+
 from .bs import bs_call
 from .errors import EngineInputError
 
@@ -33,6 +35,20 @@ _KINDS = ("preferred", "common", "option")
 def normalize_share_classes(classes: list[dict]) -> list[dict]:
     """Public entry point for the shared cap-table normaliser (used by PWERM)."""
     return _normalize(classes)
+
+
+def _finite(value: float, name: str) -> float:
+    """Reject NaN/Inf on a cap-table figure (audit T-1 P3).
+
+    Comparisons are the reason this cannot be left to the range checks below:
+    ``NaN <= 0`` is False, so a NaN share count passes ``shares must be
+    positive`` and goes on to make every allocated value NaN — which FastAPI
+    then serialises as ``null``, so a cap table nobody could allocate comes
+    back as a successful 200 with holes in it.
+    """
+    if not math.isfinite(value):
+        raise EngineInputError(f"{name} must be a finite number")
+    return value
 
 
 def _normalize(classes: list[dict]) -> list[dict]:
@@ -56,6 +72,7 @@ def _normalize(classes: list[dict]) -> list[dict]:
             shares = float(raw.get("shares"))
         except (TypeError, ValueError):
             raise EngineInputError(f"share_classes[{i}].shares must be a number") from None
+        _finite(shares, f"share_classes[{i}].shares")
         if shares <= 0:
             raise EngineInputError(f"share_classes[{i}].shares must be positive")
         cls = {"name": name, "kind": kind, "shares": shares}
@@ -64,6 +81,7 @@ def _normalize(classes: list[dict]) -> list[dict]:
                 pref = float(raw.get("preference"))
             except (TypeError, ValueError):
                 raise EngineInputError(f"'{name}': preference (total) is required for preferred") from None
+            _finite(pref, f"'{name}': preference")
             if pref < 0:
                 raise EngineInputError(f"'{name}': preference must be >= 0")
             seniority = raw.get("seniority", 1)
@@ -80,6 +98,7 @@ def _normalize(classes: list[dict]) -> list[dict]:
                     ratio = float(raw_ratio)
                 except (TypeError, ValueError):
                     raise EngineInputError(f"'{name}': conversion_ratio must be a number") from None
+            _finite(ratio, f"'{name}': conversion_ratio")
             if ratio <= 0:
                 raise EngineInputError(f"'{name}': conversion_ratio must be positive")
             cls.update(
@@ -93,6 +112,7 @@ def _normalize(classes: list[dict]) -> list[dict]:
                 strike = float(raw.get("strike"))
             except (TypeError, ValueError):
                 raise EngineInputError(f"'{name}': strike is required for options") from None
+            _finite(strike, f"'{name}': strike")
             if strike <= 0:
                 raise EngineInputError(f"'{name}': strike must be positive")
             cls["strike"] = strike
@@ -184,6 +204,7 @@ def allocate_waterfall(
     r: float,
     sigma: float,
 ) -> dict:
+    _finite(equity_value, "equity_value")
     if equity_value <= 0:
         raise EngineInputError("equity_value must be positive for the waterfall allocation")
     if sigma is None or sigma <= 0:
@@ -238,6 +259,7 @@ def exit_allocation(exit_value: float, classes: list[dict]) -> dict:
     and the OPM allocation agree on the underlying payoff structure. Value is
     conserved exactly: ``Σ class values == exit_value``.
     """
+    _finite(exit_value, "exit_value")
     if exit_value < 0:
         raise EngineInputError("exit_value must be >= 0 for the waterfall allocation")
     normalized = _normalize(classes)

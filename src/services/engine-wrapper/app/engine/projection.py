@@ -22,6 +22,8 @@ DCF, and ``terminal_value`` is returned separately for transparency.
 
 from __future__ import annotations
 
+import math
+
 from .errors import EngineInputError
 
 __all__ = ["project_financials", "terminal_value_gordon", "terminal_value_exit_multiple"]
@@ -32,9 +34,30 @@ def _num(value, name: str, *, nonneg: bool = False) -> float:
         out = float(value)
     except (TypeError, ValueError):
         raise EngineInputError(f"{name} must be a number") from None
+    # Reject NaN/Inf at the boundary, as every other engine module does
+    # (audit T-1 P3). Python's json.loads accepts the `NaN` and `Infinity`
+    # literals, so these do arrive over the wire; unguarded they became NaN
+    # cash flows that FastAPI then serialised as `null`, and the DCF came back
+    # a successful 200 with holes in it.
+    if not math.isfinite(out):
+        raise EngineInputError(f"{name} must be a finite number")
     if nonneg and out < 0:
         raise EngineInputError(f"{name} must be >= 0")
     return out
+
+
+def _finite(value: float, name: str) -> float:
+    """Guard a *computed* figure, where finite inputs can still overflow.
+
+    Compounding is the reachable case: fifteen years of a mistyped growth rate
+    overflows to inf on its own, and inf − inf is NaN, so the projection ends
+    up part astronomical and part null without a single non-finite input.
+    """
+    if not math.isfinite(value):
+        raise EngineInputError(
+            f"{name} overflowed to a non-finite value — check the growth and margin assumptions"
+        )
+    return value
 
 
 def _rate_vector(rate, years: int, name: str) -> list[float]:
@@ -117,8 +140,8 @@ def project_financials(
 
         rev_series: list[float] = []
         prev_rev = base
-        for g in growth_vec:
-            prev_rev = prev_rev * (1.0 + g)
+        for year, g in enumerate(growth_vec, start=1):
+            prev_rev = _finite(prev_rev * (1.0 + g), f"projected revenue in year {year}")
             rev_series.append(prev_rev)
 
         cogs_series = [rev_series[i] * cogs_vec[i] for i in range(n)]
@@ -160,7 +183,7 @@ def project_financials(
         ebitda = ebit + da_series[i]
         nopat = ebit * (1.0 - tax_rate)
         delta_nwc = nwc_level[i] - prev_nwc
-        fcf = nopat + da_series[i] - capex_series[i] - delta_nwc
+        fcf = _finite(nopat + da_series[i] - capex_series[i] - delta_nwc, f"free cash flow in year {i + 1}")
         prev_nwc = nwc_level[i]
         free_cash_flows.append(round(fcf, 2))
         projections.append(
