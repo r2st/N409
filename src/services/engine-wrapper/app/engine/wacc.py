@@ -27,6 +27,7 @@ target capital-structure weights:
 
 from __future__ import annotations
 
+import math
 import statistics
 
 from .errors import EngineInputError
@@ -79,6 +80,12 @@ def _num(value, name: str, *, positive: bool = False, nonneg: bool = False) -> f
         out = float(value)
     except (TypeError, ValueError):
         raise EngineInputError(f"{name} must be a number") from None
+    # float('nan') passes every comparison below, so without this a NaN walks
+    # through the whole build-up and comes back out as a null WACC on a 200 —
+    # a broken number the caller is told nothing about. `float("nan")` and
+    # `float("inf")` both accept those strings, so a JSON payload can reach it.
+    if not math.isfinite(out):
+        raise EngineInputError(f"{name} must be a finite number")
     if positive and out <= 0:
         raise EngineInputError(f"{name} must be positive")
     if nonneg and out < 0:
@@ -86,18 +93,33 @@ def _num(value, name: str, *, positive: bool = False, nonneg: bool = False) -> f
     return out
 
 
-def unlever_beta(levered_beta: float, debt_to_equity: float, tax_rate: float) -> float:
-    """Hamada unlevering: βu = βl / (1 + (1 − tax)·D/E)."""
+def _levering_factor(debt_to_equity: float, tax_rate: float) -> float:
+    """Hamada factor 1 + (1 − tax)·D/E, rejected unless it is positive.
+
+    A tax rate at or above 1 makes (1 − tax) non-positive, and the factor then
+    reaches zero — a division by zero out of ``unlever_beta``, which surfaced
+    as a 500 — or turns negative, which is worse: the beta comes back with its
+    sign flipped and the cost of equity is quietly built on it.
+    """
     if debt_to_equity < 0:
         raise EngineInputError("debt_to_equity must be >= 0")
-    return levered_beta / (1.0 + (1.0 - tax_rate) * debt_to_equity)
+    factor = 1.0 + (1.0 - tax_rate) * debt_to_equity
+    if factor <= 0:
+        raise EngineInputError(
+            f"tax_rate {tax_rate:g} with debt_to_equity {debt_to_equity:g} "
+            "gives a non-positive Hamada levering factor"
+        )
+    return factor
+
+
+def unlever_beta(levered_beta: float, debt_to_equity: float, tax_rate: float) -> float:
+    """Hamada unlevering: βu = βl / (1 + (1 − tax)·D/E)."""
+    return levered_beta / _levering_factor(debt_to_equity, tax_rate)
 
 
 def relever_beta(unlevered_beta: float, debt_to_equity: float, tax_rate: float) -> float:
     """Hamada relevering: βl = βu · (1 + (1 − tax)·D/E)."""
-    if debt_to_equity < 0:
-        raise EngineInputError("debt_to_equity must be >= 0")
-    return unlevered_beta * (1.0 + (1.0 - tax_rate) * debt_to_equity)
+    return unlevered_beta * _levering_factor(debt_to_equity, tax_rate)
 
 
 def risk_free_rate(
