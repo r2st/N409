@@ -26,7 +26,7 @@ jobs:
     env:
       DATABASE_URL: postgres://n409:n409_dev@localhost:5432/n409_dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -63,7 +63,7 @@ jobs:
       run:
         working-directory: src/services/${{ matrix.service }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -77,7 +77,7 @@ jobs:
     name: Shell scripts (shellcheck)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # infra/*.sh restart production and rotate backups. A quoting slip in one
       # of them is not caught by any other job — the Node and Python suites
       # never execute them, and deploy.sh's own tests exercise behaviour rather
@@ -91,7 +91,7 @@ jobs:
     name: Dependency & secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # gitleaks scans the full history
       - uses: actions/setup-node@v4
@@ -127,7 +127,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [node]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build valuation image
         run: docker build -f src/services/valuation/Dockerfile .
       - name: Build web (BFF) image
@@ -141,7 +141,7 @@ jobs:
     name: Terraform validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
       - run: terraform fmt -check -recursive
         working-directory: infra/terraform
