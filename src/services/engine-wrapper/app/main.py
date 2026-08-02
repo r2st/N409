@@ -20,6 +20,7 @@ from .errors import error_response, install_error_handlers, make_unhandled_error
 from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
+from .ratelimit import limit_per_minute, make_rate_limit_middleware
 from .engine.market_data import lookup as market_lookup
 from .engine.market_data import universe as market_universe
 from .engine.market_feed import MarketFeedClient
@@ -63,6 +64,9 @@ app = FastAPI(title="n409-engine-wrapper", version=ENGINE_VERSION, lifespan=life
 app.middleware("http")(internal_token_middleware)
 # Body-size cap (audit B-2 P2): reject oversized payloads before buffering.
 app.middleware("http")(make_body_limit_middleware(_MAX_BODY_BYTES))
+# Per-caller request ceiling. Outside the token gate on purpose, so guessing at
+# the shared secret is throttled too.
+app.middleware("http")(make_rate_limit_middleware(limit_per_minute()))
 # Last-resort 500 envelope. Inside request-context (so the request id is bound
 # when it logs) and outside everything else (so it catches their failures too).
 app.middleware("http")(make_unhandled_error_middleware(SERVICE))

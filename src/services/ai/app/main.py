@@ -29,6 +29,7 @@ from .openrouter import (
 )
 from .output_schema import validate_result
 from .pipelines import PIPELINES
+from .ratelimit import limit_per_minute, make_rate_limit_middleware
 
 # The built-in M1 pipelines plus the analyst agents share one dispatch table
 # and one route contract.
@@ -96,6 +97,11 @@ app = FastAPI(title="n409-ai", version=VERSION, lifespan=lifespan)
 app.middleware("http")(internal_token_middleware)
 # Body-size cap (audit B-2 P2): reject oversized payloads before buffering.
 app.middleware("http")(make_body_limit_middleware(_MAX_BODY_BYTES))
+# Per-caller request ceiling. Lower than the engine's: every pipeline here
+# blocks on an LLM for up to 90 seconds and costs tokens, so a loop is both
+# slower to notice and more expensive than a runaway compute. Outside the
+# token gate on purpose, so guessing at the shared secret is throttled too.
+app.middleware("http")(make_rate_limit_middleware(limit_per_minute(240)))
 # Last-resort 500 envelope. Inside request-context (so the request id is bound
 # when it logs) and outside everything else (so it catches their failures too).
 app.middleware("http")(make_unhandled_error_middleware(SERVICE))
