@@ -63,15 +63,35 @@ export function toIsoDate(value: string | Date): string {
   return String(value).slice(0, 10);
 }
 
-/** Whole months from `start` up to `asOf` (never negative). */
+/**
+ * Whole months from `start` up to `asOf` (never negative).
+ *
+ * The day-of-month test has to mirror the clamping `addMonths` does, or the two
+ * stop being inverses. A grant vesting from 31 August has its month-15 cadence
+ * point on 30 November — `addMonths` clamps it there, because November has no
+ * 31st. Asked how many months had elapsed on that very date, this returned 14:
+ * 30 is less than 31, so the month was judged incomplete on the one day it
+ * could ever complete on. Quarterly, that reported the previous quarter's
+ * total, so the timeline chart stalled at exactly the anniversaries it plots —
+ * 30 November and 28 February both showed the tranche before them.
+ *
+ * A day-of-month short of the start's is therefore only incomplete when the
+ * month it falls in actually has that day to reach. On the last day of a
+ * shorter month the anniversary has arrived, clamped.
+ */
 export function monthsElapsed(start: string | Date, asOf: Date): number {
   const startDate = new Date(`${toIsoDate(start)}T00:00:00Z`);
   if (Number.isNaN(startDate.getTime())) return 0;
   let months =
     (asOf.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
     (asOf.getUTCMonth() - startDate.getUTCMonth());
-  // Not a full month until the day-of-month is reached.
-  if (asOf.getUTCDate() < startDate.getUTCDate()) months -= 1;
+  const asOfDay = asOf.getUTCDate();
+  if (
+    asOfDay < startDate.getUTCDate() &&
+    asOfDay < daysInMonth(asOf.getUTCFullYear(), asOf.getUTCMonth())
+  ) {
+    months -= 1;
+  }
   return Math.max(0, months);
 }
 

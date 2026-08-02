@@ -76,6 +76,35 @@ describe('vesting', () => {
     it('never goes negative before the start', () => {
       expect(monthsElapsed('2024-06-01', new Date('2024-01-01T00:00:00Z'))).toBe(0);
     });
+
+    it('counts a clamped month-end anniversary as arrived', () => {
+      // 30 November is where addMonths puts month 15 of a 31 August grant —
+      // November has no 31st. Judging it incomplete meant the month could
+      // never complete at all.
+      expect(monthsElapsed('2024-08-31', new Date('2025-11-30T00:00:00Z'))).toBe(15);
+      expect(monthsElapsed('2024-01-31', new Date('2024-02-29T00:00:00Z'))).toBe(1);
+      expect(monthsElapsed('2023-01-31', new Date('2023-02-28T00:00:00Z'))).toBe(1);
+      expect(monthsElapsed('2024-08-31', new Date('2026-02-28T00:00:00Z'))).toBe(18);
+    });
+
+    it('still gates on a day the month actually reaches', () => {
+      // 2024 is a leap year, so 28 February is not the clamped anniversary of
+      // 31 January — the 29th is, and it has not arrived.
+      expect(monthsElapsed('2024-01-31', new Date('2024-02-28T00:00:00Z'))).toBe(0);
+      expect(monthsElapsed('2024-05-31', new Date('2024-06-15T00:00:00Z'))).toBe(0);
+      expect(monthsElapsed('2024-01-15', new Date('2024-02-14T00:00:00Z'))).toBe(0);
+    });
+
+    it('inverts addMonths for every offset of a month-end grant', () => {
+      // The invariant the two functions have to share: the date addMonths
+      // calls month n is the date monthsElapsed reports n months at.
+      for (const start of ['2024-01-31', '2024-08-31', '2023-03-31', '2024-02-29']) {
+        for (let m = 0; m <= 48; m += 1) {
+          const at = new Date(`${addMonths(start, m)}T00:00:00Z`);
+          expect(monthsElapsed(start, at)).toBe(m);
+        }
+      }
+    });
   });
 
   describe('vestingStatus — 4yr/1yr cliff', () => {
@@ -162,6 +191,40 @@ describe('vesting', () => {
       for (let i = 1; i < points.length; i++) {
         expect(points[i]!.date > points[i - 1]!.date).toBe(true);
       }
+    });
+
+    it('does not stall a month-end grant on its own cadence points', () => {
+      // A quarterly grant from 31 August. Offsets 15 and 18 land on 30 November
+      // and 28 February, the days addMonths clamps them to — and those were the
+      // days monthsElapsed called a month short, so each point repeated the
+      // quarter before it and the chart flattened into 6-month steps.
+      const points = vestingTimeline({
+        ...standard,
+        vestingStartDate: '2024-08-31',
+        frequencyMonths: 3,
+      });
+      const at = (m: number) => points.find((p) => p.monthOffset === m)!;
+      expect(at(12).cumulativeVested).toBe(12000);
+      expect(at(15).cumulativeVested).toBe(15000);
+      expect(at(18).cumulativeVested).toBe(18000);
+      expect(at(21).cumulativeVested).toBe(21000);
+
+      // Every post-cliff point is exactly its own offset's share, not a
+      // neighbour's, and the series never repeats a value.
+      for (const p of points.filter((q) => q.monthOffset >= 12)) {
+        expect(p.cumulativeVested).toBe((48000 * p.monthOffset) / 48);
+      }
+    });
+
+    it('vests a month-end grant on its clamped cliff date', () => {
+      // 29 February is the first anniversary of a 29 February 2024 grant only
+      // in a leap year; 2025 clamps it to the 28th, and that is the day the
+      // cliff is due.
+      const sched = { ...standard, vestingStartDate: '2024-02-29' };
+      expect(vestingStatus(sched, new Date('2025-02-28T00:00:00Z')).vestedShares).toBe(12000);
+      expect(vestingStatus(sched, new Date('2025-02-28T00:00:00Z')).cliffCleared).toBe(true);
+      // The day before is still short of it.
+      expect(vestingStatus(sched, new Date('2025-02-27T00:00:00Z')).vestedShares).toBe(0);
     });
   });
 
