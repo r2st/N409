@@ -44,7 +44,18 @@ def verify_tickers(tickers: list[str], *, client: httpx.Client | None = None) ->
             http.close()
     if resp.status_code != 200:
         raise EngineError(f"market-data HTTP {resp.status_code}: {resp.text[:200]}")
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        # A 200 is not a promise of JSON. An ingress or proxy in front of the
+        # engine answers with an HTML error page and a 200 of its own, and a
+        # truncated body decodes no better. JSONDecodeError is a ValueError,
+        # not an httpx.HTTPError, so it sailed past the transport guard above
+        # and straight out of this module — where the one caller catches only
+        # EngineError, so the comp-selection agent crashed on a bad gateway
+        # instead of degrading to model-only multiples, which is the entire
+        # reason this function converts its failures.
+        raise EngineError(f"market-data returned a non-JSON body: {exc}") from exc
     if not isinstance(data, dict):
         raise EngineError("market-data returned a non-object body")
     data.setdefault("companies", [])
