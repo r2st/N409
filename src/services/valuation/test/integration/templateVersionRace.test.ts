@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
-import { createTemplateVersion, listTemplates } from '../../src/repos/reportTemplates.js';
+import { activateTemplate, createTemplateVersion, listTemplates } from '../../src/repos/reportTemplates.js';
 import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -101,5 +101,104 @@ describe.skipIf(!dbUp)('report template versioning under concurrency', () => {
     const labels = responses.map((r) => r.json().template.label as string);
     expect(new Set(labels).size).toBe(4);
     expect([...labels].sort()).toEqual([1, 2, 3, 4].map((v) => `${name}.v${v}`).sort());
+  });
+});
+
+/**
+ * Activation of one name is also a per-name operation, and locking the target
+ * row does not make it one.
+ *
+ * `activateTemplate` locks the version being activated, archives whichever
+ * version of the name was active, then flips its own row to active. Two
+ * concurrent activations of *different* versions of the same name lock two
+ * different rows, so neither waits: both archive (the second finding the first
+ * already did it) and both set themselves active. The partial unique index
+ * `report_templates_one_active_per_name` is the only thing left standing
+ * between that and two live templates for one name, and it stops it the only
+ * way it can — by failing the loser's transaction, which the route surfaces as
+ * a 500.
+ *
+ * Serializing on the name means the second activation sees the first one's
+ * result and archives it properly.
+ */
+describe.skipIf(!dbUp)('report template activation under concurrency', () => {
+  let ctx: TestApp;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+    ops = await seedUser(ctx, { roles: ['admin'] });
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const freshName = () => `act_${newUlid().toLowerCase().slice(-12)}`;
+
+  /** Rows of `name`, by version, as `{version: status}`. */
+  async function statuses(name: string): Promise<Record<number, string>> {
+    const rows = await listTemplates(ctx.pool, { name });
+    return Object.fromEntries(rows.map((r) => [r.version, r.status]));
+  }
+
+  it('leaves exactly one version active when three are activated at once', async () => {
+    const name = freshName();
+    const versions = [];
+    for (let i = 0; i < 3; i++) {
+      versions.push(await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id }));
+    }
+
+    const settled = await Promise.allSettled(versions.map((v) => activateTemplate(ctx.pool, v.id)));
+    // Under the race the losers rejected with a unique violation on
+    // report_templates_one_active_per_name.
+    expect(settled.map((s) => s.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
+
+    const byVersion = await statuses(name);
+    const active = Object.entries(byVersion).filter(([, s]) => s === 'active');
+    expect(active).toHaveLength(1);
+    // Everything that was not the winner is archived history, never left draft.
+    expect(Object.values(byVersion).filter((s) => s === 'archived')).toHaveLength(2);
+  });
+
+  it('is idempotent when the same version is activated concurrently', async () => {
+    const name = freshName();
+    const v1 = await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id });
+
+    const settled = await Promise.allSettled(
+      Array.from({ length: 4 }, () => activateTemplate(ctx.pool, v1.id)),
+    );
+    expect(settled.every((s) => s.status === 'fulfilled')).toBe(true);
+    expect(await statuses(name)).toEqual({ 1: 'active' });
+  });
+
+  it('answers every concurrent activate request over the route', async () => {
+    const name = freshName();
+    const versions = [];
+    for (let i = 0; i < 3; i++) {
+      versions.push(await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id }));
+    }
+
+    const responses = await Promise.all(
+      versions.map((v) =>
+        ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/report-templates/${v.id}/activate`,
+          headers: { authorization: `Bearer ${ops.token}` },
+        }),
+      ),
+    );
+    expect(responses.map((r) => r.statusCode)).toEqual([200, 200, 200]);
+
+    const byVersion = await statuses(name);
+    expect(Object.values(byVersion).filter((s) => s === 'active')).toHaveLength(1);
+  });
+
+  it('keeps activations of different names independent', async () => {
+    const names = Array.from({ length: 3 }, freshName);
+    const rows = [];
+    for (const name of names) {
+      rows.push(await createTemplateVersion(ctx.pool, { name, kind: '409a', createdBy: ops.id }));
+    }
+
+    await Promise.all(rows.map((r) => activateTemplate(ctx.pool, r.id)));
+    for (const name of names) expect(await statuses(name)).toEqual({ 1: 'active' });
   });
 });

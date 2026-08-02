@@ -149,6 +149,24 @@ export async function updateDraftTemplate(
 /** Activates a version, archiving whichever version of the name was active. */
 export async function activateTemplate(pool: pg.Pool, id: string): Promise<ReportTemplateRow | null> {
   return withTransaction(pool, async (client) => {
+    // Locking the target row is not enough: activating two *different*
+    // versions of one name concurrently locks two different rows, so neither
+    // transaction waits. Both then run the "archive the active one" update —
+    // the second finds nothing left to archive, because the first already
+    // did — and both go on to set their own row active, which the partial
+    // unique index `report_templates_one_active_per_name` rejects with a 500.
+    //
+    // Which version of the name is live is a property of the *name*, so that
+    // is what has to be serialized. Read the name first, take the lock, then
+    // re-read the row under it: whoever arrives second now sees the state the
+    // first one left, and either archives it cleanly or no-ops.
+    const { rows: named } = await client.query<{ name: string }>(
+      'SELECT name FROM report_templates WHERE id = $1',
+      [id],
+    );
+    if (!named[0]) return null;
+    await lockTemplateName(client, named[0].name);
+
     const { rows: target } = await client.query<ReportTemplateRow>(
       'SELECT * FROM report_templates WHERE id = $1 FOR UPDATE',
       [id],
