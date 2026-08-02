@@ -193,8 +193,53 @@ def _corpus(docs: list[DocText], red: Redactor, limit: int) -> tuple[str, dict[s
     per-document summaries are read by the analyst who uploaded the file, and
     they go to our own database, not to the model.
     """
-    shown = [replace(doc, filename=red.text(doc.filename)) for doc in docs]
-    return render_corpus(shown)[:limit], {s.filename: doc for s, doc in zip(shown, docs)}
+    shown_names = _distinct_filenames([red.text(doc.filename) for doc in docs])
+    shown = [replace(doc, filename=name) for doc, name in zip(docs, shown_names)]
+    return render_corpus(shown)[:limit], dict(zip(shown_names, docs))
+
+
+def _numbered(name: str, n: int) -> str:
+    """`name` with an ordinal, kept before the extension so it still reads as a
+    filename: "[NAME] Option Grant.pdf" -> "[NAME] Option Grant (2).pdf"."""
+    stem, dot, ext = name.rpartition(".")
+    if not dot or not stem:  # no extension, or a dotfile like ".env"
+        return f"{name} ({n})"
+    return f"{stem} ({n}).{ext}"
+
+
+def _distinct_filenames(names: list[str]) -> list[str]:
+    """Make the names the model is shown unique, preserving order.
+
+    Redaction is many-to-one, and filenames are exactly where it collides:
+    a 409A engagement uploads one grant letter per employee, and they are
+    conventionally named after the grantee, so "Ada Lovelace Option Grant.pdf"
+    and "Grace Hopper Option Grant.pdf" both become "[NAME] Option Grant.pdf".
+    Two things then broke at once, both silently:
+
+    * the caller's filename -> document map is built from these names, so N
+      colliding uploads collapsed to one entry and *every* summary was
+      attributed to whichever document happened to be last — the analyst gets
+      Ada's numbers under Grace's filename, in an audit work product;
+    * the model was shown several identically-headed blocks and asked for "one
+      entry per document" keyed by filename, which is unanswerable. It could
+      not have got this right even in principle.
+
+    The ordinal is derived from position alone, so it carries nothing that was
+    just redacted out. Collisions among *unredacted* names are deduplicated the
+    same way — two uploads genuinely called the same thing fail identically.
+    """
+    used: set[str] = set()
+    out: list[str] = []
+    for name in names:
+        candidate, n = name, 1
+        # A loop rather than a counter: the numbered form can itself collide
+        # with a later name that was literally called "… (2).pdf".
+        while candidate in used:
+            n += 1
+            candidate = _numbered(name, n)
+        used.add(candidate)
+        out.append(candidate)
+    return out
 
 
 def _to_number(value: Any) -> float | None:
