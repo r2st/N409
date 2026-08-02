@@ -71,6 +71,38 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
       expect(bad.json().detail).toBe(unknown.json().detail);
     });
 
+    it('takes as long to reject an unknown email as a known one', async () => {
+      // "Identically" above covers the response body; it does not cover the
+      // clock. scrypt is ~33ms and it is the whole cost of this request, so
+      // returning before it whenever there is no digest to check made the
+      // response time answer "does this address have an account?" — an oracle
+      // that no amount of matching the 401 can close.
+      const victim = await seedUser(ctx, { roles: ['valuation_user'] });
+      const time = async (email: string): Promise<number> => {
+        const started = process.hrtime.bigint();
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/auth/login',
+          payload: { email, password: 'wrong-password-entirely' },
+        });
+        expect(res.statusCode).toBe(401); // not 429 — the throttle would skew this
+        return Number(process.hrtime.bigint() - started) / 1e6;
+      };
+      // Median of three: one sample each would be at the mercy of a GC pause,
+      // and the throttle caps how many we can afford (10 per email / 15 min).
+      const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[1]!;
+      const known: number[] = [];
+      const missing: number[] = [];
+      for (let i = 0; i < 3; i += 1) {
+        known.push(await time(victim.email));
+        missing.push(await time(`nobody-${i}@nowhere.io`));
+      }
+      // Both paths run one DB lookup and one scrypt, so the ratio sits near 1.
+      // The band is wide because this asserts a floor, not a budget: a path
+      // that skips scrypt lands orders of magnitude under it, not just outside.
+      expect(median(missing)).toBeGreaterThan(median(known) * 0.25);
+    });
+
     it('requires auth on the valuation surface', async () => {
       const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/valuations' });
       expect(res.statusCode).toBe(401);

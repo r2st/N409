@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { problems } from '@n409/shared';
 import { randomBytes } from 'node:crypto';
-import { hashPassword, verifyPassword } from '../auth/password.js';
+import { hashPassword, verifyPassword, verifyPasswordOrDecoy } from '../auth/password.js';
 import {
   signMfaChallenge,
   signOidcState,
@@ -281,13 +281,20 @@ export function registerAuthRoutes(
     }
 
     const user = await findUserByEmail(deps.pool, email);
-    // Same error for unknown email, bad password, and deleted account —
-    // no account enumeration.
-    if (
-      !user?.password_digest ||
-      user.deleted_at ||
-      !(await verifyPassword(password, user.password_digest))
-    ) {
+    // Same error *and the same latency* for unknown email, bad password, and
+    // deleted account — no account enumeration. Matching the error body is only
+    // half of it: scrypt is ~33ms and it is the entire cost of this request, so
+    // short-circuiting past it whenever there is no digest to check answered
+    // "does this address have an account?" in the response time. Hence the
+    // decoy hash for the no-user / no-password / deleted cases, and hence the
+    // comparison running before the branch rather than inside it.
+    const passwordOk = await verifyPasswordOrDecoy(
+      password,
+      user && !user.deleted_at ? user.password_digest : null,
+    );
+    // The remaining checks are pure narrowing for the compiler's benefit — the
+    // work that could be timed is already done above, so ordering is free here.
+    if (!user || user.deleted_at || !passwordOk) {
       // Record the failed attempt against both windows so guesses accumulate.
       allow(emailKey, 10, LOGIN_WINDOW_MS);
       allow(ipKey, 100, LOGIN_WINDOW_MS);
