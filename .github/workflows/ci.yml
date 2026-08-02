@@ -73,6 +73,20 @@ jobs:
       # Coverage with an enforced floor (audit T-2 P2).
       - run: python -m pytest --cov=app --cov-report=term-missing --cov-fail-under=80
 
+  shell:
+    name: Shell scripts (shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # infra/*.sh restart production and rotate backups. A quoting slip in one
+      # of them is not caught by any other job — the Node and Python suites
+      # never execute them, and deploy.sh's own tests exercise behaviour rather
+      # than lint. shellcheck is the only thing that reads them as shell.
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck --severity=warning infra/deploy.sh infra/backup/*.sh infra/firewall/*.sh
+
   security:
     name: Dependency & secret scan
     runs-on: ubuntu-latest

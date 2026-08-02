@@ -96,6 +96,28 @@ Two failure modes that look like "email is broken" but are config, not code:
 
 ## Deploy procedure
 
+> **Run `infra/deploy.sh` instead of following the steps by hand.** It performs
+> exactly the sequence below and enforces the four traps this section documents:
+> the build is mandatory and fatal, `BUILD_SHA` comes from the *local* checkout
+> and is written only after a build that succeeded, files deleted since the
+> deployed commit are removed, and `n409-valuation` restarts first. It then
+> verifies `/health` reports the commit you deployed and fails the deploy if it
+> does not.
+>
+> ```
+> infra/deploy.sh                                   # dry run — prints the plan, changes nothing
+> HOST=root@204.168.241.124 infra/deploy.sh --apply # deploy HEAD
+> ```
+>
+> Dry run is the default deliberately — this is the one script whose accidental
+> invocation restarts production. It refuses a dirty working tree, because the
+> archive is built from `HEAD`: uncommitted work would silently not deploy while
+> `BUILD_SHA` claimed the commit. `src/packages/shared/test/deploy.test.ts`
+> exercises it against stubbed `ssh`/`scp`/`curl`.
+>
+> The manual steps remain below as the specification the script implements, and
+> for the case where something has gone wrong enough to need them.
+
 1. Push the tree to `/opt/N409`. The host has **no GitHub credentials**, so
    `git fetch` there fails with `could not read Username` — pushing from the
    local checkout is the only path that works:
