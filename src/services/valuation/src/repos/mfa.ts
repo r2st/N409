@@ -22,6 +22,23 @@ export async function stageTotpSecret(pool: pg.Pool, userId: string, secretBase3
 }
 
 /**
+ * Insert a whole backup-code set in one statement.
+ *
+ * One round trip rather than one per code, batched over unnest() arrays the
+ * same way `workbook.ts` batches a bulk cell paste. This runs inside the
+ * login-critical enrolment transaction, so the round trips it saves are ones
+ * a user waits on while holding a write lock on their own row.
+ */
+async function insertBackupCodes(client: pg.ClientBase, userId: string, codes: string[]): Promise<void> {
+  if (codes.length === 0) return;
+  await client.query(
+    `INSERT INTO mfa_backup_codes (id, user_id, code_hash)
+     SELECT id, $1, code_hash FROM unnest($2::ulid[], $3::text[]) AS t(id, code_hash)`,
+    [userId, codes.map(() => newUlid()), codes.map(hashBackupCode)],
+  );
+}
+
+/**
  * Confirm enrolment: enable TOTP and replace the backup-code set. Returns the
  * plaintext backup codes for one-time display (only their hashes are stored).
  */
@@ -32,13 +49,7 @@ export async function confirmTotpEnrollment(pool: pg.Pool, userId: string): Prom
       userId,
     ]);
     await client.query('DELETE FROM mfa_backup_codes WHERE user_id = $1', [userId]);
-    for (const code of codes) {
-      await client.query(`INSERT INTO mfa_backup_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`, [
-        newUlid(),
-        userId,
-        hashBackupCode(code),
-      ]);
-    }
+    await insertBackupCodes(client, userId, codes);
   });
   return codes;
 }
@@ -60,13 +71,7 @@ export async function regenerateBackupCodes(pool: pg.Pool, userId: string): Prom
   const codes = generateBackupCodes();
   await withTransaction(pool, async (client) => {
     await client.query('DELETE FROM mfa_backup_codes WHERE user_id = $1', [userId]);
-    for (const code of codes) {
-      await client.query(`INSERT INTO mfa_backup_codes (id, user_id, code_hash) VALUES ($1, $2, $3)`, [
-        newUlid(),
-        userId,
-        hashBackupCode(code),
-      ]);
-    }
+    await insertBackupCodes(client, userId, codes);
   });
   return codes;
 }
