@@ -256,7 +256,7 @@ export function AiPanel({ valuationId }: { valuationId: string }) {
                   return anon?.applied ? (
                     <span
                       className="inline-flex items-center rounded-full bg-paper-200 px-2.5 py-0.5 text-xs font-semibold text-ink-600"
-                      title="PII (emails, phones, SSN/EIN) was redacted before documents reached the model"
+                      title="The company name and PII (people, emails, phones, addresses, SSN/EIN) were redacted out of the whole prompt — documents, filenames and the business overview — before it reached the model"
                     >
                       anonymized{redactedCount > 0 ? ` · ${redactedCount}` : ''}
                     </span>

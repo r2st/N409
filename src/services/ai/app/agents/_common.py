@@ -12,9 +12,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..anonymize import Redactor
 from ..openrouter import LlmResult, chat
 from ..pipelines import (
     _calculation_summary as calculation_summary,
+)
+from ..pipelines import (
+    _corpus as corpus,
 )
 from ..pipelines import (
     _load_docs as load_docs,
@@ -26,7 +30,13 @@ from ..pipelines import (
     _prompt_overrides as prompt_overrides,
 )
 from ..pipelines import (
+    _redactor as redactor,
+)
+from ..pipelines import (
     _safe_result as safe_result,
+)
+from ..pipelines import (
+    _subject as subject,
 )
 from ..pipelines import (
     _to_number as to_number,
@@ -34,17 +44,33 @@ from ..pipelines import (
 
 __all__ = [
     "LlmResult",
+    "Redactor",
+    "ask",
     "calculation_summary",
     "chat",
     "clamp_confidence",
     "clean_str",
+    "corpus",
     "load_docs",
     "params_summary",
     "prompt_overrides",
+    "redactor",
     "safe_result",
     "str_list",
+    "subject",
     "to_number",
 ]
+
+
+def ask(red: Redactor, system: str, user: str, model: str | None = None) -> LlmResult:
+    """The gate every agent prompt leaves through — see `pipelines._ask`.
+
+    Spelled out here rather than re-exported so it resolves `chat` in this
+    module, which is the single seam the agent tests monkeypatch. Importing the
+    pipelines' copy would send every agent call to the real OpenRouter client
+    the moment a test patched `_common.chat` and nothing else.
+    """
+    return chat(red.text(system), red.text(user), model=model)
 
 
 def clean_str(value: Any, *, limit: int = 4000) -> str:

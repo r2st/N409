@@ -91,12 +91,13 @@ def run_assumptions(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     params = payload.get("params") or {}
 
+    red = c.redactor(payload)
     system, model = c.prompt_overrides(payload, _SYSTEM)
     spec = "\n".join(
         f'    "{k}": {{"suggested_value": "<value or %>", "range": {{"low": <n>, "high": <n>}}, "reasoning": "<why>", "benchmarks": ["<data point>", ...]}}  // {basis}'
         for k, _l, basis in RECOMMENDATIONS
     )
-    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
+    user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Params: {c.params_summary(params)}
 Company profile: {_profile_summary(payload)}
 Comparable data: {_comparable_summary(payload)}
@@ -111,11 +112,12 @@ Recommend each assumption. Return JSON:
 }}
 Give numeric ranges. Cite real benchmarks from the comparable data where you can."""
 
-    llm = c.chat(system, user, model=model)
+    llm = c.ask(red, system, user, model)
     parsed = c.safe_result(llm)
     result = {
         "recommendations": _recommendations(parsed),
         "recommendation_keys": [k for k, _l, _b in RECOMMENDATIONS],
         "notes": c.clean_str(parsed.get("notes")) if isinstance(parsed, dict) else "",
+        "anonymization": red.report(),
     }
     return llm.model, result

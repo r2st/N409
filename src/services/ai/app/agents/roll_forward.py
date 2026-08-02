@@ -106,9 +106,10 @@ def _prepopulated_inputs(doc: Any) -> dict[str, float]:
 def run_roll_forward(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
 
+    red = c.redactor(payload)
     system, model = c.prompt_overrides(payload, _SYSTEM)
     fields = ", ".join(sorted(ENGINE_INPUT_FIELDS))
-    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
+    user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Prior valuation summary: {_prior_summary(payload)}
 New engagement data: {_new_data_summary(payload)}
 
@@ -122,7 +123,7 @@ Roll the valuation forward. Return JSON:
 }}
 Carry forward what the new data does not contradict; update what it does."""
 
-    llm = c.chat(system, user, model=model)
+    llm = c.ask(red, system, user, model)
     parsed = c.safe_result(llm)
     result = {
         "material_changes": _changes(parsed),
@@ -134,5 +135,6 @@ Carry forward what the new data does not contradict; update what it does."""
             item_limit=800,
         ),
         "summary": c.clean_str(parsed.get("summary")) if isinstance(parsed, dict) else "",
+        "anonymization": red.report(),
     }
     return llm.model, result

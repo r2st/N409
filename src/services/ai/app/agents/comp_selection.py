@@ -135,6 +135,7 @@ def run_comp_selection(payload: dict) -> tuple[str, dict]:
     params = payload.get("params") or {}
     raw_ctx = payload.get("comp_context")
     ctx = raw_ctx if isinstance(raw_ctx, dict) else {}
+    red = c.redactor(payload)
 
     # ── Step 1: suggest ──────────────────────────────────────────────────────
     suggest_system, model = c.prompt_overrides(payload, _SUGGEST_SYSTEM)
@@ -146,7 +147,7 @@ Propose 8 to 12 guideline public companies. Return JSON:
   "sector": "<one-line sector classification>"
 }}
 Use real, currently-listed tickers. Order by relevance."""
-    first = c.chat(suggest_system, suggest_user, model=model)
+    first = c.ask(red, suggest_system, suggest_user, model)
     suggest_doc = c.safe_result(first)
     suggested = _suggested_comps(suggest_doc)
     sector = c.clean_str(suggest_doc.get("sector")) if isinstance(suggest_doc, dict) else ""
@@ -187,7 +188,7 @@ Select the {MIN_SELECTED}-{MAX_SELECTED} most defensible comps. Return JSON:
   "excluded": [{{"ticker": "<symbol>", "name": "<name>", "reason": "<why it was left out>"}}]
 }}
 Select ONLY from the candidate tickers above."""
-        second = c.chat(_REFINE_SYSTEM, refine_user, model=model)
+        second = c.ask(red, _REFINE_SYSTEM, refine_user, model)
         refine_model = second.model
         refine_doc = c.safe_result(second)
         by_ticker = {co["ticker"]: co for co in candidates}
@@ -211,6 +212,7 @@ Select ONLY from the candidate tickers above."""
         "multiples_summary": multiples,
         "market_data_verified": engine_ok,
         "engine_error": engine_error,
+        "anonymization": red.report(),
     }
     return refine_model, result
 

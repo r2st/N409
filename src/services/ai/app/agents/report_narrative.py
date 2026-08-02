@@ -69,9 +69,10 @@ def run_report_narrative(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     params = payload.get("params") or {}
 
+    red = c.redactor(payload)
     system, model = c.prompt_overrides(payload, _SYSTEM)
     section_spec = "\n".join(f'  "{k}": "<{g}>"' for k, _t, g in SECTIONS)
-    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
+    user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Params: {c.params_summary(params)}
 Methodology choices: {_methodology_summary(payload)}
 Calculation results: {c.calculation_summary(payload)}
@@ -85,10 +86,11 @@ Draft the report narrative. Return JSON:
 Write each section as 2-4 professional paragraphs using the actual figures above.
 If a section's approach did not carry weight, say so briefly rather than padding."""
 
-    llm = c.chat(system, user, model=model)
+    llm = c.ask(red, system, user, model)
     parsed = c.safe_result(llm)
     result = {
         "sections": _sections(parsed),
         "section_keys": [k for k, _t, _g in SECTIONS],
+        "anonymization": red.report(),
     }
     return llm.model, result

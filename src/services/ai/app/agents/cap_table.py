@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ..documents import render_corpus
 from . import _common as c
 
 _KINDS = {"common", "preferred", "option"}
@@ -148,9 +147,14 @@ def _validate(share_classes: list[dict], total_stated: float | None) -> dict:
     }
 
 
-def _citations(identified: list, share_classes: list[dict]) -> list[dict]:
+def _citations(identified: list, share_classes: list[dict], by_shown: dict) -> list[dict]:
     """Flatten per-field citations from the identify step, keeping only those
-    tied to a class that survived structuring."""
+    tied to a class that survived structuring.
+
+    `source_document` is the filename the model was shown, which is redacted;
+    the analyst follows this citation back to a file in their own workspace, so
+    it is mapped to the real name. A name we don't recognise is left as the
+    model wrote it — already redacted, so a hallucinated one cannot leak."""
     kept = {cl["name"].lower() for cl in share_classes}
     out: list[dict] = []
     for entry in identified if isinstance(identified, list) else []:
@@ -163,12 +167,14 @@ def _citations(identified: list, share_classes: list[dict]) -> list[dict]:
         for cit in raw_cits if isinstance(raw_cits, list) else []:
             if not isinstance(cit, dict):
                 continue
+            shown = c.clean_str(cit.get("source_document"), limit=200)
+            source = by_shown.get(shown)
             out.append(
                 {
                     "class": cls_name,
                     "field": c.clean_str(cit.get("field"), limit=60),
                     "value": c.clean_str(cit.get("value"), limit=200),
-                    "source_document": c.clean_str(cit.get("source_document"), limit=200),
+                    "source_document": source.filename if source else shown,
                     "quote": c.clean_str(cit.get("quote"), limit=500),
                     "confidence": c.clamp_confidence(cit.get("confidence")),
                 }
@@ -177,13 +183,14 @@ def _citations(identified: list, share_classes: list[dict]) -> list[dict]:
 
 
 def run_cap_table(payload: dict) -> tuple[str, dict]:
-    valuation = payload.get("valuation") or {}
-    docs, anonymization = c.load_docs(payload)
+    red = c.redactor(payload)
+    docs, _ = c.load_docs(payload, red)
+    corpus, by_shown = c.corpus(docs, red, 45000)
 
     identify_system, model = c.prompt_overrides(payload, _IDENTIFY_SYSTEM)
-    identify_user = f"""Company: {valuation.get("company_name")}
+    identify_user = f"""Company: {c.subject(payload)}
 Documents (charter / articles / cap table):
-{render_corpus(docs)[:45000]}
+{corpus}
 
 List every class of security. Return JSON:
 {{
@@ -204,7 +211,7 @@ List every class of security. Return JSON:
 }}
 Only include values the documents actually contain."""
 
-    first = c.chat(identify_system, identify_user, model=model)
+    first = c.ask(red, identify_system, identify_user, model)
     identified_doc = c.safe_result(first)
     identified = (
         identified_doc.get("classes") if isinstance(identified_doc, dict) else None
@@ -229,7 +236,7 @@ Convert them to the valuation engine schema. Return JSON:
 Keep every number identical to the input. 'preference' is the TOTAL preference
 in dollars. Lower seniority number = paid first. Do not add classes."""
 
-    second = c.chat(_STRUCTURE_SYSTEM, structure_user, model=model)
+    second = c.ask(red, _STRUCTURE_SYSTEM, structure_user, model)
     structured = c.safe_result(second)
     raw_classes = (
         structured.get("share_classes") if isinstance(structured, dict) else None
@@ -248,13 +255,13 @@ in dollars. Lower seniority number = paid first. Do not add classes."""
 
     result = {
         "share_classes": share_classes,
-        "citations": _citations(identified, share_classes),
+        "citations": _citations(identified, share_classes, by_shown),
         "validation": validation,
         "notes": c.clean_str(identified_doc.get("notes"))
         if isinstance(identified_doc, dict)
         else "",
         "documents_reviewed": [d.filename for d in docs],
-        "anonymization": anonymization,
+        "anonymization": red.report(),
     }
     # Model of record is the structuring call (what produced the schema).
     return second.model, result

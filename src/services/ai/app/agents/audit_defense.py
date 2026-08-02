@@ -82,6 +82,7 @@ def run_audit_defense(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     params = payload.get("params") or {}
 
+    red = c.redactor(payload)
     system, model = c.prompt_overrides(payload, _SYSTEM)
     methodology = payload.get("methodology")
     methodology_str = (
@@ -89,7 +90,7 @@ def run_audit_defense(payload: dict) -> tuple[str, dict]:
         if isinstance(methodology, dict) and methodology
         else "(infer methodology from the calculation)"
     )
-    user = f"""Company: {valuation.get("company_name")} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
+    user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Params / assumptions: {c.params_summary(params)}
 Methodology: {methodology_str}
 Calculation under defense: {c.calculation_summary(payload)}
@@ -103,7 +104,7 @@ Prepare the audit-defense memo. Return JSON:
 }}
 Provide {MIN_CHALLENGES}-{MAX_CHALLENGES} challenges, ordered most to least likely."""
 
-    llm = c.chat(system, user, model=model)
+    llm = c.ask(red, system, user, model)
     parsed = c.safe_result(llm)
     result = {
         "challenges": _challenges(parsed),
@@ -116,5 +117,6 @@ Provide {MIN_CHALLENGES}-{MAX_CHALLENGES} challenges, ordered most to least like
         "overall_assessment": c.clean_str(parsed.get("overall_assessment"))
         if isinstance(parsed, dict)
         else "",
+        "anonymization": red.report(),
     }
     return llm.model, result

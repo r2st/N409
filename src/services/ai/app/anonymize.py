@@ -298,3 +298,51 @@ def anonymization_enforced() -> bool:
     if os.environ.get("APP_ENV", "").lower() == "production":
         return True
     return os.environ.get("ANONYMIZE_ENFORCE", "").lower() in {"1", "true", "yes", "on"}
+
+
+class Redactor:
+    """One request's redaction policy, and a running tally of what it struck.
+
+    `redact` is a function over one string; a request sends out many — document
+    bodies, the filenames above them, a founder's free-text business overview,
+    the prompt those are assembled into. Each caller deciding for itself
+    whether redaction is on, and with which known entities, is how a field ends
+    up going out in the clear while the report on the same job says
+    ``applied: true``. So the decision is made once, here, and the object is
+    threaded through everything the request emits.
+    """
+
+    def __init__(
+        self,
+        *,
+        company_names: list[str] | None = None,
+        person_names: list[str] | None = None,
+        applied: bool = True,
+        enforced: bool = False,
+    ) -> None:
+        self.applied = applied
+        self.enforced = enforced
+        self._companies = list(company_names or [])
+        self._people = list(person_names or [])
+        self._totals: dict[str, int] = {}
+
+    def text(self, value: str) -> str:
+        """Redact one string on its way out, adding what was struck to the tally.
+
+        Idempotent in the way that matters: re-running it over text that has
+        already been through it finds nothing left to strike and adds nothing
+        to the counts, so a field may safely be redacted where it is assembled
+        *and* again at the gate.
+        """
+        if not self.applied or not value:
+            return value
+        redacted, counts = redact(value, company_names=self._companies, person_names=self._people)
+        for category, n in counts.items():
+            self._totals[category] = self._totals.get(category, 0) + n
+        return redacted
+
+    def report(self) -> dict:
+        """What the persisted job record says about this request's redaction."""
+        if not self.applied:
+            return {"applied": False, "redacted": {}}
+        return {"applied": True, "redacted": dict(self._totals), "enforced": self.enforced}

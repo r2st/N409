@@ -8,9 +8,10 @@ valuation service persists in ai_jobs.result.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
-from .anonymize import anonymization_enforced, redact
+from .anonymize import Redactor, anonymization_enforced
 from .documents import DocText, extract_texts, render_corpus
 from .openrouter import LlmResult, chat, extract_json
 
@@ -101,15 +102,43 @@ def _known_entities(payload: dict) -> tuple[list[str], list[str]]:
     return companies, people
 
 
-def _anonymization_state(payload: dict) -> tuple[bool, bool]:
-    """(redaction applies, redaction is enforced) for this request.
+def _redactor(payload: dict) -> Redactor:
+    """The redaction policy for one request.
 
-    Both the document text and the prompt around it have to agree on this, so
-    it is decided in one place rather than per-caller.
+    Everything the request sends outward goes through this one object, so the
+    document pass, the prompt fields around it and the gate below cannot
+    disagree about whether redaction is on or which entities are known. In
+    production the anonymize=false escape hatch is ignored (audit B-1 P1).
     """
     options = payload.get("options") or {}
     enforced = anonymization_enforced()
-    return enforced or bool(options.get("anonymize", True)), enforced
+    companies, people = _known_entities(payload)
+    return Redactor(
+        company_names=companies,
+        person_names=people,
+        applied=enforced or bool(options.get("anonymize", True)),
+        enforced=enforced,
+    )
+
+
+def _ask(red: Redactor, system: str, user: str, model: str | None) -> LlmResult:
+    """The only way a prompt leaves this module.
+
+    Fields known to carry client data are struck where they are assembled, so
+    that the redaction reads as a deliberate decision at each one. This is the
+    backstop for the fields nobody classified. `business_overview` is free text
+    a founder typed into a form — it reached five prompts with the company
+    name, a founder's name and a contact email still in it, and none of the
+    five looked like they were handling PII. A prompt that grows a new
+    interpolated field tomorrow cannot leak merely because whoever adds it does
+    not know this module redacts anything.
+
+    The system prompt goes through too: it is operator-authored (the Bot
+    Prompts registry ships it as payload["prompt"]), which makes it the one
+    part of the request no reviewer of a client payload would ever think to
+    check.
+    """
+    return chat(red.text(system), red.text(user), model=model)
 
 
 def _subject(payload: dict) -> str:
@@ -130,30 +159,45 @@ def _subject(payload: dict) -> str:
     """
     valuation = payload.get("valuation") or {}
     name = valuation.get("company_name")
-    if name and _anonymization_state(payload)[0]:
+    if name and _redactor(payload).applied:
         return "[COMPANY]"
     return str(name)
 
 
-def _load_docs(payload: dict) -> tuple[list[DocText], dict]:
+def _load_docs(payload: dict, red: Redactor | None = None) -> tuple[list[DocText], dict]:
     """Extract document texts, redacting PII first (remaining-gaps §2 — the
     cap-table anonymization step) unless options.anonymize is switched off.
 
     Named-entity redaction (company + known person names) supplements the
     regexes so a cap table's most identifying fields don't leave the trust
     boundary. In production the anonymize=false escape hatch is ignored
-    (audit B-1 P1)."""
+    (audit B-1 P1).
+
+    Only the body is touched here. The filename is redacted at render time
+    instead — see `_corpus` — because the result the analyst reads has to name
+    the file they actually uploaded."""
+    red = red or _redactor(payload)
     docs = extract_texts(payload.get("documents") or [])
-    applied, enforced = _anonymization_state(payload)
-    if not applied:
-        return docs, {"applied": False, "redacted": {}}
-    companies, people = _known_entities(payload)
-    totals: dict[str, int] = {}
     for doc in docs:
-        doc.text, counts = redact(doc.text, company_names=companies, person_names=people)
-        for category, n in counts.items():
-            totals[category] = totals.get(category, 0) + n
-    return docs, {"applied": True, "redacted": totals, "enforced": enforced}
+        doc.text = red.text(doc.text)
+    return docs, red.report()
+
+
+def _corpus(docs: list[DocText], red: Redactor, limit: int) -> tuple[str, dict[str, DocText]]:
+    """The corpus as the model sees it, and a map back from the filename it
+    will echo to the document that filename belongs to.
+
+    Real 409A uploads are called "Acme Robotics - Cap Table 2025.xlsx" and
+    "Ada Lovelace Option Grant.pdf". `render_corpus` heads each block with the
+    filename, so the corpus announced the company and its founders directly
+    above the body it had just struck them out of.
+
+    The `DocText` keeps its real filename: `documents_reviewed` and the
+    per-document summaries are read by the analyst who uploaded the file, and
+    they go to our own database, not to the model.
+    """
+    shown = [replace(doc, filename=red.text(doc.filename)) for doc in docs]
+    return render_corpus(shown)[:limit], {s.filename: doc for s, doc in zip(shown, docs)}
 
 
 def _to_number(value: Any) -> float | None:
@@ -172,7 +216,9 @@ def _to_number(value: Any) -> float | None:
 
 def run_missing_data(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
-    docs, anonymization = _load_docs(payload)
+    red = _redactor(payload)
+    docs, _ = _load_docs(payload, red)
+    corpus, _ = _corpus(docs, red, 30000)
     uploaded_kinds = {d.kind for d in docs}
     params = payload.get("params") or {}
 
@@ -197,7 +243,7 @@ def run_missing_data(payload: dict) -> tuple[str, dict]:
     user = f"""Company: {_subject(payload)} ({valuation.get("kind")} valuation)
 Params already set: {_params_summary(params)}
 Uploaded documents:
-{render_corpus(docs)[:30000]}
+{corpus}
 
 Review the uploaded material. Return JSON:
 {{
@@ -207,7 +253,7 @@ Review the uploaded material. Return JSON:
 Only list gaps you can justify from the documents (e.g. a cap table with no
 preference amounts, projections without expenses). Maximum 10 gaps."""
 
-    llm = chat(system, user, model=model)
+    llm = _ask(red, system, user, model)
     parsed = _safe_result(llm)
     gaps = parsed.get("gaps") if isinstance(parsed, dict) else None
     result = {
@@ -216,14 +262,16 @@ preference amounts, projections without expenses). Maximum 10 gaps."""
         "gaps": gaps if isinstance(gaps, list) else [],
         "notes": parsed.get("notes", "") if isinstance(parsed, dict) else "",
         "documents_reviewed": [d.filename for d in docs],
-        "anonymization": anonymization,
+        "anonymization": red.report(),
     }
     return llm.model, result
 
 
 def run_extract(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
-    docs, anonymization = _load_docs(payload)
+    red = _redactor(payload)
+    docs, _ = _load_docs(payload, red)
+    corpus, _ = _corpus(docs, red, 45000)
 
     system, model = _prompt_overrides(
         payload,
@@ -233,7 +281,7 @@ def run_extract(payload: dict) -> tuple[str, dict]:
     )
     user = f"""Company: {_subject(payload)} (currency {valuation.get("currency", "USD")})
 Documents:
-{render_corpus(docs)[:45000]}
+{corpus}
 
 Extract what is present. Return JSON:
 {{
@@ -254,7 +302,7 @@ Extract what is present. Return JSON:
 }}
 Use null for anything not found. ebitda may be negative."""
 
-    llm = chat(system, user, model=model)
+    llm = _ask(red, system, user, model)
     parsed = _safe_result(llm)
     raw_inputs = parsed.get("engine_inputs") if isinstance(parsed, dict) else None
     engine_inputs: dict[str, float] = {}
@@ -268,7 +316,7 @@ Use null for anything not found. ebitda may be negative."""
         "engine_inputs": engine_inputs,
         "extractions": extractions if isinstance(extractions, list) else [],
         "documents_reviewed": [d.filename for d in docs],
-        "anonymization": anonymization,
+        "anonymization": red.report(),
     }
     return llm.model, result
 
@@ -276,7 +324,9 @@ Use null for anything not found. ebitda may be negative."""
 def run_comparables(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     params = payload.get("params") or {}
-    docs, anonymization = _load_docs(payload)
+    red = _redactor(payload)
+    docs, _ = _load_docs(payload, red)
+    corpus, _ = _corpus(docs, red, 15000)
 
     system, model = _prompt_overrides(
         payload,
@@ -286,12 +336,16 @@ def run_comparables(payload: dict) -> tuple[str, dict]:
         "and EV/EBITDA estimates typical for the sector — mark them as "
         "estimates. Respond ONLY with JSON.",
     )
-    overview = params.get("business_overview") or ""
+    # Free text a founder typed into a form. It routinely opens "Acme Robotics
+    # is a San Francisco robotics company founded by Ada Lovelace
+    # (ada@acme.io)" — the company, a person and a contact address, in the one
+    # field on the request that nothing classified as sensitive (round-7 audit).
+    overview = red.text(params.get("business_overview") or "")
     user = f"""Company: {_subject(payload)}
 Business overview: {overview or "(none provided)"}
 Countries served: {valuation.get("service_countries")}
 Document excerpts (for business context only):
-{render_corpus(docs)[:15000]}
+{corpus}
 
 Return JSON:
 {{
@@ -301,7 +355,7 @@ Return JSON:
 }}
 5 to 8 comparables, ordered by relevance."""
 
-    llm = chat(system, user, model=model)
+    llm = _ask(red, system, user, model)
     parsed = _safe_result(llm)
     comparables = []
     if isinstance(parsed, dict) and isinstance(parsed.get("comparables"), list):
@@ -321,7 +375,7 @@ Return JSON:
         "comparables": comparables,
         "sector": parsed.get("sector", "") if isinstance(parsed, dict) else "",
         "caveats": parsed.get("caveats", "") if isinstance(parsed, dict) else "",
-        "anonymization": anonymization,
+        "anonymization": red.report(),
     }
     return llm.model, result
 
@@ -329,7 +383,9 @@ Return JSON:
 def run_summarize(payload: dict) -> tuple[str, dict]:
     """Summarize Attachments (remaining-gaps §2 "AI actions & pipelines")."""
     valuation = payload.get("valuation") or {}
-    docs, anonymization = _load_docs(payload)
+    red = _redactor(payload)
+    docs, _ = _load_docs(payload, red)
+    corpus, by_shown_filename = _corpus(docs, red, 45000)
 
     system, model = _prompt_overrides(
         payload,
@@ -340,7 +396,7 @@ def run_summarize(payload: dict) -> tuple[str, dict]:
     )
     user = f"""Company: {_subject(payload)} ({valuation.get("kind")} valuation)
 Documents:
-{render_corpus(docs)[:45000]}
+{corpus}
 
 Return JSON:
 {{
@@ -350,20 +406,23 @@ Return JSON:
 One entry per document, in the order given. key_figures only for values
 actually present in that document (share counts, preferences, cash, revenue)."""
 
-    llm = chat(system, user, model=model)
+    llm = _ask(red, system, user, model)
     parsed = _safe_result(llm)
-    by_filename = {d.filename: d for d in docs}
     summaries = []
     if isinstance(parsed, dict) and isinstance(parsed.get("summaries"), list):
         for entry in parsed["summaries"][:20]:
             if not isinstance(entry, dict) or not entry.get("filename"):
                 continue
+            # The model can only echo the filename it was shown, which is the
+            # redacted one; the analyst has to be given back the file they
+            # uploaded. An unrecognised name stays as the model wrote it —
+            # already redacted, so a wrong guess cannot leak.
             filename = str(entry.get("filename"))
-            doc = by_filename.get(filename)
+            doc = by_shown_filename.get(filename)
             key_figures = entry.get("key_figures")
             summaries.append(
                 {
-                    "filename": filename,
+                    "filename": doc.filename if doc else filename,
                     "kind": doc.kind if doc else "other",
                     "summary": str(entry.get("summary") or ""),
                     "key_figures": [str(f) for f in key_figures[:10]]
@@ -375,7 +434,7 @@ actually present in that document (share counts, preferences, cash, revenue)."""
         "summaries": summaries,
         "overall": parsed.get("overall", "") if isinstance(parsed, dict) else "",
         "documents_reviewed": [d.filename for d in docs],
-        "anonymization": anonymization,
+        "anonymization": red.report(),
     }
     return llm.model, result
 
@@ -407,6 +466,7 @@ def run_qa(payload: dict) -> tuple[str, dict]:
     valuation = payload.get("valuation") or {}
     params = payload.get("params") or {}
     checks = payload.get("qa_checks") or []
+    red = _redactor(payload)
 
     system, model = _prompt_overrides(
         payload,
@@ -429,7 +489,7 @@ Review the calculation. Return JSON:
 }}
 "fail" only for defects that make the result indefensible. Maximum 10 findings."""
 
-    llm = chat(system, user, model=model)
+    llm = _ask(red, system, user, model)
     parsed = _safe_result(llm)
     findings = []
     if isinstance(parsed, dict) and isinstance(parsed.get("findings"), list):
@@ -453,6 +513,7 @@ Review the calculation. Return JSON:
         "findings": findings,
         "assessment": str(parsed.get("assessment", "")) if isinstance(parsed, dict) else "",
         "verdict": verdict,
+        "anonymization": red.report(),
     }
     return llm.model, result
 
@@ -462,6 +523,7 @@ def run_explain(payload: dict) -> tuple[str, dict]:
     methodology and result to a founder with no valuation background."""
     valuation = payload.get("valuation") or {}
     params = payload.get("params") or {}
+    red = _redactor(payload)
 
     system, model = _prompt_overrides(
         payload,
@@ -483,7 +545,7 @@ Explain this valuation to the company's founder. Return JSON:
 }}
 Only include approaches that actually carried weight. Maximum 6 drivers."""
 
-    llm = chat(system, user, model=model)
+    llm = _ask(red, system, user, model)
     parsed = _safe_result(llm)
     methodology = []
     if isinstance(parsed, dict) and isinstance(parsed.get("methodology"), list):
@@ -503,6 +565,7 @@ Only include approaches that actually carried weight. Maximum 6 drivers."""
         "methodology": methodology,
         "drivers": [str(d) for d in drivers[:6]] if isinstance(drivers, list) else [],
         "caveats": str(parsed.get("caveats", "")) if isinstance(parsed, dict) else "",
+        "anonymization": red.report(),
     }
     return llm.model, result
 
