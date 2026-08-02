@@ -58,9 +58,18 @@ export function formatMoneyCents(cents: number, currency: string): string {
  * Invoice number from an issue date + a monotonic sequence. Passed the sequence
  * so it stays pure (the repo supplies the next value). Format: INV-YYYYMM-NNNN.
  */
+/**
+ * The YYYYMM bucket an invoice number is sequenced within.
+ *
+ * Shared with the sequence allocator (`nextInvoiceSequence`) so the counter and
+ * the number it feeds cannot disagree about which month a given invoice is in.
+ */
+export function invoicePeriod(issuedAtIso: string): string {
+  return issuedAtIso.slice(0, 7).replace('-', '');
+}
+
 export function invoiceNumber(issuedAtIso: string, sequence: number): string {
-  const ym = issuedAtIso.slice(0, 7).replace('-', '');
-  return `INV-${ym}-${String(sequence).padStart(4, '0')}`;
+  return `INV-${invoicePeriod(issuedAtIso)}-${String(sequence).padStart(4, '0')}`;
 }
 
 export interface InvoiceLineItem {

@@ -12,6 +12,7 @@ import {
   createInvoice,
   findActiveSubscription,
   findInvoice,
+  findInvoiceByStripeId,
   findPlan,
   listAllInvoices,
   listAllSubscriptions,
@@ -20,7 +21,13 @@ import {
   nextInvoiceSequence,
   upsertSubscription,
 } from '../repos/billing.js';
-import { invoiceNumber, invoiceSections, usageView, type InvoiceLineItem } from '../domain/billing.js';
+import {
+  invoiceNumber,
+  invoicePeriod,
+  invoiceSections,
+  usageView,
+  type InvoiceLineItem,
+} from '../domain/billing.js';
 
 /**
  * Subscription / retainer billing (feature 7). Recurring Stripe Checkout for
@@ -244,9 +251,15 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               userId = rows[0].user_id;
             }
           }
-          if (userId) {
-            const seq = await nextInvoiceSequence(deps.pool);
+          const stripeInvoiceId = typeof obj.id === 'string' ? obj.id : null;
+          // Stripe delivers at least once. Checking first means a redelivery
+          // costs nothing instead of allocating a sequence number it then
+          // discards on the ON CONFLICT — which would leave a gap in a
+          // numbering an auditor reads as a count of what was billed.
+          const already = await findInvoiceByStripeId(deps.pool, stripeInvoiceId);
+          if (userId && !already) {
             const issuedIso = new Date().toISOString();
+            const seq = await nextInvoiceSequence(deps.pool, invoicePeriod(issuedIso));
             const amount = Number(obj.amount_paid ?? obj.amount_due ?? 0);
             const lineItems: InvoiceLineItem[] = [
               { description: String(obj.description ?? 'Subscription'), amount_cents: amount },
@@ -261,7 +274,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               periodStart: tsToDate(obj.period_start),
               periodEnd: tsToDate(obj.period_end),
               lineItems,
-              stripeInvoiceId: typeof obj.id === 'string' ? obj.id : null,
+              stripeInvoiceId,
               paidAt: new Date(),
             });
           }

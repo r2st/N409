@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import type { PlanLimit, InvoiceLineItem } from '../domain/billing.js';
+import { invoicePeriod, type PlanLimit, type InvoiceLineItem } from '../domain/billing.js';
 
 // ── Plans ────────────────────────────────────────────────────────────────────
 
@@ -176,13 +176,30 @@ export interface InvoiceRow {
   created_at: Date;
 }
 
-/** Next monotonic invoice sequence for the issue month (for the number). */
-export async function nextInvoiceSequence(pool: pg.Pool): Promise<number> {
-  const { rows } = await pool.query<{ n: string }>(
-    `SELECT count(*)::text AS n FROM invoices
-      WHERE date_trunc('month', issued_at) = date_trunc('month', now())`,
+/**
+ * Next monotonic invoice sequence for the issue month (for the number).
+ *
+ * Allocated by incrementing a counter row rather than counting the month's
+ * invoices, because `invoices.number` is UNIQUE and count-then-insert is not
+ * atomic: concurrent renewals all counted the same N and collided on the number
+ * built from it (migration 0096). `ON CONFLICT DO UPDATE` locks the row, so
+ * concurrent allocators serialise and each leaves with its own value.
+ *
+ * The period defaults to the current UTC month, matching the segment
+ * {@link invoiceNumber} puts in the number — pass the issuing date's period
+ * explicitly when the two must agree across a month boundary.
+ */
+export async function nextInvoiceSequence(
+  pool: pg.Pool,
+  period: string = invoicePeriod(new Date().toISOString()),
+): Promise<number> {
+  const { rows } = await pool.query<{ seq: number }>(
+    `INSERT INTO invoice_sequences (period, seq) VALUES ($1, 1)
+     ON CONFLICT (period) DO UPDATE SET seq = invoice_sequences.seq + 1
+     RETURNING seq`,
+    [period],
   );
-  return Number(rows[0]?.n ?? 0) + 1;
+  return rows[0]!.seq;
 }
 
 export async function createInvoice(
@@ -223,7 +240,38 @@ export async function createInvoice(
       input.paidAt ?? null,
     ],
   );
-  return rows[0]!;
+  if (rows[0]) return rows[0];
+
+  // DO NOTHING returns no row, so the insert was a no-op: this Stripe invoice
+  // is already recorded. Stripe delivers at least once, so that is an expected
+  // redelivery rather than an error — return what is already there, which makes
+  // this idempotent and keeps the signature honest. It previously returned
+  // `rows[0]!`, i.e. undefined behind a non-null assertion, so a caller reading
+  // the result got a TypeError on the redelivery path only.
+  const existing = await findInvoiceByStripeId(pool, input.stripeInvoiceId);
+  if (existing) return existing;
+
+  // No row inserted and none to find: the conflict was on something other than
+  // stripe_invoice_id (only `number` is otherwise UNIQUE) or the row vanished
+  // between the two statements. Neither is recoverable here, and returning
+  // undefined is what hid this in the first place.
+  throw new Error(
+    `createInvoice: insert affected no row and no existing invoice for stripe_invoice_id=${String(
+      input.stripeInvoiceId,
+    )}`,
+  );
+}
+
+/** The invoice recorded for a Stripe invoice id, if this one has been seen. */
+export async function findInvoiceByStripeId(
+  pool: pg.Pool,
+  stripeInvoiceId: string | null | undefined,
+): Promise<InvoiceRow | null> {
+  if (!stripeInvoiceId) return null;
+  const { rows } = await pool.query<InvoiceRow>('SELECT * FROM invoices WHERE stripe_invoice_id = $1', [
+    stripeInvoiceId,
+  ]);
+  return rows[0] ?? null;
 }
 
 export async function findInvoice(pool: pg.Pool, id: string): Promise<InvoiceRow | null> {
