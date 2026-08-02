@@ -83,8 +83,10 @@ app.log.info({ port: config.PORT }, 'valuation service listening');
 
 const emailTransports = buildEmailTransports(config, app.log);
 
-// Drip campaign scan (§15.6) — overlapping runs are prevented by the flag;
-// a failed scan logs and waits for the next tick.
+// Drip campaign scan (§15.6). The flag keeps a slow scan from stacking ticks
+// on this instance; overlap with the ops-triggered run and with other instances
+// is the advisory lock's job, inside runDueAutoEmails. A failed scan logs and
+// waits for the next tick.
 let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
   let scanning = false;

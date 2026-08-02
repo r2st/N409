@@ -91,6 +91,27 @@ export function createPool(databaseUrl: string, env: NodeJS.ProcessEnv = process
   return new pg.Pool(buildPoolConfig(databaseUrl, resolvePoolTuning(databaseUrl, env)));
 }
 
+/**
+ * Runs fn inside a transaction on a client the caller already holds, rolling
+ * back on any error. Separate from withTransaction because a caller holding a
+ * session-scoped resource on that client — an advisory lock, say — must not
+ * have the work moved to a different connection.
+ */
+export async function withClientTransaction<T>(
+  client: pg.PoolClient,
+  fn: (client: pg.PoolClient) => Promise<T>,
+): Promise<T> {
+  await client.query('BEGIN');
+  try {
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  }
+}
+
 /** Runs fn inside a transaction, rolling back on any error. */
 export async function withTransaction<T>(
   pool: pg.Pool,
@@ -98,13 +119,7 @@ export async function withTransaction<T>(
 ): Promise<T> {
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
+    return await withClientTransaction(client, fn);
   } finally {
     client.release();
   }

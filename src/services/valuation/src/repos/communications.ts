@@ -112,8 +112,8 @@ export async function deleteCommunicationTemplate(pool: pg.Pool, id: string): Pr
 
 // ── Auto email campaigns (409.ai §15.6) ──────────────────────────────────────
 
-export async function listAutoEmails(pool: pg.Pool): Promise<AutoEmailRow[]> {
-  const { rows } = await pool.query<AutoEmailRow>('SELECT * FROM auto_emails ORDER BY name');
+export async function listAutoEmails(db: pg.Pool | pg.PoolClient): Promise<AutoEmailRow[]> {
+  const { rows } = await db.query<AutoEmailRow>('SELECT * FROM auto_emails ORDER BY name');
   return rows;
 }
 
@@ -213,7 +213,10 @@ export interface DueCandidate {
  * condition applied, plus the data isCampaignDue() and rendering need. The
  * due-window check itself stays in domain code (testable without a DB).
  */
-export async function dueCandidates(pool: pg.Pool, campaign: AutoEmailRow): Promise<DueCandidate[]> {
+export async function dueCandidates(
+  db: pg.Pool | pg.PoolClient,
+  campaign: AutoEmailRow,
+): Promise<DueCandidate[]> {
   const conditionSql: Record<string, string> = {
     always: 'true',
     unpaid: "v.paid_status = 'unpaid'",
@@ -221,7 +224,7 @@ export async function dueCandidates(pool: pg.Pool, campaign: AutoEmailRow): Prom
       'NOT EXISTS (SELECT 1 FROM documents d WHERE d.valuation_id = v.id AND d.deleted_at IS NULL)',
     waiting_on_client: 'v.waiting_on_client',
   };
-  const { rows } = await pool.query<DueCandidate>(
+  const { rows } = await db.query<DueCandidate>(
     `SELECT v.id AS valuation_id, v.company_name, v.kind, v.number::text AS number,
             v.user_id, u.email AS to_email, u.phone AS to_phone,
             COALESCE(

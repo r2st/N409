@@ -53,12 +53,12 @@ export async function enqueueEmail(
 }
 
 export async function markEmail(
-  pool: pg.Pool,
+  db: pg.Pool | pg.PoolClient,
   id: string,
   status: Exclude<EmailStatus, 'queued'>,
   error?: string,
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     `UPDATE email_outbox
      SET status = $2::email_status, error = $3, attempts = attempts + 1,
          sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END
