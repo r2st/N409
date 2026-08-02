@@ -289,22 +289,24 @@ function FundDetailView({ fundId }: { fundId: string }) {
       {nav && (
         <div className="rounded-lg border border-paper-200 bg-surface p-4">
           <h3 className="mb-2 text-sm font-semibold text-ink-700">ASC 820 fair-value hierarchy</h3>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500">
-                <th className="py-1.5">Level 1 (quoted)</th>
-                <th className="py-1.5">Level 2 (observable)</th>
-                <th className="py-1.5">Level 3 (unobservable)</th>
-              </tr>
-            </thead>
-            <tbody className="tnum">
-              <tr>
-                <td className="py-1.5">{money(nav.level_breakdown.level_1, cur)}</td>
-                <td className="py-1.5">{money(nav.level_breakdown.level_2, cur)}</td>
-                <td className="py-1.5">{money(nav.level_breakdown.level_3, cur)}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[420px] text-sm">
+              <thead>
+                <tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500">
+                  <th className="py-1.5">Level 1 (quoted)</th>
+                  <th className="py-1.5">Level 2 (observable)</th>
+                  <th className="py-1.5">Level 3 (unobservable)</th>
+                </tr>
+              </thead>
+              <tbody className="tnum">
+                <tr>
+                  <td className="py-1.5">{money(nav.level_breakdown.level_1, cur)}</td>
+                  <td className="py-1.5">{money(nav.level_breakdown.level_2, cur)}</td>
+                  <td className="py-1.5">{money(nav.level_breakdown.level_3, cur)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

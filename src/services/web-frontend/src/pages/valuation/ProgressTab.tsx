@@ -220,7 +220,10 @@ export function ProgressTab() {
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr] lg:items-start">
         <div className="space-y-5">
           <CompletionBar percent={progress.percent_complete} halted={progress.halted} />
-          <dl className="grid grid-cols-3 gap-4" data-testid="progress-stats">
+          {/* Matches the skeleton above (grid-cols-2 sm:grid-cols-3): a bare
+              grid-cols-3 crushed three date labels into ~95px each on a phone,
+              and reflowed the strip the moment the data replaced the skeleton. */}
+          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3" data-testid="progress-stats">
             <div>
               <dt className="overline text-ink-400">Days in progress</dt>
               <dd className="tnum text-lg font-semibold text-ink-900">{progress.days_in_progress}</dd>

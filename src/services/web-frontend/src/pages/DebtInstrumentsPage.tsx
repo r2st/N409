@@ -529,8 +529,10 @@ function ResultCard({
       {schedule && (
         <div>
           <h4 className="overline mb-2 text-ink-400">Cash-flow schedule</h4>
-          <div className="max-h-72 overflow-y-auto">
-            <table className="w-full text-xs">
+          {/* Both axes: six money columns clear a phone's content box by ~140px,
+              and the schedule is long enough to want the capped height too. */}
+          <div className="max-h-72 overflow-x-auto overflow-y-auto">
+            <table className="w-full min-w-[520px] text-xs">
               <thead className="sticky top-0 bg-paper-50">
                 <tr className="border-b border-paper-300 text-left text-ink-500">
                   <th className="py-1">#</th>

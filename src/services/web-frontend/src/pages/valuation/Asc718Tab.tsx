@@ -680,96 +680,102 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
           <h4 className="overline mb-2 text-ink-400">
             Options — total cost {formatMoney(result.options.totalCompensationCost, currency)}
           </h4>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
-                <th className="py-1.5 pr-3">Grant</th>
-                <th className="py-1.5 pr-3">FV/option</th>
-                <th className="py-1.5 pr-3">Expected to vest</th>
-                <th className="py-1.5">Total cost</th>
-              </tr>
-            </thead>
-            <tbody className="tnum">
-              {result.options.grants.map((g, i) => (
-                <tr key={i} className="border-b border-paper-200 last:border-0">
-                  <td className="py-1.5 pr-3">{g.label ?? `Grant ${i + 1}`}</td>
-                  <td className="py-1.5 pr-3">{formatMoney(g.fairValuePerOption, currency)}</td>
-                  <td className="py-1.5 pr-3">{formatNumber(g.expectedToVestOptions)}</td>
-                  <td className="py-1.5 font-semibold">{formatMoney(g.totalCompensationCost, currency)}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[380px] text-sm">
+              <thead>
+                <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                  <th className="py-1.5 pr-3">Grant</th>
+                  <th className="py-1.5 pr-3">FV/option</th>
+                  <th className="py-1.5 pr-3">Expected to vest</th>
+                  <th className="py-1.5">Total cost</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="tnum">
+                {result.options.grants.map((g, i) => (
+                  <tr key={i} className="border-b border-paper-200 last:border-0">
+                    <td className="py-1.5 pr-3">{g.label ?? `Grant ${i + 1}`}</td>
+                    <td className="py-1.5 pr-3">{formatMoney(g.fairValuePerOption, currency)}</td>
+                    <td className="py-1.5 pr-3">{formatNumber(g.expectedToVestOptions)}</td>
+                    <td className="py-1.5 font-semibold">{formatMoney(g.totalCompensationCost, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {result.espp.length > 0 && (
         <div>
           <h4 className="overline mb-2 text-ink-400">ESPP</h4>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
-                <th className="py-1.5 pr-3">Offering</th>
-                <th className="py-1.5 pr-3">FV/share</th>
-                <th className="py-1.5 pr-3">Discount</th>
-                <th className="py-1.5 pr-3">Call</th>
-                <th className="py-1.5 pr-3">Put</th>
-                <th className="py-1.5">Total</th>
-              </tr>
-            </thead>
-            <tbody className="tnum">
-              {result.espp.map((e, i) => (
-                <tr key={i} className="border-b border-paper-200 last:border-0">
-                  <td className="py-1.5 pr-3">{e.label ?? `ESPP ${i + 1}`}</td>
-                  <td className="py-1.5 pr-3">{formatMoney(e.fair_value_per_share, currency)}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">
-                    {formatMoney(e.components.purchaseDiscount, currency)}
-                  </td>
-                  <td className="py-1.5 pr-3 text-ink-500">
-                    {formatMoney(e.components.callComponent, currency)}
-                  </td>
-                  <td className="py-1.5 pr-3 text-ink-500">
-                    {formatMoney(e.components.putComponent, currency)}
-                  </td>
-                  <td className="py-1.5 font-semibold">{formatMoney(e.total_fair_value, currency)}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[460px] text-sm">
+              <thead>
+                <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                  <th className="py-1.5 pr-3">Offering</th>
+                  <th className="py-1.5 pr-3">FV/share</th>
+                  <th className="py-1.5 pr-3">Discount</th>
+                  <th className="py-1.5 pr-3">Call</th>
+                  <th className="py-1.5 pr-3">Put</th>
+                  <th className="py-1.5">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="tnum">
+                {result.espp.map((e, i) => (
+                  <tr key={i} className="border-b border-paper-200 last:border-0">
+                    <td className="py-1.5 pr-3">{e.label ?? `ESPP ${i + 1}`}</td>
+                    <td className="py-1.5 pr-3">{formatMoney(e.fair_value_per_share, currency)}</td>
+                    <td className="py-1.5 pr-3 text-ink-500">
+                      {formatMoney(e.components.purchaseDiscount, currency)}
+                    </td>
+                    <td className="py-1.5 pr-3 text-ink-500">
+                      {formatMoney(e.components.callComponent, currency)}
+                    </td>
+                    <td className="py-1.5 pr-3 text-ink-500">
+                      {formatMoney(e.components.putComponent, currency)}
+                    </td>
+                    <td className="py-1.5 font-semibold">{formatMoney(e.total_fair_value, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {result.rsu.length > 0 && (
         <div>
           <h4 className="overline mb-2 text-ink-400">RSUs</h4>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
-                <th className="py-1.5 pr-3">Award</th>
-                <th className="py-1.5 pr-3">Condition</th>
-                <th className="py-1.5 pr-3">Units</th>
-                <th className="py-1.5 pr-3">FV/unit</th>
-                <th className="py-1.5">Total</th>
-              </tr>
-            </thead>
-            <tbody className="tnum">
-              {result.rsu.map((r, i) => (
-                <tr key={i} className="border-b border-paper-200 last:border-0">
-                  <td className="py-1.5 pr-3">{r.label ?? `RSU ${i + 1}`}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">
-                    {r.condition}
-                    {r.expectedPayoutRatio != null ? ` (${(r.expectedPayoutRatio * 100).toFixed(0)}%)` : ''}
-                    {r.probabilityMet != null ? ` (P=${(r.probabilityMet * 100).toFixed(0)}%)` : ''}
-                  </td>
-                  <td className="py-1.5 pr-3">{formatNumber(r.units)}</td>
-                  <td className="py-1.5 pr-3">
-                    {r.fairValuePerUnit != null ? formatMoney(r.fairValuePerUnit, currency) : '—'}
-                  </td>
-                  <td className="py-1.5 font-semibold">
-                    {r.totalFairValue != null ? formatMoney(r.totalFairValue, currency) : '—'}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[440px] text-sm">
+              <thead>
+                <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                  <th className="py-1.5 pr-3">Award</th>
+                  <th className="py-1.5 pr-3">Condition</th>
+                  <th className="py-1.5 pr-3">Units</th>
+                  <th className="py-1.5 pr-3">FV/unit</th>
+                  <th className="py-1.5">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="tnum">
+                {result.rsu.map((r, i) => (
+                  <tr key={i} className="border-b border-paper-200 last:border-0">
+                    <td className="py-1.5 pr-3">{r.label ?? `RSU ${i + 1}`}</td>
+                    <td className="py-1.5 pr-3 text-ink-500">
+                      {r.condition}
+                      {r.expectedPayoutRatio != null ? ` (${(r.expectedPayoutRatio * 100).toFixed(0)}%)` : ''}
+                      {r.probabilityMet != null ? ` (P=${(r.probabilityMet * 100).toFixed(0)}%)` : ''}
+                    </td>
+                    <td className="py-1.5 pr-3">{formatNumber(r.units)}</td>
+                    <td className="py-1.5 pr-3">
+                      {r.fairValuePerUnit != null ? formatMoney(r.fairValuePerUnit, currency) : '—'}
+                    </td>
+                    <td className="py-1.5 font-semibold">
+                      {r.totalFairValue != null ? formatMoney(r.totalFairValue, currency) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {result.tsr.length > 0 && (
@@ -781,30 +787,32 @@ function Results({ result, currency }: { result: Asc718Response['asc718']; curre
               text="Market-condition awards that pay out on the company’s total-shareholder-return rank against a TSR peer group. Valued by a Monte Carlo simulation of correlated peer price paths; the fair value is fixed at grant and never trued up."
             />
           </h4>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
-                <th className="py-1.5 pr-3">Award</th>
-                <th className="py-1.5 pr-3">Units</th>
-                <th className="py-1.5 pr-3">FV/unit</th>
-                <th className="py-1.5 pr-3">Exp. %ile</th>
-                <th className="py-1.5 pr-3">Payout</th>
-                <th className="py-1.5">Total</th>
-              </tr>
-            </thead>
-            <tbody className="tnum">
-              {result.tsr.map((t, i) => (
-                <tr key={i} className="border-b border-paper-200 last:border-0">
-                  <td className="py-1.5 pr-3">{t.label ?? `TSR ${i + 1}`}</td>
-                  <td className="py-1.5 pr-3">{formatNumber(t.target_units)}</td>
-                  <td className="py-1.5 pr-3">{formatMoney(t.fairValuePerUnit, currency)}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">{t.expectedPercentile.toFixed(0)}</td>
-                  <td className="py-1.5 pr-3 text-ink-500">{(t.expectedPayoutRatio * 100).toFixed(0)}%</td>
-                  <td className="py-1.5 font-semibold">{formatMoney(t.totalFairValue, currency)}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[440px] text-sm">
+              <thead>
+                <tr className="border-b border-paper-300 text-left text-xs text-ink-500 uppercase">
+                  <th className="py-1.5 pr-3">Award</th>
+                  <th className="py-1.5 pr-3">Units</th>
+                  <th className="py-1.5 pr-3">FV/unit</th>
+                  <th className="py-1.5 pr-3">Exp. %ile</th>
+                  <th className="py-1.5 pr-3">Payout</th>
+                  <th className="py-1.5">Total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="tnum">
+                {result.tsr.map((t, i) => (
+                  <tr key={i} className="border-b border-paper-200 last:border-0">
+                    <td className="py-1.5 pr-3">{t.label ?? `TSR ${i + 1}`}</td>
+                    <td className="py-1.5 pr-3">{formatNumber(t.target_units)}</td>
+                    <td className="py-1.5 pr-3">{formatMoney(t.fairValuePerUnit, currency)}</td>
+                    <td className="py-1.5 pr-3 text-ink-500">{t.expectedPercentile.toFixed(0)}</td>
+                    <td className="py-1.5 pr-3 text-ink-500">{(t.expectedPayoutRatio * 100).toFixed(0)}%</td>
+                    <td className="py-1.5 font-semibold">{formatMoney(t.totalFairValue, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
