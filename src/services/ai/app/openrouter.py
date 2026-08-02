@@ -232,10 +232,16 @@ def _probe_key(key: str, client: httpx.Client | None = None) -> KeyStatus:
                 f"unexpected HTTP {resp.status_code} from OpenRouter key endpoint",
             )
         try:
-            data = resp.json().get("data") or {}
+            body = resp.json()
         except ValueError:
-            data = {}
-        label = data.get("label") or "unlabelled"
+            body = None
+        # A 200 from the key endpoint is proof enough that the key works; the
+        # body is only read for a nicer label. Anything unexpected in it —
+        # non-JSON, or JSON that isn't the documented object — must not turn a
+        # successful probe into an exception, because this runs on /ready and
+        # an exception there is a 500 where the honest answer is "key valid".
+        data = body.get("data") if isinstance(body, dict) else None
+        label = (data.get("label") if isinstance(data, dict) else None) or "unlabelled"
         return KeyStatus("valid", f"OpenRouter accepted key '{label}'")
     finally:
         if owns_client:
@@ -325,6 +331,37 @@ def _post_with_retry(
     raise last_exc if last_exc else OpenRouterError(f"{candidate}: retries exhausted")
 
 
+def _completion_text(data: dict) -> str:
+    """The assistant text out of a chat-completions body, or "" if it isn't there.
+
+    Every level here is model-controlled, so none of it is assumed: `choices`
+    may be absent or not a list, its first entry may not be an object, and
+    `message.content` may be missing or a non-string. A "" return means "this
+    candidate did not answer", which the caller already knows how to handle.
+    """
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message")
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _token_count(value: object) -> int:
+    """A usage counter as a non-negative int; 0 when the field is unusable."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 0
+    try:
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def chat(
     system: str, user: str, *, model: str | None = None, client: httpx.Client | None = None
 ) -> LlmResult:
@@ -349,28 +386,50 @@ def chat(
             if resp.status_code != 200:
                 errors.append(f"{candidate}: HTTP {resp.status_code} {resp.text[:200]}")
                 continue
-            data = resp.json()
-            choices = data.get("choices") or []
-            content = (choices[0].get("message") or {}).get("content") if choices else None
+            # Everything from here down is one candidate's *answer*, and an
+            # unusable answer is this loop's whole reason to exist: record why
+            # and let the next model try. Before this guard a 200 carrying a
+            # proxy's HTML error page raised JSONDecodeError, and a body that
+            # was valid JSON of the wrong shape raised AttributeError — neither
+            # an OpenRouterError, so both escaped `chat` entirely and skipped
+            # the remaining healthy candidates instead of falling through to
+            # them. Callers catch OpenRouterError; an escape is a 500.
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                errors.append(f"{candidate}: non-JSON body ({exc})")
+                continue
+            if not isinstance(data, dict):
+                errors.append(f"{candidate}: non-object body ({type(data).__name__})")
+                continue
+            content = _completion_text(data)
             if not content:
                 errors.append(f"{candidate}: empty completion")
                 continue
-            usage = data.get("usage") or {}
-            prompt_tokens = int(usage.get("prompt_tokens") or 0)
-            completion_tokens = int(usage.get("completion_tokens") or 0)
+            usage = data.get("usage")
+            usage = usage if isinstance(usage, dict) else {}
+            # A completion already succeeded; junk in the accounting fields must
+            # not discard it. `int()` on a non-numeric raises, so coerce softly.
+            prompt_tokens = _token_count(usage.get("prompt_tokens"))
+            completion_tokens = _token_count(usage.get("completion_tokens"))
             self_total = prompt_tokens + completion_tokens
             cumulative = _budget.add(self_total)
+            # `model` is echoed by the provider and lands in job records and
+            # audit trails; fall back to the candidate we asked for unless it
+            # comes back as an actual string.
+            served_by = data.get("model")
+            served_by = served_by if isinstance(served_by, str) and served_by else candidate
             _log.info(
                 "llm usage",
                 extra={
                     "event": "llm_usage",
-                    "path": data.get("model", candidate),
+                    "path": served_by,
                     "status": self_total,
                     "duration_ms": cumulative,
                 },
             )
             return LlmResult(
-                model=data.get("model", candidate),
+                model=served_by,
                 content=content,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
