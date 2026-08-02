@@ -5,6 +5,7 @@ import { problems } from '@n409/shared';
 import { signSession, type JwtConfig } from '../auth/jwt.js';
 import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
 import { getSamlConfig, type SamlConfigRow } from '../repos/ssoConfig.js';
+import { consumeSamlAssertion, type SamlAssertionRef } from '../repos/samlReplay.js';
 import { createProvisionedUser, findUserByEmail, type UserWithRoles } from '../repos/users.js';
 import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
@@ -83,6 +84,70 @@ export function extractIdentity(profile: Record<string, unknown>): {
   };
 }
 
+/**
+ * A named child of an xml2js node, as an object.
+ *
+ * Elements come back wrapped in arrays, but the document root does not — xml2js
+ * applies `explicitArray` to children only — so `getAssertion()` yields
+ * `{ Assertion: {...} }` while everything inside it is `[{...}]`. Accepting
+ * both shapes lets one accessor walk the whole path.
+ */
+function first(node: unknown, child: string): Record<string, unknown> | null {
+  const value: unknown = (node as Record<string, unknown> | null)?.[child];
+  const head: unknown = Array.isArray(value) ? value[0] : value;
+  return typeof head === 'object' && head !== null ? (head as Record<string, unknown>) : null;
+}
+
+/** An xml2js attribute (`$`) as a string, or null. */
+function attrOf(node: Record<string, unknown> | null, name: string): string | null {
+  const attrs = node?.$;
+  if (typeof attrs !== 'object' || attrs === null) return null;
+  const v = (attrs as Record<string, unknown>)[name];
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
+/**
+ * The identity of a validated assertion, for the replay guard: which document
+ * this is, and how long it stays usable.
+ *
+ * Returns null when the assertion carries no ID or no expiry, and the caller
+ * refuses it. Both are refusals on principle rather than parser defensiveness.
+ * An assertion with no ID cannot be told apart from its own replay, and one
+ * with no NotOnOrAfter never expires by its own terms — an unbounded bearer
+ * credential, which is not a thing to accept from a form POST whatever the
+ * signature says. Every IdP sends both: SAML core §2.3.3 makes ID required, and
+ * the Web SSO profile requires NotOnOrAfter on the bearer confirmation.
+ *
+ * The Conditions window is preferred over the subject confirmation's because it
+ * is the one node-saml enforces, so it is the deadline that actually decides
+ * when a replay would start failing on its own.
+ */
+export function samlAssertionRef(profile: Record<string, unknown>): SamlAssertionRef | null {
+  const getAssertion = profile.getAssertion;
+  if (typeof getAssertion !== 'function') return null;
+  const assertion = first(getAssertion.call(profile) as unknown, 'Assertion');
+  if (!assertion) return null;
+
+  const assertionId = attrOf(assertion, 'ID');
+  if (!assertionId) return null;
+
+  const confirmationData = first(
+    first(first(assertion, 'Subject'), 'SubjectConfirmation'),
+    'SubjectConfirmationData',
+  );
+  const notOnOrAfter =
+    attrOf(first(assertion, 'Conditions'), 'NotOnOrAfter') ?? attrOf(confirmationData, 'NotOnOrAfter');
+  if (!notOnOrAfter) return null;
+  const expiresAt = new Date(notOnOrAfter);
+  if (Number.isNaN(expiresAt.getTime())) return null;
+
+  return {
+    issuer: typeof profile.issuer === 'string' ? profile.issuer : '',
+    assertionId,
+    expiresAt,
+  };
+}
+
 export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
   const requireEnabled = async (): Promise<SamlConfigRow> => {
     const config = await getSamlConfig(deps.pool);
@@ -141,6 +206,18 @@ export function registerSamlRoutes(app: FastifyInstance, deps: SamlDeps): void {
         throw problems.unauthorized('SAML assertion could not be validated');
       }
       if (!profile) throw problems.unauthorized('SAML assertion carried no profile');
+
+      // Spend the assertion before anything else looks at it. The signature and
+      // Conditions checks above pass just as happily on a replay — they are
+      // properties of the document — so this is the only step that can tell the
+      // second POST from the first, and it has to run before any of the work
+      // that would issue a session.
+      const ref = samlAssertionRef(profile);
+      if (!ref) throw problems.unauthorized('SAML assertion has no usable ID or expiry');
+      if (!(await consumeSamlAssertion(deps.pool, ref))) {
+        req.log.warn({ assertionId: ref.assertionId }, 'SAML assertion replayed');
+        throw problems.unauthorized('SAML assertion has already been used');
+      }
 
       const identity = extractIdentity(profile);
       if (!identity.email) throw problems.unauthorized('SAML assertion has no email');

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SignedXml } from 'xml-crypto';
 import { upsertSamlConfig } from '../../src/repos/ssoConfig.js';
 import { findUserByEmail, setUserActive } from '../../src/repos/users.js';
-import { extractIdentity } from '../../src/routes/saml.js';
+import { extractIdentity, samlAssertionRef } from '../../src/routes/saml.js';
 import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -96,11 +96,18 @@ function assertionXml(email: string, id = '_assertion1'): string {
 }
 
 /**
+ * Assertion IDs are unique per issuer, so a fresh login is a fresh ID. The
+ * counter keeps the default that way: reusing one id across two calls would be
+ * a replay, and since 0098 the ACS refuses those.
+ */
+let assertionSeq = 0;
+
+/**
  * A base64 SAMLResponse carrying one assertion, optionally signed by `signWith`.
  * Omitting `signWith` produces the unsigned forgery an attacker would send.
  */
-function samlResponse(email: string, signWith?: Keypair): string {
-  const assertion = assertionXml(email);
+function samlResponse(email: string, signWith?: Keypair, id = `_assertion${++assertionSeq}`): string {
+  const assertion = assertionXml(email, id);
   let body = assertion;
   if (signWith) {
     const sig = new SignedXml({
@@ -159,6 +166,65 @@ describe('extractIdentity', () => {
   it('ignores blank and non-string attribute values', () => {
     expect(extractIdentity({ email: '   ', mail: 'real@example.com' }).email).toBe('real@example.com');
     expect(extractIdentity({ email: 42, firstName: null }).email).toBeNull();
+  });
+});
+
+describe('samlAssertionRef', () => {
+  /**
+   * The xml2js shape node-saml hands back from profile.getAssertion(): the root
+   * Assertion is a bare object, its children are arrays.
+   */
+  const profileFor = (assertion: Record<string, unknown>, issuer?: unknown) => ({
+    ...(issuer === undefined ? {} : { issuer }),
+    getAssertion: () => ({ Assertion: assertion }),
+  });
+
+  const CONDITIONS = { Conditions: [{ $: { NotOnOrAfter: '2030-01-01T00:00:00Z' } }] };
+
+  it('reads the id, issuer and Conditions expiry', () => {
+    const ref = samlAssertionRef(profileFor({ $: { ID: '_abc' }, ...CONDITIONS }, 'http://idp.test/entity'));
+    expect(ref).toEqual({
+      issuer: 'http://idp.test/entity',
+      assertionId: '_abc',
+      expiresAt: new Date('2030-01-01T00:00:00Z'),
+    });
+  });
+
+  it('falls back to the bearer confirmation expiry when Conditions has none', () => {
+    const ref = samlAssertionRef(
+      profileFor({
+        $: { ID: '_abc' },
+        Subject: [
+          {
+            SubjectConfirmation: [
+              { SubjectConfirmationData: [{ $: { NotOnOrAfter: '2030-06-01T00:00:00Z' } }] },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(ref?.expiresAt).toEqual(new Date('2030-06-01T00:00:00Z'));
+    // No issuer element means no issuer, not a crash — the key still works.
+    expect(ref?.issuer).toBe('');
+  });
+
+  it('refuses an assertion with no id, since it cannot be told from its replay', () => {
+    expect(samlAssertionRef(profileFor({ $: {}, ...CONDITIONS }))).toBeNull();
+    expect(samlAssertionRef(profileFor({ ...CONDITIONS }))).toBeNull();
+  });
+
+  it('refuses an assertion with no expiry, which would never stop being usable', () => {
+    expect(samlAssertionRef(profileFor({ $: { ID: '_abc' } }))).toBeNull();
+  });
+
+  it('refuses an unparseable expiry rather than storing an invalid date', () => {
+    const bad = { Conditions: [{ $: { NotOnOrAfter: 'whenever' } }] };
+    expect(samlAssertionRef(profileFor({ $: { ID: '_abc' }, ...bad }))).toBeNull();
+  });
+
+  it('refuses a profile carrying no assertion at all', () => {
+    expect(samlAssertionRef({})).toBeNull();
+    expect(samlAssertionRef({ getAssertion: () => ({}) })).toBeNull();
   });
 });
 
@@ -246,6 +312,52 @@ describe.skipIf(!dbUp || !opensslAvailable())('SAML assertion consumer', () => {
     expect(res.statusCode).toBe(302);
     const after = await findUserByEmail(ctx.pool, 'ada@example.com');
     expect(after!.id).toBe(before!.id);
+  });
+
+  it('refuses a replay of an assertion it has already consumed', async () => {
+    // The assertion reaches the ACS through the browser, so a copy of it is
+    // within reach of anything that can read a POST body or a proxy log. Every
+    // check node-saml makes is a property of the document and passes again on
+    // the second POST; without the guard the captured bytes stay a working
+    // credential for the whole Conditions window.
+    const captured = samlResponse('replay@example.com', idp);
+
+    const first = await post(captured);
+    expect(first.statusCode).toBe(302);
+
+    const second = await post(captured);
+    expect(second.statusCode).toBe(401);
+  });
+
+  it('still accepts a genuine second login, which carries a new assertion id', async () => {
+    // The guard keys on the assertion, not the user — signing in twice is not
+    // an attack, and a guard that could not tell the difference would break SSO
+    // for everyone after their first login.
+    const again = await post(samlResponse('replay@example.com', idp));
+    expect(again.statusCode).toBe(302);
+  });
+
+  it('refuses an assertion whose id repeats one already spent, even for another user', async () => {
+    // The key is (issuer, assertion id) as SAML defines uniqueness — not the
+    // subject. An IdP that reissued an id would otherwise let a second identity
+    // ride in on a document already exchanged for a session.
+    const id = '_shared-assertion-id';
+    expect((await post(samlResponse('first@example.com', idp, id))).statusCode).toBe(302);
+
+    const res = await post(samlResponse('second@example.com', idp, id));
+    expect(res.statusCode).toBe(401);
+    expect(await findUserByEmail(ctx.pool, 'second@example.com')).toBeNull();
+  });
+
+  it('does not spend the assertion id of a forgery it rejected', async () => {
+    // The guard runs after signature validation, so a document the attacker
+    // wrote never reaches it. Otherwise POSTing guessed ids would be a way to
+    // burn assertions in flight and lock users out of signing in.
+    const id = '_forged-then-genuine';
+    expect((await post(samlResponse('honest@example.com', attacker, id))).statusCode).toBe(401);
+
+    const genuine = await post(samlResponse('honest@example.com', idp, id));
+    expect(genuine.statusCode).toBe(302);
   });
 
   it('refuses a deactivated account even with a valid assertion', async () => {
