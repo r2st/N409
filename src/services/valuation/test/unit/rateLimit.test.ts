@@ -123,4 +123,82 @@ describe('SlidingWindowRateLimiter', () => {
     limiter.allow('ip:1', 5, 1_000, undefined, 2_000);
     expect(limiter.size).toBe(1);
   });
+
+  // ── The sweep is a full scan, and the attacker sizes the map ──────────────
+  //
+  // Sweeping per request made the limiter the amplifier. With the map pinned at
+  // maxKeys, every allow() cost ~1.9ms of pure scanning; a login makes four
+  // (two peeks, then two records on failure), so ~130 sign-in attempts a second
+  // saturated the event loop — while the route's comment promises the throttle
+  // runs "before any DB/scrypt work so a flood can't pin the CPU". Sustaining
+  // it needed only enough distinct emails to keep the map full.
+
+  it('does not rescan the whole map on every request once it is crowded', () => {
+    const limiter = new SlidingWindowRateLimiter(10, 50_000, HOUR, 1_000);
+    for (let i = 0; i < 50; i += 1) limiter.allow(`email:${i}`, 5, HOUR, undefined, 0);
+    const before = limiter.sweeps;
+    // 500 more requests in the same millisecond — the flood. Each one used to
+    // walk every entry in the map.
+    for (let i = 0; i < 500; i += 1) limiter.allow(`email:x${i}`, 5, HOUR, undefined, 0);
+    expect(limiter.sweeps - before).toBe(0);
+  });
+
+  it('still sweeps a crowded map once the interval has passed', () => {
+    // Throttling must not become "never": expired keys still have to go.
+    const limiter = new SlidingWindowRateLimiter(10, 50_000, HOUR, 1_000);
+    for (let i = 0; i < 50; i += 1) limiter.allow(`email:${i}`, 5, 60_000, undefined, 0);
+    expect(limiter.size).toBe(50);
+    limiter.allow('email:later', 5, 60_000, undefined, 120_000);
+    expect(limiter.sweeps).toBeGreaterThan(0);
+    expect(limiter.size).toBe(1); // the 50 expired entries were collected
+  });
+
+  it('holds the hard ceiling between sweeps, not only during one', () => {
+    // Memory cannot wait for the next sweep: with eviction folded into the
+    // throttled sweep, a burst inside one interval grows the map unchecked.
+    const limiter = new SlidingWindowRateLimiter(10, 25, HOUR, 1_000);
+    for (let i = 0; i < 500; i += 1) limiter.allow(`email:${i}`, 5, HOUR, undefined, 0);
+    expect(limiter.size).toBeLessThanOrEqual(25);
+  });
+
+  it('evicts the idle keys, not the one the spray keeps touching', () => {
+    // The shape of the real spray: credential stuffing from one source mints a
+    // fresh `login:<email>` key per request, while `ip:<addr>` is checked by
+    // every one of them. Those per-email keys are individually worthless — one
+    // attempt each, never near their budget — and the per-IP entry is the only
+    // throttle that can see the attack at all. LRU is what stops the emails
+    // from washing it out: it is touched by every request, so it sits at the
+    // back of the map while the eviction takes from the front.
+    const limiter = new SlidingWindowRateLimiter(1_000, 10, HOUR, 1_000);
+    let now = 0;
+    for (let i = 0; i < 100; i += 1) {
+      limiter.allow(`login:${i}`, 5, HOUR, undefined, (now += 1));
+      limiter.allow('ip:1.2.3.4', 4, HOUR, undefined, now);
+    }
+    expect(limiter.size).toBeLessThanOrEqual(10); // the ceiling still held
+    // Spent its budget on the 4th of a hundred requests and never got it back.
+    expect(limiter.allow('ip:1.2.3.4', 4, HOUR, undefined, (now += 1))).toBe(false);
+  });
+
+  it('does evict a key that goes idle — LRU protects the touched, not the guilty', () => {
+    // The honest limit of the policy above: recency is all the limiter knows,
+    // so a key that stops being hit is indistinguishable from an abandoned one
+    // and is shed like any other. That is the accepted cost of the ceiling —
+    // worth stating outright so nobody reads LRU as a guarantee it isn't.
+    const limiter = new SlidingWindowRateLimiter(1_000, 10, HOUR, 1_000);
+    let now = 0;
+    for (let i = 0; i < 5; i += 1) limiter.allow('went-quiet', 5, HOUR, undefined, (now += 1));
+    expect(limiter.allow('went-quiet', 5, HOUR, undefined, (now += 1))).toBe(false);
+    for (let i = 0; i < 100; i += 1) limiter.allow(`spray:${i}`, 5, HOUR, undefined, (now += 1));
+    expect(limiter.allow('went-quiet', 5, HOUR, undefined, (now += 1))).toBe(true);
+  });
+
+  it('never evicts the key the current call is about', () => {
+    // Dropping it here would reset the budget for the very request being
+    // checked — the one case where a fresh budget is not an acceptable trade.
+    const limiter = new SlidingWindowRateLimiter(1_000, 1, HOUR, 1_000);
+    let now = 0;
+    expect(limiter.allow('k', 1, HOUR, undefined, (now += 1))).toBe(true);
+    expect(limiter.allow('k', 1, HOUR, undefined, (now += 1))).toBe(false);
+  });
 });

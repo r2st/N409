@@ -131,12 +131,27 @@ export class WeightedWindowRateLimiter {
  *  1. Per-entry expiry. An entry is dead once its longest window has passed, so
  *     a sweep can drop it without consulting the caller's limit.
  *  2. A sweep triggered by size *or* elapsed time, so both a burst of keys and
- *     a slow trickle over a long uptime get collected.
- *  3. A hard key ceiling. If a sweep can't get under it — an attacker minting
- *     keys faster than they expire — the entries closest to expiring are
- *     dropped anyway. That does hand those keys a fresh budget, which is the
- *     right trade: a spray across millions of distinct keys is not the attack
- *     the per-key limit defends against, and staying alive matters more.
+ *     a slow trickle over a long uptime get collected — but never more often
+ *     than `minSweepIntervalMs`, because the sweep is a full scan of the map
+ *     and the map is sized by the attacker. Running it per request turned the
+ *     limiter into the amplifier: with the map pinned at `maxKeys` every
+ *     `allow()` cost ~1.9ms of pure scanning, and a login makes four of them
+ *     (two peeks, two records), so ~130 sign-in attempts a second saturated the
+ *     event loop. The route's own comment promises the opposite — the throttle
+ *     is checked "before any DB/scrypt work so a flood can't pin the CPU".
+ *     Sustaining it needed only enough distinct emails to keep the map full.
+ *  3. A hard key ceiling, enforced on every call because memory cannot wait for
+ *     the next sweep. Eviction is least-recently-touched and costs O(1) per
+ *     key dropped: `store` re-inserts, so the Map's own iteration order is LRU
+ *     order and no sort is needed. That does hand the evicted keys a fresh
+ *     budget, which is the right trade — a spray across millions of distinct
+ *     keys is not the attack the per-key limit defends against, and staying
+ *     alive matters more. LRU picks *which* keys pay that price: the ones the
+ *     spray keeps touching sit at the back, so a flood of one-attempt
+ *     `login:<email>` keys cannot wash out the `ip:<addr>` entry that every one
+ *     of those requests also checks — the only throttle that sees the attack.
+ *     Recency is all it knows, though: a key that goes quiet looks abandoned
+ *     and is shed like any other. Nothing here recognises guilt.
  */
 export interface SlidingWindowOptions {
   /** Report headroom without consuming it (caller records the hit itself). */
@@ -155,6 +170,13 @@ export class SlidingWindowRateLimiter {
     private readonly maxKeys = 50_000,
     /** Force a sweep at least this often, however few keys there are. */
     private readonly sweepEveryMs = 60 * 60 * 1000,
+    /**
+     * Floor on the gap between two full sweeps. This is the ceiling on how much
+     * scanning one request can be made to do, so it is the number that keeps a
+     * crowded map from costing O(keys) *per call*. It applies to the elapsed-time
+     * trigger too: a `sweepEveryMs` below it is effectively raised to it.
+     */
+    private readonly minSweepIntervalMs = 1_000,
   ) {}
 
   /** True when the request is within `limit` per `windowMs` for this key. */
@@ -203,21 +225,49 @@ export class SlidingWindowRateLimiter {
     // The same key can be checked against different windows; the entry lives
     // until the longest of them could no longer exclude a request.
     const expiresAt = Math.max(now + windowMs, priorExpiry ?? 0);
+    // delete-then-set moves the key to the end of the Map's insertion order, so
+    // iterating from the front yields least-recently-touched first. That is what
+    // makes the ceiling eviction below an LRU instead of a first-seen FIFO,
+    // without keeping a second index or paying for a sort.
+    this.hits.delete(key);
     this.hits.set(key, { times, expiresAt });
   }
 
+  /** Full sweeps performed — for tests and diagnostics. */
+  get sweeps(): number {
+    return this.sweepCount;
+  }
+  private sweepCount = 0;
+
   private maybeSweep(now: number, incomingKey: string): void {
-    if (this.hits.size < this.sweepAtKeys && now - this.lastSweep < this.sweepEveryMs) return;
-    this.lastSweep = now;
-    for (const [key, entry] of this.hits) {
-      if (entry.expiresAt <= now) this.hits.delete(key);
+    // ── The expiry sweep: a full scan, so it is rate-limited in time ─────────
+    const crowded = this.hits.size >= this.sweepAtKeys;
+    const overdue = now - this.lastSweep >= this.sweepEveryMs;
+    if ((crowded || overdue) && now - this.lastSweep >= this.minSweepIntervalMs) {
+      this.lastSweep = now;
+      this.sweepCount += 1;
+      for (const [key, entry] of this.hits) {
+        if (entry.expiresAt <= now) this.hits.delete(key);
+      }
     }
+
+    // ── The ceiling: every call, because memory cannot wait for a sweep ──────
     // Leave room for the key this call is about to write, so `maxKeys` is a
     // ceiling on the map rather than on the map-before-the-insert.
     const ceiling = Math.max(0, this.maxKeys - (this.hits.has(incomingKey) ? 0 : 1));
-    if (this.hits.size <= ceiling) return;
-    // Still over: shed the entries with the least life left.
-    const byExpiry = [...this.hits.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
-    for (const [key] of byExpiry.slice(0, this.hits.size - ceiling)) this.hits.delete(key);
+    while (this.hits.size > ceiling) {
+      // The front of the Map is the least recently touched key. Skip the key
+      // this call is about — evicting it here would hand the caller a fresh
+      // budget for the very request being checked.
+      let victim: string | undefined;
+      for (const key of this.hits.keys()) {
+        if (key !== incomingKey) {
+          victim = key;
+          break;
+        }
+      }
+      if (victim === undefined) break;
+      this.hits.delete(victim);
+    }
   }
 }
