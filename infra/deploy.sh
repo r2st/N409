@@ -31,7 +31,13 @@
 #   SSH / SCP     Commands to use. Tests stub these.
 #   GIT           git command to use (default "git").
 #   HEALTH_URL    Base URL for the post-deploy check (default http://localhost:3000).
+#   VALUATION_HEALTH_URL
+#                 Base URL for valuation's own check (default http://localhost:3001).
+#                 Waited on between the two restart steps — see section 6.
 #   CURL          curl command to use. Tests stub this.
+#   SLEEP         sleep command to use. Tests stub this to make the waits free.
+#   VERIFY_TIMEOUT   Seconds to allow a restarted service to come up (default 120).
+#   VERIFY_INTERVAL  Seconds between probes while waiting (default 3).
 #   SKIP_VERIFY   Set to 1 to skip the post-deploy verification (not advised).
 #
 # Usage:
@@ -57,7 +63,11 @@ SSH="${SSH:-ssh}"
 SCP="${SCP:-scp}"
 GIT="${GIT:-git}"
 CURL="${CURL:-curl}"
+SLEEP="${SLEEP:-sleep}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:3000}"
+VALUATION_HEALTH_URL="${VALUATION_HEALTH_URL:-http://localhost:3001}"
+VERIFY_TIMEOUT="${VERIFY_TIMEOUT:-120}"
+VERIFY_INTERVAL="${VERIFY_INTERVAL:-3}"
 
 APPLY=0
 ALLOW_DIRTY=0
@@ -87,6 +97,80 @@ run_remote() {
     return 0
   fi
   $SSH ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} "$HOST" "$*"
+}
+
+if [[ "${SKIP_VERIFY:-0}" == "1" ]]; then VERIFY=0; else VERIFY=1; fi
+
+# The waits count *attempts* rather than watching a clock. That keeps the budget
+# deterministic, and it is the only form the tests can drive: they stub `sleep`
+# to a no-op, which no elapsed-time check would survive.
+VERIFY_ATTEMPTS=$(( VERIFY_INTERVAL > 0 ? VERIFY_TIMEOUT / VERIFY_INTERVAL : 1 ))
+(( VERIFY_ATTEMPTS > 0 )) || VERIFY_ATTEMPTS=1
+
+# Set by wait_for_build when it gives up, so the caller can report what the host
+# was actually saying rather than just that it was not the wanted SHA.
+LAST_LIVE_SHA=""
+
+# One probe. A failure here is not fatal and not news: the callers poll, and
+# "nothing is listening yet" is the *expected* answer for the first few seconds
+# after a restart. `|| true` keeps it out of `set -e`'s reach, and out of the
+# `pipefail` reach of the sed that consumes it.
+remote_curl() {
+  $SSH ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} "$HOST" "$CURL -sf $1" 2>/dev/null || true
+}
+
+# Wait for a restarted service to come back up on the commit we just deployed.
+#
+# THE RACE THIS CLOSES: all five units are Type=simple, so `systemctl restart`
+# returns as soon as the new process has been *forked* — not when it has booted
+# and is listening. A probe fired immediately afterwards therefore races the
+# boot, and normally loses: curl gets connection-refused, `-sf` exits non-zero,
+# and the deploy dies reporting `/health reports '<none>'`. That verdict is not
+# merely wrong, it is misdirecting — the new code IS live, and the message sends
+# the deployer hunting for a build or a restart that did not take, or into a
+# rollback of a deploy that in fact succeeded. Polling to a deadline turns a
+# timing accident back into the check this was meant to be: proof that the new
+# build answers.
+#
+# The SHA is the right thing to poll for rather than mere reachability, because
+# registerHealth() reads BUILD_SHA once at boot: an old process that has not yet
+# died still reports the *old* commit, so a match cannot be satisfied by the
+# release we are replacing.
+wait_for_build() {
+  local label="$1" base="$2" live="" i
+  if [[ "$VERIFY" -eq 0 ]]; then return 0; fi
+  if [[ "$APPLY" -eq 0 ]]; then
+    printf '  [dry-run] wait for %s at %s/health to report %s\n' "$label" "$base" "${SHA:0:7}" >&2
+    return 0
+  fi
+  for (( i = 1; i <= VERIFY_ATTEMPTS; i++ )); do
+    live="$(remote_curl "$base/health" | sed -n 's/.*"build_sha":"\([^"]*\)".*/\1/p')"
+    if [[ "$live" == "$SHA" ]]; then
+      log "$label is up on ${SHA:0:7}"
+      return 0
+    fi
+    $SLEEP "$VERIFY_INTERVAL"
+  done
+  LAST_LIVE_SHA="$live"
+  return 1
+}
+
+# Wait for readiness, which legitimately lags liveness: /ready probes upstreams,
+# so it can answer 503 for a while after the service itself is serving.
+wait_for_ready() {
+  local label="$1" base="$2" i
+  if [[ "$VERIFY" -eq 0 ]]; then return 0; fi
+  if [[ "$APPLY" -eq 0 ]]; then
+    printf '  [dry-run] wait for %s at %s/ready\n' "$label" "$base" >&2
+    return 0
+  fi
+  for (( i = 1; i <= VERIFY_ATTEMPTS; i++ )); do
+    if $SSH ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} "$HOST" "$CURL -sf $base/ready >/dev/null"; then
+      return 0
+    fi
+    $SLEEP "$VERIFY_INTERVAL"
+  done
+  return 1
 }
 
 # ── 1. What are we deploying? ────────────────────────────────────────────────
@@ -191,11 +275,22 @@ fi
 run_remote "printf '%s\n' $SHA > $REMOTE_DIR/BUILD_SHA && chown $SERVICE_USER:$SERVICE_USER $REMOTE_DIR/BUILD_SHA"
 
 # ── 6. Restart — valuation first, it runs the migrations ─────────────────────
+#
+# "First" has to mean *finished*, not merely *issued*. Type=simple makes
+# `systemctl restart` return at fork, so without the wait below this step only
+# ordered the two ssh calls: the dependent services booted and began probing
+# valuation while its migrations were still running. They survived that —
+# Restart=always, and /ready answering 503 for a while — but the ordering this
+# step exists to guarantee was never actually enforced. valuation awaits
+# migrate() before listen(), so /health answering at all is precisely the
+# "migrations are done" signal.
 run_remote "systemctl restart n409-valuation"
+wait_for_build "valuation" "$VALUATION_HEALTH_URL" \
+  || die "valuation did not come up on $SHA within ${VERIFY_TIMEOUT}s (last /health said '${LAST_LIVE_SHA:-<none>}') — the other services were deliberately NOT restarted, so the previous release is still serving them"
 run_remote "systemctl restart n409-web n409-ai n409-engine-wrapper n409-report"
 
 # ── 7. Verify, or the deploy is only a hope ──────────────────────────────────
-if [[ "${SKIP_VERIFY:-0}" == "1" ]]; then
+if [[ "$VERIFY" -eq 0 ]]; then
   log "SKIP_VERIFY=1 — not verifying"
   exit 0
 fi
@@ -204,12 +299,11 @@ if [[ "$APPLY" -eq 0 ]]; then
   exit 0
 fi
 
-log "verifying"
-LIVE_SHA="$($SSH ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} "$HOST" "$CURL -sf $HEALTH_URL/health" | sed -n 's/.*"build_sha":"\([^"]*\)".*/\1/p')"
-[[ "$LIVE_SHA" == "$SHA" ]] \
-  || die "deployed $SHA but /health reports '${LIVE_SHA:-<none>}' — the build or the restart did not take"
+log "verifying (up to ${VERIFY_TIMEOUT}s)"
+wait_for_build "web" "$HEALTH_URL" \
+  || die "deployed $SHA but /health reports '${LAST_LIVE_SHA:-<none>}' — the build or the restart did not take"
 
-$SSH ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} "$HOST" "$CURL -sf $HEALTH_URL/ready >/dev/null" \
+wait_for_ready "web" "$HEALTH_URL" \
   || die "/ready is not passing after the restart"
 
 log "deployed $SHA and verified live"

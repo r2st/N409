@@ -82,6 +82,10 @@ beforeEach(() => {
 
   stub('scp');
   stub('curl');
+  // Stubbed so the verification waits cost nothing, and so the transcript
+  // records that the script actually backed off between probes rather than
+  // spinning through its whole attempt budget instantly.
+  stub('sleep');
 });
 
 afterEach(() => {
@@ -120,6 +124,11 @@ function deploy(
     SSH_KEY: '', // no identity file in the sandbox
     REMOTE_DIR: '/opt/N409',
     SKIP_VERIFY: '1',
+    // Three attempts, not the production forty — enough for a test to prove the
+    // loop retries and enough for it to prove the loop gives up, without either
+    // case depending on the default budget.
+    VERIFY_TIMEOUT: '9',
+    VERIFY_INTERVAL: '3',
     ...env,
   };
   for (const [k, v] of Object.entries(merged)) if (v === undefined) delete merged[k];
@@ -358,15 +367,48 @@ describe('the shipped archive', () => {
   });
 });
 
+/** Ports the script probes: web is the public origin, valuation the API. */
+const WEB_PORT = 3000;
+const VALUATION_PORT = 3001;
+
+/**
+ * An ssh stub clause answering `<port>/health` with `sha`.
+ *
+ * `notBefore` makes the first N-1 probes exit non-zero the way `curl -sf` does
+ * when nothing is listening — which is what a service that has been forked but
+ * has not finished booting actually looks like from outside. The count lives in
+ * a file beside the transcript because each probe is a *fresh* stub process.
+ */
+function healthStub(port: number, sha: string, notBefore = 1): string {
+  const counter = `"$TRANSCRIPT.health${port}"`;
+  return [
+    `if [[ "$*" == *":${port}/health"* ]]; then`,
+    `  n=$(cat ${counter} 2>/dev/null || echo 0); n=$((n + 1)); printf '%s' "$n" > ${counter}`,
+    `  (( n < ${notBefore} )) && exit 7`,
+    `  printf '{"build_sha":"${sha}"}'; exit 0`,
+    'fi',
+  ].join('\n');
+}
+
+/** How many times the stub was asked for `<port>/health`. */
+function healthProbes(port: number): number {
+  const f = `${transcript}.health${port}`;
+  return existsSync(f) ? Number(readFileSync(f, 'utf8')) : 0;
+}
+
 describe('post-deploy verification', () => {
   it('fails the deploy when /health reports a different commit', () => {
     // The whole point of BUILD_SHA: catching the deploy where the build or the
-    // restart silently did not take.
+    // restart silently did not take. Valuation answers correctly so that the
+    // failure under test is web's, and not the earlier gate.
+    const sha = git('rev-parse', 'HEAD');
     const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
-      '[[ "$*" == *"/health"* ]] && { printf \'{"build_sha":"deadbeef"}\'; exit 0; }',
+      healthStub(VALUATION_PORT, sha),
+      healthStub(WEB_PORT, 'deadbeef'),
     ]);
     expect(run.status).not.toBe(0);
     expect(run.stderr).toContain('/health reports');
+    expect(run.stderr).toContain('deadbeef'); // says what it saw, not just that it was wrong
   });
 
   it('passes when the live commit matches', () => {
@@ -386,6 +428,112 @@ describe('post-deploy verification', () => {
     ]);
     expect(run.status).not.toBe(0);
     expect(run.stderr).toContain('/ready is not passing');
+  });
+});
+
+describe('verification waits for the restart instead of racing it', () => {
+  // Every unit is Type=simple, so `systemctl restart` returns at fork — not
+  // when the service is listening. A single-shot probe therefore races the boot
+  // and usually loses, failing a deploy that in fact succeeded, with a message
+  // ("the build or the restart did not take") that sends the deployer hunting
+  // in the wrong place — or rolling back a good release.
+
+  it('succeeds when the service only answers on a later probe', () => {
+    const sha = git('rev-parse', 'HEAD');
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      healthStub(VALUATION_PORT, sha, 2), // one connection-refused, then up
+      healthStub(WEB_PORT, sha, 3), // two, then up
+    ]);
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain('verified live');
+    // Proof the pass came from retrying rather than from a lucky first probe.
+    expect(healthProbes(WEB_PORT)).toBe(3);
+  });
+
+  it('backs off between probes rather than spinning', () => {
+    const sha = git('rev-parse', 'HEAD');
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      healthStub(VALUATION_PORT, sha),
+      healthStub(WEB_PORT, sha, 3),
+    ]);
+    expect(run.status).toBe(0);
+    // A retry loop with no sleep would hammer a booting host and exhaust its
+    // budget in milliseconds, which is the original bug wearing a loop.
+    expect(run.transcript).toContain('sleep 3');
+  });
+
+  it('gives up after the attempt budget and reports what it last saw', () => {
+    const sha = git('rev-parse', 'HEAD');
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      healthStub(VALUATION_PORT, sha),
+      healthStub(WEB_PORT, 'deadbeef'),
+    ]);
+    expect(run.status).not.toBe(0);
+    // VERIFY_TIMEOUT/VERIFY_INTERVAL = 9/3. Waiting forever would hang a deploy
+    // on a service that is never coming back.
+    expect(healthProbes(WEB_PORT)).toBe(3);
+  });
+
+  it('keeps waiting while /ready is still 503', () => {
+    // Readiness legitimately lags liveness: /ready probes upstreams, so it can
+    // answer 503 for a while after the service itself is serving.
+    const sha = git('rev-parse', 'HEAD');
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      `[[ "$*" == *"/health"* ]] && { printf '{"build_sha":"${sha}"}'; exit 0; }`,
+      'if [[ "$*" == *"/ready"* ]]; then',
+      '  n=$(cat "$TRANSCRIPT.ready" 2>/dev/null || echo 0); n=$((n + 1)); printf \'%s\' "$n" > "$TRANSCRIPT.ready"',
+      '  (( n < 2 )) && exit 22',
+      '  exit 0',
+      'fi',
+    ]);
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain('verified live');
+  });
+
+  it('does not probe at all when verification is skipped', () => {
+    const run = deploy(['--apply'], { SKIP_VERIFY: '1' });
+    expect(run.status).toBe(0);
+    expect(healthProbes(VALUATION_PORT)).toBe(0);
+    expect(run.stderr).toContain('not verifying');
+  });
+});
+
+describe('the restart order it claims to enforce', () => {
+  // Migrations run on n409-valuation's boot, and it awaits migrate() before
+  // listen(). Issuing the restarts in order only sequenced the two ssh calls;
+  // the dependent services still booted against a half-migrated database.
+
+  it('waits for valuation to report the new build before restarting the rest', () => {
+    const sha = git('rev-parse', 'HEAD');
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      healthStub(VALUATION_PORT, sha, 2),
+      healthStub(WEB_PORT, sha),
+    ]);
+    expect(run.status).toBe(0);
+
+    const lastValuationProbe = run.remote.reduce(
+      (acc, c, i) => (c.includes(`:${VALUATION_PORT}/health`) ? i : acc),
+      -1,
+    );
+    const dependents = run.remote.findIndex((c) => c.includes('systemctl restart n409-web'));
+    expect(lastValuationProbe).toBeGreaterThan(-1);
+    expect(dependents).toBeGreaterThan(lastValuationProbe);
+  });
+
+  it('leaves the dependent services on the old release when valuation never comes up', () => {
+    // Restarting them anyway would take down the services that were still
+    // serving, on top of the one that failed.
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [healthStub(VALUATION_PORT, 'deadbeef')]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('valuation did not come up');
+    expect(run.remote.some((c) => c.includes('systemctl restart n409-web'))).toBe(false);
+  });
+
+  it('plans both restart steps and both waits in a dry run', () => {
+    const run = deploy([], { SKIP_VERIFY: '0' });
+    expect(run.transcript).toBe('');
+    expect(run.stderr).toContain('wait for valuation');
+    expect(run.stderr).toContain('systemctl restart n409-web');
   });
 });
 

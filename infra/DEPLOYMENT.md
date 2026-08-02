@@ -100,9 +100,16 @@ Two failure modes that look like "email is broken" but are config, not code:
 > exactly the sequence below and enforces the four traps this section documents:
 > the build is mandatory and fatal, `BUILD_SHA` comes from the *local* checkout
 > and is written only after a build that succeeded, files deleted since the
-> deployed commit are removed, and `n409-valuation` restarts first. It then
-> verifies `/health` reports the commit you deployed and fails the deploy if it
-> does not.
+> deployed commit are removed, and `n409-valuation` restarts first — *and has
+> finished booting*, which is what makes "migrations run first" true rather than
+> merely intended. It then verifies `/health` reports the commit you deployed and
+> fails the deploy if it does not.
+>
+> Both waits poll rather than probe once. Every unit is `Type=simple`, so
+> `systemctl restart` returns when the process has been **forked**, not when it
+> is listening — a single immediate probe races the boot and usually loses,
+> failing a deploy that actually succeeded. `VERIFY_TIMEOUT` (default 120s) and
+> `VERIFY_INTERVAL` (default 3s) bound the wait.
 >
 > ```
 > infra/deploy.sh                                   # dry run — prints the plan, changes nothing
@@ -160,7 +167,9 @@ Two failure modes that look like "email is broken" but are config, not code:
    in `.env` points the services at it. A deploy that skips this reports
    `"build_sha":"unknown"` rather than a stale value.
 4. `systemctl restart 'n409-*'` (restart `n409-valuation` first — migrations run
-   on its boot).
+   on its boot — and wait for its `/health` to answer before restarting the
+   others; `Type=simple` means `restart` returns at fork, so issuing the two
+   commands in order does not by itself sequence the two boots).
 5. Verify: all five `/health` (engine-wrapper: `/engine/v1/health`) return 200,
    `curl -s localhost:3000/health | jq -r .build_sha` matches the commit you
    deployed, `curl -s localhost:3000/ready` is 200 with all four checks `ok`,
