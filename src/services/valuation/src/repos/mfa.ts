@@ -65,11 +65,7 @@ export async function confirmTotpEnrollment(pool: pg.Pool, userId: string): Prom
  * would let both see an older counter and both succeed, which is the whole
  * attack.
  */
-export async function consumeTotpCounter(
-  pool: pg.Pool,
-  userId: string,
-  counter: number,
-): Promise<boolean> {
+export async function consumeTotpCounter(pool: pg.Pool, userId: string, counter: number): Promise<boolean> {
   const { rowCount } = await pool.query(
     `UPDATE users SET totp_last_counter = $2
       WHERE id = $1 AND (totp_last_counter IS NULL OR totp_last_counter < $2)`,
