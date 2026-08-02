@@ -92,14 +92,63 @@ _PLACEHOLDERS = {
 _MIN_ENTITY_LEN = 3
 
 
+_TRAILING_PUNCT = re.compile(r"[.,;:]+$")
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def _entity_pattern(value: str) -> re.Pattern[str]:
+    """A whole-entity matcher for one known name.
+
+    `\\b` asserts a word character on exactly one side, so it only works where
+    the entity itself starts and ends on one. Legal entity names usually do not:
+    "Acme Robotics, Inc.", "Widgets Ltd.", "Acme (US)" all end in punctuation,
+    and a trailing `\\b` after "." can only match when the *next* character is a
+    word character — so "Acme, Inc. filed" never matched and the most
+    identifying field on a 409A went to the external model intact, with a
+    redaction count of zero to say so. Where the edge character is not word-ish,
+    the assertion becomes "no word character adjacent", which is the boundary
+    that was meant all along.
+
+    Two allowances for the fact that this runs over text pulled out of PDFs and
+    spreadsheets rather than a database column:
+
+    * a run of whitespace in the name matches any run in the text, since
+      extraction wraps lines and doubles spaces mid-name;
+    * trailing punctuation on the name is optional, so "Acme Robotics, Inc."
+      also strikes a document that writes "Acme Robotics, Inc".
+
+    Both only ever widen the match to text that still contains the whole
+    distinctive name, so neither can redact something unrelated.
+    """
+    stem = _TRAILING_PUNCT.sub("", value)
+    tail = value[len(stem) :]
+    if not stem:  # a "name" of nothing but punctuation would match everywhere
+        stem, tail = value, ""
+
+    # Split the raw value, not an escaped copy: re.escape backslashes some
+    # separators, and rewriting inside that yields a pattern matching a literal
+    # backslash.
+    body = r"\s+".join(re.escape(part) for part in _WHITESPACE_RUN.split(stem) if part)
+    if tail:
+        body += f"(?:{re.escape(tail)})?"
+
+    # (?<!\w) / (?!\w) rather than \b. Where the entity does start and end on a
+    # word character the two are identical; where it does not, only these are
+    # right — which is the whole bug.
+    return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
+
+
 def _redact_entities(text: str, entities: list[str], label: str) -> tuple[str, int]:
     """Strike each known entity by whole-word, case-insensitive match. Longest
     first so "Acme Robotics Inc" is caught before "Acme"."""
     total = 0
     placeholder = _PLACEHOLDERS[label]
-    for value in sorted({e.strip() for e in entities if e and len(e.strip()) >= _MIN_ENTITY_LEN}, key=len, reverse=True):
-        pattern = re.compile(rf"\b{re.escape(value)}\b", re.IGNORECASE)
-        text, n = pattern.subn(placeholder, text)
+    for value in sorted(
+        {e.strip() for e in entities if e and len(e.strip()) >= _MIN_ENTITY_LEN},
+        key=len,
+        reverse=True,
+    ):
+        text, n = _entity_pattern(value).subn(placeholder, text)
         total += n
     return text, total
 
