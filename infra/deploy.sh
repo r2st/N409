@@ -86,6 +86,20 @@ done
 log() { printf 'n409-deploy: %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
+# Single-quote a string for the *remote* shell.
+#
+# ssh has no argv to hand over: it concatenates its arguments and gives the
+# result to a login shell on the far side. So a path is parsed twice — once
+# here, once there — and quoting it locally does nothing for the second pass.
+# `git ls-files` in this repo already lists four paths with spaces in them, two
+# of those with parentheses as well, so this is the ordinary case rather than
+# the exotic one.
+#
+# The escape is the standard '\'' idiom: close the quoted run, emit a literal
+# quote, reopen. Everything else — spaces, parens, $, ;, globs — is inert
+# inside single quotes, so nothing else needs special handling.
+shq() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }
+
 # `run` is the single choke point between planning and doing. In a dry run it
 # prints the remote command and returns; there is no other path to the host, so
 # a dry run cannot touch production even if a later step forgets to check.
@@ -220,8 +234,31 @@ log "deploying ${SHA} to ${HOST_DISPLAY}:${REMOTE_DIR}$([[ "$APPLY" -eq 0 ]] && 
 # ── 2. Ship the tree ─────────────────────────────────────────────────────────
 # git archive carries only tracked files at HEAD, so .env, keys/, node_modules/,
 # dist/ and the .venvs on the host are left alone.
-TARBALL="$(mktemp -t n409-deploy-XXXXXX).tar.gz"
-trap 'rm -f "$TARBALL"' EXIT
+# An explicit template path rather than `mktemp -t`: BSD mktemp on macOS ignores
+# TMPDIR under -t and always writes to the per-user Darwin temp directory, which
+# left the script's scratch files somewhere no test could point at — the reason
+# the "leaves nothing behind" assertion globbed /tmp and matched nothing for as
+# long as it existed. A full template is honoured identically by BSD and GNU.
+#
+# mktemp also creates the file it names, so appending .tar.gz names a *different*
+# one and the original has to be cleaned up too, or every deploy leaves an empty
+# file behind. Hence the stem is kept in its own variable rather than recomputed:
+# the trap has to name both paths, and the one mktemp actually created is not
+# derivable from "$TARBALL" without stripping a suffix off it.
+#
+# DELETED_LIST joins the same trap, but section 3 may never run — a failed
+# archive or a failed scp exits first — and the trap body is evaluated at exit,
+# whenever that is. The :+ guard is what covers that: it expands to nothing for
+# a variable that is empty *or* unset, and it is one of the forms `set -u`
+# permits on an unset name, so the cleanup still runs on the abort path instead
+# of dying on the variable it was about to clean up. The declaration below is
+# documentation — it puts the name in view next to the other two temp files
+# rather than leaving it to appear only inside a branch a hundred lines down.
+TMP_ROOT="${TMPDIR:-/tmp}"
+TARBALL_STEM="$(mktemp "${TMP_ROOT%/}/n409-deploy-XXXXXX")"
+TARBALL="${TARBALL_STEM}.tar.gz"
+DELETED_LIST=""
+trap 'rm -f "$TARBALL_STEM" "$TARBALL" ${DELETED_LIST:+"$DELETED_LIST"}' EXIT
 $GIT archive --format=tar.gz -o "$TARBALL" HEAD
 log "archive: $(wc -c <"$TARBALL" | tr -d ' ') bytes"
 
@@ -239,13 +276,27 @@ run_remote "cd $REMOTE_DIR && tar -xzf /tmp/n409-deploy.tar.gz && rm -f /tmp/n40
 # is the only trustworthy record of what is actually running there.
 PREV_SHA="$(run_remote "cat $REMOTE_DIR/BUILD_SHA 2>/dev/null || true" | tr -d '[:space:]' || true)"
 if [[ -n "$PREV_SHA" && "$PREV_SHA" != "unknown" ]] && $GIT cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; then
-  DELETED="$($GIT diff --diff-filter=D --name-only "$PREV_SHA" HEAD || true)"
-  if [[ -n "$DELETED" ]]; then
-    log "removing $(printf '%s\n' "$DELETED" | wc -l | tr -d ' ') file(s) deleted since ${PREV_SHA:0:7}"
-    while IFS= read -r f; do
+  # -z into a file, not newlines into a variable. `--name-only` alone C-quotes
+  # any path that is not plain ASCII — `café.txt` comes back as the seven
+  # literal characters `"caf\303\251.txt"`, quotes included — so the sweep would
+  # ask the host to remove a filename that has never existed and `rm -f` would
+  # agree, silently. -z emits raw bytes and never quotes; it needs a file
+  # because bash cannot hold a NUL in a variable at all.
+  DELETED_LIST="$(mktemp "${TMP_ROOT%/}/n409-deleted-XXXXXX")"
+  $GIT diff --diff-filter=D --name-only -z "$PREV_SHA" HEAD >"$DELETED_LIST" || true
+  DELETED_COUNT="$(tr -cd '\0' <"$DELETED_LIST" | wc -c | tr -d ' ')"
+  if [[ "$DELETED_COUNT" -gt 0 ]]; then
+    log "removing ${DELETED_COUNT} file(s) deleted since ${PREV_SHA:0:7}"
+    while IFS= read -r -d '' f; do
       [[ -n "$f" ]] || continue
-      run_remote "rm -f $REMOTE_DIR/$f"
-    done <<<"$DELETED"
+      # Quoted, because the remote shell re-parses this. Unquoted, a path with
+      # a space became several arguments and `rm -f` removed none of them while
+      # exiting 0 — the sweep reporting success over a file still live, which is
+      # the very failure it exists to prevent. A path with parentheses was worse:
+      # a syntax error on the far side, fatal under `set -e`, aborting the deploy
+      # after the tree was unpacked but before it was built.
+      run_remote "rm -f $(shq "$REMOTE_DIR/$f")"
+    done <"$DELETED_LIST"
   fi
 else
   log "no usable BUILD_SHA on the host — skipping deletion sweep (files removed since the last deploy may linger)"

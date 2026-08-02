@@ -16,7 +16,15 @@
 //   - `tar` never deletes, so a file removed in a commit stays live indefinitely;
 //   - migrations run on n409-valuation's boot, so it has to restart first.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  existsSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -272,7 +280,9 @@ describe('files deleted since the last deploy', () => {
 
     const run = deployWithPrevSha(prev);
     // tar never deletes; without this the withdrawn file stays live forever.
-    expect(run.remote.some((c) => c === 'rm -f /opt/N409/doomed.txt')).toBe(true);
+    // Quoted even when it needs no quoting — always, so there is no second code
+    // path whose correctness depends on classifying the path first.
+    expect(run.remote.some((c) => c === "rm -f '/opt/N409/doomed.txt'")).toBe(true);
   });
 
   it('leaves files that still exist alone', () => {
@@ -296,6 +306,107 @@ describe('files deleted since the last deploy', () => {
     const run = deployWithPrevSha('0'.repeat(40));
     expect(run.stderr).toContain('skipping deletion sweep');
     expect(run.remote.some((c) => c.startsWith('rm -f'))).toBe(false);
+  });
+
+  // ── The remote shell re-parses whatever we send it ────────────────────────
+  //
+  // ssh does not take an argv; it concatenates its arguments and hands the
+  // result to a login shell on the far side. An unquoted path is therefore
+  // word-split and glob-expanded *there*, however carefully it was quoted here.
+  // This is not hypothetical for this repo: `git ls-files` already lists four
+  // paths under docs/1/ with spaces, and two of those also carry parentheses.
+
+  it('removes a path containing spaces as one path', () => {
+    const prev = git('rev-parse', 'HEAD');
+    const spacey = 'docs/WhatsApp Audio 2026-07-20 at 14.53.16.opus';
+    mkdirSync(path.join(repo, 'docs'));
+    writeFileSync(path.join(repo, spacey), 'x\n');
+    git('add', '-A');
+    git('commit', '-qm', 'add it');
+    const mid = git('rev-parse', 'HEAD');
+    rmSync(path.join(repo, spacey));
+    git('add', '-A');
+    git('commit', '-qm', 'drop it');
+
+    const run = deploy(['--apply'], {}, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${mid}\\n'; exit 0; }`,
+    ]);
+    expect(prev).not.toBe(mid);
+    // Unquoted, the remote shell saw six arguments and removed none of them —
+    // and `rm -f` exits 0 on paths that do not exist, so the sweep reported
+    // success while the withdrawn file stayed live. Exactly the silent failure
+    // the sweep exists to prevent.
+    const rm = run.remote.find((c) => c.includes('WhatsApp'));
+    expect(rm).toBeDefined();
+    expect(rm).toContain(`'/opt/N409/${spacey}'`);
+  });
+
+  it('removes a path containing shell metacharacters without breaking the deploy', () => {
+    const prev = git('rev-parse', 'HEAD');
+    // Parentheses are a bash syntax error unquoted, so this one did not fail
+    // quietly — it aborted the deploy under `set -e` after the tree was already
+    // unpacked, leaving new files on disk against the old build.
+    const meta = 'docs/WhatsApp Image (1).jpeg';
+    mkdirSync(path.join(repo, 'docs'));
+    writeFileSync(path.join(repo, meta), 'x\n');
+    git('add', '-A');
+    git('commit', '-qm', 'add it');
+    const mid = git('rev-parse', 'HEAD');
+    rmSync(path.join(repo, meta));
+    git('add', '-A');
+    git('commit', '-qm', 'drop it');
+
+    const run = deploy(['--apply'], {}, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${mid}\\n'; exit 0; }`,
+    ]);
+    expect(prev).not.toBe(mid);
+    expect(run.remote.some((c) => c.includes(`'/opt/N409/${meta}'`))).toBe(true);
+    // The deploy carried on: the build and the restarts still happened.
+    expect(run.remote.some((c) => c.includes('systemctl restart n409-valuation'))).toBe(true);
+  });
+
+  it('removes a path that is not plain ASCII', () => {
+    // `git diff --name-only` C-quotes anything outside ASCII: café.txt arrives
+    // as the literal characters "caf\303\251.txt", double quotes and all. The
+    // sweep then asked the host to remove a filename that has never existed,
+    // and `rm -f` agreed without complaint. -z is what stops that.
+    const prev = git('rev-parse', 'HEAD');
+    const accented = 'docs/café.txt';
+    mkdirSync(path.join(repo, 'docs'));
+    writeFileSync(path.join(repo, accented), 'x\n');
+    git('add', '-A');
+    git('commit', '-qm', 'add it');
+    const mid = git('rev-parse', 'HEAD');
+    rmSync(path.join(repo, accented));
+    git('add', '-A');
+    git('commit', '-qm', 'drop it');
+
+    const run = deploy(['--apply'], {}, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${mid}\\n'; exit 0; }`,
+    ]);
+    expect(prev).not.toBe(mid);
+    expect(run.remote.some((c) => c === `rm -f '/opt/N409/${accented}'`)).toBe(true);
+    expect(run.remote.some((c) => c.includes('\\303'))).toBe(false);
+  });
+
+  it('quotes a path containing a single quote so it cannot close the quoting', () => {
+    const prev = git('rev-parse', 'HEAD');
+    const quoted = "docs/it's here.txt";
+    mkdirSync(path.join(repo, 'docs'));
+    writeFileSync(path.join(repo, quoted), 'x\n');
+    git('add', '-A');
+    git('commit', '-qm', 'add it');
+    const mid = git('rev-parse', 'HEAD');
+    rmSync(path.join(repo, quoted));
+    git('add', '-A');
+    git('commit', '-qm', 'drop it');
+
+    const run = deploy(['--apply'], {}, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${mid}\\n'; exit 0; }`,
+    ]);
+    expect(prev).not.toBe(mid);
+    // The '\'' idiom: close, escape a literal quote, reopen.
+    expect(run.remote.some((c) => c === `rm -f '/opt/N409/docs/it'\\''s here.txt'`)).toBe(true);
   });
 });
 
@@ -357,13 +468,47 @@ describe('the shipped archive', () => {
     expect(run.remote.some((c) => c.includes('rm -f /tmp/n409-deploy.tar.gz'))).toBe(true);
   });
 
-  it('leaves no tarball behind locally', () => {
-    deploy(['--apply']);
-    // The trap must fire on the success path too.
-    const leftovers = execFileSync('bash', ['-c', 'ls /tmp/n409-deploy-* 2>/dev/null | wc -l'], {
-      encoding: 'utf8',
-    }).trim();
-    expect(Number(leftovers)).toBe(0);
+  it('leaves nothing behind in the temp directory', () => {
+    // Checked against a TMPDIR of our own rather than a /tmp glob: `mktemp -t`
+    // honours TMPDIR, and on macOS that is a per-user /var/folders path, so a
+    // hardcoded /tmp/n409-deploy-* matched nothing and the assertion held no
+    // matter what the script leaked.
+    //
+    // What it leaked was real: `mktemp -t X` creates the file X, and naming the
+    // tarball "$(mktemp …).tar.gz" then writes to a *different* path, so every
+    // deploy left the empty original behind. The deletion sweep's list file is
+    // the other one that has to go.
+    const tmp = path.join(work, 'tmp');
+    mkdirSync(tmp);
+    const prev = git('rev-parse', 'HEAD');
+    rmSync(path.join(repo, 'doomed.txt'));
+    git('add', '-A');
+    git('commit', '-qm', 'drop doomed.txt');
+    const run = deploy(['--apply'], { TMPDIR: tmp }, [
+      `[[ "$*" == *"cat /opt/N409/BUILD_SHA"* ]] && { printf '${prev}\\n'; exit 0; }`,
+    ]);
+    // Guard against the test passing because the sweep never ran at all.
+    expect(run.remote.some((c) => c === "rm -f '/opt/N409/doomed.txt'")).toBe(true);
+    // The trap must fire on the success path too, not only on the error paths.
+    expect(readdirSync(tmp)).toEqual([]);
+  });
+
+  it('leaves nothing behind when the deploy aborts before the deletion sweep', () => {
+    // The abort path is the one where the cleanup is easiest to get wrong: the
+    // trap names DELETED_LIST, but section 3 has not created it yet, so the
+    // trap has to tolerate a name with no file behind it — and it has to do so
+    // without `rm` inheriting an empty argument or the whole cleanup being
+    // skipped. Failing the upload is the earliest realistic way in: after the
+    // archive exists, before the sweep. Both temp files must still go.
+    const tmp = path.join(work, 'tmp');
+    mkdirSync(tmp);
+    stub('scp', ['exit 3']);
+    const run = deploy(['--apply'], { TMPDIR: tmp });
+    // The abort must be a real one — a passing cleanup assertion means nothing
+    // if the script actually finished.
+    expect(run.status).not.toBe(0);
+    expect(run.remote.some((c) => c.includes('tar -xzf'))).toBe(false);
+    expect(readdirSync(tmp)).toEqual([]);
   });
 });
 
