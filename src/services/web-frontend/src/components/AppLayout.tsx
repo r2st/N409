@@ -2,6 +2,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { PageSkeleton } from './ui';
+import { ErrorBoundary } from './ErrorBoundary';
 import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -250,6 +251,7 @@ export function AppLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const close = () => setMenuOpen(false);
   const unread = useUnreadCount();
+  const location = useLocation();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   /*
@@ -450,10 +452,25 @@ export function AppLayout() {
            * furniture on screen and confines the wait to the region that is
            * actually changing. The outer boundary in App.tsx still covers the
            * public pages, which have no shell to preserve.
+           *
+           * The error boundary was left behind by that move, and had exactly
+           * the same problem one step worse: a render throw on any single page
+           * replaced the whole workspace with an error card — sidebar,
+           * navigation and the sign-out button included — leaving the user
+           * nothing to click but "Reload". Catching it here confines the
+           * failure to the page that failed, so the rest of the app is still
+           * there to navigate away with.
+           *
+           * The key is what makes navigating away actually work: a boundary
+           * that has caught stays caught, so without it the error card would
+           * survive the very navigation it is meant to leave room for. Keying
+           * on the path remounts it whenever the route changes.
            */}
-          <Suspense fallback={<PageSkeleton />}>
-            <Outlet />
-          </Suspense>
+          <ErrorBoundary key={location.pathname} label="this page">
+            <Suspense fallback={<PageSkeleton />}>
+              <Outlet />
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </main>
 

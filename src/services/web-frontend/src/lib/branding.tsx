@@ -59,6 +59,38 @@ export const PLATFORM_BRANDING: Branding = {
   white_label: false,
 };
 
+/**
+ * Is this actually a branding payload?
+ *
+ * `api()` rejects on a network failure or a non-2xx, and the caller below
+ * already swallows that — an unbranded tenant is the norm and a failed lookup
+ * must never block the app. What it could not survive was a *200 carrying the
+ * wrong body*: `setBranding(res.branding)` happily stored `undefined`, and the
+ * next render of `<Wordmark>` read `branding.name` off it and threw. That is
+ * not a blank logo, it is the whole authenticated shell replaced by "Something
+ * went wrong" — sidebar, navigation and the sign-out button included — with
+ * nothing in the console, because the same `.catch` that was meant to make
+ * branding optional also swallowed the TypeError raised one line later.
+ *
+ * A 200 with an unexpected body is not exotic in front of a reverse proxy: an
+ * error page served as 200, a half-finished deploy where the route is answered
+ * by another service, a tenant record that came back empty. The response is
+ * checked before it is allowed to become state, and only the fields that are
+ * actually dereferenced need to be present.
+ */
+function isBrandingResponse(value: unknown): value is BrandingResponse {
+  if (typeof value !== 'object' || value === null) return false;
+  const branding = (value as { branding?: unknown }).branding;
+  if (typeof branding !== 'object' || branding === null) return false;
+  const b = branding as Partial<Branding>;
+  return (
+    typeof b.name === 'string' &&
+    b.name.length > 0 &&
+    typeof b.white_label === 'boolean' &&
+    (b.favicon_url === null || typeof b.favicon_url === 'string')
+  );
+}
+
 interface BrandingContextValue {
   branding: Branding;
   refresh: () => Promise<void>;
@@ -133,14 +165,21 @@ export function BrandingProvider({
   const { status } = useAuth();
   const [branding, setBranding] = useState<Branding>(initial?.branding ?? PLATFORM_BRANDING);
 
-  const applyResponse = useCallback((res: BrandingResponse) => {
+  const applyResponse = useCallback((res: unknown) => {
+    if (!isBrandingResponse(res)) {
+      // Keep whatever brand is already showing — platform, or the one this
+      // session resolved at login. Replacing it with a malformed payload is
+      // how the shell used to crash; replacing it with PLATFORM_BRANDING would
+      // silently un-brand a firm's workspace over one bad response.
+      throw new Error('/branding returned an unexpected payload');
+    }
     setBranding(res.branding);
-    applyBrandingCss(res.branding, res.css);
+    applyBrandingCss(res.branding, res.css ?? null);
     applyFavicon(res.branding.favicon_url);
   }, []);
 
   const refresh = useCallback(async () => {
-    applyResponse(await api<BrandingResponse>('/branding'));
+    applyResponse(await api<unknown>('/branding'));
   }, [applyResponse]);
 
   useEffect(() => {
@@ -163,12 +202,14 @@ export function BrandingProvider({
     // Guarded rather than delegated to refresh(): a response landing after the
     // user signed out must not paint the firm's brand over a login screen.
     let cancelled = false;
-    api<BrandingResponse>('/branding')
+    api<unknown>('/branding')
       .then((res) => {
         if (!cancelled) applyResponse(res);
       })
       // An unbranded tenant is the norm and a failed lookup must never block
-      // the app — platform branding is already applied.
+      // the app — platform branding is already applied. A malformed 200 lands
+      // here too, via the throw in applyResponse, and is treated the same way:
+      // the brand on screen stays put and the app keeps running.
       .catch(() => {});
     return () => {
       cancelled = true;

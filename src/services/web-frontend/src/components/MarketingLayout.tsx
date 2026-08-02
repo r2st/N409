@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Outlet } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { ThemeToggleButton } from './ThemeToggle';
+import { ErrorBoundary } from './ErrorBoundary';
 import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { Wordmark } from './Logo';
 import { COMPARISONS, PRODUCTS } from '../lib/marketing';
@@ -291,12 +292,19 @@ export function MarketingFooter() {
 }
 
 export function MarketingLayout() {
+  const location = useLocation();
   return (
     <div className="flex min-h-screen flex-col bg-paper-50">
       <SkipLink />
       <MarketingHeader />
       <main {...mainContentTargetProps} className={`flex-1 ${mainContentTargetProps.className}`}>
-        <Outlet />
+        {/* Per-route, for the reason spelled out in AppLayout: a throw on one
+            page should cost that page, not the header and footer around it.
+            The key remounts the boundary on navigation so a caught error does
+            not outlive the route that caused it. */}
+        <ErrorBoundary key={location.pathname} label="this page">
+          <Outlet />
+        </ErrorBoundary>
       </main>
       <MarketingFooter />
     </div>
