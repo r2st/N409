@@ -5,10 +5,12 @@ import { EXTRACTABLE_EXTENSIONS, runAiPipeline } from '../routes/ai.js';
 import { buildCalculationInputs, runCalculation } from '../routes/calculations.js';
 import { findParams } from '../repos/params.js';
 import {
+  ACTIVE_RUN_STATUSES,
   activePipelineRun,
   createPipelineRun,
   setPipelineRunStatus,
   type PipelineRunRow,
+  type PipelineRunStatus,
 } from '../repos/pipelineRuns.js';
 import type { ValuationRow } from '../repos/valuations.js';
 import type { DocumentRow } from '../repos/documents.js';
@@ -85,7 +87,11 @@ export async function maybeStartAutoPipeline(
 /**
  * Creates the run row and kicks off the orchestration WITHOUT awaiting it —
  * the caller (an upload or manual-trigger request) must not block on two
- * upstream service calls. Callers are responsible for the no-overlap check.
+ * upstream service calls.
+ *
+ * Returns null when the valuation already has an active run. The caller's
+ * `activePipelineRun` pre-check catches that in the ordinary case; this returns
+ * null for the triggers that raced past it, which the database rejects.
  */
 export async function startPipelineRun(
   deps: AutoPipelineDeps,
@@ -95,7 +101,7 @@ export async function startPipelineRun(
     trigger: 'upload' | 'manual';
     triggeredBy: string;
   },
-): Promise<PipelineRunRow> {
+): Promise<PipelineRunRow | null> {
   const run = await createPipelineRun(
     deps.pool,
     {
@@ -106,6 +112,7 @@ export async function startPipelineRun(
     },
     actorFor(args.triggeredBy),
   );
+  if (!run) return null;
   // Fire-and-forget, but gated by the concurrency limiter: the run row returns
   // immediately (status 'queued'); execution waits for a free slot so a burst
   // of uploads can't spawn unbounded concurrent orchestrations.
@@ -119,6 +126,32 @@ export async function startPipelineRun(
   return run;
 }
 
+/**
+ * A run only keeps going while its row is still active. It can be settled out
+ * from under the worker — reaped as stale, or cascade-deleted with its
+ * valuation — while the worker waits for a concurrency slot or sits on an
+ * upstream call. Carrying on then spends two upstream calls on an orchestration
+ * nobody is watching and ends by writing 'ready' over a closed audit trail.
+ */
+async function advance(
+  deps: AutoPipelineDeps,
+  run: PipelineRunRow,
+  status: PipelineRunStatus,
+): Promise<PipelineRunRow | null> {
+  const next = await setPipelineRunStatus(deps.pool, run, status);
+  if (next !== null && ACTIVE_RUN_STATUSES.has(next.status)) return next;
+  deps.log.info(
+    {
+      runId: run.id,
+      valuationId: run.valuation_id,
+      attempted: status,
+      status: next?.status ?? 'deleted',
+    },
+    'auto-pipeline run settled out from under its worker; abandoning',
+  );
+  return null;
+}
+
 async function executeRun(
   deps: AutoPipelineDeps,
   run: PipelineRunRow,
@@ -127,13 +160,17 @@ async function executeRun(
 ): Promise<void> {
   const actor = actorFor(triggeredBy);
   try {
-    run = await setPipelineRunStatus(deps.pool, run, 'extracting');
+    const extracting = await advance(deps, run, 'extracting');
+    if (!extracting) return;
+    run = extracting;
     await runAiPipeline(
       { pool: deps.pool, aiUrl: deps.aiUrl, documentsDir: deps.documentsDir },
       { valuation, pipeline: 'extract', anonymize: false, autoApply: true, createdBy: triggeredBy, actor },
     );
 
-    run = await setPipelineRunStatus(deps.pool, run, 'calculating');
+    const calculating = await advance(deps, run, 'calculating');
+    if (!calculating) return;
+    run = calculating;
     const paramsRow = await findParams(deps.pool, valuation.id);
     if (!paramsRow) throw new Error('Valuation has no params row');
     const inputs = await buildCalculationInputs(deps.pool, valuation.id, paramsRow, {});

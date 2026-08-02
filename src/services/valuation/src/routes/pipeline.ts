@@ -68,6 +68,9 @@ export function registerPipelineRoutes(
       trigger: 'manual',
       triggeredBy: principal.id,
     });
+    // Null means another trigger won the race between the check above and the
+    // insert — same answer as the check itself, just decided by the database.
+    if (!run) throw problems.conflict('A pipeline run is already in progress for this valuation');
     return reply.status(201).send({ run });
   });
 

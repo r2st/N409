@@ -30,6 +30,26 @@ export interface PipelineRunRow {
   updated_at: Date;
 }
 
+/**
+ * Partial unique index from migration 0094 — at most one run per valuation in
+ * an active status. It is what makes "no overlapping orchestration" true across
+ * processes; the `activePipelineRun` pre-check is only the friendly path.
+ */
+export const ACTIVE_RUN_UNIQUE_INDEX = 'pipeline_runs_one_active_per_valuation_idx';
+
+function isActiveRunConflict(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as { code?: unknown; constraint?: unknown };
+  return e.code === '23505' && e.constraint === ACTIVE_RUN_UNIQUE_INDEX;
+}
+
+/**
+ * Starts a run, or returns null when the valuation already has an active one.
+ *
+ * The INSERT and its 'auto_pipeline_started' event share a transaction, so a
+ * trigger that loses the race leaves nothing behind — no orphan row, and no
+ * start event for an orchestration that never ran.
+ */
 export async function createPipelineRun(
   pool: pg.Pool,
   args: {
@@ -39,36 +59,63 @@ export async function createPipelineRun(
     triggeredBy: string;
   },
   actor: EventActor,
-): Promise<PipelineRunRow> {
-  return withTransaction(pool, async (client) => {
-    const { rows } = await client.query<PipelineRunRow>(
-      `INSERT INTO pipeline_runs (id, valuation_id, document_id, trigger, triggered_by)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [newUlid(), args.valuationId, args.documentId ?? null, args.trigger, args.triggeredBy],
-    );
-    await recordEvent(client, {
-      valuationId: args.valuationId,
-      type: 'auto_pipeline_started',
-      actor,
-      payload: { run_id: rows[0]!.id, trigger: args.trigger, document_id: args.documentId ?? null },
+): Promise<PipelineRunRow | null> {
+  try {
+    return await withTransaction(pool, async (client) => {
+      const { rows } = await client.query<PipelineRunRow>(
+        `INSERT INTO pipeline_runs (id, valuation_id, document_id, trigger, triggered_by)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [newUlid(), args.valuationId, args.documentId ?? null, args.trigger, args.triggeredBy],
+      );
+      await recordEvent(client, {
+        valuationId: args.valuationId,
+        type: 'auto_pipeline_started',
+        actor,
+        payload: { run_id: rows[0]!.id, trigger: args.trigger, document_id: args.documentId ?? null },
+      });
+      return rows[0]!;
     });
-    return rows[0]!;
-  });
+  } catch (err) {
+    if (isActiveRunConflict(err)) return null;
+    throw err;
+  }
 }
 
+/**
+ * Advances a run, and returns the row as it now stands — or null once the row
+ * is gone (its valuation was deleted mid-run).
+ *
+ * 'ready' and 'failed' are final. A run can be reaped while its worker is still
+ * wedged on an upstream call, and that worker eventually returns and carries on
+ * with its stale row; without the guard it walked the run back to 'calculating'
+ * and then wrote a second terminal event over the reaper's. Worse, since
+ * migration 0094 an active status is exclusive, so resurrecting a settled run
+ * would collide with whatever run has started since. The caller sees the
+ * unchanged terminal row back and can stop.
+ */
 export async function setPipelineRunStatus(
   pool: pg.Pool,
   run: PipelineRunRow,
   status: PipelineRunStatus,
   opts: { error?: string; actor?: EventActor } = {},
-): Promise<PipelineRunRow> {
+): Promise<PipelineRunRow | null> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<PipelineRunRow>(
       `UPDATE pipeline_runs SET status = $1, error = $2, updated_at = now()
-       WHERE id = $3 RETURNING *`,
+       WHERE id = $3 AND status NOT IN ('ready', 'failed')
+       RETURNING *`,
       [status, opts.error ?? null, run.id],
     );
+    const updated = rows[0];
+    if (!updated) {
+      // Already settled (or deleted) — report the current row, change nothing.
+      const { rows: current } = await client.query<PipelineRunRow>(
+        'SELECT * FROM pipeline_runs WHERE id = $1',
+        [run.id],
+      );
+      return current[0] ?? null;
+    }
     // Terminal states land on the audit spine; intermediate hops are just UI.
     if ((status === 'ready' || status === 'failed') && opts.actor) {
       await recordEvent(client, {
@@ -78,7 +125,7 @@ export async function setPipelineRunStatus(
         payload: { run_id: run.id, ...(opts.error ? { error: opts.error } : {}) },
       });
     }
-    return rows[0]!;
+    return updated;
   });
 }
 
