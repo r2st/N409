@@ -16,6 +16,24 @@ describe('sanitizeHtml (client mirror)', () => {
   it('normalizes br', () => {
     expect(sanitizeHtml('a<br />b')).toBe('a<br>b');
   });
+
+  it('leaves an unterminated comment or raw-text element where it stands', () => {
+    expect(sanitizeHtml('a<!--b<p>c')).toBe('a<!--b<p>c');
+    expect(sanitizeHtml('<p>ok</p><script>alert(1)')).toBe('<p>ok</p>alert(1)');
+    expect(sanitizeHtml('<script>a<style>b</style>c')).toBe('ac');
+  });
+
+  it('sanitizes markers that are never closed in linear time', () => {
+    // ReportTab sanitizes each section on every render, so a stored section of
+    // `<!--` froze the tab of everyone who opened the report — not just the
+    // author who saved it. Ceiling is loose so a slow CI box does not flake it.
+    for (const marker of ['<!--', '<script>', '<style>']) {
+      const body = marker.repeat(Math.ceil(100_000 / marker.length));
+      const started = performance.now();
+      sanitizeHtml(body);
+      expect(performance.now() - started).toBeLessThan(3_000);
+    }
+  });
 });
 
 describe('formatWorkbookValue', () => {

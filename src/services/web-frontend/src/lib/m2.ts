@@ -144,13 +144,73 @@ const ALLOWED_TAGS = new Set([
 ]);
 
 /**
+ * Cutting a `open … close` span with one lazy regex — `<!--[\s\S]*?-->` — is
+ * quadratic on input that opens spans it never closes: every `<!--` is a
+ * candidate start, and with no `-->` to be found each one rescans to the end
+ * of the input before failing.
+ *
+ * The server-side twin of this sanitizer is where such a body gets stored (see
+ * the note in valuation's domain/report.ts). This copy is where the cost is
+ * paid again, and paid repeatedly: ReportTab sanitizes each section every time
+ * it renders it, so one saved section of `<!--` freezes the tab of everyone
+ * who opens the report, not just the author who saved it.
+ *
+ * The two below scan forward instead. A closing marker only ever moves later
+ * in the input, so a search that comes back empty has settled the question for
+ * every opening marker after it too — that is what makes a missing close cost
+ * one pass rather than one per candidate.
+ */
+
+/** Remove `<!-- … -->` spans, leaving an unterminated comment where it stands. */
+function stripComments(html: string): string {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const start = html.indexOf('<!--', at);
+    if (start === -1) break;
+    const end = html.indexOf('-->', start + 4);
+    if (end === -1) break; // no `-->` remains for this `<!--` or for any after it
+    out += html.slice(at, start);
+    at = end + 3;
+  }
+  return out + html.slice(at);
+}
+
+const RAW_TEXT_OPEN = /<(script|style)\b[^>]*>/gi;
+const RAW_TEXT_CLOSE = { script: /<\/script\s*>/gi, style: /<\/style\s*>/gi };
+
+/** Remove `<script>…</script>` and `<style>…</style>` bodies, open tag included. */
+function stripRawText(html: string): string {
+  // Tracked per name, because failing to find `</script>` says nothing about
+  // whether a `</style>` is still to come.
+  const unclosed = new Set<string>();
+  let out = '';
+  let at = 0;
+  RAW_TEXT_OPEN.lastIndex = 0;
+  let open: RegExpExecArray | null;
+  while ((open = RAW_TEXT_OPEN.exec(html)) !== null) {
+    const name = open[1]!.toLowerCase() as keyof typeof RAW_TEXT_CLOSE;
+    if (unclosed.has(name)) continue;
+    const closeRe = RAW_TEXT_CLOSE[name];
+    closeRe.lastIndex = open.index + open[0].length;
+    const close = closeRe.exec(html);
+    if (close === null) {
+      unclosed.add(name);
+      continue;
+    }
+    out += html.slice(at, open.index);
+    at = close.index + close[0].length;
+    RAW_TEXT_OPEN.lastIndex = at;
+  }
+  return out + html.slice(at);
+}
+
+/**
  * Whitelist tags, drop every attribute — except <a>, which keeps a validated
  * http(s)/mailto href (gap 9). Safe for dangerouslySetInnerHTML.
  */
 export function sanitizeHtml(html: string): string {
-  return html
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
+  return stripComments(stripRawText(html))
     .replace(
       /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g,
       (_m, close: string, name: string, attrs: string) => {
