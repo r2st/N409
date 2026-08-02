@@ -69,6 +69,19 @@ export async function findTemplateById(pool: pg.Pool, id: string): Promise<Repor
 }
 
 /**
+ * Advisory-lock namespace for "everything that writes the version history of
+ * one template name". Paired with `hashtext(name)` as the second key, so the
+ * lock is per-name; an incidental hash collision between two names only costs
+ * a little serialization, never correctness.
+ */
+const TEMPLATE_NAME_LOCK = 0x74706c6;
+
+/** Serializes the read-then-write on one template name for this transaction. */
+async function lockTemplateName(client: pg.PoolClient, name: string): Promise<void> {
+  await client.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [TEMPLATE_NAME_LOCK, name]);
+}
+
+/**
  * Creates the next version of `name` (v1 when the name is new). New versions
  * always start as drafts; activation is an explicit step.
  */
@@ -77,9 +90,23 @@ export async function createTemplateVersion(
   input: { name: string; kind: ValuationKind; body?: string; notes?: string; createdBy: string },
 ): Promise<ReportTemplateRow> {
   return withTransaction(pool, async (client) => {
-    // Serialize per-name so two concurrent creates can't claim the same version.
+    // The `FOR UPDATE` this replaces did not serialize anything.
+    //
+    // For a brand-new name there is no row to lock, and Postgres has no gap
+    // lock to stand in for one — so concurrent creates all read "no versions"
+    // and all pick v1. For a name that does exist it locked only the row the
+    // `LIMIT 1` returned: a waiter that blocks on that row re-checks *that
+    // row* when the lock clears, not the query, so it never sees the higher
+    // version the other transaction just inserted and picks the same next
+    // number.
+    //
+    // Either way `UNIQUE (name, version)` rejects everyone but the winner, and
+    // the route has no handler for it, so the losers surface as 500s — what an
+    // ops admin gets from a double-clicked "New template". A transaction-scoped
+    // advisory lock on the name serializes the read and the insert together.
+    await lockTemplateName(client, input.name);
     const { rows: last } = await client.query<{ version: number }>(
-      'SELECT version FROM report_templates WHERE name = $1 ORDER BY version DESC LIMIT 1 FOR UPDATE',
+      'SELECT version FROM report_templates WHERE name = $1 ORDER BY version DESC LIMIT 1',
       [input.name],
     );
     const version = (last[0]?.version ?? 0) + 1;
