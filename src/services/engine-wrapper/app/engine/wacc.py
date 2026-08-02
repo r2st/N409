@@ -132,7 +132,11 @@ def risk_free_rate(
     """
     if maturity_years <= 0:
         raise EngineInputError("maturity_years must be positive")
-    points = sorted((curve or DEFAULT_TREASURY_CURVE).items())
+    # `curve or DEFAULT` would treat an explicitly empty curve as "not given"
+    # and quietly answer from the placeholder curve instead — a discount rate
+    # built on figures the caller did not supply, and it made the guard below
+    # unreachable. Only an absent curve falls back.
+    points = sorted((DEFAULT_TREASURY_CURVE if curve is None else curve).items())
     if not points:
         raise EngineInputError("treasury curve is empty")
     if maturity_years <= points[0][0]:
