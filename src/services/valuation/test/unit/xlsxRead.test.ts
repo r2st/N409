@@ -8,6 +8,7 @@ import {
   gridToRows,
   looksLikeXlsx,
   MAX_COLUMN,
+  MAX_ROW,
   readXlsx,
   XlsxReadError,
 } from '../../src/domain/xlsxRead.js';
@@ -354,6 +355,26 @@ describe('xlsxRead', () => {
           buildWorkbook({
             sheets: Array.from({ length: 4 }, (_, i) => ({ name: `S${i}`, ...sheet })),
           }),
+        ),
+      ).toThrow(/more than [\d,]+ cells/i);
+    });
+
+    it('refuses more rows than a worksheet has', () => {
+      // A row costs an array whether or not it holds a cell, so `<row/>` — six
+      // bytes, padding no columns — was free against a budget that counted only
+      // cells. 17 MB of them, 26 KB on the wire, took 132 MB of heap.
+      const rows = '<row/>'.repeat(MAX_ROW + 2);
+      expect(() => readSheet(rows)).toThrow(XlsxReadError);
+      expect(() => readSheet(rows)).toThrow(/more than [\d,]+ rows/i);
+    });
+
+    it('spends the budget on rows too, so sheets of them cannot add up', () => {
+      // Each sheet here is inside the per-worksheet row bound; together they are
+      // not, and the grids are held in memory together.
+      const sheet = { data: sheetWith('<row/>'.repeat(1_000_000)) };
+      expect(() =>
+        readXlsx(
+          buildWorkbook({ sheets: Array.from({ length: 3 }, (_, i) => ({ name: `S${i}`, ...sheet })) }),
         ),
       ).toThrow(/more than [\d,]+ cells/i);
     });

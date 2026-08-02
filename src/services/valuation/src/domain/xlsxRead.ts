@@ -32,12 +32,16 @@ const MS_PER_DAY = 86_400_000;
 /** Index of XFD, the last column a worksheet has (ECMA-376 §18.3; 16,384 columns). */
 export const MAX_COLUMN = 16_383;
 
+/** Index of the last row a worksheet has (ECMA-376 §18.3; 1,048,576 rows). */
+export const MAX_ROW = 1_048_575;
+
 /**
- * Total cells the grids for one workbook may occupy, counting the blanks a
- * sparse ref pads through. Generous next to anything the cap-table route will
- * accept — it truncates at 2,000 rows, and real exports run to tens of columns,
- * so this is two orders of magnitude above a large legitimate import — while
- * still bounding the array slots a single upload can allocate.
+ * Total slots the grids for one workbook may occupy — the blanks a sparse ref
+ * pads through, and one apiece for the rows that hold them, since a row is an
+ * allocation before it has a cell. Generous next to anything the cap-table
+ * route will accept — it truncates at 2,000 rows, and real exports run to tens
+ * of columns, so this is two orders of magnitude above a large legitimate
+ * import — while still bounding the array slots a single upload can allocate.
  */
 export const MAX_GRID_CELLS = 2_000_000;
 
@@ -288,17 +292,21 @@ function cellText(tag: string, inner: string, shared: string[], dateStyles: bool
   return value;
 }
 
+const overGridBudget = () =>
+  new XlsxReadError(`Worksheet needs more than ${MAX_GRID_CELLS.toLocaleString('en-US')} cells to lay out`);
+
 /**
  * Rows of raw cell strings, positioned by column reference.
  *
  * A `<c>` with an explicit ref jumps past the empty columns before it, and the
  * grid is padded to reach it — so the cost of a cell is set by the *reference*,
- * not by the bytes that carry it. Both bounds below exist because of that gap;
- * neither is redundant, and the ZIP reader's decompression budget catches
- * neither, because both attacks fit comfortably inside it.
+ * not by the bytes that carry it. The bounds below exist because of that gap;
+ * none is redundant, and the ZIP reader's decompression budget catches none of
+ * them, because every one of these attacks fits comfortably inside it.
  *
  * `budget` is spent across the whole workbook rather than per sheet, since the
- * sheets are parsed into memory together.
+ * sheets are parsed into memory together. Rows spend from it too: a row is an
+ * array whether or not it holds a cell.
  */
 function parseSheetGrid(
   xml: string,
@@ -310,6 +318,20 @@ function parseSheetGrid(
   const grid: string[][] = [];
 
   for (const { inner: rowXml } of elements(sheetData, 'row')) {
+    // A row is an allocation before any cell is, and `<row/>` is six bytes that
+    // pads no columns — so a budget counting only cells counts it free, and 17 MB
+    // of them (26 KB on the wire) took 132 MB of heap having spent nothing. The
+    // bounds mirror the two on columns for the same reasons: past the last row a
+    // worksheet has is not a workbook, and the budget is what holds when every
+    // row is individually legal.
+    if (grid.length > MAX_ROW) {
+      throw new XlsxReadError(
+        `Worksheet has more than ${(MAX_ROW + 1).toLocaleString('en-US')} rows, the most a worksheet has`,
+      );
+    }
+    if (budget.remaining < 1) throw overGridBudget();
+    budget.remaining -= 1;
+
     const cells: string[] = [];
     let nextColumn = 0;
     for (const { tag, inner } of elements(rowXml, 'c')) {
@@ -331,11 +353,7 @@ function parseSheetGrid(
       // row 16,384 slots for ~26 bytes of XML, so a merely large sheet of them multiplies
       // to the same place. What bounds the grid is its total width across every row.
       const growth = Math.max(0, column + 1 - cells.length);
-      if (growth > budget.remaining) {
-        throw new XlsxReadError(
-          `Worksheet needs more than ${MAX_GRID_CELLS.toLocaleString('en-US')} cells to lay out`,
-        );
-      }
+      if (growth > budget.remaining) throw overGridBudget();
       budget.remaining -= growth;
 
       while (cells.length < column) cells.push('');
