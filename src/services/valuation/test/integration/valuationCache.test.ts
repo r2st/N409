@@ -23,16 +23,16 @@ describe.skipIf(!dbUp)('valuation read cache', () => {
   function countPointLookups(): { calls: () => number; restore: () => void } {
     const original = ctx.pool.query.bind(ctx.pool);
     let calls = 0;
-     
+
     (ctx.pool as any).query = (...args: unknown[]) => {
       const sql = typeof args[0] === 'string' ? args[0] : '';
       if (sql.includes('FROM valuations WHERE id = $1')) calls += 1;
-       
+
       return (original as any)(...args);
     };
     return {
       calls: () => calls,
-       
+
       restore: () => void ((ctx.pool as any).query = original),
     };
   }
