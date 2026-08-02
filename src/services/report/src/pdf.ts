@@ -414,6 +414,21 @@ const INK = {
   band: '#f6f5f2',
 } as const;
 
+// ── body copy metrics ─────────────────────────────────────────────────────────
+
+const BODY_FONT_SIZE = 10.5;
+const BODY_LINE_GAP = 2;
+
+/**
+ * Lines of a broken paragraph that must stay together on each side of the break.
+ *
+ * Two is the printer's convention, and the reason is legibility rather than
+ * taste: one line stranded at the foot of a page (an orphan) or carried alone
+ * to the top of the next (a widow) reads as a stray fragment, and in a report
+ * whose paragraphs are mostly three or four lines long it happens constantly.
+ */
+export const MIN_LINES_KEPT = 2;
+
 // ── tables ────────────────────────────────────────────────────────────────────
 
 export type CellAlign = 'left' | 'right';
@@ -1319,9 +1334,8 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
       .stroke();
     doc.x = doc.page.margins.left;
     doc.moveDown(0.8);
-    for (const block of htmlToBlocks(section.html)) {
-      renderBlock(doc, block, usable);
-    }
+    const blocks = htmlToBlocks(section.html);
+    blocks.forEach((block, i) => renderBlock(doc, block, usable, blocks[i + 1]));
     for (const chart of section.charts ?? []) {
       renderChart(doc, chart, usable, brandColor);
     }
@@ -1420,6 +1434,50 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
 
 function ensureRoom(doc: PDFKit.PDFDocument, needed: number): void {
   if (doc.y + needed > doc.page.height - doc.page.margins.bottom) doc.addPage();
+}
+
+/** Vertical space between the cursor and the bottom margin. */
+function roomLeft(doc: PDFKit.PDFDocument): number {
+  return doc.page.height - doc.page.margins.bottom - doc.y;
+}
+
+/**
+ * How many lines a set of runs occupies at `width`, and the height of one.
+ *
+ * Measured in bold if any run is bold. A mixed-weight line is wider than the
+ * same words set regular, and over-estimating only ever breaks a shade early —
+ * whereas under-estimating lets through the very widow this exists to stop.
+ */
+function bodyLines(
+  doc: PDFKit.PDFDocument,
+  runs: readonly Run[],
+  width: number,
+): { lines: number; lineHeight: number } {
+  const bold = runs.some((run) => run.bold);
+  doc.font(bold ? FONTS.bold : FONTS.regular).fontSize(BODY_FONT_SIZE);
+  const lineHeight = doc.currentLineHeight(true) + BODY_LINE_GAP;
+  const text = runs.map((run) => run.text).join('');
+  if (text.trim() === '') return { lines: 1, lineHeight };
+  const height = doc.heightOfString(text, { width, lineGap: BODY_LINE_GAP });
+  return { lines: Math.max(1, Math.round(height / lineHeight)), lineHeight };
+}
+
+/**
+ * Start a new page if setting `lines` here would break them badly.
+ *
+ * A break is only allowed to fall where at least `MIN_LINES_KEPT` lines stay
+ * on this page *and* at least that many carry to the next. Anything else — a
+ * lone opening line at the foot, a lone closing line at the head — moves the
+ * whole block to the next page instead. A block taller than a full page is
+ * left alone: it has to break somewhere, and refusing would loop.
+ */
+function keepLinesTogether(doc: PDFKit.PDFDocument, lines: number, lineHeight: number): void {
+  const fits = Math.floor(roomLeft(doc) / lineHeight);
+  if (lines <= fits) return;
+  if (fits >= MIN_LINES_KEPT && lines - fits >= MIN_LINES_KEPT) return;
+  const perPage = Math.floor((doc.page.height - doc.page.margins.top - doc.page.margins.bottom) / lineHeight);
+  if (lines > perPage) return;
+  doc.addPage();
 }
 
 /** Zero-based index of the page currently being written. */
@@ -1603,51 +1661,95 @@ function renderRuns(doc: PDFKit.PDFDocument, runs: Run[], opts: { indent?: numbe
     const last = idx === runs.length - 1;
     doc
       .font(fontFor(run))
-      .fontSize(10.5)
-      .fillColor('#222222')
+      .fontSize(BODY_FONT_SIZE)
+      .fillColor(INK.body)
       .text(run.text, x, doc.y, {
         width: opts.width - (opts.indent ?? 0),
         continued: !last,
         underline: run.underline,
         align: 'left',
-        lineGap: 2,
+        lineGap: BODY_LINE_GAP,
       });
   });
 }
 
-function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number): void {
+/**
+ * How much of `block` has to fit on a page for setting a heading above it to be
+ * worth anything: two lines of a paragraph or list item, a table's header plus
+ * its first row, and for a heading just its own height.
+ */
+function openingHeight(doc: PDFKit.PDFDocument, block: Block | undefined, usable: number): number {
+  if (!block) return 0;
+  switch (block.type) {
+    case 'table':
+      return tableLeadHeight(doc, block, usable);
+    case 'heading': {
+      const size = block.level === 1 ? 14 : block.level === 2 ? 12.5 : 11.5;
+      doc.font(FONTS.bold).fontSize(size);
+      return doc.heightOfString(block.runs.map((r) => r.text).join(''), { width: usable });
+    }
+    case 'list': {
+      const { lineHeight } = bodyLines(doc, block.items[0] ?? [], usable - 10);
+      return lineHeight * MIN_LINES_KEPT;
+    }
+    case 'paragraph': {
+      const { lineHeight } = bodyLines(doc, block.runs, usable - (block.quote ? 18 : 0));
+      return lineHeight * MIN_LINES_KEPT;
+    }
+  }
+}
+
+function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number, next?: Block): void {
   switch (block.type) {
     case 'heading': {
-      ensureRoom(doc, 60);
       const size = block.level === 1 ? 14 : block.level === 2 ? 12.5 : 11.5;
+      const text = block.runs.map((r) => r.text).join('');
       doc.moveDown(0.6);
-      doc.font(FONTS.bold).fontSize(size).fillColor('#111111');
-      doc.text(block.runs.map((r) => r.text).join(''), doc.page.margins.left, doc.y, { width: usable });
+      doc.font(FONTS.bold).fontSize(size);
+      const headingHeight = doc.heightOfString(text, { width: usable });
+      // Keep-with-next. A heading alone at the foot of a page announces
+      // something the reader then has to turn the page to reach, and the
+      // previous fixed 60pt reserve was a hair short of the heading plus a
+      // line or two of what follows — so it happened. The reserve is measured
+      // against the block that actually follows, because "enough for two lines
+      // of prose" is not enough for a table's header row.
+      ensureRoom(doc, headingHeight + openingHeight(doc, next, usable));
+      doc.font(FONTS.bold).fontSize(size).fillColor(INK.strong);
+      doc.text(text, doc.page.margins.left, doc.y, { width: usable });
       doc.moveDown(0.3);
       break;
     }
     case 'paragraph': {
-      ensureRoom(doc, 40);
-      renderRuns(doc, block.runs, { indent: block.quote ? 18 : 0, width: usable });
+      const indent = block.quote ? 18 : 0;
+      const { lines, lineHeight } = bodyLines(doc, block.runs, usable - indent);
+      keepLinesTogether(doc, lines, lineHeight);
+      renderRuns(doc, block.runs, { indent, width: usable });
       doc.moveDown(0.7);
       break;
     }
     case 'list': {
       block.items.forEach((item, idx) => {
-        ensureRoom(doc, 24);
         const marker = block.ordered ? `${idx + 1}. ` : '•  ';
+        // The marker is drawn inline with the item, so a break inside the item
+        // would leave the bullet behind on the previous page.
+        doc.font(FONTS.regular).fontSize(BODY_FONT_SIZE);
+        const markerWidth = doc.widthOfString(marker);
+        const { lines, lineHeight } = bodyLines(doc, item, usable - 10 - markerWidth);
+        keepLinesTogether(doc, lines, lineHeight);
         doc
           .font(FONTS.regular)
-          .fontSize(10.5)
-          .fillColor('#222222')
+          .fontSize(BODY_FONT_SIZE)
+          .fillColor(INK.body)
           .text(marker, doc.page.margins.left + 10, doc.y, {
             continued: true,
             width: usable - 10,
-            lineGap: 2,
+            lineGap: BODY_LINE_GAP,
           });
         item.forEach((run, runIdx) => {
           const last = runIdx === item.length - 1;
-          doc.font(fontFor(run)).text(run.text, { continued: !last, underline: run.underline, lineGap: 2 });
+          doc
+            .font(fontFor(run))
+            .text(run.text, { continued: !last, underline: run.underline, lineGap: BODY_LINE_GAP });
         });
         if (item.length === 0) doc.text('', { continued: false });
         doc.moveDown(0.2);
@@ -1671,12 +1773,26 @@ function renderBlock(doc: PDFKit.PDFDocument, block: Block, usable: number): voi
  * reader turning the page found six unlabelled columns of numbers. The header
  * rows are therefore re-drawn at the top of each continuation.
  */
-function renderTable(
+interface TableGeometry {
+  widths: number[];
+  aligns: CellAlign[];
+  offsets: number[];
+  heightOf: (row: string[], bold: boolean) => number;
+}
+
+/**
+ * Column widths, alignments and row heights for a table.
+ *
+ * Shared with the keep-with-next check, which has to know how tall a table's
+ * opening is before deciding whether a heading can be set above it — measuring
+ * it a second way there would let the two disagree at exactly the boundary
+ * where it matters.
+ */
+function tableGeometry(
   doc: PDFKit.PDFDocument,
   block: Extract<Block, { type: 'table' }>,
   usable: number,
-): void {
-  const left = doc.page.margins.left;
+): TableGeometry {
   const measure = (text: string, bold: boolean) =>
     doc
       .font(bold ? FONTS.bold : FONTS.regular)
@@ -1691,9 +1807,6 @@ function renderTable(
     return x + width;
   }, 0);
 
-  const headerRows = block.rows.slice(0, block.headerRows);
-  const bodyRows = block.rows.slice(block.headerRows);
-
   const heightOf = (row: string[], bold: boolean): number => {
     const heights = row.map((cell, c) =>
       doc
@@ -1703,6 +1816,39 @@ function renderTable(
     );
     return Math.max(14, ...heights, 0) + TABLE_PADDING * 2;
   };
+
+  return { widths, aligns, offsets, heightOf };
+}
+
+/**
+ * The header rows plus the first body row: the smallest fragment of a table
+ * worth leaving on a page, and so also the room a heading above one needs.
+ */
+function tableLeadHeight(
+  doc: PDFKit.PDFDocument,
+  block: Extract<Block, { type: 'table' }>,
+  usable: number,
+): number {
+  const { heightOf } = tableGeometry(doc, block, usable);
+  const headerRows = block.rows.slice(0, block.headerRows);
+  const firstBody = block.rows[block.headerRows];
+  return (
+    headerRows.reduce((sum, row) => sum + heightOf(row, true), 0) +
+    (firstBody ? heightOf(firstBody, false) : 0) +
+    6
+  );
+}
+
+function renderTable(
+  doc: PDFKit.PDFDocument,
+  block: Extract<Block, { type: 'table' }>,
+  usable: number,
+): void {
+  const left = doc.page.margins.left;
+  const { widths, aligns, offsets, heightOf } = tableGeometry(doc, block, usable);
+
+  const headerRows = block.rows.slice(0, block.headerRows);
+  const bodyRows = block.rows.slice(block.headerRows);
 
   const drawRow = (row: string[], bold: boolean, fill: string | null): number => {
     const height = heightOf(row, bold);
@@ -1754,8 +1900,7 @@ function renderTable(
 
   // The header plus one body row is the smallest fragment worth leaving on a
   // page; anything less is a stub the reader has to turn back from.
-  const headerHeight = headerRows.reduce((sum, row) => sum + heightOf(row, true), 0);
-  ensureRoom(doc, headerHeight + (bodyRows[0] ? heightOf(bodyRows[0], false) : 0) + 6);
+  ensureRoom(doc, tableLeadHeight(doc, block, usable));
 
   drawHeader(false);
   if (headerRows.length === 0) rule(0.8, INK.muted);
