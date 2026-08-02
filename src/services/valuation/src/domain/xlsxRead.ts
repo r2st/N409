@@ -110,12 +110,81 @@ export function excelSerialToIso(serial: number): string {
   return Number.isInteger(serial) ? iso.slice(0, 10) : iso.slice(0, 19).replace('T', ' ');
 }
 
-/** Iterate raw `<tag ...>inner</tag>` and `<tag ... />` occurrences. */
+/**
+ * A word character, so `\b` does not hold after the tag name — the test that
+ * keeps `<c>` from matching the `<col>` that precedes every `sheetData`.
+ */
+function continuesName(code: number): boolean {
+  return (
+    (code >= 0x30 && code <= 0x39) || // 0-9
+    (code >= 0x41 && code <= 0x5a) || // A-Z
+    (code >= 0x61 && code <= 0x7a) || // a-z
+    code === 0x5f // _
+  );
+}
+
+/**
+ * Iterate raw `<tag ...>inner</tag>` and `<tag ... />` occurrences.
+ *
+ * Scanned by hand rather than by regex. The pattern this replaces —
+ * `<tag\b([^>]*?)(/>|>([\s\S]*?)</tag>)` — is quadratic on a part that opens
+ * elements it never closes: every `<tag` is a candidate, and each one rescans
+ * to the end of the part before failing, so the work is the square of the
+ * input. Measured, 100,000 unclosed `<row r="1">` held the event loop for 19
+ * seconds, and they cost 2 KB on the wire — a workbook sitting well inside the
+ * decompression budget of `readZip` parks the process for days.
+ *
+ * That is worse than the allocation bounds above it rather than more of the
+ * same. The scan is synchronous, so no request timeout interrupts it, nothing
+ * throws, and the stall is not confined to the request that bought it: one
+ * upload takes every other request on the process down with it.
+ *
+ * Scanning forward makes those failures terminal instead of repeated. `>` and
+ * `</tag>` only ever move later in the part, so a search that comes back empty
+ * has settled the question for every `<tag` after it too, and is not run again.
+ * Each step consumes what it reads, which is what makes the pass linear.
+ *
+ * Note that a missing `</tag>` rules out only the paired form: a self-closing
+ * element still matches on `>` alone, so the scan continues looking for those.
+ * The regex arrived at that by backtracking to a later start; here it is the
+ * `closable` flag, and a differential run over both settled the parity.
+ */
 function* elements(xml: string, tag: string): Generator<{ tag: string; inner: string }> {
-  const re = new RegExp(`<${tag}\\b([^>]*?)(/>|>([\\s\\S]*?)</${tag}>)`, 'g');
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml)) !== null) {
-    yield { tag: m[1] ?? '', inner: m[2] === '/>' ? '' : (m[3] ?? '') };
+  const open = `<${tag}`;
+  const close = `</${tag}>`;
+  let at = 0;
+  let closable = true;
+
+  while ((at = xml.indexOf(open, at)) !== -1) {
+    const nameEnd = at + open.length;
+    if (continuesName(xml.charCodeAt(nameEnd))) {
+      at = nameEnd; // a longer name that merely starts the same way
+      continue;
+    }
+
+    // Attributes cannot hold a `>`, so the first one ends the tag either way.
+    const tagEnd = xml.indexOf('>', nameEnd);
+    if (tagEnd === -1) return; // left open at the end of the part, as is all that follows
+    if (xml.charCodeAt(tagEnd - 1) === 0x2f) {
+      yield { tag: xml.slice(nameEnd, tagEnd - 1), inner: '' }; // <tag ... />
+      at = tagEnd + 1;
+      continue;
+    }
+
+    // Every `<tag` between here and `tagEnd` shares this `>`, and shares that it
+    // is not the `/` of a self-closing form — so skipping them costs no match.
+    if (!closable) {
+      at = tagEnd + 1;
+      continue;
+    }
+    const closeAt = xml.indexOf(close, tagEnd + 1);
+    if (closeAt === -1) {
+      closable = false; // no `</tag>` remains for this one or for any after it
+      at = tagEnd + 1;
+      continue;
+    }
+    yield { tag: xml.slice(nameEnd, tagEnd), inner: xml.slice(tagEnd + 1, closeAt) };
+    at = closeAt + close.length;
   }
 }
 

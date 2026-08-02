@@ -358,6 +358,70 @@ describe('xlsxRead', () => {
       ).toThrow(/more than [\d,]+ cells/i);
     });
 
+    /**
+     * The element scan used to be a regex — `<tag\b([^>]*?)(/>|>([\s\S]*?)</tag>)`
+     * — which is quadratic on a part that opens elements it never closes: every
+     * `<tag` is a candidate and each rescans to the end before failing. This is a
+     * different failure from the allocation bounds above, and a worse one. It
+     * allocates nothing, so no memory bound sees it; it is synchronous, so no
+     * request timeout interrupts it; and it stalls the event loop, so the cost
+     * lands on every other request the process is serving, not just this one.
+     */
+    it('scans a part of unclosed tags in linear time', () => {
+      // Measured against the regex: this fixture is 2 KB on the wire and held
+      // the event loop for 19 seconds, growing as the square of the input — so a
+      // workbook well inside the ZIP reader's decompression budget parked the
+      // service for days. The bound below is ~1000x what the scan now takes and
+      // ~10x under what it cost before, so it is the collapse being pinned, not
+      // a machine's speed.
+      const started = Date.now();
+      expect(() => readSheet('<row r="1">'.repeat(100_000))).not.toThrow();
+      expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
+    it('scans a row of unclosed cells in linear time', () => {
+      // Same shape one level down: rows are well-formed, the `<c>` inside is not.
+      const started = Date.now();
+      expect(() => readSheet(`<row>${'<c r="A1">'.repeat(100_000)}</row>`)).not.toThrow();
+      expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
+    it('still reads the self-closing cells that follow an unclosed one', () => {
+      // A missing `</c>` rules out only the paired form — `<c/>` needs a `>` and
+      // nothing more, so it still matches. The regex reached that by backtracking
+      // to a later start, and dropping it here would have quietly lost cells.
+      const [sheet] = readSheet(
+        '<row><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>' +
+          '<row><c r="A2" t="s"><v>4</v></c><c r="B2"/></row>',
+      );
+      expect(sheet!.headers).toEqual(['class', 'shares']);
+      expect(sheet!.rows).toEqual([{ class: 'Common Stock', shares: '' }]);
+    });
+
+    it('does not mistake a longer element name for the one it scans', () => {
+      // `<col>` precedes `sheetData` in every workbook Excel writes, and `<c` is
+      // a prefix of it — the `\b` of the pattern this replaced.
+      const [sheet] = readSheet(
+        '<row><c r="A1" t="s"><v>0</v></c></row><row><c r="A2" t="s"><v>4</v></c></row>',
+      );
+      expect(sheet!.headers).toEqual(['class']);
+      expect(
+        readXlsx(
+          buildWorkbook({
+            sheets: [
+              {
+                name: 'S',
+                data:
+                  '<?xml version="1.0"?><worksheet><cols><col min="1" max="1" width="9"/></cols>' +
+                  '<sheetData><row><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>' +
+                  '<row><c r="A2" t="s"><v>4</v></c><c r="B2"><v>7</v></c></row></sheetData></worksheet>',
+              },
+            ],
+          }),
+        )[0]!.rows,
+      ).toEqual([{ class: 'Common Stock', shares: '7' }]);
+    });
+
     it('leaves a realistic cap-table import untouched', () => {
       // 2,000 rows is what the upload route truncates at, and 20 columns is wide
       // for a real export — the guard has to be invisible here or it has broken
