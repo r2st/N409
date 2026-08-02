@@ -200,14 +200,36 @@ def _segments(classes: list[dict]) -> list[dict]:
 def allocate_waterfall(
     equity_value: float,
     classes: list[dict],
-    t: float,
-    r: float,
-    sigma: float,
+    # `float | None`, not `float`: the backsolve in `approaches` carries these
+    # three as optionals all the way down, and the original `sigma is None`
+    # guard was already defending against it. Saying so makes the None checks
+    # below type-visible instead of dead code a checker prunes.
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
 ) -> dict:
     _finite(equity_value, "equity_value")
     if equity_value <= 0:
         raise EngineInputError("equity_value must be positive for the waterfall allocation")
-    if sigma is None or sigma <= 0:
+    # The OPM scalars get the same treatment as every cap-table figure above,
+    # and for the same reason `_finite` documents: they are multiplied into
+    # every tranche, so one NaN here makes the whole allocation NaN and the
+    # run still returns 200 — with `null` where each class's value belongs.
+    # Note the ordering: the finiteness check has to come *first*, because the
+    # positivity check below cannot do it. `NaN <= 0` is False, so a NaN
+    # volatility satisfies "volatility is required" and sails through.
+    if t is None:
+        raise EngineInputError("time_to_exit is required for the waterfall allocation")
+    _finite(t, "time_to_exit")
+    if t < 0:
+        raise EngineInputError("time_to_exit must be >= 0 for the waterfall allocation")
+    if r is None:
+        raise EngineInputError("risk_free_rate is required for the waterfall allocation")
+    _finite(r, "risk_free_rate")
+    if sigma is None:
+        raise EngineInputError("volatility is required for the waterfall allocation")
+    _finite(sigma, "volatility")
+    if sigma <= 0:
         raise EngineInputError("volatility is required for the waterfall allocation")
     normalized = _normalize(classes)
     segments = _segments(normalized)
@@ -310,9 +332,9 @@ def class_per_share(
     equity_value: float,
     classes: list[dict],
     class_name: str,
-    t: float,
-    r: float,
-    sigma: float,
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
 ) -> float:
     """Model value per share of one class — the backsolve objective."""
     result = allocate_waterfall(equity_value, classes, t, r, sigma)

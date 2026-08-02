@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 from app.engine.errors import EngineInputError
 from app.engine.projection import project_financials
 from app.engine.volatility import estimate_volatility
-from app.engine.waterfall import allocate_waterfall, exit_allocation
+from app.engine.waterfall import allocate_waterfall, class_per_share, exit_allocation
 from app.main import app
 
 NAN = float("nan")
@@ -111,6 +111,88 @@ class TestCapTable:
         alloc = exit_allocation(1e6, [COMMON])
         assert not has_nonfinite(alloc)
         assert alloc["common_value"] == pytest.approx(1e6)
+
+
+class TestTheOpmScalars:
+    """The cap-table figures above were guarded; t, r and σ were not.
+
+    They are the other half of the same allocation. Each is multiplied into
+    every tranche through `bs_call`, so one NaN among them poisons all of it —
+    the identical "200 with holes in it" this module exists to prevent, just
+    reached through a different argument.
+
+    Volatility is the sharp case, because it *looked* guarded: the check was
+    `sigma is None or sigma <= 0`, and `NaN <= 0` is False. A NaN volatility
+    satisfied "volatility is required" and went straight through it.
+    """
+
+    PREFERRED = {
+        "name": "Series A",
+        "kind": "preferred",
+        "shares": 500_000,
+        "preference": 1_000_000.0,
+    }
+
+    @property
+    def cap_table(self) -> list[dict]:
+        return [COMMON, self.PREFERRED]
+
+    @pytest.mark.parametrize("bad", [NAN, INF, NEG_INF])
+    def test_volatility_must_be_finite(self, bad: float) -> None:
+        with pytest.raises(EngineInputError, match="finite"):
+            allocate_waterfall(5e6, self.cap_table, T, R, bad)
+
+    @pytest.mark.parametrize("bad", [NAN, INF, NEG_INF])
+    def test_time_to_exit_must_be_finite(self, bad: float) -> None:
+        with pytest.raises(EngineInputError, match="finite"):
+            allocate_waterfall(5e6, self.cap_table, bad, R, SIGMA)
+
+    @pytest.mark.parametrize("bad", [NAN, INF, NEG_INF])
+    def test_risk_free_rate_must_be_finite(self, bad: float) -> None:
+        with pytest.raises(EngineInputError, match="finite"):
+            allocate_waterfall(5e6, self.cap_table, T, bad, SIGMA)
+
+    def test_a_nan_volatility_is_not_saved_by_the_positivity_check(self) -> None:
+        # The regression itself, stated on its own: before the finiteness check
+        # was ordered ahead of it, this call returned a 'successful' allocation
+        # in which every single figure was NaN.
+        with pytest.raises(EngineInputError):
+            allocate_waterfall(5e6, self.cap_table, T, R, NAN)
+
+    @pytest.mark.parametrize("missing", ["t", "r", "sigma"])
+    def test_a_missing_scalar_is_rejected_rather_than_assumed(self, missing: str) -> None:
+        # The backsolve carries all three as optionals; None must not become 0.
+        kwargs = {"t": T, "r": R, "sigma": SIGMA} | {missing: None}
+        with pytest.raises(EngineInputError, match="required"):
+            allocate_waterfall(5e6, self.cap_table, **kwargs)
+
+    @pytest.mark.parametrize("bad", [-1.0, -0.5])
+    def test_a_negative_time_to_exit_is_rejected(self, bad: float) -> None:
+        # bs_call reads t <= 0 as "expired" and returns intrinsic value, so a
+        # negative term would quietly produce a different model rather than an
+        # error. Zero stays legal — that is the intrinsic case on purpose.
+        with pytest.raises(EngineInputError, match="time_to_exit"):
+            allocate_waterfall(5e6, self.cap_table, bad, R, SIGMA)
+
+    def test_a_negative_risk_free_rate_is_still_allowed(self) -> None:
+        # Negative rates are real; only non-finite ones are the bug.
+        alloc = allocate_waterfall(5e6, self.cap_table, T, -0.005, SIGMA)
+        assert not has_nonfinite(alloc)
+
+    def test_the_backsolve_objective_rejects_them_too(self) -> None:
+        # class_per_share is the function Newton-Raphson calls thousands of
+        # times; a NaN there sends the solver iterating over NaN instead of
+        # failing, which reads as a hang rather than as bad input.
+        with pytest.raises(EngineInputError, match="finite"):
+            class_per_share(5e6, self.cap_table, "Series A", T, R, NAN)
+
+    def test_healthy_scalars_still_allocate_and_conserve_value(self) -> None:
+        alloc = allocate_waterfall(5e6, self.cap_table, T, R, SIGMA)
+        assert not has_nonfinite(alloc)
+        # The module's stated invariant: Σ class values == the equity value.
+        total = sum(c["value"] for c in alloc["classes"].values())
+        assert total == pytest.approx(5e6, rel=1e-6)
+        assert alloc["common_per_share"] > 0
 
 
 class TestProjection:
