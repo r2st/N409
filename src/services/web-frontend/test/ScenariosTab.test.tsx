@@ -109,20 +109,131 @@ describe('ScenariosTab', () => {
     await userEvent.clear(dr);
     await userEvent.type(dr, '50');
 
+    const previewPosts = () =>
+      fetchMock.mock.calls.filter(([u, init]) => init?.method === 'POST' && String(u).includes('preview'));
+
+    // Previews are debounced, not queued behind the typing. Clearing the field
+    // is itself a knob change, and an empty knob is sent as no override at all,
+    // so a 400ms gap anywhere between the clear and the last keystroke — which
+    // a loaded machine supplies for free — fires an interim preview of the
+    // untouched baseline. What the sandbox promises is that the knobs it
+    // settles on are the ones it previews, so wait for the last request rather
+    // than asserting on the first and hoping there was only one.
     await waitFor(
       () => {
-        expect(screen.getByText('$1.00')).toBeInTheDocument();
+        const last = previewPosts().at(-1);
+        expect(last).toBeTruthy();
+        expect(JSON.parse(String(last![1]!.body))).toEqual({ discount_rate: 0.5 });
       },
       { timeout: 3000 },
     );
-    expect(screen.getAllByText(/▼/).length).toBeGreaterThanOrEqual(1);
+    expect(String(previewPosts().at(-1)![0])).toContain(`/valuations/${valuation.id}/scenarios/preview`);
 
-    const post = fetchMock.mock.calls.find(
-      ([u, init]) => init?.method === 'POST' && String(u).includes('preview'),
-    );
-    expect(post).toBeTruthy();
-    expect(String(post![0])).toContain(`/valuations/${valuation.id}/scenarios/preview`);
-    expect(JSON.parse(String(post![1]!.body))).toEqual({ discount_rate: 0.5 });
+    // Only now is the $1.00 on screen necessarily this request's: the stubbed
+    // preview answers every body with the same numbers, so the stat card alone
+    // cannot tell which request it is showing.
+    await waitFor(() => {
+      expect(screen.getByText('$1.00')).toBeInTheDocument();
+    });
+    expect(screen.getAllByText(/▼/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('previews the knobs it settled on, not the ones a mid-edit debounce caught', async () => {
+    // The case above raced: whether the debounce fired between clearing the
+    // field and finishing the number decided how many previews were sent, so
+    // the interim preview only appeared on a machine slow enough to pause for
+    // 400ms mid-edit. Here the pause is deliberate, which makes the interim
+    // preview certain and this the case that actually pins the behaviour: a
+    // preview in flight for the empty field must not be what the sandbox is
+    // left showing once the edit is complete.
+    const fetchMock = mockApi();
+    renderTab();
+
+    const previewPosts = () =>
+      fetchMock.mock.calls.filter(([u, init]) => init?.method === 'POST' && String(u).includes('preview'));
+
+    const dr = await screen.findByLabelText(/Discount rate/);
+    await userEvent.clear(dr);
+
+    // An empty knob is no override, so this one previews the untouched baseline.
+    await waitFor(() => {
+      expect(previewPosts()).toHaveLength(1);
+    });
+    expect(JSON.parse(String(previewPosts()[0]![1]!.body))).toEqual({});
+
+    await userEvent.type(dr, '50');
+
+    await waitFor(() => {
+      expect(previewPosts().length).toBeGreaterThanOrEqual(2);
+      expect(JSON.parse(String(previewPosts().at(-1)![1]!.body))).toEqual({ discount_rate: 0.5 });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('$1.00')).toBeInTheDocument();
+    });
+    expect(dr).toHaveValue('50');
+  });
+
+  it('ignores a slow preview that lands after the one that replaced it', async () => {
+    // Two previews are in flight whenever an edit outruns the debounce, and
+    // nothing makes the first answer first — the empty-knob preview is the
+    // cheap one to ask for and the expensive one to compute, since it runs the
+    // full baseline. If a stale answer is allowed to land, the sandbox settles
+    // on numbers for knobs the client can see they are no longer holding, which
+    // in a tool whose whole purpose is "what would this change do" is the one
+    // failure that matters. Responses are resolved here in the wrong order on
+    // purpose; the request the client settled on has to win regardless.
+    let releaseStale: (() => void) | undefined;
+    const stalePosted = new Promise<void>((resolve) => {
+      releaseStale = resolve;
+    });
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (path.includes('/scenarios/baseline')) return jsonResponse(BOOT);
+      if (path.includes('/scenarios/preview')) {
+        const body = JSON.parse(String(init!.body)) as Record<string, unknown>;
+        // The empty-knob preview is held open until the later one has answered.
+        if (Object.keys(body).length === 0) {
+          await stalePosted;
+          return jsonResponse({
+            scenario: BOOT.baseline,
+            baseline: BOOT.baseline,
+            delta: { equity_value: 0, fmv_per_share: 0 },
+            currency: 'USD',
+          });
+        }
+        return jsonResponse(PREVIEW);
+      }
+      if (init?.method === 'POST') return jsonResponse({ scenario: SAVED_BEAR }, 201);
+      return jsonResponse(emptyList);
+    });
+
+    renderTab();
+
+    const previewPosts = () =>
+      fetchMock.mock.calls.filter(([u, init]) => init?.method === 'POST' && String(u).includes('preview'));
+
+    const dr = await screen.findByLabelText(/Discount rate/);
+    await userEvent.clear(dr);
+    await waitFor(() => {
+      expect(previewPosts()).toHaveLength(1);
+    });
+
+    await userEvent.type(dr, '50');
+    await waitFor(() => {
+      expect(screen.getByText('$1.00')).toBeInTheDocument();
+    });
+
+    // Only now does the baseline preview answer, out of order and obsolete.
+    releaseStale!();
+
+    // It must change nothing: $1.00 is the scenario's, $2.00 the baseline's.
+    await waitFor(() => {
+      expect(previewPosts().length).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.getByText('$1.00')).toBeInTheDocument();
+    expect(screen.getAllByText(/▼/).length).toBeGreaterThanOrEqual(1);
   });
 
   it('shows an empty state when there is no baseline calculation', async () => {
