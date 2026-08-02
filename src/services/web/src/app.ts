@@ -6,7 +6,13 @@ import fastifyStatic from '@fastify/static';
 import httpProxy from '@fastify/http-proxy';
 import helmet from '@fastify/helmet';
 import pg from 'pg';
-import { createLogger, probeReady, registerHealth, registerProblemHandler } from '@n409/shared';
+import {
+  REQUEST_ID_HEADER,
+  createLogger,
+  probeReady,
+  registerHealth,
+  registerProblemHandler,
+} from '@n409/shared';
 
 // Analytics hosts the SPA loads *after* cookie consent (§23/§25). Allowed in
 // the CSP so opt-in analytics works; everything else is self-only.
@@ -140,6 +146,10 @@ export function cacheControlFor(filePath: string): string {
 export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
   const app = Fastify({
     loggerInstance: createLogger({ service: 'web' }),
+    // The BFF is where a browser request enters the estate, so it is where the
+    // id that ties the whole chain together is minted. Honouring an inbound
+    // header lets a load balancer or a synthetic check supply its own.
+    requestIdHeader: 'x-request-id',
   }) as unknown as FastifyInstance;
   const staticRoot = opts.staticRoot ?? process.env.WEB_STATIC_ROOT ?? defaultStaticRoot;
   const hasStatic = existsSync(staticRoot);
@@ -218,6 +228,16 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
     upstream: valuationUrl,
     prefix: '/api',
     rewritePrefix: '/api',
+    replyOptions: {
+      // Stamp the proxied request with this request's id so the valuation
+      // service — and the engine/AI calls it makes in turn — log under the same
+      // id as the browser call that started it. Without this the chain breaks
+      // at the first hop: each service downstream mints its own.
+      rewriteRequestHeaders: (req, headers) => ({
+        ...headers,
+        [REQUEST_ID_HEADER]: String(req.id),
+      }),
+    },
   });
 
   if (hasStatic) {

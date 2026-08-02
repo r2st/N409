@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents import AGENT_PIPELINES
+from .errors import install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
@@ -95,8 +96,14 @@ app = FastAPI(title="n409-ai", version=VERSION, lifespan=lifespan)
 app.middleware("http")(internal_token_middleware)
 # Body-size cap (audit B-2 P2): reject oversized payloads before buffering.
 app.middleware("http")(make_body_limit_middleware(_MAX_BODY_BYTES))
+# Last-resort 500 envelope. Inside request-context (so the request id is bound
+# when it logs) and outside everything else (so it catches their failures too).
+app.middleware("http")(make_unhandled_error_middleware(SERVICE))
 # Structured access logging + x-request-id propagation (audit B-2 P3).
 app.middleware("http")(make_request_context_middleware(SERVICE))
+# Put the request id on the deliberate failures as well, so every error
+# response this service can emit is traceable to a log line.
+install_error_handlers(app)
 warn_if_unset()
 
 

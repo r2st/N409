@@ -3,7 +3,7 @@ import multipart from '@fastify/multipart';
 import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
 import type pg from 'pg';
-import { createLogger, registerHealth, registerProblemHandler } from '@n409/shared';
+import { bindRequestId, createLogger, registerHealth, registerProblemHandler } from '@n409/shared';
 import type { Config } from './config.js';
 import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
@@ -164,6 +164,15 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     loggerInstance: createLogger({ service: 'valuation', level: config.LOG_LEVEL }),
     requestIdHeader: 'x-request-id',
   }) as unknown as FastifyInstance;
+
+  // Bind the request id before anything else runs, so the engine/AI calls this
+  // request makes downstream carry it (clients/internal.ts) and their log lines
+  // join to ours. Fastify has already resolved `req.id` from the inbound
+  // x-request-id — or minted one — by the time onRequest fires.
+  app.addHook('onRequest', (req, _reply, done) => {
+    bindRequestId(String(req.id));
+    done();
+  });
 
   const jwt = { secret: config.JWT_SECRET, issuer: config.JWT_ISSUER, ttlSeconds: config.JWT_TTL_SECONDS };
   const google =

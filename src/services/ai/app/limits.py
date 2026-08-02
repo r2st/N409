@@ -18,7 +18,8 @@ import os
 
 import anyio
 from fastapi import Request
-from fastapi.responses import JSONResponse
+
+from .errors import error_response
 
 _log = logging.getLogger("limits")
 
@@ -44,12 +45,9 @@ def make_body_limit_middleware(limit_bytes: int):
             try:
                 declared = int(content_length)
             except ValueError:
-                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+                return error_response(400, "Invalid Content-Length")
             if declared > limit_bytes:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": f"Request body exceeds {limit_bytes} bytes"},
-                )
+                return error_response(413, f"Request body exceeds {limit_bytes} bytes")
         return await call_next(request)
 
     return body_limit_middleware

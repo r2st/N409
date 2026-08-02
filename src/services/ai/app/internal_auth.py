@@ -18,7 +18,8 @@ import logging
 import os
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+
+from .errors import error_response
 
 INTERNAL_TOKEN_HEADER = "x-internal-token"
 INTERNAL_TOKEN_ENV = "INTERNAL_SERVICE_TOKEN"
@@ -50,10 +51,7 @@ async def internal_token_middleware(request: Request, call_next):
     if expected is not None and not is_public_path(request.url.path):
         provided = request.headers.get(INTERNAL_TOKEN_HEADER)
         if provided is None or not hmac.compare_digest(provided, expected):
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Missing or invalid internal service token"},
-            )
+            return error_response(401, "Missing or invalid internal service token")
     return await call_next(request)
 
 

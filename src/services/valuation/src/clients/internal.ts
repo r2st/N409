@@ -1,4 +1,4 @@
-import { ApiProblem, probeReady as sharedProbeReady, problems } from '@n409/shared';
+import { ApiProblem, probeReady as sharedProbeReady, problems, requestIdHeaders } from '@n409/shared';
 
 /**
  * Thin JSON client for the internal AI / engine services. Failures surface as
@@ -111,7 +111,9 @@ async function postJsonOnce<T>(service: string, url: string, body: unknown, time
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...internalAuthHeaders() },
+      // The request id makes the engine/AI log lines for this call joinable to
+      // ours; the Python side reads it, or mints one when we have none to give.
+      headers: { 'content-type': 'application/json', ...internalAuthHeaders(), ...requestIdHeaders() },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs ?? 120_000),
     });

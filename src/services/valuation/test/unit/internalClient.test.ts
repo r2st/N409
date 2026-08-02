@@ -6,6 +6,7 @@ import {
   postJson,
   toProblem,
 } from '../../src/clients/internal.js';
+import { runWithRequestId } from '@n409/shared';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -185,5 +186,58 @@ describe('parseIssues', () => {
   it('returns an empty array for anything that is not a list', () => {
     expect(parseIssues(undefined)).toEqual([]);
     expect(parseIssues({ issues: [] })).toEqual([]);
+  });
+});
+
+describe('request-id propagation to the internal services', () => {
+  it('forwards the active request id so the engine logs under our id', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runWithRequestId('req-abc', () => postJson('engine', 'http://engine/compute', { a: 1 }));
+
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['x-request-id']).toBe('req-abc');
+  });
+
+  it('sends no request id outside a request, letting the engine mint its own', async () => {
+    // Background work — the pipeline reaper, a cron sweep — has no inbound
+    // request to correlate to, and a made-up id would appear in no other log.
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await postJson('engine', 'http://engine/compute', { a: 1 });
+
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>)['x-request-id']).toBeUndefined();
+  });
+
+  it('keeps the id across the retry, so both attempts are traceable', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(503, { detail: 'restarting' }))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runWithRequestId('req-retry', () =>
+      postJson('engine', 'http://engine/compute', {}, { backoffMs: 1 }),
+    );
+
+    for (const call of fetchMock.mock.calls) {
+      expect(((call[1] as RequestInit).headers as Record<string, string>)['x-request-id']).toBe('req-retry');
+    }
+  });
+
+  it('carries both the shared secret and the request id together', async () => {
+    process.env.INTERNAL_SERVICE_TOKEN = 'top-secret';
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runWithRequestId('req-both', () => postJson('ai-service', 'http://ai/pipe', {}));
+
+    const headers = (fetchMock.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(headers['x-internal-token']).toBe('top-secret');
+    expect(headers['x-request-id']).toBe('req-both');
+    delete process.env.INTERNAL_SERVICE_TOKEN;
   });
 });

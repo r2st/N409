@@ -30,6 +30,15 @@ def current_request_id() -> str:
     return _request_id.get()
 
 
+def _level_for(status: int) -> int:
+    """Access-log level for a response status — 5xx errors, 4xx warnings."""
+    if status >= 500:
+        return logging.ERROR
+    if status >= 400:
+        return logging.WARNING
+    return logging.INFO
+
+
 class JsonLogFormatter(logging.Formatter):
     """One JSON object per line, with the active request id attached."""
 
@@ -80,7 +89,11 @@ def make_request_context_middleware(service: str):
             return response
         finally:
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
-            access_log.info(
+            # Level tracks the status so `level=error` is a usable production
+            # filter: at a uniform info, a 500 is indistinguishable from a 200
+            # in any log query that isn't already parsing the status field.
+            access_log.log(
+                _level_for(status),
                 "request",
                 extra={
                     "event": "http_access",

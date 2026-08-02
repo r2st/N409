@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .engine.approaches import EngineInputError
 from .engine.compute import ENGINE_VERSION, compute
 from .engine.validate import split_issues, validate_payload
+from .errors import error_response, install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
@@ -62,8 +63,14 @@ app = FastAPI(title="n409-engine-wrapper", version=ENGINE_VERSION, lifespan=life
 app.middleware("http")(internal_token_middleware)
 # Body-size cap (audit B-2 P2): reject oversized payloads before buffering.
 app.middleware("http")(make_body_limit_middleware(_MAX_BODY_BYTES))
+# Last-resort 500 envelope. Inside request-context (so the request id is bound
+# when it logs) and outside everything else (so it catches their failures too).
+app.middleware("http")(make_unhandled_error_middleware(SERVICE))
 # Structured access logging + x-request-id propagation (audit B-2 P3).
 app.middleware("http")(make_request_context_middleware(SERVICE))
+# Put the request id on the deliberate failures as well, so every error
+# response this service can emit is traceable to a log line.
+install_error_handlers(app)
 warn_if_unset()
 
 
@@ -271,13 +278,11 @@ def engine_compute(request: ComputeRequest) -> JSONResponse | dict:
         )
     )
     if errors:
-        return JSONResponse(
-            status_code=422,
-            content={
-                "detail": _issue_summary(errors),
-                "issues": [i.as_dict() for i in errors],
-                "warnings": [i.as_dict() for i in warnings],
-            },
+        return error_response(
+            422,
+            _issue_summary(errors),
+            issues=[i.as_dict() for i in errors],
+            warnings=[i.as_dict() for i in warnings],
         )
     try:
         result = compute(

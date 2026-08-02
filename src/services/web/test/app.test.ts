@@ -66,6 +66,7 @@ describe('web service', () => {
         password: true,
         google: false,
         sawAuth: req.headers.authorization ?? null,
+        sawRequestId: req.headers['x-request-id'] ?? null,
       }));
       await upstream.listen({ port: 0, host: '127.0.0.1' });
       const addr = upstream.server.address();
@@ -86,6 +87,45 @@ describe('web service', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toMatchObject({ password: true, sawAuth: 'Bearer abc' });
       await app.close();
+    });
+
+    describe('request-id propagation', () => {
+      /**
+       * The BFF is where a browser request enters the estate, so it mints the
+       * id that ties the chain together. Without the stamp below, the chain
+       * broke at the first hop — valuation minted its own, and the engine a
+       * third — and one user action wrote log lines under three unrelated ids.
+       */
+      it('stamps a minted request id onto the proxied request', async () => {
+        const app = buildApp({ staticRoot: '/nonexistent', valuationUrl: upstreamUrl });
+        const res = await app.inject({ method: 'GET', url: '/api/v1/auth/providers' });
+        expect(res.json().sawRequestId).toBeTruthy();
+        await app.close();
+      });
+
+      it('honours an inbound id, so a load balancer can supply its own', async () => {
+        const app = buildApp({ staticRoot: '/nonexistent', valuationUrl: upstreamUrl });
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/providers',
+          headers: { 'x-request-id': 'edge-trace-1' },
+        });
+        expect(res.json().sawRequestId).toBe('edge-trace-1');
+        await app.close();
+      });
+
+      it('passes the same id it logged against, not a second one', async () => {
+        const app = buildApp({ staticRoot: '/nonexistent', valuationUrl: upstreamUrl });
+        const res = await app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/providers',
+          headers: { 'x-request-id': 'edge-trace-2' },
+        });
+        // Fastify resolves req.id from the same header, so the id in this
+        // service's own log lines and the one forwarded are one value.
+        expect(res.json().sawRequestId).toBe('edge-trace-2');
+        await app.close();
+      });
     });
   });
 });

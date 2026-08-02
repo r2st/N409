@@ -7,4 +7,12 @@ export { buildInfo, readBuildInfo, resetBuildInfoCache, UNKNOWN_BUILD, type Buil
 export { installCrashHandlers, type CrashHandlerLogger, type CrashHandlerOptions } from './crash.js';
 export { listenHost, DEFAULT_LISTEN_HOST } from './listen.js';
 export { newUlid, isUlid } from './ids.js';
+export {
+  REQUEST_ID_HEADER,
+  bindRequestId,
+  currentRequestId,
+  requestIdHeaders,
+  runWithRequestId,
+  type RequestContext,
+} from './requestContext.js';
 export { TtlCache } from './cache.js';
