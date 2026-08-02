@@ -1,4 +1,4 @@
-import { installCrashHandlers, listenHost, startTelemetry } from '@n409/shared';
+import { installCrashHandlers, installShutdownHandlers, listenHost, startTelemetry } from '@n409/shared';
 
 const telemetry = startTelemetry('report');
 const { buildApp } = await import('./app.js');
@@ -18,11 +18,12 @@ installCrashHandlers(app.log, {
 
 await app.listen({ port: Number(process.env.PORT ?? 3004), host: listenHost() });
 
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    void app
-      .close()
-      .then(() => telemetry.shutdown())
-      .then(() => process.exit(0));
-  });
-}
+// A PDF render in flight is the realistic reason this service is slow to
+// close, so the deadline matters more here than anywhere else.
+installShutdownHandlers(app.log, {
+  service: 'report',
+  onShutdown: async () => {
+    await app.close();
+    await telemetry.shutdown();
+  },
+});

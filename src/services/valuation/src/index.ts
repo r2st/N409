@@ -3,6 +3,7 @@ import {
   createHttpMetrics,
   registerGauge,
   installCrashHandlers,
+  installShutdownHandlers,
   listenHost,
 } from '@n409/shared';
 
@@ -207,20 +208,24 @@ let retentionTimer: NodeJS.Timeout | undefined;
   retentionTimer = setInterval(sweep, 6 * 60 * 60_000);
 }
 
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    void (async () => {
-      app.log.info({ signal }, 'shutting down');
-      if (autoEmailTimer) clearInterval(autoEmailTimer);
-      if (emailRetryTimer) clearInterval(emailRetryTimer);
-      if (reaperTimer) clearInterval(reaperTimer);
-      if (capTableSyncTimer) clearInterval(capTableSyncTimer);
-      if (hrisSyncTimer) clearInterval(hrisSyncTimer);
-      if (retentionTimer) clearInterval(retentionTimer);
-      await app.close();
-      await pool.end();
-      await telemetry.shutdown();
-      process.exit(0);
-    })();
-  });
-}
+// This is the service `deploy.sh` restarts and then waits for, and the one with
+// the most that can stall: six background timers, a Fastify server draining
+// in-flight requests, and a pg pool that will not end until every checked-out
+// connection comes back. Unbounded, one stuck query held the whole deploy until
+// systemd's 90s timeout and a SIGKILL — which is what the graceful path was
+// there to avoid.
+installShutdownHandlers(app.log, {
+  service: 'valuation',
+  onShutdown: async () => {
+    // Timers first: stop starting new work before waiting for existing work.
+    if (autoEmailTimer) clearInterval(autoEmailTimer);
+    if (emailRetryTimer) clearInterval(emailRetryTimer);
+    if (reaperTimer) clearInterval(reaperTimer);
+    if (capTableSyncTimer) clearInterval(capTableSyncTimer);
+    if (hrisSyncTimer) clearInterval(hrisSyncTimer);
+    if (retentionTimer) clearInterval(retentionTimer);
+    await app.close();
+    await pool.end();
+    await telemetry.shutdown();
+  },
+});

@@ -5,6 +5,12 @@ export { ApiProblem, problems, registerProblemHandler, scrubSensitive, scrubErro
 export { registerHealth, probeReady, type ReadinessCheck } from './health.js';
 export { buildInfo, readBuildInfo, resetBuildInfoCache, UNKNOWN_BUILD, type BuildInfo } from './build.js';
 export { installCrashHandlers, type CrashHandlerLogger, type CrashHandlerOptions } from './crash.js';
+export {
+  installShutdownHandlers,
+  SHUTDOWN_FAILED_EXIT_CODE,
+  type ShutdownLogger,
+  type ShutdownOptions,
+} from './shutdown.js';
 export { listenHost, DEFAULT_LISTEN_HOST } from './listen.js';
 export { trustedProxies, DEFAULT_TRUSTED_PROXIES } from './clientIp.js';
 export { newUlid, isUlid } from './ids.js';
