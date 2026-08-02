@@ -20,6 +20,32 @@ const MAX_COMMENT = 0xffff;
 /** Sentinel the ZIP64 format writes into the 32-bit fields it overflows. */
 const ZIP64_SENTINEL = 0xffffffff;
 
+/**
+ * Decompression budget. Deflate reaches roughly 1000:1 on the runs of a single
+ * byte a bomb is built from, so the route's 10 MB upload cap bounds the bytes
+ * on the wire and nothing at all about the bytes this reader materialises —
+ * measured, 511 KiB of archive expands to 512 MiB, and a full-size upload to
+ * something near ten gigabytes. Every entry is decompressed eagerly into a
+ * Buffer, so that number is resident memory, and the request that asks for it
+ * costs an attacker one upload.
+ *
+ * The budget is what the archive can expand *to*, not the ratio it expands
+ * *by*: a ratio alone would let a large archive of highly compressible XML —
+ * which is what every real `.xlsx` is — sail past a limit that a small one
+ * trips. Scaling with the input keeps the amplification an attacker can buy
+ * bounded (they must send a megabyte to cost us twenty), while the floor and
+ * ceiling keep both ends sane: no legitimate small workbook is refused, and no
+ * archive whatsoever can ask for more than the ceiling.
+ */
+const MAX_EXPANSION_RATIO = 20;
+const MIN_INFLATED_BUDGET = 16 * 1024 * 1024;
+const MAX_INFLATED_BUDGET = 128 * 1024 * 1024;
+
+/** Total inflated bytes an archive of `archiveBytes` is allowed to produce. */
+export function inflatedBudgetFor(archiveBytes: number): number {
+  return Math.min(MAX_INFLATED_BUDGET, Math.max(MIN_INFLATED_BUDGET, archiveBytes * MAX_EXPANSION_RATIO));
+}
+
 export class ZipReadError extends Error {}
 
 /** Locate the end-of-central-directory record by scanning back from the tail. */
@@ -34,10 +60,22 @@ function findEocd(buf: Buffer): number {
 /**
  * Read every entry into a name → bytes map. Directory entries are skipped;
  * `.xlsx` archives are small enough that eager decompression is simpler than
- * a lazy handle, and the upload size is already capped by the route.
+ * a lazy handle.
+ *
+ * Because that decompression is eager, the total it may produce is bounded —
+ * see {@link inflatedBudgetFor}. `maxInflatedBytes` overrides the default for
+ * a caller that knows its own workbooks are smaller.
  */
-export function readZip(buf: Buffer): Map<string, Buffer> {
+export function readZip(buf: Buffer, opts: { maxInflatedBytes?: number } = {}): Map<string, Buffer> {
   if (buf.length < EOCD_MIN_SIZE) throw new ZipReadError('File is too small to be a ZIP archive');
+
+  const budget = opts.maxInflatedBytes ?? inflatedBudgetFor(buf.length);
+  let remaining = budget;
+  const overBudget = (name: string) =>
+    new ZipReadError(
+      `Entry "${name}" expands past the ${Math.round(budget / (1024 * 1024))} MB decompression limit ` +
+        'for an archive this size',
+    );
 
   const eocd = findEocd(buf);
   const entryCount = buf.readUInt16LE(eocd + 10);
@@ -83,15 +121,27 @@ export function readZip(buf: Buffer): Map<string, Buffer> {
     const end = start + compressedSize;
     if (end > buf.length) throw new ZipReadError(`Entry "${name}" runs past the end of the archive`);
 
+    // The declared size is the cheap rejection — it costs no allocation — but
+    // it is a number the archive chose, so it can lie in either direction. It
+    // is a fast path, never the guard: what actually holds is maxOutputLength,
+    // which stops zlib mid-stream rather than after the Buffer exists.
+    if (uncompressedSize > remaining || remaining <= 0) throw overBudget(name);
+
     const raw = buf.subarray(start, end);
     if (method === 0) {
+      if (raw.length > remaining) throw overBudget(name);
       entries.set(name, raw);
+      remaining -= raw.length;
     } else if (method === 8) {
+      let inflated: Buffer;
       try {
-        entries.set(name, inflateRawSync(raw));
-      } catch {
+        inflated = inflateRawSync(raw, { maxOutputLength: remaining });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ERR_BUFFER_TOO_LARGE') throw overBudget(name);
         throw new ZipReadError(`Entry "${name}" could not be decompressed`);
       }
+      entries.set(name, inflated);
+      remaining -= inflated.length;
     } else {
       throw new ZipReadError(`Entry "${name}" uses unsupported compression method ${method}`);
     }
