@@ -1,10 +1,25 @@
-f4d21c401aa788f9a1bba9fe6e60000d4557804b
+0e64bc8d746b33bf4ccb32582a2d13f9e2224447
 # N409 deployed revision
-# commit:    f4d21c401aa788f9a1bba9fe6e60000d4557804b
-# subject:   perf(web): asset caching, batched monitor fetch, real readiness, richer JSON-LD
-# previous:  d6ce632 (fix(audit): P2 remediation)
-# includes:  6c0698c fix(security): verify OpenRouter key, rate-limit public routes, handle crashes
-# deployed:  2026-07-29T23:41:03Z (UTC)
-# method:    git archive + scp + tar extract, npm run build on host
-# note:      package-lock.json intentionally NOT overwritten (host lock retains
-#            linux-specific optional deps); the two commits change no dependencies.
+# commit:    0e64bc8d746b33bf4ccb32582a2d13f9e2224447
+# subject:   fix(security): bound the per-IP rate-limit maps now that they are per-IP
+# previous:  c0f385e (test(web): stop the scenario preview case racing its own debounce)
+# includes:  11 commits — the per-IP rate-limit pair (6722cad, 0e64bc8), the AI
+#            prompt-redaction series (2ab3760…e0008d1), the login throttle and
+#            timing-oracle fixes (de270db, 4004523), and two deploy-script fixes
+#            (5c7bed5, af4ef85).
+# deployed:  2026-08-02T15:04:39Z (UTC)
+# method:    infra/deploy.sh --apply (git archive + scp + tar extract, npm ci &&
+#            npm run build on host, BUILD_SHA written after the build, valuation
+#            restarted and awaited before the other four).
+# note:      This file is tracked, so it always names the *previous* deploy at the
+#            moment the archive is built — the commit recording a deploy cannot be
+#            the commit being deployed. /opt/N409/BUILD_SHA is the authoritative
+#            record of what is running; it is written by the deploy script from the
+#            local HEAD after a successful build, and is what /health reports.
+#            The f4d21c4 this file named before was three deploys stale for exactly
+#            that reason.
+# note:      no deletions and no dependency changes between c0f385e and this commit,
+#            so the deletion sweep was empty and no pip install was needed. The host
+#            lock is now the repo lock: it carries the linux-x64 optional binaries
+#            (rollup, esbuild, tailwind oxide, lightningcss), so the old "do not
+#            overwrite package-lock.json" caveat no longer applies.
