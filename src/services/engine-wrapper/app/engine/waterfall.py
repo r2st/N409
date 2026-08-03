@@ -31,6 +31,25 @@ from .errors import EngineInputError
 
 _KINDS = ("preferred", "common", "option")
 
+# Ceiling on the cap table one request may allocate.
+#
+# The breakpoint method is quadratic in the number of classes twice over: the
+# residual event loop resolves one pending class per iteration and rescans the
+# rest, and the segments it produces are then priced against a participant map
+# whose own size grows with the class count. Both the CPU and the *response*
+# scale as n² — measured, 2,000 preferred classes arrive as a 200 KB request
+# and leave as a 36 MB body after a second of engine time, and the 8 MB body
+# cap admits fifty times that, which is hours of CPU and a response no caller
+# could hold. The backsolve makes it worse still: `class_per_share` is the
+# Newton objective, so the whole allocation runs again per iteration.
+#
+# 200 is far past anything real. A late-stage cap table carries a dozen
+# preferred series, a common class and a handful of option pools; the largest
+# legitimate table this platform has seen is an order of magnitude under the
+# limit, while the limit itself keeps the worst case at a few hundred
+# kilobytes.
+MAX_SHARE_CLASSES = 200
+
 
 def normalize_share_classes(classes: list[dict]) -> list[dict]:
     """Public entry point for the shared cap-table normaliser (used by PWERM)."""
@@ -54,6 +73,12 @@ def _finite(value: float, name: str) -> float:
 def _normalize(classes: list[dict]) -> list[dict]:
     if not isinstance(classes, list) or not classes:
         raise EngineInputError("share_classes must be a non-empty list")
+    if len(classes) > MAX_SHARE_CLASSES:
+        raise EngineInputError(
+            f"share_classes accepts at most {MAX_SHARE_CLASSES} classes "
+            f"(got {len(classes)}) — the breakpoint allocation grows with the "
+            "square of the class count"
+        )
     out: list[dict] = []
     names: set[str] = set()
     for i, raw in enumerate(classes):

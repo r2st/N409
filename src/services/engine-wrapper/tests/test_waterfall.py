@@ -5,7 +5,12 @@ import pytest
 from app.engine.bs import bs_call
 from app.engine.errors import EngineInputError
 from app.engine.newton import implied_volatility, newton_raphson
-from app.engine.waterfall import allocate_waterfall
+from app.engine.waterfall import (
+    MAX_SHARE_CLASSES,
+    allocate_waterfall,
+    exit_allocation,
+    normalize_share_classes,
+)
 
 T, R, SIGMA = 3.0, 0.04, 0.6
 
@@ -170,3 +175,56 @@ def test_validation_errors():
         allocate_waterfall(1e6, [COMMON, COMMON], T, R, SIGMA)
     with pytest.raises(EngineInputError, match="volatility"):
         allocate_waterfall(1e6, classes_of(), T, R, 0.0)
+
+
+# ── class-count ceiling ──────────────────────────────────────────────────────
+#
+# The breakpoint method is quadratic in the class count in both CPU and
+# response size, so an oversized cap table has to be refused as input rather
+# than allocated: 2,000 classes fit in a 200 KB request and produce a 36 MB
+# body. These pin the ceiling, its error, and that a real cap table clears it.
+
+
+def _preferred_stack(n: int) -> list[dict]:
+    return classes_of(
+        *(
+            {
+                "name": f"Series-{i}",
+                "kind": "preferred",
+                "shares": 100_000,
+                "preference": 1_000_000.0 + i,
+                "seniority": i + 1,
+            }
+            for i in range(n)
+        )
+    )
+
+
+def test_share_classes_over_the_ceiling_are_refused():
+    classes = _preferred_stack(MAX_SHARE_CLASSES)  # + Common == one over
+    assert len(classes) == MAX_SHARE_CLASSES + 1
+    with pytest.raises(EngineInputError, match="at most 200 classes"):
+        allocate_waterfall(1e9, classes, T, R, SIGMA)
+
+
+def test_share_class_ceiling_names_the_count_it_got():
+    with pytest.raises(EngineInputError, match=r"got 501"):
+        allocate_waterfall(1e9, _preferred_stack(500), T, R, SIGMA)
+
+
+def test_share_classes_at_the_ceiling_still_allocate():
+    classes = _preferred_stack(MAX_SHARE_CLASSES - 1)
+    assert len(classes) == MAX_SHARE_CLASSES
+    out = allocate_waterfall(1e9, classes, T, R, SIGMA)
+    # Value is still conserved at the limit — the ceiling bounds the work, it
+    # does not truncate the table.
+    assert sum(c["value"] for c in out["classes"].values()) == pytest.approx(1e9, rel=1e-6)
+
+
+def test_share_class_ceiling_also_guards_the_deterministic_waterfall():
+    # exit_allocation and PWERM share the normaliser, so the same table that
+    # the OPM path refuses must not slip in through the intrinsic path.
+    with pytest.raises(EngineInputError, match="at most 200 classes"):
+        exit_allocation(1e9, _preferred_stack(MAX_SHARE_CLASSES))
+    with pytest.raises(EngineInputError, match="at most 200 classes"):
+        normalize_share_classes(_preferred_stack(MAX_SHARE_CLASSES))
