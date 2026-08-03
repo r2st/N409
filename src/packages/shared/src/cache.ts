@@ -7,9 +7,16 @@
  * with multiple replicas should only cache data where brief staleness is
  * acceptable.
  */
+/** A load in progress, and whether an invalidation has overtaken it. */
+interface InflightLoad<T> {
+  promise: Promise<T>;
+  /** Set when delete()/clear() lands while this load is still running. */
+  stale: boolean;
+}
+
 export class TtlCache<T> {
   private readonly entries = new Map<string, { value: T; expiresAt: number }>();
-  private readonly inflight = new Map<string, Promise<T>>();
+  private readonly inflight = new Map<string, InflightLoad<T>>();
 
   constructor(
     private readonly opts: {
@@ -49,35 +56,56 @@ export class TtlCache<T> {
 
   delete(key: string): void {
     this.entries.delete(key);
+    const pending = this.inflight.get(key);
+    if (pending) pending.stale = true;
   }
 
   clear(): void {
     this.entries.clear();
+    for (const pending of this.inflight.values()) pending.stale = true;
   }
 
   /**
    * Cached read-through. Concurrent calls for the same key share one loader
    * run; a loader failure is not cached.
+   *
+   * An invalidation that lands *while a load is in flight* has to be honoured
+   * too, and dropping the entry cannot do it: there is no entry yet. The
+   * loader read the row before the write, so publishing its result on
+   * completion re-populated the cache with the pre-write value and served it
+   * for a full TTL — after an explicit `delete`. Callers that state their
+   * correctness rests on invalidation rather than on the TTL (the valuation
+   * row cache, which every authorization and state check reads through) then
+   * saw a superseded row for as long as the TTL allowed.
+   *
+   * So each load carries a `stale` flag: `delete`/`clear` set it, and a load
+   * that finishes stale still answers its own callers — the read they asked
+   * for was in flight when they asked — but does not populate the cache. A
+   * caller arriving after the invalidation starts a fresh load rather than
+   * joining the doomed one, and the newer load owns the slot.
    */
-  async getOrLoad(key: string, loader: () => Promise<T>): Promise<T> {
+  getOrLoad(key: string, loader: () => Promise<T>): Promise<T> {
     const hit = this.get(key);
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) return Promise.resolve(hit);
 
     const pending = this.inflight.get(key);
-    if (pending) return pending;
+    if (pending && !pending.stale) return pending.promise;
 
-    const load = loader().then(
+    const record: InflightLoad<T> = { promise: undefined as unknown as Promise<T>, stale: false };
+    this.inflight.set(key, record);
+    record.promise = loader().then(
       (value) => {
-        this.inflight.delete(key);
-        this.set(key, value);
+        // Only the load that still owns the slot may clear it; a stale load
+        // finishing late must not evict the fresh one that replaced it.
+        if (this.inflight.get(key) === record) this.inflight.delete(key);
+        if (!record.stale) this.set(key, value);
         return value;
       },
       (err: unknown) => {
-        this.inflight.delete(key);
+        if (this.inflight.get(key) === record) this.inflight.delete(key);
         throw err;
       },
     );
-    this.inflight.set(key, load);
-    return load;
+    return record.promise;
   }
 }
