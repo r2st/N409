@@ -32,6 +32,34 @@ export function toScimUser(u: ScimUserRow): Record<string, unknown> {
   };
 }
 
+/**
+ * Coerce a SCIM `active` value to a boolean.
+ *
+ * `Boolean(value)` is wrong here. Microsoft Entra ID (Azure AD) does not send
+ * JSON booleans for `active` — it sends the *strings* `"True"` and `"False"`,
+ * capitalised, in both User create bodies and PatchOp deprovision requests:
+ *
+ *     { "op": "Replace", "path": "active", "value": "False" }
+ *
+ * `Boolean("False")` is `true`, because every non-empty string is truthy. The
+ * effect was that a deprovision from Entra reported 200 and left the account
+ * fully active: an offboarded employee kept their session, their password
+ * reset, and their access to every valuation their roles reached. Nothing in
+ * the response told the IdP otherwise, so the failure was silent on both ends.
+ *
+ * Anything that isn't recognisably false is treated as true, matching the
+ * previous behaviour for genuine booleans and for the `"1"`/`"0"` some smaller
+ * IdPs send.
+ */
+export function scimBoolean(value: unknown): boolean {
+  if (typeof value === 'string') {
+    const v = value.trim().toLowerCase();
+    if (v === 'false' || v === '0' || v === '') return false;
+    return true;
+  }
+  return Boolean(value);
+}
+
 export function scimError(status: number, detail: string): Record<string, unknown> {
   return { schemas: [SCIM_ERROR_SCHEMA], status: String(status), detail };
 }
@@ -76,7 +104,7 @@ export function parseScimUser(body: unknown): ScimCreate | null {
     firstName: typeof name.givenName === 'string' ? name.givenName : null,
     lastName: typeof name.familyName === 'string' ? name.familyName : null,
     externalId: typeof b.externalId === 'string' ? b.externalId : null,
-    active: b.active === undefined ? true : Boolean(b.active),
+    active: b.active === undefined ? true : scimBoolean(b.active),
   };
 }
 
@@ -91,13 +119,20 @@ export function activeFromPatch(body: unknown): boolean | undefined {
   for (const raw of ops) {
     const op = raw as Record<string, unknown>;
     const path = typeof op.path === 'string' ? op.path.toLowerCase() : '';
-    if ((op.op === 'replace' || op.op === 'Replace') && path === 'active') {
-      return Boolean(op.value);
+    // RFC 7644 names the ops in lower case but IdPs capitalise them freely
+    // ("Replace" from Entra, "REPLACE" from some OneLogin connectors), so
+    // normalise rather than listing spellings. `add` on a singular attribute
+    // that already has a value is a replace, which is what Okta sends when it
+    // reactivates a user it previously suspended.
+    const verb = typeof op.op === 'string' ? op.op.toLowerCase() : '';
+    if (verb !== 'replace' && verb !== 'add') continue;
+    if (path === 'active') {
+      return scimBoolean(op.value);
     }
     // Pathless replace: { op:'replace', value:{ active:false } }
-    if ((op.op === 'replace' || op.op === 'Replace') && !path && op.value && typeof op.value === 'object') {
+    if (!path && op.value && typeof op.value === 'object') {
       const v = op.value as Record<string, unknown>;
-      if ('active' in v) return Boolean(v.active);
+      if ('active' in v) return scimBoolean(v.active);
     }
   }
   return undefined;

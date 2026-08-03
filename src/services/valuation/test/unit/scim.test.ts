@@ -6,6 +6,7 @@ import {
   parseUserNameFilter,
   parseScimUser,
   activeFromPatch,
+  scimBoolean,
   SCIM_USER_SCHEMA,
   SCIM_LIST_SCHEMA,
   SCIM_ERROR_SCHEMA,
@@ -160,6 +161,17 @@ describe('parseScimUser', () => {
     const result = parseScimUser({ userName: 'a@b.com', name: { givenName: 123 } });
     expect(result!.firstName).toBeNull();
   });
+
+  // Entra ID creates already-suspended users with active:"False" (a string).
+  it('creates a user inactive when active is the string "False"', () => {
+    const result = parseScimUser({ userName: 'a@b.com', name: {}, active: 'False' });
+    expect(result!.active).toBe(false);
+  });
+
+  it('creates a user active when active is the string "True"', () => {
+    const result = parseScimUser({ userName: 'a@b.com', name: {}, active: 'True' });
+    expect(result!.active).toBe(true);
+  });
 });
 
 describe('activeFromPatch', () => {
@@ -190,5 +202,70 @@ describe('activeFromPatch', () => {
 
   it('returns undefined for non-array Operations', () => {
     expect(activeFromPatch({ Operations: 'bad' })).toBeUndefined();
+  });
+
+  // Microsoft Entra ID sends `active` as a capitalised *string*, not a JSON
+  // boolean. Boolean("False") is true, so a deprovision used to answer 200 and
+  // leave the offboarded account fully active.
+  it('deactivates on the Entra ID patch body verbatim', () => {
+    const body = {
+      schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+      Operations: [{ op: 'Replace', path: 'active', value: 'False' }],
+    };
+    expect(activeFromPatch(body)).toBe(false);
+  });
+
+  it('reactivates on the string "True"', () => {
+    const body = { Operations: [{ op: 'Replace', path: 'active', value: 'True' }] };
+    expect(activeFromPatch(body)).toBe(true);
+  });
+
+  it('honours a string "false" nested in a pathless replace', () => {
+    const body = { Operations: [{ op: 'replace', value: { active: 'false' } }] };
+    expect(activeFromPatch(body)).toBe(false);
+  });
+
+  it('accepts an uppercase op verb', () => {
+    expect(activeFromPatch({ Operations: [{ op: 'REPLACE', path: 'active', value: false }] })).toBe(false);
+  });
+
+  it('treats add on active as a replace', () => {
+    expect(activeFromPatch({ Operations: [{ op: 'add', path: 'active', value: true }] })).toBe(true);
+    expect(activeFromPatch({ Operations: [{ op: 'Add', path: 'active', value: 'False' }] })).toBe(false);
+  });
+
+  it('ignores ops it does not implement', () => {
+    expect(activeFromPatch({ Operations: [{ op: 'remove', path: 'active' }] })).toBeUndefined();
+  });
+
+  it('takes the first active-bearing op when several are sent', () => {
+    const body = {
+      Operations: [
+        { op: 'Replace', path: 'displayName', value: 'New Name' },
+        { op: 'Replace', path: 'active', value: 'False' },
+      ],
+    };
+    expect(activeFromPatch(body)).toBe(false);
+  });
+});
+
+describe('scimBoolean', () => {
+  it('passes genuine booleans through', () => {
+    expect(scimBoolean(true)).toBe(true);
+    expect(scimBoolean(false)).toBe(false);
+  });
+
+  it('reads the string spellings IdPs actually send', () => {
+    for (const falsey of ['False', 'false', 'FALSE', ' false ', '0', '']) {
+      expect(scimBoolean(falsey)).toBe(false);
+    }
+    for (const truthy of ['True', 'true', 'TRUE', '1']) {
+      expect(scimBoolean(truthy)).toBe(true);
+    }
+  });
+
+  it('treats absent values as false', () => {
+    expect(scimBoolean(undefined)).toBe(false);
+    expect(scimBoolean(null)).toBe(false);
   });
 });
