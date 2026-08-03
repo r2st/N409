@@ -141,23 +141,64 @@ def relever_beta(unlevered_beta: float, debt_to_equity: float, tax_rate: float) 
     return unlevered_beta * _levering_factor(debt_to_equity, tax_rate)
 
 
+def _normalize_curve(curve) -> list[tuple[float, float]]:
+    """Coerce a treasury curve into sorted, validated (maturity, yield) points.
+
+    The ``dict[float, float]`` this parameter advertises is not a shape any HTTP
+    caller can send: JSON object keys are always strings. A curve posted as
+    ``{"5": 0.041, "10": 0.045}`` therefore arrived with *string* maturities,
+    the maturities sorted lexically ("10" before "5"), and the first
+    ``maturity_years <= points[0][0]`` compared a float to a str — a bare
+    TypeError that ``/compute`` (which catches only ``EngineInputError``)
+    returned as a 500. A non-dict fared worse still: ``[].items()`` raised
+    AttributeError before any guard could run. The documented override was
+    unreachable from the API by either route, and the failure named nothing the
+    caller could act on.
+
+    Coercing the keys is the fix, and it brings the checks a hand-built curve
+    also lacked: a non-numeric or non-finite entry, and duplicate maturities —
+    ``{"5": 0.04, "5.0": 0.05}`` collapses to two points at 5.0, and
+    interpolating strictly between them divides by ``m1 - m0`` == 0.
+    """
+    if not isinstance(curve, dict):
+        raise EngineInputError(
+            "treasury_curve must be an object of {maturity_years: yield}"
+        )
+    points: list[tuple[float, float]] = []
+    seen: set[float] = set()
+    for maturity, yield_ in curve.items():
+        m = _num(maturity, f"treasury_curve maturity {maturity!r}", positive=True)
+        y = _num(yield_, f"treasury_curve[{maturity!r}]")
+        if m in seen:
+            raise EngineInputError(f"treasury_curve has duplicate maturity {m:g}")
+        seen.add(m)
+        points.append((m, y))
+    if not points:
+        raise EngineInputError("treasury curve is empty")
+    points.sort()
+    return points
+
+
 def risk_free_rate(
-    maturity_years: float,
-    curve: dict[float, float] | None = None,
+    maturity_years,
+    # Deliberately an untyped dict, not `dict[float, float]`: the maturities
+    # arrive as JSON object keys, so they are strings as often as they are
+    # numbers, and the old annotation described a call no client could make.
+    # `_normalize_curve` is what actually establishes the shape.
+    curve: dict | None = None,
 ) -> float:
     """Linearly interpolate the Treasury yield for ``maturity_years``.
 
     Clamps to the nearest endpoint outside the curve's range.
     """
-    if maturity_years <= 0:
-        raise EngineInputError("maturity_years must be positive")
+    # Through `_num`, not a bare comparison: `forecast_horizon_years` reaches
+    # here straight off the wire, and `"abc" <= 0` is a TypeError, not a 422.
+    maturity_years = _num(maturity_years, "maturity_years", positive=True)
     # `curve or DEFAULT` would treat an explicitly empty curve as "not given"
     # and quietly answer from the placeholder curve instead — a discount rate
-    # built on figures the caller did not supply, and it made the guard below
-    # unreachable. Only an absent curve falls back.
-    points = sorted((DEFAULT_TREASURY_CURVE if curve is None else curve).items())
-    if not points:
-        raise EngineInputError("treasury curve is empty")
+    # built on figures the caller did not supply, and it made the emptiness
+    # guard unreachable. Only an absent curve falls back.
+    points = _normalize_curve(DEFAULT_TREASURY_CURVE if curve is None else curve)
     if maturity_years <= points[0][0]:
         return points[0][1]
     if maturity_years >= points[-1][0]:
@@ -219,7 +260,7 @@ def compute_wacc(
     equity_risk_premium: float = DEFAULT_EQUITY_RISK_PREMIUM,
     forecast_horizon_years: float = 5.0,
     risk_free_rate_override: float | None = None,
-    treasury_curve: dict[float, float] | None = None,
+    treasury_curve: dict | None = None,  # {maturity_years: yield}, keys may be strings
     company_specific_premium: float = 0.0,
     size_premium_override: float | None = None,
     cost_of_debt: float = 0.0,

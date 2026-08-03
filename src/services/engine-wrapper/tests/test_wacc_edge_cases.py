@@ -392,3 +392,83 @@ def test_wacc_rises_with_the_company_specific_premium():
     ]
     assert rates == sorted(rates)
     assert len(set(rates)) == len(rates)
+
+
+# ── Treasury curve over the wire ──────────────────────────────────────────────
+#
+# `treasury_curve` is typed `dict[float, float]`, and JSON object keys are
+# always strings — so the shape the signature asks for is one no HTTP caller can
+# send. Everything below is about the override being usable, and failing by name
+# when it is not.
+
+
+def test_a_curve_posted_as_json_has_string_maturities_and_still_works():
+    # The exact body a client sends: {"5": 0.041} — not {5.0: 0.041}. This used
+    # to compare a float to a str inside the interpolation and raise a bare
+    # TypeError, which /compute returned as a 500.
+    curve = {"1": 0.04, "3": 0.05}
+    assert risk_free_rate(1.0, curve) == pytest.approx(0.04)
+    assert risk_free_rate(2.0, curve) == pytest.approx(0.045)
+    assert risk_free_rate(3.0, curve) == pytest.approx(0.05)
+
+
+def test_string_maturities_sort_numerically_not_lexically():
+    # Lexically "10" < "5", which put the endpoints in the wrong order and made
+    # the clamps return the wrong end of the curve.
+    curve = {"5": 0.041, "10": 0.045}
+    assert risk_free_rate(1.0, curve) == pytest.approx(0.041)  # clamp to short end
+    assert risk_free_rate(50.0, curve) == pytest.approx(0.045)  # clamp to long end
+    assert risk_free_rate(7.5, curve) == pytest.approx(0.043)
+
+
+@pytest.mark.parametrize("bad", [[], [(1.0, 0.04)], "1:0.04", 5.0])
+def test_a_curve_that_is_not_an_object_is_refused_by_name(bad):
+    # `[].items()` raised AttributeError before any guard ran — a 500 for a
+    # malformed input. (`None` is the documented "use the default curve"
+    # sentinel and is covered by the default-curve tests above.)
+    with pytest.raises(EngineInputError, match="treasury_curve must be an object"):
+        risk_free_rate(5.0, bad)
+
+
+@pytest.mark.parametrize("bad", [{"abc": 0.04}, {"5": "high"}, {"5": float("nan")}, {"0": 0.04}, {"-1": 0.04}])
+def test_a_curve_with_an_unusable_point_names_the_point(bad):
+    with pytest.raises(EngineInputError, match="treasury_curve"):
+        risk_free_rate(5.0, bad)
+
+
+def test_duplicate_maturities_are_refused_rather_than_dividing_by_zero():
+    # "5" and 5.0 collapse to the same maturity; interpolating strictly between
+    # two points at 5.0 divides by (m1 - m0) == 0.
+    with pytest.raises(EngineInputError, match="duplicate maturity"):
+        risk_free_rate(5.0, {"5": 0.04, 5.0: 0.05})
+
+
+def test_a_non_numeric_forecast_horizon_is_a_422_not_a_type_error():
+    with pytest.raises(EngineInputError, match="maturity_years"):
+        risk_free_rate("five years")
+
+
+def test_the_wacc_endpoint_accepts_a_json_curve():
+    res = client.post(
+        "/engine/v1/wacc",
+        json={
+            "inputs": {
+                "unlevered_beta_input": 1.0,
+                "equity_risk_premium": 0.05,
+                "treasury_curve": {"1": 0.04, "10": 0.05},
+                "forecast_horizon_years": 5.5,
+            }
+        },
+    )
+    assert res.status_code == 200, res.json()
+    # 5.5y interpolates to 0.045 on a straight 1y→10y line.
+    assert res.json()["capm"]["risk_free_rate"] == pytest.approx(0.045)
+
+
+def test_the_wacc_endpoint_refuses_a_malformed_curve_with_422():
+    res = client.post(
+        "/engine/v1/wacc",
+        json={"inputs": {"unlevered_beta_input": 1.0, "treasury_curve": []}},
+    )
+    assert res.status_code == 422
+    assert "treasury_curve" in res.json()["detail"]

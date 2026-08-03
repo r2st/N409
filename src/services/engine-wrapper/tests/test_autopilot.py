@@ -146,3 +146,33 @@ def test_compute_endpoint_with_flags():
     res = r.json()["results"]
     assert res["auto"]["wacc"]["wacc"] == pytest.approx(0.09)
     assert res["fmv_per_share"] > 0
+
+
+def test_auto_wacc_accepts_a_treasury_curve_the_way_json_delivers_it():
+    # `inputs.wacc.treasury_curve` arrives through a JSON body, so its
+    # maturities are strings. This whole call used to die inside the curve
+    # interpolation on a float-vs-str comparison — a bare TypeError, which
+    # /compute (catching only EngineInputError) returned as a 500.
+    inputs = _inputs(
+        wacc={
+            "unlevered_beta_input": 1.0,
+            "equity_risk_premium": 0.05,
+            "treasury_curve": {"1": 0.04, "10": 0.05},
+            "forecast_horizon_years": 5.5,
+        }
+    )
+    res = compute(PARAMS, inputs, auto_volatility=True, auto_wacc=True, auto_comparables=True)["results"]
+    # 5.5y sits halfway along a straight 1y→10y line: (0.04 + 0.05) / 2.
+    assert res["auto"]["wacc"]["capm"]["risk_free_rate"] == pytest.approx(0.045)
+    assert res["auto"]["wacc"]["wacc"] > 0
+    assert res["fmv_per_share"] > 0
+
+
+def test_auto_wacc_reports_a_malformed_curve_as_an_input_error_not_a_500():
+    inputs = _inputs(wacc={"unlevered_beta_input": 1.0, "treasury_curve": []})
+    res = client.post(
+        "/engine/v1/compute",
+        json={"params": PARAMS, "inputs": inputs, "auto_volatility": True, "auto_wacc": True, "auto_comparables": True},
+    )
+    assert res.status_code == 422
+    assert "treasury_curve" in res.json()["detail"]
