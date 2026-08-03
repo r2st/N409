@@ -472,3 +472,46 @@ def test_the_wacc_endpoint_refuses_a_malformed_curve_with_422():
     )
     assert res.status_code == 422
     assert "treasury_curve" in res.json()["detail"]
+
+
+# ── A WACC that overflowed is not a WACC ──────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "overflowing",
+    [
+        {"equity_risk_premium": 1e308, "target_debt_to_equity": 1e300},
+        {"unlevered_beta_input": 1e308, "equity_risk_premium": 1e10},
+        {"company_specific_premium": 1e308, "equity_risk_premium": 1e308},
+    ],
+)
+def test_a_build_up_that_overflows_fails_instead_of_returning_null(overflowing):
+    # Each input is finite; their product is not. `round(inf, 6)` is inf, which
+    # json.dumps writes as `null` — so this used to be a 200 whose "wacc" was
+    # null, with nothing to say the number was unusable.
+    with pytest.raises(EngineInputError, match="non-finite cost of equity"):
+        compute_wacc(**{**BASE, **overflowing})
+
+
+def test_an_overflowing_wacc_endpoint_call_is_a_422_with_no_null_rate():
+    res = client.post(
+        "/engine/v1/wacc",
+        json={
+            "inputs": {
+                "unlevered_beta_input": 1.0,
+                "risk_free_rate_override": 0.04,
+                "equity_risk_premium": 1e308,
+                "target_debt_to_equity": 1e300,
+            }
+        },
+    )
+    assert res.status_code == 422
+    assert "non-finite" in res.json()["detail"]
+
+
+def test_every_ordinary_build_up_still_returns_a_finite_wacc():
+    for de in (0.0, 0.5, 2.0, 10.0):
+        for erp in (0.03, 0.05, 0.12):
+            out = compute_wacc(**{**BASE, "target_debt_to_equity": de, "equity_risk_premium": erp})
+            assert math.isfinite(out["wacc"])
+            assert math.isfinite(out["cost_of_equity"])

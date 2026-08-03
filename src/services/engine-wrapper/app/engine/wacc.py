@@ -320,6 +320,23 @@ def compute_wacc(
     after_tax_kd = kd * (1.0 - tax_rate)
     wacc = we * cost_of_equity + wd * after_tax_kd
 
+    # Every *input* is finite by construction — `_num` sees to that — but the
+    # build-up multiplies them, and a product can still overflow: a beta
+    # relevered against a huge D/E times a percentage-not-fraction ERP reaches
+    # inf. `round(inf, 6)` is inf, which `json.dumps` writes as `null`, so
+    # `/wacc` answered 200 with `"wacc": null` — the exact "broken number the
+    # caller is told nothing about" the `_num` guard exists to prevent, arriving
+    # one step later. Through `/compute`+`auto_wacc` it was worse than silent:
+    # the non-finite WACC was assigned to `income.discount_rate` and rejected
+    # downstream as *that* field being bad, blaming an input the caller never
+    # supplied. Fail here, where the fields at fault can be named.
+    if not math.isfinite(cost_of_equity) or not math.isfinite(wacc):
+        raise EngineInputError(
+            "the CAPM build-up overflowed to a non-finite cost of equity — check "
+            "equity_risk_premium, target_debt_to_equity, the beta and the premiums "
+            "are fractions (0.05), not percentages (5)"
+        )
+
     return {
         "wacc": round(wacc, 6),
         "cost_of_equity": round(cost_of_equity, 6),

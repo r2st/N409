@@ -176,3 +176,24 @@ def test_auto_wacc_reports_a_malformed_curve_as_an_input_error_not_a_500():
     )
     assert res.status_code == 422
     assert "treasury_curve" in res.json()["detail"]
+
+
+def test_auto_wacc_blames_the_wacc_inputs_not_the_discount_rate_when_it_overflows():
+    # An overflowing build-up used to reach `income.discount_rate` as inf and be
+    # rejected as *that* field being bad — naming an input the caller never sent.
+    inputs = _inputs(
+        wacc={
+            "unlevered_beta_input": 1.0,
+            "risk_free_rate_override": 0.04,
+            "equity_risk_premium": 1e308,
+            "target_debt_to_equity": 1e300,
+        }
+    )
+    res = client.post(
+        "/engine/v1/compute",
+        json={"params": PARAMS, "inputs": inputs, "auto_volatility": True, "auto_wacc": True, "auto_comparables": True},
+    )
+    assert res.status_code == 422
+    detail = res.json()["detail"]
+    assert "cost of equity" in detail
+    assert "discount_rate" not in detail
