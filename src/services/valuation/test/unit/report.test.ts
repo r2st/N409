@@ -179,6 +179,50 @@ describe('report templates', () => {
     expect(asc718!.html).toContain('<table>');
   });
 
+  // A built-in skeleton is code-authored, but the variables merged into it are
+  // not: company_name is free text the client types, and it lands inside
+  // <strong>{{company_name}}</strong> in five sections of the 409A skeleton.
+  // Filled raw, whatever was typed became stored report HTML on first ops
+  // access — and the auditor portal renders stored section HTML directly, so
+  // the payload executed in the browser of the external auditor reviewing the
+  // engagement. The managed-template path already sanitized; this one did not.
+  const XSS_NAME = '<img src=x onerror="alert(1)">Acme';
+
+  const instantiate409a = (companyName: string) =>
+    instantiateTemplate(templateForKind('409a'), {
+      company_name: companyName,
+      kind: '409a',
+      valuation_ref: 'ref',
+      date: '2026-07-06',
+      currency: 'USD',
+    });
+
+  it('strips markup a company name smuggles into the body', () => {
+    const content = instantiate409a(XSS_NAME);
+    // The name appears in several sections; none may carry the payload.
+    const carrying = content.sections.filter((s) => /<img|onerror/i.test(s.html));
+    expect(carrying).toEqual([]);
+    // The harmless part of the name still reads through.
+    expect(content.sections.some((s) => s.html.includes('Acme'))).toBe(true);
+  });
+
+  it('leaves a filled skeleton at its sanitizer fixed point for every var', () => {
+    for (const name of [XSS_NAME, '<script>alert(1)</script>', 'A & B, Ltd.', 'Acme']) {
+      for (const section of instantiate409a(name).sections) {
+        expect(sanitizeHtml(section.html), name).toBe(section.html);
+      }
+    }
+  });
+
+  it('keeps the placeholders an ordinary company name resolves to', () => {
+    // Sanitising the body must not cost the substitution itself.
+    const content = instantiate409a('Acme Robotics, Inc.');
+    const intro = content.sections[0]!;
+    expect(intro.html).toContain('Acme Robotics, Inc.');
+    expect(intro.html).toContain('2026-07-06');
+    expect(intro.html).not.toContain('{{');
+  });
+
   it('produces template HTML that survives its own sanitizer unchanged', () => {
     for (const template of REPORT_TEMPLATES.values()) {
       const content = instantiateTemplate(template, {

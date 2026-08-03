@@ -3,6 +3,7 @@ import { AuthShell } from '../components/AuthShell';
 import { HelpIcon } from '../components/HelpIcon';
 import { ErrorNote, Spinner } from '../components/ui';
 import { moneyFormatter } from '../lib/format';
+import { sanitizeHtml } from '../lib/m2';
 
 interface Section {
   heading: string;
@@ -129,8 +130,18 @@ export function AuditorPortalPage() {
           {bundle.report.content.sections.map((s, i) => (
             <div key={i} className="mb-5 last:mb-0">
               <h3 className="mb-1.5 font-display text-base font-semibold text-ink-900">{s.heading}</h3>
-              {/* Report HTML is sanitised server-side on save (domain/report.ts). */}
-              <div className="prose-sm text-ink-700" dangerouslySetInnerHTML={{ __html: s.html }} />
+              {/*
+                Sanitised again here, as the report tab does. Server-side
+                sanitisation on save is the primary control, but this page
+                renders whatever is *already stored* — including content
+                written before a sanitiser covered the path that wrote it —
+                and its reader is an external auditor holding a token, the one
+                viewer with no account and the least reason to trust us.
+              */}
+              <div
+                className="prose-sm text-ink-700"
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(s.html) }}
+              />
             </div>
           ))}
         </Card>

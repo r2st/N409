@@ -365,12 +365,32 @@ export function fillTemplateVars(text: string, vars: ReportTemplateVars): string
   });
 }
 
-/** Instantiates a template into editable content with placeholders resolved. */
+/**
+ * Instantiates a template into editable content with placeholders resolved.
+ *
+ * The filled body is sanitized, exactly as `contentFromManagedTemplate` does
+ * with a DB template. The skeletons here are code-authored and need nothing,
+ * but the *variables* substituted into them are not: `company_name` is a
+ * free-text field the client types (`z.string().min(1).max(300)`), and it
+ * lands inside `<strong>{{company_name}}</strong>` in five sections of the
+ * 409A skeleton. Filling it raw stored whatever was typed as report HTML on
+ * first ops access, and the auditor portal renders stored section HTML
+ * directly — so a company named `<img src=x onerror=…>` was script execution
+ * in the browser of the external auditor reviewing the engagement.
+ *
+ * Only the body is sanitized. Headings render as text everywhere they are
+ * shown (React escapes them, and the PDF writer draws them as a string), so
+ * passing them through the HTML whitelist would only mangle an ampersand.
+ */
 export function instantiateTemplate(template: ReportTemplate, vars: ReportTemplateVars): ReportContent {
   const fill = (text: string) => fillTemplateVars(text, vars);
   return {
     title: `${template.name} — ${vars.company_name}`,
-    sections: template.sections.map((s) => ({ key: s.key, heading: fill(s.heading), html: fill(s.html) })),
+    sections: template.sections.map((s) => ({
+      key: s.key,
+      heading: fill(s.heading),
+      html: sanitizeHtml(fill(s.html)),
+    })),
   };
 }
 
