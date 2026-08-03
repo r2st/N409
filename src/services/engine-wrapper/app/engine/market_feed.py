@@ -28,6 +28,7 @@ and ``info``; the default is the yfinance-backed one, and tests inject a stub.
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Mapping
 
 __all__ = ["MarketFeedClient", "YFinanceProvider", "default_provider", "UNSET"]
@@ -100,12 +101,44 @@ def default_provider():
         return None
 
 
+# How long a memoized fetch stays usable, and how many are kept.
+#
+# The memo is there so repeated engine passes within one valuation don't re-hit
+# the API — a horizon of minutes, not of process lifetime. It had neither bound
+# before, and `main.py` holds a single client for the life of the service, so
+# both ends went wrong. An entry never expired: `get_company_multiples` keys on
+# ("multiples", ticker, date) and the callers pass no date, so the first fetch
+# of a ticker was served to every valuation for as long as the process lived,
+# labelled `source: "yfinance"` — a report built next month quoting last
+# month's multiples as observed market data. And an entry was never evicted:
+# every distinct (ticker, start, end) triple retained a whole price series, so
+# the resident set only grew.
+#
+# Fifteen minutes is well past a single valuation run and well inside a trading
+# session. 256 entries covers a busy queue of runs at a few hundred KB.
+CACHE_TTL_SECONDS = 900.0
+CACHE_MAX_ENTRIES = 256
+
+
 class MarketFeedClient:
     """Caching live market-data client with fallback-on-error semantics."""
 
-    def __init__(self, provider=UNSET, cache: dict | None = None) -> None:
+    def __init__(
+        self,
+        provider=UNSET,
+        cache: dict | None = None,
+        *,
+        ttl_seconds: float = CACHE_TTL_SECONDS,
+        max_entries: int = CACHE_MAX_ENTRIES,
+        clock=time.monotonic,
+    ) -> None:
         self.provider = default_provider() if provider is UNSET else provider
+        # key → (expires_at, result). Insertion order doubles as recency, the
+        # same way the Node side's TtlCache bounds itself.
         self.cache: dict = cache if cache is not None else {}
+        self.ttl_seconds = ttl_seconds
+        self.max_entries = max_entries
+        self._clock = clock
 
     # ── internals ─────────────────────────────────────────────────────────────
     def _fallback(self, reason: str, fallback) -> dict:
@@ -116,9 +149,20 @@ class MarketFeedClient:
             payload["estimated"] = fallback
         return payload
 
+    def _store(self, key: tuple, result) -> None:
+        self.cache.pop(key, None)  # re-insert so this key becomes the newest
+        self.cache[key] = (self._clock() + self.ttl_seconds, result)
+        while len(self.cache) > self.max_entries:
+            oldest = next(iter(self.cache))
+            del self.cache[oldest]
+
     def _cached(self, key: tuple, produce, fallback):
-        if key in self.cache:
-            return self.cache[key]
+        entry = self.cache.get(key)
+        if entry is not None:
+            expires_at, result = entry
+            if self._clock() < expires_at:
+                return result
+            del self.cache[key]  # stale — re-fetch below, or fall back
         if self.provider is None:
             return self._fallback(
                 "no market-data provider available (yfinance not installed)", fallback
@@ -127,7 +171,7 @@ class MarketFeedClient:
             result = produce(self.provider)
         except Exception as exc:  # network/parse/library errors → fallback, never raise
             return self._fallback(f"market-data fetch failed: {exc}", fallback)
-        self.cache[key] = result
+        self._store(key, result)
         return result
 
     # ── public API ────────────────────────────────────────────────────────────

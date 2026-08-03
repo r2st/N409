@@ -259,3 +259,94 @@ def test_market_feed_bounds_the_metrics_list():
     )
     assert ok.status_code == 200
     assert ok.json()["metrics"] == ["pe"]
+
+
+# ── Cache lifetime ───────────────────────────────────────────────────────────
+# main.py holds one client for the life of the service, and the memo had
+# neither an expiry nor a size bound. `get_company_multiples` keys on
+# ("multiples", ticker, date) and its callers pass no date, so the first fetch
+# of a ticker was replayed to every valuation for as long as the process lived
+# — labelled `source: "yfinance"`, i.e. a report quoting a month-old multiple
+# as observed market data. Nothing was ever evicted either, so every distinct
+# (ticker, start, end) triple retained a price series for good.
+
+
+class FakeClock:
+    """A monotonic clock the test advances by hand."""
+
+    def __init__(self):
+        self.t = 1_000.0
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, seconds):
+        self.t += seconds
+
+
+def test_cached_entry_expires_and_is_refetched():
+    clock = FakeClock()
+    stub = StubProvider()
+    c = MarketFeedClient(provider=stub, ttl_seconds=900.0, clock=clock)
+
+    c.get_company_multiples(["DDOG"])
+    clock.advance(899.0)
+    c.get_company_multiples(["DDOG"])
+    assert stub.calls["info"] == 1  # still inside the window
+
+    clock.advance(2.0)
+    c.get_company_multiples(["DDOG"])
+    assert stub.calls["info"] == 2  # past it — the live source is consulted again
+
+
+def test_expired_entry_does_not_linger_in_the_map():
+    clock = FakeClock()
+    c = MarketFeedClient(provider=StubProvider(), ttl_seconds=10.0, clock=clock)
+    c.get_historical_prices("DDOG", "2026-01-01", "2026-02-01")
+    assert len(c.cache) == 1
+    clock.advance(11.0)
+    c.get_historical_prices("DDOG", "2026-01-01", "2026-02-01")
+    assert len(c.cache) == 1  # replaced, not accumulated
+
+
+def test_cache_is_bounded_and_evicts_the_oldest():
+    stub = StubProvider()
+    c = MarketFeedClient(provider=stub, max_entries=3)
+    for day in range(10):
+        c.get_historical_prices("DDOG", f"2026-01-{day + 1:02d}", "2026-02-01")
+    assert len(c.cache) == 3
+    assert stub.calls["prices"] == 10
+
+    # The three most recent windows are the ones retained.
+    for day in (7, 8, 9):
+        c.get_historical_prices("DDOG", f"2026-01-{day + 1:02d}", "2026-02-01")
+    assert stub.calls["prices"] == 10
+    # …and the oldest is gone, so asking again costs a fetch.
+    c.get_historical_prices("DDOG", "2026-01-01", "2026-02-01")
+    assert stub.calls["prices"] == 11
+
+
+def test_a_read_refreshes_recency_but_not_expiry():
+    clock = FakeClock()
+    stub = StubProvider()
+    c = MarketFeedClient(provider=stub, ttl_seconds=100.0, max_entries=2, clock=clock)
+    c.get_company_financials("A")
+    c.get_company_financials("B")
+    clock.advance(50.0)
+    c.get_company_financials("A")  # cache hit; must not extend A's life
+    c.get_company_financials("C")  # evicts the oldest
+    assert stub.calls["financials"] == 3
+
+    clock.advance(51.0)
+    c.get_company_financials("A")
+    assert stub.calls["financials"] == 4  # A aged out on its original clock
+
+
+def test_a_failed_fetch_is_not_cached():
+    # The fallback path must stay out of the memo, or one blip is served for a
+    # full TTL. BoomProvider raises every time; each call must reach it.
+    c = MarketFeedClient(provider=BoomProvider())
+    for _ in range(3):
+        out = c.get_company_financials("DDOG")
+        assert out["source"] == "fallback"
+    assert c.cache == {}
