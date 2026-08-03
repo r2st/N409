@@ -3,15 +3,16 @@
  * quotes, or newlines are quoted; quotes are doubled. Values are prefixed
  * with a quote when they could be interpreted as spreadsheet formulas
  * (CSV-injection hardening).
+ *
+ * The field encoder is domain/csv.ts's — this file had its own copy, and the
+ * copies drifted: only one of them ever learned that a negative number is not
+ * a formula. Two encoders for one wire format is one more than the number of
+ * places that fix can land.
  */
 
-export function csvField(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  let s = value instanceof Date ? value.toISOString() : String(value);
-  if (/^[=+\-@\t]/.test(s)) s = `'${s}`;
-  if (/[",\r\n]/.test(s)) s = `"${s.replaceAll('"', '""')}"`;
-  return s;
-}
+import { csvEscape } from '../domain/csv.js';
+
+export const csvField = csvEscape;
 
 export function toCsv(headers: string[], rows: unknown[][]): string {
   const lines = [headers.map(csvField).join(',')];

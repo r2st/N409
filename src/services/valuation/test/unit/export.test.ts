@@ -25,6 +25,13 @@ describe('CSV export (M4)', () => {
     expect(csvField('=A1,B1')).toBe('"\'=A1,B1"');
   });
 
+  it('leaves a negative number alone — the audit change log is full of them', () => {
+    expect(csvField(-1200000)).toBe('-1200000');
+    expect(csvField('-0.15')).toBe('-0.15');
+    // The DDE vector still starts with '-' and is still neutralized.
+    expect(csvField('-2+3+cmd|calc')).toBe("'-2+3+cmd|calc");
+  });
+
   it('renders a header row and CRLF line endings', () => {
     const csv = toCsv(['a', 'b'], [['1', 'x,y']]);
     expect(csv).toBe('a,b\r\n1,"x,y"\r\n');
