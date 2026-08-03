@@ -14,6 +14,32 @@ export function escapeLike(s: string): string {
   return s.replace(/[%_\\]/g, '\\$&');
 }
 
+/** Largest value `valuations.number` (a bigint) can hold. */
+const MAX_BIGINT = 9223372036854775807n;
+
+/**
+ * The query as a valuation number, or null when it is not one.
+ *
+ * An all-digit query is compared against `valuations.number`, which is a
+ * bigint — and in Postgres a cast that overflows is an *error*, not a
+ * non-match. A query of 23 digits therefore took the entire search endpoint
+ * down with a 500 (`value ... is out of range for type bigint`) instead of
+ * returning the empty result it obviously has, and it took the company-name
+ * matches down with it: the number clause is OR'd into the same statement, so
+ * one unreachable branch failed the whole query. Anyone who pasted a long
+ * digit string — an account number, a phone number, an id from another system
+ * — into the search box got a broken page.
+ *
+ * The valuations list filter has always bounded its digit run for this reason
+ * (`/^#?\d{1,12}$/`); search is the one place that never did. Bounding by the
+ * column's actual range rather than a digit count keeps every number that
+ * exists findable.
+ */
+export function valuationNumberQuery(q: string): string | null {
+  if (!/^\d+$/.test(q)) return null;
+  return BigInt(q) <= MAX_BIGINT ? q : null;
+}
+
 export interface UserSearchHit {
   id: string;
   email: string;
@@ -45,8 +71,9 @@ export async function searchValuations(
   matches.push(`company_name ILIKE $${params.length}`);
   params.push(`%${escaped}%`);
   matches.push(`service_name ILIKE $${params.length}`);
-  if (/^\d+$/.test(q)) {
-    params.push(q);
+  const asNumber = valuationNumberQuery(q);
+  if (asNumber !== null) {
+    params.push(asNumber);
     matches.push(`number = $${params.length}::bigint`);
   }
   if (isUlid(q.toUpperCase())) {

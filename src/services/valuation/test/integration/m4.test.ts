@@ -510,6 +510,42 @@ describe.skipIf(!dbUp)('M4 — Polish', () => {
       });
       expect(res.statusCode).toBe(400);
     });
+
+    it('survives an all-digit query too large for the valuation number column', async () => {
+      // `number` is a bigint, so casting a 23-digit query to it is a range
+      // error, not a miss — the search 500s instead of returning no hits.
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/search?q=99999999999999999999999',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().valuations).toEqual([]);
+    });
+
+    it('still matches a valuation by its number, right up to the bigint ceiling', async () => {
+      // Pinned rather than read back, because the sequence hands out numbers
+      // shorter than the two-character query minimum. The ceiling itself is
+      // the case the bound must not exclude.
+      const id = await createValuation('Numbered Ventures');
+      await ctx.pool.query('UPDATE valuations SET number = $1 WHERE id = $2', ['9223372036854775807', id]);
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/search?q=9223372036854775807',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().valuations.some((v: { id: string }) => v.id === id)).toBe(true);
+    });
+
+    it('does not 500 on a digit run with leading zeros', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/search?q=00000000000000000000001',
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+    });
   });
 
   // ── Rich sort (P2 #30) ──────────────────────────────────────────────────────
