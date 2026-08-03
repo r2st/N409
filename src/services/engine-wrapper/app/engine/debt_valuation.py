@@ -43,7 +43,7 @@ RATING_SPREADS_BPS: dict[str, float] = {
 }
 
 
-def _num(value, name: str, *, minimum: float | None = None) -> float:
+def _num(value, name: str, *, minimum: float | None = None, maximum: float | None = None) -> float:
     try:
         out = float(value)
     except (TypeError, ValueError) as exc:
@@ -52,7 +52,36 @@ def _num(value, name: str, *, minimum: float | None = None) -> float:
         raise EngineInputError(f"{name} must be finite")
     if minimum is not None and out < minimum:
         raise EngineInputError(f"{name} must be >= {minimum}")
+    if maximum is not None and out > maximum:
+        raise EngineInputError(f"{name} must be <= {maximum}")
     return out
+
+
+# The period count every schedule below is built from is `maturity_years ×
+# frequency`, and neither factor was bounded. `frequency=100000,
+# maturity_years=50` is about 150 bytes of JSON and asks for five million
+# cash-flow rows — measured at six seconds and some gigabytes of dicts, and it
+# scales linearly from there until the process dies. The work is synchronous in
+# a threadpool slot, so nothing interrupts it.
+#
+# Both ceilings are set past anything that trades. A coupon is paid at most
+# daily, and the longest instruments ever issued are century bonds; a
+# hundred-year daily-pay note is 36,600 periods, which builds in milliseconds.
+MAX_FREQUENCY = 366
+MAX_MATURITY_YEARS = 100.0
+
+
+def _frequency(value, name: str = "frequency") -> int:
+    """Coupon periods per year — a positive integer, no finer than daily."""
+    try:
+        m = int(value)
+    except (TypeError, ValueError) as exc:
+        raise EngineInputError(f"{name} must be a positive integer") from exc
+    if m <= 0:
+        raise EngineInputError(f"{name} must be a positive integer")
+    if m > MAX_FREQUENCY:
+        raise EngineInputError(f"{name} must be <= {MAX_FREQUENCY} (daily is the finest coupon period)")
+    return m
 
 
 def rating_implied_spread(rating: str) -> float:
@@ -82,10 +111,8 @@ def coupon_schedule(
     """
     f = _num(face, "face", minimum=0.0)
     rate = _num(coupon_rate, "coupon_rate", minimum=0.0)
-    m = int(frequency)
-    if m <= 0:
-        raise EngineInputError("frequency must be a positive integer")
-    yrs = _num(maturity_years, "maturity_years", minimum=0.0)
+    m = _frequency(frequency)
+    yrs = _num(maturity_years, "maturity_years", minimum=0.0, maximum=MAX_MATURITY_YEARS)
     n_periods = max(1, round(yrs * m))
     period_rate = rate / m
     rows: list[dict] = []
@@ -116,9 +143,7 @@ def present_value(cashflows: list[dict], annual_yield: float, *, frequency: int 
     """PV of dated cash flows discounted at ``annual_yield`` (nominal, compounded
     ``frequency`` times a year)."""
     y = _num(annual_yield, "annual_yield")
-    m = int(frequency)
-    if m <= 0:
-        raise EngineInputError("frequency must be a positive integer")
+    m = _frequency(frequency)
     per = y / m
     if per <= -1.0:
         raise EngineInputError("yield too negative to discount")
@@ -147,7 +172,7 @@ def yield_dcf(
     settlement sits into the current coupon period; it shifts every cash-flow
     time earlier by that fraction of a period and accrues the running coupon.
     """
-    m = int(frequency)
+    m = _frequency(frequency)
     schedule = coupon_schedule(
         face=face, coupon_rate=coupon_rate, frequency=frequency, maturity_years=maturity_years, amortizing=amortizing
     )
@@ -179,7 +204,7 @@ def yield_to_maturity(
 ) -> float:
     """Solve the yield that reprices the instrument to ``price`` (dirty)."""
     target = _num(price, "price", minimum=0.0)
-    m = int(frequency)
+    m = _frequency(frequency)
     schedule = coupon_schedule(
         face=face, coupon_rate=coupon_rate, frequency=frequency, maturity_years=maturity_years, amortizing=amortizing
     )
@@ -207,7 +232,7 @@ def duration_convexity(
     computed by a central-difference reprice, which is exact for these smooth
     price/yield functions and avoids per-schedule formula errors.
     """
-    m = int(frequency)
+    m = _frequency(frequency)
     schedule = coupon_schedule(
         face=face, coupon_rate=coupon_rate, frequency=frequency, maturity_years=maturity_years, amortizing=amortizing
     )
@@ -336,8 +361,8 @@ def convertible_note(
     r = _num(risk_free_rate, "risk_free_rate")
     cs = _num(credit_spread, "credit_spread", minimum=0.0)
     q = _num(dividend_yield, "dividend_yield", minimum=0.0)
-    t = _num(maturity_years, "maturity_years", minimum=0.0)
-    m = int(frequency)
+    t = _num(maturity_years, "maturity_years", minimum=0.0, maximum=MAX_MATURITY_YEARS)
+    m = _frequency(frequency)
     n = max(10, min(int(steps), 2000))
     if t <= 0 or sigma <= 0 or s0 <= 0:
         # Degenerate: worth the greater of conversion or redemption today.

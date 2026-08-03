@@ -320,3 +320,74 @@ def test_value_instrument_dispatches_and_bond_includes_duration():
 def test_value_instrument_rejects_unknown_type():
     with pytest.raises(EngineInputError):
         value_instrument("mortgage", {})
+
+
+# ── Schedule size bounds ─────────────────────────────────────────────────────
+
+
+def test_coupon_frequency_is_capped_at_daily():
+    # `n_periods = maturity_years × frequency` drove every schedule and neither
+    # factor was bounded: frequency=100000 over 50 years is ~150 bytes of JSON
+    # asking for five million cash-flow rows.
+    with pytest.raises(EngineInputError) as exc:
+        coupon_schedule(face=1000, coupon_rate=0.05, frequency=100_000, maturity_years=50)
+    assert "366" in str(exc.value)
+
+
+def test_maturity_is_capped_at_a_century():
+    with pytest.raises(EngineInputError) as exc:
+        coupon_schedule(face=1000, coupon_rate=0.05, frequency=12, maturity_years=1_000_000)
+    assert "maturity_years" in str(exc.value)
+
+
+def test_the_longest_real_instrument_still_builds():
+    # A hundred-year daily-pay note is the worst honest case: it must still work.
+    rows = coupon_schedule(face=1000, coupon_rate=0.05, frequency=366, maturity_years=100)
+    assert len(rows) == 36_600
+
+
+def test_non_numeric_frequency_is_an_input_error_not_a_crash():
+    # `int("weekly")` raises ValueError, which the route does not map to a 422.
+    with pytest.raises(EngineInputError):
+        coupon_schedule(face=1000, coupon_rate=0.05, frequency="weekly", maturity_years=5)
+    with pytest.raises(EngineInputError):
+        duration_convexity(
+            face=1000, coupon_rate=0.05, frequency="weekly", maturity_years=5, market_yield=0.05
+        )
+
+
+def test_convertible_tree_bounds_its_coupon_schedule_too():
+    # The tree's `n_coupons = maturity_years × frequency` loop had the same gap.
+    with pytest.raises(EngineInputError):
+        convertible_note(
+            face=1000,
+            coupon_rate=0.05,
+            frequency=500_000,
+            maturity_years=30,
+            conversion_ratio=10,
+            stock_price=50,
+            volatility=0.5,
+            risk_free_rate=0.04,
+            credit_spread=0.03,
+        )
+
+
+def test_oversized_debt_request_answers_422_over_http():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    res = TestClient(app).post(
+        "/engine/v1/debt-valuation",
+        json={
+            "instrument_type": "bond",
+            "params": {
+                "face": 1000,
+                "coupon_rate": 0.05,
+                "frequency": 1_000_000,
+                "maturity_years": 90,
+                "market_yield": 0.05,
+            },
+        },
+    )
+    assert res.status_code == 422
