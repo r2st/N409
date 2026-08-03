@@ -86,10 +86,7 @@ export function monthsElapsed(start: string | Date, asOf: Date): number {
     (asOf.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
     (asOf.getUTCMonth() - startDate.getUTCMonth());
   const asOfDay = asOf.getUTCDate();
-  if (
-    asOfDay < startDate.getUTCDate() &&
-    asOfDay < daysInMonth(asOf.getUTCFullYear(), asOf.getUTCMonth())
-  ) {
+  if (asOfDay < startDate.getUTCDate() && asOfDay < daysInMonth(asOf.getUTCFullYear(), asOf.getUTCMonth())) {
     months -= 1;
   }
   return Math.max(0, months);

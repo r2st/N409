@@ -184,11 +184,7 @@ export function PortfolioPage() {
                 <Metric label="Entities" value={String(detail.consolidated.entity_count)} />
                 <Metric label="Valued" value={String(detail.consolidated.valued_count)} />
                 {mixed ? (
-                  <Metric
-                    label="Total equity"
-                    value="Mixed currencies"
-                    hint="Broken out by currency below"
-                  />
+                  <Metric label="Total equity" value="Mixed currencies" hint="Broken out by currency below" />
                 ) : (
                   <>
                     <Metric
