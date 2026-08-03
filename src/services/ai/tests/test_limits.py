@@ -72,3 +72,53 @@ def test_startup_lifespan_runs_without_error():
     main = importlib.import_module("app.main")
     with TestClient(main.app) as c:
         assert c.get("/health").status_code == 200
+
+
+def _chunks(total_bytes: int, chunk_bytes: int = 1024 * 1024):
+    """A body streamed in pieces — httpx sends this without a Content-Length."""
+    sent = 0
+    while sent < total_bytes:
+        size = min(chunk_bytes, total_bytes - sent)
+        sent += size
+        yield b"x" * size
+
+
+def test_chunked_request_over_the_cap_is_rejected(monkeypatch):
+    # No Content-Length to read, so the cap has to come from counting the body
+    # as it arrives. Before this was enforced the whole 40 MB was buffered and
+    # handed to the JSON parser, which is the OOM the cap exists to prevent.
+    res = client.post(
+        "/ai/v1/pipelines/extract",
+        content=_chunks(40 * 1024 * 1024),
+        headers={"content-type": "application/json"},
+    )
+    assert res.status_code == 413
+    assert "exceeds" in res.json()["detail"]
+
+
+def test_chunked_request_under_the_cap_still_reaches_the_route():
+    # The metered body must be replayed intact — a legitimate chunked caller
+    # sees its payload, not an empty one.
+    res = client.post(
+        "/ai/v1/pipelines/does-not-exist",
+        content=iter([b'{"valuation": ', b'{"id": "v1"}}']),
+        headers={"content-type": "application/json"},
+    )
+    assert res.status_code == 404
+    assert "does-not-exist" in res.json()["detail"]
+
+
+def test_negative_content_length_is_rejected():
+    # `int("-1") > limit` is False, so a negative length slipped past the
+    # comparison instead of being read as the malformed header it is.
+    res = client.post(
+        "/ai/v1/test",
+        content="{}",
+        headers={"content-type": "application/json", "content-length": "-1"},
+    )
+    assert res.status_code == 400
+
+
+def test_bodyless_methods_skip_the_meter():
+    # GET carries no body; it must not pay for an extra receive() round-trip.
+    assert client.get("/health").status_code == 200
