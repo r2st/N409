@@ -27,12 +27,22 @@ interface Entity {
   fmv_per_share: number | null;
   currency: string;
 }
-interface Consolidated {
+interface CurrencyTotals {
+  currency: string;
   entity_count: number;
   valued_count: number;
   total_equity_value: number;
   consolidated_equity_value: number;
+}
+interface Consolidated {
+  entity_count: number;
+  valued_count: number;
+  /** Null when the organization spans more than one currency. */
+  total_equity_value: number | null;
+  consolidated_equity_value: number | null;
+  by_currency?: CurrencyTotals[];
   currencies: string[];
+  mixed_currency?: boolean;
 }
 interface OrgDetail {
   organization: Organization;
@@ -105,7 +115,11 @@ export function PortfolioPage() {
 
   if (!orgs) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
 
+  // Only meaningful for a single-currency organization; a mixed one gets a
+  // per-currency breakdown below instead of one mislabelled sum.
   const currency = detail?.consolidated.currencies[0] ?? 'USD';
+  const mixed = detail?.consolidated.mixed_currency ?? false;
+  const byCurrency = detail?.consolidated.by_currency ?? [];
 
   return (
     <div className="max-w-5xl">
@@ -169,17 +183,50 @@ export function PortfolioPage() {
               <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
                 <Metric label="Entities" value={String(detail.consolidated.entity_count)} />
                 <Metric label="Valued" value={String(detail.consolidated.valued_count)} />
-                <Metric label="Total equity" value={usd(detail.consolidated.total_equity_value, currency)} />
-                <Metric
-                  label="Consolidated equity"
-                  value={usd(detail.consolidated.consolidated_equity_value, currency)}
-                  hint="Subsidiaries excluded"
-                />
+                {mixed ? (
+                  <Metric
+                    label="Total equity"
+                    value="Mixed currencies"
+                    hint="Broken out by currency below"
+                  />
+                ) : (
+                  <>
+                    <Metric
+                      label="Total equity"
+                      value={usd(detail.consolidated.total_equity_value ?? 0, currency)}
+                    />
+                    <Metric
+                      label="Consolidated equity"
+                      value={usd(detail.consolidated.consolidated_equity_value ?? 0, currency)}
+                      hint="Subsidiaries excluded"
+                    />
+                  </>
+                )}
                 <Metric
                   label="Type"
                   value={ENTITY_LABELS[detail.organization.entity_type] ?? detail.organization.entity_type}
                 />
               </div>
+
+              {mixed && byCurrency.length > 0 && (
+                <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+                  <h2 className="font-display text-lg font-semibold text-ink-900">Equity by currency</h2>
+                  <p className="mt-1 text-sm text-ink-500">
+                    These entities are held in {byCurrency.length} currencies, so there is no single
+                    consolidated total. Convert at your own reporting rate.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-6">
+                    {byCurrency.map((c) => (
+                      <Metric
+                        key={c.currency}
+                        label={`${c.currency} total`}
+                        value={usd(c.total_equity_value, c.currency)}
+                        hint={`${usd(c.consolidated_equity_value, c.currency)} excluding subsidiaries`}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
 
               <section className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                 <table className="w-full min-w-[640px] text-sm">

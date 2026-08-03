@@ -20,25 +20,52 @@ export interface PortfolioEntity {
   currency: string;
 }
 
+/** Roll-up of the entities denominated in one currency. */
+export interface CurrencyTotals {
+  currency: string;
+  entity_count: number;
+  valued_count: number;
+  total_equity_value: number;
+  consolidated_equity_value: number;
+}
+
 export interface ConsolidatedReport {
   entity_count: number;
   valued_count: number;
-  /** Sum of the latest equity value across valued entities. */
-  total_equity_value: number;
+  /**
+   * Sum of the latest equity value across valued entities — `null` when the
+   * organization spans more than one currency, where no single sum exists.
+   */
+  total_equity_value: number | null;
   /** Consolidated equity excluding subsidiaries (avoids double counting a
-   *  parent that already includes its subsidiaries). */
-  consolidated_equity_value: number;
-  by_entity_type: Record<EntityType, { count: number; equity_value: number }>;
+   *  parent that already includes its subsidiaries). `null` when mixed. */
+  consolidated_equity_value: number | null;
+  by_entity_type: Record<EntityType, { count: number; equity_value: number | null }>;
+  /** Per-currency roll-up, ordered by descending total then currency code. */
+  by_currency: CurrencyTotals[];
   currencies: string[];
+  /** True when the entities are denominated in more than one currency. */
+  mixed_currency: boolean;
 }
 
 const ENTITY_TYPES: EntityType[] = ['standalone', 'parent', 'subsidiary', 'portfolio_company'];
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /**
  * Consolidate an organization's entities. `total_equity_value` sums every
  * valued entity; `consolidated_equity_value` excludes `subsidiary` entities on
  * the assumption a `parent` entity's valuation already consolidates them —
  * the common holding-company reporting convention.
+ *
+ * Equity values carry the currency of their own valuation, and an organization
+ * may well hold a US subsidiary next to a European one. Adding those figures
+ * produces a number in no currency at all, and the caller cannot tell: it used
+ * to receive a single total plus a list of currencies and would label the sum
+ * with whichever one came back first, so a $10M + €5M portfolio reported
+ * "$15,000,000". The scalar totals are therefore only populated when a single
+ * currency is in play; when more than one is, they are `null` and the honest
+ * figures live in `by_currency`, one roll-up per currency.
  */
 export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
   const byType = Object.fromEntries(ENTITY_TYPES.map((t) => [t, { count: 0, equity_value: 0 }])) as Record<
@@ -49,26 +76,61 @@ export function consolidate(entities: PortfolioEntity[]): ConsolidatedReport {
   let total = 0;
   let consolidated = 0;
   let valued = 0;
-  const currencies = new Set<string>();
+  const perCurrency = new Map<string, CurrencyTotals>();
 
   for (const e of entities) {
     byType[e.entity_type].count += 1;
-    currencies.add(e.currency);
+    let bucket = perCurrency.get(e.currency);
+    if (!bucket) {
+      bucket = {
+        currency: e.currency,
+        entity_count: 0,
+        valued_count: 0,
+        total_equity_value: 0,
+        consolidated_equity_value: 0,
+      };
+      perCurrency.set(e.currency, bucket);
+    }
+    bucket.entity_count += 1;
     if (e.equity_value !== null) {
       valued += 1;
       total += e.equity_value;
+      bucket.valued_count += 1;
+      bucket.total_equity_value += e.equity_value;
       byType[e.entity_type].equity_value += e.equity_value;
-      if (e.entity_type !== 'subsidiary') consolidated += e.equity_value;
+      if (e.entity_type !== 'subsidiary') {
+        consolidated += e.equity_value;
+        bucket.consolidated_equity_value += e.equity_value;
+      }
     }
   }
+
+  const byCurrency = [...perCurrency.values()]
+    .map((b) => ({
+      ...b,
+      total_equity_value: round2(b.total_equity_value),
+      consolidated_equity_value: round2(b.consolidated_equity_value),
+    }))
+    .sort((a, b) =>
+      b.total_equity_value !== a.total_equity_value
+        ? b.total_equity_value - a.total_equity_value
+        : a.currency.localeCompare(b.currency),
+    );
+  const mixed = perCurrency.size > 1;
 
   return {
     entity_count: entities.length,
     valued_count: valued,
-    total_equity_value: Math.round(total * 100) / 100,
-    consolidated_equity_value: Math.round(consolidated * 100) / 100,
-    by_entity_type: byType,
-    currencies: [...currencies],
+    total_equity_value: mixed ? null : round2(total),
+    consolidated_equity_value: mixed ? null : round2(consolidated),
+    by_entity_type: mixed
+      ? (Object.fromEntries(
+          ENTITY_TYPES.map((t) => [t, { count: byType[t].count, equity_value: null }]),
+        ) as Record<EntityType, { count: number; equity_value: number | null }>)
+      : byType,
+    by_currency: byCurrency,
+    currencies: [...perCurrency.keys()],
+    mixed_currency: mixed,
   };
 }
 

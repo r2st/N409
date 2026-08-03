@@ -28,7 +28,59 @@ const detail = {
     valued_count: 1,
     total_equity_value: 10_000_000,
     consolidated_equity_value: 10_000_000,
+    by_currency: [
+      {
+        currency: 'USD',
+        entity_count: 1,
+        valued_count: 1,
+        total_equity_value: 10_000_000,
+        consolidated_equity_value: 10_000_000,
+      },
+    ],
     currencies: ['USD'],
+    mixed_currency: false,
+  },
+};
+
+const mixedDetail = {
+  organization: org,
+  entities: [
+    ...detail.entities,
+    {
+      valuation_id: 'v2',
+      number: 'VAL-2',
+      company_name: 'Acme Europe',
+      entity_type: 'portfolio_company',
+      parent_valuation_id: null,
+      state: 'delivered',
+      equity_value: 5_000_000,
+      fmv_per_share: 1.5,
+      currency: 'EUR',
+    },
+  ],
+  consolidated: {
+    entity_count: 2,
+    valued_count: 2,
+    total_equity_value: null,
+    consolidated_equity_value: null,
+    by_currency: [
+      {
+        currency: 'USD',
+        entity_count: 1,
+        valued_count: 1,
+        total_equity_value: 10_000_000,
+        consolidated_equity_value: 10_000_000,
+      },
+      {
+        currency: 'EUR',
+        entity_count: 1,
+        valued_count: 1,
+        total_equity_value: 5_000_000,
+        consolidated_equity_value: 5_000_000,
+      },
+    ],
+    currencies: ['USD', 'EUR'],
+    mixed_currency: true,
   },
 };
 
@@ -59,6 +111,22 @@ describe('PortfolioPage (feature 6)', () => {
     // Consolidated metrics + member entity.
     await waitFor(() => expect(screen.getByText('Acme Parent')).toBeInTheDocument());
     expect(screen.getAllByText(/\$10,000,000/).length).toBeGreaterThan(0);
+  });
+
+  it('breaks the roll-up out per currency instead of summing across them', async () => {
+    mockApi({ 'GET /organizations/org1': () => jsonResponse(mixedDetail) });
+    render(
+      <MemoryRouter>
+        <PortfolioPage />
+      </MemoryRouter>,
+    );
+    // No single total is claimed...
+    expect(await screen.findByText('Mixed currencies')).toBeInTheDocument();
+    expect(screen.queryByText(/\$15,000,000/)).not.toBeInTheDocument();
+    // ...and each currency reports its own.
+    await waitFor(() => expect(screen.getByText('Equity by currency')).toBeInTheDocument());
+    expect(screen.getAllByText(/\$10,000,000/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/€5,000,000/).length).toBeGreaterThan(0);
   });
 
   it('shows an empty state with no organizations', async () => {

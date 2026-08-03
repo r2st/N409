@@ -48,6 +48,80 @@ describe('portfolio consolidation (feature 6)', () => {
     expect(report.currencies.sort()).toEqual(['EUR', 'USD']);
   });
 
+  it('reports a single currency roll-up alongside the scalar totals', () => {
+    const report = consolidate([
+      entity({ valuation_id: 'a', equity_value: 4_000_000 }),
+      entity({ valuation_id: 'b', entity_type: 'subsidiary', equity_value: 1_000_000 }),
+    ]);
+    expect(report.mixed_currency).toBe(false);
+    expect(report.total_equity_value).toBe(5_000_000);
+    expect(report.consolidated_equity_value).toBe(4_000_000);
+    expect(report.by_currency).toEqual([
+      {
+        currency: 'USD',
+        entity_count: 2,
+        valued_count: 2,
+        total_equity_value: 5_000_000,
+        consolidated_equity_value: 4_000_000,
+      },
+    ]);
+  });
+
+  it('refuses to add equity values denominated in different currencies', () => {
+    // $10M + €5M is not $15M, and the caller labelled the sum with whichever
+    // currency it saw first. There is no single total here.
+    const report = consolidate([
+      entity({ valuation_id: 'us', currency: 'USD', equity_value: 10_000_000 }),
+      entity({ valuation_id: 'eu', currency: 'EUR', equity_value: 5_000_000 }),
+    ]);
+    expect(report.mixed_currency).toBe(true);
+    expect(report.total_equity_value).toBeNull();
+    expect(report.consolidated_equity_value).toBeNull();
+    expect(report.by_entity_type.standalone.count).toBe(2);
+    expect(report.by_entity_type.standalone.equity_value).toBeNull();
+  });
+
+  it('breaks a mixed-currency portfolio out per currency, largest first', () => {
+    const report = consolidate([
+      entity({ valuation_id: 'eu1', currency: 'EUR', equity_value: 5_000_000 }),
+      entity({ valuation_id: 'us1', currency: 'USD', equity_value: 8_000_000 }),
+      entity({
+        valuation_id: 'us2',
+        currency: 'USD',
+        entity_type: 'subsidiary',
+        equity_value: 2_000_000,
+      }),
+      entity({ valuation_id: 'gb1', currency: 'GBP', equity_value: null }),
+    ]);
+    expect(report.by_currency.map((c) => c.currency)).toEqual(['USD', 'EUR', 'GBP']);
+    const usd = report.by_currency[0]!;
+    expect(usd).toEqual({
+      currency: 'USD',
+      entity_count: 2,
+      valued_count: 2,
+      total_equity_value: 10_000_000,
+      consolidated_equity_value: 8_000_000,
+    });
+    // An unvalued entity still contributes its currency and its head count.
+    expect(report.by_currency[2]).toEqual({
+      currency: 'GBP',
+      entity_count: 1,
+      valued_count: 0,
+      total_equity_value: 0,
+      consolidated_equity_value: 0,
+    });
+    expect(report.valued_count).toBe(3);
+  });
+
+  it('rounds each currency bucket to cents', () => {
+    const report = consolidate([
+      entity({ valuation_id: 'a', currency: 'USD', equity_value: 0.1 }),
+      entity({ valuation_id: 'b', currency: 'USD', equity_value: 0.2 }),
+      entity({ valuation_id: 'c', currency: 'JPY', equity_value: 1 }),
+    ]);
+    expect(report.by_currency.find((c) => c.currency === 'USD')!.total_equity_value).toBe(0.3);
+  });
+
   it('builds a parent → children tree from inter-company references', () => {
     const { roots, childrenOf } = buildEntityTree([
       entity({ valuation_id: 'parent', entity_type: 'parent' }),
