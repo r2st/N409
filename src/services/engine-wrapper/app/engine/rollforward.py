@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 from datetime import date
 
+from .compounding import compound_factor
 from .errors import EngineInputError
 
 __all__ = ["roll_forward", "DEFAULT_REVENUE_MATERIALITY", "DEFAULT_TIME_MATERIALITY_YEARS"]
@@ -130,10 +131,11 @@ def roll_forward(
         # left alone it is worse than wrong: `(1 + rate) ** years` with a
         # negative base and a fractional exponent returns a *complex* number in
         # Python, which then blows up in `round()` as a 500 rather than telling
-        # the caller their rate was out of range.
+        # the caller their rate was out of range. `compound_factor` enforces
+        # that, and the ceiling the bare operator also lacked.
         if accretion_rate <= -1.0:
             raise EngineInputError("annual_accretion must be greater than -1 (i.e. > -100%)")
-        factor = (1.0 + accretion_rate) ** years_elapsed
+        factor = compound_factor(accretion_rate, years_elapsed, "annual_accretion")
         equity = equity * factor
         steps.append(
             {

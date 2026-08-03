@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 
+from .compounding import compound_factor
 from .errors import EngineInputError
 from .waterfall import exit_allocation, normalize_share_classes
 
@@ -124,7 +125,7 @@ def allocate_pwerm(
             raise EngineInputError(f"scenarios[{i}].discount_rate must exceed -1")
 
         alloc = exit_allocation(equity, share_classes)
-        discount_factor = (1.0 + rate) ** t
+        discount_factor = compound_factor(rate, t, f"scenarios[{i}].discount_rate")
 
         classes_pv: dict[str, dict] = {}
         scenario_pv = 0.0

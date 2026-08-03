@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 
 from .bs import bs_call
+from .compounding import compound_factor
 from .errors import EngineInputError
 from .newton import implied_volatility
 
@@ -131,7 +132,7 @@ def roll_forward_mark(
         new_value = _num(new_calibrated_value, "new_calibrated_value", minimum=0.0)
     elif method == "accretion":
         rate = _num(accretion_rate if accretion_rate is not None else 0.0, "accretion_rate")
-        new_value = pv * (1.0 + rate) ** _num(periods, "periods", minimum=0.0)
+        new_value = pv * compound_factor(rate, _num(periods, "periods", minimum=0.0), "accretion_rate")
     else:  # index
         ret = _num(index_return if index_return is not None else 0.0, "index_return")
         new_value = pv * (1.0 + ret)
@@ -262,7 +263,7 @@ def lp_waterfall(
     remaining -= roc
 
     # Tier 2 — preferred return (compounded hurdle on contributed capital).
-    pref_target = contributed * ((1.0 + pref_rate) ** yrs - 1.0)
+    pref_target = contributed * (compound_factor(pref_rate, yrs, "preferred_return_rate") - 1.0)
     pref = min(remaining, pref_target)
     lp += pref
     remaining -= pref
