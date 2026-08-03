@@ -320,3 +320,65 @@ def test_every_drivable_lever_emits_an_ascending_axis():
     for table in out["one_way"]:
         values = [p["value"] for p in table["points"]]
         assert values == sorted(values), f"{table['parameter']} axis runs backwards"
+
+
+# ── Unusable lever base values are input errors, not crashes ─────────────────
+#
+# This endpoint has no preflight validation in front of it, so every lever's
+# base value reached a bare `float()` directly. ValueError/TypeError are not
+# EngineInputError, so the route's 422 handler never saw them.
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("volatility", "60%", id="percent-suffixed volatility"),
+        pytest.param("volatility", {"pct": 60}, id="object volatility"),
+    ],
+)
+def test_non_numeric_lever_base_is_an_input_error(field, value):
+    with pytest.raises(EngineInputError):
+        sensitivity(PARAMS, {**INPUTS, field: value})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        pytest.param(["4.0x", "6.0x"], id="unit-suffixed strings"),
+        pytest.param([4.0, None], id="null beside a good multiple"),
+        pytest.param([{"value": 4.0}], id="object"),
+    ],
+)
+def test_non_numeric_market_multiple_is_an_input_error(bad):
+    with pytest.raises(EngineInputError):
+        sensitivity(PARAMS, {**INPUTS, "market": {**INPUTS["market"], "multiples": bad}})
+
+
+def test_non_numeric_income_lever_is_an_input_error():
+    income = {**INPUTS["income"], "discount_rate": "thirty percent"}
+    with pytest.raises(EngineInputError):
+        sensitivity(PARAMS, {**INPUTS, "income": income})
+
+
+def test_sensitivity_endpoint_answers_422_not_500():
+    inputs = {**INPUTS, "market": {**INPUTS["market"], "multiples": ["4.0x", "6.0x"]}}
+    res = client.post("/engine/v1/sensitivity", json={"params": PARAMS, "inputs": inputs})
+    assert res.status_code == 422
+    assert "market.multiples" in res.json()["detail"]
+
+
+def test_numeric_strings_still_drive_the_levers():
+    inputs = {
+        **INPUTS,
+        "volatility": "0.6",
+        "market": {**INPUTS["market"], "multiples": ["4.0", "6.0"]},
+    }
+    out = sensitivity(inputs=inputs, params=PARAMS)
+    assert out["base"]["parameters"]["exit_multiple"] == 5.0
+    assert out["base"]["parameters"]["volatility"] == 0.6
+
+
+def test_a_singular_market_multiple_is_coerced_too():
+    inputs = {**INPUTS, "market": {"metric": 4_000_000, "multiple": "5.0"}}
+    out = sensitivity(PARAMS, inputs)
+    assert out["base"]["parameters"]["exit_multiple"] == 5.0

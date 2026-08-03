@@ -397,8 +397,19 @@ def _weighted_equity(
             if not isinstance(multiples, list):
                 raise EngineInputError("market.multiples (from comparables) is required")
             metric = _req(market_in.get("metric"), "market.metric", positive=True)
+            # `float(m)` raised ValueError on "12.5x" and TypeError on a null,
+            # neither of which is an EngineInputError — so a single unusable
+            # entry in an otherwise fine list of comparables left the endpoint
+            # as an unhandled 500 rather than the 422 the caller can act on.
+            # Preflight validation does not catch it either: it drops the
+            # unusable entries and passes the list as long as one good multiple
+            # survives, so `[8.0, null]` cleared validation and then crashed the
+            # calculation it had just cleared.
             approaches["market"] = market_multiples(
-                metric, [float(m) for m in multiples], cash=cash, debt=debt
+                metric,
+                [_req(m, "market.multiples[]") for m in multiples],
+                cash=cash,
+                debt=debt,
             )
         else:
             approaches["market"] = _reused_prior(prior, "market")

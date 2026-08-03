@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.engine.compute import compute
+from app.engine.errors import EngineInputError
 from app.engine.dlom import finnerty_dlom
 from app.main import app
 
@@ -249,3 +250,47 @@ def test_a_genuinely_unparseable_valuation_date_is_still_rejected():
 
     with pytest.raises(EngineInputError, match="must be YYYY-MM-DD"):
         compute(PARAMS, {**INPUTS, "valuation_date": "30/06/2026"})
+
+
+# ── Unusable market multiples are input errors, not crashes ──────────────────
+#
+# `float(m)` raised ValueError on "12.5x" and TypeError on a null, neither of
+# which the route's `except EngineInputError` handler sees — so an input problem
+# the caller could fix came back as an opaque 500.
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        pytest.param(["12.5x"], id="unit-suffixed string"),
+        pytest.param([{"value": 6.0}], id="object"),
+        pytest.param([[6.0]], id="nested list"),
+    ],
+)
+def test_non_numeric_market_multiple_is_an_input_error(bad):
+    inputs = {**INPUTS, "market": {**INPUTS["market"], "multiples": bad}}
+    with pytest.raises(EngineInputError):
+        compute(PARAMS, inputs)
+
+
+def test_a_null_beside_a_good_multiple_is_an_input_error():
+    """Preflight validation drops the unusable entries and passes the list as
+    long as one good multiple survives, so this cleared validation and then
+    crashed the calculation it had just cleared."""
+    inputs = {**INPUTS, "market": {**INPUTS["market"], "multiples": [6.0, None]}}
+    with pytest.raises(EngineInputError):
+        compute(PARAMS, inputs)
+
+
+def test_numeric_strings_are_still_accepted():
+    """Multiples arrive from spreadsheet cells and JSON payloads, so a numeric
+    string has always worked and must keep working."""
+    inputs = {**INPUTS, "market": {**INPUTS["market"], "multiples": ["6.0", "4.0"]}}
+    assert compute(PARAMS, inputs)["results"]["approaches"]["market"]["selected_multiple"] == 5.0
+
+
+def test_compute_endpoint_answers_422_not_500_for_a_null_multiple():
+    inputs = {**INPUTS, "market": {**INPUTS["market"], "multiples": [6.0, None]}}
+    res = client.post("/engine/v1/compute", json={"params": PARAMS, "inputs": inputs})
+    assert res.status_code == 422
+    assert "market.multiples" in res.json()["detail"]

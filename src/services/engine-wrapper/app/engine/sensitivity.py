@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import statistics
 
-from .compute import _time_to_exit, compute
+from .compute import _num, _req, _time_to_exit, compute
 from .errors import EngineInputError
 
 PARAMETERS = ("discount_rate", "volatility", "exit_multiple", "time_to_exit", "growth_rate")
@@ -43,23 +43,30 @@ def _market_multiples(inputs: dict) -> list[float] | None:
         return None
     multiples = market.get("multiples")
     if isinstance(multiples, list) and multiples:
-        return [float(m) for m in multiples]
+        return [_req(m, "market.multiples[]") for m in multiples]
     if market.get("multiple") is not None:
-        return [float(market["multiple"])]
+        return [_req(market["multiple"], "market.multiple")]
     return None
 
 
 def _base_value(name: str, params: dict, inputs: dict) -> float | None:
-    """The base value of a lever, or None when the payload doesn't drive it."""
+    """The base value of a lever, or None when the payload doesn't drive it.
+
+    Every read goes through the engine's numeric guard rather than a bare
+    `float()`. This endpoint has no preflight validation in front of it, so a
+    lever whose base value is unusable — "12.5x" typed into a multiple, a null
+    left in a comparables list — reached `float()` directly and raised
+    ValueError/TypeError. Neither is an EngineInputError, so the route's 422
+    handler did not see them and the caller got an opaque 500 for an input
+    problem it could have fixed.
+    """
     if name == "volatility":
-        v = inputs.get("volatility")
-        return float(v) if v is not None else None
+        return _num(inputs.get("volatility"), "volatility")
     if name == "discount_rate":
-        v = _income(inputs).get("discount_rate")
-        return float(v) if v is not None else None
+        return _num(_income(inputs).get("discount_rate"), "income.discount_rate")
     if name == "growth_rate":
-        v = _income(inputs).get("terminal_growth")
-        return float(v) if v is not None else 0.0 if _income(inputs) else None
+        v = _num(_income(inputs).get("terminal_growth"), "income.terminal_growth")
+        return v if v is not None else (0.0 if _income(inputs) else None)
     if name == "time_to_exit":
         try:
             return _time_to_exit(params, inputs)
