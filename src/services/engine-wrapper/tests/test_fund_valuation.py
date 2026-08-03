@@ -1,6 +1,7 @@
 """ASC 820 fund-holdings valuation unit tests (feature: ASC 820 Fund Holdings)."""
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.engine.errors import EngineInputError
 from app.engine.fund_valuation import (
@@ -12,6 +13,9 @@ from app.engine.fund_valuation import (
     mark_position,
     roll_forward_mark,
 )
+from app.main import app
+
+client = TestClient(app)
 
 
 # ── ASC 820 leveling ─────────────────────────────────────────────────────────
@@ -216,3 +220,67 @@ def test_fund_valuation_returns_nav_and_waterfall():
     assert res["nav"]["net_asset_value"] == pytest.approx(900.0)
     assert "waterfall" in res
     assert res["waterfall"]["lp_distribution"] > 0
+
+
+# ── A mark that overflowed is not a mark ─────────────────────────────────────
+#
+# Every input is guarded finite by `_num`, but the arithmetic on top of them is
+# not closed over the finite floats. `round(inf, 4)` is inf, and json.dumps
+# writes inf as `null` — so an overflowing book came back as a 200 whose NAV
+# was literally null.
+
+
+def test_a_position_whose_value_overflows_fails_instead_of_marking_null():
+    with pytest.raises(EngineInputError, match="fair_value"):
+        mark_position(
+            {"name": "Whale", "method": "market", "quantity": 1e308, "quoted_price": 1e308}
+        )
+
+
+def test_a_book_that_sums_past_the_float_range_fails_by_name():
+    # Each mark is finite on its own; the sum is not.
+    positions = [
+        {"name": f"P{i}", "method": "calibrated_opm", "model_value": 1.5e308}
+        for i in range(3)
+    ]
+    with pytest.raises(EngineInputError, match="gross_asset_value"):
+        compute_nav(positions)
+
+
+def test_a_cost_basis_book_that_overflows_fails_by_name():
+    # Marks stay small so the gross roll-up is fine; only the cost side blows
+    # up, and `total_unrealized_gain` would have been the null figure.
+    positions = [
+        {"name": f"P{i}", "method": "calibrated_opm", "model_value": 1.0, "cost_basis": 1.5e308}
+        for i in range(3)
+    ]
+    with pytest.raises(EngineInputError, match="total_cost_basis"):
+        compute_nav(positions)
+
+
+def test_an_ordinary_book_still_marks_and_rolls_up():
+    nav = compute_nav(
+        [
+            {"name": "A", "method": "market", "quantity": 100, "quoted_price": 10, "cost_basis": 500},
+            {"name": "B", "method": "cost", "cost_basis": 250},
+        ],
+        liabilities=150,
+    )
+    assert nav["gross_asset_value"] == pytest.approx(1250.0)
+    assert nav["net_asset_value"] == pytest.approx(1100.0)
+
+
+def test_an_accretion_that_overflows_fails_instead_of_marking_null():
+    with pytest.raises(EngineInputError):
+        roll_forward_mark(
+            prior_fair_value=1e308, method="accretion", accretion_rate=5.0, periods=200
+        )
+
+
+def test_the_fund_valuation_endpoint_refuses_an_overflowing_position():
+    res = client.post(
+        "/engine/v1/fund-valuation",
+        json={"positions": [{"name": "a", "method": "market", "quantity": 1e308, "quoted_price": 1e308}]},
+    )
+    assert res.status_code == 422
+    assert res.json()["detail"]

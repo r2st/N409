@@ -36,6 +36,22 @@ LEVEL_3 = 3  # unobservable inputs (model / calibration)
 _MARK_METHODS = ("market", "last_round", "calibrated_opm", "cost")
 
 
+def _finite_result(value: float, name: str) -> float:
+    """Guard a *computed* figure, as ``_num`` guards a supplied one.
+
+    Every input here is finite by the time it is used, but the arithmetic on top
+    of them is not closed over the finite floats: ``quantity × price`` overflows
+    to inf for a large enough pair, and so does a sum of marks. ``round(inf, 4)``
+    is inf, which ``json.dumps`` writes as ``null`` — so a NAV built on an
+    overflowing position came back as a 200 whose ``fair_value``,
+    ``gross_asset_value`` and ``net_asset_value`` were all ``null``, with
+    nothing on the response to say the fund could not be marked.
+    """
+    if not math.isfinite(value):
+        raise EngineInputError(f"{name} overflowed to a non-finite value — check the magnitudes")
+    return value
+
+
 def _num(value, name: str, *, minimum: float | None = None) -> float:
     try:
         out = float(value)
@@ -136,6 +152,7 @@ def roll_forward_mark(
     else:  # index
         ret = _num(index_return if index_return is not None else 0.0, "index_return")
         new_value = pv * (1.0 + ret)
+    new_value = _finite_result(new_value, "new_fair_value")
     return {
         "prior_fair_value": round(pv, 4),
         "new_fair_value": round(max(new_value, 0.0), 4),
@@ -175,6 +192,7 @@ def mark_position(position: dict) -> dict:
     else:  # cost
         fair_value = cost_basis
 
+    _finite_result(fair_value, f"{name}.fair_value")
     level = classify_level(method, has_quote=bool(position.get("quoted_price")))
     return {
         "name": name,
@@ -196,8 +214,10 @@ def compute_nav(positions: list[dict], liabilities: float = 0.0) -> dict:
     if not isinstance(positions, list) or not positions:
         raise EngineInputError("positions must be a non-empty list")
     marks = [mark_position(p) for p in positions]
-    gross = sum(m["fair_value"] for m in marks)
-    cost = sum(m["cost_basis"] for m in marks)
+    # Each mark is finite, but a long enough book of large ones still sums to
+    # inf — and an inf NAV serialises as `null` exactly like an inf mark does.
+    gross = _finite_result(sum(m["fair_value"] for m in marks), "gross_asset_value")
+    cost = _finite_result(sum(m["cost_basis"] for m in marks), "total_cost_basis")
     liab = _num(liabilities, "liabilities", minimum=0.0)
     by_level = {LEVEL_1: 0.0, LEVEL_2: 0.0, LEVEL_3: 0.0}
     for m in marks:
