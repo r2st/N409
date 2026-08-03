@@ -21,6 +21,7 @@ from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
+from .engine.market_data import MAX_TICKERS
 from .engine.market_data import lookup as market_lookup
 from .engine.market_data import universe as market_universe
 from .engine.market_feed import MarketFeedClient
@@ -183,12 +184,23 @@ class RatingSpreadRequest(BaseModel):
 
 
 class MarketFeedRequest(BaseModel):
+    """Live market-data request.
+
+    ``tickers`` and ``metrics`` are typed and bounded rather than bare lists.
+    A bare ``list`` accepts any element, and the feed client keys its memo on
+    ``("multiples", ticker, date)`` — so ``{"tickers": [[]]}`` reached
+    ``key in self.cache`` with an unhashable tuple and died there, answering a
+    malformed request with a 500 instead of the 422 it is. The length cap is
+    the other half: the multiples path fetches once per ticker, and the body
+    limit alone would let one request queue hundreds of thousands of them.
+    """
+
     kind: Literal["prices", "financials", "multiples"]
     ticker: str | None = None
-    tickers: list | None = None
+    tickers: list[str] | None = Field(default=None, max_length=MAX_TICKERS)
     start: str | None = None
     end: str | None = None
-    metrics: list | None = None
+    metrics: list[str] | None = Field(default=None, max_length=32)
     date: str | None = None
     fallback: dict | None = None
 

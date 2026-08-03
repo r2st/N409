@@ -202,3 +202,60 @@ def test_no_median_is_ever_nan_over_http():
         assert _math.isfinite(value), f"median[{metric}] is {value!r}"
     # And the payload is serialisable as strict JSON — NaN is not valid JSON.
     json.dumps(out, allow_nan=False)
+
+
+# ── Request shape ────────────────────────────────────────────────────────────
+# `tickers`/`metrics` used to be bare `list`s, which accept any element. The
+# feed client memoizes on ("multiples", ticker, date), so a non-hashable
+# element reached `key in self.cache` and took the request down with a 500 —
+# a malformed body answered as a server fault. They are typed and bounded now,
+# so the shape is rejected before any of that runs.
+
+
+def test_market_feed_rejects_non_string_tickers():
+    import app.main as main
+
+    main._market_feed = MarketFeedClient(provider=StubProvider())
+    # An unhashable element is the one that used to crash the memo lookup.
+    unhashable = client.post("/engine/v1/market-feed", json={"kind": "multiples", "tickers": [[]]})
+    assert unhashable.status_code == 422
+    assert unhashable.json()["detail"][0]["loc"] == ["body", "tickers", 0]
+
+    numeric = client.post("/engine/v1/market-feed", json={"kind": "multiples", "tickers": [1]})
+    assert numeric.status_code == 422
+
+
+def test_market_feed_bounds_the_ticker_list():
+    import app.main as main
+
+    stub = StubProvider()
+    main._market_feed = MarketFeedClient(provider=stub)
+    over = client.post(
+        "/engine/v1/market-feed", json={"kind": "multiples", "tickers": ["DDOG"] * 51}
+    )
+    assert over.status_code == 422
+    # Refused before the client ran, so nothing was fetched.
+    assert stub.calls["info"] == 0
+
+    at_limit = client.post(
+        "/engine/v1/market-feed", json={"kind": "multiples", "tickers": ["DDOG"] * 50}
+    )
+    assert at_limit.status_code == 200
+
+
+def test_market_feed_bounds_the_metrics_list():
+    import app.main as main
+
+    main._market_feed = MarketFeedClient(provider=StubProvider())
+    over = client.post(
+        "/engine/v1/market-feed",
+        json={"kind": "multiples", "tickers": ["DDOG"], "metrics": ["pe"] * 33},
+    )
+    assert over.status_code == 422
+
+    ok = client.post(
+        "/engine/v1/market-feed",
+        json={"kind": "multiples", "tickers": ["DDOG"], "metrics": ["pe"]},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["metrics"] == ["pe"]
