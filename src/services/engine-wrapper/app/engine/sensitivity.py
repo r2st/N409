@@ -31,6 +31,10 @@ PARAMETERS = ("discount_rate", "volatility", "exit_multiple", "time_to_exit", "g
 DEFAULT_SPAN = 0.20  # ±20%
 DEFAULT_STEPS = 5
 
+# Distinct ordered (row, col) pairs that can be asked for: every lever against
+# every other. A request naming more than this is naming one of them twice.
+MAX_TWO_WAY_TABLES = len(PARAMETERS) * (len(PARAMETERS) - 1)
+
 
 def _income(inputs: dict) -> dict:
     income = inputs.get("income")
@@ -276,8 +280,18 @@ def sensitivity(
             continue
         one_way.append(_one_way(name, base_value, base_fmv, params, inputs, span, steps))
 
+    # Refused up front rather than de-duped below, because a list this long
+    # cannot be anything but repetition — and saying so beats silently
+    # collapsing a quarter of a million entries into twenty.
+    if two_way is not None and len(two_way) > MAX_TWO_WAY_TABLES:
+        raise EngineInputError(
+            f"two_way accepts at most {MAX_TWO_WAY_TABLES} pairs "
+            f"({len(PARAMETERS)} parameters against each other); got {len(two_way)}"
+        )
+
     two_way_tables = []
     skipped_two_way = []
+    seen_pairs: set[tuple[str, str]] = set()
     for pair in two_way or []:
         if not (isinstance(pair, (list, tuple)) and len(pair) == 2):
             raise EngineInputError("each two_way entry must be a [row, col] pair")
@@ -286,6 +300,21 @@ def sensitivity(
             raise EngineInputError(f"unknown two-way parameters: {pair}")
         if row == col:
             raise EngineInputError("two-way parameters must differ")
+        # De-duped for the same reason the one-way levers above are, and with
+        # more riding on it. A repeated pair produces a byte-identical table, so
+        # nothing is lost — but each one costs steps² full `compute` runs, and
+        # the list had no cap of any kind. `[["discount_rate","exit_multiple"]]`
+        # repeated fills an 8 MB body with about 4,700 entries at 36 bytes
+        # apiece, which is ~4,700 × 441 = two million valuations: measured on a
+        # cap-table payload, a little over an hour of CPU bought by one request.
+        # That runs synchronously in a threadpool slot, so no request timeout
+        # interrupts it and forty such requests take the service down.
+        #
+        # Only 20 distinct pairs exist, so collapsing them bounds the work at
+        # what an honest caller could have asked for anyway.
+        if (row, col) in seen_pairs:
+            continue
+        seen_pairs.add((row, col))
         # An undrivable lever (not present in this payload) is skipped, not an
         # error — the caller can request a default pair set without knowing
         # which levers the valuation actually exercises.

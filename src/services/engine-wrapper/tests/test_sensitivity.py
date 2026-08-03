@@ -382,3 +382,60 @@ def test_a_singular_market_multiple_is_coerced_too():
     inputs = {**INPUTS, "market": {"metric": 4_000_000, "multiple": "5.0"}}
     out = sensitivity(PARAMS, inputs)
     assert out["base"]["parameters"]["exit_multiple"] == 5.0
+
+
+def test_repeated_two_way_pair_is_computed_once():
+    # A duplicate pair produces a byte-identical table, and each one costs
+    # steps² full compute runs — so it is collapsed, not recomputed.
+    out = sensitivity(
+        PARAMS,
+        INPUTS,
+        parameters=[],
+        two_way=[["discount_rate", "exit_multiple"]] * 8,
+        steps=3,
+    )
+    assert len(out["two_way"]) == 1
+    assert out["two_way"][0]["row_parameter"] == "discount_rate"
+
+
+def test_two_way_keeps_distinct_pairs_and_their_order():
+    out = sensitivity(
+        PARAMS,
+        INPUTS,
+        parameters=[],
+        two_way=[
+            ["discount_rate", "exit_multiple"],
+            ["volatility", "growth_rate"],
+            ["discount_rate", "exit_multiple"],
+            ["exit_multiple", "discount_rate"],  # the reverse pair is its own table
+        ],
+        steps=3,
+    )
+    assert [(t["row_parameter"], t["col_parameter"]) for t in out["two_way"]] == [
+        ("discount_rate", "exit_multiple"),
+        ("volatility", "growth_rate"),
+        ("exit_multiple", "discount_rate"),
+    ]
+
+
+def test_absurdly_long_two_way_list_is_refused():
+    # 8 MB of repeated pairs was ~4,700 tables — two million valuations, over an
+    # hour of synchronous CPU, from one request inside the body cap.
+    with pytest.raises(EngineInputError) as exc:
+        sensitivity(PARAMS, INPUTS, parameters=[], two_way=[["volatility", "growth_rate"]] * 500)
+    assert "at most" in str(exc.value)
+
+
+def test_two_way_flood_is_rejected_over_http():
+    res = client.post(
+        "/engine/v1/sensitivity",
+        json={
+            "params": PARAMS,
+            "inputs": INPUTS,
+            "parameters": [],
+            "two_way": [["discount_rate", "exit_multiple"]] * 2000,
+            "steps": 21,
+        },
+    )
+    assert res.status_code == 422
+    assert "at most" in res.json()["detail"]
