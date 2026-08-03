@@ -114,3 +114,56 @@ def test_validation_and_endpoint():
 
     bad = client.post("/engine/v1/projection", json={"inputs": {"method": "growth"}})
     assert bad.status_code == 422
+
+
+# ── Forecast horizon bounds ──────────────────────────────────────────────────
+
+
+def test_forecast_horizon_is_capped():
+    # `{"years": 3000000, "revenue_growth": 0}` is 122 bytes and was measured at
+    # nine seconds and 3.6 GB resident, before the response was serialised.
+    with pytest.raises(EngineInputError) as exc:
+        project_financials(method="growth", years=3_000_000, base_revenue=1e6, revenue_growth=0.0)
+    assert "years must be <=" in str(exc.value)
+
+
+def test_flat_growth_does_not_escape_the_cap():
+    # A *positive* growth rate overflows out of a long horizon on its own around
+    # year 7,300, which made the horizon look bounded when it was not. A flat or
+    # negative rate compounds to nothing and runs every year asked for.
+    with pytest.raises(EngineInputError):
+        project_financials(method="growth", years=500_000, base_revenue=1e6, revenue_growth=-0.01)
+
+
+def test_a_long_but_defensible_horizon_still_projects():
+    out = project_financials(
+        method="growth", years=100, base_revenue=1_000_000, revenue_growth=0.05, cogs_pct=0.4
+    )
+    assert len(out["free_cash_flows"]) == 100
+    assert out["years"] == 100
+
+
+def test_driver_method_horizon_is_capped_too():
+    with pytest.raises(EngineInputError):
+        project_financials(method="driver", revenue=[1.0] * 101)
+
+
+def test_non_integer_years_names_the_field():
+    # `[rate] * 1.5` is a bare TypeError; the caller should be told which input
+    # was wrong.
+    with pytest.raises(EngineInputError) as exc:
+        project_financials(method="growth", years=1.5, base_revenue=1e6, revenue_growth=0.1)
+    assert "years" in str(exc.value)
+
+
+def test_oversized_projection_answers_422_over_http():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    res = TestClient(app).post(
+        "/engine/v1/projection",
+        json={"inputs": {"method": "growth", "years": 5_000_000, "base_revenue": 1e6, "revenue_growth": 0.0}},
+    )
+    assert res.status_code == 422
+    assert "years must be <=" in res.json()["detail"]

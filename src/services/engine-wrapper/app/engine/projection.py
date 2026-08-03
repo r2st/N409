@@ -26,7 +26,25 @@ import math
 
 from .errors import EngineInputError
 
-__all__ = ["project_financials", "terminal_value_gordon", "terminal_value_exit_multiple"]
+__all__ = [
+    "project_financials",
+    "terminal_value_gordon",
+    "terminal_value_exit_multiple",
+    "MAX_FORECAST_YEARS",
+]
+
+# The forecast horizon, which sizes eight parallel per-year lists and the
+# `projections` array returned alongside them. `years` arrived as an unbounded
+# int off the wire: `{"years": 3000000, "revenue_growth": 0}` is 122 bytes and
+# was measured at nine seconds and 3.6 GB resident, before the response is even
+# serialised. A positive growth rate happens to overflow out of it around year
+# 7,300 — but a flat or negative one does not, so the guard that looked like a
+# bound was only ever an accident of the arithmetic.
+#
+# An explicit DCF forecast period is five to ten years and a long one is
+# thirty; a hundred is past any defensible horizon and still projects
+# instantly.
+MAX_FORECAST_YEARS = 100
 
 
 def _num(value, name: str, *, nonneg: bool = False) -> float:
@@ -44,6 +62,14 @@ def _num(value, name: str, *, nonneg: bool = False) -> float:
     if nonneg and out < 0:
         raise EngineInputError(f"{name} must be >= 0")
     return out
+
+
+def _check_horizon(n: int) -> None:
+    """Refuse a forecast horizon past anything a DCF defensibly projects."""
+    if n > MAX_FORECAST_YEARS:
+        raise EngineInputError(
+            f"years must be <= {MAX_FORECAST_YEARS} (a DCF forecast period is 5-10 years); got {n}"
+        )
 
 
 def _finite(value: float, name: str) -> float:
@@ -129,8 +155,13 @@ def project_financials(
             raise EngineInputError("base_revenue must be positive")
         growth = revenue_growth if isinstance(revenue_growth, (list, tuple)) else None
         n = years if years is not None else (len(growth) if growth is not None else None)
-        if not n or n < 1:
+        if isinstance(n, bool) or not isinstance(n, int):
+            # `years: 1.5` reached `[rate] * 1.5` as a bare TypeError rather
+            # than an error naming the field that was wrong.
+            raise EngineInputError("years must be an integer")
+        if n < 1:
             raise EngineInputError("growth method needs years (or a revenue_growth list)")
+        _check_horizon(n)
         growth_vec = _rate_vector(revenue_growth, n, "revenue_growth")
         cogs_vec = _rate_vector(cogs_pct if cogs_pct is not None else 0.0, n, "cogs_pct")
         opex_vec = _rate_vector(opex_pct if opex_pct is not None else 0.0, n, "opex_pct")
@@ -158,6 +189,7 @@ def project_financials(
         n = len(rev_series)
         if n < 1:
             raise EngineInputError("revenue list must be non-empty")
+        _check_horizon(n)
 
         def _line(vals, name: str) -> list[float]:
             if vals is None:
