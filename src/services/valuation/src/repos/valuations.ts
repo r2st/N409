@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { isUlid, newUlid, TtlCache } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { likeContains } from '../db/like.js';
 import { diffRecords } from '../domain/auditTrail.js';
 import {
   EVENT_TYPES,
@@ -302,7 +303,7 @@ export function buildValuationWhere(
       // Company-name substring, exact workflow id, or requester name/email
       // (gap 7 — 409.ai also matches the requesting user).
       const ownerRef = `${alias || 'valuations.'}user_id`;
-      params.push(`%${q}%`, q);
+      params.push(likeContains(q), q);
       const like = `$${params.length - 1}`;
       where.push(
         `(${alias}company_name ILIKE ${like} OR ${alias}workflow_id = $${params.length}

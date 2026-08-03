@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { isUlid } from '@n409/shared';
+import { likeContains } from '../db/like.js';
 import type { ValuationScope } from '../auth/rbac.js';
 import type { ValuationRow } from './valuations.js';
 
@@ -9,10 +10,7 @@ import type { ValuationRow } from './valuations.js';
  * User search is ops-only and lives beside it so the route returns one shape.
  */
 
-/** Escape LIKE/ILIKE wildcards so user input is matched literally. */
-export function escapeLike(s: string): string {
-  return s.replace(/[%_\\]/g, '\\$&');
-}
+export { escapeLike } from '../db/like.js';
 
 /** Largest value `valuations.number` (a bigint) can hold. */
 const MAX_BIGINT = 9223372036854775807n;
@@ -66,10 +64,10 @@ export async function searchValuations(
   if (scope.kind === 'own') add('user_id = ?', scope.userId);
 
   const matches: string[] = [];
-  const escaped = escapeLike(q);
-  params.push(`%${escaped}%`);
+  const contains = likeContains(q);
+  params.push(contains);
   matches.push(`company_name ILIKE $${params.length}`);
-  params.push(`%${escaped}%`);
+  params.push(contains);
   matches.push(`service_name ILIKE $${params.length}`);
   const asNumber = valuationNumberQuery(q);
   if (asNumber !== null) {
@@ -98,7 +96,7 @@ export async function searchUsers(pool: pg.Pool, q: string, limit = 10): Promise
         OR (coalesce(first_name, '') || ' ' || coalesce(last_name, '')) ILIKE $1
         ${isUlid(q.toUpperCase()) ? 'OR id = $3' : ''}
      ORDER BY created_at DESC LIMIT $2`,
-    isUlid(q.toUpperCase()) ? [`%${escapeLike(q)}%`, limit, q.toUpperCase()] : [`%${escapeLike(q)}%`, limit],
+    isUlid(q.toUpperCase()) ? [likeContains(q), limit, q.toUpperCase()] : [likeContains(q), limit],
   );
   return rows;
 }

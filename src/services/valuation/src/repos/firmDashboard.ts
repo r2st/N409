@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { likeContains } from '../db/like.js';
 import { STATE_GROUPS } from '../domain/operations.js';
 import type { FirmValuationRow } from '../domain/firmDashboard.js';
 
@@ -109,7 +110,7 @@ export async function firmClients(
   // The two queries carry different parameter lists, so each builds its own
   // placeholder index — sharing one produced an off-by-one that only showed up
   // once a search term was supplied.
-  const search = opts.search?.trim() ? `%${opts.search.trim()}%` : null;
+  const search = opts.search?.trim() ? likeContains(opts.search.trim()) : null;
 
   const totalParams: unknown[] = [partnerId];
   if (search) totalParams.push(search);
