@@ -192,7 +192,10 @@ export interface Asc718Grant {
   grantDate: string;
   vestingMonths: number;
   assumptions: Asc718Assumptions;
-  /** Expected annual pre-vest forfeiture rate (0–1); reduces the accrued cost. */
+  /**
+   * Expected *annual* pre-vest forfeiture rate (0–1); compounds over the
+   * vesting period to reduce the accrued cost. See expectedToVestFraction.
+   */
   forfeitureRate?: number;
   /** Amortization bucket size in months (default 12 = annual). */
   amortizationFrequencyMonths?: number;
@@ -213,15 +216,36 @@ export interface Asc718Result {
 }
 
 /**
+ * Share of a grant still expected to be held at the end of the requisite
+ * service period, given an *annual* pre-vest forfeiture rate.
+ *
+ * The rate is estimated and disclosed per year — "we expect 10% annual
+ * turnover" — but it is survival over the whole vesting period that reduces the
+ * cost, so it compounds: (1 − rate) ^ years. Applying the annual figure once
+ * treats four years of turnover as one year of it. On the standard 4-year vest
+ * that is 90% surviving where 65.6% is expected, and compensation cost is
+ * overstated by more than a third — in the direction that inflates reported
+ * expense, straight into the ASC 718 note and the client's income statement.
+ *
+ * A grant that vests immediately has no service period to leave during, so it
+ * forfeits nothing; `Math.pow(x, 0) === 1` gives that for free, including for a
+ * 100% rate.
+ */
+export function expectedToVestFraction(annualForfeitureRate: number, vestingMonths: number): number {
+  const rate = Math.min(Math.max(annualForfeitureRate, 0), 1);
+  const years = Math.max(0, vestingMonths) / 12;
+  return Math.pow(1 - rate, years);
+}
+
+/**
  * Full ASC 718 measurement for one option grant: grant-date fair value per
  * option, the expected-to-vest compensation cost, and its straight-line
  * amortization schedule over the vesting period.
  */
 export function asc718Grant(grant: Asc718Grant): Asc718Result {
-  const forfeiture = Math.min(Math.max(grant.forfeitureRate ?? 0, 0), 1);
   const fairValuePerOption = blackScholesMerton(grant.assumptions);
   const options = Math.max(0, grant.optionsGranted);
-  const expectedToVest = options * (1 - forfeiture);
+  const expectedToVest = options * expectedToVestFraction(grant.forfeitureRate ?? 0, grant.vestingMonths);
   const grossFairValue = round2(fairValuePerOption * options);
   const totalCost = round2(fairValuePerOption * expectedToVest);
   return {

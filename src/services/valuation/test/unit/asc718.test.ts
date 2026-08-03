@@ -4,6 +4,7 @@ import {
   asc718Grant,
   asc718Portfolio,
   blackScholesMerton,
+  expectedToVestFraction,
   monteCarloFairValue,
 } from '../../src/domain/asc718.js';
 
@@ -116,9 +117,10 @@ describe('asc718Grant', () => {
     const r = asc718Grant(grant);
     const fv = blackScholesMerton(grant.assumptions); // unrounded reference
     expect(r.fairValuePerOption).toBeGreaterThan(0);
-    expect(r.expectedToVestOptions).toBe(90000); // 100k × (1 − 10%)
+    // 10% *annual* turnover across a 4-year vest: 100k × 0.9⁴ = 65,610.
+    expect(r.expectedToVestOptions).toBe(65610);
     // Total cost is net of forfeitures; gross uses all options.
-    expect(r.totalCompensationCost).toBeCloseTo(fv * 90000, 0);
+    expect(r.totalCompensationCost).toBeCloseTo(fv * 65610, 0);
     expect(r.grossFairValue).toBeCloseTo(fv * 100000, 0);
     expect(r.schedule).toHaveLength(4);
     const total = r.schedule.reduce((s, p) => s + p.expense, 0);
@@ -130,6 +132,46 @@ describe('asc718Grant', () => {
     const r = asc718Grant({ ...grant, vestingMonths: 0, forfeitureRate: 0 });
     expect(r.schedule).toHaveLength(1);
     expect(r.schedule[0]!.expense).toBeCloseTo(r.totalCompensationCost, 2);
+  });
+
+  it('forfeits more over a longer requisite service period', () => {
+    // The same annual rate, two vesting terms. Applied once — the bug — both
+    // would land on 90,000 and the length of the service period would not
+    // reach the compensation cost at all.
+    const twoYear = asc718Grant({ ...grant, vestingMonths: 24 });
+    const sixYear = asc718Grant({ ...grant, vestingMonths: 72 });
+    expect(twoYear.expectedToVestOptions).toBe(81000); // 0.9²
+    expect(sixYear.expectedToVestOptions).toBe(53144); // 0.9⁶
+    expect(sixYear.totalCompensationCost).toBeLessThan(twoYear.totalCompensationCost);
+  });
+
+  it('a zero forfeiture rate expenses every option granted', () => {
+    const r = asc718Grant({ ...grant, forfeitureRate: 0 });
+    expect(r.expectedToVestOptions).toBe(100000);
+    expect(r.totalCompensationCost).toBeCloseTo(r.grossFairValue, 2);
+  });
+});
+
+describe('expectedToVestFraction', () => {
+  it('compounds the annual rate over the service period', () => {
+    expect(expectedToVestFraction(0.1, 48)).toBeCloseTo(0.9 ** 4, 10);
+    expect(expectedToVestFraction(0.05, 36)).toBeCloseTo(0.95 ** 3, 10);
+    // Partial years too: an 18-month vest is 1.5 years of turnover.
+    expect(expectedToVestFraction(0.2, 18)).toBeCloseTo(0.8 ** 1.5, 10);
+  });
+
+  it('forfeits nothing when there is no rate or no service period', () => {
+    expect(expectedToVestFraction(0, 48)).toBe(1);
+    expect(expectedToVestFraction(0.1, 0)).toBe(1);
+    // No service period to leave during, even at a 100% annual rate.
+    expect(expectedToVestFraction(1, 0)).toBe(1);
+  });
+
+  it('clamps a rate outside 0–1 and a negative term', () => {
+    expect(expectedToVestFraction(1, 48)).toBe(0);
+    expect(expectedToVestFraction(1.5, 48)).toBe(0);
+    expect(expectedToVestFraction(-0.5, 48)).toBe(1);
+    expect(expectedToVestFraction(0.1, -12)).toBe(1);
   });
 });
 
