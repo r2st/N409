@@ -24,6 +24,8 @@ MAX_XLSX_SHEETS = 20
 MAX_XLSX_ROWS_PER_SHEET = 2_000
 
 _SSML = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+_PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_OFFICE_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
 
 @dataclass
@@ -49,12 +51,58 @@ def _xlsx_shared_strings(zf: zipfile.ZipFile) -> list[str]:
     return ["".join(t.text or "" for t in si.iter(f"{_SSML}t")) for si in root.iter(f"{_SSML}si")]
 
 
-def _xlsx_sheet_names(zf: zipfile.ZipFile) -> list[str]:
+def _xlsx_rels(zf: zipfile.ZipFile) -> dict[str, str]:
+    """Relationship id → part target, from the workbook's relationships part."""
+    try:
+        root = ElementTree.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    except (KeyError, ElementTree.ParseError):
+        return {}
+    out: dict[str, str] = {}
+    for rel in root.iter(f"{_PKG_REL}Relationship"):
+        rid, target = rel.get("Id"), rel.get("Target")
+        if rid and target:
+            out[rid] = target
+    return out
+
+
+def _xlsx_sheets(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
+    """(sheet name, part path) in workbook tab order.
+
+    The name and the part have to be resolved together. `xl/workbook.xml` lists
+    the sheets in tab order and carries their names; the file each one lives in
+    is reached only through the `r:id` on the entry and the relationships part.
+    The `N` in `worksheets/sheetN.xml` is a creation-order id, not a position —
+    reorder or delete a tab in Excel and the two diverge permanently.
+
+    Pairing the Nth workbook entry with the Nth numerically-sorted part, as this
+    used to, therefore mislabels every sheet in such a workbook: the header said
+    "=== Sheet: Cap Table ===" above the revenue rows and "=== Sheet:
+    Financials ===" above the cap table. That heading is the model's only cue
+    for what it is reading, so the extraction pipeline confidently pulled
+    share classes out of a P&L.
+    """
     try:
         root = ElementTree.fromstring(zf.read("xl/workbook.xml"))
-        return [s.get("name") or "" for s in root.iter(f"{_SSML}sheet")]
     except (KeyError, ElementTree.ParseError):
         return []
+    rels = _xlsx_rels(zf)
+    present = set(zf.namelist())
+    sheets: list[tuple[str, str]] = []
+    for i, entry in enumerate(root.iter(f"{_SSML}sheet")):
+        name = entry.get("name") or f"Sheet{i + 1}"
+        rid = entry.get(f"{_OFFICE_REL}id")
+        target = rels.get(rid) if rid else None
+        if target:
+            # Targets are relative to xl/ unless rooted at the package root.
+            path = target[1:] if target.startswith("/") else "xl/" + re.sub(r"^\./", "", target)
+        else:
+            # No relationships part (or an entry without an r:id) — fall back to
+            # the positional guess, which is right for the simple workbooks that
+            # is all such a file can be.
+            path = f"xl/worksheets/sheet{i + 1}.xml"
+        if path in present:
+            sheets.append((name, path))
+    return sheets
 
 
 def _xlsx_cell_value(cell: ElementTree.Element, shared: list[str]) -> str:
@@ -129,18 +177,25 @@ def _xlsx_text(raw: bytes) -> str:
     cap table without a spreadsheet dependency."""
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         shared = _xlsx_shared_strings(zf)
-        names = _xlsx_sheet_names(zf)
-        sheet_paths = sorted(
-            (p for p in zf.namelist() if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", p)),
-            key=lambda p: int(re.search(r"\d+", p).group()),  # type: ignore[union-attr]
-        )[:MAX_XLSX_SHEETS]
+        sheets = _xlsx_sheets(zf)
+        if not sheets:
+            # No readable workbook part: fall back to whatever worksheets the
+            # archive holds, numbered, so a damaged file still yields its rows.
+            sheets = [
+                (f"Sheet{i + 1}", p)
+                for i, p in enumerate(
+                    sorted(
+                        (p for p in zf.namelist() if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", p)),
+                        key=lambda p: int(re.search(r"\d+", p).group()),  # type: ignore[union-attr]
+                    )
+                )
+            ]
         blocks: list[str] = []
-        for i, path in enumerate(sheet_paths):
+        for name, path in sheets[:MAX_XLSX_SHEETS]:
             try:
                 root = ElementTree.fromstring(zf.read(path))
-            except ElementTree.ParseError:
+            except (KeyError, ElementTree.ParseError):
                 continue
-            name = names[i] if i < len(names) else f"Sheet{i + 1}"
             lines = [f"=== Sheet: {name} ==="]
             for row in list(root.iter(f"{_SSML}row"))[:MAX_XLSX_ROWS_PER_SHEET]:
                 values = _row_values(row, shared)

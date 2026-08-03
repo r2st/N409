@@ -178,6 +178,115 @@ def test_a_far_right_cell_does_not_pad_the_row_to_16k_columns():
     assert doc.text.count("\t") < 512
 
 
+# ── Sheet name ↔ part pairing ────────────────────────────────────────────────
+#
+# The N in worksheets/sheetN.xml is a creation-order id, not a tab position.
+# Reordering or deleting a tab in Excel makes the two diverge for good.
+
+_REORDERED_WORKBOOK = """<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Cap Table"  sheetId="2" r:id="rId2"/>
+    <sheet name="Financials" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>"""
+
+_REORDERED_RELS = """<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Target="worksheets/sheet2.xml"/>
+</Relationships>"""
+
+
+def _one_cell_sheet(label: str) -> str:
+    return f"""<?xml version="1.0"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" t="inlineStr"><is><t>{label}</t></is></c></row>
+  </sheetData>
+</worksheet>"""
+
+
+def _reordered_bytes(rels: str | None = _REORDERED_RELS) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("xl/workbook.xml", _REORDERED_WORKBOOK)
+        if rels is not None:
+            zf.writestr("xl/_rels/workbook.xml.rels", rels)
+        zf.writestr("xl/worksheets/sheet1.xml", _one_cell_sheet("REVENUE-ROWS"))
+        zf.writestr("xl/worksheets/sheet2.xml", _one_cell_sheet("CAP-TABLE-ROWS"))
+    return buf.getvalue()
+
+
+def test_sheet_names_follow_the_relationship_not_the_filename_number():
+    [doc] = extract_texts([_doc(_reordered_bytes())])
+    assert "=== Sheet: Cap Table ===\nCAP-TABLE-ROWS" in doc.text
+    assert "=== Sheet: Financials ===\nREVENUE-ROWS" in doc.text
+
+
+def test_sheets_are_emitted_in_workbook_tab_order():
+    [doc] = extract_texts([_doc(_reordered_bytes())])
+    assert doc.text.index("Cap Table") < doc.text.index("Financials")
+
+
+def test_absent_rels_falls_back_to_positional_pairing():
+    """A workbook with no relationships part can only be a simple one, so the
+    positional guess is still the best available and must not be dropped."""
+    [doc] = extract_texts([_doc(_reordered_bytes(rels=None))])
+    assert "=== Sheet: Cap Table ===\nREVENUE-ROWS" in doc.text
+    assert "=== Sheet: Financials ===\nCAP-TABLE-ROWS" in doc.text
+
+
+def test_root_relative_and_dot_prefixed_targets_resolve():
+    workbook = """<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Rooted" r:id="rId1"/>
+    <sheet name="Dotted" r:id="rId2"/>
+  </sheets>
+</workbook>"""
+    rels = """<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Target="/xl/worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Target="./worksheets/sheet2.xml"/>
+</Relationships>"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("xl/workbook.xml", workbook)
+        zf.writestr("xl/_rels/workbook.xml.rels", rels)
+        zf.writestr("xl/worksheets/sheet1.xml", _one_cell_sheet("ROOTED"))
+        zf.writestr("xl/worksheets/sheet2.xml", _one_cell_sheet("DOTTED"))
+    [doc] = extract_texts([_doc(buf.getvalue())])
+    assert "=== Sheet: Rooted ===\nROOTED" in doc.text
+    assert "=== Sheet: Dotted ===\nDOTTED" in doc.text
+
+
+def test_a_sheet_whose_part_is_missing_is_skipped_without_shifting_the_rest():
+    workbook = """<?xml version="1.0"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Gone" r:id="rId9"/>
+    <sheet name="Here" r:id="rId1"/>
+  </sheets>
+</workbook>"""
+    rels = """<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId9" Target="worksheets/sheet9.xml"/>
+</Relationships>"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("xl/workbook.xml", workbook)
+        zf.writestr("xl/_rels/workbook.xml.rels", rels)
+        zf.writestr("xl/worksheets/sheet1.xml", _one_cell_sheet("HERE-ROWS"))
+    [doc] = extract_texts([_doc(buf.getvalue())])
+    assert "=== Sheet: Here ===\nHERE-ROWS" in doc.text
+    assert "Gone" not in doc.text
+
+
 def test_cells_without_a_ref_still_trail_the_row():
     sheet = """<?xml version="1.0"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
