@@ -29,6 +29,13 @@ export async function listOverwrites(pool: pg.Pool, valuationId: string): Promis
 }
 
 /**
+ * Advisory-lock namespace for one override cell. Keyed on valuation + field, so
+ * two analysts working different fields of the same valuation never wait on
+ * each other; a hash collision only costs a little serialization.
+ */
+const OVERWRITE_CELL_LOCK = 0x0ffe7;
+
+/**
  * Creates or updates an override. The first write freezes `original_value`
  * (the pre-override AI/computed value) and `created_by`; later writes only
  * move `value`/`reason`. The audit event carries the before/after pair.
@@ -45,8 +52,24 @@ export async function upsertOverwrite(
   },
 ): Promise<OverwriteRow> {
   return withTransaction(pool, async (client) => {
+    // The branch below is a read-then-write against `UNIQUE (valuation_id,
+    // field_key)`, and `FOR UPDATE` cannot serialize the branch that matters:
+    // the *first* write of a field has no row to lock, so two of them both
+    // read "no override", both take the INSERT arm, and the loser's
+    // transaction dies on the unique violation. A PUT that raced another PUT
+    // on the same cell comes back 500 — a double-clicked Save, or two analysts
+    // on one engagement overriding the same field.
+    //
+    // Lock the cell rather than the row, so the check and the write are one
+    // step whether or not the override already exists. It also keeps the
+    // audit event honest: `from` is read under the same lock that decides
+    // which arm runs, so it cannot report a value another write has replaced.
+    await client.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [
+      OVERWRITE_CELL_LOCK,
+      `${args.valuationId}:${args.def.key}`,
+    ]);
     const { rows: existingRows } = await client.query<OverwriteRow>(
-      'SELECT * FROM overwrites WHERE valuation_id = $1 AND field_key = $2 FOR UPDATE',
+      'SELECT * FROM overwrites WHERE valuation_id = $1 AND field_key = $2',
       [args.valuationId, args.def.key],
     );
     const existing = existingRows[0] ?? null;
