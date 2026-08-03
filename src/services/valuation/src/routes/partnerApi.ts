@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import type { Principal } from '../auth/rbac.js';
+import { canReadReport, type Principal } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { VALUATION_KINDS, VALUATION_STATES } from '../domain/valuation.js';
@@ -96,6 +96,19 @@ function publicValuation(v: ValuationRow) {
 
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'partner_api' };
+}
+
+/**
+ * The deliverable is not visible to a partner until a draft has been shared —
+ * `canReadReport` is what the session API gates `report.pdf` on, and scoping a
+ * request to the right partner is a different question from whether the report
+ * has reached a state that partner is allowed to see. Without this the partner
+ * API handed back the rendered PDF of a valuation still in review: ops render
+ * to check their own work long before `drafted`, and the same partner asking
+ * the browser API for that file correctly got a 404.
+ */
+function partnerCanReadReport(principal: Principal, v: ValuationRow): boolean {
+  return canReadReport(principal, { userId: v.user_id, partnerId: v.partner_id, state: v.state });
 }
 
 export function registerPartnerApiRoutes(
@@ -350,16 +363,18 @@ export function registerPartnerApiRoutes(
       path: '/valuations/{id}/results',
       summary: 'Retrieve results: latest calculation summary, documents, report availability.',
       auth: 'api_key',
-      response: '{ valuation, calculation | null, documents[], report: { available, version } }',
+      response:
+        '{ valuation, calculation | null, documents[], report: { available, version } } — report.available stays false until a draft has been shared',
     },
     async (req) => {
-      const { token } = requireToken(req);
+      const { principal, token } = requireToken(req);
       const { id } = req.params as { id: string };
       const valuation = await loadScoped(token, id);
+      const reportReadable = partnerCanReadReport(principal, valuation);
       const [calculation, documents, report] = await Promise.all([
         latestSucceededCalculation(deps.pool, valuation.id),
         listDocuments(deps.pool, valuation.id),
-        findReportByValuation(deps.pool, valuation.id),
+        reportReadable ? findReportByValuation(deps.pool, valuation.id) : null,
       ]);
       const versions = report ? await listVersions(deps.pool, report.id) : [];
       const rendered = versions.find((v) => v.has_pdf);
@@ -389,14 +404,17 @@ export function registerPartnerApiRoutes(
     {
       method: 'GET',
       path: '/valuations/{id}/report.pdf',
-      summary: 'Download the latest rendered report PDF (404 until one exists).',
+      summary: 'Download the latest rendered report PDF (404 until a draft has been shared with you).',
       auth: 'api_key',
       response: 'application/pdf',
     },
     async (req, reply) => {
-      const { token } = requireToken(req);
+      const { principal, token } = requireToken(req);
       const { id } = req.params as { id: string };
       const valuation = await loadScoped(token, id);
+      // Same 404 as "not rendered yet": whether a draft exists internally is
+      // not something to disclose before it is shared.
+      if (!partnerCanReadReport(principal, valuation)) throw problems.notFound('No rendered report yet');
       const report = await findReportByValuation(deps.pool, valuation.id);
       const versions = report ? await listVersions(deps.pool, report.id) : [];
       const rendered = versions.find((v) => v.has_pdf);

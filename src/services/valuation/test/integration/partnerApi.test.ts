@@ -184,6 +184,63 @@ describe.skipIf(!dbUp)('partner API', () => {
     expect(pdf.statusCode).toBe(404);
   });
 
+  it('withholds a rendered report until the draft has been shared with the partner', async () => {
+    const ops = await seedUser(ctx, { roles: ['admin'] });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/partner/v1/valuations',
+      headers: keyHeader(apiKey),
+      payload: { kind: '409a', company_name: 'DraftCo' },
+    });
+    const id = created.json().valuation.id as string;
+
+    // Ops render the report to check their own work, long before the draft is
+    // shared — exactly the window where the deliverable must stay internal.
+    const render = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/report/render`,
+      headers: authHeader(ops.token),
+    });
+    expect(render.statusCode).toBe(200);
+
+    // The browser API 404s the partner here, and so must the partner API.
+    const early = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/valuations/${id}/report.pdf`,
+      headers: keyHeader(apiKey),
+    });
+    expect(early.statusCode).toBe(404);
+    const earlyResults = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/valuations/${id}/results`,
+      headers: keyHeader(apiKey),
+    });
+    // Not even the existence of a rendered draft leaks.
+    expect(earlyResults.json().report).toEqual({ available: false, version: null });
+
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${id}`,
+      headers: authHeader(ops.token),
+      payload: { state: 'drafted' },
+    });
+    expect(patch.statusCode).toBe(200);
+
+    const shared = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/valuations/${id}/report.pdf`,
+      headers: keyHeader(apiKey),
+    });
+    expect(shared.statusCode).toBe(200);
+    expect(shared.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+    const sharedResults = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/valuations/${id}/results`,
+      headers: keyHeader(apiKey),
+    });
+    expect(sharedResults.json().report.available).toBe(true);
+  }, 30_000);
+
   it('rejects empty and oversized uploads', async () => {
     const created = await app.inject({
       method: 'POST',
