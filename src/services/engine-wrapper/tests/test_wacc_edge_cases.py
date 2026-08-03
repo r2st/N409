@@ -69,17 +69,68 @@ def test_a_tax_rate_of_exactly_one_is_still_a_valid_factor():
     assert unlever_beta(1.2, 2.0, 1.0) == pytest.approx(1.2)
 
 
-def test_a_comparables_own_tax_rate_reaches_the_levering_factor():
-    # The subject's tax rate is band-checked, a comparable's is only checked
-    # for sign — so this is the route by which an impossible rate actually
-    # arrives at the Hamada factor.
+def test_a_comparables_own_tax_rate_is_held_to_the_same_band_as_the_subjects():
+    # A comparable's rate feeds the same Hamada factor the subject's does, so
+    # it is refused by the same [0, 1) band — before the factor, not by it.
     comps = [{"ticker": "A", "beta": 1.2, "debt_to_equity": 1.0, "tax_rate": 2.0}]
-    with pytest.raises(EngineInputError, match="Hamada"):
+    with pytest.raises(EngineInputError, match=r"comparable\.tax_rate must be in \[0, 1\)"):
         compute_wacc(
             comparable_betas=comps,
             risk_free_rate_override=0.04,
             equity_risk_premium=0.05,
         )
+
+
+def test_an_impossible_comparable_rate_the_hamada_guard_cannot_see_is_refused():
+    # The Hamada guard only fires where the factor lands at or below zero. Pair
+    # a tax rate above 1 with a small enough D/E and it stays positive:
+    # 1 + (1 − 2.0)·0.5 == 0.5. The comp's beta is then *divided* by a half,
+    # and the build-up returned an unlevered beta of 2.4 where 0.86 was right
+    # and a 16% cost of equity where 8.3% was — on a successful 200, with
+    # nothing in the response to say the number was impossible.
+    comps = [{"ticker": "A", "beta": 1.2, "debt_to_equity": 0.5, "tax_rate": 2.0}]
+    with pytest.raises(EngineInputError, match=r"comparable\.tax_rate must be in \[0, 1\)"):
+        compute_wacc(
+            comparable_betas=comps,
+            risk_free_rate_override=0.04,
+            equity_risk_premium=0.05,
+        )
+
+
+def test_a_comparable_rate_of_exactly_one_is_out_of_band():
+    # (1 − 1.0) zeroes the leverage adjustment entirely, so the comp is treated
+    # as unlevered however much debt it carries. Sound as a limit, not as a
+    # tax rate — and the subject's band excludes it, so this one does too.
+    comps = [{"ticker": "A", "beta": 1.2, "debt_to_equity": 1.0, "tax_rate": 1.0}]
+    with pytest.raises(EngineInputError, match=r"comparable\.tax_rate must be in \[0, 1\)"):
+        compute_wacc(comparable_betas=comps, risk_free_rate_override=0.04)
+
+
+def test_a_comparable_without_its_own_rate_still_inherits_the_subjects():
+    # The band check must not disturb the default: no `tax_rate` on the comp
+    # means the subject's rate, which is in band by construction.
+    comps: list[dict[str, Any]] = [{"ticker": "A", "beta": 1.2, "debt_to_equity": 1.0}]
+    out = compute_wacc(
+        comparable_betas=comps,
+        tax_rate=0.21,
+        risk_free_rate_override=0.04,
+        equity_risk_premium=0.05,
+    )
+    # βu = 1.2 / (1 + 0.79·1.0)
+    assert out["capm"]["beta_unlevered"] == pytest.approx(1.2 / 1.79, abs=1e-4)
+
+
+def test_an_in_band_comparable_rate_is_unaffected():
+    comps: list[dict[str, Any]] = [
+        {"ticker": "A", "beta": 1.2, "debt_to_equity": 0.5, "tax_rate": 0.21}
+    ]
+    out = compute_wacc(
+        comparable_betas=comps,
+        risk_free_rate_override=0.04,
+        equity_risk_premium=0.05,
+    )
+    assert out["capm"]["beta_unlevered"] == pytest.approx(1.2 / (1 + 0.79 * 0.5), abs=1e-4)
+    assert out["cost_of_equity"] == pytest.approx(0.083011, abs=1e-5)
 
 
 # ── Non-finite inputs ─────────────────────────────────────────────────────────

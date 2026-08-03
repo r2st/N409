@@ -93,6 +93,25 @@ def _num(value, name: str, *, positive: bool = False, nonneg: bool = False) -> f
     return out
 
 
+def _tax_rate(value, name: str) -> float:
+    """A corporate tax rate, held to [0, 1).
+
+    Both the subject's rate and each comparable's feed the same Hamada factor,
+    so they need the same band — and only the subject's had one. `_levering_
+    factor` catches an out-of-band comparable rate only where the factor lands
+    at or below zero; a rate above 1 paired with a small enough D/E leaves it
+    positive and the estimate simply comes out wrong. A comparable taxed at
+    200% with D/E 0.5 gives a factor of 0.5, so the comp's beta is *divided* by
+    a half: an unlevered beta of 2.4 where 0.86 was right, and a cost of equity
+    of 16% where 8.3% was — returned as a successful 200 with nothing on it to
+    say the number is impossible.
+    """
+    out = _num(value, name, nonneg=True)
+    if out >= 1.0:
+        raise EngineInputError(f"{name} must be in [0, 1)")
+    return out
+
+
 def _levering_factor(debt_to_equity: float, tax_rate: float) -> float:
     """Hamada factor 1 + (1 − tax)·D/E, rejected unless it is positive.
 
@@ -176,7 +195,7 @@ def _median_unlevered_beta(
             raise EngineInputError("each comparable beta must be an object")
         beta = _num(c.get("beta"), "comparable.beta")
         de = _num(c.get("debt_to_equity", 0.0), "comparable.debt_to_equity", nonneg=True)
-        comp_tax = _num(c.get("tax_rate", tax_rate), "comparable.tax_rate", nonneg=True)
+        comp_tax = _tax_rate(c.get("tax_rate", tax_rate), "comparable.tax_rate")
         bu = unlever_beta(beta, de, comp_tax)
         unlevered.append(bu)
         detail.append(
@@ -215,9 +234,7 @@ def compute_wacc(
     ``debt_weight`` (Wd = D/(D+E)) sets the WACC blend; if omitted it is
     derived from ``target_debt_to_equity``.
     """
-    tax_rate = _num(tax_rate, "tax_rate", nonneg=True)
-    if not 0.0 <= tax_rate < 1.0:
-        raise EngineInputError("tax_rate must be in [0, 1)")
+    tax_rate = _tax_rate(tax_rate, "tax_rate")
     target_de = _num(target_debt_to_equity, "target_debt_to_equity", nonneg=True)
     erp = _num(equity_risk_premium, "equity_risk_premium")
 
