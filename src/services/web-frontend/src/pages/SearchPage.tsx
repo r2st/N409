@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -18,19 +18,37 @@ export function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * Which search the displayed results belong to.
+   *
+   * The debounce cancels a *pending* request, not an in-flight one, so a query
+   * that takes longer than the debounce leaves two requests open at once — and
+   * nothing ordered their replies. When the slower reply for "ac" landed after
+   * the reply for "acme", the page showed one query's results under the other
+   * query's text and stayed that way, because no further request was coming to
+   * correct it. Only the newest request may write state.
+   */
+  const latestRequest = useRef(0);
+
   useEffect(() => {
     setInput(q);
     if (q.trim().length < 2) {
+      // Abandon anything in flight too, or its reply repopulates the list the
+      // cleared box is supposed to have emptied.
+      latestRequest.current += 1;
       setResults(null);
+      setBusy(false);
       return;
     }
     setBusy(true);
     setError(null);
     const timer = setTimeout(() => {
+      const seq = (latestRequest.current += 1);
+      const current = () => seq === latestRequest.current;
       api<SearchResults>(`/search?q=${encodeURIComponent(q.trim())}&limit=20`)
-        .then(setResults)
-        .catch(() => setError('Search failed.'))
-        .finally(() => setBusy(false));
+        .then((data) => current() && setResults(data))
+        .catch(() => current() && setError('Search failed.'))
+        .finally(() => current() && setBusy(false));
     }, 250);
     return () => clearTimeout(timer);
   }, [q]);
