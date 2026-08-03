@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { moneyFormatter } from '../lib/format';
 import {
   Button,
   EmptyState,
@@ -20,8 +21,7 @@ import { HelpIcon } from '../components/HelpIcon';
  * into NAV and distributes through an LP waterfall. Ops-only.
  */
 
-const money = (v: number, currency: string) =>
-  new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0 }).format(v);
+const money = (v: number, currency: string) => moneyFormatter(currency, { maximumFractionDigits: 0 })(v);
 
 interface Fund {
   id: string;

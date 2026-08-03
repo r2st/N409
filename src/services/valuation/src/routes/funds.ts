@@ -5,6 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { CurrencyCode } from '../domain/currency.js';
 import {
   createFund,
   createMark,
@@ -35,7 +36,7 @@ const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
 const FundBody = z.object({
   name: z.string().trim().min(1).max(200),
   fund_type: z.enum(['vc', 'pe', 'credit', 'growth', 'other']).default('vc'),
-  currency: z.string().trim().length(3).default('USD'),
+  currency: CurrencyCode.default('USD'),
   vintage_year: z.number().int().min(1970).max(2100).nullish(),
 });
 

@@ -2,14 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { moneyFormatter } from '../lib/format';
 import { HelpIcon } from '../components/HelpIcon';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 
 /** Engine equity/FMV values are in whole currency units (dollars), not cents. */
-const usd = (v: number, currency: string) =>
-  new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0 }).format(v);
-const usdPrecise = (v: number, currency: string) =>
-  new Intl.NumberFormat(undefined, { style: 'currency', currency, minimumFractionDigits: 2 }).format(v);
+const usd = (v: number, currency: string) => moneyFormatter(currency, { maximumFractionDigits: 0 })(v);
+const usdPrecise = (v: number, currency: string) => moneyFormatter(currency, { minimumFractionDigits: 2 })(v);
 
 interface Organization {
   id: string;

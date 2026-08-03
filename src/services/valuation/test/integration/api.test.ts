@@ -128,6 +128,34 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
       expect(Number(valuation.number)).toBeGreaterThanOrEqual(1);
     });
 
+    // A `length(3)` check let "123" and "$$$" through to the char(3) column,
+    // and Intl.NumberFormat throws a RangeError on those — so the stored row
+    // crashed the render of every money value on any page listing it.
+    it('refuses a currency that is not an ISO 4217 code', async () => {
+      for (const currency of ['123', '$$$', 'us1', 'USDX']) {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/valuations',
+          headers: authHeader(client.token),
+          payload: { kind: '409a', company_name: 'Bad Currency Co', currency },
+        });
+        expect(res.statusCode, `currency ${currency}`).toBe(422);
+      }
+    });
+
+    it('stores a lower-case currency under its canonical upper-case code', async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: 'Sterling Co', currency: 'gbp' },
+      });
+      expect(res.statusCode).toBe(201);
+      // Otherwise 'gbp' and 'GBP' are two currencies to every total that groups
+      // by the column.
+      expect(res.json().valuation.currency).toBe('GBP');
+    });
+
     it('wrote the valuation_created event atomically', async () => {
       const res = await ctx.app.inject({
         method: 'GET',

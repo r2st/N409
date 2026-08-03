@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { moneyFormatter } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
 
@@ -14,8 +15,7 @@ import { HelpIcon } from '../components/HelpIcon';
 
 type InstrumentType = 'bond' | 'term_loan' | 'convertible' | 'safe' | 'credit_spread';
 
-const money = (v: number, currency: string) =>
-  new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(v);
+const money = (v: number, currency: string) => moneyFormatter(currency, { maximumFractionDigits: 2 })(v);
 
 const TYPE_LABELS: Record<InstrumentType, string> = {
   bond: 'Bond',

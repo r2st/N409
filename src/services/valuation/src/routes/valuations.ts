@@ -11,6 +11,7 @@ import {
   valuationScope,
 } from '../auth/rbac.js';
 import { VALUATION_KINDS, VALUATION_SOURCES, VALUATION_STATES } from '../domain/valuation.js';
+import { CurrencyCode } from '../domain/currency.js';
 import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { listEvents } from '../events/record.js';
 import {
@@ -33,7 +34,7 @@ const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
   company_name: z.string().min(1).max(300),
   service_name: z.string().min(1).max(300).optional(),
-  currency: z.string().length(3).optional(),
+  currency: CurrencyCode.optional(),
   service_countries: z.array(z.string().length(2)).max(50).optional(),
   source: z.enum(VALUATION_SOURCES).optional(),
   gclid: z.string().max(200).optional(),
@@ -52,7 +53,7 @@ const PatchBody = z
     due_date: z.string().datetime().nullable(),
     delivery_days: z.number().int().positive().nullable(),
     paid_status: z.enum(['unpaid', 'paid', 'paid_by_partner']),
-    currency: z.string().length(3),
+    currency: CurrencyCode,
     service_countries: z.array(z.string().length(2)).max(50),
     qsbs_attestation: z.boolean().nullable(),
   })

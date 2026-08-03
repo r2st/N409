@@ -101,6 +101,42 @@ export function formatDateTime(iso: string | null | undefined): string {
   });
 }
 
+/**
+ * Money formatting that cannot take the render down.
+ *
+ * `Intl.NumberFormat` throws a *RangeError* for a currency that is not three
+ * letters — `"123"`, `"$$$"` — and the code comes from a row, not from us. The
+ * API used to accept those (a `length(3)` check is not a code check), so rows
+ * carrying one predate the fix and will outlive it. A thrown formatter inside
+ * render is not a mis-formatted cell: it unmounts the tree to the nearest error
+ * boundary, so an unrenderable currency code took out the whole page rather
+ * than one number on it.
+ *
+ * The fallback prints the amount with the code beside it, which is what `Intl`
+ * itself does for a well-formed code it does not recognise.
+ */
+export function moneyFormatter(
+  currency: string | null | undefined,
+  options: Intl.NumberFormatOptions = {},
+): (value: number) => string {
+  const code = (currency || 'USD').trim();
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency: code, ...options }).format;
+  } catch {
+    // Only default the fraction digits when the caller pinned neither: merging
+    // a default `minimumFractionDigits: 2` under a caller's
+    // `maximumFractionDigits: 0` gives min > max, which is itself a RangeError
+    // — the fallback would throw exactly where it is meant to stop throwing.
+    const digitsGiven =
+      options.minimumFractionDigits !== undefined || options.maximumFractionDigits !== undefined;
+    const plain = new Intl.NumberFormat(
+      undefined,
+      digitsGiven ? options : { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+    );
+    return (value: number) => `${code} ${plain.format(value)}`;
+  }
+}
+
 /** Renders integer cents as money, e.g. 250050 → "$2,500.50" (M4). */
 export function formatMoney(
   cents: string | number | null | undefined,
@@ -109,11 +145,7 @@ export function formatMoney(
   if (cents === null || cents === undefined || cents === '') return '—';
   const n = Number(cents);
   if (!Number.isFinite(n)) return '—';
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: currency || 'USD',
-    minimumFractionDigits: 2,
-  }).format(n / 100);
+  return moneyFormatter(currency, { minimumFractionDigits: 2 })(n / 100);
 }
 
 /**
@@ -135,12 +167,10 @@ export function formatAmount(
   const n = Number(amount);
   if (!Number.isFinite(n)) return '—';
   const small = n !== 0 && Math.abs(n) < 1;
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: currency || 'USD',
+  return moneyFormatter(currency, {
     minimumFractionDigits: 2,
     maximumFractionDigits: small ? 6 : 2,
-  }).format(n);
+  })(n);
 }
 
 export function formatNumber(value: string | number | null | undefined): string {

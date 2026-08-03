@@ -6,6 +6,7 @@ import { canReadReport, type Principal } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 import { VALUATION_KINDS, VALUATION_STATES } from '../domain/valuation.js';
+import { CurrencyCode } from '../domain/currency.js';
 import { DOCUMENT_KINDS } from '../domain/pipeline.js';
 import {
   createValuation,
@@ -58,7 +59,7 @@ const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
   company_name: z.string().min(1).max(300),
   service_name: z.string().min(1).max(300).optional(),
-  currency: z.string().length(3).optional(),
+  currency: CurrencyCode.optional(),
   service_countries: z.array(z.string().length(2)).max(50).optional(),
 });
 

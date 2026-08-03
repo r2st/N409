@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { AuthShell } from '../components/AuthShell';
 import { HelpIcon } from '../components/HelpIcon';
 import { ErrorNote, Spinner } from '../components/ui';
+import { moneyFormatter } from '../lib/format';
 
 interface Section {
   heading: string;
@@ -172,9 +173,7 @@ const pct = (v: string | null) => (v === null || v === undefined ? '—' : `${(N
 function Metric({ label, value, currency }: { label: string; value: string; currency?: string }) {
   const display =
     currency && /^-?\d/.test(value)
-      ? new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(
-          Number(value),
-        )
+      ? moneyFormatter(currency, { maximumFractionDigits: 2 })(Number(value))
       : value;
   return (
     <div>

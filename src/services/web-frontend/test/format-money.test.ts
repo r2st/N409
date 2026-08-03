@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAmount, formatMoney, formatNumber } from '../src/lib/format';
+import { formatAmount, formatMoney, formatNumber, moneyFormatter } from '../src/lib/format';
 
 describe('money & number formatting (M4)', () => {
   it('formats integer cents as currency', () => {
@@ -42,5 +42,31 @@ describe('money & number formatting (M4)', () => {
   it('formats large share counts with separators', () => {
     expect(formatNumber('10000000')).toBe('10,000,000');
     expect(formatNumber(null)).toBe('—');
+  });
+});
+
+// Intl.NumberFormat throws a RangeError for a currency that is not three
+// letters, and inside render that unmounts the tree to the nearest error
+// boundary — the whole page, not the one cell. The API used to accept such
+// codes, so rows carrying one outlive the validation that now rejects them.
+describe('a currency code Intl will not accept', () => {
+  it('renders the amount instead of throwing', () => {
+    expect(() => formatMoney(250050, '123')).not.toThrow();
+    expect(formatMoney(250050, '123')).toBe('123 2,500.50');
+    expect(formatAmount(2500.5, '$$$')).toBe('$$$ 2,500.50');
+    expect(moneyFormatter('us1', { maximumFractionDigits: 0 })(1234)).toBe('us1 1,234');
+  });
+
+  it('still uses Intl for a well-formed code', () => {
+    expect(formatMoney(250050, 'EUR')).toBe('€2,500.50');
+    // Well-formed but unassigned: Intl prints the code itself, no throw.
+    // (Intl separates it with a non-breaking space; the fallback uses a plain
+    // one, which is how the two cases are told apart here.)
+    expect(formatMoney(250050, 'ABC')).toBe('ABC\u00a02,500.50');
+  });
+
+  it('falls back to USD for an empty code rather than printing a blank prefix', () => {
+    expect(formatMoney(100, '')).toBe('$1.00');
+    expect(moneyFormatter(undefined)(1)).toBe('$1.00');
   });
 });
