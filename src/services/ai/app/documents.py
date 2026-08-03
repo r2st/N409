@@ -73,16 +73,55 @@ def _xlsx_cell_value(cell: ElementTree.Element, shared: list[str]) -> str:
     return raw
 
 
-def _col_index(ref: str | None) -> int:
-    """'BC12' → 0-based column 54; missing refs sort to the end of the row."""
+def _col_index(ref: str | None) -> int | None:
+    """'BC12' → 0-based column 54; None when the ref is missing or unparseable."""
     if not ref:
-        return 1 << 14
+        return None
     idx = 0
     for ch in ref:
         if not ch.isalpha():
             break
         idx = idx * 26 + (ord(ch.upper()) - 64)
-    return idx - 1 if idx else 1 << 14
+    return idx - 1 if idx else None
+
+
+# Widest row we will pad out to. A cell ref may name any column up to XFD
+# (16384), and padding blindly would let one crafted cell turn every row into
+# 16k tabs — 32MB of empty strings across a sheet, and enough output to consume
+# a document's whole character budget on nothing. 512 columns is far past what a
+# cap table or a monthly ten-year model needs.
+MAX_XLSX_COLS = 512
+
+
+def _row_values(row: ElementTree.Element, shared: list[str]) -> list[str]:
+    """A row's cells as a dense left-to-right list, gaps included.
+
+    XLSX does not store empty cells: a row whose Price is blank simply has no
+    <c r="B2"> element. Reading the <c> elements in order therefore yields a
+    *shorter* row than the header, and joining them with tabs slid every later
+    value one column left — a share count landed under "Price", a price under
+    "Class". Nothing downstream could detect it, because the row it received was
+    a perfectly well-formed line of TSV; the LLM read 2,000,000 as a per-share
+    price and the extracted cap table was wrong in a way that looked right.
+
+    So place each cell at the column its `r` attribute names and fill the holes.
+    Cells without a usable ref keep the old behaviour of trailing the row.
+    """
+    placed: dict[int, str] = {}
+    floating: list[str] = []
+    for cell in row.findall(f"{_SSML}c"):
+        value = _xlsx_cell_value(cell, shared)
+        idx = _col_index(cell.get("r"))
+        if idx is None:
+            floating.append(value)
+        elif idx < MAX_XLSX_COLS:
+            # Two cells claiming one column is malformed; last one wins, which
+            # is what a spreadsheet reader would show.
+            placed[idx] = value
+    width = max(placed) + 1 if placed else 0
+    values = [placed.get(i, "") for i in range(width)]
+    values.extend(floating)
+    return values
 
 
 def _xlsx_text(raw: bytes) -> str:
@@ -104,8 +143,7 @@ def _xlsx_text(raw: bytes) -> str:
             name = names[i] if i < len(names) else f"Sheet{i + 1}"
             lines = [f"=== Sheet: {name} ==="]
             for row in list(root.iter(f"{_SSML}row"))[:MAX_XLSX_ROWS_PER_SHEET]:
-                cells = sorted(row.findall(f"{_SSML}c"), key=lambda c: _col_index(c.get("r")))
-                values = [_xlsx_cell_value(c, shared) for c in cells]
+                values = _row_values(row, shared)
                 if any(v.strip() for v in values):
                     lines.append("\t".join(values).rstrip())
             blocks.append("\n".join(lines))
