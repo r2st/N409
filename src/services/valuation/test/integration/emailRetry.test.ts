@@ -27,6 +27,25 @@ async function seedFailedEmail(
   return { ...email, status: 'failed', attempts: email.attempts + 1, error: 'smtp connect refused' };
 }
 
+/**
+ * A 'queued' row backdated past the claim lease — what a process killed between
+ * the outbox INSERT and the transport call leaves behind. Backdated in SQL
+ * rather than by shrinking `leaseMs`, because the lease is also the window that
+ * protects an in-flight send, and a test that shrinks it stops pinning that.
+ */
+async function seedStrandedQueuedEmail(ctx: TestApp, toEmail: string): Promise<EmailOutboxRow> {
+  const email = await enqueueEmail(ctx.pool, {
+    toEmail,
+    templateKey: 'test_template',
+    subject: 'Test',
+    body: 'Body',
+  });
+  await ctx.pool.query(`UPDATE email_outbox SET created_at = now() - interval '1 hour' WHERE id = $1`, [
+    email.id,
+  ]);
+  return email;
+}
+
 /** The row with this id, whatever else the outbox is holding. */
 async function outboxRow(ctx: TestApp, id: string): Promise<EmailOutboxRow> {
   const row = (await listOutbox(ctx.pool, { limit: 500 })).find((e) => e.id === id);
@@ -134,6 +153,89 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
     expect(row.status).toBe('failed');
     // Nothing tried to deliver it, so nothing may have spent one of its tries.
     expect(row.attempts).toBe(1);
+  });
+
+  // ── Rows a crash stranded on 'queued' ──────────────────────────────────
+  //
+  // Every send path writes the outbox row and *then* hands it to the transport,
+  // so a process killed in that window (deploy SIGTERM, OOM, eviction) leaves a
+  // row on 'queued' that no code path revisits. The row exists precisely so the
+  // mail is not lost there, so the sweep has to be what comes back for it.
+
+  it('resends a row a crash stranded on queued past the lease', async () => {
+    const email = await seedStrandedQueuedEmail(ctx, 'stranded@test.example.com');
+
+    const deliveredIds: string[] = [];
+    const result = await retryFailedEmails({
+      pool: ctx.pool,
+      transport: {
+        async send(e) {
+          deliveredIds.push(e.id);
+        },
+      },
+    });
+
+    expect(deliveredIds).toContain(email.id);
+    expect(result.sent).toBeGreaterThanOrEqual(1);
+    expect((await outboxRow(ctx, email.id)).status).toBe('sent');
+  });
+
+  it('leaves a freshly queued row alone so an in-flight send is not duplicated', async () => {
+    // Not backdated: this is the row whose original send is still running.
+    const email = await enqueueEmail(ctx.pool, {
+      toEmail: 'inflight@test.example.com',
+      templateKey: 'test_template',
+      subject: 'Test',
+      body: 'Body',
+    });
+
+    const deliveredIds: string[] = [];
+    await retryFailedEmails({
+      pool: ctx.pool,
+      transport: {
+        async send(e) {
+          deliveredIds.push(e.id);
+        },
+      },
+    });
+
+    expect(deliveredIds).not.toContain(email.id);
+    const row = await outboxRow(ctx, email.id);
+    expect(row.status).toBe('queued');
+    // Untouched means untouched: claiming it would have burned an attempt.
+    expect(row.attempts).toBe(0);
+  });
+
+  it('marks a stranded queued row failed when the resend fails, so the next sweep retries it', async () => {
+    const email = await seedStrandedQueuedEmail(ctx, 'stranded-fail@test.example.com');
+
+    await retryFailedEmails({ pool: ctx.pool, transport: failingTransport });
+
+    const after = await outboxRow(ctx, email.id);
+    expect(after.status).toBe('failed');
+    expect(after.attempts).toBe(1);
+    // The lease is released on settlement, so this is retryable immediately —
+    // a stranded row must not land in a state that waits a lease out.
+    expect(after.claimed_at).toBeNull();
+  });
+
+  it('honours the attempts cap for stranded queued rows too', async () => {
+    const email = await seedStrandedQueuedEmail(ctx, 'stranded-exhausted@test.example.com');
+    await ctx.pool.query(`UPDATE email_outbox SET attempts = 3 WHERE id = $1`, [email.id]);
+
+    const deliveredIds: string[] = [];
+    await retryFailedEmails({
+      pool: ctx.pool,
+      maxAttempts: 3,
+      transport: {
+        async send(e) {
+          deliveredIds.push(e.id);
+        },
+      },
+    });
+
+    expect(deliveredIds).not.toContain(email.id);
+    expect((await outboxRow(ctx, email.id)).attempts).toBe(3);
   });
 });
 

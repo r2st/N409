@@ -18,7 +18,7 @@ export interface EmailOutboxRow {
   attempts: number;
   created_at: Date;
   sent_at: Date | null;
-  /** When a retry sweeper last took this row; null when free. See claimFailedEmails. */
+  /** When a retry sweeper last took this row; null when free. See claimRetryableEmails. */
   claimed_at: Date | null;
 }
 
@@ -91,8 +91,23 @@ export const CLAIM_LEASE_MS = 15 * 60_000;
  * Only channels the caller can actually deliver are claimed; claiming an SMS row
  * with no SMS transport configured would burn its attempts on every sweep until
  * it hit the cap without one delivery ever being tried.
+ *
+ * "Retryable" is 'failed' *and* 'queued'-past-the-lease. A row is written to the
+ * outbox before it is handed to the transport precisely so that a crash cannot
+ * lose the mail — but until now nothing ever came back for a row the crash left
+ * behind. Every send path (state-change workflow, transactional must-sends,
+ * auto emails) enqueues then sends in the same process, so a SIGTERM during a
+ * deploy, an OOM kill, or a pod eviction in that window stranded the row on
+ * 'queued' permanently: the sweep only looked at 'failed', and nothing else in
+ * the service reads the outbox at all. A password reset or an invitation simply
+ * never arrived, with a row in the table swearing it had been enqueued.
+ *
+ * The lease is the grace period for that, not just a claim window. It is defined
+ * as longer than any single transport attempt, which is exactly the condition
+ * for "no in-flight send can still be holding this row" — so reusing it here
+ * cannot double-deliver a slow-but-live attempt.
  */
-export async function claimFailedEmails(
+export async function claimRetryableEmails(
   pool: pg.Pool,
   opts: {
     channels: ReadonlyArray<'email' | 'sms'>;
@@ -106,7 +121,11 @@ export async function claimFailedEmails(
   const { rows } = await pool.query<EmailOutboxRow>(
     `WITH claimable AS (
        SELECT id FROM email_outbox
-        WHERE status = 'failed'
+        -- Spelled as an IN over the leading index column, then narrowed, so
+        -- email_outbox_claim_idx (status, created_at, claimed_at) still drives
+        -- the scan rather than the planner falling back to a seq scan.
+        WHERE status IN ('failed', 'queued')
+          AND (status = 'failed' OR created_at < now() - ($3 || ' seconds')::interval)
           AND attempts < $1
           AND channel = ANY($2::comm_channel[])
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)
@@ -127,7 +146,7 @@ export async function claimFailedEmails(
 }
 
 /**
- * Settles a row taken by claimFailedEmails. Unlike markEmail this does not count
+ * Settles a row taken by claimRetryableEmails. Unlike markEmail this does not count
  * an attempt — the claim already did — and it releases the lease so a row left
  * 'failed' is picked up by the next sweep instead of waiting one out.
  */
