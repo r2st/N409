@@ -270,6 +270,61 @@ def test_an_ordinary_book_still_marks_and_rolls_up():
     assert nav["net_asset_value"] == pytest.approx(1100.0)
 
 
+# ── Roll-forward: an unrecognised method is not "index" ──────────────────────
+
+
+@pytest.mark.parametrize("bad", ["acretion", "index_return", "INDEX", "", "pme"])
+def test_an_unknown_roll_forward_method_is_refused_not_silently_ignored(bad):
+    # `else: # index` swallowed every unrecognised name and returned the mark
+    # unchanged with the bad method echoed back, so a typo produced a stale mark
+    # that claimed to have been rolled forward.
+    with pytest.raises(EngineInputError, match="method must be one of"):
+        roll_forward_mark(prior_fair_value=1000, method=bad, index_return=0.10)
+
+
+def test_the_fund_rollforward_endpoint_rejects_an_unknown_method():
+    res = client.post(
+        "/engine/v1/fund-rollforward", json={"prior_fair_value": 1000, "method": "nope"}
+    )
+    assert res.status_code == 422
+    assert "method must be one of" in res.json()["detail"]
+
+
+# ── Roll-forward: the two reported figures have to agree ─────────────────────
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"method": "index", "index_return": 0.10},
+        {"method": "index", "index_return": -0.35},
+        {"method": "index", "index_return": -1.0},
+        {"method": "accretion", "accretion_rate": 0.08, "periods": 2},
+        {"method": "calibration", "new_calibrated_value": 1500},
+        {"method": "calibration", "new_calibrated_value": 0},
+    ],
+)
+def test_prior_plus_change_always_equals_the_reported_new_value(kwargs):
+    r = roll_forward_mark(prior_fair_value=1000, **kwargs)
+    assert r["prior_fair_value"] + r["change"] == pytest.approx(r["new_fair_value"])
+    assert r["new_fair_value"] >= 0.0
+
+
+def test_a_total_loss_marks_to_zero_with_a_matching_change():
+    r = roll_forward_mark(prior_fair_value=1000, method="index", index_return=-1.0)
+    assert r["new_fair_value"] == pytest.approx(0.0)
+    assert r["change"] == pytest.approx(-1000.0)
+
+
+@pytest.mark.parametrize("bad", [-1.5, -5.0, -100.0])
+def test_a_return_below_minus_one_hundred_percent_is_refused(bad):
+    # It used to be absorbed by a floor at zero, which reported
+    # new_fair_value 0 next to change -500 — two figures disagreeing by the
+    # size of the mistake. A long position cannot lose more than all of it.
+    with pytest.raises(EngineInputError, match="index_return"):
+        roll_forward_mark(prior_fair_value=1000, method="index", index_return=bad)
+
+
 def test_an_accretion_that_overflows_fails_instead_of_marking_null():
     with pytest.raises(EngineInputError):
         roll_forward_mark(

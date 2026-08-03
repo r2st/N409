@@ -34,6 +34,7 @@ LEVEL_2 = 2  # observable inputs other than quoted prices (recent round, comps)
 LEVEL_3 = 3  # unobservable inputs (model / calibration)
 
 _MARK_METHODS = ("market", "last_round", "calibrated_opm", "cost")
+_ROLL_METHODS = ("index", "accretion", "calibration")
 
 
 def _finite_result(value: float, name: str) -> float:
@@ -142,6 +143,15 @@ def roll_forward_mark(
     - ``calibration``: adopt a fresh calibrated value (e.g. a new round).
     """
     pv = _num(prior_fair_value, "prior_fair_value", minimum=0.0)
+    # `else: # index` swallowed every unrecognised method, so a typo — "acretion",
+    # "index_return", a method from a newer client — was answered 200 with the
+    # mark unchanged and the bad name echoed back as if it had been honoured. A
+    # stale mark that claims to have been rolled forward is worse than an error:
+    # nothing downstream can tell it apart from one the index genuinely left
+    # flat. `mark_position` already vets its own method against a tuple; this is
+    # the same check the roll-forward never got.
+    if method not in _ROLL_METHODS:
+        raise EngineInputError(f"method must be one of {_ROLL_METHODS}")
     if method == "calibration":
         if new_calibrated_value is None:
             raise EngineInputError("calibration roll-forward needs new_calibrated_value")
@@ -150,12 +160,18 @@ def roll_forward_mark(
         rate = _num(accretion_rate if accretion_rate is not None else 0.0, "accretion_rate")
         new_value = pv * compound_factor(rate, _num(periods, "periods", minimum=0.0), "accretion_rate")
     else:  # index
-        ret = _num(index_return if index_return is not None else 0.0, "index_return")
+        # A long position cannot lose more than all of it, so a total return at
+        # or below -100% is a typo (a -500% "return" is a percentage in the
+        # fraction's slot). It used to be absorbed by the `max(..., 0.0)` floor
+        # below, which reported new_fair_value 0 alongside change -500 — a mark
+        # whose own two figures disagreed by the size of the error.
+        ret = _num(index_return if index_return is not None else 0.0, "index_return", minimum=-1.0)
         new_value = pv * (1.0 + ret)
     new_value = _finite_result(new_value, "new_fair_value")
     return {
         "prior_fair_value": round(pv, 4),
-        "new_fair_value": round(max(new_value, 0.0), 4),
+        "new_fair_value": round(new_value, 4),
+        # Off the value actually reported, so prior + change == new always holds.
         "change": round(new_value - pv, 4),
         "method": method,
     }
