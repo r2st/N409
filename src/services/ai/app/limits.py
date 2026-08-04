@@ -8,9 +8,15 @@ Two DoS mitigations shared by the FastAPI services:
   declare one — count the body as it streams and cut it off at the same
   ceiling.
 * **Threadpool sizing** — FastAPI runs sync ``def`` handlers in a bounded
-  threadpool; LLM calls block up to 90s and CPU-bound engine work holds a
-  thread for its duration. Make the size a deliberate, tunable number instead
-  of an implicit default.
+  threadpool; an LLM call blocks for up to ``openrouter.DEFAULT_CALL_BUDGET_S``
+  and CPU-bound engine work holds a thread for its duration. Make the size a
+  deliberate, tunable number instead of an implicit default.
+
+  That LLM figure is a whole-call ceiling, not a per-attempt one — the
+  distinction is the point. ``openrouter.TIMEOUT_S`` bounds one HTTP attempt,
+  and a call makes up to ``(MAX_RETRIES + 1) x len(models)`` of them, so before
+  the deadline existed the real worst case was 13.6 minutes per thread and this
+  pool was sized against a number that could not hold.
 """
 
 from __future__ import annotations

@@ -60,7 +60,7 @@ class _Client:
         self._replies = list(replies)
         self.calls = 0
 
-    def post(self, url, headers=None, json=None):  # noqa: A002 - httpx signature
+    def post(self, url, headers=None, json=None, timeout=None):  # noqa: A002 - httpx signature
         self.calls += 1
         return self._replies.pop(0)
 

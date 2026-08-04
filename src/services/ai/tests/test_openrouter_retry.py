@@ -38,8 +38,12 @@ class _ScriptedClient:
     def __init__(self, outcomes):
         self._outcomes = list(outcomes)
         self.calls = 0
+        # Every attempt's timeout, so a test can assert the whole-call deadline
+        # is what bounds them rather than a fresh TIMEOUT_S each time.
+        self.timeouts: list[float | None] = []
 
-    def post(self, url, headers=None, json=None):  # noqa: A002 - httpx signature
+    def post(self, url, headers=None, json=None, timeout=None):  # noqa: A002 - httpx signature
+        self.timeouts.append(timeout)
         self.calls += 1
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, Exception):

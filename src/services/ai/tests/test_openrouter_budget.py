@@ -26,7 +26,7 @@ class _FakeClient:
         self._completion = completion
         self._usage = usage or {"prompt_tokens": 10, "completion_tokens": 5}
 
-    def post(self, url, headers=None, json=None):  # noqa: A002 - httpx signature
+    def post(self, url, headers=None, json=None, timeout=None):  # noqa: A002 - httpx signature
         self.last_json = json
         return _FakeResponse(
             {
