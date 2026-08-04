@@ -2,8 +2,16 @@
 
 import base64
 
+import pytest
+
 from app import pipelines
-from app.anonymize import redact
+from app.anonymize import (
+    MAX_KNOWN_ENTITIES,
+    AnonymizeInputError,
+    Redactor,
+    _entity_pattern,
+    redact,
+)
 from app.openrouter import LlmResult
 
 
@@ -452,3 +460,81 @@ def test_a_locality_run_never_swallows_the_words_before_it():
     redacted, _ = redact(text)
     assert redacted.startswith("The Company maintains its principal executive offices in ")
     assert "Menlo Park" not in redacted
+
+
+# ── Bound on the known-entity list ───────────────────────────────────────────
+#
+# `options.known_companies` / `options.known_people` are free-form lists inside
+# a free-form `options` dict, so their length was bounded only by the 32 MB body
+# cap. `_redact_entities` compiles a pattern per entity and scans the whole
+# string with it, and `Redactor.text` runs once per document body, once per
+# filename and once per interpolated prompt field — so the work was
+# entities × fields × chars with only the last two bounded. Measured on a
+# 20,000-char document: 2,000 names cost 0.6s for a single field and 20,000 cost
+# 6.1s, for ~600 KB of request. `re` holds the GIL, so that is the whole service
+# stopped, not one slow request.
+
+
+def test_a_reasonable_known_entity_list_is_accepted():
+    names = [f"Person{i} Surname{i}" for i in range(MAX_KNOWN_ENTITIES)]
+    red = Redactor(company_names=["Acme Robotics, Inc."], person_names=names)
+    assert red.text("Acme Robotics, Inc. employs Person7 Surname7.") == "[COMPANY] employs [NAME]."
+
+
+def test_too_many_known_people_is_refused_rather_than_truncated():
+    names = [f"Person{i} Surname{i}" for i in range(MAX_KNOWN_ENTITIES + 1)]
+    with pytest.raises(AnonymizeInputError, match="too many known names"):
+        Redactor(person_names=names)
+
+
+def test_too_many_known_companies_is_refused():
+    with pytest.raises(AnonymizeInputError, match="too many known companies"):
+        Redactor(company_names=[f"Acme {i} Robotics" for i in range(MAX_KNOWN_ENTITIES + 1)])
+
+
+def test_the_module_level_redact_is_bounded_too():
+    """`redact` is reachable without a Redactor, so it carries the bound itself."""
+    with pytest.raises(AnonymizeInputError, match="too many known names"):
+        redact("some text", person_names=[f"Person{i} Surname{i}" for i in range(MAX_KNOWN_ENTITIES + 1)])
+
+
+def test_an_over_size_entity_list_answers_422_not_500():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    res = TestClient(app, raise_server_exceptions=False).post(
+        "/ai/v1/pipelines/missing_data",
+        json={
+            "valuation": {"company_name": "Acme Robotics, Inc."},
+            "options": {"known_people": [f"Person{i} Surname{i}" for i in range(MAX_KNOWN_ENTITIES + 1)]},
+        },
+    )
+    assert res.status_code == 422
+    assert "too many known names" in res.json()["detail"]
+
+
+def test_redaction_stays_fast_at_the_bound():
+    """The bound is what makes the cost of one request predictable."""
+    import time
+
+    text = ("Acme Robotics raised money from investors in San Francisco. " * 340)[:20_000]
+    red = Redactor(
+        company_names=["Acme Robotics, Inc."],
+        person_names=[f"Person{i} Surname{i}" for i in range(MAX_KNOWN_ENTITIES)],
+    )
+    started = time.perf_counter()
+    red.text(text)
+    # Generous next to the ~0.15s this actually costs, and two orders of
+    # magnitude under the 6s an unbounded list bought for the same money.
+    assert time.perf_counter() - started < 2.0
+
+
+def test_the_compiled_pattern_is_memoised_across_fields():
+    """A request redacts many strings against one entity list; compile once."""
+    red = Redactor(company_names=["Acme Robotics, Inc."])
+    before = _entity_pattern.cache_info()
+    for _ in range(20):
+        red.text("Acme Robotics, Inc. filed.")
+    after = _entity_pattern.cache_info()
+    assert after.hits > before.hits

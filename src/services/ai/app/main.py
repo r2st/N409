@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents import AGENT_PIPELINES
-from .anonymize import Redactor
+from .anonymize import AnonymizeInputError, Redactor
 from .errors import install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
@@ -227,9 +227,11 @@ def test_prompt(request: TestRequest) -> TestResponse:
     redaction ran, because an operator tuning prompt wording has to be able to
     tell "the model handled this badly" from "the model never saw it".
     """
-    red = Redactor.for_request(request.options)
     try:
+        red = Redactor.for_request(request.options)
         llm = chat(red.text(request.system), red.text(request.user), model=request.model)
+    except AnonymizeInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OpenRouterError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return TestResponse(model=llm.model, content=llm.content, anonymization=red.report())
@@ -242,6 +244,11 @@ def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
         raise HTTPException(status_code=404, detail=f"Unknown pipeline '{pipeline}'")
     try:
         model, result = runner(request.model_dump())
+    except AnonymizeInputError as exc:
+        # An input problem, not a model problem — 422 names the field to fix.
+        # Must precede the ValueError arm below, which reads as "the model said
+        # something unusable" and would mislabel this one.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OpenRouterError as exc:
         # 503 → the valuation service records the job as failed and returns 502.
         raise HTTPException(status_code=503, detail=str(exc)) from exc

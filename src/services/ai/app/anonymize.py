@@ -21,6 +21,36 @@ from __future__ import annotations
 
 import os
 import re
+from functools import lru_cache
+
+
+class AnonymizeInputError(Exception):
+    """A known-entity list the redactor will not accept. Answered as a 422."""
+
+
+# Ceiling on the known entities one request may declare.
+#
+# `_redact_entities` compiles a pattern per entity and runs it over the whole
+# string, and `Redactor.text` is called once per document body, once per
+# filename and once per interpolated prompt field — so the work is
+# entities × fields × chars, and only the middle two of those were bounded.
+# `options.known_people` is a free-form list inside a free-form `options` dict,
+# so the count was whatever fitted in the 32 MB body cap.
+#
+# Measured against a 20,000-char document (the per-document cap): 2,000 names
+# cost 0.6s for one field and 20,000 cost 6.1s, for ~600 KB of request. `re`
+# holds the GIL, so that is not one slow request among forty — it is every
+# request on the process waiting, and a handful of them keeps it waiting for
+# minutes.
+#
+# Refused rather than truncated, deliberately. Silently dropping the tail of the
+# list would mean a request that asked for an entity to be struck gets a
+# response saying redaction was applied while that entity went to an external
+# model in the clear — a worse failure than the 422, and an invisible one. The
+# bound is far above any real caller: what is known is the subject company and
+# its founders, and the valuation service sends one company name plus a handful
+# of people.
+MAX_KNOWN_ENTITIES = 500
 
 # Order matters: most specific first.
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -209,8 +239,15 @@ def _short_form(value: str) -> str | None:
     return None
 
 
+@lru_cache(maxsize=4096)
 def _entity_pattern(value: str) -> re.Pattern[str]:
     """A whole-entity matcher for one known name.
+
+    Memoised because a request redacts many strings against the same entity
+    list — every document body, every filename, every interpolated prompt
+    field — and the pattern is a pure function of the name. `re` keeps its own
+    small cache for `re.compile`, but this one is built through `re.compile` on
+    a *derived* string, so the assembly ran again for every field.
 
     `\\b` asserts a word character on exactly one side, so it only works where
     the entity itself starts and ends on one. Legal entity names usually do not:
@@ -261,6 +298,14 @@ def _redact_entities(text: str, entities: list[str], label: str) -> tuple[str, i
     first so "Acme Robotics Inc" is caught before "Acme"."""
     total = 0
     placeholder = _PLACEHOLDERS[label]
+    # Bounded before anything is compiled or scanned — see MAX_KNOWN_ENTITIES.
+    # Checked on the raw list rather than the deduplicated set, so the cost of
+    # getting here is not itself proportional to an unbounded input.
+    if len(entities) > MAX_KNOWN_ENTITIES:
+        raise AnonymizeInputError(
+            f"too many known {label} to redact against: {len(entities)} "
+            f"(the limit is {MAX_KNOWN_ENTITIES})"
+        )
     candidates = {e.strip() for e in entities if e and len(e.strip()) >= _MIN_ENTITY_LEN}
     if label == "companies":
         # Only companies: a person is not "Ada Lovelace, Inc.", and stripping a
@@ -365,6 +410,16 @@ class Redactor:
         self.enforced = enforced
         self._companies = list(company_names or [])
         self._people = list(person_names or [])
+        # Bounded here as well as at the choke point in `_redact_entities`, so an
+        # over-size list is refused while the request is still being set up —
+        # before a document is decoded or a token is spent — rather than on the
+        # first field that happens to be redacted.
+        for label, values in (("companies", self._companies), ("names", self._people)):
+            if len(values) > MAX_KNOWN_ENTITIES:
+                raise AnonymizeInputError(
+                    f"too many known {label} to redact against: {len(values)} "
+                    f"(the limit is {MAX_KNOWN_ENTITIES})"
+                )
         self._totals: dict[str, int] = {}
 
     def text(self, value: str) -> str:
