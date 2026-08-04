@@ -223,11 +223,25 @@ export interface SortSpec {
   dir: 'asc' | 'desc';
 }
 
+/**
+ * Sort terms one request may name.
+ *
+ * The columns are whitelisted, so no term can be an injection — but the *count*
+ * was unbounded, and every term becomes another key Postgres sorts the result
+ * set by. There are only eight sortable columns and repeating one changes
+ * nothing after the first, so any request past that is naming a column twice.
+ * Ten leaves room for every column plus slack, and turns the ORDER BY into
+ * something whose size does not depend on the query string's.
+ */
+export const MAX_SORT_TERMS = 10;
+
 /** Parses "company_name:asc,created_at:desc"; returns null on any bad part. */
 export function parseSort(raw: string | undefined): SortSpec[] | null {
   if (!raw) return [];
+  const parts = raw.split(',');
+  if (parts.length > MAX_SORT_TERMS) return null;
   const specs: SortSpec[] = [];
-  for (const part of raw.split(',')) {
+  for (const part of parts) {
     const [column, dir = 'asc'] = part.trim().split(':');
     if (!(SORTABLE_COLUMNS as readonly string[]).includes(column ?? '')) return null;
     if (dir !== 'asc' && dir !== 'desc') return null;
@@ -236,10 +250,16 @@ export function parseSort(raw: string | undefined): SortSpec[] | null {
   return specs;
 }
 
-function orderBySql(sort: SortSpec[] | undefined): string {
-  if (!sort || sort.length === 0) return 'ORDER BY created_at DESC';
-  const parts = sort.map((s) => `${s.column} ${s.dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST`);
-  parts.push('id ASC'); // deterministic tiebreaker for stable pagination
+/**
+ * `alias` prefixes the column references, exactly as `buildValuationWhere` does.
+ * The export query joins `users` and `partners`, both of which have their own
+ * `created_at` and `id`, so an unqualified term there is not merely untidy — it
+ * is an ambiguous-column error from Postgres.
+ */
+function orderBySql(sort: SortSpec[] | undefined, alias = ''): string {
+  if (!sort || sort.length === 0) return `ORDER BY ${alias}created_at DESC`;
+  const parts = sort.map((s) => `${alias}${s.column} ${s.dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST`);
+  parts.push(`${alias}id ASC`); // deterministic tiebreaker for stable pagination
   return `ORDER BY ${parts.join(', ')}`;
 }
 
@@ -426,10 +446,20 @@ export async function dashboardStats(
 }
 
 /** Rows for CSV export — same scope/filters as the list, joined for display, capped. */
+/**
+ * The CSV/XLSX export projection.
+ *
+ * `sort` is honoured here for the same reason the route parses it: an export is
+ * the list the caller is looking at, in a file. It used to be dropped — the
+ * route validated the caller's sort, rejected a bad one with a 400, and then
+ * called this function without it, so every CSV and XLSX came back newest-first
+ * however the list had been ordered. Only the PDF branch, which goes through
+ * `listValuations`, ever applied it.
+ */
 export async function exportValuations(
   pool: pg.Pool,
   scope: ValuationScope,
-  filters: ValuationFilters,
+  filters: ValuationFilters & { sort?: SortSpec[] },
   limit = 10_000,
 ): Promise<Array<Record<string, unknown>>> {
   if (scope.kind === 'none') return [];
@@ -445,7 +475,7 @@ export async function exportValuations(
      LEFT JOIN partners p ON p.id = v.partner_id
      LEFT JOIN users r ON r.id = v.assigned_reviewer_id
      ${whereSql}
-     ORDER BY v.created_at DESC
+     ${orderBySql(filters.sort, 'v.')}
      LIMIT $${params.length}`,
     params,
   );

@@ -35,7 +35,9 @@ import { requirePrincipal } from '../plugins/auth.js';
 
 const ExportQuery = ValuationFilterQuery.extend({
   format: z.enum(['csv', 'pdf', 'xlsx']).default('csv'),
-  sort: z.string().optional(),
+  // Bounded like GET /valuations' own `sort`. Unbounded, this was the one entry
+  // point where the length of a query string set the length of an ORDER BY.
+  sort: z.string().max(200).optional(),
 });
 
 const MAX_EXPORT_ROWS = 10_000;
@@ -142,7 +144,12 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const generatedAt = new Date();
     const stamp = generatedAt.toISOString().slice(0, 10);
     if (format === 'csv' || format === 'xlsx') {
-      const rows = await exportValuations(deps.pool, valuationScope(principal), filters, MAX_EXPORT_ROWS);
+      const rows = await exportValuations(
+        deps.pool,
+        valuationScope(principal),
+        { ...filters, sort },
+        MAX_EXPORT_ROWS,
+      );
       if (format === 'csv') {
         return reply
           .header('content-type', 'text/csv; charset=utf-8')
