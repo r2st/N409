@@ -181,6 +181,9 @@ services:
       # still needs the container's own interface rather than loopback.
       HOST: '0.0.0.0'
       PORT: '3004'
+      # Same shared secret the AI and engine services require. `expose` puts
+      # this on the compose network, so the header is what actually gates it.
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token-change-me}
     expose:
       - '3004'
     healthcheck:

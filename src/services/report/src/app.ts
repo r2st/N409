@@ -1,6 +1,12 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { createLogger, problems, registerHealth, registerProblemHandler } from '@n409/shared';
+import {
+  createLogger,
+  problems,
+  registerHealth,
+  registerInternalAuth,
+  registerProblemHandler,
+} from '@n409/shared';
 import { renderReportPdf } from './pdf.js';
 
 /**
@@ -94,6 +100,10 @@ export function buildApp(): FastifyInstance {
     bodyLimit: 8 * 1024 * 1024,
   }) as unknown as FastifyInstance;
   registerProblemHandler(app);
+  // Shared secret, same contract as the AI and engine services. Registered
+  // before the render route so an unauthenticated caller is refused before the
+  // 8 MB body is read, let alone rendered.
+  registerInternalAuth(app, { service: 'report' });
   registerHealth(app, { service: 'report' });
 
   app.post('/render/v1/pdf', async (req, reply) => {

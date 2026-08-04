@@ -1,6 +1,8 @@
 # /etc/systemd/system/n409-report.service
-# Internal report-rendering service (port 3004). Never public — the firewall
-# blocks 3004 from the internet. See infra/DEPLOYMENT.md.
+# Internal report-rendering service (port 3004). Never public — it binds
+# loopback, the firewall blocks 3004 from the internet, and /render requires
+# X-Internal-Token (INTERNAL_SERVICE_TOKEN, already in the EnvironmentFile
+# below) exactly as the ai and engine-wrapper units do. See infra/DEPLOYMENT.md.
 [Unit]
 Description=N409 report service (TS/Fastify)
 After=network-online.target

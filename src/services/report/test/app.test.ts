@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 
 describe('report service', () => {
@@ -87,5 +87,72 @@ describe('report service', () => {
       },
     });
     expect(res.statusCode).toBe(422);
+  });
+
+  // ── Internal shared-secret gate ──────────────────────────────────────────
+  //
+  // This service renders an 8 MB body's worth of PDF for anyone who can reach
+  // it, and until now that was everyone who could reach the port — loopback
+  // binding and a firewall rule were the whole defence, while the AI and
+  // engine services next to it have required `X-Internal-Token` since audit
+  // B-1 P0. These pin the parity.
+  describe('internal service token', () => {
+    const SECRET = 'r'.repeat(64);
+    const RENDER = {
+      title: 'Valuation Report',
+      company_name: 'Acme',
+      sections: [{ heading: 'Introduction', html: '<p>Hello.</p>' }],
+    };
+
+    afterEach(() => {
+      delete process.env.INTERNAL_SERVICE_TOKEN;
+    });
+
+    it('renders without a token when none is configured (local dev)', async () => {
+      delete process.env.INTERNAL_SERVICE_TOKEN;
+      const app = buildApp();
+      const res = await app.inject({ method: 'POST', url: '/render/v1/pdf', payload: RENDER });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('refuses an unauthenticated render once a token is configured', async () => {
+      process.env.INTERNAL_SERVICE_TOKEN = SECRET;
+      const app = buildApp();
+      const res = await app.inject({ method: 'POST', url: '/render/v1/pdf', payload: RENDER });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('refuses a wrong token', async () => {
+      process.env.INTERNAL_SERVICE_TOKEN = SECRET;
+      const app = buildApp();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/render/v1/pdf',
+        headers: { 'x-internal-token': 's'.repeat(64) },
+        payload: RENDER,
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('renders for the caller that presents the token', async () => {
+      process.env.INTERNAL_SERVICE_TOKEN = SECRET;
+      const app = buildApp();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/render/v1/pdf',
+        headers: { 'x-internal-token': SECRET },
+        payload: RENDER,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+    });
+
+    it('keeps /health and /ready reachable so the supervisor never needs the secret', async () => {
+      process.env.INTERNAL_SERVICE_TOKEN = SECRET;
+      const app = buildApp();
+      for (const url of ['/', '/health', '/ready']) {
+        expect((await app.inject({ method: 'GET', url })).statusCode, url).toBe(200);
+      }
+    });
   });
 });

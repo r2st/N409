@@ -39,8 +39,12 @@ The single most important production control, and the reason this doc exists:
 2. **Loopback bind.** The `n409-ai` / `n409-engine-wrapper` units start uvicorn
    with `--host 127.0.0.1`; the valuation service reaches them over loopback.
 3. **Shared-secret header.** `INTERNAL_SERVICE_TOKEN` (in `/opt/N409/.env`) is
-   sent as `X-Internal-Token` by the valuation client and required by both
-   Python services on every non-health route.
+   sent as `X-Internal-Token` by the valuation client and required by all three
+   internal services — `ai`, `engine-wrapper` and `report` — on every non-health
+   route. `report` was the exception until r38: it rendered an 8 MB body for any
+   caller that reached port 3004, with the firewall and the loopback bind as the
+   only guard. Every unit already loads the same `.env`, so no new variable is
+   needed.
 4. **Forced PII redaction.** `n409-ai` runs with `APP_ENV=production`, which
    makes `options.anonymize=false` a no-op.
 5. **Document encryption at rest.** Set `DOCUMENTS_ENCRYPTION_KEY` in
@@ -54,7 +58,7 @@ work adds:
 
 ```
 NODE_ENV=production
-INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>   # valuation ⇄ ai/engine
+INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>   # valuation ⇄ ai/engine/report
 DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
 PUBLIC_BASE_URL=https://n409.aiknol.com         # emailed links (reset, board sign)
 BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the deploy

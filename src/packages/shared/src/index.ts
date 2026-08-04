@@ -3,6 +3,16 @@ export { startTelemetry, type TelemetryHandle } from './otel.js';
 export { createHttpMetrics, registerGauge, routeLabel, statusClass, type HttpMetrics } from './metrics.js';
 export { ApiProblem, problems, registerProblemHandler, scrubSensitive, scrubError } from './problem.js';
 export { registerHealth, probeReady, type ReadinessCheck } from './health.js';
+export {
+  INTERNAL_PUBLIC_PATHS,
+  INTERNAL_TOKEN_ENV,
+  INTERNAL_TOKEN_HEADER,
+  internalToken,
+  internalTokenMatches,
+  isInternalPublicPath,
+  registerInternalAuth,
+  type InternalAuthLogger,
+} from './internalAuth.js';
 export { buildInfo, readBuildInfo, resetBuildInfoCache, UNKNOWN_BUILD, type BuildInfo } from './build.js';
 export { installCrashHandlers, type CrashHandlerLogger, type CrashHandlerOptions } from './crash.js';
 export {
