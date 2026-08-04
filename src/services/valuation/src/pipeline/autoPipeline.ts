@@ -164,7 +164,7 @@ async function executeRun(
     if (!extracting) return;
     run = extracting;
     await runAiPipeline(
-      { pool: deps.pool, aiUrl: deps.aiUrl, documentsDir: deps.documentsDir },
+      { pool: deps.pool, aiUrl: deps.aiUrl, documentsDir: deps.documentsDir, log: deps.log },
       { valuation, pipeline: 'extract', anonymize: false, autoApply: true, createdBy: triggeredBy, actor },
     );
 

@@ -200,6 +200,89 @@ export const EngineInputsBody = z
 
 export type EngineInputsPatch = z.infer<typeof EngineInputsBody>;
 
+/**
+ * The same bounds, for the same fields, applied to what the AI extraction
+ * pipeline proposes.
+ *
+ * `engine_inputs` has two writers. This route validates every figure against
+ * the schema above before it lands. The AI path (routes/ai.ts auto-apply, and
+ * the manual apply of a stored extraction) merged the pipeline's
+ * `engine_inputs` object into the very same jsonb document with no validation
+ * at all — so the document had two standards depending on which writer touched
+ * it, and the unchecked one was the writer whose values a language model chose
+ * from a PDF.
+ *
+ * The results are not exotic. `volatility` is a fraction here and capped at 5;
+ * a model reading "volatility of 65%" off a page and reporting `65` wrote a
+ * 6,500% volatility that no analyst could have typed, and the OPM happily
+ * priced against it. A negative share count is refused as `pos` here and was
+ * accepted there. None of it is visible in the UI, which renders whatever the
+ * document holds.
+ *
+ * Fields are dropped individually rather than the batch being refused: an
+ * extraction that found eight good figures and one bad one is still worth
+ * applying, and the rejects are returned so the caller can say what was
+ * ignored instead of silently losing it.
+ *
+ * `revenue_*` and `ebitda_ltm` are not in the analyst schema (nothing consumes
+ * them yet — they are recorded for the report), so they are only required to
+ * be real numbers; EBITDA is routinely negative for a pre-revenue company.
+ */
+const EXTRACTED_FIELD_SCHEMAS: Readonly<Record<string, z.ZodType<number>>> = {
+  shares_outstanding_common: pos,
+  shares_outstanding_preferred: nonNeg,
+  options_outstanding: nonNeg,
+  liquidation_preference: nonNeg,
+  last_round_post_money: nonNeg,
+  last_round_price_per_share: nonNeg,
+  cash: nonNeg,
+  debt: nonNeg,
+  revenue_ltm: z.number().finite(),
+  revenue_ntm: z.number().finite(),
+  ebitda_ltm: z.number().finite(),
+  volatility: z.number().positive().max(5),
+  risk_free_rate: z.number().min(0).max(1),
+};
+
+/** Field names the extraction pipeline is allowed to propose. */
+export const EXTRACTABLE_INPUT_FIELDS: readonly string[] = Object.keys(EXTRACTED_FIELD_SCHEMAS);
+
+export interface RejectedInput {
+  field: string;
+  value: unknown;
+  reason: string;
+}
+
+export interface SanitizedExtraction {
+  /** Fields that passed, ready to merge into `engine_inputs`. */
+  applied: Record<string, number>;
+  /** Fields dropped, with why — surfaced to the caller, never applied. */
+  rejected: RejectedInput[];
+}
+
+/**
+ * Filter an extraction result down to the fields that would survive
+ * hand-entry. Unknown keys are rejected too: the AI service already whitelists
+ * them, and agreeing about the list on both sides is cheaper than trusting it.
+ */
+export function sanitizeExtractedInputs(raw: unknown): SanitizedExtraction {
+  const applied: Record<string, number> = {};
+  const rejected: RejectedInput[] = [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { applied, rejected };
+
+  for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+    const schema = EXTRACTED_FIELD_SCHEMAS[field];
+    if (!schema) {
+      rejected.push({ field, value, reason: 'not an engine input this pipeline may set' });
+      continue;
+    }
+    const parsed = schema.safeParse(value);
+    if (parsed.success) applied[field] = parsed.data;
+    else rejected.push({ field, value, reason: parsed.error.issues[0]?.message ?? 'invalid value' });
+  }
+  return { applied, rejected };
+}
+
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
 }

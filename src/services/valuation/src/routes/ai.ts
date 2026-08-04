@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -14,6 +14,7 @@ import {
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
+import { sanitizeExtractedInputs, type RejectedInput } from './engineInputs.js';
 import { listDocuments, type DocumentRow } from '../repos/documents.js';
 import {
   completeAiJob,
@@ -113,6 +114,12 @@ export interface AiPipelineDeps {
   pool: pg.Pool;
   aiUrl: string;
   documentsDir: string;
+  /**
+   * Optional so the many test call sites need not supply one. Used to report
+   * extracted figures that failed validation — an auto-pipeline run has no
+   * response for them to appear in.
+   */
+  log?: FastifyBaseLogger;
 }
 
 /**
@@ -136,7 +143,11 @@ export async function runAiPipeline(
     /** Extra payload fields (e.g. the calculation for 'qa'/'explain' runs). */
     extraPayload?: Record<string, unknown>;
   },
-): Promise<{ job: AiJobRow; appliedInputs: Record<string, unknown> | null }> {
+): Promise<{
+  job: AiJobRow;
+  appliedInputs: Record<string, unknown> | null;
+  rejectedInputs: RejectedInput[];
+}> {
   const { valuation, pipeline } = args;
   const params = await findParams(deps.pool, valuation.id);
   const documents = await listDocuments(deps.pool, valuation.id);
@@ -198,15 +209,29 @@ export async function runAiPipeline(
     );
     // Auto-apply (409.ai "Set Valuation Parameters"): extracted engine
     // inputs land in params without a second manual step.
+    //
+    // Nobody is watching this one — the auto-pipeline runs it on upload — so
+    // it is the path that most needs the values checked against the same
+    // bounds hand-entry enforces. `sanitizeExtractedInputs` drops the figures
+    // an analyst could not have typed and reports them rather than the whole
+    // extraction being lost to one bad field.
     let appliedInputs: Record<string, unknown> | null = null;
+    let rejectedInputs: RejectedInput[] = [];
     if (pipeline === 'extract' && args.autoApply) {
-      const extracted = response.result?.engine_inputs;
-      if (extracted && typeof extracted === 'object' && Object.keys(extracted).length > 0) {
-        appliedInputs = extracted as Record<string, unknown>;
-        await applyEngineInputs(deps.pool, valuation.id, appliedInputs, args.actor);
+      const { applied, rejected } = sanitizeExtractedInputs(response.result?.engine_inputs);
+      rejectedInputs = rejected;
+      if (rejected.length > 0) {
+        deps.log?.warn(
+          { valuationId: valuation.id, jobId: job.id, rejected },
+          'ai extraction proposed engine inputs outside the accepted range; dropping them',
+        );
+      }
+      if (Object.keys(applied).length > 0) {
+        appliedInputs = applied;
+        await applyEngineInputs(deps.pool, valuation.id, applied, args.actor);
       }
     }
-    return { job: completed, appliedInputs };
+    return { job: completed, appliedInputs, rejectedInputs };
   } catch (err) {
     if (err instanceof InternalServiceError) {
       await completeAiJob(
@@ -280,7 +305,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     const merged = { ...(extraPayload ?? {}), ...(body.data.context ?? {}) };
 
     try {
-      const { job, appliedInputs } = await runAiPipeline(deps, {
+      const { job, appliedInputs, rejectedInputs } = await runAiPipeline(deps, {
         valuation,
         pipeline: typedPipeline,
         anonymize: body.data.anonymize,
@@ -289,7 +314,7 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
         actor: actorFor(principal),
         extraPayload: Object.keys(merged).length > 0 ? merged : undefined,
       });
-      return reply.status(201).send({ job, applied_inputs: appliedInputs });
+      return reply.status(201).send({ job, applied_inputs: appliedInputs, rejected_inputs: rejectedInputs });
     } catch (err) {
       if (err instanceof InternalServiceError) throw toProblem(err);
       throw err;
@@ -311,13 +336,17 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
         'No successful extraction with engine inputs to apply — run data extraction first',
       );
     }
-    const params = await applyEngineInputs(
-      deps.pool,
-      id,
-      extracted as Record<string, unknown>,
-      actorFor(principal),
-    );
-    return { params, applied_inputs: extracted, source_job_id: job!.id };
+    // Same bounds as hand-entry; see sanitizeExtractedInputs. A stored job can
+    // predate that check, so it is applied on read rather than trusted.
+    const { applied, rejected } = sanitizeExtractedInputs(extracted);
+    if (Object.keys(applied).length === 0) {
+      throw problems.unprocessable(
+        'Every extracted engine input is outside the accepted range — review the extraction before applying it',
+        { rejected },
+      );
+    }
+    const params = await applyEngineInputs(deps.pool, id, applied, actorFor(principal));
+    return { params, applied_inputs: applied, rejected_inputs: rejected, source_job_id: job!.id };
   });
 
   app.get('/api/v1/valuations/:id/ai', { preHandler: app.authenticate }, async (req) => {
