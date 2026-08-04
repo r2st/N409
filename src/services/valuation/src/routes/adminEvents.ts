@@ -5,6 +5,7 @@ import { problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { listActivity } from '../repos/activityLog.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { pageParam } from '../domain/pagination.js';
 
 /**
  * Global activity audit viewer (P2 #12): one ops-only feed over
@@ -21,7 +22,7 @@ const ListQuery = z.object({
   source: z.string().max(100).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(50),
 });
 

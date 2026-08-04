@@ -15,6 +15,7 @@ import {
 import { listEvents, type EventQuery } from '../events/record.js';
 import { findValuationById } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { pageParam } from '../domain/pagination.js';
 
 /**
  * Per-valuation audit trail: the raw event spine enriched with category,
@@ -35,7 +36,7 @@ const ListQuery = z.object({
   field: z.string().max(120).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(200).default(50),
 });
 

@@ -12,6 +12,7 @@ import { findValuationById, patchValuation } from '../repos/valuations.js';
 import { assertPublishGate } from '../domain/publishGate.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { pageParam } from '../domain/pagination.js';
 
 /**
  * P1 #6 — the review workflow's verbs. "Approve" and "request changes" wrap
@@ -27,7 +28,7 @@ const DecisionBody = z.object({
 
 const QueueQuery = z.object({
   assignee: z.string().optional(), // 'me' or a user id
-  page: z.coerce.number().int().min(1).default(1),
+  page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
 

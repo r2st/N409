@@ -40,13 +40,14 @@ import { sendTransactionalEmail } from '../email/transactional.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { pageParam } from '../domain/pagination.js';
 
 const ListQuery = z.object({
   q: z.string().max(200).optional(),
   role: z.enum(ROLE_KEYS).optional(),
   partner_id: z.string().optional(),
   include_deleted: z.coerce.boolean().default(false),
-  page: z.coerce.number().int().min(1).default(1),
+  page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
 

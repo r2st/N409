@@ -20,6 +20,7 @@ import { findReportByValuation, getVersion, listVersions } from '../repos/report
 import { MAX_DOCUMENT_BYTES, storeDocument } from './documents.js';
 import { checkUploadType } from '../documents/fileType.js';
 import type { EventActor } from '../events/record.js';
+import { pageParam } from '../domain/pagination.js';
 
 /**
  * Partner API (improvement 6): a stable, versioned surface for programmatic
@@ -65,7 +66,7 @@ const CreateBody = z.object({
 
 const ListQuery = z.object({
   state: z.enum(VALUATION_STATES).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
 

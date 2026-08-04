@@ -29,6 +29,7 @@ import { assertPublishGate } from '../domain/publishGate.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
+import { pageParam } from '../domain/pagination.js';
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
@@ -134,7 +135,7 @@ export function toRepoFilters(
 const ListQuery = ValuationFilterQuery.extend({
   // M4 rich sort: "company_name:asc,created_at:desc" (whitelisted columns)
   sort: z.string().max(200).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
 

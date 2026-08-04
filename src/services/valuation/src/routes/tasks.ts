@@ -9,6 +9,7 @@ import { createTask, findTaskById, listTasks, patchTask } from '../repos/tasks.j
 import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { pageParam } from '../domain/pagination.js';
 
 const CreateBody = z.object({
   kind: z.enum(REVIEW_TASK_KINDS),
@@ -48,7 +49,7 @@ const ListQuery = z.object({
   assignee: z.string().optional(), // 'me' or a user id
   status: z.enum(REVIEW_TASK_STATUSES).optional(),
   overdue: z.coerce.boolean().optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
 });
 

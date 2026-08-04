@@ -7,6 +7,7 @@ import { countByReason, DUE_SOON_DAYS, rankAttention } from '../domain/firmDashb
 import { firmAttentionCandidates, firmClients, firmSummary, firmTeam } from '../repos/firmDashboard.js';
 import { findBrandingByPartnerId } from '../repos/branding.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { pageParam } from '../domain/pagination.js';
 
 /**
  * Firm-level administration — one console for a valuation firm's whole book,
@@ -80,7 +81,7 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   app.get('/api/v1/firm/clients', { preHandler: app.authenticate }, async (req) => {
     const parsed = QueryWithPartner.extend({
       search: z.string().max(200).optional(),
-      page: z.coerce.number().int().min(1).default(1),
+      page: pageParam(),
       per_page: z.coerce.number().int().min(1).max(100).default(25),
     }).safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query');
