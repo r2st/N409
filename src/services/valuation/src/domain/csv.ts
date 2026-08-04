@@ -26,8 +26,18 @@ export function csvEscape(value: unknown): string {
   if (value instanceof Date) s = value.toISOString();
   else if (Array.isArray(value)) s = value.join(';');
   else s = String(value);
-  // Excel formula-injection guard for cells starting with = + - @ \t (OWASP CSV Injection)
-  if (/^[=+\-@\t]/.test(s) && !PLAIN_NEGATIVE_NUMBER.test(s)) s = `'${s}`;
+  // Excel formula-injection guard (OWASP CSV Injection). The trigger set is
+  // = + - @ and the two control characters the spreadsheet strips before it
+  // decides what the cell is: tab (0x09) and carriage return (0x0D).
+  //
+  // CR was missing, and quoting is not what stops this — `"\r=cmd|'/c calc'!A1"`
+  // is a well-formed quoted field that Excel unquotes, strips the CR from, and
+  // then reads as a formula, so the value sailed through both halves of this
+  // function untouched. It reaches here the same way every other vector does:
+  // a company name, a note, an audit change-log value — user text that someone
+  // else opens as a spreadsheet. LF is included on the same reasoning; it costs
+  // a prefix on a value no column legitimately starts with.
+  if (/^[=+\-@\t\r\n]/.test(s) && !PLAIN_NEGATIVE_NUMBER.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

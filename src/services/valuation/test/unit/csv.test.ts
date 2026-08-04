@@ -35,6 +35,24 @@ describe('csvEscape', () => {
     expect(csvEscape('\t+cmd|...')).toBe("'\t+cmd|...");
   });
 
+  // The other control character OWASP names, and the one this guard missed.
+  // Quoting is not the defence: `"\r=cmd|'/c calc'!A1"` is a well-formed
+  // quoted field, and the spreadsheet unquotes it, strips the leading CR, and
+  // reads what is left as a formula — so the value used to clear both halves
+  // of csvEscape with nothing added to it.
+  it('guards against CR- and LF-prefixed formula injection', () => {
+    expect(csvEscape('\r=SUM(A1)')).toBe('"\'\r=SUM(A1)"');
+    expect(csvEscape("\r=cmd|'/c calc'!A1")).toBe("\"'\r=cmd|'/c calc'!A1\"");
+    expect(csvEscape('\n=SUM(A1)')).toBe('"\'\n=SUM(A1)"');
+    expect(csvEscape('\r\n@cmd')).toBe('"\'\r\n@cmd"');
+  });
+
+  it('leaves a CR in the middle of a value quoted but unprefixed', () => {
+    // Only the *leading* character decides whether a cell is a formula, so an
+    // ordinary multi-line note is not treated as an attack.
+    expect(csvEscape('Board note\r\nApproved')).toBe('"Board note\r\nApproved"');
+  });
+
   // A leading `-` is the one injection prefix that is also an ordinary value.
   // Prefixing it does not produce a cell a spreadsheet reads as the number: an
   // apostrophe is only a text marker when typed, so an imported CSV shows
