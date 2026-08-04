@@ -399,3 +399,56 @@ def test_a_valuation_with_no_company_name_still_renders(monkeypatch):
     _mock_chat(monkeypatch, captured)
     pipelines.run_explain({"valuation": {"kind": "409a"}})
     assert "Company:" in captured["user"]
+
+
+def test_a_page_of_capitalized_words_does_not_cost_quadratic_time():
+    # The city/state/ZIP pattern scans a run of capitalized words looking for
+    # the comma that precedes the state code. Unbounded, that run walked the
+    # rest of the document from every capitalized word it started at, so text
+    # with no address in it at all cost O(words^2) — 0.55s for one document at
+    # the 20k-char cap, ~1.7s for a full 60k-char request. `re` holds the GIL,
+    # so that is the whole service stalled, not one slow request.
+    #
+    # Timed rather than asserted on shape: the bound is the point, and a future
+    # rewrite of the pattern is free as long as it stays linear. The threshold
+    # is ~50x the fixed version's cost and ~1/5th of the old one's, so it fails
+    # on a regression without being flaky on a loaded machine.
+    import time
+
+    from app.documents import MAX_CHARS_PER_DOC
+
+    text = ("Alpha " * (MAX_CHARS_PER_DOC // 6))[:MAX_CHARS_PER_DOC]
+    started = time.perf_counter()
+    redacted, counts = redact(text)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.1, f"redact() took {elapsed:.3f}s on {MAX_CHARS_PER_DOC} chars"
+    # Nothing here is an address, so nothing should have been struck.
+    assert counts.get("addresses", 0) == 0
+    assert redacted == text
+
+
+def test_a_multi_word_locality_is_still_redacted():
+    # The bound that makes the scan linear must not be tight enough to miss a
+    # real locality. Six words is already past anything the USPS lists.
+    for locality in (
+        "San Francisco",
+        "Research Triangle Park",
+        "Winston Salem",
+        "St. Louis",
+        "Lake Havasu City",
+    ):
+        text = f"Registered office at {locality}, CA 94105 as of the date hereof."
+        redacted, counts = redact(text)
+        assert counts.get("addresses", 0) == 1, locality
+        assert "94105" not in redacted, locality
+        assert locality not in redacted, locality
+
+
+def test_a_locality_run_never_swallows_the_words_before_it():
+    # Bounding the run must not shift where the match starts: the ZIP-bearing
+    # tail is what anchors it, and the prose ahead of the locality stays put.
+    text = "The Company maintains its principal executive offices in Menlo Park, CA 94025."
+    redacted, _ = redact(text)
+    assert redacted.startswith("The Company maintains its principal executive offices in ")
+    assert "Menlo Park" not in redacted

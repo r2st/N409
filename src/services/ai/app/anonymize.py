@@ -42,8 +42,23 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         # "City, ST 94105" / "City, ST 94105-1234" — a capitalized locality,
         # a two-letter state code, then a ZIP. Specific enough that a bare
         # 5-digit share count never matches.
+        #
+        # The word repetition is bounded, and that bound is load-bearing rather
+        # than cosmetic. Unbounded (`*`), the locality run happily walks the
+        # rest of the document before discovering there is no comma, and it does
+        # that from *every* capitalized word — so a page of capitalized words
+        # with no address in it costs O(words^2). At the 20k-char per-document
+        # cap that is 0.55s of one crafted upload, against 0.002s for ordinary
+        # prose of the same size; three documents fill the 60k-char request
+        # budget with ~1.7s. `re` holds the GIL, so that is not one slow request
+        # among forty — it is the whole service stopped for that long.
+        #
+        # Six extra words is far past any real locality ("Research Triangle
+        # Park" is three), so nothing that used to match stops matching; the
+        # possessive `+` then keeps even those six from being re-tried, since
+        # the run can never cross the comma it is looking for anyway.
         "addresses",
-        re.compile(r"\b[A-Z][A-Za-z.]+(?:\s+[A-Z][A-Za-z.]+)*,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b"),
+        re.compile(r"\b[A-Z][A-Za-z.]+(?:\s+[A-Z][A-Za-z.]+){0,6}+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b"),
     ),
     (
         # "123 Main Street", "45 Sand Hill Rd", "P.O. Box 12" — a house number
