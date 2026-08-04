@@ -10,7 +10,12 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from app.internal_auth import INTERNAL_TOKEN_ENV, is_public_path, warn_if_unset
+from app.internal_auth import (
+    INTERNAL_TOKEN_ENV,
+    is_public_path,
+    tokens_match,
+    warn_if_unset,
+)
 from app.main import app
 
 TOKEN = "s3cret-internal-token"
@@ -77,3 +82,67 @@ def test_is_public_path():
     assert is_public_path("/health")
     assert is_public_path("/")
     assert not is_public_path("/ai/v1/pipelines/missing_data")
+
+
+# ── Non-ASCII header bytes ────────────────────────────────────────────────────
+#
+# HTTP header values are bytes, and Starlette decodes them as latin-1, so any
+# byte above 0x7f reaches the middleware as a non-ASCII `str`. `compare_digest`
+# refuses that pair with a TypeError, which is raised *inside* the gate: the
+# request was never rejected, it fell through to the unhandled-error middleware
+# and came back 500 with a traceback logged. These pin the 401.
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"caf\xe9",  # one latin-1 byte
+        b"\xff" * len(TOKEN),  # right length, all high bytes
+        TOKEN.encode() + b"\x80",  # the real token plus one
+        "🔑".encode(),  # multi-byte UTF-8
+    ],
+    ids=["latin1", "high-bytes", "token-plus-one", "utf8-emoji"],
+)
+def test_non_ascii_token_is_rejected_not_crashed(monkeypatch, client, raw):
+    monkeypatch.setenv(INTERNAL_TOKEN_ENV, TOKEN)
+    res = client.post(
+        "/ai/v1/pipelines/__no_such_pipeline__",
+        json={"valuation": {}},
+        headers={b"X-Internal-Token": raw},
+    )
+    assert res.status_code == 401, res.text
+
+
+def test_non_ascii_secret_still_authenticates_its_own_caller(monkeypatch, client):
+    """A secret is opaque bytes; nothing requires an operator to pick ASCII."""
+    secret = "ünïcødé-token-🔑"
+    monkeypatch.setenv(INTERNAL_TOKEN_ENV, secret)
+    res = client.post(
+        "/ai/v1/pipelines/__no_such_pipeline__",
+        json={"valuation": {}},
+        headers={b"X-Internal-Token": secret.encode()},
+    )
+    assert res.status_code == 404  # past the gate, into the handler
+
+
+def test_tokens_match_is_total_over_header_values():
+    """No header value may raise; only a byte-for-byte match may return True."""
+    assert tokens_match(None, TOKEN) is False
+    assert tokens_match("café", TOKEN) is False
+    assert tokens_match("", TOKEN) is False
+    assert tokens_match("\U0001f511", TOKEN) is False  # above latin-1, no raise
+    assert tokens_match(TOKEN, TOKEN) is True
+
+
+def test_tokens_match_compares_wire_bytes_not_decoded_text():
+    """`provided` is latin-1-decoded off the wire; `expected` is UTF-8 from env.
+
+    So the two sides are re-encoded differently on purpose. For a non-ASCII
+    secret that means the *latin-1 reading of its UTF-8 bytes* is what a
+    correct caller presents — the same string is not a match, because the same
+    string is not what would ever arrive.
+    """
+    secret = "ünïcødé-token"
+    on_the_wire = secret.encode("utf-8").decode("latin-1")
+    assert tokens_match(on_the_wire, secret) is True
+    assert tokens_match(secret, secret) is False

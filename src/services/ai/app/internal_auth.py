@@ -40,6 +40,46 @@ def is_public_path(path: str) -> bool:
     return path in _PUBLIC_PATHS
 
 
+def _header_bytes(value: str) -> bytes:
+    """The bytes a header value arrived as, back from the ``str`` we were given.
+
+    Starlette decodes request headers as latin-1, which is a byte-for-byte
+    mapping, so re-encoding that way recovers exactly what the client sent.
+    The fallback exists because the decoding is the ASGI server's choice, not
+    ours: a value holding a character above U+00FF did not come from a latin-1
+    decode, and UTF-8 is the only other reading worth trying.
+    """
+    try:
+        return value.encode("latin-1")
+    except UnicodeEncodeError:
+        return value.encode("utf-8")
+
+
+def tokens_match(provided: str | None, expected: str) -> bool:
+    """Constant-time comparison that answers for *any* header value.
+
+    ``hmac.compare_digest`` on two ``str`` arguments raises ``TypeError`` the
+    moment either one holds a character outside ASCII, and a header value is
+    not ours to keep inside it: a single latin-1 byte above 0x7f —
+    ``X-Internal-Token: caf\\xe9`` — produced one. The raise happened *inside*
+    the gate, above every handler, so the request was never rejected; it fell
+    through to the unhandled-error middleware and came back 500 with a full
+    traceback logged. A rejected token has to look like a rejected token, or
+    the one check whose job is to say "no" becomes a way to make the service
+    throw, and to tell from outside exactly which byte did it.
+
+    Comparing bytes instead is total over the input and stays constant-time.
+    The two sides are recovered from different encodings on purpose: `expected`
+    came from the environment, which Python decodes as UTF-8, while `provided`
+    came off the wire — so this compares the bytes the operator configured
+    against the bytes the caller actually sent, and a secret is free to be any
+    of them.
+    """
+    if provided is None:
+        return False
+    return hmac.compare_digest(_header_bytes(provided), expected.encode("utf-8"))
+
+
 async def internal_token_middleware(request: Request, call_next):
     """Reject non-health requests whose ``X-Internal-Token`` doesn't match.
 
@@ -49,8 +89,7 @@ async def internal_token_middleware(request: Request, call_next):
     """
     expected = _configured_token()
     if expected is not None and not is_public_path(request.url.path):
-        provided = request.headers.get(INTERNAL_TOKEN_HEADER)
-        if provided is None or not hmac.compare_digest(provided, expected):
+        if not tokens_match(request.headers.get(INTERNAL_TOKEN_HEADER), expected):
             return error_response(401, "Missing or invalid internal service token")
     return await call_next(request)
 
