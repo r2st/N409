@@ -7,6 +7,7 @@ import {
   toProblem,
 } from '../../src/clients/internal.js';
 import { runWithRequestId } from '@n409/shared';
+import { AI_PIPELINE_TIMEOUT_MS } from '../../src/routes/ai.js';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -239,5 +240,98 @@ describe('request-id propagation to the internal services', () => {
     expect(headers['x-internal-token']).toBe('top-secret');
     expect(headers['x-request-id']).toBe('req-both');
     delete process.env.INTERNAL_SERVICE_TOKEN;
+  });
+});
+
+describe('internal client whole-call deadline', () => {
+  /** Rejects the way `fetch` does when its AbortSignal.timeout fires. */
+  const timeoutError = () => Object.assign(new Error('The operation was aborted'), { name: 'TimeoutError' });
+
+  it('does not re-send a request it abandoned on our own deadline', async () => {
+    // The upstream took the request and may still be running it. Sending the
+    // payload again bills a second set of LLM calls and holds a second slot in
+    // the AI service's threadpool for one job the caller asked for once.
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(timeoutError())
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postJson('ai-service', 'http://x/y', {}, { backoffMs: 1 })).rejects.toBeInstanceOf(
+      InternalServiceError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still retries a refused connection, which is what the retry is for', async () => {
+    // The distinction the flag draws: nobody accepted this request, so re-sending
+    // it duplicates nothing.
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postJson('ai-service', 'http://x/y', {}, { backoffMs: 1 })).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('says whose clock ran out', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeoutError()));
+    const err = await postJson('ai-service', 'http://x/y', {}, { timeoutMs: 5_000 }).catch((e) => e);
+    expect(err).toBeInstanceOf(InternalServiceError);
+    expect(err.abandoned).toBe(true);
+    expect(err.detail).toBe('did not respond within 5s');
+  });
+
+  it('spends one budget across attempts rather than one per attempt', async () => {
+    // Two attempts against a 5xx, with the budget nearly gone. Previously each
+    // attempt started a fresh `timeoutMs`, so the caller's number bounded an
+    // attempt and not the wait.
+    const deadlines: number[] = [];
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      // AbortSignal.timeout(n) is opaque, so record elapsed budget indirectly:
+      // the attempt must be given less than the full budget the second time.
+      deadlines.push(Date.now());
+      void init;
+      return jsonResponse(503, { detail: 'restarting' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const started = Date.now();
+    await postJson('engine', 'http://x/y', {}, { timeoutMs: 400, retries: 5, backoffMs: 120 }).catch(
+      (e) => e,
+    );
+    const elapsed = Date.now() - started;
+
+    // Five retries at 120ms doubling would run for seconds; the 400ms budget
+    // stops it, and stops it by declining a retry it cannot pay for rather than
+    // by running one into the deadline.
+    expect(elapsed).toBeLessThan(400);
+    expect(fetchMock.mock.calls.length).toBeLessThan(6);
+  });
+
+  it('leaves a restart-time retry essentially the whole budget', async () => {
+    // The retry's reason for existing must survive the shared budget: a refused
+    // connection fails in milliseconds, so attempt two is not squeezed.
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postJson('engine', 'http://x/y', {}, { timeoutMs: 30_000, backoffMs: 1 })).resolves.toEqual({
+      ok: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the AI pipeline deadline outlasts the AI service budget', () => {
+  it('waits longer than the upstream is allowed to take', async () => {
+    // openrouter.DEFAULT_CALL_BUDGET_S is 150s. Our deadline has to be the
+    // looser of the two, or we abandon work that was going to succeed.
+    const AI_SERVICE_CALL_BUDGET_MS = 150_000;
+    expect(AI_PIPELINE_TIMEOUT_MS).toBeGreaterThan(AI_SERVICE_CALL_BUDGET_MS);
   });
 });

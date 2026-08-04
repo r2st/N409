@@ -28,6 +28,24 @@ import { decodeFromStorage } from '../storage/documentEncryption.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
+/**
+ * How long one AI pipeline call may take, end to end.
+ *
+ * This has to sit *above* the AI service's own whole-call budget
+ * (`openrouter.DEFAULT_CALL_BUDGET_S`, 150s) plus the request handling around
+ * it, and it did not: the call passed no timeout, took `postJson`'s 120s
+ * default, and so gave up on a working pipeline thirty seconds before that
+ * pipeline was entitled to finish. Because a timeout used to count as
+ * retryable, the response to reaching our deadline was to send the whole
+ * payload again — a second set of LLM calls billed for one request, a second of
+ * the AI service's forty threadpool slots spent on a job it was already doing,
+ * and the analyst waiting out both deadlines to be told it timed out.
+ *
+ * Sized so the upstream's own deadline is always the one that fires. Whoever
+ * moves `DEFAULT_CALL_BUDGET_S` moves this with it.
+ */
+export const AI_PIPELINE_TIMEOUT_MS = 180_000;
+
 /** Only text-extractable formats are shipped to the AI service. */
 export const EXTRACTABLE_EXTENSIONS = new Set([
   '.pdf',
@@ -165,6 +183,7 @@ export async function runAiPipeline(
       'ai-service',
       `${deps.aiUrl}/ai/v1/pipelines/${pipeline}`,
       payload,
+      { timeoutMs: AI_PIPELINE_TIMEOUT_MS },
     );
     const completed = await completeAiJob(
       deps.pool,

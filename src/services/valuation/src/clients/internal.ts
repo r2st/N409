@@ -25,6 +25,12 @@ export class InternalServiceError extends Error {
     readonly detail: string,
     /** Field-level issues when the upstream sent them; empty otherwise. */
     readonly issues: UpstreamIssue[] = [],
+    /**
+     * True when *we* gave up on a request the upstream had already accepted,
+     * rather than the upstream failing. The distinction decides whether a retry
+     * is free (see `isRetryable`).
+     */
+    readonly abandoned: boolean = false,
   ) {
     super(`${service}: ${detail}`);
   }
@@ -49,10 +55,25 @@ export function parseIssues(value: unknown): UpstreamIssue[] {
   return issues;
 }
 
-/** A 4xx means our payload was wrong — retrying can't fix it. */
+/**
+ * A 4xx means our payload was wrong — retrying can't fix it.
+ *
+ * Neither can retrying a request we abandoned. `status === null` covers two
+ * very different failures and used to treat them alike: a refused connection
+ * (nobody took the request — retrying is free and is the case the retry exists
+ * for) and our own deadline firing (the upstream took the request and is still
+ * working on it). Retrying the second one re-sends the whole payload, so a
+ * pipeline that is merely slow gets run twice: two LLM calls billed, two of the
+ * AI service's forty threadpool slots held on the same job, and the caller
+ * waiting out both deadlines before hearing anything.
+ */
 function isRetryable(err: InternalServiceError): boolean {
+  if (err.abandoned) return false;
   return err.status === null || err.status >= 500;
 }
+
+/** Below this there is no point starting an attempt; it would only time out. */
+const MIN_ATTEMPT_MS = 250;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -83,6 +104,21 @@ export async function probeReady(
   return sharedProbeReady(service, baseUrl, { ...opts, headers: internalAuthHeaders() });
 }
 
+/**
+ * POST JSON to an internal service, under one deadline for the whole call.
+ *
+ * `timeoutMs` is the budget for the call, not for each attempt. It used to be
+ * the latter, which meant the number a caller passed was not the time it could
+ * be kept waiting: with the default single retry, `timeoutMs: 30_000` was
+ * really "up to 60.25 seconds", and the AI pipeline route — which passed no
+ * timeout at all, taking the 120s default — was really "up to 240 seconds" of a
+ * held Fastify handler with nothing above it enforcing anything shorter.
+ *
+ * Sharing one budget costs the retry nothing in the case it was written for. A
+ * restarting service refuses the connection in milliseconds, so the second
+ * attempt still gets essentially the whole budget; only an upstream that is
+ * slow rather than absent is now stopped from spending it twice.
+ */
 export async function postJson<T>(
   service: string,
   url: string,
@@ -93,20 +129,26 @@ export async function postJson<T>(
   // so a transient outage/restart shouldn't surface as a failed run.
   const retries = opts.retries ?? 1;
   const backoffMs = opts.backoffMs ?? 250;
+  const budgetMs = opts.timeoutMs ?? 120_000;
+  const startedAt = Date.now();
+  const remaining = () => budgetMs - (Date.now() - startedAt);
+
   for (let attempt = 0; ; attempt++) {
     try {
-      return await postJsonOnce<T>(service, url, body, opts.timeoutMs);
+      return await postJsonOnce<T>(service, url, body, Math.max(MIN_ATTEMPT_MS, remaining()));
     } catch (err) {
-      if (err instanceof InternalServiceError && isRetryable(err) && attempt < retries) {
-        await sleep(backoffMs * 2 ** attempt);
-        continue;
-      }
-      throw err;
+      if (!(err instanceof InternalServiceError) || !isRetryable(err) || attempt >= retries) throw err;
+      const backoff = backoffMs * 2 ** attempt;
+      // A retry the budget cannot pay for is not taken: it would only run
+      // headlong into the deadline and report a timeout instead of the real
+      // failure we already have in hand.
+      if (remaining() - backoff < MIN_ATTEMPT_MS) throw err;
+      await sleep(backoff);
     }
   }
 }
 
-async function postJsonOnce<T>(service: string, url: string, body: unknown, timeoutMs?: number): Promise<T> {
+async function postJsonOnce<T>(service: string, url: string, body: unknown, timeoutMs: number): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -115,9 +157,17 @@ async function postJsonOnce<T>(service: string, url: string, body: unknown, time
       // ours; the Python side reads it, or mints one when we have none to give.
       headers: { 'content-type': 'application/json', ...internalAuthHeaders(), ...requestIdHeaders() },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs ?? 120_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
+    // Our deadline, not their failure: the request may well have been accepted
+    // and still be running. Named so the caller's error says whose clock ran
+    // out, and flagged so the retry above knows not to duplicate the work.
+    const abandoned = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    if (abandoned) {
+      const seconds = Math.round(timeoutMs / 1000);
+      throw new InternalServiceError(service, null, `did not respond within ${seconds}s`, [], true);
+    }
     const reason = err instanceof Error ? err.message : 'unreachable';
     throw new InternalServiceError(service, null, reason);
   }
