@@ -213,21 +213,41 @@ export async function deleteBoardMember(
 /**
  * Records a board member's decision (signed / rejected) against a token, then
  * rolls the aggregate resolution status forward. Returns the refreshed
- * resolution so the caller can react to a newly-reached approval.
+ * resolution so the caller can react to a newly-reached approval, or `null`
+ * when the member had already decided and this call changed nothing.
+ *
+ * The `status = 'pending'` predicate is what makes a decision final. The route
+ * checks `member.status !== 'pending'` before calling, but that read happens in
+ * its own statement, so two requests carrying the same token can both pass it
+ * and both arrive here — and an unconditional UPDATE let the second overwrite
+ * the first. That is not a harmless duplicate: it is how a signature already
+ * recorded (and possibly already counted toward an approved resolution, with an
+ * `approved_at` stamped and an approval event emitted) gets rewritten to
+ * 'rejected' afterwards, leaving two contradictory `signoff_recorded` events
+ * against one member and an audit trail that cannot say which decision stood.
+ * A board resolution adopting a 409A FMV is precisely the document whose
+ * sign-offs have to be write-once.
+ *
+ * Putting the predicate in the UPDATE closes the window rather than narrowing
+ * it: the second transaction blocks on the first's row lock, then re-evaluates
+ * the condition against the committed row and matches nothing.
  */
 export async function recordSignoff(
   pool: pg.Pool,
   signoff: BoardSignoffRow,
   decision: { status: 'signed' | 'rejected'; comment?: string | null },
-): Promise<{ signoff: BoardSignoffRow; resolution: BoardResolutionRow }> {
+): Promise<{ signoff: BoardSignoffRow; resolution: BoardResolutionRow } | null> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<BoardSignoffRow>(
       `UPDATE board_signoffs
          SET status = $2, comment = $3, signed_at = now()
-       WHERE id = $1
+       WHERE id = $1 AND status = 'pending'
        RETURNING *`,
       [signoff.id, decision.status, decision.comment ?? null],
     );
+    // Lost the race (or a replayed request). Nothing has been written, so there
+    // is no event to record and no status to roll forward.
+    if (rows.length === 0) return null;
     await recordEvent(client, {
       valuationId: signoff.valuation_id,
       type: BOARD_EVENT_TYPES.signoffRecorded,

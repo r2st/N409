@@ -321,10 +321,17 @@ export function registerBoardApprovalRoutes(
     if (member.status !== 'pending') {
       throw problems.conflict('You have already recorded a decision on this resolution');
     }
-    const { signoff, resolution } = await recordSignoff(deps.pool, member, {
+    const recorded = await recordSignoff(deps.pool, member, {
       status: parsed.data.decision,
       comment: parsed.data.comment ?? null,
     });
+    // The check above is a read; the write is what actually claims the decision.
+    // A concurrent request carrying the same token loses here, and gets the same
+    // answer it would have got had it arrived a moment later.
+    if (!recorded) {
+      throw problems.conflict('You have already recorded a decision on this resolution');
+    }
+    const { signoff, resolution } = recorded;
     return {
       signoff: { status: signoff.status, signed_at: signoff.signed_at },
       resolution_status: resolution.status,
