@@ -171,15 +171,37 @@ const ENTITIES: Record<string, string> = {
   nbsp: ' ',
 };
 
+/** The highest code point Unicode defines — `String.fromCodePoint` throws past it. */
+const MAX_CODE_POINT = 0x10ffff;
+
+/**
+ * A numeric character reference as a character, or `null` when it does not name
+ * one.
+ *
+ * `String.fromCodePoint` throws RangeError for anything above U+10FFFF, and the
+ * decoder's only guard was `Number.isNaN` — which a well-formed number like
+ * `&#99999999;` passes. The throw escaped `decodeEntities`, then `htmlToBlocks`,
+ * then `renderReportPdf`, so eight digits anywhere in any section of a report
+ * returned a 500 instead of a PDF. The text reaching here is a report narrative:
+ * partly LLM-written, partly copied out of a client's own documents, and neither
+ * source is one that never emits a stray high number.
+ *
+ * An unresolvable reference is left as the literal text it was, which is what
+ * the named-entity branch below already does for `&unknown;`.
+ */
+function codePointChar(digits: string, radix: number): string | null {
+  const code = Number.parseInt(digits, radix);
+  if (!Number.isFinite(code) || code < 0 || code > MAX_CODE_POINT) return null;
+  return String.fromCodePoint(code);
+}
+
 export function decodeEntities(text: string): string {
   return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (m, body: string) => {
     if (body.startsWith('#x') || body.startsWith('#X')) {
-      const code = Number.parseInt(body.slice(2), 16);
-      return Number.isNaN(code) ? m : String.fromCodePoint(code);
+      return codePointChar(body.slice(2), 16) ?? m;
     }
     if (body.startsWith('#')) {
-      const code = Number.parseInt(body.slice(1), 10);
-      return Number.isNaN(code) ? m : String.fromCodePoint(code);
+      return codePointChar(body.slice(1), 10) ?? m;
     }
     return ENTITIES[body.toLowerCase()] ?? m;
   });

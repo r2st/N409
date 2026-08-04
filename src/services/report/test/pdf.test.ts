@@ -44,6 +44,31 @@ describe('decodeEntities', () => {
   it('leaves unknown entities untouched', () => {
     expect(decodeEntities('&unknown; &fake123;')).toBe('&unknown; &fake123;');
   });
+
+  // `String.fromCodePoint` throws RangeError above U+10FFFF, and the only guard
+  // was `Number.isNaN` — which `&#99999999;` passes, being a perfectly good
+  // number. The throw escaped decodeEntities, htmlToBlocks and renderReportPdf
+  // in turn, so eight digits anywhere in any section returned a 500 instead of
+  // a PDF.
+  it('leaves an out-of-range numeric reference as text instead of throwing', () => {
+    expect(decodeEntities('Valued at &#99999999; per share')).toBe('Valued at &#99999999; per share');
+    expect(decodeEntities('&#x110000;')).toBe('&#x110000;');
+    expect(decodeEntities('&#1114112;')).toBe('&#1114112;');
+  });
+
+  it('still decodes the highest reference that is a real code point', () => {
+    // U+10FFFF is the last one; one past it is the first that must be left alone.
+    expect(decodeEntities('&#x10FFFF;')).toBe(String.fromCodePoint(0x10ffff));
+    expect(decodeEntities('&#1114111;')).toBe(String.fromCodePoint(0x10ffff));
+  });
+
+  it('survives a reference far too long to be a code point', () => {
+    // parseInt returns Infinity-free but huge values here; some overflow to a
+    // float, which fromCodePoint also refuses.
+    const huge = `&#${'9'.repeat(400)};`;
+    expect(() => decodeEntities(huge)).not.toThrow();
+    expect(decodeEntities(huge)).toBe(huge);
+  });
 });
 
 describe('htmlToBlocks', () => {
