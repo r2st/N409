@@ -23,6 +23,86 @@ MAX_TOTAL_CHARS = 60_000
 MAX_XLSX_SHEETS = 20
 MAX_XLSX_ROWS_PER_SHEET = 2_000
 
+# ── XLSX decompression budget ────────────────────────────────────────────────
+#
+# An `.xlsx` is a ZIP, and `zipfile` will inflate a member as far as it goes.
+# The character limits above bound the *output* of extraction and nothing about
+# the bytes read to produce it: a part is fully materialised as a `bytes` before
+# a single character is counted.
+#
+# Deflate reaches roughly 1000:1 on the runs of a single byte a bomb is built
+# from, so the 32 MB request-body cap bounds what an attacker sends and nothing
+# at all about what this process allocates. Measured: a 398 KiB archive grew
+# resident memory by 1.2 GiB, and the body cap admits sixty of those in one
+# request. The valuation service's TypeScript reader (`domain/zipReader.ts`) has
+# had a budget for exactly this since it was written; the Python extractor
+# reading the same uploads did not.
+#
+# The budget is what an archive may expand *to*, not the ratio it expands *by*:
+# a ratio alone lets a large archive of highly compressible XML — which is what
+# every genuine workbook is — sail past a limit that a small one trips. Scaling
+# with the input bounds the amplification an attacker can buy, while the floor
+# and ceiling keep both ends sane.
+MAX_XLSX_EXPANSION_RATIO = 20
+MIN_XLSX_INFLATED_BUDGET = 16 * 1024 * 1024
+MAX_XLSX_INFLATED_BUDGET = 128 * 1024 * 1024
+
+
+class DocumentTooLarge(Exception):
+    """An archive asked to expand past its decompression budget."""
+
+
+def xlsx_inflated_budget(archive_bytes: int) -> int:
+    """Total inflated bytes an archive of `archive_bytes` may produce."""
+    return min(
+        MAX_XLSX_INFLATED_BUDGET,
+        max(MIN_XLSX_INFLATED_BUDGET, archive_bytes * MAX_XLSX_EXPANSION_RATIO),
+    )
+
+
+class _BoundedZip:
+    """A ZipFile whose members are read against one shared byte budget.
+
+    `zf.read(name)` is the only way this module touches archive contents, so
+    metering it here covers every part — shared strings, the workbook, the
+    relationships, each sheet — with one running total rather than a per-part
+    limit that a hundred parts could each sit just under.
+    """
+
+    def __init__(self, zf: zipfile.ZipFile, budget: int) -> None:
+        self._zf = zf
+        self._remaining = budget
+        self._budget = budget
+
+    def namelist(self) -> list[str]:
+        return self._zf.namelist()
+
+    def read(self, name: str) -> bytes:
+        """Read one member, stopping the moment it passes what is left.
+
+        Read through the stream with a cap rather than calling `zf.read`: the
+        declared uncompressed size is a number the archive chose, so it is a
+        cheap pre-check and never the guard. One extra byte is requested so a
+        member that exactly fills the budget is still distinguishable from one
+        that overruns it.
+        """
+        if self._remaining <= 0:
+            raise DocumentTooLarge(self._message(name))
+        info = self._zf.getinfo(name)
+        if info.file_size > self._remaining:
+            raise DocumentTooLarge(self._message(name))
+        with self._zf.open(name) as handle:
+            data = handle.read(self._remaining + 1)
+        if len(data) > self._remaining:
+            raise DocumentTooLarge(self._message(name))
+        self._remaining -= len(data)
+        return data
+
+    def _message(self, name: str) -> str:
+        mb = round(self._budget / (1024 * 1024))
+        return f'"{name}" expands past the {mb} MB decompression limit for an archive this size'
+
+
 _SSML = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _OFFICE_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -42,7 +122,7 @@ def _pdf_text(raw: bytes) -> str:
     return "\n".join(pages)
 
 
-def _xlsx_shared_strings(zf: zipfile.ZipFile) -> list[str]:
+def _xlsx_shared_strings(zf: _BoundedZip) -> list[str]:
     try:
         root = ElementTree.fromstring(zf.read("xl/sharedStrings.xml"))
     except (KeyError, ElementTree.ParseError):
@@ -51,7 +131,7 @@ def _xlsx_shared_strings(zf: zipfile.ZipFile) -> list[str]:
     return ["".join(t.text or "" for t in si.iter(f"{_SSML}t")) for si in root.iter(f"{_SSML}si")]
 
 
-def _xlsx_rels(zf: zipfile.ZipFile) -> dict[str, str]:
+def _xlsx_rels(zf: _BoundedZip) -> dict[str, str]:
     """Relationship id → part target, from the workbook's relationships part."""
     try:
         root = ElementTree.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
@@ -65,7 +145,7 @@ def _xlsx_rels(zf: zipfile.ZipFile) -> dict[str, str]:
     return out
 
 
-def _xlsx_sheets(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
+def _xlsx_sheets(zf: _BoundedZip) -> list[tuple[str, str]]:
     """(sheet name, part path) in workbook tab order.
 
     The name and the part have to be resolved together. `xl/workbook.xml` lists
@@ -175,7 +255,8 @@ def _row_values(row: ElementTree.Element, shared: list[str]) -> list[str]:
 def _xlsx_text(raw: bytes) -> str:
     """Tab-separated rows per sheet — enough structure for the LLM to read a
     cap table without a spreadsheet dependency."""
-    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        zf = _BoundedZip(archive, xlsx_inflated_budget(len(raw)))
         shared = _xlsx_shared_strings(zf)
         sheets = _xlsx_sheets(zf)
         if not sheets:

@@ -301,3 +301,123 @@ def test_cells_without_a_ref_still_trail_the_row():
         zf.writestr("xl/worksheets/sheet1.xml", sheet)
     [doc] = extract_texts([_doc(buf.getvalue())])
     assert "first\tunplaced" in doc.text
+
+
+# ── Decompression budget ─────────────────────────────────────────────────────
+#
+# An `.xlsx` is a ZIP, and `zipfile` inflates a member as far as it goes. The
+# character limits in this module bound extraction's *output* and nothing about
+# the bytes read to produce it — a part is fully materialised before a single
+# character is counted. Deflate reaches ~1000:1 on a run of one byte, so the
+# 32 MB request-body cap bounded what an attacker sent and nothing at all about
+# what this process allocated: measured, a 398 KiB archive grew resident memory
+# by 1.2 GiB, and the body cap admits sixty of those in one request.
+
+import struct
+
+import pytest
+
+from app.documents import (
+    MAX_XLSX_INFLATED_BUDGET,
+    MIN_XLSX_INFLATED_BUDGET,
+    DocumentTooLarge,
+    _BoundedZip,
+    xlsx_inflated_budget,
+)
+
+
+def _bomb(inflated_bytes: int, *, declare: int | None = None) -> bytes:
+    """An archive whose sharedStrings part inflates to `inflated_bytes`.
+
+    `declare` rewrites the uncompressed-size fields so the header lies, leaving
+    only the metered read able to stop it.
+    """
+    buf = io.BytesIO()
+    payload = b"<sst><si><t>" + b"A" * inflated_bytes + b"</t></si></sst>"
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        z.writestr("xl/sharedStrings.xml", payload)
+        z.writestr("xl/workbook.xml", "<workbook/>")
+    raw = bytearray(buf.getvalue())
+    if declare is not None:
+        for i in range(len(raw) - 4):
+            if struct.unpack_from("<I", raw, i)[0] == len(payload):
+                struct.pack_into("<I", raw, i, declare)
+    return bytes(raw)
+
+
+class TestInflatedBudget:
+    def test_a_small_archive_still_gets_a_workable_floor(self):
+        # No legitimate small workbook may be refused for being small.
+        assert xlsx_inflated_budget(1) == MIN_XLSX_INFLATED_BUDGET
+        assert xlsx_inflated_budget(100 * 1024) == MIN_XLSX_INFLATED_BUDGET
+
+    def test_the_budget_scales_with_the_archive_between_floor_and_ceiling(self):
+        # Scaling with the input is what bounds the amplification an attacker
+        # can buy: they must send a megabyte to cost us twenty.
+        assert xlsx_inflated_budget(4 * 1024 * 1024) == 80 * 1024 * 1024
+
+    def test_no_archive_whatsoever_gets_past_the_ceiling(self):
+        assert xlsx_inflated_budget(1024 * 1024 * 1024) == MAX_XLSX_INFLATED_BUDGET
+
+
+class TestZipBomb:
+    def test_the_measured_bomb_is_refused_instead_of_resident(self):
+        archive = _bomb(400 * 1024 * 1024)
+        # Still a small upload — this is the whole point.
+        assert len(archive) < 1024 * 1024
+        docs = extract_texts([_doc(archive, "cap.xlsx")])
+        assert "decompression limit" in docs[0].text
+
+    def test_a_header_that_lies_about_the_size_is_caught_by_the_read(self):
+        # The declared uncompressed size is a number the archive chose, so it is
+        # a cheap pre-check and never the guard.
+        archive = _bomb(300 * 1024 * 1024, declare=1024)
+        docs = extract_texts([_doc(archive, "cap.xlsx")])
+        # Refused one way or the other — what must not happen is 300 MB resident.
+        assert docs[0].text.startswith("[could not extract text:")
+
+    def test_one_bad_workbook_does_not_sink_the_rest_of_the_run(self):
+        # The module's contract: extraction failures degrade to a note.
+        docs = extract_texts(
+            [_doc(_bomb(400 * 1024 * 1024), "bomb.xlsx"), _doc(_xlsx_bytes(), "real.xlsx")]
+        )
+        assert "decompression limit" in docs[0].text
+        assert "Series A" in docs[1].text
+
+    def test_an_ordinary_workbook_is_untouched_by_the_budget(self):
+        docs = extract_texts([_doc(_xlsx_bytes())])
+        assert "=== Sheet: Cap Table ===" in docs[0].text
+        assert "Series A" in docs[0].text
+
+
+class TestBoundedZip:
+    def _archive(self, parts: dict[str, bytes]) -> zipfile.ZipFile:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, data in parts.items():
+                z.writestr(name, data)
+        return zipfile.ZipFile(io.BytesIO(buf.getvalue()))
+
+    def test_the_budget_is_shared_across_parts_not_per_part(self):
+        # A per-part limit is one a hundred parts could each sit just under.
+        payload = b"B" * 4096
+        zf = _BoundedZip(self._archive({f"p{i}.xml": payload for i in range(4)}), 10_000)
+        assert len(zf.read("p0.xml")) == 4096
+        assert len(zf.read("p1.xml")) == 4096
+        with pytest.raises(DocumentTooLarge):
+            zf.read("p2.xml")
+
+    def test_a_missing_member_is_still_a_key_error(self):
+        # The callers catch KeyError to mean "this part isn't in the archive";
+        # metering must not change that into something they don't handle.
+        zf = _BoundedZip(self._archive({"a.xml": b"<a/>"}), 10_000)
+        with pytest.raises(KeyError):
+            zf.read("nope.xml")
+
+    def test_a_part_that_exactly_fills_the_budget_is_allowed(self):
+        payload = b"C" * 1000
+        zf = _BoundedZip(self._archive({"a.xml": payload}), 1000)
+        assert zf.read("a.xml") == payload
+        # ...and the next read has nothing left.
+        with pytest.raises(DocumentTooLarge):
+            zf.read("a.xml")
