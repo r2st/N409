@@ -473,3 +473,90 @@ def test_unparseable_integers_answer_422_over_http(overrides):
     )
     assert res.status_code == 422
     assert "must be an integer" in res.json()["detail"]
+
+
+# ── overflow: a finite input whose arithmetic has no answer ──────────────────
+#
+# Three operations in this module raise OverflowError rather than saturating to
+# `inf`, and none of them was caught: the route maps EngineInputError, KeyError
+# and TypeError to 422 and lets everything else out as a 500. Every input below
+# is finite and passes every range check the module applies.
+
+
+def _debt_post(instrument_type: str, params: dict):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    return TestClient(app, raise_server_exceptions=False).post(
+        "/engine/v1/debt-valuation",
+        json={"instrument_type": instrument_type, "params": params},
+    )
+
+
+def test_a_volatility_that_overflows_the_tree_is_named_before_it_is_built():
+    """`u**j` on a 200-step tree, where u = e^{σ√dt}. A volatility of 100 is a
+    mistyped 10,000%, and the engine caps volatility nowhere — the band is a
+    warning, not a limit — so this arrives as an ordinary convertible."""
+    with pytest.raises(EngineInputError) as err:
+        convertible_note(**{**CONVERTIBLE_BASE, "volatility": 100.0})
+    detail = str(err.value)
+    assert "binomial tree" in detail
+    assert "volatility" in detail
+
+
+def test_the_lattice_guard_leaves_a_high_but_workable_volatility_alone():
+    """The ceiling is the double's exponent range, not a view on volatility. A
+    150% vol is ordinary for an early-stage note and must still price."""
+    out = convertible_note(**{**CONVERTIBLE_BASE, "volatility": 1.5})
+    assert out["fair_value"] > 0
+    assert out["fair_value"] >= out["parity"]
+
+
+@pytest.mark.parametrize(
+    ("instrument", "overrides"),
+    [
+        # math.exp(-r·dt) — the risk-free discount factor.
+        pytest.param("convertible", {"risk_free_rate": -1e6}, id="convertible-rate-underflows"),
+        # math.exp((r − q)·dt) — the risk-neutral drift.
+        pytest.param("convertible", {"risk_free_rate": 1e6}, id="convertible-rate-overflows"),
+        # (1 + y/m)^(m·t) — the DCF discount factor.
+        pytest.param("term_loan", {"market_yield": 1e9}, id="term-loan-yield-overflows"),
+    ],
+)
+def test_an_overflowing_rate_answers_422_where_it_used_to_answer_500(instrument, overrides):
+    base = (
+        CONVERTIBLE_BASE
+        if instrument == "convertible"
+        else {
+            "principal": 1_000_000,
+            "coupon_rate": 0.07,
+            "frequency": 12,
+            "maturity_years": 5.0,
+            "market_yield": 0.08,
+        }
+    )
+    res = _debt_post(instrument, {**base, **overrides})
+    assert res.status_code == 422, res.text
+    assert "overflow" in res.json()["detail"].lower()
+
+
+def test_the_overflow_backstop_names_the_instrument():
+    with pytest.raises(EngineInputError, match="term_loan"):
+        value_instrument(
+            "term_loan",
+            {
+                "principal": 1_000_000,
+                "coupon_rate": 0.07,
+                "frequency": 12,
+                "maturity_years": 5.0,
+                "market_yield": 1e9,
+            },
+        )
+
+
+def test_the_backstop_does_not_swallow_an_ordinary_valuation():
+    """Guarding the dispatcher must not change what a good request returns."""
+    assert value_instrument("convertible", dict(CONVERTIBLE_BASE)) == convertible_note(
+        **CONVERTIBLE_BASE
+    )

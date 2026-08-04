@@ -76,6 +76,11 @@ MAX_MATURITY_YEARS = 100.0
 MIN_TREE_STEPS = 10
 MAX_TREE_STEPS = 2000
 
+# `math.log(sys.float_info.max)` is 709.78: the largest exponent a double can
+# carry. `convertible_note` checks its lattice against this before building it,
+# rather than discovering the ceiling as an OverflowError partway through.
+MAX_LATTICE_LOG = 709.0
+
 
 def _int(value, name: str) -> int:
     """`int(value)`, with every way it can fail turned into an EngineInputError.
@@ -400,6 +405,26 @@ def convertible_note(
         }
 
     dt = t / n
+    # The tree's top node is `s0·u^n` with u = e^{σ√dt}, so its height in logs
+    # is ln s0 + σ√(t·n), and the payoff standing there is `κ` times it. Each
+    # factor is separately reasonable — a 3-year note, a 2000-step tree, and a
+    # volatility the engine deliberately does not cap (the band is a warning,
+    # not a limit, so a startup's 150% is as legitimate as a mistyped 10,000%)
+    # — but their combination leaves the doubles. `u**j` *raises* OverflowError
+    # rather than saturating to inf, so a volatility of 100 on an otherwise
+    # ordinary convertible took /engine/v1/debt-valuation down as a 500 that
+    # named nothing. Checked in logs, before anything is exponentiated, because
+    # the check itself must not be the thing that overflows.
+    lattice_log_height = math.log(s0) + sigma * math.sqrt(t * n)
+    if kappa > 0:
+        lattice_log_height += math.log(kappa)
+    if lattice_log_height > MAX_LATTICE_LOG:
+        raise EngineInputError(
+            "the binomial tree's price range overflows a double — reduce volatility, "
+            "maturity_years, steps, stock_price or conversion_ratio "
+            f"(ln of the tree's highest payoff is {lattice_log_height:.0f}, "
+            f"and {MAX_LATTICE_LOG:.0f} is the most a double can carry)"
+        )
     u = math.exp(sigma * math.sqrt(dt))
     d = 1.0 / u
     disc_rf = math.exp(-r * dt)
@@ -528,7 +553,36 @@ def safe_conversion(
 
 
 def value_instrument(instrument_type: str, params: dict) -> dict:
-    """Route a debt instrument to its valuation function."""
+    """Route a debt instrument to its valuation function.
+
+    Any OverflowError raised under here is re-raised as an EngineInputError, so
+    it leaves the endpoint as the 422 a bad magnitude deserves rather than a 500.
+
+    `convertible_note` names its own overflow, precisely, before it happens; this
+    is the backstop for the rest. Python's float arithmetic is inconsistent about
+    which operations raise: `math.exp`, `**` and `float(int)` raise OverflowError,
+    while `*` and `/` saturate to `inf` silently. So the discount factors alone
+    give two 500s — `math.exp(-r·dt)` for a very negative rate, `(1 + y/m)^(m·t)`
+    for a very large yield — and `params` is a free-form dict, so every rate on
+    every instrument here is a caller-supplied double with no ceiling of its own.
+
+    Catching the exception type rather than bounding each rate is the deliberate
+    choice: a ceiling on a rate is a modelling opinion this module has no reason
+    to hold, and it would have to be repeated on every input of every instrument,
+    including ones added later. Overflow is not an opinion — the arithmetic
+    genuinely has no answer to return — and it is one type, raised at the exact
+    operation that could not be completed.
+    """
+    try:
+        return _dispatch(instrument_type, params)
+    except OverflowError as exc:
+        raise EngineInputError(
+            f"the {str(instrument_type or '').strip() or 'instrument'} calculation overflowed "
+            f"a double ({exc}) — check the input magnitudes, particularly the rates"
+        ) from exc
+
+
+def _dispatch(instrument_type: str, params: dict) -> dict:
     if not isinstance(params, dict):
         raise EngineInputError("params must be an object")
     it = str(instrument_type or "").strip()
