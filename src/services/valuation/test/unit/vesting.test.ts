@@ -3,10 +3,13 @@ import {
   addMonths,
   defaultScenarioFmvs,
   exerciseScenarios,
+  isIssuableTemplate,
+  ISSUABLE_TEMPLATE_KEYS,
   monthsElapsed,
   templateByKey,
   vestingStatus,
   vestingTimeline,
+  VESTING_TEMPLATES,
   type VestingSchedule,
 } from '../../src/domain/vesting.js';
 
@@ -248,5 +251,24 @@ describe('vesting', () => {
   it('templateByKey resolves the standard template', () => {
     expect(templateByKey('standard_4yr_1yr_cliff')).toMatchObject({ vestingMonths: 48, cliffMonths: 12 });
     expect(templateByKey('nope')).toBeUndefined();
+  });
+
+  describe('isIssuableTemplate', () => {
+    // `templateByKey` returning undefined used to be read as "use the defaults",
+    // so a misspelled key issued a standard 4-year grant under the misspelling.
+    // The write boundary needs a yes/no answer, not an optional lookup.
+    it('accepts every built-in key plus custom', () => {
+      for (const t of VESTING_TEMPLATES) expect(isIssuableTemplate(t.key)).toBe(true);
+      expect(isIssuableTemplate('custom')).toBe(true);
+      expect(ISSUABLE_TEMPLATE_KEYS).toHaveLength(VESTING_TEMPLATES.length + 1);
+    });
+
+    it('refuses anything else, including a near-miss and the empty string', () => {
+      expect(isIssuableTemplate('three_year_quarterl')).toBe(false);
+      expect(isIssuableTemplate('')).toBe(false);
+      // Provenance the HRIS importer writes straight to the column — it is not
+      // a schedule this service picks, so it is not issuable through the route.
+      expect(isIssuableTemplate('imported')).toBe(false);
+    });
   });
 });

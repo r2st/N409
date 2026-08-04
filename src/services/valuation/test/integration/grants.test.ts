@@ -232,4 +232,113 @@ describe.skipIf(!dbUp)('feature 6 — grant management', () => {
     expect(cancelled.statusCode).toBe(200);
     expect(cancelled.json().grant.status).toBe('cancelled');
   });
+
+  // ── The vesting template has to mean what the schedule does ───────────────
+  //
+  // `vesting_template` was a free 60-character string resolved with
+  // `templateByKey(...) ?? 48/12/1`. An unrecognised key was therefore issued
+  // as a standard 4-year, 1-year-cliff grant and stored under the key that was
+  // sent, so the row's label and the schedule it vests on disagreed — silently,
+  // permanently, on a record that is a contract with an employee.
+
+  it('refuses an unrecognised vesting template instead of issuing a default schedule', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      // One character short of a real template key.
+      payload: {
+        grantee_name: 'Typo',
+        grant_date: '2026-01-01',
+        options_count: 1000,
+        vesting_template: 'three_year_quarterl',
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(JSON.stringify(res.json())).toContain('Unknown vesting template');
+  });
+
+  it('issues a named template on that template\'s own schedule', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      payload: {
+        grantee_name: 'Quarterly',
+        grant_date: '2026-01-01',
+        options_count: 3600,
+        vesting_template: 'three_year_quarterly',
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().grant).toMatchObject({
+      vesting_template: 'three_year_quarterly',
+      vesting_months: 36,
+      cliff_months: 12,
+      frequency_months: 3,
+    });
+  });
+
+  it('moves the schedule when a patch switches the template', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      payload: { grantee_name: 'Switcher', grant_date: '2026-01-01', options_count: 4800 },
+    });
+    expect(created.json().grant.vesting_months).toBe(48);
+    const grantId = created.json().grant.id;
+
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${valuationId}/grants/${grantId}`,
+      headers: authHeader(ops.token),
+      payload: { vesting_template: 'three_year_quarterly' },
+    });
+    expect(patched.statusCode).toBe(200);
+    // Previously this relabelled the grant and left it on 48 months, monthly.
+    expect(patched.json().grant).toMatchObject({
+      vesting_template: 'three_year_quarterly',
+      vesting_months: 36,
+      cliff_months: 12,
+      frequency_months: 3,
+    });
+  });
+
+  it('lets an explicit month override win over the template it accompanies', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      payload: { grantee_name: 'Override', grant_date: '2026-01-01', options_count: 1200 },
+    });
+    const grantId = created.json().grant.id;
+
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${valuationId}/grants/${grantId}`,
+      headers: authHeader(ops.token),
+      payload: { vesting_template: 'three_year_quarterly', vesting_months: 30 },
+    });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json().grant).toMatchObject({ vesting_months: 30, frequency_months: 3 });
+  });
+
+  it('refuses an unrecognised template on a patch too', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      payload: { grantee_name: 'PatchTypo', grant_date: '2026-01-01', options_count: 100 },
+    });
+    const grantId = created.json().grant.id;
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${valuationId}/grants/${grantId}`,
+      headers: authHeader(ops.token),
+      payload: { vesting_template: 'made_up' },
+    });
+    expect(res.statusCode).toBe(422);
+  });
 });

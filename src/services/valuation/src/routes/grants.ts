@@ -18,6 +18,8 @@ import {
 import {
   defaultScenarioFmvs,
   exerciseScenarios,
+  isIssuableTemplate,
+  ISSUABLE_TEMPLATE_KEYS,
   templateByKey,
   toIsoDate,
   vestingStatus,
@@ -33,13 +35,30 @@ import {
  * the exercise-scenario calculator are computed from structured data.
  */
 
+/**
+ * A vesting template this service knows how to turn into a schedule.
+ *
+ * `z.string().max(60)` accepted anything, and the route then resolved it with
+ * `templateByKey(...) ?? 48/12/1`. A typo — `three_year_quarterl` — was
+ * therefore issued as a standard 4-year monthly grant with a 1-year cliff and
+ * stored under the misspelled key, so the grant's own label and the schedule it
+ * actually vests on disagreed for the life of the option. Silence is the wrong
+ * answer for a write that mints a contract.
+ */
+const TemplateKey = z
+  .string()
+  .max(60)
+  .refine(isIssuableTemplate, {
+    message: `Unknown vesting template — expected one of ${ISSUABLE_TEMPLATE_KEYS.join(', ')}`,
+  });
+
 const CreateBody = z.object({
   grantee_name: z.string().min(1).max(200),
   grantee_email: z.string().email().max(320).nullable().optional(),
   grant_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   options_count: z.number().int().positive(),
   exercise_price: z.number().nonnegative().optional(),
-  vesting_template: z.string().max(60).default('standard_4yr_1yr_cliff'),
+  vesting_template: TemplateKey.default('standard_4yr_1yr_cliff'),
   vesting_start_date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -58,7 +77,7 @@ const PatchBody = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   options_count: z.number().int().positive().optional(),
-  vesting_template: z.string().max(60).optional(),
+  vesting_template: TemplateKey.optional(),
   vesting_start_date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -213,6 +232,20 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
     const patch = parsed.data as Record<string, unknown>;
+
+    // Switching the template has to move the schedule with it. `updateGrant`
+    // writes whichever mutable columns the patch names, so a patch of
+    // `{vesting_template: 'three_year_quarterly'}` alone relabelled the grant
+    // and left it vesting over 48 months, monthly — the same label/schedule
+    // disagreement the create path had, arrived at from the other direction.
+    // Explicit months still win, so an edit that names both is not overridden.
+    const template = templateByKey(String(patch.vesting_template ?? ''));
+    if (template) {
+      if (patch.vesting_months === undefined) patch.vesting_months = template.vestingMonths;
+      if (patch.cliff_months === undefined) patch.cliff_months = template.cliffMonths;
+      if (patch.frequency_months === undefined) patch.frequency_months = template.frequencyMonths;
+    }
+
     const vm = (patch.vesting_months as number | undefined) ?? grant.vesting_months;
     const cm = (patch.cliff_months as number | undefined) ?? grant.cliff_months;
     if (cm > vm) throw problems.unprocessable('Cliff cannot be longer than the vesting term');

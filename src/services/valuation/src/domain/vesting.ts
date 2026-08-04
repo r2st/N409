@@ -48,6 +48,37 @@ export function templateByKey(key: string): VestingTemplate | undefined {
   return VESTING_TEMPLATES.find((t) => t.key === key);
 }
 
+/**
+ * The key that means "not one of the built-ins — the schedule is spelled out in
+ * the request". The grant form offers it alongside the templates.
+ */
+export const CUSTOM_TEMPLATE_KEY = 'custom';
+
+/**
+ * Template keys a grant may be *issued* under.
+ *
+ * `templateByKey` returning undefined is how an unrecognised key used to be
+ * handled, and every caller treated that as "fall back to the defaults". A
+ * misspelled key therefore issued a standard 4-year, 1-year-cliff grant while
+ * storing the misspelling in `vesting_template`, so the row's own label
+ * disagreed with the schedule it vests on — an option grant is a contract, and
+ * the disagreement is not visible anywhere in the UI. Unrecognised is now
+ * refused at the write boundary instead.
+ *
+ * Deliberately narrower than what the *column* holds: the HRIS importer writes
+ * `imported` for grants whose schedule came from an external system, and that
+ * is provenance rather than a schedule this service chose. The check belongs on
+ * the routes that pick a schedule, not on the repo.
+ */
+export const ISSUABLE_TEMPLATE_KEYS: readonly string[] = [
+  ...VESTING_TEMPLATES.map((t) => t.key),
+  CUSTOM_TEMPLATE_KEY,
+];
+
+export function isIssuableTemplate(key: string): boolean {
+  return ISSUABLE_TEMPLATE_KEYS.includes(key);
+}
+
 export interface VestingSchedule {
   totalShares: number;
   /** ISO date string or a Date (pg returns `date` columns as Date objects). */
