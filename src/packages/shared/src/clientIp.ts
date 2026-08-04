@@ -184,6 +184,39 @@ function contains(outer: Block, inner: Block): boolean {
   return outer.bits === inner.bits && inner.start >= outer.start && inner.end <= outer.end;
 }
 
+/** The IPv4-mapped range `::ffff:0:0/96` — every IPv4 address, spelled as IPv6. */
+const V4_MAPPED_START = 0xffff00000000n;
+const V4_MAPPED_END = V4_MAPPED_START + 0xffffffffn;
+
+/**
+ * The IPv4 space an IPv6 block also grants, or undefined if it grants none.
+ *
+ * The breadth check above counts prefix bits, and for a v4-mapped block that
+ * counts the wrong thing: `::ffff:0.0.0.0/96` is a `/96`, sails past the `/32`
+ * IPv6 floor, and is every IPv4 address there is. Nor is that a spelling only a
+ * pedant would reach for — it is how a dual-stack listener reports IPv4 peers
+ * (`::ffff:203.0.113.9`), so it is the natural thing to write after reading a
+ * log line, and proxy-addr converts across families in both directions, so it
+ * really does trust all of IPv4. `TRUSTED_PROXIES=::ffff:0.0.0.0/96` was
+ * therefore `trustProxy: true` under a name that looks narrow — the same
+ * failure the numeric guard exists to catch, one family over.
+ *
+ * Intersecting rather than requiring containment is what makes it hold for the
+ * blocks written *around* the mapped range too: `::ffff:0.0.0.0/95` and `::/0`
+ * grant all of IPv4 just as completely while being IPv6 blocks in their own
+ * right, and only the overlap says so.
+ */
+function v4Equivalent(block: Block): Block | undefined {
+  if (block.bits !== 128) return undefined;
+  const start = block.start > V4_MAPPED_START ? block.start : V4_MAPPED_START;
+  const end = block.end < V4_MAPPED_END ? block.end : V4_MAPPED_END;
+  if (start > end) return undefined;
+  // CIDR blocks are power-of-two aligned, so the overlap is one too.
+  let prefix = 32;
+  for (let size = end - start + 1n; size > 1n; size >>= 1n) prefix--;
+  return { bits: 32, prefix, start: start - V4_MAPPED_START, end: end - V4_MAPPED_START };
+}
+
 /**
  * Resolve `TRUSTED_PROXIES` into a Fastify `trustProxy` option.
  *
@@ -239,15 +272,22 @@ export function trustedProxies(env: NodeJS.ProcessEnv = process.env): string[] |
   for (const hop of hops) {
     const block = parseBlock(hop);
     if (block === undefined) continue; // a preset name; proxy-addr validates it
-    if (block.prefix >= MIN_PREFIX[block.bits]!) continue;
-    if (safe.some((range) => contains(range, block))) continue;
-    throw new Error(
-      `Invalid configuration: TRUSTED_PROXIES contains "${hop}", which spans ` +
-        `${block.end - block.start + 1n} addresses of routable space. A trusted-proxy list names ` +
-        'the hops you run, and a block that wide lets anyone inside it forge X-Forwarded-For — ' +
-        `the same result as TRUSTED_PROXIES=true. Name the proxy addresses instead (default: ` +
-        `"${DEFAULT_TRUSTED_PROXIES}").`,
-    );
+    // An IPv6 block is measured twice: once as itself, and once as the IPv4
+    // space it reaches through the mapped range. Either one being too wide is
+    // the same bug, so either one refuses the whole list.
+    for (const span of [block, v4Equivalent(block)]) {
+      if (span === undefined) continue;
+      if (span.prefix >= MIN_PREFIX[span.bits]!) continue;
+      if (safe.some((range) => contains(range, span))) continue;
+      const mapped = span !== block ? ' of IPv4, via the ::ffff:0:0/96 mapped range,' : ' of routable';
+      throw new Error(
+        `Invalid configuration: TRUSTED_PROXIES contains "${hop}", which spans ` +
+          `${span.end - span.start + 1n} addresses${mapped} space. A trusted-proxy list names ` +
+          'the hops you run, and a block that wide lets anyone inside it forge X-Forwarded-For — ' +
+          `the same result as TRUSTED_PROXIES=true. Name the proxy addresses instead (default: ` +
+          `"${DEFAULT_TRUSTED_PROXIES}").`,
+      );
+    }
   }
   return hops;
 }

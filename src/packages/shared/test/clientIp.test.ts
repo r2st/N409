@@ -150,6 +150,60 @@ describe('trustedProxies', () => {
       expect(() => trustedProxies({ TRUSTED_PROXIES: '10.0.0.0/6' })).toThrow(/routable space/);
     });
 
+    // ── The same blanket trust, spelled in the other address family ──────────
+    //
+    // A `/96` clears the `/32` IPv6 floor by a mile and is nonetheless every
+    // IPv4 address there is, because `::ffff:0:0/96` is where IPv4 lives inside
+    // IPv6 — and that is the spelling a dual-stack listener puts in its logs
+    // (`::ffff:203.0.113.9`), so it is the natural thing for an operator to
+    // copy. proxy-addr converts across families in both directions, so the
+    // block really is honoured for plain IPv4 peers: the check has to measure
+    // the IPv4 breadth, not the prefix length.
+    describe('a v4-mapped IPv6 block is measured as the IPv4 space it grants', () => {
+      it('refuses the mapped range itself, which is all of IPv4', () => {
+        expect(() => trustedProxies({ TRUSTED_PROXIES: '::ffff:0.0.0.0/96' })).toThrow(
+          /4294967296 addresses of IPv4, via the ::ffff:0:0\/96 mapped range/,
+        );
+      });
+
+      it('refuses blocks written around the mapped range, which grant it whole', () => {
+        // Both are IPv6 blocks in their own right — /95 clears the IPv6 floor —
+        // and both contain every mapped IPv4 address.
+        expect(() => trustedProxies({ TRUSTED_PROXIES: '::ffff:0.0.0.0/95' })).toThrow(/IPv4/);
+        expect(() => trustedProxies({ TRUSTED_PROXIES: '::/0' })).toThrow(/routable space/);
+      });
+
+      it('refuses a mapped block that is merely very wide', () => {
+        // /100 is a /4 of IPv4 — the same breadth 198.0.0.0/4 is refused for.
+        expect(() => trustedProxies({ TRUSTED_PROXIES: '::ffff:0.0.0.0/100' })).toThrow(/IPv4/);
+      });
+
+      it('applies the IPv4 floor to it, not the IPv6 one', () => {
+        // /104 is exactly a /8 of IPv4, which MIN_PREFIX allows for IPv4 — so
+        // the mapped spelling must be allowed on identical terms, or the guard
+        // is inconsistent about the same set of addresses.
+        expect(trustedProxies({ TRUSTED_PROXIES: '::ffff:0.0.0.0/104' })).toEqual(['::ffff:0.0.0.0/104']);
+      });
+
+      it('still exempts non-routable space through the mapped spelling', () => {
+        // ::ffff:10.0.0.0/104 is 10/8, which `uniquelocal` covers by preset.
+        expect(trustedProxies({ TRUSTED_PROXIES: '::ffff:10.0.0.0/104' })).toEqual(['::ffff:10.0.0.0/104']);
+      });
+
+      it('leaves ordinary IPv6 fleets alone — they touch no mapped address', () => {
+        expect(trustedProxies({ TRUSTED_PROXIES: '2400:cb00::/32, ::ffff:203.0.113.9' })).toEqual([
+          '2400:cb00::/32',
+          '::ffff:203.0.113.9',
+        ]);
+      });
+
+      it('refuses it inside an otherwise specific list', () => {
+        expect(() => trustedProxies({ TRUSTED_PROXIES: 'loopback, 10.0.0.7, ::ffff:0.0.0.0/96' })).toThrow(
+          /::ffff:0\.0\.0\.0\/96/,
+        );
+      });
+    });
+
     it('still hands the named presets through untouched', () => {
       // They are fixed strings this file chose, not operator-supplied breadth,
       // and proxy-addr is what validates them.
