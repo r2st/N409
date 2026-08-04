@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
@@ -26,7 +26,10 @@ import type { EventActor } from '../events/record.js';
 
 const nonNeg = z.number().nonnegative();
 const pos = z.number().positive();
-const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+const DateStr = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+  .refine(isIsoCalendarDate, 'Not a real calendar date');
 const ClassName = z.string().trim().min(1).max(80);
 
 /** One row of the cap table — mirrors waterfall.py `_normalize`. */

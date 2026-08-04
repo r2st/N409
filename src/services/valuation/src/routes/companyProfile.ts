@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findCompanyProfile, upsertCompanyProfile } from '../repos/companyProfiles.js';
@@ -19,6 +19,7 @@ const Str = (max: number) => z.string().max(max).nullable();
 const DateStr = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+  .refine(isIsoCalendarDate, 'Not a real calendar date')
   .nullable();
 
 export const REVENUE_RANGES = [

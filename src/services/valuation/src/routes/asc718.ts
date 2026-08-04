@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { asc718Portfolio, type Asc718Grant } from '../domain/asc718.js';
 import {
@@ -39,7 +39,10 @@ import { requirePrincipal } from '../plugins/auth.js';
  * settings row (asc718_settings) persists the public-company configuration.
  */
 
-const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+const DateStr = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+  .refine(isIsoCalendarDate, 'Not a real calendar date');
 
 const ExerciseHistory = z.object({ years: z.number().min(0).max(30), options: z.number().positive() });
 

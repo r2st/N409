@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems, TtlCache } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, problems, TtlCache } from '@n409/shared';
 import { canCreateValuation, canReadValuation, isOps, valuationScope } from '../auth/rbac.js';
 import { stateGroupOf, STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import {
@@ -14,7 +14,10 @@ import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { VALUATION_KINDS } from '../domain/valuation.js';
 
-const DateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+const DateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+  .refine(isIsoCalendarDate, 'Not a real calendar date');
 
 // Both endpoints below are hit on every worklist/dashboard page load — often
 // several times a minute per ops user — and re-scan/aggregate the whole

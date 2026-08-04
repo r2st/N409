@@ -5,6 +5,8 @@
  * source of truth.
  */
 
+import { isIsoCalendarDate } from '@n409/shared';
+
 export const INTAKE_EVENT_TYPES = {
   saved: 'intake_saved',
   submitted: 'intake_submitted',
@@ -354,19 +356,18 @@ export const INTAKE_CROSS_RULES: readonly IntakeCrossRule[] = [
   },
 ] as const;
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 /**
  * True when `value` is a real calendar day written as YYYY-MM-DD.
  *
- * `new Date('2023-02-30')` does not throw — it rolls forward to 2 March. The
- * round-trip comparison is what catches that.
+ * `new Date('2023-02-30')` does not throw — it rolls forward to 2 March, which
+ * is what the shared check catches. Re-exported under this name because the
+ * intake rules refer to it, but there is one implementation now: the route
+ * schemas were doing the shape check alone while this file had it right, and
+ * two spellings of the same rule are how that gap opened.
  */
-export function isValidIsoDate(value: string): boolean {
-  if (!ISO_DATE.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
+export const isValidIsoDate = isIsoCalendarDate;
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Answers arrive as JSON, so a number can be a number or the string of one. */
 function asNumber(value: unknown): number | null {

@@ -14,6 +14,7 @@ export {
 export { listenHost, DEFAULT_LISTEN_HOST } from './listen.js';
 export { trustedProxies, DEFAULT_TRUSTED_PROXIES } from './clientIp.js';
 export { newUlid, isUlid } from './ids.js';
+export { isIsoCalendarDate, isoCalendarDateError } from './dates.js';
 export {
   REQUEST_ID_HEADER,
   bindRequestId,

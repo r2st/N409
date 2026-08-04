@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { ApiProblem, isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { consumeValuation, findActiveSubscription } from '../repos/billing.js';
 import {
   canCreateValuation,
@@ -60,7 +60,10 @@ const PatchBody = z
   .partial()
   .strict();
 
-const DateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+const DateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+  .refine(isIsoCalendarDate, 'Not a real calendar date');
 
 /**
  * M3 feature 15 — advanced filters, shared by the list, the tab counts, and

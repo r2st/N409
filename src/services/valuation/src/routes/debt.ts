@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -27,7 +27,10 @@ import {
  * does the maths. Ops-only.
  */
 
-const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+const DateStr = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+  .refine(isIsoCalendarDate, 'Not a real calendar date');
 
 const InstrumentBody = z.object({
   name: z.string().trim().min(1).max(200),

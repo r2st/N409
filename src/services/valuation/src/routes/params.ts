@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams, patchParams } from '../repos/params.js';
@@ -22,7 +22,10 @@ const Weight = z
   });
 
 const Fraction = z.number().min(0).max(1);
-const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD');
+const DateStr = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+  .refine(isIsoCalendarDate, 'Not a real calendar date');
 const Cents = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
 export const ParamsPatchBody = z

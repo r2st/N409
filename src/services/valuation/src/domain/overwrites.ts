@@ -9,6 +9,8 @@
  * · market_comparables 16 · reporting 1 — 68 total.
  */
 
+import { isIsoCalendarDate } from '@n409/shared';
+
 export const OVERWRITE_CATEGORIES = [
   'company_info',
   'financial_metrics',
@@ -644,10 +646,7 @@ export function validateOverwriteValue(def: OverwriteFieldDef, value: unknown): 
       if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
         return 'must be an ISO date (YYYY-MM-DD)';
       }
-      const parsed = new Date(`${value}T00:00:00Z`);
-      if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
-        return 'must be a real calendar date';
-      }
+      if (!isIsoCalendarDate(value)) return 'must be a real calendar date';
       return null;
     }
     case 'character': {

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems } from '@n409/shared';
+import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findResolutionByValuation } from '../repos/boardApprovals.js';
@@ -52,17 +52,23 @@ const TemplateKey = z
     message: `Unknown vesting template — expected one of ${ISSUABLE_TEMPLATE_KEYS.join(', ')}`,
   });
 
+/**
+ * A grant date is a contract date. `new Date('2026-02-31')` rolls silently
+ * forward to 2026-03-03, which on a vesting start moves every tranche.
+ */
+const GrantDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+  .refine(isIsoCalendarDate, 'Not a real calendar date');
+
 const CreateBody = z.object({
   grantee_name: z.string().min(1).max(200),
   grantee_email: z.string().email().max(320).nullable().optional(),
-  grant_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  grant_date: GrantDate,
   options_count: z.number().int().positive(),
   exercise_price: z.number().nonnegative().optional(),
   vesting_template: TemplateKey.default('standard_4yr_1yr_cliff'),
-  vesting_start_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
+  vesting_start_date: GrantDate.optional(),
   vesting_months: z.number().int().min(0).max(240).optional(),
   cliff_months: z.number().int().min(0).max(120).optional(),
   frequency_months: z.number().int().min(1).max(12).optional(),
@@ -72,16 +78,10 @@ const CreateBody = z.object({
 const PatchBody = z.object({
   grantee_name: z.string().min(1).max(200).optional(),
   grantee_email: z.string().email().max(320).nullable().optional(),
-  grant_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
+  grant_date: GrantDate.optional(),
   options_count: z.number().int().positive().optional(),
   vesting_template: TemplateKey.optional(),
-  vesting_start_date: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
+  vesting_start_date: GrantDate.optional(),
   vesting_months: z.number().int().min(0).max(240).optional(),
   cliff_months: z.number().int().min(0).max(120).optional(),
   frequency_months: z.number().int().min(1).max(12).optional(),
