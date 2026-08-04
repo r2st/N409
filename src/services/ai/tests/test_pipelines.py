@@ -126,6 +126,62 @@ def test_extract_whitelists_and_normalizes(monkeypatch, client):
     assert "volatility" not in inputs  # unparseable dropped
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        "NaN",
+        "inf",
+        "-Infinity",
+        1e400,  # json.loads and float() both fold this to inf
+    ],
+)
+def test_to_number_refuses_non_finite(raw):
+    """NaN/Infinity must never become an engine input.
+
+    `json.loads` accepts the non-standard NaN/Infinity literals and folds an
+    overflowing exponent to inf, so a model can put one in `engine_inputs`
+    without emitting anything the parser calls invalid.
+    """
+    assert pipelines._to_number(raw) is None
+
+
+def test_extract_drops_non_finite_and_stays_serialisable(monkeypatch, client):
+    """The response body has to remain parseable JSON.
+
+    `json.dumps` writes a float nan back out as the bare token `NaN`, which no
+    conforming parser accepts — so a single non-finite extraction used to make
+    the whole 200 response unreadable to the valuation service, which parses it
+    with `JSON.parse`. Dropping the field keeps the rest of the extraction.
+    """
+    chat = fake_chat(
+        '{"engine_inputs": {"cash": NaN, "debt": Infinity, "revenue_ltm": 5000000}, "extractions": []}'
+    )
+    monkeypatch.setattr(pipelines, "chat", chat)
+
+    resp = client.post(
+        "/ai/v1/pipelines/extract",
+        json={
+            "valuation": {"company_name": "Acme", "currency": "USD"},
+            "documents": [doc("bs.csv", "balance_sheet", "cash,1200000.50")],
+        },
+    )
+    assert resp.status_code == 200
+    # Parsed strictly, exactly as the Node caller parses it.
+    body = json.loads(resp.text, parse_constant=_reject_constant)
+    inputs = body["result"]["engine_inputs"]
+    assert "cash" not in inputs
+    assert "debt" not in inputs
+    assert inputs["revenue_ltm"] == 5_000_000
+
+
+def _reject_constant(name: str):
+    raise ValueError(f"response body contains the non-JSON token {name}")
+
+
+
 # ── comparables ───────────────────────────────────────────────────────────────
 def test_comparables_normalizes_multiples(monkeypatch, client):
     chat = fake_chat(

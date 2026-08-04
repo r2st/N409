@@ -8,6 +8,7 @@ valuation service persists in ai_jobs.result.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from typing import Any
 
@@ -243,17 +244,39 @@ def _distinct_filenames(names: list[str]) -> list[str]:
 
 
 def _to_number(value: Any) -> float | None:
+    """A model-emitted figure as a finite float, or None if it isn't one.
+
+    Non-finite is not a theoretical case here, it is the default behaviour of
+    both parsers in the path. ``json.loads`` accepts the non-standard ``NaN``,
+    ``Infinity`` and ``-Infinity`` literals, and folds an overflowing literal
+    like ``1e400`` to ``inf`` without complaint; ``float()`` accepts the
+    strings ``"nan"``, ``"inf"`` and ``"Infinity"`` for the same reason. Either
+    one reaches ``engine_inputs``, which the auto-pipeline applies to the
+    valuation's params unattended.
+
+    Both ends of that then break. ``json.dumps`` — what FastAPI serialises the
+    response with — writes those values back out as the bare tokens ``NaN`` and
+    ``Infinity``, which are not JSON, so the valuation service's ``JSON.parse``
+    throws and the whole pipeline 500s on a body we produced ourselves. And a
+    NaN that did get through compares false against every range check
+    downstream (``NaN <= 0`` is False), so it would pass validation and make
+    every allocated value NaN — the same failure ``waterfall._finite`` exists
+    to stop one layer further in. Refusing the value here leaves the field
+    simply absent, which is what "not found" already means to every caller.
+    """
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
+        number = float(value)
+    elif isinstance(value, str):
         cleaned = value.replace(",", "").replace("$", "").strip()
         try:
-            return float(cleaned)
+            number = float(cleaned)
         except ValueError:
             return None
-    return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def run_missing_data(payload: dict) -> tuple[str, dict]:
