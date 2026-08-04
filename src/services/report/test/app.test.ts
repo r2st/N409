@@ -39,9 +39,7 @@ describe('report service', () => {
       payload: {
         title: 'Valuation Report',
         company_name: 'Acme',
-        sections: [
-          { heading: 'Conclusion', html: '<p>Valued at &#99999999; per share &#x110000;.</p>' },
-        ],
+        sections: [{ heading: 'Conclusion', html: '<p>Valued at &#99999999; per share &#x110000;.</p>' }],
       },
     });
     expect(res.statusCode).toBe(200);

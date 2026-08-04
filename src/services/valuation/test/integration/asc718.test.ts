@@ -255,5 +255,4 @@ describe.runIf(dbUp)('ASC 718 (private + public)', () => {
     // The whole point: this used to be seconds of uninterruptible CPU.
     expect(Date.now() - started).toBeLessThan(5_000);
   });
-
 });

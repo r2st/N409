@@ -258,7 +258,7 @@ describe.skipIf(!dbUp)('feature 6 — grant management', () => {
     expect(JSON.stringify(res.json())).toContain('Unknown vesting template');
   });
 
-  it('issues a named template on that template\'s own schedule', async () => {
+  it("issues a named template on that template's own schedule", async () => {
     const res = await app.inject({
       method: 'POST',
       url: `/api/v1/valuations/${valuationId}/grants`,

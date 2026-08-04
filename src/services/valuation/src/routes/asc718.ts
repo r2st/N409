@@ -406,10 +406,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
       marketRsu: (b.rsu ?? []).filter((r) => r.condition === 'market').length,
       // A TSR path draws the common factor, the subject's idiosyncratic shock,
       // and one per peer.
-      tsrDraws: (b.tsr ?? []).reduce(
-        (n, t) => n + DEFAULT_MC_PATHS.relativeTsr * (t.peers.length + 2),
-        0,
-      ),
+      tsrDraws: (b.tsr ?? []).reduce((n, t) => n + DEFAULT_MC_PATHS.relativeTsr * (t.peers.length + 2), 0),
     };
     const requestedDraws =
       mcAwards.performanceRsu * DEFAULT_MC_PATHS.performanceRsu +
