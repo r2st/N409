@@ -70,13 +70,38 @@ def _num(value, name: str, *, minimum: float | None = None, maximum: float | Non
 MAX_FREQUENCY = 366
 MAX_MATURITY_YEARS = 100.0
 
+# Binomial-tree resolution for `convertible_note`. The rollback is O(steps²) in
+# pure Python, so the ceiling bounds one request's synchronous work; the floor
+# keeps a coarse tree from pricing the note as a two-state coin flip.
+MIN_TREE_STEPS = 10
+MAX_TREE_STEPS = 2000
+
+
+def _int(value, name: str) -> int:
+    """`int(value)`, with every way it can fail turned into an EngineInputError.
+
+    `params` on `/engine/v1/debt-valuation` is a free-form dict splatted into
+    these functions, so anything JSON can carry reaches a bare `int()`. Three of
+    its failure modes are not the `(KeyError, TypeError)` the route maps to 422:
+
+      * `int("abc")` raises ValueError;
+      * `int(float("nan"))` raises ValueError;
+      * `int(float("inf"))` raises OverflowError — and `json.loads("1e400")` is
+        `inf`, so a five-character number in the body reaches it.
+
+    None of them is an EngineInputError either, so each one answered a bad input
+    with an opaque 500 and a logged traceback instead of the 422 that names the
+    field the caller has to fix.
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise EngineInputError(f"{name} must be an integer") from exc
+
 
 def _frequency(value, name: str = "frequency") -> int:
     """Coupon periods per year — a positive integer, no finer than daily."""
-    try:
-        m = int(value)
-    except (TypeError, ValueError) as exc:
-        raise EngineInputError(f"{name} must be a positive integer") from exc
+    m = _int(value, name)
     if m <= 0:
         raise EngineInputError(f"{name} must be a positive integer")
     if m > MAX_FREQUENCY:
@@ -363,7 +388,7 @@ def convertible_note(
     q = _num(dividend_yield, "dividend_yield", minimum=0.0)
     t = _num(maturity_years, "maturity_years", minimum=0.0, maximum=MAX_MATURITY_YEARS)
     m = _frequency(frequency)
-    n = max(10, min(int(steps), 2000))
+    n = max(MIN_TREE_STEPS, min(_int(steps, "steps"), MAX_TREE_STEPS))
     if t <= 0 or sigma <= 0 or s0 <= 0:
         # Degenerate: worth the greater of conversion or redemption today.
         conv = kappa * s0

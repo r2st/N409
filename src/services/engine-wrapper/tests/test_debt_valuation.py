@@ -4,6 +4,8 @@ import pytest
 
 from app.engine.errors import EngineInputError
 from app.engine.debt_valuation import (
+    MAX_TREE_STEPS,
+    MIN_TREE_STEPS,
     convertible_note,
     coupon_schedule,
     credit_spread_valuation,
@@ -391,3 +393,83 @@ def test_oversized_debt_request_answers_422_over_http():
         },
     )
     assert res.status_code == 422
+
+
+# ── Integer coercion on a free-form params dict ──────────────────────────────
+#
+# `/engine/v1/debt-valuation` splats `params` into these functions, so anything
+# JSON can carry reaches the `int()` calls behind `frequency` and `steps`. Only
+# TypeError was handled there; ValueError ("abc", nan) and OverflowError (inf,
+# which is what `json.loads("1e400")` produces) escaped as neither an
+# EngineInputError nor one of the (KeyError, TypeError) the route maps, so a bad
+# input answered 500 with a logged traceback instead of a 422 naming the field.
+
+CONVERTIBLE_BASE = {
+    "face": 1000,
+    "coupon_rate": 0.05,
+    "frequency": 2,
+    "maturity_years": 3,
+    "conversion_ratio": 10,
+    "stock_price": 50,
+    "volatility": 0.4,
+    "risk_free_rate": 0.04,
+    "credit_spread": 0.02,
+}
+
+
+@pytest.mark.parametrize("steps", ["abc", float("inf"), float("nan"), [], {}, "1.5x"])
+def test_unparseable_tree_steps_is_an_input_error(steps):
+    with pytest.raises(EngineInputError, match="steps must be an integer"):
+        convertible_note(**CONVERTIBLE_BASE, steps=steps)
+
+
+@pytest.mark.parametrize("frequency", ["abc", float("inf"), float("nan"), []])
+def test_unparseable_frequency_is_an_input_error(frequency):
+    with pytest.raises(EngineInputError, match="frequency must be an integer"):
+        coupon_schedule(face=1000, coupon_rate=0.05, frequency=frequency, maturity_years=3)
+
+
+def test_tree_steps_still_accept_the_lenient_forms_they_always_did():
+    """Numeric strings and floats truncate, as `int()` has always done here."""
+    for steps in (400, 400.9, "400"):
+        assert convertible_note(**CONVERTIBLE_BASE, steps=steps)["fair_value"] > 0
+
+
+def test_tree_steps_are_clamped_to_the_usable_range():
+    """Out-of-range steps clamp rather than raise — the bound is on our work."""
+    coarse = convertible_note(**CONVERTIBLE_BASE, steps=-5)
+    floored = convertible_note(**CONVERTIBLE_BASE, steps=MIN_TREE_STEPS)
+    assert coarse == floored
+    huge = convertible_note(**CONVERTIBLE_BASE, steps=10**9)
+    capped = convertible_note(**CONVERTIBLE_BASE, steps=MAX_TREE_STEPS)
+    assert huge == capped
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        '"steps": "abc"',
+        # `1e400` is a JSON number the parser hands back as `inf`, and
+        # `int(inf)` is an OverflowError. Written into the body as raw text
+        # because a JSON *encoder* refuses to emit `inf` — only a decoder
+        # produces one, which is exactly how the service meets it.
+        '"steps": 1e400',
+        '"frequency": "quarterly"',
+    ],
+)
+def test_unparseable_integers_answer_422_over_http(overrides):
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    base = ", ".join(f'"{k}": {json.dumps(v)}' for k, v in CONVERTIBLE_BASE.items())
+    body = f'{{"instrument_type": "convertible", "params": {{{base}, {overrides}}}}}'
+    res = TestClient(app, raise_server_exceptions=False).post(
+        "/engine/v1/debt-valuation",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+    assert res.status_code == 422
+    assert "must be an integer" in res.json()["detail"]
