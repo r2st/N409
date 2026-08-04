@@ -184,4 +184,76 @@ describe.runIf(dbUp)('ASC 718 (private + public)', () => {
     });
     expect(res.statusCode).toBe(403);
   });
+
+  // ── The per-request Monte-Carlo draw budget ───────────────────────────────
+  //
+  // The RSU and TSR estimators are synchronous loops on a single-threaded
+  // process, so their cost stalls every other request on the box — /health
+  // included — and no request timeout can interrupt them. The per-award schema
+  // caps multiply rather than compose (20 TSR × 50 peers × 30,000 paths is
+  // 30.6 million draws), so the request as a whole has to be priced.
+
+  it('leaves an ordinary batch scaled by exactly 1 and reports what it rests on', async () => {
+    const id = await seedValuation('BudgetCo');
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/asc718`,
+      headers: authHeader(ops.token),
+      payload: {
+        company_type: 'public',
+        default_grant_date_fair_value: 50,
+        default_volatility: 0.4,
+        rsu: [{ condition: 'market', units: 1000, hurdle_price: 60, vesting_years: 3 }],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const mc = res.json().asc718.monte_carlo;
+    expect(mc.scale).toBe(1);
+    expect(mc.requested_draws).toBe(40_000);
+    expect(mc.paths.marketConditionRsu).toBe(40_000);
+    expect(mc.requested_draws).toBeLessThan(mc.draw_budget);
+  });
+
+  it('scales a batch that would otherwise stall the event loop, and says so', async () => {
+    const id = await seedValuation('BigBatchCo');
+    // Entirely legal under the per-award caps: 20 TSR awards, 20 peers each.
+    const peers = Array.from({ length: 20 }, (_, i) => ({ name: `P${i}`, volatility: 0.4 }));
+    const tsr = Array.from({ length: 20 }, () => ({
+      target_units: 1000,
+      performance_period_years: 3,
+      risk_free_rate: 0.03,
+      peers,
+      payout_schedule: [
+        { percentile: 75, payout_ratio: 2 },
+        { percentile: 50, payout_ratio: 1 },
+        { percentile: 0, payout_ratio: 0 },
+      ],
+    }));
+    const started = Date.now();
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/asc718`,
+      headers: authHeader(ops.token),
+      payload: {
+        company_type: 'public',
+        default_grant_date_fair_value: 50,
+        default_volatility: 0.4,
+        tsr,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json().asc718;
+    const mc = body.monte_carlo;
+    // 20 awards × 30,000 paths × 22 draws = 13.2M, over the 4M budget.
+    expect(mc.requested_draws).toBe(13_200_000);
+    expect(mc.scale).toBeLessThan(1);
+    expect(mc.paths.relativeTsr).toBeLessThan(30_000);
+    expect(mc.paths.relativeTsr).toBeGreaterThanOrEqual(1_000);
+    // Scaled, not refused — every award still has a usable number.
+    expect(body.tsr).toHaveLength(20);
+    for (const t of body.tsr) expect(t.fairValuePerUnit).toBeGreaterThan(0);
+    // The whole point: this used to be seconds of uninterruptible CPU.
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
 });

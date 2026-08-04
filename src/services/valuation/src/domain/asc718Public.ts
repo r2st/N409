@@ -24,6 +24,59 @@ import { blackScholesMerton, type Asc718Assumptions } from './asc718.js';
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+// ── Per-request simulation budget ───────────────────────────────────────────
+
+/** Default path counts, so a caller can price the work before spending it. */
+export const DEFAULT_MC_PATHS = {
+  performanceRsu: 20_000,
+  marketConditionRsu: 40_000,
+  relativeTsr: 30_000,
+} as const;
+
+/** Below this a Monte-Carlo estimate stops being worth reporting. */
+export const MIN_MC_PATHS = 1_000;
+
+/**
+ * Standard normals one ASC 718 compute may draw.
+ *
+ * Every estimator here is a synchronous `for` loop, so its cost is charged to
+ * the event loop of a single-threaded process and no request timeout can
+ * interrupt it: while it runs, *every other* request on the box — including
+ * /health — waits. That makes the total work one request can ask for a shared
+ * resource rather than its own problem.
+ *
+ * The route's own schema caps award counts, but those caps multiply: 20 TSR
+ * awards × 50 peers × 30,000 paths is 30.6 million normal draws, measured at
+ * 1.9 seconds of uninterruptible CPU for one ops request. The per-award caps
+ * cannot see each other, so no combination of them expresses "and not all at
+ * once".
+ *
+ * 4 million draws is ~250 ms on the same measurement — under a quarter second
+ * of stall in the worst case, and far above what any single award asks for, so
+ * an ordinary request is scaled by exactly 1 and its numbers do not move.
+ */
+export const MC_DRAW_BUDGET = 4_000_000;
+
+/**
+ * How far to scale every award's path count so the request fits the budget.
+ *
+ * Scaling rather than refusing: the estimators converge as 1/√paths, so a
+ * request asking for eight times the budget gets a still-usable estimate at a
+ * third of the standard error it would have had, instead of a 422 telling an
+ * analyst their perfectly legal batch is too big. The effective path count is
+ * reported back so a reviewer can see what the number rests on.
+ */
+export function monteCarloScale(requestedDraws: number, budget: number = MC_DRAW_BUDGET): number {
+  if (!Number.isFinite(requestedDraws) || requestedDraws <= 0) return 1;
+  return requestedDraws <= budget ? 1 : budget / requestedDraws;
+}
+
+/** Apply a scale to one award's path count, never below MIN_MC_PATHS. */
+export function scaleMonteCarloPaths(paths: number, scale: number): number {
+  if (scale >= 1) return paths;
+  return Math.max(MIN_MC_PATHS, Math.floor(paths * scale));
+}
+
 // ── Deterministic standard-normal generator ─────────────────────────────────
 
 /**

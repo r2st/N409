@@ -6,13 +6,17 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { asc718Portfolio, type Asc718Grant } from '../domain/asc718.js';
 import {
   binomialLattice,
+  DEFAULT_MC_PATHS,
   esppFairValue,
   historicalExpectedTerm,
   historicalVolatility,
   marketConditionRsuMonteCarlo,
+  MC_DRAW_BUDGET,
+  monteCarloScale,
   performanceRsuMonteCarlo,
   relativeTsrMonteCarlo,
   rsuMarketFairValue,
+  scaleMonteCarloPaths,
   simplifiedExpectedTerm,
 } from '../domain/asc718Public.js';
 import { findValuationById } from '../repos/valuations.js';
@@ -387,6 +391,34 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
       };
     });
 
+    // ── Monte-Carlo budget for this request ───────────────────────────────
+    //
+    // The three estimators below are synchronous loops, so their cost lands on
+    // the event loop of the whole process. Each award's own path count is
+    // sensible; twenty of them at once is not, and no per-award cap can see the
+    // others. Price the whole request first, then scale every award by the same
+    // factor so the batch fits — see monteCarloScale.
+    const mcAwards = {
+      performanceRsu: (b.rsu ?? []).filter((r) => r.condition === 'performance').length,
+      marketRsu: (b.rsu ?? []).filter((r) => r.condition === 'market').length,
+      // A TSR path draws the common factor, the subject's idiosyncratic shock,
+      // and one per peer.
+      tsrDraws: (b.tsr ?? []).reduce(
+        (n, t) => n + DEFAULT_MC_PATHS.relativeTsr * (t.peers.length + 2),
+        0,
+      ),
+    };
+    const requestedDraws =
+      mcAwards.performanceRsu * DEFAULT_MC_PATHS.performanceRsu +
+      mcAwards.marketRsu * DEFAULT_MC_PATHS.marketConditionRsu +
+      mcAwards.tsrDraws;
+    const mcScale = monteCarloScale(requestedDraws);
+    const mcPaths = {
+      performanceRsu: scaleMonteCarloPaths(DEFAULT_MC_PATHS.performanceRsu, mcScale),
+      marketConditionRsu: scaleMonteCarloPaths(DEFAULT_MC_PATHS.marketConditionRsu, mcScale),
+      relativeTsr: scaleMonteCarloPaths(DEFAULT_MC_PATHS.relativeTsr, mcScale),
+    };
+
     // ── RSUs ──────────────────────────────────────────────────────────────
     const rsu = (b.rsu ?? []).map((rItem, idx) => {
       const price = rItem.market_price ?? defaultUnderlying;
@@ -399,6 +431,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
           expectedAttainment: rItem.expected_attainment ?? 1,
           attainmentVolatility: rItem.attainment_volatility ?? 0.25,
           maxPayoutRatio: rItem.max_payout_ratio,
+          paths: mcPaths.performanceRsu,
           seed: 0x51ed270b + idx,
         });
         return { label: rItem.label ?? null, condition: 'performance' as const, units: rItem.units, ...res };
@@ -421,6 +454,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
           volatility,
           riskFreeRate: rItem.risk_free_rate ?? 0.03,
           dividendYield: rItem.dividend_yield,
+          paths: mcPaths.marketConditionRsu,
           seed: 0x2f8b1c33 + idx,
         });
         return {
@@ -467,6 +501,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
           percentile: t.percentile,
           payoutRatio: t.payout_ratio,
         })),
+        paths: mcPaths.relativeTsr,
         seed: 0x6d2b79f5 + idx,
       });
       return {
@@ -488,6 +523,16 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
         espp,
         rsu,
         tsr,
+        // What the Monte-Carlo figures above actually rest on. Reported rather
+        // than silently applied: a scaled-down batch is a wider confidence
+        // interval, and a reviewer signing the ASC 718 note should be able to
+        // see that without re-deriving it.
+        monte_carlo: {
+          requested_draws: requestedDraws,
+          draw_budget: MC_DRAW_BUDGET,
+          scale: Math.round(mcScale * 1e4) / 1e4,
+          paths: mcPaths,
+        },
         valuation_fmv_per_share: fmv,
         currency: valuation.currency,
       },
