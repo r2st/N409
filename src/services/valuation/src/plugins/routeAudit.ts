@@ -152,6 +152,16 @@ export interface RouteAudit {
   unguarded(): string[];
   /** Allow-list entries no route matched — a stale exemption to delete. */
   staleExemptions(): string[];
+  /**
+   * Every registered route as `METHOD /url`, params still in `:name` form.
+   *
+   * The audit already walks every route for the authentication check, so it is
+   * the one place that knows the real URL set. Other invariants that are
+   * written *about* routes — the request-cost table, whose patterns silently
+   * stopped matching anything when routes were renamed — can then be asserted
+   * against reality instead of against what somebody assumed the paths were.
+   */
+  all(): string[];
 }
 
 declare module 'fastify' {
@@ -193,6 +203,7 @@ export function registerRouteAudit(app: FastifyInstance): RouteAudit {
         .filter((k) => !authenticated.has(k) && !PUBLIC_KEYS.has(k))
         .sort((a, b) => a.localeCompare(b)),
     staleExemptions: () => [...PUBLIC_KEYS].filter((k) => !seen.has(k)).sort((a, b) => a.localeCompare(b)),
+    all: () => [...seen].sort((a, b) => a.localeCompare(b)),
   };
   app.decorate('routeAudit', audit);
   return audit;

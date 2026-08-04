@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import pg from 'pg';
 import {
   COST_RULES,
   DEFAULT_COST,
@@ -7,8 +8,32 @@ import {
   normalizePath,
 } from '../../src/domain/requestCost.js';
 import { WeightedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
+import { buildApp } from '../../src/app.js';
+import { loadConfig } from '../../src/config.js';
 
 const VAL = '/api/v1/valuations/01JZZZZZZZZZZZZZZZZZZZZZZZ';
+
+/** pg.Pool connects lazily; nothing in this file issues a query. */
+function stubPool(): pg.Pool {
+  return new pg.Pool({ connectionString: 'postgres://unused:unused@127.0.0.1:1/unused' });
+}
+
+function testConfig() {
+  return loadConfig({
+    ...process.env,
+    NODE_ENV: 'test',
+    JWT_SECRET: 'z'.repeat(48),
+    LOG_LEVEL: 'silent',
+  } as NodeJS.ProcessEnv);
+}
+
+/** `METHOD /url` with every `:param` filled in, as a request would arrive. */
+function concreteRoutes(keys: string[]): Array<{ method: string; path: string }> {
+  return keys.map((k) => {
+    const [method, url] = k.split(' ') as [string, string];
+    return { method, path: url.replace(/:[^/]+/g, 'x') };
+  });
+}
 
 describe('normalizePath', () => {
   it('drops the query string', () => {
@@ -42,6 +67,73 @@ describe('COST_RULES', () => {
       }
     }
   });
+
+  /**
+   * The invariant the table lost: seven of its rules matched no URL this
+   * service registers (`/ai/jobs`, `/backsolve`, `/agents/…`,
+   * `/scenarios/:id/run`, `/asc718/expense`, `/documents/:id/content`,
+   * `.zip`), so the routes they were written to price ran free. A dead rule is
+   * invisible — it neither errors nor logs — which is why it has to be a test.
+   */
+  it('has no rule that matches nothing this service registers', async () => {
+    const pool = stubPool();
+    const app = buildApp({ config: testConfig(), pool });
+    try {
+      await app.ready();
+      const routes = concreteRoutes(app.routeAudit.all());
+      const dead = COST_RULES.filter(
+        (rule) =>
+          !routes.some(
+            (r) =>
+              (!rule.methods || rule.methods.includes(r.method.toUpperCase())) &&
+              rule.pattern.test(normalizePath(r.path)),
+          ),
+      ).map((rule) => `${rule.methods?.join('|') ?? 'ANY'} ${rule.pattern}`);
+      expect(dead).toEqual([]);
+    } finally {
+      await app.close();
+      await pool.end();
+    }
+  });
+
+  /** Every route that spends an LLM call or an engine round-trip is charged. */
+  it('charges every route that leaves the process for AI or the engine', async () => {
+    const pool = stubPool();
+    const app = buildApp({ config: testConfig(), pool });
+    try {
+      await app.ready();
+      const registered = new Set(app.routeAudit.all());
+      const mustCost: Array<[string, string]> = [
+        ['POST', '/api/v1/valuations/:id/ai/:pipeline'],
+        ['POST', '/api/v1/admin/prompts/:id/test'],
+        ['POST', '/api/v1/valuations/:id/qa'],
+        ['POST', '/api/v1/valuations/:id/calculations'],
+        ['POST', '/api/v1/valuations/:id/scenarios'],
+        ['POST', '/api/v1/valuations/:id/scenarios/preview'],
+        ['POST', '/api/v1/valuations/:id/sensitivity'],
+        ['POST', '/api/v1/valuations/:id/sensitivity/model'],
+        ['POST', '/api/v1/valuations/:id/asc718'],
+        ['POST', '/api/v1/valuations/:id/report/render'],
+        ['POST', '/api/v1/valuations/:id/evidence-bundle'],
+        ['POST', '/api/v1/debt/instruments/:id/value'],
+        ['POST', '/api/v1/debt/rating-spread'],
+        ['POST', '/api/v1/funds/:id/waterfall'],
+        ['POST', '/api/v1/funds/:id/calibrate'],
+        ['GET', '/api/v1/valuations/export'],
+        ['GET', '/api/v1/users/export'],
+        ['GET', '/api/v1/valuations/:id/documents/:documentId/download'],
+      ];
+      for (const [method, url] of mustCost) {
+        // Guards the list itself: a renamed route must fail here, not silently
+        // stop being asserted.
+        expect(registered, `${method} ${url} is no longer registered`).toContain(`${method} ${url}`);
+        expect(costOfRequest(method, url.replace(/:[^/]+/g, 'x')), `${method} ${url}`).toBeGreaterThan(0);
+      }
+    } finally {
+      await app.close();
+      await pool.end();
+    }
+  });
 });
 
 describe('costOfRequest', () => {
@@ -55,23 +147,40 @@ describe('costOfRequest', () => {
   it('charges document renders and bundles', () => {
     expect(costOfRequest('GET', `${VAL}/report.pdf`)).toBeGreaterThan(0);
     expect(costOfRequest('GET', `${VAL}/workbook.xlsx`)).toBeGreaterThan(0);
-    expect(costOfRequest('GET', `${VAL}/evidence.zip`)).toBeGreaterThan(0);
-    expect(costOfRequest('GET', `${VAL}/cap-table.csv`)).toBeGreaterThan(0);
+    expect(costOfRequest('POST', `${VAL}/evidence-bundle`)).toBeGreaterThan(0);
+    expect(costOfRequest('GET', `${VAL}/audit-trail.csv`)).toBeGreaterThan(0);
+  });
+
+  it('charges the render that produces the PDF, not only the download', () => {
+    // `.pdf$` never matched POST …/report/render, so the expensive half of the
+    // pair — the one that actually runs the renderer — was free.
+    expect(costOfRequest('POST', `${VAL}/report/render`)).toBeGreaterThan(0);
   });
 
   it('charges engine round-trips only on the methods that run them', () => {
     expect(costOfRequest('POST', `${VAL}/calculations`)).toBeGreaterThan(0);
     expect(costOfRequest('GET', `${VAL}/calculations`)).toBe(DEFAULT_COST);
+    expect(costOfRequest('POST', `${VAL}/scenarios`)).toBeGreaterThan(0);
+    expect(costOfRequest('GET', `${VAL}/scenarios`)).toBe(DEFAULT_COST);
   });
 
   it('charges AI pipelines the most of any single request', () => {
-    const ai = costOfRequest('POST', `${VAL}/ai/jobs`);
+    const ai = costOfRequest('POST', `${VAL}/ai/extract`);
     expect(ai).toBeGreaterThan(costOfRequest('GET', `${VAL}/report.pdf`));
     expect(ai).toBeGreaterThan(costOfRequest('GET', '/api/v1/search'));
+    // Every pipeline the route accepts, not just the one that got a rule.
+    for (const pipeline of ['extract', 'summarize', 'comparables', 'missing_data', 'explain']) {
+      expect(costOfRequest('POST', `${VAL}/ai/${pipeline}`), pipeline).toBe(ai);
+    }
+  });
+
+  it('leaves the apply step cheap — it re-reads a stored job, it does not run one', () => {
+    expect(costOfRequest('POST', `${VAL}/ai/extract/apply`)).toBe(DEFAULT_COST);
+    expect(costOfRequest('GET', `${VAL}/ai`)).toBe(DEFAULT_COST);
   });
 
   it('prices a bundle above a single render', () => {
-    expect(costOfRequest('GET', `${VAL}/evidence.zip`)).toBeGreaterThan(
+    expect(costOfRequest('POST', `${VAL}/evidence-bundle`)).toBeGreaterThan(
       costOfRequest('GET', `${VAL}/report.pdf`),
     );
   });
@@ -188,7 +297,7 @@ describe('WeightedWindowRateLimiter', () => {
 
   it('stops a user spraying evidence bundles', () => {
     const limiter = new WeightedWindowRateLimiter(200, WINDOW);
-    const cost = costOfRequest('GET', `${VAL}/evidence.zip`);
+    const cost = costOfRequest('POST', `${VAL}/evidence-bundle`);
     let admitted = 0;
     for (let i = 0; i < 50; i += 1) {
       if (limiter.consume('u1', cost, i).allowed) admitted += 1;

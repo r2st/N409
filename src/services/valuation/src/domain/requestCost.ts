@@ -26,33 +26,54 @@ export const DEFAULT_COST = 0;
 /**
  * First match wins, so order matters: put the narrower pattern first.
  * Costs are relative — a render is ~10x a list, a bundle ~30x.
+ *
+ * Every pattern here has to match a URL this service actually registers, and
+ * most of them used not to. The table was written from the shape the routes
+ * were expected to take rather than the shape they took: there is no
+ * `/ai/jobs`, no `/ai/run`, no `/backsolve`, no `/agents/…`, no
+ * `/scenarios/:id/run`, no `/asc718/expense`, and no `/documents/:id/content`.
+ * Seven of eighteen rules could not fire, and among them was the one the
+ * comment called "the most expensive thing the platform does per request" — so
+ * a 90-second LLM pipeline, a scenario that runs the engine, and a bulk export
+ * were all charged nothing while the budget dutifully throttled a PDF
+ * download. The budget looked configured and enforced exactly one thing it was
+ * written to stop.
+ *
+ * `routeAudit.all()` now exposes the registered set, and the cost test asserts
+ * every rule below matches something in it, so a rule cannot go dead again
+ * when a route is renamed.
  */
 export const COST_RULES: readonly CostRule[] = [
+  // AI pipelines — the most expensive thing the platform does per request.
+  // POST /valuations/:id/ai/:pipeline. Matching a single trailing segment is
+  // deliberate: /ai/extract/apply only re-reads a stored job's result.
+  { pattern: /\/ai\/[^/]+$/, methods: ['POST'], cost: 25 },
+  { pattern: /\/admin\/prompts\/[^/]+\/test$/, methods: ['POST'], cost: 25 },
+  { pattern: /\/qa$/, methods: ['POST'], cost: 20 },
+
   // Document/report rendering and bundling — CPU plus large buffers.
-  { pattern: /\/evidence(-bundle)?(\.zip)?$/, cost: 30 },
-  { pattern: /\/exports?\/.+$/, cost: 15 },
-  { pattern: /\.zip$/, cost: 30 },
+  { pattern: /\/evidence-bundle$/, methods: ['POST'], cost: 30 },
+  { pattern: /\/export$/, methods: ['GET'], cost: 15 },
   { pattern: /\.xlsx$/, cost: 15 },
+  { pattern: /\/report\/render$/, methods: ['POST'], cost: 10 },
   { pattern: /\.pdf$/, cost: 10 },
+  { pattern: /\/invoices\/[^/]+\/pdf$/, methods: ['GET'], cost: 10 },
   { pattern: /\.csv$/, cost: 8 },
+  { pattern: /\/documents\/[^/]+\/download$/, methods: ['GET'], cost: 5 },
 
   // Engine round-trips.
   { pattern: /\/calculations$/, methods: ['POST'], cost: 12 },
-  { pattern: /\/sensitivity/, cost: 12 },
-  { pattern: /\/scenarios\/.+\/run$/, methods: ['POST'], cost: 12 },
-  { pattern: /\/backsolve$/, methods: ['POST'], cost: 12 },
-  { pattern: /\/waterfall$/, cost: 10 },
-  { pattern: /\/asc718\/(expense|forecast)/, methods: ['POST'], cost: 10 },
-
-  // AI pipelines — the most expensive thing the platform does per request.
-  { pattern: /\/ai\/(jobs|run)/, methods: ['POST'], cost: 25 },
-  { pattern: /\/qa$/, methods: ['POST'], cost: 20 },
-  { pattern: /\/agents?\//, methods: ['POST'], cost: 25 },
+  { pattern: /\/sensitivity(\/model)?$/, methods: ['POST'], cost: 12 },
+  { pattern: /\/scenarios(\/preview)?$/, methods: ['POST'], cost: 12 },
+  { pattern: /\/asc718$/, methods: ['POST'], cost: 10 },
+  { pattern: /\/waterfall$/, methods: ['POST'], cost: 10 },
+  { pattern: /\/calibrate$/, methods: ['POST'], cost: 10 },
+  { pattern: /\/instruments\/[^/]+\/value$/, methods: ['POST'], cost: 10 },
+  { pattern: /\/rating-spread$/, methods: ['POST'], cost: 10 },
 
   // Bulk reads that fan out across the corpus.
-  { pattern: /\/documents\/.+\/content$/, cost: 5 },
-  { pattern: /\/search$/, cost: 3 },
-  { pattern: /\/audit-trail/, cost: 3 },
+  { pattern: /\/search$/, methods: ['GET'], cost: 3 },
+  { pattern: /\/audit-trail$/, methods: ['GET'], cost: 3 },
 ];
 
 /** Strip the query string and any trailing slash before matching. */
