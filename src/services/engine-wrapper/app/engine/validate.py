@@ -29,6 +29,8 @@ import math
 from dataclasses import dataclass, field as dc_field
 from datetime import date
 
+from .projection import MAX_FORECAST_YEARS
+
 ERROR = "error"
 WARNING = "warning"
 
@@ -219,6 +221,18 @@ def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> No
             "income.free_cash_flows must be a non-empty list of yearly cash flows",
             "Add the projection years to the financial model.",
         )
+    elif len(fcf) > MAX_FORECAST_YEARS:
+        # The horizon is the exponent on every discount factor, and a float `**`
+        # overflows rather than saturating — so an over-long explicit forecast
+        # reached `income_dcf` and came back a 500. Refused here so it lands as a
+        # field-addressable 422 alongside whatever else is wrong with the payload.
+        c.error(
+            "out_of_range",
+            "inputs.income.free_cash_flows",
+            f"free_cash_flows accepts at most {MAX_FORECAST_YEARS} years; got {len(fcf)}",
+            "An explicit DCF forecast period is 5-10 years; use the terminal value "
+            "for everything past the horizon.",
+        )
     else:
         flows = [_finite(v) for v in fcf]
         for i, value in enumerate(flows):
@@ -337,16 +351,35 @@ def _check_cap_table(
         hint="Fully diluted common is the denominator of the per-share value.",
     )
 
-    options = inputs.get("options_outstanding")
-    if options is not None:
-        num = _finite(options)
+    # Share counts and the preference stack are all "cannot be negative", and
+    # each of them silently changes the answer rather than failing when it is.
+    #
+    # `options_outstanding` was checked from the start; the other two were not,
+    # and they are the ones that matter most. Every allocation path guards the
+    # preference with `preferred_shares > 0 and liquidation_preference > 0`, so a
+    # single mistyped minus sign does not produce a wrong-looking number — it
+    # takes the entire preference stack out of the model and falls through to
+    # as-converted, where common receives everything. Measured on the reference
+    # payload, `shares_outstanding_preferred: -2000000` moved the concluded FMV
+    # from $0.9761 to $1.5789, a 62% overstatement reported as a clean 200 with
+    # no error and no warning. That is the direction that understates option
+    # strike prices, and it is invisible in the result.
+    for field_name, label in (
+        ("options_outstanding", "options_outstanding"),
+        ("shares_outstanding_preferred", "shares_outstanding_preferred"),
+        ("liquidation_preference", "liquidation_preference"),
+    ):
+        raw = inputs.get(field_name)
+        if raw is None:
+            continue
+        num = _finite(raw)
         if num is None:
-            c.error("not_a_number", "inputs.options_outstanding", "options_outstanding must be a number")
+            c.error("not_a_number", f"inputs.{field_name}", f"{label} must be a number")
         elif num < 0:
             c.error(
                 "out_of_range",
-                "inputs.options_outstanding",
-                f"options_outstanding cannot be negative (got {num:g})",
+                f"inputs.{field_name}",
+                f"{label} cannot be negative (got {num:g})",
             )
 
     share_classes = inputs.get("share_classes")

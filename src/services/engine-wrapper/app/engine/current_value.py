@@ -22,7 +22,7 @@ from .errors import EngineInputError
 from .waterfall import exit_allocation
 
 
-def _num(value, name: str, *, positive: bool = False) -> float | None:
+def _num(value, name: str, *, positive: bool = False, nonneg: bool = False) -> float | None:
     if value is None:
         return None
     try:
@@ -33,6 +33,12 @@ def _num(value, name: str, *, positive: bool = False) -> float | None:
         raise EngineInputError(f"{name} must be a finite number")
     if positive and out <= 0:
         raise EngineInputError(f"{name} must be positive")
+    # Mirrors compute._num: a negative share count or preference reads as zero in
+    # every branch below, so the CVM would quietly hand common the whole equity
+    # value. Worse here than in the OPM path — negative options also shrink the
+    # fully-diluted denominator on line 115, and enough of them make it zero.
+    if nonneg and out < 0:
+        raise EngineInputError(f"{name} cannot be negative")
     return out
 
 
@@ -69,10 +75,14 @@ def allocate_cvm(equity_value: float, inputs: dict) -> dict:
     )
     if common_shares is None:
         raise EngineInputError("shares_outstanding_common is required for CVM")
-    options = _num(inputs.get("options_outstanding"), "options_outstanding") or 0.0
+    options = _num(inputs.get("options_outstanding"), "options_outstanding", nonneg=True) or 0.0
     fully_diluted_common = common_shares + options
-    preferred_shares = _num(inputs.get("shares_outstanding_preferred"), "shares_outstanding_preferred") or 0.0
-    liquidation_preference = _num(inputs.get("liquidation_preference"), "liquidation_preference") or 0.0
+    preferred_shares = (
+        _num(inputs.get("shares_outstanding_preferred"), "shares_outstanding_preferred", nonneg=True) or 0.0
+    )
+    liquidation_preference = (
+        _num(inputs.get("liquidation_preference"), "liquidation_preference", nonneg=True) or 0.0
+    )
 
     if preferred_shares > 0 and liquidation_preference > 0:
         # Reuse the deterministic waterfall via a synthetic two-class cap table

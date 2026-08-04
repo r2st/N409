@@ -367,3 +367,97 @@ def test_a_clean_compute_reports_no_warnings():
     res = client.post("/engine/v1/compute", json={"params": GOOD_PARAMS, "inputs": GOOD_INPUTS})
     assert res.status_code == 200
     assert res.json()["warnings"] == []
+
+
+# ── The cap table's non-negative quantities ──────────────────────────────────
+#
+# `options_outstanding` was checked from the start; the preference stack was
+# not. Every allocation branch in compute._opm_allocate, allocate_cvm and the
+# aggregate backsolve guards the preference with `preferred_shares > 0 and
+# liquidation_preference > 0`, so a single mistyped minus sign does not produce
+# a wrong-looking number: it removes the whole preference stack from the model
+# and falls through to as-converted, where common takes everything. The run
+# returns 200 with no error and no warning, and the overstatement is invisible
+# in the result.
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["options_outstanding", "shares_outstanding_preferred", "liquidation_preference"],
+)
+def test_a_negative_cap_table_quantity_is_an_error_not_a_silent_reinterpretation(field_name):
+    issues = validate_payload(GOOD_PARAMS, {**GOOD_INPUTS, field_name: -1_000})
+    errors, _ = split_issues(issues)
+    assert "out_of_range" in codes(errors)
+    assert f"inputs.{field_name}" in fields(errors)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["options_outstanding", "shares_outstanding_preferred", "liquidation_preference"],
+)
+def test_zero_stays_legal_for_every_one_of_them(field_name):
+    # Zero is a real answer — "no preferred outstanding", "no option pool".
+    errors, _ = split_issues(validate_payload(GOOD_PARAMS, {**GOOD_INPUTS, field_name: 0}))
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["options_outstanding", "shares_outstanding_preferred", "liquidation_preference"],
+)
+def test_compute_refuses_the_same_negative_quantity_it_used_to_absorb(field_name):
+    with pytest.raises(EngineInputError, match="cannot be negative"):
+        compute(GOOD_PARAMS, {**GOOD_INPUTS, field_name: -1_000})
+
+
+def test_the_sign_typo_that_used_to_inflate_the_concluded_fmv_is_now_a_422():
+    baseline = compute(GOOD_PARAMS, GOOD_INPUTS)["results"]
+    assert baseline["allocation"]["method"] == "opm_single_breakpoint"
+
+    res = client.post(
+        "/engine/v1/compute",
+        json={"params": GOOD_PARAMS, "inputs": {**GOOD_INPUTS, "shares_outstanding_preferred": -2_000_000}},
+    )
+    assert res.status_code == 422
+    body = res.json()
+    assert "inputs.shares_outstanding_preferred" in {i["field"] for i in body["issues"]}
+
+
+def test_the_cvm_path_refuses_a_negative_quantity_too():
+    params = {**GOOD_PARAMS, "allocation_method": "cvm"}
+    with pytest.raises(EngineInputError, match="cannot be negative"):
+        compute(params, {**GOOD_INPUTS, "options_outstanding": -1_000})
+
+
+# ── The explicit DCF forecast horizon ────────────────────────────────────────
+
+
+def test_an_over_long_forecast_horizon_is_a_422_not_an_overflow_500():
+    from app.engine.projection import MAX_FORECAST_YEARS
+
+    inputs = {
+        **GOOD_INPUTS,
+        "income": {**GOOD_INPUTS["income"], "free_cash_flows": [100_000.0] * 4_000},
+    }
+    errors, _ = split_issues(validate_payload(GOOD_PARAMS, inputs))
+    assert "out_of_range" in codes(errors)
+    assert "inputs.income.free_cash_flows" in fields(errors)
+
+    res = client.post("/engine/v1/compute", json={"params": GOOD_PARAMS, "inputs": inputs})
+    assert res.status_code == 422
+    assert str(MAX_FORECAST_YEARS) in res.json()["detail"]
+
+
+def test_a_horizon_at_the_limit_still_computes():
+    from app.engine.projection import MAX_FORECAST_YEARS
+
+    inputs = {
+        **GOOD_INPUTS,
+        "income": {**GOOD_INPUTS["income"], "free_cash_flows": [100_000.0] * MAX_FORECAST_YEARS},
+    }
+    errors, _ = split_issues(validate_payload(GOOD_PARAMS, inputs))
+    assert errors == []
+    res = client.post("/engine/v1/compute", json={"params": GOOD_PARAMS, "inputs": inputs})
+    assert res.status_code == 200
+    assert res.json()["results"]["fmv_per_share"] > 0

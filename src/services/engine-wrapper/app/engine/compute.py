@@ -53,7 +53,7 @@ _WACC_KEYS = frozenset(
 )
 
 
-def _num(value, name: str, *, positive: bool = False) -> float | None:
+def _num(value, name: str, *, positive: bool = False, nonneg: bool = False) -> float | None:
     if value is None:
         return None
     try:
@@ -66,6 +66,14 @@ def _num(value, name: str, *, positive: bool = False) -> float | None:
         raise EngineInputError(f"{name} must be a finite number")
     if positive and out <= 0:
         raise EngineInputError(f"{name} must be positive")
+    # `nonneg` is for the quantities that are *optionally* zero but never below
+    # it — share counts and the preference stack. Zero is a real answer there
+    # ("no preferred outstanding"); a negative one is a typo that every
+    # allocation branch reads as zero, dropping the whole preference stack and
+    # handing common the entire equity value without a word. See the matching
+    # pre-flight checks in validate._check_cap_table.
+    if nonneg and out < 0:
+        raise EngineInputError(f"{name} cannot be negative")
     return out
 
 
@@ -273,7 +281,7 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
     common_shares = _req(
         inputs.get("shares_outstanding_common"), "shares_outstanding_common", positive=True
     )
-    options = _num(inputs.get("options_outstanding"), "options_outstanding") or 0.0
+    options = _num(inputs.get("options_outstanding"), "options_outstanding", nonneg=True) or 0.0
     fully_diluted_common = common_shares + options
 
     # Expected (probability-weighted) time to exit drives any model DLOM.
@@ -443,9 +451,13 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
     fully diluted common, volatility, and the pre-discount common per share.
     Shared by the OPM and hybrid paths."""
     common_shares = _req(inputs.get("shares_outstanding_common"), "shares_outstanding_common", positive=True)
-    options = _num(inputs.get("options_outstanding"), "options_outstanding") or 0.0
-    preferred_shares = _num(inputs.get("shares_outstanding_preferred"), "shares_outstanding_preferred") or 0.0
-    liquidation_preference = _num(inputs.get("liquidation_preference"), "liquidation_preference") or 0.0
+    options = _num(inputs.get("options_outstanding"), "options_outstanding", nonneg=True) or 0.0
+    preferred_shares = (
+        _num(inputs.get("shares_outstanding_preferred"), "shares_outstanding_preferred", nonneg=True) or 0.0
+    )
+    liquidation_preference = (
+        _num(inputs.get("liquidation_preference"), "liquidation_preference", nonneg=True) or 0.0
+    )
     fully_diluted_common = common_shares + options
 
     share_classes = inputs.get("share_classes")
