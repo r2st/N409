@@ -50,7 +50,7 @@ import { acceptInvitation, findPendingInvitationByToken } from '../repos/invitat
 import { getSamlConfig } from '../repos/ssoConfig.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { emailVerificationEmail, passwordResetEmail } from '../domain/emailWorkflows.js';
-import { sendTransactionalEmail } from '../email/transactional.js';
+import { sendTransactionalEmail, sendTransactionalEmailInBackground } from '../email/transactional.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 
@@ -481,8 +481,12 @@ export function registerAuthRoutes(
       const link = `${baseUrl}/reset-password#token=${secret}`;
       const template = passwordResetEmail(link);
       // Deliberately not awaited: response latency must not reveal whether
-      // an account exists. The outbox row tracks delivery either way.
-      void sendTransactionalEmail(
+      // an account exists. The outbox row tracks delivery either way. Through
+      // the background helper rather than a bare `void`, because a rejection
+      // from an unawaited promise is an unhandled rejection, and this service
+      // exits on those — so a database hiccup here took the process down from
+      // an unauthenticated endpoint.
+      sendTransactionalEmailInBackground(
         { pool: deps.pool, transport: deps.transport, log: req.log },
         { toUserId: user.id, toEmail: user.email, ...template, vars: { link } },
       );

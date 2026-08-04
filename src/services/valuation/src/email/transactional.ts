@@ -44,7 +44,39 @@ export async function sendTransactionalEmail(
     await deps.transport.send(email);
     await markEmail(deps.pool, email.id, 'sent');
   } catch (err) {
-    await markEmail(deps.pool, email.id, 'failed', err instanceof Error ? err.message : String(err));
+    // The marking is itself a query, so it fails when the reason the send failed
+    // was the database. Losing the 'failed' stamp is a bookkeeping problem; a
+    // rejection escaping this function is not — see below.
+    try {
+      await markEmail(deps.pool, email.id, 'failed', err instanceof Error ? err.message : String(err));
+    } catch (markErr) {
+      deps.log?.warn({ err: markErr, emailId: email.id }, 'could not mark transactional email failed');
+    }
     deps.log?.warn({ err, emailId: email.id }, 'transactional email delivery failed; left in outbox');
   }
+}
+
+/**
+ * Send without waiting, and without a rejection ever escaping.
+ *
+ * `sendTransactionalEmail` swallows *delivery* errors, as its contract says, but
+ * the outbox insert in front of them is a plain query: a pool timeout, a lost
+ * connection, an address longer than the column all reject. Awaited by a route
+ * that is a 500 — honest enough. Not awaited, it is an unhandled rejection, and
+ * `installCrashHandlers` answers one of those by logging and exiting so systemd
+ * restarts the service. `POST /api/v1/auth/forgot-password` is unauthenticated
+ * and deliberately does not await (response latency must not reveal whether an
+ * account exists), so the whole valuation service went down on a database
+ * hiccup that a caller could pick the moment for.
+ *
+ * Callers that want the failure to reach the client keep awaiting the function
+ * above; this one is for the sites that have already decided they don't.
+ */
+export function sendTransactionalEmailInBackground(
+  deps: { pool: pg.Pool; transport?: EmailTransport; log?: FastifyBaseLogger },
+  input: Parameters<typeof sendTransactionalEmail>[1],
+): void {
+  void sendTransactionalEmail(deps, input).catch((err: unknown) => {
+    deps.log?.warn({ err, templateKey: input.templateKey }, 'background transactional email failed');
+  });
 }
