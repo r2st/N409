@@ -1,5 +1,7 @@
 """Unit tests for the four valuation approaches."""
 
+import math
+
 import pytest
 from app.engine.approaches import (
     EngineInputError,
@@ -8,6 +10,7 @@ from app.engine.approaches import (
     market_multiples,
     opm_backsolve,
 )
+from app.engine.projection import MAX_FORECAST_YEARS
 
 
 # ── income_dcf ───────────────────────────────────────────────────────────────
@@ -143,3 +146,47 @@ class TestOpmBacksolve:
             common_shares=1_000_000,
         )
         assert result["method"] == "post_money"
+
+
+# ── income_dcf: the explicit forecast horizon ────────────────────────────────
+
+
+class TestIncomeDcfHorizon:
+    """A DCF's horizon is the exponent on every discount factor it builds.
+
+    `projection.py` already refuses a horizon past MAX_FORECAST_YEARS when it
+    *generates* the flows; a caller handing them over directly bypassed that,
+    and Python's float `**` raises OverflowError rather than saturating to inf.
+    A plausible 30% rate over a few thousand "years" — 20 KB of JSON, inside
+    every request cap — therefore came back as an unhandled 500.
+    """
+
+    def test_horizon_at_the_limit_is_accepted(self):
+        result = income_dcf([100.0] * MAX_FORECAST_YEARS, discount_rate=0.30, terminal_growth=0.02)
+        assert result["equity_value"] > 0
+        assert math.isfinite(result["pv_explicit"])
+        assert math.isfinite(result["pv_terminal"])
+
+    def test_horizon_past_the_limit_is_refused(self):
+        with pytest.raises(EngineInputError, match="at most"):
+            income_dcf([100.0] * (MAX_FORECAST_YEARS + 1), discount_rate=0.30)
+
+    def test_the_overflowing_horizon_is_an_input_error_not_a_crash(self):
+        # 4,000 years at 25% overflowed a float and raised OverflowError.
+        with pytest.raises(EngineInputError):
+            income_dcf([100.0] * 4_000, discount_rate=0.25)
+
+    def test_compound_factor_guards_a_rate_that_cannot_compound(self):
+        # Reachable only by calling the approach directly (validate refuses a
+        # non-positive rate), but the factor must still be an input error.
+        with pytest.raises(EngineInputError, match="greater than -1"):
+            income_dcf([100.0, 110.0], discount_rate=-1.0, terminal_growth=-2.0)
+
+    def test_discounting_is_unchanged_by_the_compound_factor_rewrite(self):
+        flows = [100.0, 250.0, -40.0, 900.0]
+        r, g = 0.18, 0.03
+        result = income_dcf(flows, discount_rate=r, terminal_growth=g)
+        expected_pv = sum(f / (1.0 + r) ** (i + 1) for i, f in enumerate(flows))
+        expected_tv = flows[-1] * (1.0 + g) / (r - g) / (1.0 + r) ** len(flows)
+        assert result["pv_explicit"] == pytest.approx(expected_pv, rel=1e-12)
+        assert result["pv_terminal"] == pytest.approx(expected_tv, rel=1e-12)

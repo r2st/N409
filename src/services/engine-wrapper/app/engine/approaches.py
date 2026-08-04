@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import statistics
 
+from .compounding import compound_factor
 from .errors import EngineInputError
+from .projection import MAX_FORECAST_YEARS
 
 __all__ = [
     "EngineInputError",
@@ -28,14 +30,33 @@ def income_dcf(
 ) -> dict:
     if not free_cash_flows:
         raise EngineInputError("income.free_cash_flows must be a non-empty list")
+    # The explicit forecast period is the exponent every discount factor below
+    # is raised to, and it arrived as a list of whatever length the caller sent.
+    # Python's float `**` raises OverflowError rather than returning inf, so a
+    # plausible 30% discount rate over ~3,200 years — a 20 KB body, well inside
+    # the request cap — took the whole request down with an unhandled exception
+    # and a 500. `projection.py` already refuses the same horizon when it
+    # *builds* the flows; a caller supplying them directly bypassed that, so the
+    # bound belongs here too and is deliberately the same number.
+    if len(free_cash_flows) > MAX_FORECAST_YEARS:
+        raise EngineInputError(
+            f"income.free_cash_flows accepts at most {MAX_FORECAST_YEARS} years "
+            f"(a DCF forecast period is 5-10 years); got {len(free_cash_flows)}"
+        )
     if discount_rate <= terminal_growth:
         raise EngineInputError("income.discount_rate must exceed terminal_growth")
 
-    pv_fcf = sum(fcf / (1.0 + discount_rate) ** (year + 1) for year, fcf in enumerate(free_cash_flows))
+    # compound_factor rather than a bare `**`: it turns an overflow or a base at
+    # or below zero into a 422 naming the rate, instead of an OverflowError or a
+    # complex number that dies several frames later.
     horizon = len(free_cash_flows)
+    factors = [
+        compound_factor(discount_rate, year + 1, "income.discount_rate") for year in range(horizon)
+    ]
+    pv_fcf = sum(fcf / factor for fcf, factor in zip(free_cash_flows, factors))
     terminal_fcf = free_cash_flows[-1] * (1.0 + terminal_growth)
     terminal_value = terminal_fcf / (discount_rate - terminal_growth)
-    pv_terminal = terminal_value / (1.0 + discount_rate) ** horizon
+    pv_terminal = terminal_value / factors[-1]
     enterprise = pv_fcf + pv_terminal
     return {
         "pv_explicit": pv_fcf,
