@@ -635,6 +635,40 @@ def _compute_hybrid(params: dict, inputs: dict, recompute: list[str] | None, pri
     return {"engine_version": ENGINE_VERSION, "results": results}
 
 
+def _assert_finite_results(node, path: str = "results") -> None:
+    """Refuse a result document holding a non-finite float, naming where it is.
+
+    The approach layer names the overflows it can see (`approaches._finite_result`),
+    but it is not the only place the arithmetic leaves the finite floats. Every
+    per-share figure is a division by a share count, and a share count only has
+    to be *positive* — `1e-320` is a legal denormal that passes `_num(...,
+    positive=True)`, and dividing a perfectly ordinary equity value by it gives
+    `inf`. The same holds inside the waterfall, whose per-class `value / shares`
+    is one division per class.
+
+    Catching it here rather than at each division is deliberate. The failure is
+    not a property of any one formula — it is the boundary between "a float this
+    engine computed" and "a number JSON can carry", and Starlette renders with
+    `allow_nan=False`, so anything non-finite that reaches it is a 500 naming
+    nothing at all. One sweep over the finished document is the narrowest place
+    that covers every path into it, including ones added later.
+    """
+    if isinstance(node, float):
+        if not math.isfinite(node):
+            raise EngineInputError(
+                f"the calculation produced a non-finite value at {path} — check the input "
+                "magnitudes (very large figures, or a share count near zero, overflow the "
+                "arithmetic)"
+            )
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            _assert_finite_results(value, f"{path}.{key}")
+    elif isinstance(node, (list, tuple)):
+        for i, value in enumerate(node):
+            _assert_finite_results(value, f"{path}[{i}]")
+
+
 def compute(
     params: dict,
     inputs: dict,
@@ -689,4 +723,5 @@ def compute(
 
     if auto_meta is not None:
         out["results"]["auto"] = auto_meta
+    _assert_finite_results(out["results"])
     return out

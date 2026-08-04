@@ -89,6 +89,20 @@ def _clean_series(values, name: str) -> list[float]:
 
 
 def _log_returns(prices: list[float], name: str) -> list[float]:
+    """Close-to-close log returns of a positive price series.
+
+    Taken as `log(cur) - log(prev)` rather than `log(cur / prev)`. The two agree
+    in exact arithmetic; in floating point the quotient of two positive doubles
+    far apart in magnitude is not representable, so it flushes to 0.0 (or
+    saturates to inf) and `math.log` raises "expected a positive input" on a
+    series whose every entry passed the positivity check immediately above.
+    That ValueError is not an EngineInputError, so it surfaced as a 500 rather
+    than the 422 a bad price series deserves — the same failure the finiteness
+    check in `_clean_series` was added for, one operation later.
+
+    The difference of logs is defined for every positive finite pair, and is the
+    numerically better form for near-equal prices as well.
+    """
     if len(prices) < 2:
         raise EngineInputError(f"{name} needs at least 2 prices to compute a return")
     returns: list[float] = []
@@ -96,7 +110,7 @@ def _log_returns(prices: list[float], name: str) -> list[float]:
         prev, cur = prices[i - 1], prices[i]
         if prev <= 0 or cur <= 0:
             raise EngineInputError(f"{name} prices must be positive to take log returns")
-        returns.append(math.log(cur / prev))
+        returns.append(math.log(cur) - math.log(prev))
     return returns
 
 
@@ -161,7 +175,11 @@ def parkinson_volatility(
             raise EngineInputError("parkinson highs/lows must be positive")
         if h < low:
             raise EngineInputError("parkinson high must be >= low")
-        squared.append(math.log(h / low) ** 2)
+        # Differenced for the reason `_log_returns` documents. Here the ratio
+        # saturates upward rather than down — `h / low` for a high far above the
+        # low is inf, which squares to inf and carries an infinite volatility
+        # all the way out of the estimator instead of raising.
+        squared.append((math.log(h) - math.log(low)) ** 2)
     daily_var = factor * (sum(squared) / len(squared))
     return math.sqrt(daily_var) * math.sqrt(periods_per_year)
 

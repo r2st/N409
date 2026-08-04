@@ -6,6 +6,7 @@ bridge with + cash − debt.
 
 from __future__ import annotations
 
+import math
 import statistics
 
 from .compounding import compound_factor
@@ -19,6 +20,34 @@ __all__ = [
     "market_multiples",
     "opm_backsolve",
 ]
+
+
+def _finite_result(value: float, name: str, hint: str) -> float:
+    """A computed approach figure, or an EngineInputError explaining the overflow.
+
+    Every scalar reaching these functions is finite — `compute._num` refuses
+    NaN/Inf at the boundary — but the arithmetic between them is not closed over
+    the finite floats. Multiplication and division saturate to ``inf`` in Python
+    rather than raising, so a cash flow near the top of the double range, a
+    multiple applied to a huge metric, or a bridge that adds two of them produce
+    an ``inf`` equity value out of inputs that each passed every check.
+
+    Nothing downstream notices: ``inf <= 0`` is False, so the weighted-value
+    guard lets it through, ``round(inf, 2)`` is ``inf``, and the figure travels
+    the whole way to Starlette's JSON encoder — which is the first thing to
+    object, with ``allow_nan=False``, as a 500 naming nothing. Worse, the
+    pre-flight validator clears the same payload: it checks that each figure is
+    finite, which they all are, so the caller is told the inputs are good and
+    then handed an unhandled error for using them.
+
+    So the overflow is caught where it happens and named there. The sibling
+    engines already answer this way — `fund_valuation`, `rollforward` and `wacc`
+    each refuse a non-finite result rather than returning one — and this is the
+    approach layer catching up with them.
+    """
+    if not math.isfinite(value):
+        raise EngineInputError(f"{name} overflowed to a non-finite value — {hint}")
+    return value
 
 
 def income_dcf(
@@ -58,11 +87,15 @@ def income_dcf(
     terminal_value = terminal_fcf / (discount_rate - terminal_growth)
     pv_terminal = terminal_value / factors[-1]
     enterprise = pv_fcf + pv_terminal
+    hint = (
+        "check the cash-flow magnitudes, and that the discount rate is far "
+        "enough above the terminal growth rate"
+    )
     return {
-        "pv_explicit": pv_fcf,
-        "pv_terminal": pv_terminal,
-        "enterprise_value": enterprise,
-        "equity_value": enterprise + cash - debt,
+        "pv_explicit": _finite_result(pv_fcf, "income.pv_explicit", hint),
+        "pv_terminal": _finite_result(pv_terminal, "income.pv_terminal", hint),
+        "enterprise_value": _finite_result(enterprise, "income.enterprise_value", hint),
+        "equity_value": _finite_result(enterprise + cash - debt, "income.equity_value", hint),
     }
 
 
@@ -79,12 +112,13 @@ def market_multiples(
         raise EngineInputError("market.metric must be positive")
     selected = statistics.median(clean)
     enterprise = selected * metric
+    hint = "check the metric and multiple magnitudes"
     return {
         "metric": metric,
         "multiples": clean,
         "selected_multiple": selected,
-        "enterprise_value": enterprise,
-        "equity_value": enterprise + cash - debt,
+        "enterprise_value": _finite_result(enterprise, "market.enterprise_value", hint),
+        "equity_value": _finite_result(enterprise + cash - debt, "market.equity_value", hint),
     }
 
 
@@ -104,7 +138,11 @@ def asset_value(
         "method": "nav",
         "total_assets": total_assets,
         "total_liabilities": total_liabilities,
-        "equity_value": total_assets - total_liabilities,
+        "equity_value": _finite_result(
+            total_assets - total_liabilities,
+            "asset.equity_value",
+            "check the balance-sheet magnitudes",
+        ),
     }
 
 
