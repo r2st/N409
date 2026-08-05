@@ -222,7 +222,7 @@ def _segments(classes: list[dict]) -> list[dict]:
     return segments
 
 
-def allocate_waterfall(
+def _allocate(
     equity_value: float,
     classes: list[dict],
     # `float | None`, not `float`: the backsolve in `approaches` carries these
@@ -232,7 +232,14 @@ def allocate_waterfall(
     t: float | None,
     r: float | None,
     sigma: float | None,
-) -> dict:
+) -> tuple[list[dict], list[dict], list[float], dict[str, float]]:
+    """The allocation itself: validated classes, segments, per-segment tranche
+    values, and each class's value — all unrounded.
+
+    Split out from ``allocate_waterfall`` because rounding is a property of the
+    response, not of the arithmetic, and one caller needs the arithmetic:
+    ``class_per_share`` is the backsolve's Newton objective. See its docstring.
+    """
     _finite(equity_value, "equity_value")
     if equity_value <= 0:
         raise EngineInputError("equity_value must be positive for the waterfall allocation")
@@ -260,21 +267,35 @@ def allocate_waterfall(
     segments = _segments(normalized)
 
     values: dict[str, float] = {c["name"]: 0.0 for c in normalized}
-    breakpoints: list[dict] = []
+    tranches: list[float] = []
     for seg in segments:
         c_from = bs_call(equity_value, seg["from"], t, r, sigma)
         c_to = bs_call(equity_value, seg["to"], t, r, sigma) if seg["to"] is not None else 0.0
         tranche = c_from - c_to
         for name, fraction in seg["participants"].items():
             values[name] += tranche * fraction
-        breakpoints.append(
-            {
-                "from": round(seg["from"], 2),
-                "to": round(seg["to"], 2) if seg["to"] is not None else None,
-                "participants": {k: round(v, 6) for k, v in seg["participants"].items()},
-                "value": round(tranche, 2),
-            }
-        )
+        tranches.append(tranche)
+    return normalized, segments, tranches, values
+
+
+def allocate_waterfall(
+    equity_value: float,
+    classes: list[dict],
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
+) -> dict:
+    normalized, segments, tranches, values = _allocate(equity_value, classes, t, r, sigma)
+
+    breakpoints = [
+        {
+            "from": round(seg["from"], 2),
+            "to": round(seg["to"], 2) if seg["to"] is not None else None,
+            "participants": {k: round(v, 6) for k, v in seg["participants"].items()},
+            "value": round(tranche, 2),
+        }
+        for seg, tranche in zip(segments, tranches, strict=True)
+    ]
 
     by_class = {
         c["name"]: {
@@ -361,9 +382,35 @@ def class_per_share(
     r: float | None,
     sigma: float | None,
 ) -> float:
-    """Model value per share of one class — the backsolve objective."""
-    result = allocate_waterfall(equity_value, classes, t, r, sigma)
-    cls = result["classes"].get(class_name)
-    if cls is None:
-        raise EngineInputError(f"share class '{class_name}' not found in share_classes")
-    return cls["per_share"]
+    """Model value per share of one class — the backsolve objective.
+
+    Reads the allocation rather than ``allocate_waterfall``'s response, because
+    the response rounds ``per_share`` to six decimals and this is what Newton
+    differentiates. Rounding turns the objective into a step function, and both
+    halves of the solver degrade on one:
+
+    - The derivative is a central difference over ``h = |x|·1e-6``. On an equity
+      of $2.5e7 that is a step of 25, which moves the per-share figure by
+      ``50 / total_shares`` — so once a cap table runs to hundreds of millions
+      of shares the whole difference is *smaller than the rounding quantum* and
+      the derivative is reading quantization noise, not slope.
+    - Convergence is tested on the step size, so the solver keeps stepping until
+      the step is under ``1e-7·|x|``. It cannot get there against a function
+      that is flat in stretches, so it burns its iteration budget.
+
+    The error that leaves in the solved equity value is the quantum divided by
+    the slope — ``1e-6 · total_shares`` — so it grows linearly with the share
+    count while the reported ``solved_pps``, rounded the same way, still shows a
+    clean hit on the target. Measured against the exact objective on the same
+    inputs: 12M shares solved $5 apart in 8 Newton iterations against 2, 1.2B
+    shares $353 apart in 24, and 120B shares $26,469 apart (0.12%) in 18.
+
+    A 409A opinion is defensible to the cent, and this is the number the whole
+    OPM hangs off — so the objective is exact and the rounding stays in
+    ``allocate_waterfall``, where it only ever reaches a response body.
+    """
+    normalized, _, _, values = _allocate(equity_value, classes, t, r, sigma)
+    for c in normalized:
+        if c["name"] == class_name:
+            return values[c["name"]] / c["shares"]
+    raise EngineInputError(f"share class '{class_name}' not found in share_classes")
