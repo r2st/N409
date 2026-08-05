@@ -287,6 +287,20 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
         message: `"${e.security_class}" has an invalid share count.`,
         security_class: e.security_class,
       });
+    } else if (e.shares === 0) {
+      // A warning rather than an error, unlike the negative money below: zero
+      // is a real thing for a row to say (a retired class, an option pool with
+      // nothing left in it) and refusing the import would lose the other
+      // fifteen rows over it. But it is not a thing the *waterfall* can say —
+      // the engine's rule is `shares must be positive`, so this row is the one
+      // that turns the allocation into a 422 — and the importer is the only
+      // place that still knows which row it was.
+      issues.push({
+        severity: 'warning',
+        code: 'zero_shares',
+        message: `"${e.security_class}" has no shares outstanding — the waterfall allocation will refuse this row.`,
+        security_class: e.security_class,
+      });
     }
     summary.total_shares += Math.max(0, e.shares);
     if (e.class_type === 'common') summary.common_shares += e.shares;
@@ -344,6 +358,42 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
       }
       // Preference stack: invested × multiple, else shares × price × multiple.
       const invested = e.invested_amount ?? (e.price_per_share !== null ? e.price_per_share * e.shares : 0);
+      // The two money columns were the last unchecked inputs to the preference
+      // stack, and `parseNumericCell` hands them straight through: it reads a
+      // fully parenthesised `(5,000,000)` as −5,000,000, which is the correct
+      // reading of an accounting export and precisely how a negative one
+      // arrives. Shares are checked for it; these were not, so a repurchase or
+      // a contra row imported as `valid: true` and carried a *negative*
+      // preference through everything downstream:
+      //
+      //   - `waterfallSheet` prints it as the class's "Preference (currency)"
+      //     and sums it into the total, so the preference stack an auditor
+      //     reads is understated by twice the row.
+      //   - `summary.total_preference_stack` is understated the same way, and
+      //     that is the figure the import screen reports back.
+      //   - the ops `waterfall-inputs` endpoint hands it to an engine whose own
+      //     rule is `preference must be >= 0`, so the allocation is refused for
+      //     a table the importer had just called valid.
+      //
+      // A liquidation preference is a claim on proceeds; there is no such thing
+      // as a negative one. Same severity as `bad_liq_pref` just above, which
+      // has been making this exact check on the multiple all along.
+      if (e.invested_amount !== null && e.invested_amount < 0) {
+        issues.push({
+          severity: 'error',
+          code: 'negative_investment',
+          message: `"${e.security_class}" has a negative invested amount (${e.invested_amount}) — a liquidation preference cannot be negative.`,
+          security_class: e.security_class,
+        });
+      }
+      if (e.price_per_share !== null && e.price_per_share < 0) {
+        issues.push({
+          severity: 'error',
+          code: 'negative_price',
+          message: `"${e.security_class}" has a negative price per share (${e.price_per_share}).`,
+          security_class: e.security_class,
+        });
+      }
       if (invested === 0) {
         issues.push({
           severity: 'warning',

@@ -232,6 +232,72 @@ describe('capTable', () => {
       expect(bad).toHaveLength(1);
       expect(bad[0]!.security_class).toBe('Series A');
     });
+
+    // The money columns behind the preference stack. `parseNumericCell` reads
+    // `(5,000,000)` as −5,000,000 — the right reading of an accounting export,
+    // and exactly how a negative figure arrives here. Shares were checked for
+    // it and these were not, so a repurchase or contra row imported as valid
+    // and put a negative preference into the auditor's workbook, into the
+    // summary the import screen reports, and into an engine that refuses it.
+    describe('negative money in the preference stack', () => {
+      it.each([
+        ['a negative invested amount', { invested_amount: -5_000_000 }, 'negative_investment'],
+        ['a negative price per share', { price_per_share: -2.5 }, 'negative_price'],
+      ])('errors on %s', (_label, patch, code) => {
+        const v = validateCapTable([good[0]!, { ...good[1]!, ...patch }]);
+        expect(v.valid).toBe(false);
+        const issue = v.issues.find((i) => i.code === code);
+        expect(issue?.security_class).toBe('Series A');
+      });
+
+      it('refuses the accounting-parenthesis form the parser produces', () => {
+        const rows = parseCsv(
+          'class,type,shares,invested\nCommon,common,8000000,\nSeries A,preferred,2000000,"(5,000,000)"\n',
+        );
+        const entries = parseCapTable(rows, {
+          security_class: 'class',
+          class_type: 'type',
+          shares: 'shares',
+          invested_amount: 'invested',
+        });
+        expect(entries[1]!.invested_amount).toBe(-5_000_000);
+        expect(validateCapTable(entries).valid).toBe(false);
+      });
+
+      it('leaves a zero invested amount as the warning it already was', () => {
+        const v = validateCapTable([
+          good[0]!,
+          { ...good[1]!, invested_amount: 0, price_per_share: 0 },
+        ]);
+        expect(v.valid).toBe(true);
+        expect(v.issues.some((i) => i.code === 'no_investment')).toBe(true);
+      });
+
+      it('checks the columns independently of each other', () => {
+        // invested_amount wins over price × shares when both are present, but a
+        // negative price is still a negative price.
+        const v = validateCapTable([good[0]!, { ...good[1]!, price_per_share: -1 }]);
+        expect(v.issues.some((i) => i.code === 'negative_price')).toBe(true);
+        expect(v.issues.some((i) => i.code === 'negative_investment')).toBe(false);
+      });
+    });
+
+    // Zero shares is a warning, not an error: it is a real thing for a row to
+    // say, and refusing the import would lose every other row over it. But the
+    // engine's rule is `shares must be positive`, so the row is the one that
+    // turns the allocation into a 422 and this is the last place that knows
+    // which row it was.
+    it('warns that a zero-share row will be refused by the waterfall', () => {
+      const v = validateCapTable([good[0]!, { ...good[1]!, shares: 0 }]);
+      expect(v.valid).toBe(true);
+      const issue = v.issues.find((i) => i.code === 'zero_shares');
+      expect(issue?.severity).toBe('warning');
+      expect(issue?.security_class).toBe('Series A');
+    });
+
+    it('does not warn about zero shares on an ordinary table', () => {
+      expect(validateCapTable(good).issues.some((i) => i.code === 'zero_shares')).toBe(false);
+    });
   });
 
   describe('toWaterfallInputs', () => {
