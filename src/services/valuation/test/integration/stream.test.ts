@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
+import { ValuationHub } from '../../src/realtime/hub.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
 import type pg from 'pg';
 
@@ -157,6 +158,54 @@ describe.skipIf(!dbUp)('improvement 4 — realtime presence + comment stream (SS
 
     const unauthenticated = await fetch(`${base}/api/v1/valuations/${valuationId}/stream`);
     expect(unauthenticated.status).toBe(401);
+  });
+
+  it('refuses a stream past the per-user ceiling with 429, not a hijacked socket', async () => {
+    // A second app on the same pool, with a hub capped at one stream per user.
+    const config = loadConfig({
+      ...process.env,
+      NODE_ENV: 'test',
+      JWT_SECRET: 'integration-test-secret-0123456789abcdef',
+      LOG_LEVEL: 'silent',
+      AUTO_PIPELINE: 'off',
+    });
+    const capped = buildApp({ config, pool, hub: new ValuationHub({ maxPerUser: 1 }) });
+    await capped.listen({ port: 0, host: '127.0.0.1' });
+    const addr = capped.server.address();
+    const cappedBase = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
+
+    try {
+      const first = await openStream(cappedBase, valuationId, client.token);
+      expect(first.status).toBe(200);
+      await until(() => first.events.find((e) => e.event === 'presence'), 'first presence');
+
+      // The second is turned away as a problem document, with the headers a
+      // 429 carries — not left hanging on an event-stream that never opened.
+      const second = await fetch(`${cappedBase}/api/v1/valuations/${valuationId}/stream`, {
+        headers: { authorization: `Bearer ${client.token}` },
+      });
+      expect(second.status).toBe(429);
+      expect(second.headers.get('content-type')).toContain('application/problem+json');
+      expect(second.headers.get('retry-after')).toBe('30');
+      expect((await second.json()).detail).toMatch(/realtime streams/i);
+
+      // Another user still gets in — the ceiling is per-user, not global.
+      const other = await openStream(cappedBase, valuationId, ops.token);
+      expect(other.status).toBe(200);
+      other.close();
+
+      // Closing the first frees the slot for a reconnect.
+      first.close();
+      await until(
+        () => (capped.realtimeHub.stats().total === 0 ? true : undefined),
+        'the hub to drain after both closes',
+      );
+      const reconnect = await openStream(cappedBase, valuationId, client.token);
+      expect(reconnect.status).toBe(200);
+      reconnect.close();
+    } finally {
+      await capped.close();
+    }
   });
 
   it('one presence badge per user, however many tabs they have open', async () => {

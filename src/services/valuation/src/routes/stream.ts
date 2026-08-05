@@ -5,7 +5,14 @@ import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import type { ValuationHub } from '../realtime/hub.js';
+import { HubCapacityError, type ValuationHub } from '../realtime/hub.js';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /** The realtime hub these routes fan out through, for the saturation gauge. */
+    realtimeHub: ValuationHub;
+  }
+}
 
 /**
  * Improvement 4 — per-valuation SSE stream. One long-lived GET per open
@@ -18,6 +25,7 @@ export function registerStreamRoutes(
   deps: { pool: pg.Pool; hub: ValuationHub; heartbeatMs?: number },
 ): void {
   const heartbeatMs = deps.heartbeatMs ?? 25_000;
+  app.decorate('realtimeHub', deps.hub);
 
   app.get('/api/v1/valuations/:id/stream', { preHandler: app.authenticate }, async (req, reply) => {
     const principal: Principal = requirePrincipal(req);
@@ -34,6 +42,13 @@ export function registerStreamRoutes(
     const user = await findUserById(deps.pool, principal.id);
     const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.email || 'Someone';
 
+    // Refuse before hijacking: once the event-stream headers are on the wire
+    // there is no status left to answer with. `capacityFor` and the `join`
+    // below are one synchronous run, so no second request can slip between.
+    if (deps.hub.capacityFor(valuation.id, principal.id)) {
+      throw problems.tooManyRequests('Too many open realtime streams — close a tab and retry', 30);
+    }
+
     reply.hijack();
     reply.raw.writeHead(200, {
       'content-type': 'text/event-stream',
@@ -46,7 +61,16 @@ export function registerStreamRoutes(
     const send = (event: string, data: unknown) => {
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
-    const leave = deps.hub.join(valuation.id, { userId: principal.id, name, send });
+    let leave: () => void;
+    try {
+      leave = deps.hub.join(valuation.id, { userId: principal.id, name, send });
+    } catch (err) {
+      // Unreachable behind the check above, but a throw after `hijack()` has no
+      // reply to land on — end the stream rather than leak the socket.
+      if (!(err instanceof HubCapacityError)) req.log.error({ err }, 'realtime join failed');
+      reply.raw.end();
+      return;
+    }
 
     const heartbeat = setInterval(() => {
       reply.raw.write(': ping\n\n');

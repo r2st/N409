@@ -126,6 +126,8 @@ export interface AppDeps {
   capTableSyncFetch?: FetchFn;
   /** injectable for tests — HRIS provider HTTP */
   hrisFetch?: FetchFn;
+  /** injectable for tests — realtime SSE hub, to exercise its connection caps */
+  hub?: ValuationHub;
   /** injectable for tests — /ready probes against the AI + engine services */
   readinessFetch?: FetchFn;
 }
@@ -362,7 +364,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerWorkbookRoutes(app, { pool });
   registerReportRoutes(app, { pool });
   // Improvement 4 — realtime collaboration: presence + live comment pushes
-  const hub = new ValuationHub();
+  const hub = deps.hub ?? new ValuationHub();
   registerStreamRoutes(app, { pool, hub });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });

@@ -76,6 +76,14 @@ registerGauge(
   'queued auto-pipeline orchestrations',
   () => autoPipelineConcurrency().pending,
 );
+// Realtime streams are capped per-user/per-room/per-process (realtime/hub.ts);
+// this is the number those ceilings are measured against.
+registerGauge(
+  'valuation',
+  'realtime.streams.open',
+  'open per-valuation SSE connections',
+  () => app.realtimeHub.stats().total,
+);
 
 await migrate(pool, { log: (msg) => app.log.info({ migration: msg }, 'migration applied') });
 await app.listen({ port: config.PORT, host: listenHost() });

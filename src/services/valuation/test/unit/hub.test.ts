@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ValuationHub } from '../../src/realtime/hub.js';
+import { HubCapacityError, ValuationHub } from '../../src/realtime/hub.js';
 
 const V1 = '01JAAAAAAAAAAAAAAAAAAAAAAA';
 const V2 = '01JBBBBBBBBBBBBBBBBBBBBBBB';
@@ -61,5 +61,75 @@ describe('ValuationHub', () => {
 
   it('broadcast to an empty room is a no-op', () => {
     expect(() => new ValuationHub().broadcast(V1, 'comment', {})).not.toThrow();
+  });
+});
+
+describe('ValuationHub connection ceilings', () => {
+  const conn = (userId: string) => ({ userId, name: userId, send: vi.fn() });
+
+  it('caps the streams one user may hold, across valuations', () => {
+    const hub = new ValuationHub({ maxPerUser: 2 });
+    hub.join(V1, conn('u1'));
+    hub.join(V2, conn('u1')); // a different room still spends the same budget
+
+    expect(hub.capacityFor(V1, 'u1')).toBe('user');
+    expect(() => hub.join(V1, conn('u1'))).toThrow(HubCapacityError);
+    // …and only that user is refused.
+    expect(hub.capacityFor(V1, 'u2')).toBeNull();
+    expect(() => hub.join(V1, conn('u2'))).not.toThrow();
+  });
+
+  it('caps one room regardless of how many users fill it', () => {
+    const hub = new ValuationHub({ maxPerRoom: 2 });
+    hub.join(V1, conn('u1'));
+    hub.join(V1, conn('u2'));
+
+    expect(hub.capacityFor(V1, 'u3')).toBe('room');
+    expect(() => hub.join(V1, conn('u3'))).toThrow(HubCapacityError);
+    // A different valuation is unaffected.
+    expect(hub.capacityFor(V2, 'u3')).toBeNull();
+  });
+
+  it('caps the process total ahead of the narrower ceilings', () => {
+    const hub = new ValuationHub({ maxTotal: 2 });
+    hub.join(V1, conn('u1'));
+    hub.join(V2, conn('u2'));
+
+    expect(hub.capacityFor(V1, 'u3')).toBe('total');
+    expect(() => hub.join(V1, conn('u3'))).toThrow(HubCapacityError);
+  });
+
+  it('names the ceiling it hit on the thrown error', () => {
+    const hub = new ValuationHub({ maxPerUser: 1 });
+    hub.join(V1, conn('u1'));
+    try {
+      hub.join(V1, conn('u1'));
+      expect.unreachable('join should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HubCapacityError);
+      expect((err as HubCapacityError).scope).toBe('user');
+    }
+  });
+
+  it('leaving returns the budget, and a double-leave does not return it twice', () => {
+    const hub = new ValuationHub({ maxPerUser: 1 });
+    const leave = hub.join(V1, conn('u1'));
+    expect(hub.stats()).toEqual({ total: 1, rooms: 1, users: 1 });
+
+    leave();
+    expect(hub.stats()).toEqual({ total: 0, rooms: 0, users: 0 });
+    leave(); // idempotent — must not credit a second slot
+    expect(hub.stats().total).toBe(0);
+
+    // The freed slot is reusable exactly once.
+    hub.join(V1, conn('u1'));
+    expect(() => hub.join(V1, conn('u1'))).toThrow(HubCapacityError);
+  });
+
+  it('defaults leave room for ordinary multi-tab use', () => {
+    const hub = new ValuationHub();
+    for (let i = 0; i < 8; i++) hub.join(V1, conn('u1'));
+    expect(hub.capacityFor(V1, 'u1')).toBeNull();
+    expect(hub.stats().total).toBe(8);
   });
 });
