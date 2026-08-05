@@ -213,17 +213,106 @@ interface Token {
   closing?: boolean;
 }
 
+/**
+ * Splits the sanitized subset into tags and text.
+ *
+ * Scans for the brackets explicitly rather than letting one regex do it. The
+ * regex form — `/<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g` — is quadratic on
+ * input with no `>` in it: at every `<` the `[^>]*` runs to the end of the
+ * document looking for a closing bracket, fails, backtracks the whole way, and
+ * the engine advances one character and does it again. Measured on `"<p"`
+ * repeated: 7.5k copies took 49ms, 15k took 192ms, 30k 760ms and 60k 3.1s —
+ * a clean 4× per doubling, inside the 200,000-character section limit the
+ * schema already allows, on a service whose only job is rendering.
+ *
+ * Two things make the scan below linear:
+ *
+ *  - `gt` only ever moves forward. A `>` that is not there for this `<` is not
+ *    there for any `<` after it either, so the search resumes past the last one
+ *    found instead of restarting per candidate. This is the same argument
+ *    `domain/report.ts` makes for its comment and raw-text strippers.
+ *  - the tag pattern is sticky (`/y`) and anchored at the `<`, so it matches the
+ *    name in place rather than slicing the document out to test it. Its own
+ *    backtracking is bounded by the tag name.
+ *
+ * The tokens produced are identical to the regex's for every input; only the
+ * cost of arriving at them changes.
+ */
 function tokenize(html: string): Token[] {
   const tokens: Token[] = [];
-  const re = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+  // No `[^>]*>` tail: the attributes are skipped by the `gt` cursor instead.
+  // A successful match cannot cross the `>`, since neither whitespace nor a
+  // tag-name character is `>`.
+  const tag = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b/y;
+  const tokenText = (from: number, to: number) => {
+    if (to > from) tokens.push({ kind: 'text', value: html.slice(from, to) });
+  };
   let last = 0;
-  for (let m = re.exec(html); m; m = re.exec(html)) {
-    if (m.index > last) tokens.push({ kind: 'text', value: html.slice(last, m.index) });
+  let at = 0;
+  let gt = -1;
+  for (;;) {
+    const lt = html.indexOf('<', at);
+    if (lt === -1) break;
+    if (gt < lt) gt = html.indexOf('>', lt + 1);
+    if (gt === -1) break; // no `>` remains, for this `<` or any after it
+    tag.lastIndex = lt;
+    const m = tag.exec(html);
+    if (m === null) {
+      at = lt + 1; // a `<` that starts no tag is text; keep looking
+      continue;
+    }
+    tokenText(last, lt);
     tokens.push({ kind: 'tag', value: m[2]!.toLowerCase(), closing: m[1] === '/' });
-    last = re.lastIndex;
+    last = at = gt + 1;
   }
-  if (last < html.length) tokens.push({ kind: 'text', value: html.slice(last) });
+  tokenText(last, html.length);
   return tokens;
+}
+
+/**
+ * The longest run of non-whitespace handed to the line wrapper in one piece.
+ *
+ * pdfkit breaks a word that is wider than the line by fitting characters: it
+ * measures a prefix, adjusts by one character, and measures again, and each of
+ * those measurements walks the string. For one token that is O(n²) — rendering
+ * a single 64,000-character "word" took 5.5s against 23ms for the same bytes
+ * as ordinary words, and at the schema's 200,000-character section limit it is
+ * 52 seconds of one pinned CPU. The valuation service renders in-process, so
+ * that is the report path for every other request on the box, not a separate
+ * renderer that can be left to be slow.
+ *
+ * Chunking is what removes the exponent, and the chunk size barely matters to
+ * that: bounded at K, the fitting loop costs O(K²) per chunk over n/K chunks —
+ * O(K·n), linear in the input, for any fixed K. So K is chosen for the other
+ * constraint instead, which is that nothing real should ever reach it. 128 is
+ * several times the longest word in any natural language and an order of
+ * magnitude past the longest ticker, ULID or account reference this platform
+ * puts in a report.
+ */
+const MAX_UNBROKEN_RUN = 128;
+const SOFT_HYPHEN = '­';
+
+/**
+ * Inserts break opportunities into absurdly long unbroken runs.
+ *
+ * U+00AD rather than a space or a zero-width space: a soft hyphen is a break
+ * opportunity that renders *nothing* unless the line actually breaks there, in
+ * which case pdfkit draws the hyphen (it special-cases the character in
+ * `canFit`). So a run short enough to fit is unchanged on the page, and one
+ * that has to be broken is broken the way a typesetter would. It is also
+ * WinAnsi 0xAD, so the built-in Helvetica metrics this renderer uses carry it.
+ *
+ * Whitespace-separated text — which is all real prose — comes back untouched.
+ */
+export function breakLongRuns(text: string, limit: number = MAX_UNBROKEN_RUN): string {
+  // The common case is one pass over the string finding nothing to do.
+  if (text.length <= limit) return text;
+  return text.replace(/\S+/g, (run) => {
+    if (run.length <= limit) return run;
+    const parts: string[] = [];
+    for (let i = 0; i < run.length; i += limit) parts.push(run.slice(i, i + limit));
+    return parts.join(SOFT_HYPHEN);
+  });
 }
 
 /**
@@ -265,7 +354,9 @@ export function htmlToBlocks(html: string): Block[] {
 
   for (const token of tokenize(html)) {
     if (token.kind === 'text') {
-      const text = decodeEntities(token.value).replace(/\s+/g, ' ');
+      // Every piece of body text — paragraph, list item, table cell — passes
+      // through here, so it is the one place the unbroken-run bound has to go.
+      const text = breakLongRuns(decodeEntities(token.value).replace(/\s+/g, ' '));
       if (text.trim().length === 0 && !paragraphOpen && !listItem && tableCell === null) continue;
       if (tableCell !== null) tableCell += text;
       else if (listItem) {
