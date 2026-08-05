@@ -27,6 +27,17 @@ describe('renderEmailTemplate', () => {
       'Bridge Advisors: Acme Inc (409a) {{nope}}',
     );
   });
+
+  // `\w+` matches every name on `Object.prototype`, and a plain `vars[key]`
+  // lookup found them — so `{{constructor}}` in a partner's email template
+  // rendered as `function Object() { [native code] }`. Same three lines as
+  // `renderTemplate` in domain/communications.ts, which carries the full note.
+  it.each(['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'])(
+    'leaves the inherited name {{%s}} verbatim',
+    (key) => {
+      expect(renderEmailTemplate(`{{${key}}}`, VARS)).toBe(`{{${key}}}`);
+    },
+  );
 });
 
 describe('applyPartnerEmailTemplates', () => {

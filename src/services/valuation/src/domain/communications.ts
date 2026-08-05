@@ -43,9 +43,22 @@ export interface AutoEmailRow {
 
 export type TemplateVars = Record<string, string | number | null | undefined>;
 
-/** {{placeholder}} substitution; unknown placeholders survive verbatim. */
+/**
+ * {{placeholder}} substitution; unknown placeholders survive verbatim.
+ *
+ * `Object.hasOwn` rather than a plain lookup, because `\w+` matches the names
+ * on `Object.prototype` and a plain lookup finds them. `{{constructor}}`
+ * rendered as `function Object() { [native code] }`, and `{{toString}}`,
+ * `{{valueOf}}`, `{{hasOwnProperty}}` and `{{__proto__}}` likewise — none of
+ * them ever `undefined` or `null`, so none of them ever survived verbatim.
+ *
+ * The same function appears in `domain/report.ts` (report templates) and
+ * `domain/emailWorkflows.ts` (partner emails), and had the same hole; all
+ * three take template text an operator or a user authored.
+ */
 export function renderTemplate(text: string, vars: TemplateVars): string {
   return text.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
+    if (!Object.hasOwn(vars, key)) return match;
     const value = vars[key];
     return value === undefined || value === null ? match : String(value);
   });

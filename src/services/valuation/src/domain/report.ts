@@ -447,9 +447,17 @@ export function templateForKind(kind: ValuationKind): ReportTemplate {
   return kind === '409a' ? TEMPLATE_409A : TEMPLATE_GENERIC;
 }
 
-/** {{placeholder}} substitution; unknown placeholders survive verbatim. */
+/**
+ * {{placeholder}} substitution; unknown placeholders survive verbatim.
+ *
+ * `Object.hasOwn` rather than a plain lookup — see `renderTemplate` in
+ * `domain/communications.ts`, which carries this function and this note. `\w+`
+ * matches the names on `Object.prototype`, so `{{constructor}}` in a report
+ * template rendered as `function Object() { [native code] }`.
+ */
 export function fillTemplateVars(text: string, vars: ReportTemplateVars): string {
   return text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => {
+    if (!Object.hasOwn(vars, key)) return m;
     const v = (vars as unknown as Record<string, unknown>)[key];
     return v === undefined || v === null ? m : String(v);
   });

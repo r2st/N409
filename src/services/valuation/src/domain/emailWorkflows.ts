@@ -190,9 +190,17 @@ export interface EmailTemplateVars {
   partner_name: string;
 }
 
-/** {{placeholder}} substitution; unknown placeholders survive verbatim. */
+/**
+ * {{placeholder}} substitution; unknown placeholders survive verbatim.
+ *
+ * `Object.hasOwn` rather than a plain lookup — see `renderTemplate` in
+ * `domain/communications.ts`, which carries this function and this note. `\w+`
+ * matches the names on `Object.prototype`, so `{{constructor}}` in a partner
+ * email template rendered as `function Object() { [native code] }`.
+ */
 export function renderEmailTemplate(text: string, vars: EmailTemplateVars): string {
   return text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => {
+    if (!Object.hasOwn(vars, key)) return m;
     const v = (vars as unknown as Record<string, unknown>)[key];
     return v === undefined || v === null ? m : String(v);
   });

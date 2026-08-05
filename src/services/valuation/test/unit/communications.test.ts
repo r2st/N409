@@ -20,6 +20,31 @@ describe('renderTemplate (§15.5)', () => {
   it('leaves unknown and null placeholders verbatim', () => {
     expect(renderTemplate('{{missing}} / {{gone}}', { gone: null })).toBe('{{missing}} / {{gone}}');
   });
+
+  /**
+   * `\w+` matches every name on `Object.prototype`, and a plain `vars[key]`
+   * lookup finds them — none of which is `undefined` or `null`, so none of them
+   * took the "unknown placeholder" path. `{{constructor}}` rendered as
+   * `function Object() { [native code] }` in an email subject.
+   *
+   * The same three lines live in `domain/report.ts` and
+   * `domain/emailWorkflows.ts`; both are covered below.
+   */
+  const INHERITED = ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__', 'isPrototypeOf'];
+
+  it.each(INHERITED)('leaves the inherited name {{%s}} verbatim', (key) => {
+    expect(renderTemplate(`{{${key}}}`, { company_name: 'Acme' })).toBe(`{{${key}}}`);
+  });
+
+  it('still substitutes an own property that shadows an inherited name', () => {
+    // Not a name any caller uses, but "own wins" is the rule being applied and
+    // it should be the rule, not a side effect of the name being unusual.
+    expect(renderTemplate('{{toString}}', { toString: 'shadowed' })).toBe('shadowed');
+  });
+
+  it('leaves a placeholder verbatim when its own value is undefined', () => {
+    expect(renderTemplate('{{company_name}}', { company_name: undefined })).toBe('{{company_name}}');
+  });
 });
 
 describe('valuationTemplateVars', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fillTemplateVars,
   instantiateTemplate,
   REPORT_TEMPLATES,
   sanitizeContent,
@@ -301,5 +302,41 @@ describe('sanitizeHtml on input with no closing bracket', () => {
     expect(sanitizeHtml('<a href="javascript:alert(1)">x</a>')).toBe('<a>x</a>');
     expect(sanitizeHtml('<a href="https://ok.example">x</a>')).toBe('<a href="https://ok.example">x</a>');
     expect(sanitizeHtml('<p onclick="boom()">x</p>')).toBe('<p>x</p>');
+  });
+});
+
+describe('fillTemplateVars', () => {
+  const VARS = {
+    company_name: 'Acme',
+    kind: '409a' as const,
+    valuation_ref: 'ref',
+    date: '2026-07-06',
+    currency: 'USD',
+  };
+
+  it('substitutes known placeholders and leaves unknown ones verbatim', () => {
+    expect(fillTemplateVars('{{company_name}} ({{kind}}) {{nope}}', VARS)).toBe('Acme (409a) {{nope}}');
+  });
+
+  // `\w+` matches every name on `Object.prototype`, and a plain `vars[key]`
+  // lookup found them — so `{{constructor}}` in a report template rendered as
+  // `function Object() { [native code] }` into the report body, which the
+  // auditor portal then shows. Same three lines as `renderTemplate` in
+  // domain/communications.ts, which carries the full note.
+  it.each(['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'])(
+    'leaves the inherited name {{%s}} verbatim',
+    (key) => {
+      expect(fillTemplateVars(`{{${key}}}`, VARS)).toBe(`{{${key}}}`);
+    },
+  );
+
+  it('keeps an inherited name out of an instantiated template body', () => {
+    const content = instantiateTemplate(templateForKind('409a'), {
+      ...VARS,
+      company_name: '{{constructor}}',
+    });
+    for (const section of content.sections) {
+      expect(section.html, section.key).not.toContain('native code');
+    }
   });
 });
