@@ -320,6 +320,28 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
           security_class: e.security_class,
         });
       }
+      // Seniority was the one preferred field nothing here checked, and it is
+      // the field that orders the stack. `parseNumericCell` accepts any finite
+      // number, so a 0-based export ("0, 1, 2"), a negative, or a fractional
+      // rank imported as `valid: true` and was carried through unexamined:
+      //
+      //   - `waterfallSheet` sorts the preference stack by it and declares the
+      //     column `integer`, so the sheet an auditor reaches for first shows
+      //     the wrong liquidation order — with a fraction in an integer column.
+      //   - the ops `waterfall-inputs` endpoint hands it to an engine whose own
+      //     rule is `seniority must be an integer >= 1`, so the allocation is
+      //     refused for a table the importer had just called valid.
+      //
+      // Same rule as the hand-entry schema (`z.number().int().min(1)`) and the
+      // engine, stated where the import can still say which row is wrong.
+      if (e.seniority !== null && (!Number.isInteger(e.seniority) || e.seniority < 1)) {
+        issues.push({
+          severity: 'error',
+          code: 'bad_seniority',
+          message: `"${e.security_class}" has a seniority of ${e.seniority} — it must be a whole number of 1 or more (1 is the most senior).`,
+          security_class: e.security_class,
+        });
+      }
       // Preference stack: invested × multiple, else shares × price × multiple.
       const invested = e.invested_amount ?? (e.price_per_share !== null ? e.price_per_share * e.shares : 0);
       if (invested === 0) {

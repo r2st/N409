@@ -192,6 +192,46 @@ describe('capTable', () => {
       expect(v.valid).toBe(false);
       expect(v.issues.some((i) => i.code === 'bad_conversion')).toBe(true);
     });
+
+    // Seniority orders the preference stack, and nothing used to check it.
+    // `parseNumericCell` accepts any finite number, so these all imported as
+    // `valid: true` and only failed later — in the engine, which refuses a
+    // seniority that is not an integer >= 1, or silently in the workbook,
+    // whose waterfall sheet sorts by this column and formats it as an integer.
+    it.each([
+      ['a zero rank, as 0-based exports write it', 0],
+      ['a negative rank', -1],
+      ['a fractional rank', 1.5],
+    ])('errors on %s', (_label, seniority) => {
+      const v = validateCapTable([{ ...good[1]!, seniority }]);
+      expect(v.valid).toBe(false);
+      const issue = v.issues.find((i) => i.code === 'bad_seniority');
+      expect(issue?.security_class).toBe(good[1]!.security_class);
+    });
+
+    it('accepts an absent seniority, which toWaterfallInputs defaults positionally', () => {
+      const v = validateCapTable([{ ...good[1]!, seniority: null }]);
+      expect(v.issues.some((i) => i.code === 'bad_seniority')).toBe(false);
+      expect(toWaterfallInputs([{ ...good[1]!, seniority: null }]).preferred[0]!.seniority).toBe(1);
+    });
+
+    it('accepts the ordinary ranks a preference stack is written with', () => {
+      const v = validateCapTable([
+        { ...good[1]!, security_class: 'Series B', seniority: 1 },
+        { ...good[1]!, security_class: 'Series A', seniority: 2 },
+      ]);
+      expect(v.issues.some((i) => i.code === 'bad_seniority')).toBe(false);
+    });
+
+    it('names only the row that is wrong when the rest of the stack is fine', () => {
+      const v = validateCapTable([
+        { ...good[1]!, security_class: 'Series B', seniority: 1 },
+        { ...good[1]!, security_class: 'Series A', seniority: 0 },
+      ]);
+      const bad = v.issues.filter((i) => i.code === 'bad_seniority');
+      expect(bad).toHaveLength(1);
+      expect(bad[0]!.security_class).toBe('Series A');
+    });
   });
 
   describe('toWaterfallInputs', () => {
