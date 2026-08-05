@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { problems } from '@n409/shared';
+import { isUlid, problems } from '@n409/shared';
 import { canManageUsers } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { findValuationById } from '../repos/valuations.js';
+import { findUserById } from '../repos/users.js';
 import { RETENTION_DATA_TYPES } from '../domain/retention.js';
 import {
   findArchivableValuations,
@@ -33,6 +35,38 @@ const HoldBody = z.object({
   reference_id: z.string().nullable().optional(),
   reason: z.string().trim().min(1).max(1000),
 });
+
+/**
+ * Resolve the aggregate a non-global hold names, refusing anything that does
+ * not exist.
+ *
+ * A hold is the control that stops a sweep deleting evidence someone is under a
+ * legal obligation to keep, and `legal_holds.reference_id` carries no foreign
+ * key — it cannot, because the column is polymorphic over valuations and users.
+ * So nothing downstream ever notices a bad reference: `findArchivableValuations`
+ * compares it against `v.id`/`v.user_id`, no row matches, and the sweep archives
+ * the very records the hold was placed to freeze. The admin saw a 201 and a hold
+ * listed as active. A typo'd id has to fail here, where someone is looking, and
+ * not months later in a sweep nobody is.
+ *
+ * The malformed case was louder and no better: `reference_id` is the `ulid`
+ * domain, so a non-ULID string reached Postgres and came back a 500 — the
+ * generic one, with nothing said about which field was wrong.
+ */
+async function assertHoldTarget(
+  pool: pg.Pool,
+  scope: 'valuation' | 'user',
+  referenceId: string,
+): Promise<void> {
+  if (!isUlid(referenceId)) {
+    throw problems.unprocessable(`reference_id is not a valid id for a ${scope} hold`);
+  }
+  const found =
+    scope === 'valuation'
+      ? await findValuationById(pool, referenceId)
+      : await findUserById(pool, referenceId);
+  if (!found) throw problems.unprocessable(`No ${scope} exists with that reference_id`);
+}
 
 export interface SweepResult {
   archived: number;
@@ -108,6 +142,9 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
     if (!parsed.success) throw problems.unprocessable('Invalid hold', { errors: parsed.error.issues });
     if (parsed.data.scope !== 'global' && !parsed.data.reference_id) {
       throw problems.unprocessable('A valuation/user hold needs a reference_id');
+    }
+    if (parsed.data.scope !== 'global') {
+      await assertHoldTarget(deps.pool, parsed.data.scope, parsed.data.reference_id!);
     }
     const hold = await placeHold(deps.pool, {
       scope: parsed.data.scope,

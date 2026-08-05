@@ -124,6 +124,85 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
     ).not.toBeNull();
   });
 
+  it('refuses a hold whose reference names nothing, rather than freezing nothing', async () => {
+    await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/retention/policies/valuation',
+      headers: authHeader(admin.token),
+      payload: { archive_after_days: 365, retention_days: 730, enabled: true },
+    });
+
+    const place = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/retention/holds',
+        headers: authHeader(admin.token),
+        payload,
+      });
+
+    // Malformed: the column is the `ulid` domain, so this used to reach
+    // Postgres and come back as a bare 500.
+    const malformed = await place({ scope: 'valuation', reference_id: 'not-a-ulid', reason: 'litigation' });
+    expect(malformed.statusCode).toBe(422);
+    expect(malformed.json().detail).toMatch(/reference_id/i);
+
+    // Well-formed but naming no valuation: accepted before, and the sweep then
+    // archived everything the admin believed was frozen.
+    const ghost = await place({
+      scope: 'valuation',
+      reference_id: '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+      reason: 'litigation',
+    });
+    expect(ghost.statusCode).toBe(422);
+    expect(ghost.json().detail).toMatch(/no valuation/i);
+
+    const ghostUser = await place({
+      scope: 'user',
+      reference_id: '01JZZZZZZZZZZZZZZZZZZZZZZZ',
+      reason: 'litigation',
+    });
+    expect(ghostUser.statusCode).toBe(422);
+    expect(ghostUser.json().detail).toMatch(/no user/i);
+
+    // Nothing was written, so nothing claims to be freezing anything.
+    const holds = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/retention/holds',
+      headers: authHeader(admin.token),
+    });
+    const refs = holds.json().holds.map((h: { reference_id: string | null }) => h.reference_id);
+    expect(refs).not.toContain('01JZZZZZZZZZZZZZZZZZZZZZZZ');
+
+    // The real targets still work, on both scopes…
+    const held = await agedValuation('RealHoldCo', 500);
+    const loose = await agedValuation('NoHoldCo', 500);
+    expect((await place({ scope: 'valuation', reference_id: held.id, reason: 'audit' })).statusCode).toBe(
+      201,
+    );
+    expect((await place({ scope: 'user', reference_id: admin.id, reason: 'audit' })).statusCode).toBe(201);
+
+    // …and the accepted hold actually freezes, which is the point. Asserted
+    // before any global hold exists, so the freeze is attributable to this hold
+    // and not to one that stops every sweep regardless.
+    const archivedAt = async (id: string) =>
+      (await ctx.pool.query('SELECT archived_at FROM valuations WHERE id = $1', [id])).rows[0].archived_at;
+    await runRetentionSweep(ctx.pool);
+    expect(await archivedAt(held.id)).toBeNull();
+    // The user-scope hold covers everything this admin owns, `loose` included —
+    // proof the second scope resolves too, from the same sweep.
+    expect(await archivedAt(loose.id)).toBeNull();
+
+    // A global hold still needs no reference at all.
+    const globalHold = await place({ scope: 'global', reason: 'estate-wide freeze' });
+    expect(globalHold.statusCode).toBe(201);
+    // Released again so it does not silently freeze whatever runs after this.
+    await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/retention/holds/${globalHold.json().hold.id}/release`,
+      headers: authHeader(admin.token),
+    });
+  });
+
   it('gates retention admin to admins', async () => {
     const plain = await seedUser(ctx, { roles: ['valuation_user'] });
     const res = await ctx.app.inject({
