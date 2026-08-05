@@ -31,7 +31,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.engine.approaches import asset_value, income_dcf, market_multiples
-from app.engine.bs import bs_call
+from app.engine.bs import bs_call, discount_factor
 from app.engine.compute import compute
 from app.engine.errors import EngineInputError
 from app.engine.volatility import ewma_volatility, historical_volatility, parkinson_volatility
@@ -227,3 +227,99 @@ def test_log_return_estimators_are_unchanged_on_an_ordinary_series():
 def test_a_non_positive_price_is_still_the_error_it_was():
     with pytest.raises(EngineInputError, match="positive"):
         historical_volatility([100.0, 0.0, 100.0])
+
+
+# ── the discount factor, which the risk-free rate reaches unbounded ───────────
+#
+# `risk_free_rate` outside its plausible band is a `warn`, not an `error` — a
+# band is a review opinion rather than a fact about the arithmetic — so a rate
+# typed as a whole number instead of a fraction clears the pre-flight validator
+# with `ok: true` and then meets `math.exp` in the Black-Scholes discount
+# factor, which raises rather than saturating. Same pairing as everything
+# above: told the inputs were good, then handed a 500 for using them.
+
+
+def opm_only_params(**over) -> dict:
+    return {
+        "weight_asset": 0.0,
+        "weight_opm": 1.0,
+        "weight_income": 0.0,
+        "weight_market": 0.0,
+        "allocation_method": "opm",
+        "dlom_method": "qualitative",
+        "dlom": 0.2,
+        "dloc": 0.0,
+        "exit_timeline": "2029-06-30",
+        **over,
+    }
+
+
+def opm_only_inputs(**over) -> dict:
+    return {
+        "valuation_date": "2026-06-30",
+        "shares_outstanding_common": 7_000_000,
+        "options_outstanding": 1_000_000,
+        "shares_outstanding_preferred": 2_000_000,
+        "liquidation_preference": 5_000_000,
+        "volatility": 0.6,
+        "risk_free_rate": 0.042,
+        "last_round_post_money": 20_000_000,
+        **over,
+    }
+
+
+def test_discount_factor_refuses_a_rate_whose_exponential_overflows():
+    with pytest.raises(EngineInputError) as err:
+        discount_factor(-1e6, 3.0)
+    assert "overflowed" in str(err.value)
+    assert "risk_free_rate" in str(err.value)
+
+
+def test_discount_factor_refuses_a_rate_times_horizon_that_saturates_to_inf():
+    """`r * t` saturates silently where `math.exp` raises, so `math.exp(inf)`
+    returns `inf` and no exception is raised at all. Left alone it becomes
+    `inf * norm_cdf(d2)` — a NaN the moment the tail underflows — and FastAPI
+    serialises that as `null` on a 200."""
+    with pytest.raises(EngineInputError) as err:
+        discount_factor(-1e308, 1e10)
+    assert "finite" in str(err.value)
+
+
+def test_discount_factor_is_the_plain_exponential_in_the_ordinary_range():
+    assert discount_factor(0.042, 3.0) == pytest.approx(math.exp(-0.042 * 3.0), rel=1e-15)
+    assert discount_factor(0.0, 5.0) == 1.0
+    # Underflow is not overflow: a huge *positive* rate discounts to zero, which
+    # is a representable answer and must not be refused.
+    assert discount_factor(1e6, 3.0) == 0.0
+
+
+def test_bs_call_refuses_an_overflowing_rate_rather_than_raising_overflowerror():
+    with pytest.raises(EngineInputError):
+        bs_call(1e6, 5e5, 3.0, -1e6, 0.6)
+    # The degenerate (t → 0) branch discounts too, so it needs the same guard.
+    with pytest.raises(EngineInputError):
+        bs_call(1e6, 5e5, 3.0, -1e6, 0.0)
+
+
+def test_bs_call_is_unchanged_on_ordinary_inputs():
+    assert bs_call(1e6, 5e5, 3.0, 0.042, 0.6) == pytest.approx(637457.6440384055, rel=1e-12)
+    assert bs_call(100.0, 100.0, 0.0, 0.05, 0.3) == 0.0
+
+
+def test_compute_answers_422_for_a_rate_the_validator_only_warned_about():
+    """The pair that made this a bug: validate says ok, compute used to 500."""
+    payload = {"params": opm_only_params(), "inputs": opm_only_inputs(risk_free_rate=-1e6)}
+    pre = client.post("/engine/v1/validate", json=payload)
+    assert pre.status_code == 200
+    assert pre.json()["ok"] is True
+
+    res = client.post("/engine/v1/compute", json=payload)
+    assert res.status_code == 422
+    assert "risk_free_rate" in res.json()["detail"]
+
+
+def test_compute_still_succeeds_on_the_same_payload_with_a_sane_rate():
+    payload = {"params": opm_only_params(), "inputs": opm_only_inputs()}
+    res = client.post("/engine/v1/compute", json=payload)
+    assert res.status_code == 200
+    assert math.isfinite(res.json()["results"]["fmv_per_share"])

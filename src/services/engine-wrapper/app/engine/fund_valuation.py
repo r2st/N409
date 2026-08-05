@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import math
 
-from .bs import bs_call
+from .bs import bs_call, discount_factor
 from .compounding import compound_factor
 from .errors import EngineInputError
 from .newton import implied_volatility
@@ -112,7 +112,7 @@ def calibrate_implied_volatility(
     # The class owns fraction ``frac`` of the residual equity above the senior
     # preference K, valued as a call on the equity: class_value = frac·call.
     target_call = target_class_value / frac
-    intrinsic = max(s - k * math.exp(-r * t), 0.0)
+    intrinsic = max(s - k * discount_factor(r, t), 0.0)
     if not intrinsic <= target_call < s:
         raise EngineInputError(
             "round price implies a residual-claim value outside the no-arbitrage "
