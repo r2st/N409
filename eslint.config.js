@@ -25,6 +25,37 @@ export default tseslint.config(
       'no-console': 'error',
     },
   },
+  /**
+   * Type-checked promise rules, for the long-lived server processes only.
+   *
+   * A floating promise in a request handler is a bug; in a scheduler tick or a
+   * fire-and-forget write it is an unhandled rejection, and an unhandled
+   * rejection takes the process down. That is not hypothetical here — 66a0c79
+   * fixed exactly that, an unawaited outbox insert, and it was found by reading
+   * rather than by any check that would have caught the next one.
+   *
+   * Scoped to the services' `src` because that is where the cost lands: the
+   * frontend's `onClick={async …}` is the ordinary React idiom and would report
+   * ~300 times without a crash behind any of them, and the test files hold
+   * deliberate un-awaited promises. Type-aware linting costs a few seconds over
+   * this scope, which is worth it for the one class of bug that is fatal rather
+   * than merely wrong.
+   */
+  {
+    files: [
+      'src/services/valuation/src/**/*.ts',
+      'src/services/web/src/**/*.ts',
+      'src/services/report/src/**/*.ts',
+      'src/packages/shared/src/**/*.ts',
+    ],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+    },
+  },
   {
     files: ['**/test/**', '**/*.test.ts', '**/vitest.config.ts'],
     rules: {

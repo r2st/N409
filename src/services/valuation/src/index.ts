@@ -134,7 +134,9 @@ let reaperTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
   const olderThanMs = config.AUTO_PIPELINE_STALE_MINUTES * 60_000;
   const reaperActor = { actorType: 'system', actorId: 'reaper', source: 'auto-pipeline' } as const;
-  const sweep = () =>
+  // Block body, like every sibling scheduler below: a concise body would hand
+  // `setInterval` a promise it has no way to settle.
+  const sweep = (): void => {
     reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor })
       .then((reaped) => {
         if (reaped.length > 0) {
@@ -145,7 +147,8 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
         }
       })
       .catch((err) => app.log.error({ err }, 'pipeline reaper failed'));
-  void sweep();
+  };
+  sweep();
   reaperTimer = setInterval(sweep, Math.min(olderThanMs, 5 * 60_000));
 }
 
