@@ -6,6 +6,7 @@
  * injectable fetch.
  */
 
+import { clampScheduleMonths } from '../domain/vesting.js';
 import { IMPORT_TIMEOUT_MS, OAUTH_TIMEOUT_MS, readJson, withDeadline } from './deadline.js';
 
 export const HRIS_PROVIDERS = ['rippling', 'gusto', 'deel'] as const;
@@ -172,6 +173,16 @@ function mapGrant(
   const externalId = String(raw.id ?? raw.grantId ?? '').trim();
   if (!options || options <= 0 || !grantDate || !externalId) return null;
   const vesting = (raw.vesting ?? raw.vestingSchedule ?? {}) as Record<string, unknown>;
+  // Bounded to the same range the grant routes enforce in zod. This path wrote
+  // whatever the provider sent straight onto the row, so a schedule `POST
+  // /grants` refuses — a negative cadence, a cliff past the end of the vest, a
+  // `vesting.months` of 2,000,000 — was importable, and the grant page then
+  // builds one timeline point per cadence step from it.
+  const months = clampScheduleMonths({
+    vestingMonths: toNum(vesting.months ?? vesting.durationMonths) ?? undefined,
+    cliffMonths: toNum(vesting.cliffMonths ?? vesting.cliff) ?? undefined,
+    frequencyMonths: toNum(vesting.frequencyMonths ?? vesting.frequency) ?? undefined,
+  });
   return {
     external_id: externalId,
     grantee_name: granteeName,
@@ -180,9 +191,9 @@ function mapGrant(
     options_count: Math.round(options),
     exercise_price: toNum(raw.strikePrice ?? raw.exercisePrice) ?? 0,
     vesting_start_date: toDate(vesting.startDate ?? raw.vestingStartDate) ?? grantDate,
-    vesting_months: toNum(vesting.months ?? vesting.durationMonths) ?? 48,
-    cliff_months: toNum(vesting.cliffMonths ?? vesting.cliff) ?? 12,
-    frequency_months: toNum(vesting.frequencyMonths ?? vesting.frequency) ?? 1,
+    vesting_months: months.vestingMonths,
+    cliff_months: months.cliffMonths,
+    frequency_months: months.frequencyMonths,
   };
 }
 

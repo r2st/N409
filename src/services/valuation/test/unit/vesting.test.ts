@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   addMonths,
+  clampScheduleMonths,
+  CLIFF_MONTHS_MAX,
+  FREQUENCY_MONTHS_MAX,
+  VESTING_MONTHS_MAX,
   defaultScenarioFmvs,
   exerciseScenarios,
   isIssuableTemplate,
@@ -270,5 +274,114 @@ describe('vesting', () => {
       // a schedule this service picks, so it is not issuable through the route.
       expect(isIssuableTemplate('imported')).toBe(false);
     });
+  });
+});
+
+/**
+ * A schedule's month figures set the size of the timeline, and they arrive on
+ * the grant row rather than on the request. The two grant routes bound them in
+ * zod; the HRIS importer mapped a provider's payload straight through and
+ * bounded nothing, so a schedule `POST /grants` refuses was importable — and
+ * `GET /grants/:id`, which any reader of the valuation can call, then built one
+ * point per cadence step from it.
+ */
+describe('clampScheduleMonths', () => {
+  it('leaves an ordinary schedule alone', () => {
+    expect(clampScheduleMonths({ vestingMonths: 48, cliffMonths: 12, frequencyMonths: 3 })).toEqual({
+      vestingMonths: 48,
+      cliffMonths: 12,
+      frequencyMonths: 3,
+    });
+  });
+
+  it('caps figures past the range the routes accept', () => {
+    expect(clampScheduleMonths({ vestingMonths: 2_000_000, cliffMonths: 999, frequencyMonths: 400 })).toEqual(
+      {
+        vestingMonths: VESTING_MONTHS_MAX,
+        cliffMonths: CLIFF_MONTHS_MAX,
+        frequencyMonths: FREQUENCY_MONTHS_MAX,
+      },
+    );
+  });
+
+  it('floors negatives at the bottom of the range, and the cadence at one', () => {
+    expect(clampScheduleMonths({ vestingMonths: -48, cliffMonths: -12, frequencyMonths: -3 })).toEqual({
+      vestingMonths: 0,
+      cliffMonths: 0,
+      frequencyMonths: 1,
+    });
+  });
+
+  it('pulls a cliff that outlasts the vest back to the end of the vest', () => {
+    // The routes refuse this pairing outright; the importer cannot, because
+    // refusing there means dropping the grant.
+    expect(clampScheduleMonths({ vestingMonths: 24, cliffMonths: 36 })).toMatchObject({
+      vestingMonths: 24,
+      cliffMonths: 24,
+    });
+  });
+
+  it('falls back to 48/12/1 for absent or unusable figures', () => {
+    expect(clampScheduleMonths({})).toEqual({ vestingMonths: 48, cliffMonths: 12, frequencyMonths: 1 });
+    expect(clampScheduleMonths({ vestingMonths: NaN, cliffMonths: Infinity, frequencyMonths: '3' })).toEqual({
+      vestingMonths: 48,
+      cliffMonths: 12,
+      frequencyMonths: 1,
+    });
+  });
+
+  it('rounds a fractional figure to a whole month', () => {
+    expect(clampScheduleMonths({ vestingMonths: 47.6, frequencyMonths: 2.4 })).toMatchObject({
+      vestingMonths: 48,
+      frequencyMonths: 2,
+    });
+  });
+});
+
+describe('vestingTimeline bounds the points it builds', () => {
+  const schedule = (vestingMonths: number, frequencyMonths = 1): VestingSchedule => ({
+    totalShares: 1000,
+    vestingStartDate: '2024-01-15',
+    vestingMonths,
+    cliffMonths: 0,
+    frequencyMonths,
+  });
+
+  it('caps a stored schedule past the ceiling instead of one point per month', () => {
+    // Rows written before the importer clamped are already stored, so the pure
+    // function caps too. 2,000,000 months built a 2,000,002-element array in
+    // ~6s of blocked event loop.
+    const started = Date.now();
+    const points = vestingTimeline(schedule(2_000_000));
+    expect(points.length).toBeLessThanOrEqual(VESTING_MONTHS_MAX + 2);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('is unchanged for every schedule inside the ceiling', () => {
+    expect(vestingTimeline(schedule(48)).length).toBe(49);
+    expect(vestingTimeline(schedule(36, 3)).length).toBe(13);
+    expect(vestingTimeline(schedule(VESTING_MONTHS_MAX)).length).toBe(VESTING_MONTHS_MAX + 1);
+  });
+
+  it('keeps the final point inside the capped term', () => {
+    const points = vestingTimeline(schedule(2_000_000));
+    const last = points[points.length - 1]!;
+    expect(last.monthOffset).toBeLessThanOrEqual(VESTING_MONTHS_MAX);
+    expect(last.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe('addMonths past the representable date range', () => {
+  it('returns the date unmoved rather than throwing RangeError', () => {
+    // A Date holds about +/-273,000 years; `toISOString` throws past that
+    // rather than returning anything, which reached a grant page as a 500.
+    expect(() => addMonths('2024-01-15', 1e9)).not.toThrow();
+    expect(addMonths('2024-01-15', 1e9)).toBe('2024-01-15');
+    expect(addMonths('2024-01-15', -1e9)).toBe('2024-01-15');
+  });
+
+  it('still moves a date the range can hold', () => {
+    expect(addMonths('2024-01-31', 1)).toBe('2024-02-29');
+    expect(addMonths('2024-01-15', 12_000)).toBe('3024-01-15');
   });
 });

@@ -74,3 +74,57 @@ describe('HRIS roster + grant mapping (feature 11)', () => {
     expect(grants).toHaveLength(0);
   });
 });
+
+describe('HRIS grant mapping bounds the vesting schedule', () => {
+  const grantWith = (vesting: unknown) =>
+    mapEmployees({
+      employees: [
+        {
+          id: 'e1',
+          fullName: 'Ada Lovelace',
+          equityGrants: [{ id: 'g1', optionsGranted: 1000, grantDate: '2025-03-01', vesting }],
+        },
+      ],
+    }).grants[0]!;
+
+  it('caps a schedule the grant routes would refuse', () => {
+    // Written straight onto the row before this; `GET /grants/:id` then builds
+    // one timeline point per cadence step over the term.
+    expect(grantWith({ months: 2_000_000, cliffMonths: 999, frequencyMonths: 400 })).toMatchObject({
+      vesting_months: 240,
+      cliff_months: 120,
+      frequency_months: 12,
+    });
+  });
+
+  it('refuses a negative cadence the way the routes do', () => {
+    expect(grantWith({ months: 48, cliffMonths: -12, frequencyMonths: -3 })).toMatchObject({
+      vesting_months: 48,
+      cliff_months: 0,
+      frequency_months: 1,
+    });
+  });
+
+  it('pulls a cliff past the end of the vest back to the vest', () => {
+    expect(grantWith({ months: 24, cliffMonths: 36 })).toMatchObject({
+      vesting_months: 24,
+      cliff_months: 24,
+    });
+  });
+
+  it('leaves an ordinary provider schedule untouched', () => {
+    expect(grantWith({ months: 48, cliffMonths: 12, frequencyMonths: 3 })).toMatchObject({
+      vesting_months: 48,
+      cliff_months: 12,
+      frequency_months: 3,
+    });
+  });
+
+  it('still fills an absent schedule with the 48/12/1 defaults', () => {
+    expect(grantWith(undefined)).toMatchObject({
+      vesting_months: 48,
+      cliff_months: 12,
+      frequency_months: 1,
+    });
+  });
+});

@@ -16,14 +16,17 @@ import {
   type GrantRow,
 } from '../repos/grants.js';
 import {
+  CLIFF_MONTHS_MAX,
   defaultScenarioFmvs,
   exerciseScenarios,
+  FREQUENCY_MONTHS_MAX,
   isIssuableTemplate,
   ISSUABLE_TEMPLATE_KEYS,
   templateByKey,
   toIsoDate,
   vestingStatus,
   vestingTimeline,
+  VESTING_MONTHS_MAX,
   VESTING_TEMPLATES,
   type VestingSchedule,
 } from '../domain/vesting.js';
@@ -70,9 +73,9 @@ const CreateBody = z.object({
   exercise_price: z.number().nonnegative().optional(),
   vesting_template: TemplateKey.default('standard_4yr_1yr_cliff'),
   vesting_start_date: GrantDate.optional(),
-  vesting_months: z.number().int().min(0).max(240).optional(),
-  cliff_months: z.number().int().min(0).max(120).optional(),
-  frequency_months: z.number().int().min(1).max(12).optional(),
+  vesting_months: z.number().int().min(0).max(VESTING_MONTHS_MAX).optional(),
+  cliff_months: z.number().int().min(0).max(CLIFF_MONTHS_MAX).optional(),
+  frequency_months: z.number().int().min(1).max(FREQUENCY_MONTHS_MAX).optional(),
   notes: z.string().max(2000).nullable().optional(),
 });
 
@@ -83,9 +86,9 @@ const PatchBody = z.object({
   options_count: int4Positive().optional(),
   vesting_template: TemplateKey.optional(),
   vesting_start_date: GrantDate.optional(),
-  vesting_months: z.number().int().min(0).max(240).optional(),
-  cliff_months: z.number().int().min(0).max(120).optional(),
-  frequency_months: z.number().int().min(1).max(12).optional(),
+  vesting_months: z.number().int().min(0).max(VESTING_MONTHS_MAX).optional(),
+  cliff_months: z.number().int().min(0).max(CLIFF_MONTHS_MAX).optional(),
+  frequency_months: z.number().int().min(1).max(FREQUENCY_MONTHS_MAX).optional(),
   notes: z.string().max(2000).nullable().optional(),
 });
 

@@ -79,6 +79,22 @@ export function isIssuableTemplate(key: string): boolean {
   return ISSUABLE_TEMPLATE_KEYS.includes(key);
 }
 
+/**
+ * The range a vesting schedule's month figures may occupy.
+ *
+ * Exported because the manual grant routes are not the only writer. They bound
+ * these in zod; the HRIS importer maps a provider's payload straight onto a
+ * grant row and bounded nothing, so a schedule the API refuses could still be
+ * imported — see `clampScheduleMonths`, which is what that path now uses.
+ *
+ * 240 months is twenty years. Real schedules run to four, occasionally ten;
+ * the ceiling is not a modelling opinion, it is the point past which the figure
+ * is not a schedule.
+ */
+export const VESTING_MONTHS_MAX = 240;
+export const CLIFF_MONTHS_MAX = 120;
+export const FREQUENCY_MONTHS_MAX = 12;
+
 export interface VestingSchedule {
   totalShares: number;
   /** ISO date string or a Date (pg returns `date` columns as Date objects). */
@@ -86,6 +102,38 @@ export interface VestingSchedule {
   vestingMonths: number;
   cliffMonths: number;
   frequencyMonths: number;
+}
+
+const clampInt = (value: unknown, min: number, max: number, fallback: number): number => {
+  const n = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback;
+  return Math.min(max, Math.max(min, n));
+};
+
+/**
+ * Force a schedule's three month figures into the range the grant routes
+ * enforce, for callers taking them from somewhere that is not a validated
+ * request body.
+ *
+ * Clamped rather than refused, because the caller is the HRIS importer and the
+ * alternative is dropping an employee's grant on the floor over a field the
+ * analyst can correct afterwards — which is the same judgement the mapper
+ * already makes when it fills an absent schedule with 48/12/1. A provider
+ * sending a figure outside these bounds is sending garbage, not a long vest.
+ *
+ * A cliff past the end of the vest is clamped to the vest for the same reason:
+ * the routes refuse that pairing, and here refusing means losing the grant.
+ */
+export function clampScheduleMonths(input: {
+  vestingMonths?: unknown;
+  cliffMonths?: unknown;
+  frequencyMonths?: unknown;
+}): { vestingMonths: number; cliffMonths: number; frequencyMonths: number } {
+  const vestingMonths = clampInt(input.vestingMonths, 0, VESTING_MONTHS_MAX, 48);
+  return {
+    vestingMonths,
+    cliffMonths: Math.min(vestingMonths, clampInt(input.cliffMonths, 0, CLIFF_MONTHS_MAX, 12)),
+    frequencyMonths: clampInt(input.frequencyMonths, 1, FREQUENCY_MONTHS_MAX, 1),
+  };
 }
 
 /** Coerce a Date or ISO string to a bare YYYY-MM-DD date string. */
@@ -206,6 +254,15 @@ export function addMonths(start: string | Date, months: number): string {
   const month = ((absolute % 12) + 12) % 12;
   const out = new Date(0);
   out.setUTCFullYear(year, month, Math.min(d!, daysInMonth(year, month)));
+  // A Date holds ±8.64e15 ms — about ±273,000 years — and `toISOString` does not
+  // return anything past that, it throws `RangeError: Invalid time value`. That
+  // is roughly 3.3 million months, so it takes a schedule no validated request
+  // body could carry; the unvalidated ones reaching this were the bug that
+  // `clampScheduleMonths` closes. Returning the date unmoved keeps a stored row
+  // that predates the clamp from turning a grant page into a 500, which is the
+  // one thing worse than a wrong-looking timeline.
+  const stamp = out.getTime();
+  if (!Number.isFinite(stamp)) return iso;
   return out.toISOString().slice(0, 10);
 }
 
@@ -216,10 +273,17 @@ export function addMonths(start: string | Date, months: number): string {
 export function vestingTimeline(schedule: VestingSchedule): VestingPoint[] {
   const total = Math.max(0, Math.floor(schedule.totalShares));
   const freq = Math.max(1, schedule.frequencyMonths);
+  // One point per cadence step, so the array and the work are both set by
+  // `vestingMonths` — a figure that arrives on the row rather than on the
+  // request. The routes cap it at 240; the HRIS importer did not, and a row
+  // holding 2,000,000 built a two-million-element array in six seconds of
+  // blocked event loop, on a GET any reader of the valuation can make. Capping
+  // here as well as at the two writers, because the rows are already stored.
+  const months = Math.min(schedule.vestingMonths, VESTING_MONTHS_MAX);
   const points: VestingPoint[] = [
     { monthOffset: 0, date: toIsoDate(schedule.vestingStartDate), cumulativeVested: 0 },
   ];
-  for (let m = freq; m <= schedule.vestingMonths; m += freq) {
+  for (let m = freq; m <= months; m += freq) {
     const asOf = new Date(`${addMonths(schedule.vestingStartDate, m)}T00:00:00Z`);
     const status = vestingStatus(schedule, asOf);
     points.push({
@@ -233,8 +297,8 @@ export function vestingTimeline(schedule: VestingSchedule): VestingPoint[] {
   const last = points[points.length - 1]!;
   if (last.cumulativeVested < total) {
     points.push({
-      monthOffset: schedule.vestingMonths,
-      date: addMonths(schedule.vestingStartDate, schedule.vestingMonths),
+      monthOffset: months,
+      date: addMonths(schedule.vestingStartDate, months),
       cumulativeVested: total,
     });
   }
