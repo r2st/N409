@@ -14,6 +14,7 @@ import {
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { int4Version } from '../domain/int4.js';
 
 /**
  * Bot Prompts management (remaining-gaps §3 #4, §6 P1 #8): the DB-backed
@@ -39,7 +40,7 @@ const TestBody = z.object({
 });
 
 const RevertBody = z.object({
-  version: z.number().int().min(1),
+  version: int4Version(),
 });
 
 export interface AiTestResponse {

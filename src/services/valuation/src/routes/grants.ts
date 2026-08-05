@@ -27,6 +27,7 @@ import {
   VESTING_TEMPLATES,
   type VestingSchedule,
 } from '../domain/vesting.js';
+import { int4Positive } from '../domain/int4.js';
 
 /**
  * Grant management (feature 6). Grants can only be issued once the board has
@@ -65,7 +66,7 @@ const CreateBody = z.object({
   grantee_name: z.string().min(1).max(200),
   grantee_email: z.string().email().max(320).nullable().optional(),
   grant_date: GrantDate,
-  options_count: z.number().int().positive(),
+  options_count: int4Positive(),
   exercise_price: z.number().nonnegative().optional(),
   vesting_template: TemplateKey.default('standard_4yr_1yr_cliff'),
   vesting_start_date: GrantDate.optional(),
@@ -79,7 +80,7 @@ const PatchBody = z.object({
   grantee_name: z.string().min(1).max(200).optional(),
   grantee_email: z.string().email().max(320).nullable().optional(),
   grant_date: GrantDate.optional(),
-  options_count: z.number().int().positive().optional(),
+  options_count: int4Positive().optional(),
   vesting_template: TemplateKey.optional(),
   vesting_start_date: GrantDate.optional(),
   vesting_months: z.number().int().min(0).max(240).optional(),

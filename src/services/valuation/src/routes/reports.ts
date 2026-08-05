@@ -23,6 +23,7 @@ import {
   type ReportRow,
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
+import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findPartnerById } from '../repos/adminUsers.js';
 import { fetchPartnerLogo } from '../clients/partnerLogo.js';
@@ -50,7 +51,7 @@ const PutBody = z
   })
   .strict();
 
-const RevertBody = z.object({ version: z.number().int().min(1) }).strict();
+const RevertBody = z.object({ version: int4Version() }).strict();
 
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
@@ -273,7 +274,9 @@ export function registerReportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       const { id, version: versionParam } = req.params as { id: string; version: string };
       const valuation = await loadForEdit(deps.pool, principal, id);
       const versionNumber = Number(versionParam);
-      if (!Number.isInteger(versionNumber) || versionNumber < 1) throw problems.notFound();
+      // A version past int4 cannot name a stored row, so it is a 404 like any
+      // other missing version — never a 500 from the driver.
+      if (!fitsInt4(versionNumber) || versionNumber < 1) throw problems.notFound();
       const report = await findReportByValuation(deps.pool, valuation.id);
       const version = report ? await getVersion(deps.pool, report.id, versionNumber) : null;
       if (!version) throw problems.notFound();

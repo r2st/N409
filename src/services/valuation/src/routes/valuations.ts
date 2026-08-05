@@ -30,6 +30,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
 import { pageParam } from '../domain/pagination.js';
+import { int4Positive } from '../domain/int4.js';
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
@@ -52,7 +53,7 @@ const PatchBody = z
     waiting_on_client: z.boolean(),
     assigned_reviewer_id: z.string().nullable(),
     due_date: z.string().datetime().nullable(),
-    delivery_days: z.number().int().positive().nullable(),
+    delivery_days: int4Positive().nullable(),
     paid_status: z.enum(['unpaid', 'paid', 'paid_by_partner']),
     currency: CurrencyCode,
     service_countries: z.array(z.string().length(2)).max(50),
