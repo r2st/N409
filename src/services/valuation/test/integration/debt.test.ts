@@ -30,9 +30,14 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
         return { fair_value: 400000, conversion_price: 0.5, converted_via: 'cap' };
       if (lastPayload.instrument_type === 'convertible')
         return { fair_value: 1100, straight_debt_value: 900, option_value: 200, parity: 800 };
+      // Price scales with face, as the real engine's does: `face` carries no
+      // maximum in `debt_valuation._num`, so a large one yields a large — but
+      // perfectly finite — dirty price. The usual face of 1000 still prices at
+      // exactly 980.5.
+      const price = Number(lastPayload.params?.face ?? 1000) * 0.9805;
       return {
-        dirty_price: 980.5,
-        clean_price: 980.5,
+        dirty_price: price,
+        clean_price: price,
         accrued_interest: 0,
         market_yield: 0.06,
         modified_duration: 4.1,
@@ -191,6 +196,68 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().spread).toBe(0.03);
+  });
+
+  /**
+   * `debt_valuations.fair_value` is `numeric(24, 6)`, so it holds figures below
+   * 1e18. Nothing bounded what arrived there: `params` is `z.record(z.unknown())`
+   * on the way in, and the engine's `_num` refuses NaN and Inf but sets no
+   * maximum, so a face of 1e25 prices at 1e25 — finite, cleared by every check,
+   * and seven orders of magnitude too large for the column. The driver answered
+   * `22003 numeric field overflow` and nothing caught it.
+   */
+  it('refuses a fair value too large for its column instead of 500ing', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/debt/instruments',
+      headers: authHeader(ops.token),
+      payload: {
+        name: 'Oversized',
+        instrument_type: 'bond',
+        currency: 'USD',
+        params: { face: 1e25, coupon_rate: 0.05, maturity_years: 5 },
+      },
+    });
+    expect(created.statusCode).toBe(201);
+
+    const valued = await app.inject({
+      method: 'POST',
+      url: `/api/v1/debt/instruments/${created.json().instrument.id}/value`,
+      headers: authHeader(ops.token),
+      payload: { valuation_date: '2026-01-01', overrides: {} },
+    });
+    expect(valued.statusCode).toBe(422);
+    expect(valued.json().detail).toMatch(/too large to record/i);
+
+    // Nothing was written: the run is refused whole, not half-stored.
+    const history = await app.inject({
+      method: 'GET',
+      url: `/api/v1/debt/instruments/${created.json().instrument.id}/valuations`,
+      headers: authHeader(ops.token),
+    });
+    expect(history.json().valuations).toHaveLength(0);
+  });
+
+  it('still stores a fair value the column can hold', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/debt/instruments',
+      headers: authHeader(ops.token),
+      payload: {
+        name: 'Large but storable',
+        instrument_type: 'bond',
+        currency: 'USD',
+        params: { face: 1e12, coupon_rate: 0.05, maturity_years: 5 },
+      },
+    });
+    const valued = await app.inject({
+      method: 'POST',
+      url: `/api/v1/debt/instruments/${created.json().instrument.id}/value`,
+      headers: authHeader(ops.token),
+      payload: { valuation_date: '2026-01-01', overrides: {} },
+    });
+    expect(valued.statusCode).toBe(200);
+    expect(Number(valued.json().valuation.fair_value)).toBeCloseTo(9.805e11, -6);
   });
 
   it('forbids non-ops and 404s unknown instruments', async () => {

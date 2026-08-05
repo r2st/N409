@@ -6,6 +6,7 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { CurrencyCode } from '../domain/currency.js';
+import { FUND_MARK_FAIR_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
 import {
   createFund,
   createMark,
@@ -248,7 +249,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       positionId: pid,
       measurementDate: b.measurement_date,
       method: b.method,
-      fairValue: marked.fair_value,
+      fairValue: requireStorableFigure(marked.fair_value, 'Fair value', FUND_MARK_FAIR_VALUE)!,
       level: marked.level,
       inputs,
       createdBy: principal.id,
@@ -292,7 +293,11 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
           measurementDate: b.measurement_date ?? new Date().toISOString().slice(0, 10),
           // A rolled mark is a model estimate → Level 3 (unless a fresh calibration).
           method: 'calibrated_opm',
-          fairValue: rolled.new_fair_value,
+          fairValue: requireStorableFigure(
+            rolled.new_fair_value,
+            'Rolled-forward fair value',
+            FUND_MARK_FAIR_VALUE,
+          )!,
           level: 3,
           inputs: { model_value: rolled.new_fair_value, rolled_from: prior.id, roll_method: b.method },
           createdBy: principal.id,

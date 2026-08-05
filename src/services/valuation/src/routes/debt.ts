@@ -6,6 +6,7 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { CurrencyCode } from '../domain/currency.js';
+import { DEBT_FAIR_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
 import {
   createInstrument,
   createValuation,
@@ -182,7 +183,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       valuationDate: parsed.data.valuation_date ?? new Date().toISOString().slice(0, 10),
       inputs: { instrument_type: instrument.instrument_type, params },
       result,
-      fairValue: extractFairValue(result),
+      fairValue: requireStorableFigure(extractFairValue(result), 'Fair value', DEBT_FAIR_VALUE),
       createdBy: principal.id,
     });
     return { valuation, result };

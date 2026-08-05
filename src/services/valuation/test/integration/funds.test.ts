@@ -254,6 +254,63 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings', () => {
     expect(cal.json().calibration.implied_volatility).toBeGreaterThan(0);
   });
 
+  /**
+   * `fund_marks.fair_value` is `numeric(24, 4)`, so it holds figures below 1e20.
+   * A `market` mark is `quantity × quoted_price`, and the route caps quantity at
+   * 1e15 and quoted_price at 1e12 — each defensible alone, their product 1e27.
+   * No single input is wrong, so no single bound could have caught it; the
+   * driver answered `22003 numeric field overflow` and nothing caught that
+   * either.
+   */
+  it('refuses a mark too large for its column instead of 500ing', async () => {
+    const id = await createFund();
+    const pos = await app.inject({
+      method: 'POST',
+      url: `/api/v1/funds/${id}/positions`,
+      headers: authHeader(ops.token),
+      payload: { company_name: 'Oversized', quantity: 1e15, cost_basis: 1e15, mark_method: 'market' },
+    });
+    expect(pos.statusCode).toBe(201);
+    const pid = pos.json().position.id as string;
+
+    const mark = await app.inject({
+      method: 'POST',
+      url: `/api/v1/funds/${id}/positions/${pid}/marks`,
+      headers: authHeader(ops.token),
+      // Each field is inside its own declared ceiling; the product is not.
+      payload: { measurement_date: '2026-03-31', method: 'market', quantity: 1e15, quoted_price: 1e12 },
+    });
+    expect(mark.statusCode).toBe(422);
+    expect(mark.json().detail).toMatch(/too large to record/i);
+
+    // Refused whole: no mark row, so NAV is unaffected.
+    const marks = await app.inject({
+      method: 'GET',
+      url: `/api/v1/funds/${id}/positions/${pid}/marks`,
+      headers: authHeader(ops.token),
+    });
+    expect(marks.json().marks).toHaveLength(0);
+  });
+
+  it('still records a mark at the top of what the column holds', async () => {
+    const id = await createFund();
+    const pos = await app.inject({
+      method: 'POST',
+      url: `/api/v1/funds/${id}/positions`,
+      headers: authHeader(ops.token),
+      payload: { company_name: 'BigCo', quantity: 1e9, cost_basis: 1e9, mark_method: 'market' },
+    });
+    const pid = pos.json().position.id as string;
+    const mark = await app.inject({
+      method: 'POST',
+      url: `/api/v1/funds/${id}/positions/${pid}/marks`,
+      headers: authHeader(ops.token),
+      payload: { measurement_date: '2026-03-31', method: 'market', quantity: 1e9, quoted_price: 1e9 },
+    });
+    expect(mark.statusCode).toBe(201);
+    expect(Number(mark.json().mark.fair_value)).toBeCloseTo(1e18, -12);
+  });
+
   it('forbids non-ops callers and 404s unknown funds', async () => {
     const forbidden = await app.inject({
       method: 'GET',
