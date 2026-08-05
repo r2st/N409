@@ -238,3 +238,68 @@ describe('report templates', () => {
     }
   });
 });
+
+/**
+ * Input shapes that used to make the sanitizer quadratic.
+ *
+ * Both regexes it was built from ended in `[^>]*>`, so on input with no `>` in
+ * it the engine ran to the end of the document from every `<`, failed,
+ * backtracked the whole way, and started again one character along. 12.5k
+ * characters of `"<p"` cost 36ms, 25k 140ms, 50k 567ms and 100k 2.27s — a clean
+ * 4x per doubling — against 3ms for ordinary editor HTML of the same size, with
+ * 100,000 the per-section limit `reports.ts` already allows.
+ *
+ * The budgets below are set an order of magnitude under the quadratic timings
+ * and two orders above what the scan needs, so they fail on a return of the
+ * exponent rather than on a slow machine.
+ */
+describe('sanitizeHtml on input with no closing bracket', () => {
+  const SECTION_LIMIT = 100_000;
+  const elapsed = (fn: () => unknown): number => {
+    const started = Date.now();
+    fn();
+    return Date.now() - started;
+  };
+
+  it('sanitizes a section-sized run of unterminated tags in linear time', () => {
+    expect(elapsed(() => sanitizeHtml('<p'.repeat(SECTION_LIMIT / 2)))).toBeLessThan(500);
+  });
+
+  it('sanitizes a section-sized run of junk leads in linear time', () => {
+    // `"<3"` exercises the second regex, the junk-tag sweep, which was
+    // quadratic in exactly the same way and by exactly the same amount.
+    expect(elapsed(() => sanitizeHtml('<3'.repeat(SECTION_LIMIT / 2)))).toBeLessThan(500);
+  });
+
+  it('scales linearly rather than quadratically as the input doubles', () => {
+    const cost = (n: number) => elapsed(() => sanitizeHtml('<p'.repeat(n)));
+    cost(2_000); // warm up so the first measurement is not paying for JIT
+    expect(cost(50_000)).toBeLessThan(Math.max(cost(12_500), 5) * 8);
+  });
+
+  it('keeps the text of an unterminated tag rather than eating the rest', () => {
+    expect(sanitizeHtml('<p>kept</p><p')).toBe('<p>kept</p><p');
+    expect(sanitizeHtml('5 < 6')).toBe('5 < 6');
+  });
+
+  it('leaves a bare "<>" alone — it was never a junk tag', () => {
+    expect(sanitizeHtml('text<><')).toBe('text<><');
+    expect(sanitizeHtml('><>')).toBe('><>');
+  });
+
+  it('keeps text in front of a dropped tag when the "<" before it never closed', () => {
+    // The junk sweep runs over what the whitelist pass *left*: the `>` that
+    // would have closed `<3` was consumed with the `<img>`, so `<3` is text.
+    expect(sanitizeHtml('<3<img src=x onerror=y>')).toBe('<3');
+    expect(sanitizeHtml('<3<svg>')).toBe('<3');
+  });
+
+  it('still strips everything it stripped before', () => {
+    expect(sanitizeHtml('<p>ok</p><script>alert(1)</script>')).toBe('<p>ok</p>');
+    expect(sanitizeHtml('<img src=x onerror=alert(1)>text')).toBe('text');
+    expect(sanitizeHtml('<3 onerror=alert(1)>text')).toBe('text');
+    expect(sanitizeHtml('<a href="javascript:alert(1)">x</a>')).toBe('<a>x</a>');
+    expect(sanitizeHtml('<a href="https://ok.example">x</a>')).toBe('<a href="https://ok.example">x</a>');
+    expect(sanitizeHtml('<p onclick="boom()">x</p>')).toBe('<p>x</p>');
+  });
+});

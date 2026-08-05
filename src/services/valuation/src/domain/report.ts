@@ -110,32 +110,122 @@ function stripRawText(html: string): string {
   return out + html.slice(at);
 }
 
+/** Sticky, so the tag head is matched in place rather than searched for. */
+const TAG_HEAD = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b/y;
+const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const SAFE_URL = /^(https?:\/\/|mailto:)/i;
+
 /**
  * Reduces arbitrary editor HTML to the whitelist: script/style bodies are
  * removed outright, allowed tags are kept with all attributes stripped —
  * except <a>, which keeps a validated http(s)/mailto href (gap 9) —
  * anything else is dropped (its text content survives).
+ *
+ * Scans for the brackets rather than letting two regexes find them, for the
+ * reason the block above `stripComments` spells out at length — and which the
+ * two regexes this replaces were missed by. Both ended in `[^>]*>`:
+ *
+ *     /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g     the tag filter
+ *     /<[^a-zA-Z\/!][^>]*>/g                              the junk-tag sweep
+ *
+ * On input with no `>` in it, that tail runs to the end of the document from
+ * every `<`, fails, backtracks the whole way, and the engine advances one
+ * character and does it again. Measured on `"<p"` repeated (and identically on
+ * `"<3"`, which exercises the second regex): 12.5k characters 36ms, 25k 140ms,
+ * 50k 567ms, 100k 2.27s — a clean 4x per doubling against 3ms for ordinary
+ * editor HTML of the same size, and 100,000 is what `reports.ts` allows per
+ * section.
+ *
+ * Both ends of that are load-bearing. Server-side this runs on every report
+ * version saved and every help article written, in a single-process service, so
+ * it is 2.3 seconds during which nothing else is served. Client-side the
+ * identical copy in the editor runs on *every keystroke*, so a document holding
+ * that shape freezes the editor a keystroke at a time.
+ *
+ * Each scan is linear because `gt` only moves forward: a `>` that is not there
+ * for this `<` is not there for any `<` after it either — and both regexes
+ * required one, so once there is no `>` left the rest of the input is text.
+ *
+ * Still two passes, deliberately. They are not interchangeable with one: the
+ * junk sweep runs over what the tag filter *left*, so a `<3` in front of a
+ * dropped `<img …>` keeps its text ("<3") because the `>` that would have
+ * closed it went with the img. Folding the two together silently ate that text
+ * — caught by differentially testing the scan against the regexes it replaces
+ * over every ordered pair and triple of a tag alphabet.
  */
 export function sanitizeHtml(html: string): string {
-  return stripComments(stripRawText(html))
-    .replace(
-      /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g,
-      (_m, close: string, name: string, attrs: string) => {
-        const tag = name.toLowerCase();
-        if (!ALLOWED_TAGS.has(tag)) return '';
-        if (tag === 'br') return '<br>';
-        if (tag === 'a' && !close) {
-          const href = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs);
-          const url = (href?.[1] ?? href?.[2] ?? href?.[3] ?? '').trim();
-          if (/^(https?:\/\/|mailto:)/i.test(url)) {
-            return `<a href="${url.replace(/"/g, '&quot;')}">`;
-          }
-          return '<a>';
-        }
-        return `<${close}${tag}>`;
-      },
-    )
-    .replace(/<[^a-zA-Z/!][^>]*>/g, '');
+  return dropJunkTags(filterTags(stripComments(stripRawText(html))));
+}
+
+/** Whitelist pass: allowed tags kept (bare), everything else dropped. */
+function filterTags(source: string): string {
+  let out = '';
+  let last = 0;
+  let at = 0;
+  let gt = -1;
+  for (;;) {
+    const lt = source.indexOf('<', at);
+    if (lt === -1) break;
+    if (gt < lt) gt = source.indexOf('>', lt + 1);
+    if (gt === -1) break; // no `>` remains, for this `<` or any after it
+    TAG_HEAD.lastIndex = lt;
+    const m = TAG_HEAD.exec(source);
+    if (m === null) {
+      at = lt + 1; // a `<` that starts no tag; the junk sweep decides its fate
+      continue;
+    }
+    out += source.slice(last, lt);
+    const close = m[1]!;
+    const tag = m[2]!.toLowerCase();
+    const attrsFrom = TAG_HEAD.lastIndex;
+    last = at = gt + 1;
+    if (!ALLOWED_TAGS.has(tag)) continue;
+    if (tag === 'br') {
+      out += '<br>';
+      continue;
+    }
+    if (tag === 'a' && !close) {
+      // Bounded by this tag's own length, and tags do not overlap.
+      const href = HREF.exec(source.slice(attrsFrom, gt));
+      const url = (href?.[1] ?? href?.[2] ?? href?.[3] ?? '').trim();
+      out += SAFE_URL.test(url) ? `<a href="${url.replace(/"/g, '&quot;')}">` : '<a>';
+      continue;
+    }
+    out += `<${close}${tag}>`;
+  }
+  return out + source.slice(last);
+}
+
+/**
+ * Junk sweep: `<` followed by anything that cannot begin a tag, through to its
+ * `>`. `/` and `!` stay excluded as they were — a stray `</>` or a `<!` left by
+ * an unterminated comment is text, not a tag.
+ *
+ * The closing `>` is searched from `lt + 2`, not `lt + 1`, because the regex
+ * this replaces spent a character on the junk lead before looking for it: in
+ * `/<[^a-zA-Z\/!][^>]*>/`, the `[^a-zA-Z\/!]` consumes `lt + 1`. So a bare `<>`
+ * is not a junk tag and survives as text, which is the answer the old regex
+ * gave and the differential test insisted on.
+ */
+function dropJunkTags(source: string): string {
+  let out = '';
+  let last = 0;
+  let at = 0;
+  let gt = -1;
+  for (;;) {
+    const lt = source.indexOf('<', at);
+    if (lt === -1) break;
+    if (gt < lt + 2) gt = source.indexOf('>', lt + 2);
+    if (gt === -1) break;
+    const next = source[lt + 1]!;
+    if (next === '/' || next === '!' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z')) {
+      at = lt + 1;
+      continue;
+    }
+    out += source.slice(last, lt);
+    last = at = gt + 1;
+  }
+  return out + source.slice(last);
 }
 
 export function sanitizeContent(content: ReportContent): ReportContent {

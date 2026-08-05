@@ -205,30 +205,106 @@ function stripRawText(html: string): string {
   return out + html.slice(at);
 }
 
+/** Sticky, so the tag head is matched in place rather than searched for. */
+const TAG_HEAD = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b/y;
+const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const SAFE_URL = /^(https?:\/\/|mailto:)/i;
+
 /**
  * Whitelist tags, drop every attribute — except <a>, which keeps a validated
  * http(s)/mailto href (gap 9). Safe for dangerouslySetInnerHTML.
+ *
+ * Scans for the brackets rather than letting two regexes find them, for exactly
+ * the reason the block above `stripComments` gives — the two regexes this
+ * replaces both ended in `[^>]*>`, so on input with no `>` in it they ran to the
+ * end of the document from every `<`, failed, backtracked, and started again one
+ * character along. 12.5k characters of `"<p"` cost 36ms, 25k 140ms, 50k 567ms,
+ * 100k 2.27s, against 3ms for ordinary editor HTML of the same size.
+ *
+ * That matters more here than on the server. `RichTextEditor` calls this on
+ * every input event, so a document holding that shape freezes the editor a
+ * keystroke at a time — and it can arrive by paste, which is one event that
+ * produces the whole 100k at once.
+ *
+ * Kept as two passes on purpose: the junk sweep runs over what the tag filter
+ * *left*, so a `<3` in front of a dropped `<img …>` keeps its text, because the
+ * `>` that would have closed it went with the img. Output is byte-identical to
+ * the regexes for every input — checked differentially over every ordered pair
+ * and triple of a tag alphabet, and mirrored in the server copy in
+ * valuation/src/domain/report.ts.
  */
 export function sanitizeHtml(html: string): string {
-  return stripComments(stripRawText(html))
-    .replace(
-      /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g,
-      (_m, close: string, name: string, attrs: string) => {
-        const tag = name.toLowerCase();
-        if (!ALLOWED_TAGS.has(tag)) return '';
-        if (tag === 'br') return '<br>';
-        if (tag === 'a' && !close) {
-          const href = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs);
-          const url = (href?.[1] ?? href?.[2] ?? href?.[3] ?? '').trim();
-          if (/^(https?:\/\/|mailto:)/i.test(url)) {
-            return `<a href="${url.replace(/"/g, '&quot;')}">`;
-          }
-          return '<a>';
-        }
-        return `<${close}${tag}>`;
-      },
-    )
-    .replace(/<[^a-zA-Z/!][^>]*>/g, '');
+  return dropJunkTags(filterTags(stripComments(stripRawText(html))));
+}
+
+/** Whitelist pass: allowed tags kept (bare), everything else dropped. */
+function filterTags(source: string): string {
+  let out = '';
+  let last = 0;
+  let at = 0;
+  let gt = -1;
+  for (;;) {
+    const lt = source.indexOf('<', at);
+    if (lt === -1) break;
+    if (gt < lt) gt = source.indexOf('>', lt + 1);
+    if (gt === -1) break; // no `>` remains, for this `<` or any after it
+    TAG_HEAD.lastIndex = lt;
+    const m = TAG_HEAD.exec(source);
+    if (m === null) {
+      at = lt + 1; // a `<` that starts no tag; the junk sweep decides its fate
+      continue;
+    }
+    out += source.slice(last, lt);
+    const close = m[1]!;
+    const tag = m[2]!.toLowerCase();
+    const attrsFrom = TAG_HEAD.lastIndex;
+    last = at = gt + 1;
+    if (!ALLOWED_TAGS.has(tag)) continue;
+    if (tag === 'br') {
+      out += '<br>';
+      continue;
+    }
+    if (tag === 'a' && !close) {
+      // Bounded by this tag's own length, and tags do not overlap.
+      const href = HREF.exec(source.slice(attrsFrom, gt));
+      const url = (href?.[1] ?? href?.[2] ?? href?.[3] ?? '').trim();
+      out += SAFE_URL.test(url) ? `<a href="${url.replace(/"/g, '&quot;')}">` : '<a>';
+      continue;
+    }
+    out += `<${close}${tag}>`;
+  }
+  return out + source.slice(last);
+}
+
+/**
+ * Junk sweep: `<` followed by anything that cannot begin a tag, through to its
+ * `>`. `/` and `!` stay excluded as they were — a stray `</>` or a `<!` left by
+ * an unterminated comment is text, not a tag.
+ *
+ * The closing `>` is searched from `lt + 2`, not `lt + 1`: in the regex this
+ * replaces, `/<[^a-zA-Z\/!][^>]*>/`, the `[^a-zA-Z\/!]` spends `lt + 1` on the
+ * junk lead before looking for it. So a bare `<>` is not a junk tag and survives
+ * as text.
+ */
+function dropJunkTags(source: string): string {
+  let out = '';
+  let last = 0;
+  let at = 0;
+  let gt = -1;
+  for (;;) {
+    const lt = source.indexOf('<', at);
+    if (lt === -1) break;
+    if (gt < lt + 2) gt = source.indexOf('>', lt + 2);
+    if (gt === -1) break;
+    const next = source[lt + 1]!;
+    if (next === '/' || next === '!' || (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z')) {
+      at = lt + 1;
+      continue;
+    }
+    out += source.slice(last, lt);
+    last = at = gt + 1;
+  }
+  return out + source.slice(last);
 }
 
 /** Fetches an authenticated binary endpoint and triggers a browser download. */
