@@ -5,6 +5,7 @@ import {
   installCrashHandlers,
   installShutdownHandlers,
   listenHost,
+  nonOverlapping,
 } from '@n409/shared';
 
 // OTel first so http/pg get instrumented before anything imports them (issue #4).
@@ -91,49 +92,39 @@ app.log.info({ port: config.PORT }, 'valuation service listening');
 
 const emailTransports = buildEmailTransports(config, app.log);
 
-// Drip campaign scan (§15.6). The flag keeps a slow scan from stacking ticks
-// on this instance; overlap with the ops-triggered run and with other instances
-// is the advisory lock's job, inside runDueAutoEmails. A failed scan logs and
-// waits for the next tick.
+// Drip campaign scan (§15.6). `nonOverlapping` keeps a slow scan from stacking
+// ticks on this instance; overlap with the ops-triggered run and with other
+// instances is the advisory lock's job, inside runDueAutoEmails. A failed scan
+// logs and waits for the next tick.
 let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
-  let scanning = false;
-  autoEmailTimer = setInterval(() => {
-    if (scanning) return;
-    scanning = true;
-    runDueAutoEmails({ pool, ...emailTransports, log: app.log })
-      .then((r) => {
-        if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
-      })
-      .catch((err) => app.log.error({ err }, 'auto email scan failed'))
-      .finally(() => {
-        scanning = false;
-      });
-  }, config.AUTO_EMAIL_SCAN_MINUTES * 60_000);
+  const scan = nonOverlapping(
+    async () => {
+      const r = await runDueAutoEmails({ pool, ...emailTransports, log: app.log });
+      if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
+    },
+    (err) => app.log.error({ err }, 'auto email scan failed'),
+  );
+  autoEmailTimer = setInterval(() => scan.run(), config.AUTO_EMAIL_SCAN_MINUTES * 60_000);
 }
 
 // Failed-outbox retry sweep: transient SMTP failures otherwise sit as
 // 'failed' forever with nothing else revisiting them (see hooks/emailRetry.ts).
 let emailRetryTimer: NodeJS.Timeout | undefined;
 if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
-  let retrying = false;
-  emailRetryTimer = setInterval(() => {
-    if (retrying) return;
-    retrying = true;
-    retryFailedEmails({
-      pool,
-      ...emailTransports,
-      log: app.log,
-      maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS,
-    })
-      .then((r) => {
-        if (r.attempted > 0) app.log.info(r, 'email retry sweep');
-      })
-      .catch((err) => app.log.error({ err }, 'email retry sweep failed'))
-      .finally(() => {
-        retrying = false;
+  const sweep = nonOverlapping(
+    async () => {
+      const r = await retryFailedEmails({
+        pool,
+        ...emailTransports,
+        log: app.log,
+        maxAttempts: config.EMAIL_RETRY_MAX_ATTEMPTS,
       });
-  }, config.EMAIL_RETRY_SCAN_MINUTES * 60_000);
+      if (r.attempted > 0) app.log.info(r, 'email retry sweep');
+    },
+    (err) => app.log.error({ err }, 'email retry sweep failed'),
+  );
+  emailRetryTimer = setInterval(() => sweep.run(), config.EMAIL_RETRY_SCAN_MINUTES * 60_000);
 }
 
 // Auto-pipeline reaper (B-3 §auto-pipeline): sweep runs orphaned by a restart or
@@ -142,22 +133,22 @@ let reaperTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
   const olderThanMs = config.AUTO_PIPELINE_STALE_MINUTES * 60_000;
   const reaperActor = { actorType: 'system', actorId: 'reaper', source: 'auto-pipeline' } as const;
-  // Block body, like every sibling scheduler below: a concise body would hand
-  // `setInterval` a promise it has no way to settle.
-  const sweep = (): void => {
-    reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor })
-      .then((reaped) => {
-        if (reaped.length > 0) {
-          app.log.warn(
-            { count: reaped.length, runIds: reaped.map((r) => r.id) },
-            'reaped stale pipeline runs',
-          );
-        }
-      })
-      .catch((err) => app.log.error({ err }, 'pipeline reaper failed'));
-  };
-  sweep();
-  reaperTimer = setInterval(sweep, Math.min(olderThanMs, 5 * 60_000));
+  // This is the longest tick of the six — a transaction that locks up to 100
+  // stale runs and writes an audit event for each — and it is slowest exactly
+  // when runs are wedged, which is the one time it runs at all. It used to be
+  // the only scheduler here without the non-overlap guard, despite a comment
+  // claiming it followed its siblings.
+  const sweep = nonOverlapping(
+    async () => {
+      const reaped = await reapStalePipelineRuns(pool, { olderThanMs, actor: reaperActor });
+      if (reaped.length > 0) {
+        app.log.warn({ count: reaped.length, runIds: reaped.map((r) => r.id) }, 'reaped stale pipeline runs');
+      }
+    },
+    (err) => app.log.error({ err }, 'pipeline reaper failed'),
+  );
+  sweep.run();
+  reaperTimer = setInterval(() => sweep.run(), Math.min(olderThanMs, 5 * 60_000));
 }
 
 // Cap-table sync scheduler (feature 4): pull connections whose daily/weekly
@@ -165,60 +156,42 @@ if (config.AUTO_PIPELINE_STALE_MINUTES > 0) {
 // errors are recorded on the row and don't stop the scan.
 let capTableSyncTimer: NodeJS.Timeout | undefined;
 {
-  let syncing = false;
-  const tick = () => {
-    if (syncing) return;
-    syncing = true;
-    runDueCapTableSyncs({ pool, log: app.log })
-      .then((n) => {
-        if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
-      })
-      .catch((err) => app.log.error({ err }, 'cap-table sync scan failed'))
-      .finally(() => {
-        syncing = false;
-      });
-  };
-  capTableSyncTimer = setInterval(tick, 15 * 60_000);
+  const tick = nonOverlapping(
+    async () => {
+      const n = await runDueCapTableSyncs({ pool, log: app.log });
+      if (n > 0) app.log.info({ processed: n }, 'cap-table sync scan');
+    },
+    (err) => app.log.error({ err }, 'cap-table sync scan failed'),
+  );
+  capTableSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
 
 // HRIS/payroll sync scheduler (feature 11): pull due roster/grant connections.
 let hrisSyncTimer: NodeJS.Timeout | undefined;
 {
-  let syncing = false;
-  const tick = () => {
-    if (syncing) return;
-    syncing = true;
-    runDueHrisSyncs({ pool, log: app.log })
-      .then((n) => {
-        if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
-      })
-      .catch((err) => app.log.error({ err }, 'HRIS sync scan failed'))
-      .finally(() => {
-        syncing = false;
-      });
-  };
-  hrisSyncTimer = setInterval(tick, 15 * 60_000);
+  const tick = nonOverlapping(
+    async () => {
+      const n = await runDueHrisSyncs({ pool, log: app.log });
+      if (n > 0) app.log.info({ processed: n }, 'HRIS sync scan');
+    },
+    (err) => app.log.error({ err }, 'HRIS sync scan failed'),
+  );
+  hrisSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
 
 // Retention archival sweep (feature 10): archive records past their policy age
 // unless a legal hold freezes them. Runs at boot, then every 6 hours.
 let retentionTimer: NodeJS.Timeout | undefined;
 {
-  let sweeping = false;
-  const sweep = () => {
-    if (sweeping) return;
-    sweeping = true;
-    runRetentionSweep(pool)
-      .then((r) => {
-        if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
-      })
-      .catch((err) => app.log.error({ err }, 'retention sweep failed'))
-      .finally(() => {
-        sweeping = false;
-      });
-  };
-  void sweep();
-  retentionTimer = setInterval(sweep, 6 * 60 * 60_000);
+  const sweep = nonOverlapping(
+    async () => {
+      const r = await runRetentionSweep(pool);
+      if (r.archived > 0 || r.skipped_hold > 0) app.log.info(r, 'retention sweep');
+    },
+    (err) => app.log.error({ err }, 'retention sweep failed'),
+  );
+  sweep.run();
+  retentionTimer = setInterval(() => sweep.run(), 6 * 60 * 60_000);
 }
 
 // This is the service `deploy.sh` restarts and then waits for, and the one with
