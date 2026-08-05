@@ -126,6 +126,31 @@ def _normalize(classes: list[dict]) -> list[dict]:
             _finite(ratio, f"'{name}': conversion_ratio")
             if ratio <= 0:
                 raise EngineInputError(f"'{name}': conversion_ratio must be positive")
+            # Both factors are finite and positive and their *product* still
+            # need not be: the as-converted share count is what the residual
+            # algebra actually runs on, and it is the figure that leaves the
+            # doubles.
+            #
+            # Underflow first, because it is a 500. `_segments` divides by it —
+            # the conversion breakpoint is `(P_cur − P) + P·(S + S_j)/S_j` — so
+            # a product that flushes to zero is a ZeroDivisionError, for a cap
+            # table every check above had passed.
+            #
+            # Overflow is quieter and worse. `S_j` of `inf` makes `(S + S_j)/S_j`
+            # a NaN, the breakpoint never orders ahead of anything, and the
+            # residual segment is simply never emitted — so the allocation pays
+            # out the preference stack and stops. It conserves nothing and says
+            # nothing: a $1,000,000 PWERM exit came back 200 OK having allocated
+            # $69.44, with the common holder shown $0.00 per share. This module
+            # documents `Σ class values == exit_value` as an invariant; that is
+            # the shape of its violation.
+            as_converted = shares * ratio
+            if not math.isfinite(as_converted) or as_converted <= 0:
+                raise EngineInputError(
+                    f"'{name}': shares x conversion_ratio ({shares:g} x {ratio:g}) is not a "
+                    "representable as-converted share count — the allocation is computed on the "
+                    "converted count, so check both figures"
+                )
             cls.update(
                 preference=pref,
                 seniority=seniority,
@@ -144,6 +169,23 @@ def _normalize(classes: list[dict]) -> list[dict]:
         out.append(cls)
     if not any(c["kind"] == "common" for c in out):
         raise EngineInputError("share_classes must include at least one 'common' class")
+    # The same argument as the per-class check above, one level up: every
+    # residual slope in `_segments` is `class shares / pool shares`, and the
+    # pool is a *sum*, so it can leave the doubles while every term in it is
+    # fine. Three common classes of 1e308 shares each are individually legal and
+    # add to `inf`; every slope is then `finite / inf == 0.0`, so the residual
+    # tranches are handed to nobody and a $1,000,000 exit allocates $0.00 to
+    # every class — silently, as a 200, with the arithmetic never once
+    # producing a NaN for the finite-result sweep downstream to catch.
+    #
+    # Fully converted and fully exercised is the largest the pool can ever be,
+    # so bounding that bounds every intermediate state of the event loop.
+    total_as_converted = sum(c["shares"] * c.get("conversion_ratio", 1.0) for c in out)
+    if not math.isfinite(total_as_converted):
+        raise EngineInputError(
+            "share_classes: the fully-diluted, as-converted share count is not a representable "
+            "number — the allocation divides the residual by it, so check the share counts"
+        )
     return out
 
 

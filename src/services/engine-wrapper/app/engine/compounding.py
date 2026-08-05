@@ -17,8 +17,27 @@ factor, and the bare `**` operator has two failure modes that both surface as a
   unhandled exception. A rate that large is a typo, and the caller deserves to
   be told which field it was in.
 
-Both are input problems, so both raise ``EngineInputError`` and become a 422
-carrying the offending field name.
+* **Underflow.** The mirror image, and the one an ``isfinite`` check cannot
+  see: ``0.0`` is a perfectly finite float. A base below 1 raised to a large
+  enough exponent flushes the whole factor to zero — ``(1 - 0.99) ** 200`` is
+  ``0.0``, not ``1e-400`` — and zero is not a compounding factor, it is the
+  absence of one. Every caller then does one of two things with it, and both
+  are worse than an error:
+
+  - **Divides.** ``pwerm`` discounts each scenario's allocated value by the
+    factor, so a zero divisor is a ``ZeroDivisionError`` — a 500 naming
+    nothing, for a payload the pre-flight validator had just cleared. (One
+    exponent lower the factor is merely *denormal*, the quotient saturates to
+    ``inf``, and the finite-result guard answers 422; the caller therefore got
+    a clean error for the smaller mistake and a crash for the larger one.)
+  - **Multiplies.** ``fund_valuation`` accretes a mark by the factor, so a zero
+    factor silently rewrites the position's fair value to 0 and reports it as a
+    mark that was rolled forward normally. Nothing downstream can tell it from
+    a position that genuinely went to zero — the same objection the index leg
+    two lines below already raises about a return at or under -100%.
+
+All three are input problems, so all three raise ``EngineInputError`` and
+become a 422 carrying the offending field name.
 """
 
 from __future__ import annotations
@@ -57,5 +76,12 @@ def compound_factor(rate: float, periods: float, name: str) -> float:
         raise EngineInputError(
             f"{name} is too large to compound over {periods:g} periods — check the rate is a "
             "fraction (0.25), not a percentage (25)"
+        )
+    # `isfinite` is true of 0.0, so the underflow has to be named separately.
+    if factor == 0.0:
+        raise EngineInputError(
+            f"{name} compounds to zero over {periods:g} periods — the factor is too small to "
+            "represent, so there is no value to discount or accrete by it; check the rate is a "
+            "fraction (-0.25), not a percentage (-25), and that the period count is in years"
         )
     return factor
