@@ -578,6 +578,13 @@ def _compute_opm(params: dict, inputs: dict, recompute: list[str] | None, prior:
             for name, data in we["approaches"].items()
         },
         "allocation": alloc["allocation"],
+        # The other three paths all name themselves; this one did not, and it is
+        # the default. `allocation.method` is the *mechanism* the OPM used —
+        # "opm_waterfall", "opm_single_breakpoint", "as_converted" — not the
+        # allocation method, so a consumer falling back to it read a different
+        # vocabulary. The report's summary page did exactly that and printed
+        # "Allocation method: OPM_WATERFALL" on the deliverable a board reads.
+        "allocation_method": "opm",
         "common_equity_value": round(alloc["common_equity"], 2),
         "assumptions": {
             "time_to_exit_years": round(t, 4),

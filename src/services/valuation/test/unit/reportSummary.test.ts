@@ -310,4 +310,45 @@ describe('buildReportSummary', () => {
     )!;
     expect(summary.figures![0]!.value).toBe('PWERM');
   });
+
+  /**
+   * The OPM path did not hoist `allocation_method`, so the fallback above was
+   * not a rare degraded case — it was the default run, and `allocation.method`
+   * speaks a different vocabulary: the *mechanism* the OPM used. Unmapped keys
+   * echo upper-cased, so the board-facing summary printed "OPM_WATERFALL".
+   *
+   * The engine now hoists `allocation_method` on that path too, but every
+   * calculation stored before it does not, and re-rendering an old report must
+   * not change what it says. So both spellings resolve to prose.
+   */
+  describe('allocation mechanism names (calculations stored before the hoist)', () => {
+    const label = (results: Record<string, unknown>) =>
+      buildReportSummary(calculation({ results: { fmv_per_share: 1, ...results } }), CONTEXT)!.figures!.find(
+        (f) => f.label === 'Allocation method',
+      )!.value;
+
+    it.each([
+      ['opm_waterfall', 'Option pricing model (cap-table waterfall)'],
+      ['opm_single_breakpoint', 'Option pricing model (single breakpoint)'],
+      ['as_converted', 'As-converted (pro-rata)'],
+      ['cvm_waterfall', 'Current value method (cap-table waterfall)'],
+      ['cvm_single_preference', 'Current value method (single preference)'],
+      ['cvm_pro_rata', 'Current value method (pro-rata)'],
+      ['cvm_common_only', 'Current value method (common only)'],
+    ])('renders %s as prose, never a shouted key', (method, expected) => {
+      expect(label({ allocation: { method } })).toBe(expected);
+    });
+
+    it('never leaves an underscored key on the page for a known mechanism', () => {
+      for (const method of ['opm_waterfall', 'opm_single_breakpoint', 'as_converted']) {
+        expect(label({ allocation: { method } })).not.toMatch(/_|^[A-Z ]+$/);
+      }
+    });
+
+    it('prefers the hoisted method when the engine supplies both', () => {
+      expect(label({ allocation_method: 'opm', allocation: { method: 'opm_waterfall' } })).toBe(
+        'Option pricing model',
+      );
+    });
+  });
 });

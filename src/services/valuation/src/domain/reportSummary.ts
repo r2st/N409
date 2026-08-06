@@ -27,11 +27,35 @@ export const APPROACH_LABELS: Record<string, string> = {
   market: 'Market (comparables)',
 };
 
-const ALLOCATION_LABELS: Record<string, string> = {
+/**
+ * How the allocation is named on the summary page.
+ *
+ * Two vocabularies land here and both have to resolve. `results.allocation_method`
+ * is the method the analyst chose — opm / pwerm / hybrid / cvm. `results.allocation.method`
+ * is the *mechanism* the engine then used, and it is the only thing an OPM run
+ * carried until the engine started emitting `allocation_method` on that path
+ * too: every calculation stored before that change has `opm_waterfall`,
+ * `opm_single_breakpoint` or `as_converted` and nothing else.
+ *
+ * Unmapped keys fall through to an upper-cased echo of the key, so the gap was
+ * silent and reached paper: a board-facing 409A read "Allocation method:
+ * OPM_WATERFALL". The mechanism names are mapped here rather than only fixed in
+ * the engine because re-rendering an old report must not change what it says —
+ * the reader gets the right words for the allocation that actually ran.
+ */
+export const ALLOCATION_LABELS: Record<string, string> = {
   opm: 'Option pricing model',
   pwerm: 'PWERM',
   hybrid: 'Hybrid (OPM + PWERM)',
   cvm: 'Current value method',
+  // Mechanisms, as `allocation.method` reports them.
+  opm_waterfall: 'Option pricing model (cap-table waterfall)',
+  opm_single_breakpoint: 'Option pricing model (single breakpoint)',
+  as_converted: 'As-converted (pro-rata)',
+  cvm_waterfall: 'Current value method (cap-table waterfall)',
+  cvm_single_preference: 'Current value method (single preference)',
+  cvm_pro_rata: 'Current value method (pro-rata)',
+  cvm_common_only: 'Current value method (common only)',
 };
 
 const DLOM_LABELS: Record<string, string> = {
