@@ -1,43 +1,75 @@
-2fb953351de1c001bee849868af8de11a41a15a3
+e43aa6d95c8553ad569bf81f5495ccdb4ad9efcf
 # N409 deployed revision
-# commit:    2fb953351de1c001bee849868af8de11a41a15a3
-# subject:   fix(billing): a refunded 409A stayed paid, published, and counted as revenue
-# previous:  5ed45da (docs: record the 0ab53d6 deploy)
-# includes:  1 commit — the payment-lifecycle completion. The payments webhook
-#            only ever listened to checkout.session.*, so every event that moves
-#            money back out (charge.refunded, charge.dispute.created/closed) was
-#            acknowledged as `ignored`: a refunded or charged-back engagement
-#            stayed paid, kept counting as revenue on the billing page, and
-#            alerted nobody. The same commit adds invoice.payment_failed dunning,
-#            an alert on a bounced ACH debit, and POST /api/v1/billing/portal so
-#            a subscriber can cancel or replace a card without emailing support.
-# deployed:  2026-08-06T05:28Z (UTC)
+# commit:    e43aa6d95c8553ad569bf81f5495ccdb4ad9efcf
+# subject:   chore(format): run prettier over two test files that predate this branch
+# previous:  2fb9533 (fix(billing): a refunded 409A stayed paid, published, and
+#            counted as revenue)
+# includes:  5 commits — four fixes plus one formatting commit. The theme is the
+#            layer *above* the payment lifecycle work in 2fb9533: what the
+#            customer is quoted, what the deliverable says, and who is allowed
+#            to set a password.
+#
+#            191c762 billing — plan_limits seeded per_valuation at $2,000 while
+#              the one-time checkout charges $990-$1,490 by product kind. The
+#              Billing screen renders that row as a price card, so a customer
+#              read $2,000.00 and was charged $1,190.00 for a 409A: the gap this
+#              file has carried as unresolved since the payments work landed. It
+#              is not a business call — whichever number is right, the two
+#              cannot disagree. The tier now quotes the entry price ("From
+#              $990.00") because the price genuinely varies by product, and a
+#              test pins the figure to min(priceForKind).
+#            899eef8 report — the OPM path never hoisted `allocation_method`, so
+#              the report summary fell back to `allocation.method` (a different
+#              vocabulary) and printed "Allocation method: OPM_WATERFALL" on the
+#              board-facing summary page. Fixed in the engine *and* in the label
+#              map, because stored calculations lack the key and re-rendering an
+#              archived report must not change what it says.
+#            d12cafa auth — accept-invite called neither assertPasswordStrong
+#              nor anything like it. Invitation is how every firm seat is
+#              created, so an administrator raising password_min_length secured
+#              self-service sign-ups only.
+#            1e562fb payments UI — migration 0099 added the `refunded` label and
+#              the refund/dispute columns; the frontend was never updated. The
+#              status chip is a lookup keyed on a four-value union, so a
+#              refunded row rendered `undefined` in its class list, and the
+#              refund itself was never displayed at all.
+#            e43aa6d format — two test files unformatted since before this work;
+#              format:check is a CI gate and was already red.
+# deployed:  2026-08-06T07:04Z (UTC)
 # method:    infra/deploy.sh --apply (git archive + scp + tar extract, npm ci &&
 #            npm run build on host, BUILD_SHA written after the build, valuation
 #            restarted and awaited before the other four).
 # verified:  BUILD_SHA on the host, all five units active, /health on :3000 and
-#            :3001 both reporting 2fb9533, https://n409.aiknol.com/health 200
-#            through Caddy, 0099 in schema_migrations, and the four new payments
-#            columns plus the 'refunded' enum label present in the live schema.
-# note:      This file is tracked, so it always names the *previous* deploy at the
-#            moment the archive is built — the commit recording a deploy cannot be
-#            the commit being deployed. /opt/N409/BUILD_SHA is the authoritative
-#            record of what is running; it is written by the deploy script from the
-#            local HEAD after a successful build, and is what /health reports.
-# note:      no deletions and no dependency changes since 5ed45da, so the deletion
-#            sweep was empty and no pip install was needed. Nothing Python changed;
-#            ai and engine-wrapper restarted only because the script restarts the
-#            whole set.
-# note:      migration 0099 runs ALTER TYPE ... ADD VALUE inside the runner's
-#            per-file transaction. Legal from PG 12 provided the new label is not
-#            *used* in the same transaction — it is not, and the host is PG 17.
+#            :3001 both reporting e43aa6d, https://n409.aiknol.com/health 200
+#            through Caddy, 0100 at the head of schema_migrations, and
+#            plan_limits.per_valuation reading 99000 in the live database.
+# tests:     4,870 green before the push — 3,453 JS across the five workspaces
+#            (npm test), 341 ai, 1,076 engine-wrapper. Each of the four fixes
+#            was confirmed to fail its new test with the fix reverted.
+# note:      This file is tracked, so it always names the *previous* deploy at
+#            the moment the archive is built — the commit recording a deploy
+#            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
+#            authoritative record of what is running; it is written by the
+#            deploy script from the local HEAD after a successful build, and is
+#            what /health reports.
+# note:      no deletions and no dependency changes since 2fb9533, so the
+#            deletion sweep was empty and no pip install was needed. The only
+#            Python change is compute.py plus a new test file; ai restarted only
+#            because the script restarts the whole set.
+# note:      migration 0100 is a single guarded UPDATE (`WHERE tier =
+#            'per_valuation' AND price_cents = 200000`), so it is a no-op on any
+#            environment whose catalogue was already edited by hand rather than
+#            silently overwriting a deliberate price.
 # gap:       Stripe is still unconfigured in production — /opt/N409/.env has no
-#            STRIPE_SECRET_KEY and no webhook secrets, so every client still sees
-#            "Online payment is not available yet — we will invoice you instead"
-#            and none of the handlers deployed here can fire. When the keys land,
-#            the two endpoints now want seven events each, and the Stripe Billing
-#            Portal must be enabled once in the dashboard before
-#            /api/v1/billing/portal can return a URL. See docs/billing-setup.md.
-# gap:       the two per-valuation prices still disagree — plan_limits.per_valuation
-#            says $2,000.00, DEFAULT_PRICE_CENTS['409a'] charges $1,190.00. A
-#            business call, unresolved, and it surfaces on the first live charge.
+#            STRIPE_SECRET_KEY and no webhook secrets, so every client still
+#            sees "Online payment is not available yet — we will invoice you
+#            instead" and none of the payment handlers can fire. The pricing fix
+#            above matters *before* those keys land, not after: it is what the
+#            first live charge would otherwise contradict. See
+#            docs/billing-setup.md.
+# gap:       the client intake portal accepts any JSON value for a text or
+#            textarea answer — `filterIntakeAnswers` narrows the key set but not
+#            the value types, so an object or array is stored and later rendered
+#            as "[object Object]" in the firm console. Not a crash and not an
+#            injection (the console stringifies), but the questionnaire's own
+#            rules only cover number / date / select. Unfixed this round.
