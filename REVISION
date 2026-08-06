@@ -1,31 +1,43 @@
-0ab53d6d805412ed4665682230222cbfa75da3b7
+2fb953351de1c001bee849868af8de11a41a15a3
 # N409 deployed revision
-# commit:    0ab53d6d805412ed4665682230222cbfa75da3b7
-# subject:   fix(payments): a bounced ACH debit left the valuation paid and nobody told
-# previous:  9173064 (fix(engine): three malformed payloads that left the engine as a 500)
-# includes:  2 commits — the engine boolean/terminal-growth pair (e8d5499) and the
-#            Stripe delayed-payment settlement fix (0ab53d6). Both are revenue- or
-#            trust-critical: the first returned a threefold overstated FMV on a
-#            payload the validator had called clean, the second released a 409A
-#            for an ACH debit that later bounced.
-# deployed:  2026-08-06T03:33Z (UTC)
+# commit:    2fb953351de1c001bee849868af8de11a41a15a3
+# subject:   fix(billing): a refunded 409A stayed paid, published, and counted as revenue
+# previous:  5ed45da (docs: record the 0ab53d6 deploy)
+# includes:  1 commit — the payment-lifecycle completion. The payments webhook
+#            only ever listened to checkout.session.*, so every event that moves
+#            money back out (charge.refunded, charge.dispute.created/closed) was
+#            acknowledged as `ignored`: a refunded or charged-back engagement
+#            stayed paid, kept counting as revenue on the billing page, and
+#            alerted nobody. The same commit adds invoice.payment_failed dunning,
+#            an alert on a bounced ACH debit, and POST /api/v1/billing/portal so
+#            a subscriber can cancel or replace a card without emailing support.
+# deployed:  2026-08-06T05:28Z (UTC)
 # method:    infra/deploy.sh --apply (git archive + scp + tar extract, npm ci &&
 #            npm run build on host, BUILD_SHA written after the build, valuation
 #            restarted and awaited before the other four).
 # verified:  BUILD_SHA on the host, all five units active, /health on :3000 and
-#            :3001 both reporting 0ab53d6, and https://n409.aiknol.com/health
-#            200 through Caddy.
+#            :3001 both reporting 2fb9533, https://n409.aiknol.com/health 200
+#            through Caddy, 0099 in schema_migrations, and the four new payments
+#            columns plus the 'refunded' enum label present in the live schema.
 # note:      This file is tracked, so it always names the *previous* deploy at the
 #            moment the archive is built — the commit recording a deploy cannot be
 #            the commit being deployed. /opt/N409/BUILD_SHA is the authoritative
 #            record of what is running; it is written by the deploy script from the
 #            local HEAD after a successful build, and is what /health reports.
-# note:      no deletions and no dependency changes between 9173064 and this commit,
-#            so the deletion sweep was empty and no pip install was needed. The
-#            engine-wrapper and ai services carry Python changes only in
-#            engine-wrapper (compute.py, validate.py); both were restarted.
-# gap:       Stripe remains unconfigured in production — /opt/N409/.env still has
-#            no STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET, so every client sees
+# note:      no deletions and no dependency changes since 5ed45da, so the deletion
+#            sweep was empty and no pip install was needed. Nothing Python changed;
+#            ai and engine-wrapper restarted only because the script restarts the
+#            whole set.
+# note:      migration 0099 runs ALTER TYPE ... ADD VALUE inside the runner's
+#            per-file transaction. Legal from PG 12 provided the new label is not
+#            *used* in the same transaction — it is not, and the host is PG 17.
+# gap:       Stripe is still unconfigured in production — /opt/N409/.env has no
+#            STRIPE_SECRET_KEY and no webhook secrets, so every client still sees
 #            "Online payment is not available yet — we will invoice you instead"
-#            and the webhook this deploy fixed cannot fire. The code is complete;
-#            the keys and the webhook registration are not. See docs/billing-setup.md.
+#            and none of the handlers deployed here can fire. When the keys land,
+#            the two endpoints now want seven events each, and the Stripe Billing
+#            Portal must be enabled once in the dashboard before
+#            /api/v1/billing/portal can return a URL. See docs/billing-setup.md.
+# gap:       the two per-valuation prices still disagree — plan_limits.per_valuation
+#            says $2,000.00, DEFAULT_PRICE_CENTS['409a'] charges $1,190.00. A
+#            business call, unresolved, and it surfaces on the first live charge.
