@@ -609,6 +609,15 @@ export function registerAuthRoutes(
       throw problems.tooManyRequests('Too many invitation attempts — try again later');
     }
 
+    // The same policy register, reset-password and change-password all apply.
+    // This route was the one that did not, and it is how every seat inside a
+    // firm is created — so an administrator who raised `password_min_length`
+    // raised it for self-service sign-ups only, while the accounts that came in
+    // by invitation kept the schema's 10-character floor and could still be
+    // all-letters. Ordered ahead of the hash for the same reason register is:
+    // the scrypt call is the expensive half of the request.
+    await assertPasswordStrong(password);
+
     const result = await acceptInvitation(deps.pool, {
       rawToken: token,
       passwordDigest: await hashPassword(password),
