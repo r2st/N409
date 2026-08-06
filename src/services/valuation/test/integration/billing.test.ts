@@ -21,7 +21,14 @@ interface BillingJson {
     receipt_url: string | null;
   }>;
   unpaid_valuations: Array<{ id: string; amount_cents: number }>;
-  totals: { paid_cents: number; succeeded_count: number; payment_count: number };
+  totals: {
+    gross_cents: number;
+    refunded_cents: number;
+    paid_cents: number;
+    succeeded_count: number;
+    refunded_count: number;
+    payment_count: number;
+  };
 }
 
 describe.skipIf(!dbUp)('billing rollup', () => {
@@ -102,8 +109,11 @@ describe.skipIf(!dbUp)('billing rollup', () => {
     expect(payment.status).toBe('succeeded');
     expect(payment.receipt_url).toBe('https://pay.stripe.com/receipts/cs_billing_client');
     expect(billing.totals).toEqual({
+      gross_cents: 119_000,
+      refunded_cents: 0,
       paid_cents: 119_000,
       succeeded_count: 1,
+      refunded_count: 0,
       payment_count: 1,
     });
   });
@@ -138,6 +148,13 @@ describe.skipIf(!dbUp)('billing rollup', () => {
     const billing = await getBilling(fresh.token);
     expect(billing.payments).toEqual([]);
     expect(billing.unpaid_valuations).toEqual([]);
-    expect(billing.totals).toEqual({ paid_cents: 0, succeeded_count: 0, payment_count: 0 });
+    expect(billing.totals).toEqual({
+      gross_cents: 0,
+      refunded_cents: 0,
+      paid_cents: 0,
+      succeeded_count: 0,
+      refunded_count: 0,
+      payment_count: 0,
+    });
   });
 });

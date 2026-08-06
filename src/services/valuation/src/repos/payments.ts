@@ -1,8 +1,9 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import type { ValuationScope } from '../auth/rbac.js';
+import type { DisputeStatus } from '../domain/payments.js';
 
-export type PaymentStatus = 'pending' | 'succeeded' | 'failed' | 'expired';
+export type PaymentStatus = 'pending' | 'succeeded' | 'failed' | 'expired' | 'refunded';
 
 export interface PaymentRow {
   id: string;
@@ -16,6 +17,10 @@ export interface PaymentRow {
   checkout_url: string | null;
   charge_id: string | null;
   receipt_url: string | null;
+  refunded_cents: string | number;
+  refunded_at: Date | null;
+  dispute_status: DisputeStatus | null;
+  disputed_at: Date | null;
   created_by: string | null;
   created_at: Date;
   updated_at: Date;
@@ -51,6 +56,94 @@ export async function createPayment(
 
 export async function findPaymentBySessionId(pool: pg.Pool, sessionId: string): Promise<PaymentRow | null> {
   const { rows } = await pool.query<PaymentRow>('SELECT * FROM payments WHERE session_id = $1', [sessionId]);
+  return rows[0] ?? null;
+}
+
+/**
+ * The payment a refund or dispute event names.
+ *
+ * Those events carry a charge and a payment intent, never the Checkout Session
+ * id the row is keyed on, so both are tried. Charge first: it is the more
+ * specific of the two and the only one present on a dispute raised against a
+ * charge whose intent we never stored. Newest-first with a LIMIT because
+ * neither column is unique — a resumed checkout can produce a second row
+ * against the same intent — and the latest is the one that settled.
+ */
+export async function findPaymentByChargeOrIntent(
+  pool: pg.Pool,
+  ref: { chargeId?: string | null; paymentIntentId?: string | null },
+): Promise<PaymentRow | null> {
+  if (ref.chargeId) {
+    const { rows } = await pool.query<PaymentRow>(
+      'SELECT * FROM payments WHERE charge_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [ref.chargeId],
+    );
+    if (rows[0]) return rows[0];
+  }
+  if (ref.paymentIntentId) {
+    const { rows } = await pool.query<PaymentRow>(
+      'SELECT * FROM payments WHERE payment_intent_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [ref.paymentIntentId],
+    );
+    if (rows[0]) return rows[0];
+  }
+  return null;
+}
+
+/**
+ * Records a refund total against a payment.
+ *
+ * Assignment, not accumulation: Stripe sends the charge's running
+ * `amount_refunded`, so a redelivered event writes the same value again. The
+ * row only becomes 'refunded' when everything went back — a partial refund
+ * leaves it 'succeeded', because the client still bought and still holds the
+ * report. `refunded_at` is stamped once and never moved, so it means "when the
+ * money first started coming back" even across several partial refunds.
+ */
+export async function recordRefund(
+  pool: pg.Pool,
+  id: string,
+  args: { refundedCents: number; fullyRefunded: boolean },
+): Promise<PaymentRow | null> {
+  const { rows } = await pool.query<PaymentRow>(
+    `UPDATE payments
+     SET refunded_cents = $2,
+         refunded_at = COALESCE(refunded_at, now()),
+         status = CASE WHEN $3 THEN 'refunded'::payment_status ELSE status END,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id, args.refundedCents, args.fullyRefunded],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Records where a chargeback stands.
+ *
+ * A lost dispute is money Stripe has already pulled back, so it lands the row
+ * in the same terminal state as a full refund and records the whole charge as
+ * returned. An open or won one leaves `status` alone: during an open dispute we
+ * still hold the money, and a won one we keep.
+ */
+export async function recordDispute(
+  pool: pg.Pool,
+  id: string,
+  status: DisputeStatus,
+): Promise<PaymentRow | null> {
+  const lost = status === 'lost';
+  const { rows } = await pool.query<PaymentRow>(
+    `UPDATE payments
+     SET dispute_status = $2,
+         disputed_at = COALESCE(disputed_at, now()),
+         status = CASE WHEN $3 THEN 'refunded'::payment_status ELSE status END,
+         refunded_cents = CASE WHEN $3 THEN amount_cents ELSE refunded_cents END,
+         refunded_at = CASE WHEN $3 THEN COALESCE(refunded_at, now()) ELSE refunded_at END,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [id, status, lost],
+  );
   return rows[0] ?? null;
 }
 

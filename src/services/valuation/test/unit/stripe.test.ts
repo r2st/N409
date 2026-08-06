@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createBillingPortalSession,
   encodeForm,
   parseSignatureHeader,
   retrieveReceipt,
@@ -135,3 +136,50 @@ describe('settlement gate', () => {
     expect(isSettled('')).toBe(true);
   });
 });
+
+/**
+ * Billing portal sessions (self-serve cancel / card update). The URL is the
+ * whole point of the call, so a response without one is a failure rather than
+ * a redirect to `undefined`.
+ */
+describe('billing portal session', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('posts the customer and return URL, and returns the session URL', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(portalResponse({ id: 'bps_1', url: 'https://billing.stripe.com/s/1' }));
+
+    const session = await createBillingPortalSession('sk_test', {
+      customerId: 'cus_1',
+      returnUrl: 'https://app.example.com/billing',
+    });
+
+    expect(session).toEqual({ id: 'bps_1', url: 'https://billing.stripe.com/s/1' });
+    const [url, init] = spy.mock.calls[0]!;
+    expect(String(url)).toBe('https://api.stripe.com/v1/billing_portal/sessions');
+    expect(String(init?.body)).toContain('customer=cus_1');
+    expect(String(init?.body)).toContain(
+      `return_url=${encodeURIComponent('https://app.example.com/billing')}`,
+    );
+  });
+
+  it('raises a StripeApiError carrying Stripe’s own message', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      portalResponse({ error: { message: 'No configuration provided' } }, 400),
+    );
+    await expect(
+      createBillingPortalSession('sk_test', { customerId: 'cus_1', returnUrl: 'https://x/billing' }),
+    ).rejects.toThrow('No configuration provided');
+  });
+
+  it('refuses a 200 with no URL rather than redirecting nowhere', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(portalResponse({ id: 'bps_2' }));
+    await expect(
+      createBillingPortalSession('sk_test', { customerId: 'cus_1', returnUrl: 'https://x/billing' }),
+    ).rejects.toThrow(StripeApiError);
+  });
+});
+
+const portalResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });

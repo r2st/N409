@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, problems } from '@n409/shared';
@@ -6,7 +6,12 @@ import { renderReportPdf } from '@n409/report/pdf';
 import { isOps } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findUserById } from '../repos/users.js';
-import { createSubscriptionCheckoutSession, verifyWebhookSignature } from '../payments/stripe.js';
+import {
+  createBillingPortalSession,
+  createSubscriptionCheckoutSession,
+  StripeApiError,
+  verifyWebhookSignature,
+} from '../payments/stripe.js';
 import { isSettled } from './payments.js';
 import {
   cancelSubscription,
@@ -15,14 +20,20 @@ import {
   findInvoice,
   findInvoiceByStripeId,
   findPlan,
+  findStripeCustomerId,
   listAllInvoices,
   listAllSubscriptions,
   listInvoicesForUser,
   listPlans,
+  markSubscriptionPastDue,
   nextInvoiceSequence,
   upsertSubscription,
 } from '../repos/billing.js';
+import { createNotification } from '../repos/notifications.js';
+import { listUserIdsWithRoles } from '../repos/users.js';
+import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 import {
+  formatMoneyCents,
   invoiceNumber,
   invoicePeriod,
   invoiceSections,
@@ -115,7 +126,54 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       plan,
       usage,
       invoices: await listInvoicesForUser(deps.pool, principal.id),
+      // Drives the "Manage subscription" control: a customer record has to
+      // exist before the portal has anything to open.
+      portal_available:
+        Boolean(deps.stripeSecretKey) && (await findStripeCustomerId(deps.pool, principal.id)) !== null,
     };
+  });
+
+  /**
+   * Self-serve subscription management — cancel, change plan, update the card,
+   * download past invoices — as a redirect into Stripe's hosted portal.
+   *
+   * Until this existed, `cancelSubscription` was only ever reached from a
+   * Stripe-side event: there was no way for a subscriber to cancel from the
+   * product at all, and a customer whose card expired had no way to fix it and
+   * simply lapsed. Both are churn we caused. Handing the flow to Stripe also
+   * keeps card details out of this service entirely.
+   *
+   * Always the caller's own customer id, never one supplied by the request —
+   * a portal session for someone else's customer is their card and their
+   * invoice history.
+   */
+  app.post('/api/v1/billing/portal', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!deps.stripeSecretKey) throw billingUnavailable('Payments are not configured');
+
+    const customerId = await findStripeCustomerId(deps.pool, principal.id);
+    if (!customerId) {
+      throw problems.conflict('There is no billing account to manage yet — subscribe to a plan first.');
+    }
+    const base = deps.publicBaseUrl.replace(/\/$/, '');
+    try {
+      const session = await createBillingPortalSession(deps.stripeSecretKey, {
+        customerId,
+        returnUrl: `${base}/billing`,
+      });
+      return { portal_url: session.url };
+    } catch (err) {
+      if (err instanceof StripeApiError) {
+        req.log.warn({ err }, 'stripe billing portal session failed');
+        throw new ApiProblem({
+          status: 502,
+          title: 'Bad Gateway',
+          type: 'urn:n409:problem:stripe',
+          detail: `Stripe: ${err.message}`,
+        });
+      }
+      throw err;
+    }
   });
 
   // ── Admin billing dashboard ──────────────────────────────────────────────
@@ -183,6 +241,41 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       .header('content-disposition', `attachment; filename="${invoice.number}.pdf"`)
       .send(pdf);
   });
+
+  /**
+   * Tells the subscriber their renewal failed, and the billing admins that an
+   * account is at risk. Best-effort: a notification failure must not turn into
+   * the 5xx that makes Stripe redeliver an event we already acted on.
+   */
+  async function alertPaymentFailed(
+    log: FastifyBaseLogger,
+    userId: string,
+    amountDueCents: number,
+  ): Promise<void> {
+    try {
+      const amount = Number.isFinite(amountDueCents) && amountDueCents > 0 ? amountDueCents : 0;
+      await createNotification(deps.pool, {
+        userId,
+        type: 'subscription_payment_failed',
+        title: 'Your subscription payment did not go through',
+        body:
+          (amount
+            ? `A payment of ${formatMoneyCents(amount, 'usd')} was declined. `
+            : 'A payment was declined. ') +
+          'Update your card from the billing page to keep your plan active.',
+      });
+      for (const opsId of await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES)) {
+        await createNotification(deps.pool, {
+          userId: opsId,
+          type: 'subscription_payment_failed',
+          title: 'A subscription renewal failed',
+          body: 'A subscriber’s payment was declined and the account is now past due.',
+        });
+      }
+    } catch (err) {
+      log.warn({ err, userId }, 'dunning notification failed');
+    }
+  }
 
   // ── Webhook (subscription lifecycle + invoices) ──────────────────────────
   void app.register(async (scope) => {
@@ -286,6 +379,19 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
               stripeInvoiceId,
               paidAt: new Date(),
             });
+          }
+        } else if (type === 'invoice.payment_failed') {
+          // Dunning. A renewal that does not go through is the single most
+          // common way a paying customer stops paying, and it is almost always
+          // an expired card rather than a decision — which makes it recoverable
+          // if anyone is told. Nothing handled this event before, so the
+          // subscription drifted to past_due (or not even that, for a
+          // subscription carrying no metadata) and the first sign of trouble
+          // was Stripe cancelling it weeks later.
+          const stripeSubId = typeof obj.subscription === 'string' ? obj.subscription : null;
+          if (stripeSubId) {
+            const sub = await markSubscriptionPastDue(deps.pool, stripeSubId);
+            if (sub) await alertPaymentFailed(req.log, sub.user_id, Number(obj.amount_due ?? 0));
           }
         }
       } catch (err) {

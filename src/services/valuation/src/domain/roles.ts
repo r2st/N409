@@ -50,3 +50,12 @@ export const CLIENT_ROLES: ReadonlySet<RoleKey> = new Set(['valuation_user', 'in
 
 /** Roles allowed to administer users/roles/partners. */
 export const USER_ADMIN_ROLES: ReadonlySet<RoleKey> = new Set(['admin', 'god', 'supervisor']);
+
+/**
+ * Who hears about money going wrong — a refund, a chargeback, a bounced debit,
+ * a failed renewal. Deliberately the smallest set that can actually act on one:
+ * a chargeback has a Stripe response deadline and a failed renewal needs
+ * somebody to call the client, and neither is a reviewer's job. Sent to the
+ * whole ops group instead, these would be ignorable within a week.
+ */
+export const BILLING_ALERT_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervisor'];

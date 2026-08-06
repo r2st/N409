@@ -156,6 +156,35 @@ export async function findUserByExternalId(pool: pg.Pool, externalId: string): P
   return rows[0] ?? null;
 }
 
+/**
+ * Active users holding any of the given roles — the audience for a system
+ * alert that has no single owner to send to.
+ *
+ * Soft-deleted accounts are excluded: a notification nobody can log in to read
+ * is the same as no notification, and it is exactly the alert that must not go
+ * missing. Capped because a billing alert fanned out across a large ops team is
+ * noise, and the first few holders of an admin role are enough for someone to
+ * act; callers that need everyone should page, not notify.
+ */
+export async function listUserIdsWithRoles(
+  pool: pg.Pool,
+  roles: readonly RoleKey[],
+  limit = 25,
+): Promise<string[]> {
+  if (roles.length === 0) return [];
+  const { rows } = await pool.query<{ id: string }>(
+    `SELECT DISTINCT u.id, u.created_at
+       FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN roles r ON r.id = ur.role_id
+      WHERE r.key = ANY($1::text[]) AND u.deleted_at IS NULL
+      ORDER BY u.created_at ASC
+      LIMIT $2`,
+    [roles as readonly string[], limit],
+  );
+  return rows.map((r) => r.id);
+}
+
 /** Soft delete / reactivate for SCIM `active` toggling. */
 export async function setUserActive(pool: pg.Pool, id: string, active: boolean): Promise<void> {
   await pool.query(`UPDATE users SET deleted_at = ${active ? 'NULL' : 'now()'} WHERE id = $1`, [id]);

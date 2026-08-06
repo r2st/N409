@@ -119,6 +119,49 @@ export async function cancelSubscription(pool: pg.Pool, stripeSubscriptionId: st
 }
 
 /**
+ * A renewal that did not go through.
+ *
+ * Written from `invoice.payment_failed` rather than left to
+ * `customer.subscription.updated`, because that handler can only act when the
+ * Stripe subscription carries our metadata — and a subscription created before
+ * that metadata was attached, or through the Stripe dashboard, carries none. A
+ * lapsed card should mark the account past due either way.
+ *
+ * Never touches an already-canceled row: a failed invoice arriving after the
+ * subscription ended must not resurrect it into a billable state.
+ */
+export async function markSubscriptionPastDue(
+  pool: pg.Pool,
+  stripeSubscriptionId: string,
+): Promise<SubscriptionRow | null> {
+  const { rows } = await pool.query<SubscriptionRow>(
+    `UPDATE subscriptions SET status = 'past_due'
+      WHERE stripe_subscription_id = $1 AND status <> 'canceled'
+      RETURNING *`,
+    [stripeSubscriptionId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * The Stripe customer to open the billing portal for.
+ *
+ * Not restricted to an *active* subscription: someone who has just cancelled
+ * still needs the portal to pull their invoices, and someone whose card lapsed
+ * is by definition not in good standing but is exactly who needs to reach it.
+ * Most recent first, since a resubscribe creates a new row.
+ */
+export async function findStripeCustomerId(pool: pg.Pool, userId: string): Promise<string | null> {
+  const { rows } = await pool.query<{ stripe_customer_id: string }>(
+    `SELECT stripe_customer_id FROM subscriptions
+      WHERE user_id = $1 AND stripe_customer_id IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [userId],
+  );
+  return rows[0]?.stripe_customer_id ?? null;
+}
+
+/**
  * Atomically consume one valuation against the active subscription's limit.
  * Returns false (and consumes nothing) when the limit is already exhausted.
  * Unlimited plans always succeed.

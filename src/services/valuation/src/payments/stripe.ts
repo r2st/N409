@@ -191,6 +191,42 @@ export async function createSubscriptionCheckoutSession(
   return json as unknown as CheckoutSession;
 }
 
+/**
+ * Stripe-hosted Billing Portal session (feature 7, self-serve).
+ *
+ * Cancelling, swapping a card, or downloading an invoice all mean handling
+ * payment details, which is exactly the work Stripe's own portal exists to keep
+ * out of this codebase — so this is a redirect, not a set of endpoints. Without
+ * it a subscriber's only route to cancelling was to email support, and an
+ * expired card meant a subscription that silently lapsed.
+ *
+ * The returned URL is single-use and short-lived, so it is fetched per click
+ * rather than stored.
+ */
+export async function createBillingPortalSession(
+  secretKey: string,
+  args: { customerId: string; returnUrl: string },
+): Promise<{ id: string; url: string }> {
+  const res = await fetch(`${STRIPE_API}/billing_portal/sessions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: encodeForm({ customer: args.customerId, return_url: args.returnUrl }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = (json.error ?? {}) as Record<string, unknown>;
+    throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
+  }
+  if (typeof json.url !== 'string') {
+    throw new StripeApiError('Stripe returned a billing portal session with no URL', 502);
+  }
+  return { id: String(json.id ?? ''), url: json.url };
+}
+
 export interface ChargeReceipt {
   chargeId: string | null;
   receiptUrl: string | null;

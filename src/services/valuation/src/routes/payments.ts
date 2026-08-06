@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
@@ -7,12 +7,16 @@ import type { ValuationKind } from '../domain/valuation.js';
 import { findValuationById, patchValuation, type ValuationRow } from '../repos/valuations.js';
 import {
   createPayment,
+  findPaymentByChargeOrIntent,
   findPaymentBySessionId,
   listPayments,
   listPaymentsForScope,
   listUnpaidValuationsForScope,
   markPayment,
+  recordDispute,
+  recordRefund,
   setPaymentReceipt,
+  type PaymentRow,
 } from '../repos/payments.js';
 import { valuationScope } from '../auth/rbac.js';
 import {
@@ -22,6 +26,10 @@ import {
   verifyWebhookSignature,
 } from '../payments/stripe.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } from '../domain/payments.js';
+import { createNotification } from '../repos/notifications.js';
+import { listUserIdsWithRoles } from '../repos/users.js';
+import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 
 /**
  * Stripe payment processing (remaining-gaps §3 #1 / §6 P0 #2).
@@ -190,9 +198,6 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       listPaymentsForScope(deps.pool, scope),
       listUnpaidValuationsForScope(deps.pool, scope),
     ]);
-    const totalPaid = payments
-      .filter((p) => p.status === 'succeeded')
-      .reduce((sum, p) => sum + Number(p.amount_cents), 0);
     return {
       billing: {
         payments,
@@ -200,14 +205,183 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           ...v,
           amount_cents: priceForKind(v.kind),
         })),
-        totals: {
-          paid_cents: totalPaid,
-          succeeded_count: payments.filter((p) => p.status === 'succeeded').length,
-          payment_count: payments.length,
-        },
+        // Net of refunds and lost chargebacks. Summing the 'succeeded' rows
+        // gross, as this did, told a refunded client they had paid us money
+        // their own card statement says came back.
+        totals: collectedTotals(payments),
       },
     };
   });
+
+  /**
+   * Tells the people who can act about money that came back.
+   *
+   * The engagement owner, because their report is no longer paid for and they
+   * are the one who has to decide whether to pay again; and the billing-admin
+   * group, because a chargeback runs against a Stripe response deadline and a
+   * refund needs reconciling. Best-effort by design — a notification failure
+   * must never turn into a 5xx that makes Stripe redeliver a refund we have
+   * already recorded.
+   */
+  async function alertBilling(
+    log: FastifyBaseLogger,
+    args: { valuationId: string; ownerId: string | null; type: string; title: string; body: string },
+  ): Promise<void> {
+    try {
+      const opsIds = await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES);
+      const recipients = new Set([...(args.ownerId ? [args.ownerId] : []), ...opsIds]);
+      for (const userId of recipients) {
+        await createNotification(deps.pool, {
+          userId,
+          valuationId: args.valuationId,
+          type: args.type,
+          title: args.title,
+          body: args.body,
+        });
+      }
+    } catch (err) {
+      log.warn({ err, valuationId: args.valuationId }, 'billing alert notification failed');
+    }
+  }
+
+  /**
+   * Takes a valuation's paid status back after money was returned in full.
+   *
+   * Straight to 'unpaid' rather than a new 'refunded' status: 'unpaid' is what
+   * the whole system already reads — the unpaid work queue, the billing page's
+   * pay-now call to action, the ops filter — and a client who charged back and
+   * still wants the report should be able to buy it again. The forensic detail
+   * (how much came back, when, and whether it was a refund or a lost dispute)
+   * lives on the payments row, and patchValuation writes the transition into
+   * the audit trail attributed to Stripe rather than to a person.
+   */
+  async function revokePaidStatus(
+    log: FastifyBaseLogger,
+    payment: PaymentRow,
+    reason: string,
+  ): Promise<void> {
+    const valuation = await findValuationById(deps.pool, payment.valuation_id);
+    if (!valuation) return;
+    if (valuation.paid_status === 'paid') {
+      await patchValuation(
+        deps.pool,
+        valuation,
+        { paid_status: 'unpaid', paid_at: null },
+        { actorType: 'system', source: 'stripe' },
+      );
+    }
+    await alertBilling(log, {
+      valuationId: valuation.id,
+      ownerId: valuation.user_id,
+      type: 'payment_reversed',
+      title: `Payment reversed — ${valuation.company_name}`,
+      body:
+        `${reason} The ${valuation.kind.toUpperCase()} valuation for ${valuation.company_name} ` +
+        `is marked unpaid again.`,
+    });
+  }
+
+  /**
+   * `charge.refunded` — the charge object carries the running total refunded,
+   * so this is idempotent by assignment. A partial refund is recorded but does
+   * not revoke: the client still bought the report and still holds it.
+   */
+  async function handleRefund(
+    log: FastifyBaseLogger,
+    charge: Record<string, unknown>,
+  ): Promise<{ received: boolean; ignored?: string; refunded?: boolean }> {
+    const payment = await findPaymentByChargeOrIntent(deps.pool, {
+      chargeId: typeof charge.id === 'string' ? charge.id : null,
+      paymentIntentId: typeof charge.payment_intent === 'string' ? charge.payment_intent : null,
+    });
+    if (!payment) return { received: true, ignored: 'unknown charge' };
+
+    const state = refundState({
+      amountCents: Number(payment.amount_cents),
+      amountRefunded: charge.amount_refunded,
+    });
+    if (state.refundedCents === 0) return { received: true, ignored: 'no refunded amount' };
+
+    // Stripe redelivers, so the question is not "did a refund happen" but "is
+    // this news". Answered from the payment row's own prior state rather than
+    // from the valuation's, because the valuation may legitimately not be
+    // 'paid' (a partner-paid engagement, one an operator already corrected) —
+    // and a redelivery that found it so would otherwise alert every time.
+    const alreadyKnown = Number(payment.refunded_cents) >= state.refundedCents;
+    if (alreadyKnown) return { received: true, refunded: payment.status === 'refunded' };
+
+    await recordRefund(deps.pool, payment.id, {
+      refundedCents: state.refundedCents,
+      fullyRefunded: state.fullyRefunded,
+    });
+
+    if (state.fullyRefunded) {
+      await revokePaidStatus(log, payment, 'The payment was refunded in full.');
+    } else {
+      const valuation = await findValuationById(deps.pool, payment.valuation_id);
+      await alertBilling(log, {
+        valuationId: payment.valuation_id,
+        ownerId: valuation?.user_id ?? null,
+        type: 'payment_partially_refunded',
+        title: `Partial refund — ${valuation?.company_name ?? 'valuation'}`,
+        body:
+          `${state.refundedCents / 100} ${payment.currency} of ${Number(payment.amount_cents) / 100} ` +
+          `was refunded. The engagement remains paid.`,
+      });
+    }
+    return { received: true, refunded: state.fullyRefunded };
+  }
+
+  /**
+   * `charge.dispute.created` / `charge.dispute.closed` — a chargeback.
+   *
+   * Creation never revokes: the money is only held, the case is answerable, and
+   * pulling a published 409A out from under a client who may well win would be
+   * worse than the alert. It does need the alert, though, because Stripe's
+   * evidence deadline is days and it is the one billing event with a clock on
+   * it. Only a lost dispute revokes, on the same path as a full refund.
+   */
+  async function handleDispute(
+    log: FastifyBaseLogger,
+    dispute: Record<string, unknown>,
+  ): Promise<{ received: boolean; ignored?: string; dispute_status?: DisputeStatus }> {
+    const payment = await findPaymentByChargeOrIntent(deps.pool, {
+      chargeId: typeof dispute.charge === 'string' ? dispute.charge : null,
+      paymentIntentId: typeof dispute.payment_intent === 'string' ? dispute.payment_intent : null,
+    });
+    if (!payment) return { received: true, ignored: 'unknown charge' };
+
+    const status = disputeStatusOf(dispute.status);
+    // Same redelivery guard as the refund path: `created` and `closed` are both
+    // retried, and a repeated `created` must not re-alert an ops team that is
+    // already working the case.
+    if (payment.dispute_status === status) return { received: true, dispute_status: status };
+    await recordDispute(deps.pool, payment.id, status);
+
+    if (status === 'lost') {
+      await revokePaidStatus(log, payment, 'A chargeback was decided against us.');
+    } else if (status === 'open') {
+      const valuation = await findValuationById(deps.pool, payment.valuation_id);
+      // Ops only: a client who has just disputed a charge does not need us to
+      // tell them they did, and the notification would read as an accusation.
+      try {
+        for (const userId of await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES)) {
+          await createNotification(deps.pool, {
+            userId,
+            valuationId: payment.valuation_id,
+            type: 'payment_disputed',
+            title: `Chargeback opened — ${valuation?.company_name ?? 'valuation'}`,
+            body:
+              `A dispute was raised against the ${payment.currency} payment for this engagement. ` +
+              `Submit evidence in Stripe before the response deadline.`,
+          });
+        }
+      } catch (err) {
+        log.warn({ err, paymentId: payment.id }, 'dispute alert notification failed');
+      }
+    }
+    return { received: true, dispute_status: status };
+  }
 
   // Webhook lives in its own plugin scope so the raw-buffer content parser
   // (required for signature verification) can't leak to other routes.
@@ -238,6 +412,19 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       }
       const session = event.data?.object ?? {};
       const sessionId = typeof session.id === 'string' ? session.id : null;
+
+      // ── Money going back out ────────────────────────────────────────────
+      // Refund and dispute events are not `checkout.session.*` and carry a
+      // charge or a payment intent rather than a session id, so they are
+      // resolved and handled before the session branch below. Before this
+      // existed they fell through it as `ignored` and a refunded engagement
+      // stayed paid, published, and counted as revenue.
+      if (event.type === 'charge.refunded') {
+        return reply.send(await handleRefund(req.log, session));
+      }
+      if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
+        return reply.send(await handleDispute(req.log, session));
+      }
 
       if (!event.type?.startsWith('checkout.session.') || !sessionId) {
         return reply.send({ received: true, ignored: event.type ?? 'unknown' });
@@ -310,7 +497,23 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       } else if (event.type === 'checkout.session.expired') {
         if (payment.status === 'pending') await markPayment(deps.pool, payment.id, 'expired');
       } else if (event.type === 'checkout.session.async_payment_failed') {
-        if (payment.status === 'pending') await markPayment(deps.pool, payment.id, 'failed');
+        // The delayed debit bounced. Marking the row failed is not enough on
+        // its own: the client believes they have paid — they completed Checkout
+        // days ago — and the engagement is sitting unpaid with nobody aware.
+        // That silence is half of what made the original ACH bug expensive.
+        if (payment.status === 'pending') {
+          await markPayment(deps.pool, payment.id, 'failed');
+          const valuation = await findValuationById(deps.pool, payment.valuation_id);
+          await alertBilling(req.log, {
+            valuationId: payment.valuation_id,
+            ownerId: valuation?.user_id ?? null,
+            type: 'payment_failed',
+            title: `Payment failed — ${valuation?.company_name ?? 'valuation'}`,
+            body:
+              'The bank debit for this engagement did not clear, so it is still unpaid. ' +
+              'You can start the payment again from the billing page.',
+          });
+        }
       }
       return reply.send({ received: true });
     });

@@ -38,7 +38,12 @@ interface MySub {
   plan: Plan | null;
   usage: Usage | null;
   invoices: Invoice[];
+  /** A Stripe customer exists and payments are configured. */
+  portal_available?: boolean;
 }
+
+/** Statuses where the subscription needs the customer's attention, not ours. */
+const NEEDS_ATTENTION = new Set(['past_due', 'unpaid', 'incomplete']);
 
 const money = (cents: number, currency = 'usd') =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: currency.toUpperCase() }).format(cents / 100);
@@ -88,6 +93,24 @@ export function SubscriptionSection() {
     }
   };
 
+  /**
+   * Hands the customer to Stripe's hosted portal to cancel, change plan, or
+   * replace a card. Deliberately a redirect rather than screens of our own:
+   * card details never touch this app, and "cancel" being one click away is
+   * both the honest thing and, increasingly, the required one.
+   */
+  const openPortal = async () => {
+    setError(null);
+    setBusy('portal');
+    try {
+      const { portal_url } = await api<{ portal_url: string }>('/billing/portal', { method: 'POST' });
+      window.location.href = portal_url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not open billing management.');
+      setBusy(null);
+    }
+  };
+
   if (!mine) return <Spinner />;
 
   return (
@@ -121,6 +144,24 @@ export function SubscriptionSection() {
                   </strong>
                 </>
               )}
+            </div>
+          )}
+          {/* A declined renewal is nearly always an expired card, so say what
+              happened and put the fix one click away rather than leaving the
+              account to lapse. */}
+          {NEEDS_ATTENTION.has(mine.subscription.status) && (
+            <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">
+              Your last payment did not go through. Update your payment method to keep your plan active.
+            </p>
+          )}
+          {mine.portal_available && (
+            <div className="mt-4 flex flex-wrap gap-3">
+              <Button variant="secondary" disabled={busy === 'portal'} onClick={() => void openPortal()}>
+                {busy === 'portal' ? 'Opening…' : 'Manage subscription'}
+              </Button>
+              <span className="self-center text-xs text-ink-400">
+                Update your card, change plan, or cancel — handled securely by Stripe.
+              </span>
             </div>
           )}
         </div>

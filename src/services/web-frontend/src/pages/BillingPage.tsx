@@ -17,8 +17,10 @@ interface BillingPayment {
   kind: string;
   amount_cents: string | number;
   currency: string;
-  status: 'pending' | 'succeeded' | 'failed' | 'expired';
+  status: 'pending' | 'succeeded' | 'failed' | 'expired' | 'refunded';
   receipt_url: string | null;
+  refunded_cents: string | number;
+  dispute_status: 'open' | 'won' | 'lost' | null;
   created_at: string;
 }
 
@@ -34,7 +36,14 @@ interface UnpaidValuation {
 interface Billing {
   payments: BillingPayment[];
   unpaid_valuations: UnpaidValuation[];
-  totals: { paid_cents: number; succeeded_count: number; payment_count: number };
+  totals: {
+    gross_cents: number;
+    refunded_cents: number;
+    paid_cents: number;
+    succeeded_count: number;
+    refunded_count: number;
+    payment_count: number;
+  };
 }
 
 const STATUS_TONES: Record<BillingPayment['status'], string> = {
@@ -42,6 +51,12 @@ const STATUS_TONES: Record<BillingPayment['status'], string> = {
   pending: 'bg-sky-50 text-sky-800 ring-sky-200',
   failed: 'bg-red-50 text-red-700 ring-red-200',
   expired: 'bg-paper-200 text-ink-400 ring-ink-200',
+  refunded: 'bg-amber-50 text-amber-800 ring-amber-200',
+};
+
+const num = (v: string | number | null | undefined): number => {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
 };
 
 /** P2 #13 — account-level billing: payment history with receipts, totals,
@@ -75,9 +90,15 @@ export function BillingPage() {
       <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Billing</h1>
       <p className="mt-2 text-sm text-ink-500">{scopeNote}</p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+      {/* "Total paid" is net of refunds and lost chargebacks, so the refunded
+          figure is shown beside it rather than left to be inferred from a
+          number that no longer matches the sum of the rows below. */}
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Total paid" value={formatMoney(billing.totals.paid_cents)} accent />
         <StatCard label="Completed payments" value={billing.totals.succeeded_count} />
+        {billing.totals.refunded_cents > 0 && (
+          <StatCard label="Refunded" value={formatMoney(billing.totals.refunded_cents)} />
+        )}
         <StatCard label="Unpaid engagements" value={billing.unpaid_valuations.length} />
       </div>
 
@@ -144,13 +165,25 @@ export function BillingPage() {
                     </td>
                     <td className="tnum px-5 py-3.5 font-semibold text-ink-800">
                       {formatMoney(p.amount_cents, p.currency)}
+                      {/* A partial refund leaves the row 'succeeded', so the
+                          amount alone would overstate what was actually kept. */}
+                      {p.status !== 'refunded' && num(p.refunded_cents) > 0 && (
+                        <div className="text-xs font-normal text-amber-700">
+                          −{formatMoney(num(p.refunded_cents), p.currency)} refunded
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3.5">
                       <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${STATUS_TONES[p.status]}`}
+                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${STATUS_TONES[p.status] ?? STATUS_TONES.expired}`}
                       >
                         {p.status}
                       </span>
+                      {p.dispute_status === 'open' && (
+                        <span className="ml-1.5 inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-red-200 ring-inset">
+                          disputed
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5">
                       {p.receipt_url ? (

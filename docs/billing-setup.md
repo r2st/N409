@@ -19,6 +19,8 @@ only way N409 collects money.
 | Recurring subscription Checkout | `routes/billing.ts` | Built, tested |
 | Webhook: payment lifecycle | `POST /api/v1/stripe/webhook` | Built, signature-verified |
 | Webhook: subscription + invoice lifecycle | `POST /api/v1/billing/webhook` | Built, signature-verified |
+| Refunds, chargebacks, dunning | `routes/payments.ts`, `routes/billing.ts` | Built, tested |
+| Self-serve cancel / card update | `POST /api/v1/billing/portal` | Built, tested — needs the portal enabled in Stripe |
 | Usage vs. plan limit | `domain/billing.ts` | Built, tested |
 | Generated invoice PDFs | `GET /api/v1/billing/invoices/:id/pdf` | Built, tested |
 | Ops billing dashboard (MRR, collected) | `GET /api/v1/admin/billing` | Built, tested |
@@ -58,8 +60,8 @@ deployment that registers a single endpoint or that has not enabled subscription
 
    | Endpoint | Events |
    |---|---|
-   | `https://n409.aiknol.com/api/v1/stripe/webhook` | `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired` |
-   | `https://n409.aiknol.com/api/v1/billing/webhook` | `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_succeeded` |
+   | `https://n409.aiknol.com/api/v1/stripe/webhook` | `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired`, `charge.refunded`, `charge.dispute.created`, `charge.dispute.closed` |
+   | `https://n409.aiknol.com/api/v1/billing/webhook` | `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_succeeded`, `invoice.payment_failed` |
 
    The two `async_payment_*` events are not optional. Any delayed-notification
    method — ACH direct debit, SEPA, Bacs, boleto, OXXO, Konbini — completes its
@@ -67,7 +69,25 @@ deployment that registers a single endpoint or that has not enabled subscription
    that say whether it ever arrived. Without them subscribed, an ACH payment
    stays `pending` forever and the client never gets their report.
 
-3. **Put all three secrets in `/opt/N409/.env`** — the live key, and each
+   Nor are `charge.refunded` and the dispute pair. Those are the only signal
+   that money went back *out*: without them a refunded or charged-back
+   engagement stays `paid` in our records, keeps counting toward revenue on the
+   billing page, and nobody is told — and a chargeback in particular runs
+   against a Stripe evidence deadline that starts whether we noticed or not.
+
+   `invoice.payment_failed` is the dunning signal. A subscription renewal that
+   fails is almost always an expired card rather than a decision, and it is
+   recoverable only if the subscriber is told; unsubscribed, the account drifts
+   past due and Stripe cancels it weeks later with no warning to anyone.
+
+3. **Enable the Stripe Billing Portal** (Settings → Billing → Customer portal)
+   and save a configuration. `POST /api/v1/billing/portal` is what a subscriber
+   clicks to cancel, change plan, or replace a card — without it, the only way
+   out of a subscription is to email support. Stripe returns
+   `No configuration provided` until this is saved once, which the endpoint
+   surfaces as a `502` with that message.
+
+4. **Put all three secrets in `/opt/N409/.env`** — the live key, and each
    endpoint's own signing secret — then restart the valuation service:
 
    ```bash
@@ -76,14 +96,14 @@ deployment that registers a single endpoint or that has not enabled subscription
    systemctl restart n409-valuation
    ```
 
-4. **Confirm** the quote endpoint now reports `configured: true`:
+5. **Confirm** the quote endpoint now reports `configured: true`:
 
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" \
      https://n409.aiknol.com/api/v1/valuations/$VID/payments/quote
    ```
 
-5. **Send a test event** from the Stripe dashboard to each endpoint and confirm a
+6. **Send a test event** from the Stripe dashboard to each endpoint and confirm a
    `200`. A `400 Invalid Stripe signature` means that endpoint's variable does not
    hold that endpoint's signing secret: `/api/v1/stripe/webhook` verifies against
    `STRIPE_WEBHOOK_SECRET`, `/api/v1/billing/webhook` against
@@ -119,3 +139,15 @@ whichever way, one of the two numbers has to move.
   a partly-applied event is safe.
 - **Ops can override the amount** on a per-valuation checkout; clients always pay
   list price.
+- **A full refund or a lost chargeback takes the valuation back to `unpaid`**,
+  which puts it back in the pay-now list and the unpaid work queue. The detail —
+  how much came back, when, and whether it was a refund or a dispute — stays on
+  the `payments` row, and the transition is written to the valuation's audit
+  trail attributed to `system`/`stripe`. A **partial** refund is recorded but
+  does not revoke: the client still bought the report and still holds it.
+- **An opened dispute never revokes.** The money is only held and the case is
+  answerable, so it raises an ops notification and waits for
+  `charge.dispute.closed`.
+- **Billing totals are net.** `/api/v1/me/billing` reports `gross_cents`,
+  `refunded_cents` and a `paid_cents` that nets them — the figure a client can
+  check against their own card statement.
