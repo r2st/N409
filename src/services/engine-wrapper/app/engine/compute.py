@@ -77,6 +77,33 @@ def _num(value, name: str, *, positive: bool = False, nonneg: bool = False) -> f
     return out
 
 
+def _section(inputs: dict, name: str) -> dict:
+    """Read a nested inputs object (`income`, `market`, `asset`) as a dict.
+
+    `inputs.get(name) or {}` was the idiom, and it only defaults on a *falsy*
+    value. A truthy non-object — `"income": "2026-01-01"`, `"market": 5`,
+    a list left by a client that serialised its form state wrong — passed
+    straight through, and the very next line called `.get` on it: an
+    AttributeError, which is not an EngineInputError, so it left the service
+    as a 500.
+
+    `/compute` mostly hid this because `validate_payload` runs first and
+    rejects the shape. `/sensitivity` has no pre-flight — it calls `compute`
+    directly inside a `try` that only catches EngineInputError — so every one
+    of these was a live 500 there, on a request the caller can only read as
+    "the engine is broken" rather than "your `income` field is not an object".
+
+    Absent and null still default to an empty section; the required-field
+    checks downstream are what report what is actually missing.
+    """
+    section = inputs.get(name)
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise EngineInputError(f"{name} must be an object")
+    return section
+
+
 def _req(value, name: str, *, positive: bool = False) -> float:
     out = _num(value, name, positive=positive)
     if out is None:
@@ -155,7 +182,7 @@ def _apply_autopilot(
 
     # ── auto_comparables → market.multiples from verified comparable tickers ──
     if auto_comparables:
-        market_in = dict(inputs.get("market") or {})
+        market_in = dict(_section(inputs, "market"))
         tickers = market_in.get("comparable_tickers")
         if isinstance(tickers, list) and tickers:
             from . import market_data
@@ -208,7 +235,7 @@ def _apply_autopilot(
             if unknown:
                 raise EngineInputError(f"auto_wacc: unknown wacc keys {sorted(unknown)}")
             result = compute_wacc(**wacc_in)
-            income_in = dict(inputs.get("income") or {})
+            income_in = dict(_section(inputs, "income"))
             manual = income_in.get("discount_rate") is not None
             if not manual:
                 income_in["discount_rate"] = result["wacc"]
@@ -340,7 +367,7 @@ def _weighted_equity(
 
     if weights["weight_asset"] > 0:
         if _fresh("asset"):
-            asset_in = inputs.get("asset") or {}
+            asset_in = _section(inputs, "asset")
             approaches["asset"] = asset_value(
                 total_assets=_num(asset_in.get("total_assets"), "asset.total_assets"),
                 total_liabilities=_num(asset_in.get("total_liabilities"), "asset.total_liabilities"),
@@ -382,7 +409,7 @@ def _weighted_equity(
 
     if weights["weight_income"] > 0:
         if _fresh("income"):
-            income_in = inputs.get("income") or {}
+            income_in = _section(inputs, "income")
             fcf = income_in.get("free_cash_flows")
             if not isinstance(fcf, list):
                 raise EngineInputError("income.free_cash_flows (list of yearly FCF) is required")
@@ -398,7 +425,7 @@ def _weighted_equity(
 
     if weights["weight_market"] > 0:
         if _fresh("market"):
-            market_in = inputs.get("market") or {}
+            market_in = _section(inputs, "market")
             multiples = market_in.get("multiples")
             if multiples is None and market_in.get("multiple") is not None:
                 multiples = [market_in["multiple"]]

@@ -180,10 +180,28 @@ def opm_backsolve(
 
     if last_round_pps is not None and last_round_pps > 0 and have_model:
         if share_classes and last_round_class:
-            from .waterfall import class_per_share
+            from .waterfall import class_per_share, normalize_share_classes
 
             target = float(last_round_pps)
-            total_shares = sum(float(c.get("shares") or 0) for c in share_classes)
+            # Normalised before anything reads it. `sum(float(c.get("shares")))`
+            # over the *raw* list was the first thing to touch a cap table on
+            # this path, and it assumed every entry was a dict with a numeric
+            # `shares` — an assumption only `_normalize` actually enforces, and
+            # it does not run until `class_per_share` a few lines below. So a
+            # single malformed entry — `share_classes: [{...}, 1.5]`, a null
+            # left by a client-side filter, `"shares": "1,000,000"` — raised a
+            # bare AttributeError/TypeError/ValueError out of a generator
+            # expression, and a cap table the waterfall was about to refuse
+            # with a 422 naming the offending class came back as a 500 naming
+            # nothing. Reachable on /compute and, since it skips the pre-flight
+            # validator entirely, on every /sensitivity run as well.
+            #
+            # The normaliser is the one authority on this shape and it runs on
+            # this list anyway, once per Newton iteration; running it once up
+            # front costs nothing and makes the error the same one the
+            # allocation itself would have given.
+            normalized = normalize_share_classes(share_classes)
+            total_shares = sum(c["shares"] for c in normalized)
             lo, hi = _bounds(target * max(total_shares, 1.0))
             x0 = last_round_post_money if last_round_post_money and last_round_post_money > 0 else target * total_shares
 
@@ -242,6 +260,22 @@ def opm_backsolve(
                     # side call value is C = (E − preferred_value) / (1 − f_p);
                     # invert Black-Scholes on that for the round's implied vol.
                     pref_fraction = preferred_shares / (preferred_shares + common_shares)
+                    # `1 − f_p` is a subtraction of two nearby doubles and it
+                    # reaches exactly zero well before the *shares* do. Any cap
+                    # table where the common count is more than ~2^53 times
+                    # smaller than the preferred — 1e308 preferred against 7e6
+                    # common, or a common count that underflowed to 1e-320 —
+                    # rounds `f_p` to 1.0, and the division below is then a
+                    # ZeroDivisionError escaping as a 500.
+                    #
+                    # Skipping is the right answer rather than raising: the
+                    # inversion is a disclosure extra, and the `except
+                    # EngineInputError: pass` immediately below already
+                    # establishes that an ill-posed implied vol is reported as
+                    # nothing rather than allowed to fail a run whose equity
+                    # value solved fine.
+                    if 1.0 - pref_fraction <= 0.0:
+                        return result
                     call_value = (
                         last_round_post_money - last_round_pps * preferred_shares
                     ) / (1.0 - pref_fraction)
