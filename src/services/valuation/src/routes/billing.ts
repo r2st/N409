@@ -7,6 +7,7 @@ import { isOps } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findUserById } from '../repos/users.js';
 import { createSubscriptionCheckoutSession, verifyWebhookSignature } from '../payments/stripe.js';
+import { isSettled } from './payments.js';
 import {
   cancelSubscription,
   createInvoice,
@@ -216,7 +217,15 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
             await upsertSubscription(deps.pool, {
               userId: meta.user_id,
               planTier: meta.plan_tier,
-              status: 'active',
+              // Not unconditionally 'active'. A subscription started with a
+              // delayed-notification method completes its Checkout Session with
+              // `payment_status: 'unpaid'` and a Stripe subscription that is
+              // `incomplete`, so calling it active here hands over the plan's
+              // valuation quota before the first debit has cleared. 'past_due'
+              // is the status mapStatus already gives `incomplete`, and
+              // `customer.subscription.updated` promotes it the moment Stripe
+              // says the money landed. See isSettled in routes/payments.ts.
+              status: isSettled(obj.payment_status) ? 'active' : 'past_due',
               stripeSubscriptionId: typeof obj.subscription === 'string' ? obj.subscription : null,
               stripeCustomerId: typeof obj.customer === 'string' ? obj.customer : null,
             });

@@ -61,6 +61,20 @@ const stripeUpstream = (detail: string) =>
     detail,
   });
 
+/**
+ * Does this Checkout Session's `payment_status` mean the money is in?
+ *
+ * `paid` and `no_payment_required` (a 100%-discounted session) are settled;
+ * `unpaid` is a delayed-notification method that has not cleared yet. Anything
+ * else — including the field being absent — is treated as settled, because the
+ * only sessions that report `unpaid` are the ones Stripe follows up on with an
+ * async event, and withholding a paid-for report on an unrecognised value would
+ * be the more damaging way to guess wrong.
+ */
+export function isSettled(paymentStatus: unknown): boolean {
+  return paymentStatus !== 'unpaid';
+}
+
 const CheckoutBody = z
   .object({
     // Ops-only override; clients always pay list price.
@@ -231,33 +245,68 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       const payment = await findPaymentBySessionId(deps.pool, sessionId);
       if (!payment) return reply.send({ received: true, ignored: 'unknown session' });
 
-      if (event.type === 'checkout.session.completed') {
-        // Idempotent: replayed events find the row already succeeded.
-        if (payment.status !== 'succeeded') {
-          const intent = typeof session.payment_intent === 'string' ? session.payment_intent : null;
-          await markPayment(deps.pool, payment.id, 'succeeded', { paymentIntentId: intent });
-          // Best-effort receipt capture — the charge (not the session) carries
-          // receipt_url, so resolve it via the API. Failure never blocks the ack.
-          if (deps.stripeSecretKey && intent) {
-            try {
-              const receipt = await retrieveReceipt(deps.stripeSecretKey, intent);
-              await setPaymentReceipt(deps.pool, payment.id, receipt);
-            } catch (err) {
-              req.log.warn({ err }, 'stripe receipt lookup failed');
-            }
-          }
-          const valuation = await findValuationById(deps.pool, payment.valuation_id);
-          if (valuation && valuation.paid_status === 'unpaid') {
-            const amount =
-              typeof session.amount_total === 'number' ? session.amount_total : Number(payment.amount_cents);
-            await patchValuation(
-              deps.pool,
-              valuation,
-              { paid_status: 'paid', amount_cents: amount, paid_at: new Date() },
-              { actorType: 'system', source: 'stripe' },
-            );
+      // Money has actually arrived, so mark the payment and release the
+      // valuation. Idempotent: replayed events find the row already succeeded.
+      const fulfill = async () => {
+        if (payment.status === 'succeeded') return;
+        const intent = typeof session.payment_intent === 'string' ? session.payment_intent : null;
+        await markPayment(deps.pool, payment.id, 'succeeded', { paymentIntentId: intent });
+        // Best-effort receipt capture — the charge (not the session) carries
+        // receipt_url, so resolve it via the API. Failure never blocks the ack.
+        if (deps.stripeSecretKey && intent) {
+          try {
+            const receipt = await retrieveReceipt(deps.stripeSecretKey, intent);
+            await setPaymentReceipt(deps.pool, payment.id, receipt);
+          } catch (err) {
+            req.log.warn({ err }, 'stripe receipt lookup failed');
           }
         }
+        const valuation = await findValuationById(deps.pool, payment.valuation_id);
+        if (valuation && valuation.paid_status === 'unpaid') {
+          const amount =
+            typeof session.amount_total === 'number' ? session.amount_total : Number(payment.amount_cents);
+          await patchValuation(
+            deps.pool,
+            valuation,
+            { paid_status: 'paid', amount_cents: amount, paid_at: new Date() },
+            { actorType: 'system', source: 'stripe' },
+          );
+        }
+      };
+
+      if (event.type === 'checkout.session.completed') {
+        // `completed` means the customer finished the Checkout page, which is
+        // not the same as having paid. Every delayed-notification method — ACH
+        // direct debit, SEPA, Bacs, boleto, OXXO, Konbini — completes the
+        // session with `payment_status: 'unpaid'` and settles days later as
+        // `async_payment_succeeded` or `async_payment_failed`.
+        //
+        // Fulfilling on `completed` alone gave those away. The valuation flipped
+        // to paid the moment the customer clicked through, and when the debit
+        // then bounced, `async_payment_failed` arrived to find the row already
+        // `succeeded` — its `status === 'pending'` guard declined to touch it,
+        // so nothing downgraded and nothing alerted. A client who chose ACH and
+        // let it fail kept a published 409A and paid nothing, and the only trace
+        // was in the Stripe dashboard.
+        //
+        // So `completed` fulfils only when the session says the money is in.
+        // An *absent* payment_status still fulfils: it is what the field looks
+        // like on anything that isn't a current Checkout Session, and the wrong
+        // way to be wrong here is to withhold a report a client has paid for.
+        // Only a session that positively reports itself unpaid waits — and it
+        // stays `pending`, which is exactly the state the two async events
+        // downstream know how to resolve.
+        if (isSettled(session.payment_status)) {
+          await fulfill();
+        } else {
+          req.log.info(
+            { sessionId, paymentStatus: session.payment_status },
+            'checkout completed with a delayed payment method — awaiting settlement',
+          );
+        }
+      } else if (event.type === 'checkout.session.async_payment_succeeded') {
+        // The settlement half of the above: the delayed debit cleared.
+        await fulfill();
       } else if (event.type === 'checkout.session.expired') {
         if (payment.status === 'pending') await markPayment(deps.pool, payment.id, 'expired');
       } else if (event.type === 'checkout.session.async_payment_failed') {

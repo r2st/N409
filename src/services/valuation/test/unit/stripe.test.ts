@@ -7,7 +7,12 @@ import {
   StripeApiError,
   verifyWebhookSignature,
 } from '../../src/payments/stripe.js';
-import { priceForKind, DEFAULT_PRICE_CENTS, FALLBACK_PRICE_CENTS } from '../../src/routes/payments.js';
+import {
+  isSettled,
+  priceForKind,
+  DEFAULT_PRICE_CENTS,
+  FALLBACK_PRICE_CENTS,
+} from '../../src/routes/payments.js';
 
 function sign(payload: string, secret: string, timestamp: number): string {
   const mac = crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');
@@ -99,5 +104,34 @@ describe('checkout pricing', () => {
   it('prices known kinds and falls back for the rest', () => {
     expect(priceForKind('409a')).toBe(DEFAULT_PRICE_CENTS['409a']);
     expect(priceForKind('esop')).toBe(FALLBACK_PRICE_CENTS);
+  });
+});
+
+/**
+ * The gate deciding whether a completed Checkout Session means the money is in.
+ * Delayed-notification methods complete the session first and settle later; the
+ * webhook must not release a valuation until they do.
+ */
+describe('settlement gate', () => {
+  it('treats a paid session as settled', () => {
+    expect(isSettled('paid')).toBe(true);
+  });
+
+  it('treats a fully-discounted session as settled', () => {
+    expect(isSettled('no_payment_required')).toBe(true);
+  });
+
+  it('withholds on the one status that means the debit has not cleared', () => {
+    expect(isSettled('unpaid')).toBe(false);
+  });
+
+  it('settles when the field is absent, rather than withholding a paid-for report', () => {
+    // Only current Checkout Sessions carry payment_status. Guessing "unpaid"
+    // for anything that omits it would strand real card payments — the more
+    // damaging direction to be wrong in, since `unpaid` is the only value
+    // Stripe follows up on with an async event anyway.
+    expect(isSettled(undefined)).toBe(true);
+    expect(isSettled(null)).toBe(true);
+    expect(isSettled('')).toBe(true);
   });
 });

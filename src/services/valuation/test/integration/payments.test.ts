@@ -163,6 +163,148 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
       expect((await findPaymentBySessionId(ctx.pool, 'cs_test_success_1'))?.status).toBe('succeeded');
     });
 
+    /**
+     * Delayed-notification methods (ACH, SEPA, Bacs, boleto, OXXO, Konbini)
+     * complete the Checkout Session before any money moves: `completed` arrives
+     * with `payment_status: 'unpaid'` and the debit settles days later.
+     *
+     * Fulfilling on `completed` alone gave the valuation away. The row went
+     * `succeeded` on the click-through, so when the debit bounced,
+     * `async_payment_failed` found it no longer `pending` and its guard
+     * declined to act — the client kept a published 409A and paid nothing.
+     */
+    describe('delayed-notification payment methods', () => {
+      const completed = (sessionId: string, paymentStatus?: string) =>
+        JSON.stringify({
+          type: 'checkout.session.completed',
+          data: {
+            object: {
+              id: sessionId,
+              payment_intent: `pi_for_${sessionId}`,
+              amount_total: 119_000,
+              ...(paymentStatus ? { payment_status: paymentStatus } : {}),
+            },
+          },
+        });
+
+      const asyncEvent = (type: string, sessionId: string) =>
+        JSON.stringify({
+          type,
+          data: { object: { id: sessionId, payment_intent: `pi_for_${sessionId}`, amount_total: 119_000 } },
+        });
+
+      const post = (body: string) =>
+        ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/stripe/webhook',
+          headers: signedHeaders(body),
+          payload: body,
+        });
+
+      const paidStatus = async (vid: string): Promise<string> => {
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/valuations/${vid}`,
+          headers: authHeader(ops.token),
+        });
+        return res.json().valuation.paid_status as string;
+      };
+
+      const seed = async (name: string, sessionId: string): Promise<string> => {
+        const vid = await createValuation(name);
+        await createPayment(ctx.pool, {
+          valuationId: vid,
+          sessionId,
+          amountCents: priceForKind('409a'),
+          currency: 'USD',
+          createdBy: ops.id,
+        });
+        return vid;
+      };
+
+      it('does not release the valuation while the session reports itself unpaid', async () => {
+        const vid = await seed('ACH Pending Co', 'cs_test_ach_pending');
+
+        expect((await post(completed('cs_test_ach_pending', 'unpaid'))).statusCode).toBe(200);
+
+        expect((await findPaymentBySessionId(ctx.pool, 'cs_test_ach_pending'))?.status).toBe('pending');
+        expect(await paidStatus(vid)).toBe('unpaid');
+      });
+
+      it('releases it when the delayed debit settles', async () => {
+        const vid = await seed('ACH Settles Co', 'cs_test_ach_ok');
+
+        await post(completed('cs_test_ach_ok', 'unpaid'));
+        expect(await paidStatus(vid)).toBe('unpaid');
+
+        expect((await post(asyncEvent('checkout.session.async_payment_succeeded', 'cs_test_ach_ok'))).statusCode).toBe(
+          200,
+        );
+
+        const settled = await findPaymentBySessionId(ctx.pool, 'cs_test_ach_ok');
+        expect(settled?.status).toBe('succeeded');
+        expect(settled?.payment_intent_id).toBe('pi_for_cs_test_ach_ok');
+        expect(await paidStatus(vid)).toBe('paid');
+      });
+
+      it('marks the payment failed — and leaves the valuation unpaid — when the debit bounces', async () => {
+        const vid = await seed('ACH Bounces Co', 'cs_test_ach_fail');
+
+        await post(completed('cs_test_ach_fail', 'unpaid'));
+        expect((await post(asyncEvent('checkout.session.async_payment_failed', 'cs_test_ach_fail'))).statusCode).toBe(
+          200,
+        );
+
+        expect((await findPaymentBySessionId(ctx.pool, 'cs_test_ach_fail'))?.status).toBe('failed');
+        // The regression this whole block exists for: before the fix the
+        // valuation was already 'paid' by this point and stayed that way.
+        expect(await paidStatus(vid)).toBe('unpaid');
+      });
+
+      it('an async success is idempotent across Stripe redeliveries', async () => {
+        const vid = await seed('ACH Replay Co', 'cs_test_ach_replay');
+        await post(completed('cs_test_ach_replay', 'unpaid'));
+        await post(asyncEvent('checkout.session.async_payment_succeeded', 'cs_test_ach_replay'));
+        const first = await findPaymentBySessionId(ctx.pool, 'cs_test_ach_replay');
+
+        await post(asyncEvent('checkout.session.async_payment_succeeded', 'cs_test_ach_replay'));
+
+        const after = await findPaymentBySessionId(ctx.pool, 'cs_test_ach_replay');
+        expect(after?.status).toBe('succeeded');
+        expect(after?.updated_at).toEqual(first?.updated_at);
+        expect(await paidStatus(vid)).toBe('paid');
+      });
+
+      it('a late async failure never downgrades a settled payment', async () => {
+        const vid = await seed('ACH Late Co', 'cs_test_ach_late');
+        await post(completed('cs_test_ach_late', 'paid'));
+        expect(await paidStatus(vid)).toBe('paid');
+
+        await post(asyncEvent('checkout.session.async_payment_failed', 'cs_test_ach_late'));
+
+        expect((await findPaymentBySessionId(ctx.pool, 'cs_test_ach_late'))?.status).toBe('succeeded');
+        expect(await paidStatus(vid)).toBe('paid');
+      });
+
+      it('a card session still settles immediately on completed', async () => {
+        const vid = await seed('Card Co', 'cs_test_card');
+
+        await post(completed('cs_test_card', 'paid'));
+
+        expect((await findPaymentBySessionId(ctx.pool, 'cs_test_card'))?.status).toBe('succeeded');
+        expect(await paidStatus(vid)).toBe('paid');
+      });
+
+      it('a fully-discounted session needs no payment and settles too', async () => {
+        const vid = await seed('Comped Co', 'cs_test_comped');
+
+        await post(completed('cs_test_comped', 'no_payment_required'));
+
+        expect((await findPaymentBySessionId(ctx.pool, 'cs_test_comped'))?.status).toBe('succeeded');
+        expect(await paidStatus(vid)).toBe('paid');
+      });
+    });
+
     it('rejects a tampered signature', async () => {
       const event = JSON.stringify({
         type: 'checkout.session.completed',
