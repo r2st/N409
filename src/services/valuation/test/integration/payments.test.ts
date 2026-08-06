@@ -237,9 +237,9 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
         await post(completed('cs_test_ach_ok', 'unpaid'));
         expect(await paidStatus(vid)).toBe('unpaid');
 
-        expect((await post(asyncEvent('checkout.session.async_payment_succeeded', 'cs_test_ach_ok'))).statusCode).toBe(
-          200,
-        );
+        expect(
+          (await post(asyncEvent('checkout.session.async_payment_succeeded', 'cs_test_ach_ok'))).statusCode,
+        ).toBe(200);
 
         const settled = await findPaymentBySessionId(ctx.pool, 'cs_test_ach_ok');
         expect(settled?.status).toBe('succeeded');
@@ -251,9 +251,9 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
         const vid = await seed('ACH Bounces Co', 'cs_test_ach_fail');
 
         await post(completed('cs_test_ach_fail', 'unpaid'));
-        expect((await post(asyncEvent('checkout.session.async_payment_failed', 'cs_test_ach_fail'))).statusCode).toBe(
-          200,
-        );
+        expect(
+          (await post(asyncEvent('checkout.session.async_payment_failed', 'cs_test_ach_fail'))).statusCode,
+        ).toBe(200);
 
         expect((await findPaymentBySessionId(ctx.pool, 'cs_test_ach_fail'))?.status).toBe('failed');
         // The regression this whole block exists for: before the fix the

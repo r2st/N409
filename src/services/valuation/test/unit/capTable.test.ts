@@ -265,10 +265,7 @@ describe('capTable', () => {
       });
 
       it('leaves a zero invested amount as the warning it already was', () => {
-        const v = validateCapTable([
-          good[0]!,
-          { ...good[1]!, invested_amount: 0, price_per_share: 0 },
-        ]);
+        const v = validateCapTable([good[0]!, { ...good[1]!, invested_amount: 0, price_per_share: 0 }]);
         expect(v.valid).toBe(true);
         expect(v.issues.some((i) => i.code === 'no_investment')).toBe(true);
       });
