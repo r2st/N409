@@ -452,8 +452,20 @@ export interface SensitivityResult {
 
 // ── P0 #2 — Payments ─────────────────────────────────────────────────────────
 
-export const PAYMENT_STATUSES = ['pending', 'succeeded', 'failed', 'expired'] as const;
+/**
+ * Mirrors the `payment_status` enum. `refunded` arrived with migration 0099 and
+ * this list did not follow, so the one terminal state that means "the money went
+ * back" was not a value the UI knew existed — the history row's status badge is
+ * a lookup keyed on this union, and an unlisted key rendered a class name of
+ * `undefined`: a colourless chip on the screen a customer opens *because* they
+ * are checking a refund.
+ */
+export const PAYMENT_STATUSES = ['pending', 'succeeded', 'failed', 'expired', 'refunded'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+/** A chargeback is tracked beside `status`: the money is held, not returned. */
+export const DISPUTE_STATUSES = ['open', 'won', 'lost'] as const;
+export type DisputeStatus = (typeof DISPUTE_STATUSES)[number];
 
 export interface Payment {
   id: string;
@@ -467,6 +479,11 @@ export interface Payment {
   checkout_url: string | null;
   charge_id: string | null;
   receipt_url: string | null;
+  /** Cumulative, because Stripe refunds are partial and repeatable. */
+  refunded_cents: string | number;
+  refunded_at: string | null;
+  dispute_status: DisputeStatus | null;
+  disputed_at: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

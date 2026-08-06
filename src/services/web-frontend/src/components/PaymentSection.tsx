@@ -95,7 +95,45 @@ const PAYMENT_STATUS_STYLES: Record<Payment['status'], string> = {
   succeeded: 'bg-bond-100 text-bond-800',
   failed: 'bg-red-100 text-red-800',
   expired: 'bg-paper-200 text-ink-500',
+  refunded: 'bg-paper-200 text-ink-600',
 };
+
+const DISPUTE_STATUS_LABELS: Record<NonNullable<Payment['dispute_status']>, string> = {
+  open: 'Chargeback under review',
+  won: 'Chargeback resolved in our favour',
+  lost: 'Chargeback upheld',
+};
+
+const toCents = (value: string | number): number => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/**
+ * The one line under a payment that says what happened to the money.
+ *
+ * A refund is not visible in `status` alone: Stripe refunds are partial and
+ * repeatable, so a row can be `succeeded` with a non-zero `refunded_cents` and
+ * the customer has genuinely been sent money back. A dispute is not in `status`
+ * at all — an open chargeback holds the funds without returning them, and only
+ * a lost one promotes the row to `refunded`. Both facts already come back on
+ * the payments endpoint; nothing rendered them, so the client's own record of
+ * their refund was a table that still read "succeeded".
+ */
+function settlementNote(p: Payment): string | null {
+  const refunded = toCents(p.refunded_cents);
+  const parts: string[] = [];
+  if (refunded > 0) {
+    const full = refunded >= toCents(p.amount_cents);
+    parts.push(
+      `${full ? 'Refunded' : 'Partially refunded'} ${formatMoney(refunded, p.currency)}${
+        p.refunded_at ? ` on ${new Date(p.refunded_at).toLocaleDateString()}` : ''
+      }`,
+    );
+  }
+  if (p.dispute_status) parts.push(DISPUTE_STATUS_LABELS[p.dispute_status]);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
 
 /**
  * Past checkout attempts for this valuation — date, amount, status, receipt.
@@ -124,51 +162,68 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
   return (
     <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-4 text-ink-400">Payment history</h2>
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-paper-300 text-xs text-ink-400">
-            <th className="pb-2 font-semibold">Date</th>
-            <th className="pb-2 font-semibold">Amount</th>
-            <th className="pb-2 font-semibold">Status</th>
-            <th className="pb-2 text-right font-semibold">Receipt</th>
-          </tr>
-        </thead>
-        <tbody>
-          {payments.map((p) => (
-            <tr key={p.id} className="border-b border-paper-200 last:border-0">
-              <td className="tnum py-2.5 text-ink-800">
-                {new Date(p.created_at).toLocaleDateString(undefined, {
-                  year: 'numeric',
-                  month: 'short',
-                  day: 'numeric',
-                })}
-              </td>
-              <td className="tnum py-2.5 text-ink-900">{formatMoney(p.amount_cents, p.currency)}</td>
-              <td className="py-2.5">
-                <span
-                  className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${PAYMENT_STATUS_STYLES[p.status]}`}
-                >
-                  {p.status}
-                </span>
-              </td>
-              <td className="py-2.5 text-right">
-                {p.receipt_url ? (
-                  <a
-                    href={p.receipt_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-semibold text-bond-700 hover:underline"
-                  >
-                    View receipt ↗
-                  </a>
-                ) : (
-                  <span className="text-ink-400">—</span>
-                )}
-              </td>
+      {/* The status column used to hold one short token, and the table was
+          allowlisted as fitting a 375px phone on that measurement. A settlement
+          note is a sentence ("Refunded $1,190.00 on 9 Jul · Chargeback upheld"),
+          which does not fit that budget — so the table scrolls in its own box
+          rather than pushing the page sideways, matching the invoice table. */}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-paper-300 text-xs text-ink-400">
+              <th className="pb-2 font-semibold">Date</th>
+              <th className="pb-2 font-semibold">Amount</th>
+              <th className="pb-2 font-semibold">Status</th>
+              <th className="pb-2 text-right font-semibold">Receipt</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {payments.map((p) => (
+              <tr key={p.id} className="border-b border-paper-200 last:border-0">
+                <td className="tnum py-2.5 text-ink-800">
+                  {new Date(p.created_at).toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                </td>
+                <td className="tnum py-2.5 text-ink-900">{formatMoney(p.amount_cents, p.currency)}</td>
+                <td className="py-2.5">
+                  <span
+                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                      // An unknown status must still get a chip, not a bare
+                      // `undefined` in the class list — the last time this list
+                      // fell behind the database enum, that is what shipped.
+                      PAYMENT_STATUS_STYLES[p.status] ?? 'bg-paper-200 text-ink-500'
+                    }`}
+                  >
+                    {p.status}
+                  </span>
+                  {settlementNote(p) && (
+                    <div className="mt-1 text-xs text-ink-500" data-testid="settlement-note">
+                      {settlementNote(p)}
+                    </div>
+                  )}
+                </td>
+                <td className="py-2.5 text-right">
+                  {p.receipt_url ? (
+                    <a
+                      href={p.receipt_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-semibold text-bond-700 hover:underline"
+                    >
+                      View receipt ↗
+                    </a>
+                  ) : (
+                    <span className="text-ink-400">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

@@ -114,7 +114,10 @@ describe('app data tables stay within a 375px viewport', () => {
    * in them is an un-wrappable figure at fund scale.
    */
   const NARROW_ENOUGH = new Map([
-    ['components/PaymentSection.tsx:127', 249], // date · amount · status · receipt
+    // PaymentSection's history table left this list rather than being
+    // re-measured: its status cell now carries a refund/chargeback sentence
+    // instead of one short token, which no longer fits the budget, so it went
+    // into an overflow-x-auto box like the invoice table beside it.
     ['pages/SettingsPage.tsx:450', 228], // personal API tokens
     ['pages/FundPortfolioPage.tsx:525', 292], // position mark history
     ['pages/AdminSsoPage.tsx:211', 261], // SCIM tokens — label · created · state · revoke

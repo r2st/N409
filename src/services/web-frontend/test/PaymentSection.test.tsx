@@ -30,10 +30,20 @@ const PAYMENT = {
   checkout_url: null,
   charge_id: 'ch_1',
   receipt_url: 'https://pay.stripe.com/receipts/r1',
+  refunded_cents: 0,
+  refunded_at: null,
+  dispute_status: null,
+  disputed_at: null,
   created_by: null,
   created_at: '2026-07-01T12:00:00Z',
   updated_at: '2026-07-01T12:00:00Z',
 };
+
+const listPayments = (payments: unknown[]) =>
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    if (String(input).endsWith('/payments')) return jsonResponse({ payments });
+    throw new Error(`unexpected fetch ${String(input)}`);
+  });
 
 describe('PaymentSection (price transparency before checkout)', () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -114,5 +124,77 @@ describe('PaymentHistory', () => {
     const { container } = render(<PaymentHistory valuation={VALUATION} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
+  });
+
+  /**
+   * Money going back out is the customer's side of the refund/dispute work.
+   * The API has returned `refunded_cents` / `dispute_status` since migration
+   * 0099; this table ignored both and its status union never learned the
+   * `refunded` label, so a refunded engagement rendered a colourless chip over
+   * a row that otherwise still read like a completed payment.
+   */
+  describe('refunds and chargebacks', () => {
+    const rowStyles = (label: string) => screen.getByText(label).className;
+
+    it('styles a refunded payment instead of emitting an undefined class', async () => {
+      listPayments([
+        { ...PAYMENT, status: 'refunded', refunded_cents: 119_000, refunded_at: '2026-07-09T09:00:00Z' },
+      ]);
+      render(<PaymentHistory valuation={{ ...VALUATION, paid_status: 'unpaid' }} />);
+      await waitFor(() => expect(screen.getByText('refunded')).toBeInTheDocument());
+      expect(rowStyles('refunded')).not.toContain('undefined');
+      expect(rowStyles('refunded')).toMatch(/bg-\S+/);
+    });
+
+    it('states the amount and date returned', async () => {
+      listPayments([
+        { ...PAYMENT, status: 'refunded', refunded_cents: 119_000, refunded_at: '2026-07-09T09:00:00Z' },
+      ]);
+      render(<PaymentHistory valuation={VALUATION} />);
+      await waitFor(() => expect(screen.getByTestId('settlement-note')).toBeInTheDocument());
+      expect(screen.getByTestId('settlement-note')).toHaveTextContent(/Refunded \$1,190\.00 on /);
+    });
+
+    it('distinguishes a partial refund, which leaves the status succeeded', async () => {
+      listPayments([{ ...PAYMENT, refunded_cents: 20_000, refunded_at: '2026-07-09T09:00:00Z' }]);
+      render(<PaymentHistory valuation={{ ...VALUATION, paid_status: 'paid' }} />);
+      await waitFor(() => expect(screen.getByTestId('settlement-note')).toBeInTheDocument());
+      expect(screen.getByTestId('settlement-note')).toHaveTextContent(/Partially refunded \$200\.00/);
+      expect(screen.getByText('succeeded')).toBeInTheDocument();
+    });
+
+    it('surfaces an open chargeback, which is not a refund', async () => {
+      listPayments([{ ...PAYMENT, dispute_status: 'open', disputed_at: '2026-07-11T09:00:00Z' }]);
+      render(<PaymentHistory valuation={{ ...VALUATION, paid_status: 'paid' }} />);
+      await waitFor(() => expect(screen.getByTestId('settlement-note')).toBeInTheDocument());
+      const note = screen.getByTestId('settlement-note');
+      expect(note).toHaveTextContent('Chargeback under review');
+      expect(note).not.toHaveTextContent(/refunded/i);
+    });
+
+    it('reports both when a lost dispute became a refund', async () => {
+      listPayments([
+        {
+          ...PAYMENT,
+          status: 'refunded',
+          refunded_cents: 119_000,
+          refunded_at: '2026-07-12T09:00:00Z',
+          dispute_status: 'lost',
+          disputed_at: '2026-07-11T09:00:00Z',
+        },
+      ]);
+      render(<PaymentHistory valuation={{ ...VALUATION, paid_status: 'unpaid' }} />);
+      await waitFor(() => expect(screen.getByTestId('settlement-note')).toBeInTheDocument());
+      expect(screen.getByTestId('settlement-note')).toHaveTextContent(
+        /Refunded \$1,190\.00 on .* · Chargeback upheld/,
+      );
+    });
+
+    it('says nothing extra about an ordinary settled payment', async () => {
+      listPayments([PAYMENT]);
+      render(<PaymentHistory valuation={{ ...VALUATION, paid_status: 'paid' }} />);
+      await waitFor(() => expect(screen.getByText('succeeded')).toBeInTheDocument());
+      expect(screen.queryByTestId('settlement-note')).not.toBeInTheDocument();
+    });
   });
 });
