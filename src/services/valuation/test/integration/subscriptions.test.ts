@@ -143,3 +143,69 @@ describe.skipIf(!dbUp)('subscription billing (feature 7)', () => {
     expect(Array.isArray(ok.json().subscriptions)).toBe(true);
   });
 });
+
+// Stripe issues a separate signing secret per registered endpoint, and the
+// billing webhook is a separate endpoint from the payment one. With a single
+// secret in the env, whichever endpoint it does not belong to answers every
+// delivery with 400 — silently, apart from Stripe's failed-delivery list.
+describe.skipIf(!dbUp)('billing webhook signing secret (STRIPE_BILLING_WEBHOOK_SECRET)', () => {
+  const BILLING_SECRET = 'whsec_billing_endpoint_secret';
+  const PAYMENT_SECRET = 'whsec_payment_endpoint_secret';
+
+  it('verifies against its own secret, not the payment endpoint one', async () => {
+    const ctx = await setupTestApp({
+      STRIPE_SECRET_KEY: 'sk_test',
+      STRIPE_WEBHOOK_SECRET: PAYMENT_SECRET,
+      STRIPE_BILLING_WEBHOOK_SECRET: BILLING_SECRET,
+    });
+    try {
+      const event = JSON.stringify({ id: 'evt_secret_split', type: 'invoice.paid', data: {} });
+
+      const signedWithBilling = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/billing/webhook',
+        headers: {
+          'stripe-signature': stripeSig(event, BILLING_SECRET),
+          'content-type': 'application/json',
+        },
+        payload: event,
+      });
+      expect(signedWithBilling.statusCode).toBe(200);
+
+      const signedWithPayment = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/billing/webhook',
+        headers: {
+          'stripe-signature': stripeSig(event, PAYMENT_SECRET),
+          'content-type': 'application/json',
+        },
+        payload: event,
+      });
+      expect(signedWithPayment.statusCode).toBe(400);
+    } finally {
+      await ctx.teardown();
+    }
+  });
+
+  it('falls back to STRIPE_WEBHOOK_SECRET when unset, for single-endpoint deployments', async () => {
+    const ctx = await setupTestApp({
+      STRIPE_SECRET_KEY: 'sk_test',
+      STRIPE_WEBHOOK_SECRET: PAYMENT_SECRET,
+    });
+    try {
+      const event = JSON.stringify({ id: 'evt_secret_fallback', type: 'invoice.paid', data: {} });
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/billing/webhook',
+        headers: {
+          'stripe-signature': stripeSig(event, PAYMENT_SECRET),
+          'content-type': 'application/json',
+        },
+        payload: event,
+      });
+      expect(res.statusCode).toBe(200);
+    } finally {
+      await ctx.teardown();
+    }
+  });
+});

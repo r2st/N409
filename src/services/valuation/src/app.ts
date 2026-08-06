@@ -418,7 +418,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerBillingRoutes(app, {
     pool,
     stripeSecretKey: config.STRIPE_SECRET_KEY,
-    stripeWebhookSecret: config.STRIPE_WEBHOOK_SECRET,
+    // Its own signing secret when the billing webhook is registered as a
+    // separate Stripe endpoint (it has a different path, so it is one), falling
+    // back to the payment secret for a single-endpoint deployment. See the
+    // note on STRIPE_BILLING_WEBHOOK_SECRET in config.ts.
+    stripeWebhookSecret: config.STRIPE_BILLING_WEBHOOK_SECRET ?? config.STRIPE_WEBHOOK_SECRET,
     publicBaseUrl: config.PUBLIC_BASE_URL,
   });
   registerSignatureRoutes(app, { pool });

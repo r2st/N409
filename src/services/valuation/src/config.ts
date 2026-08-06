@@ -57,6 +57,20 @@ const Env = z.object({
   // Stripe payment processing (remaining-gaps §3 #1). Routes 503 when unset.
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  // The subscription/invoice webhook lives at its own path
+  // (/api/v1/billing/webhook) from the payment one (/api/v1/stripe/webhook),
+  // and Stripe issues a *separate* signing secret per registered endpoint —
+  // you cannot tell it to reuse one. So a single STRIPE_WEBHOOK_SECRET can
+  // only ever verify one of the two: register both and whichever secret is not
+  // in the env answers every delivery with `400 Invalid Stripe signature`.
+  // Nothing surfaces that but the Stripe dashboard's failed-delivery list, and
+  // the events being dropped are the ones that record a subscription starting
+  // and an invoice being paid.
+  //
+  // Set this to the billing endpoint's own signing secret. Left unset it falls
+  // back to STRIPE_WEBHOOK_SECRET, so a deployment that registers one endpoint,
+  // or that has not enabled subscriptions at all, needs no new configuration.
+  STRIPE_BILLING_WEBHOOK_SECRET: z.string().optional(),
   // Base URL the browser lands on after Stripe checkout (the web frontend).
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
   // Accounting integrations (§23) — each provider activates when its OAuth
