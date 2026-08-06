@@ -50,6 +50,15 @@ const money = (cents: number, currency = 'usd') =>
 const per = (i: string) => (i === 'year' ? '/yr' : i === 'month' ? '/mo' : '');
 
 /**
+ * A recurring tier bills one amount; the one-time tier is a single catalogue
+ * row covering a price list that differs by product ($990 for an SMB opinion,
+ * $1,190 for a 409A, $1,490 for ASC 718/820). Quoting it flat made this card
+ * disagree with the Stripe page one click later, so it renders as a floor.
+ * Mirrors `isEntryPrice` in the valuation service's billing domain.
+ */
+const isEntryPrice = (interval: Plan['interval']) => interval === 'one_time';
+
+/**
  * Subscription & retainer billing (feature 7): plan selection, current
  * subscription + usage, invoice list, and — for ops — an admin billing
  * dashboard summarising all subscriptions and invoices.
@@ -171,12 +180,20 @@ export function SubscriptionSection() {
             <div key={p.tier} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
               <div className="font-semibold text-ink-900">{p.name}</div>
               <div className="tnum mt-2 font-display text-2xl font-semibold text-ink-900">
+                {isEntryPrice(p.interval) && (
+                  <span className="mr-1 text-sm font-normal text-ink-400">From</span>
+                )}
                 {money(p.price_cents, p.currency)}
                 <span className="text-sm font-normal text-ink-400">{per(p.interval)}</span>
               </div>
               <div className="mt-1 text-sm text-ink-400">
                 {p.valuation_limit === null ? 'Unlimited valuations' : `${p.valuation_limit} valuations`}
               </div>
+              {isEntryPrice(p.interval) && (
+                <p className="mt-1 text-xs text-ink-400" data-testid="entry-price-note">
+                  Priced per valuation — the exact amount is shown before you pay.
+                </p>
+              )}
               {p.interval !== 'one_time' && (
                 <Button className="mt-4 w-full" disabled={busy === p.tier} onClick={() => subscribe(p.tier)}>
                   {busy === p.tier ? 'Redirecting…' : 'Subscribe'}

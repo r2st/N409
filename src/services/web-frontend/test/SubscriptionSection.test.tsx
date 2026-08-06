@@ -15,7 +15,10 @@ const plans = [
     tier: 'per_valuation',
     name: 'Per valuation',
     valuation_limit: 1,
-    price_cents: 200000,
+    // The entry price, as migration 0100 corrected it: the cheapest amount the
+    // one-time checkout can charge. It was seeded at 200000 against a $1,190
+    // 409A charge, so this card overstated the flagship product by 68%.
+    price_cents: 99000,
     currency: 'usd',
     interval: 'one_time',
   },
@@ -65,6 +68,35 @@ describe('SubscriptionSection (feature 7)', () => {
     expect(await screen.findByText('Annual retainer')).toBeInTheDocument();
     // Per-valuation (one_time) has no Subscribe button; the retainer does.
     expect(screen.getAllByRole('button', { name: 'Subscribe' })).toHaveLength(1);
+  });
+
+  /**
+   * The per-valuation row is one catalogue entry standing for a price list that
+   * differs by product ($990 SMB, $1,190 409A, $1,490 ASC 718/820). Quoting it
+   * flat made this the last screen before Stripe to state a number the Stripe
+   * page then contradicted — so it renders as a floor, and says so.
+   */
+  describe('the one-time tier quotes an entry price, not a flat one', () => {
+    const noSubscription = () => mockApi({ subscription: null, plan: null, usage: null, invoices: [] });
+
+    it('prefixes the one-time price with "From" and explains it', async () => {
+      noSubscription();
+      render(<SubscriptionSection />);
+      const card = (await screen.findByText('Per valuation')).closest('div')!.parentElement!;
+      expect(card).toHaveTextContent(/From\s*\$990\.00/);
+      expect(screen.getByTestId('entry-price-note')).toHaveTextContent(
+        /exact amount is shown before you pay/i,
+      );
+    });
+
+    it('leaves a recurring price stated flat', async () => {
+      noSubscription();
+      render(<SubscriptionSection />);
+      const card = (await screen.findByText('Annual retainer')).closest('div')!.parentElement!;
+      expect(card).toHaveTextContent(/\$20,000\.00\/yr/);
+      expect(card).not.toHaveTextContent(/From/);
+      expect(screen.getAllByTestId('entry-price-note')).toHaveLength(1);
+    });
   });
 
   it('shows current usage when subscribed', async () => {

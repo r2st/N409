@@ -45,6 +45,25 @@ export function canConsume(state: UsageState): boolean {
   return !usageView(state).exhausted;
 }
 
+/**
+ * Is this plan's `price_cents` an entry price rather than the price?
+ *
+ * A recurring tier bills one amount, so its figure is exact. The `one_time`
+ * tier is a single catalogue row standing in for the whole per-valuation price
+ * list, and that list differs by product — routes/payments.ts prices a 409A at
+ * $1,190, an SMB opinion at $990, an ASC 718 or 820 at $1,490. There is no one
+ * number, so quoting the row as a flat price makes the Billing screen disagree
+ * with the Stripe page the customer reaches next; it read "$2,000.00" against a
+ * $1,190 charge until migration 0100.
+ *
+ * Callers render a floor ("From $990.00") when this is true. Keyed on the
+ * interval rather than the tier name so a second one-time product added to the
+ * catalogue inherits the treatment instead of re-opening the same gap.
+ */
+export function isEntryPrice(plan: Pick<PlanLimit, 'interval'>): boolean {
+  return plan.interval === 'one_time';
+}
+
 /** Human money for line items / invoice display. */
 export function formatMoneyCents(cents: number, currency: string): string {
   return new Intl.NumberFormat('en-US', {
