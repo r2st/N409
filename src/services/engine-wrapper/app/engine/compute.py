@@ -56,6 +56,29 @@ _WACC_KEYS = frozenset(
 def _num(value, name: str, *, positive: bool = False, nonneg: bool = False) -> float | None:
     if value is None:
         return None
+    # A bool is not a figure, and `float(True)` is `1.0` — so without this every
+    # numeric input on the engine silently accepts `true` and values the company
+    # as though the analyst had typed a 1.
+    #
+    # JSON makes this reachable rather than theoretical: the extraction agents,
+    # the HRIS/cap-table importers and the intake forms all map upstream fields
+    # onto this payload, and a source column that is a flag ("has terminal
+    # growth?", "is participating?") lands here as `true` whenever a mapping is
+    # off by one field. Nothing downstream can tell it apart from a deliberate 1.
+    #
+    # `validate._finite` has always refused bools for exactly this reason, which
+    # is what keeps most of these fields safe today — `/compute` pre-flights, so
+    # a bool share count is caught there and answered 422. That made this look
+    # like dead defence, and it is not: `terminal_growth` was not covered by the
+    # pre-flight (see `validate._check_income`), so `terminal_growth: true` was
+    # read here as 100% perpetual growth and returned a fair market value three
+    # times the correct one, with no error and no warning on the response.
+    # `/sensitivity` has no pre-flight at all and calls `compute` directly.
+    #
+    # So the two layers are made to agree, rather than leaving `compute` relying
+    # on a caller having run the validator first.
+    if isinstance(value, bool):
+        raise EngineInputError(f"{name} must be a number, not a true/false value")
     try:
         out = float(value)
     except (TypeError, ValueError):

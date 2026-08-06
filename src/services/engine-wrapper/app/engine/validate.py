@@ -259,7 +259,36 @@ def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> No
         if auto_wacc
         else _require_number(c, income.get("discount_rate"), "inputs.income.discount_rate", positive=True)
     )
-    growth = _finite(income.get("terminal_growth")) or 0.0
+    # `_finite(...) or 0.0` was the idiom, and it conflated three different
+    # things: absent (default to zero, correct), zero (default to zero, same
+    # answer), and *unusable* — a string, a list, a NaN, a bool — which it also
+    # read as zero and reported nothing about.
+    #
+    # That last case is the one that mattered. `compute._num` does not agree
+    # that an unusable terminal growth is zero: it raises on a string or a NaN,
+    # so the validator cleared a payload (`ok: true`, no issues) that `/compute`
+    # then refused — the precise mismatch this module's contract rules out. And
+    # a bool was worse than a mismatch: `float(True)` is `1.0`, so `compute`
+    # read `terminal_growth: true` as 100% perpetual growth and returned a fair
+    # market value three times the correct one, warning-free, on a payload the
+    # validator had called clean. (`compute._num` now refuses bools too; this is
+    # the half that names the field for the analyst instead of failing the run.)
+    #
+    # Absent still means zero. Anything present has to be a number.
+    raw_growth = income.get("terminal_growth")
+    growth = 0.0
+    if raw_growth is not None:
+        parsed_growth = _finite(raw_growth)
+        if parsed_growth is None:
+            c.error(
+                "not_a_number",
+                "inputs.income.terminal_growth",
+                "terminal_growth must be a finite number",
+                "Leave it unset for a zero-growth perpetuity, or enter the "
+                "long-run growth rate as a fraction (2% is 0.02).",
+            )
+        else:
+            growth = parsed_growth
     if rate is not None:
         if rate <= growth:
             c.error(
