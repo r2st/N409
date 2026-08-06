@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createBillingPortalSession,
+  createCheckoutSession,
+  createSubscriptionCheckoutSession,
   encodeForm,
   parseSignatureHeader,
   retrieveReceipt,
@@ -183,3 +185,95 @@ describe('billing portal session', () => {
 
 const portalResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+
+/**
+ * The two Checkout Session builders — the calls that decide what a customer is
+ * actually charged. Untested until now, which is an odd thing to leave for the
+ * only code in the repo that names a price to Stripe.
+ */
+describe('checkout sessions', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const args = {
+    valuationId: '01HZZZZZZZZZZZZZZZZZZZZZZZ',
+    productName: '409A valuation — Acme Robotics',
+    amountCents: 119_000,
+    currency: 'USD',
+    successUrl: 'https://app.example.com/payment/success',
+    cancelUrl: 'https://app.example.com/payment/cancel',
+  };
+
+  it('sends a one-off payment session with the price and the valuation reference', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(portalResponse({ id: 'cs_1', url: 'https://checkout.stripe.com/c/1' }));
+
+    const session = await createCheckoutSession('sk_test', args);
+    expect(session.id).toBe('cs_1');
+
+    const [url, init] = spy.mock.calls[0]!;
+    expect(String(url)).toBe('https://api.stripe.com/v1/checkout/sessions');
+    const body = decodeURIComponent(String(init?.body));
+    expect(body).toContain('mode=payment');
+    // The amount Stripe charges, and the currency lowercased as Stripe requires
+    // — an uppercase currency is rejected outright.
+    expect(body).toContain('line_items[0][price_data][unit_amount]=119000');
+    expect(body).toContain('line_items[0][price_data][currency]=usd');
+    // Two independent ways back to the valuation, because the webhook reads
+    // metadata and the success redirect reads client_reference_id.
+    expect(body).toContain(`client_reference_id=${args.valuationId}`);
+    expect(body).toContain(`metadata[valuation_id]=${args.valuationId}`);
+  });
+
+  it('omits a customer email that was never supplied', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(portalResponse({ id: 'cs_2', url: 'https://checkout.stripe.com/c/2' }));
+    await createCheckoutSession('sk_test', args);
+    expect(String(spy.mock.calls[0]![1]?.body)).not.toContain('customer_email');
+  });
+
+  it('sends a subscription session as recurring, with the tier on the subscription itself', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(portalResponse({ id: 'cs_sub', url: 'https://checkout.stripe.com/c/sub' }));
+
+    await createSubscriptionCheckoutSession('sk_test', {
+      userId: '01HYYYYYYYYYYYYYYYYYYYYYYY',
+      planTier: 'annual_retainer',
+      planName: 'Annual retainer',
+      amountCents: 2_000_000,
+      currency: 'usd',
+      interval: 'year',
+      successUrl: 'https://app.example.com/settings?billing=success',
+      cancelUrl: 'https://app.example.com/settings?billing=canceled',
+      customerEmail: 'cfo@acme.example.com',
+    });
+
+    const body = decodeURIComponent(String(spy.mock.calls[0]![1]?.body));
+    expect(body).toContain('mode=subscription');
+    expect(body).toContain('line_items[0][price_data][recurring][interval]=year');
+    // subscription_data.metadata, not just session metadata: session metadata is
+    // not carried onto customer.subscription.* events, and that is where the
+    // webhook resolves the user and tier from.
+    expect(body).toContain('subscription_data[metadata][user_id]=01HYYYYYYYYYYYYYYYYYYYYYYY');
+    expect(body).toContain('subscription_data[metadata][plan_tier]=annual_retainer');
+    expect(body).toContain('customer_email=cfo@acme.example.com');
+  });
+
+  it('surfaces a declined session as StripeApiError with Stripe’s message', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      portalResponse({ error: { message: 'Amount must be at least $0.50 usd' } }, 400),
+    );
+    await expect(createCheckoutSession('sk_test', { ...args, amountCents: 10 })).rejects.toThrow(
+      'Amount must be at least $0.50 usd',
+    );
+  });
+
+  it('does not mistake a non-JSON error body for success', async () => {
+    // Stripe 5xx pages are HTML. `.json()` rejects; the catch must not turn
+    // that into an ok-looking session with an undefined URL.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<html>502</html>', { status: 502 }));
+    await expect(createCheckoutSession('sk_test', args)).rejects.toThrow(StripeApiError);
+  });
+});
