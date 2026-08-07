@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import { renderReportPdf, type ReportPdfSummary } from '@n409/report/pdf';
+import { renderReportPdf, type ReportPdfSection, type ReportPdfSummary } from '@n409/report/pdf';
 import { canEditWorkingData, canReadReport, canReadValuation } from '../auth/rbac.js';
 import {
   contentFromManagedTemplate,
@@ -23,6 +23,8 @@ import {
   type ReportRow,
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
+import { buildExhibits } from '../domain/reportExhibits.js';
+import { findParams } from '../repos/params.js';
 import { sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
@@ -75,12 +77,51 @@ async function loadForEdit(pool: pg.Pool, principal: Principal, id: string): Pro
   return loadValuation(pool, principal, id);
 }
 
-function templateVars(valuation: ValuationRow) {
+/**
+ * The valuation date of this engagement, as the analyst stated it.
+ *
+ * Two places hold it and they are written at different times. The financial
+ * model (`valuation_params.engine_inputs`) carries it from the moment the
+ * analyst fills the inputs form; a calculation freezes a copy of the whole
+ * payload when it runs. The calculation is preferred because a report states
+ * what the run it reports on was computed as of, and the model can move
+ * afterwards.
+ */
+async function valuationDateFor(pool: pg.Pool, valuationId: string): Promise<string | null> {
+  const calculation = await latestSucceededCalculation(pool, valuationId);
+  const payload = calculation?.inputs as { inputs?: { valuation_date?: unknown } } | undefined;
+  const fromRun = payload?.inputs?.valuation_date;
+  if (typeof fromRun === 'string' && fromRun) return fromRun.slice(0, 10);
+
+  const params = await findParams(pool, valuationId);
+  const model = params?.engine_inputs as { valuation_date?: unknown } | null | undefined;
+  const fromModel = model?.valuation_date;
+  return typeof fromModel === 'string' && fromModel ? fromModel.slice(0, 10) : null;
+}
+
+/**
+ * `date` is the *valuation* date, not today's.
+ *
+ * It reads `{{date}}` in the skeleton and lands in the sentence that opens the
+ * report ("as of {{date}}") and the one that concludes it. Filling it with the
+ * clock made a §409A deliverable state a date that was merely when someone
+ * first opened the report tab — while the summary page, which has always read
+ * the engine payload, printed the real one a page earlier. The two disagreed on
+ * paper, and the date on a 409A is not decorative: it starts the twelve months
+ * of Treas. Reg. §1.409A-1(b)(5)(iv)(B)(1) over which grants may rely on the
+ * appraisal.
+ *
+ * The clock remains the fallback for a report created before any valuation date
+ * has been entered, which is the only case where there is nothing better; the
+ * cover page and Exhibit H state the date from the calculation either way, so
+ * the deliverable itself is right even then.
+ */
+function templateVars(valuation: ValuationRow, valuationDate: string | null) {
   return {
     company_name: valuation.company_name,
     kind: valuation.kind,
     valuation_ref: valuation.id,
-    date: new Date().toISOString().slice(0, 10),
+    date: valuationDate ?? new Date().toISOString().slice(0, 10),
     currency: valuation.currency,
   };
 }
@@ -98,7 +139,7 @@ async function loadOrCreateReport(
   // Gap 6 — an ACTIVE managed template for this kind supplies the body of a
   // new report; the built-in skeleton is only the fallback.
   const managed = await findActiveTemplateForKind(pool, valuation.kind);
-  const vars = templateVars(valuation);
+  const vars = templateVars(valuation, await valuationDateFor(pool, valuation.id));
   const { templateVersion, content } = managed
     ? { templateVersion: templateLabel(managed), content: contentFromManagedTemplate(managed, vars) }
     : (() => {
@@ -173,19 +214,27 @@ async function historyFor(
  * Executive summary for this valuation, from its latest successful engine run.
  * A report drafted before the engine has produced a value renders without one.
  */
-async function summaryFor(pool: pg.Pool, valuation: ValuationRow): Promise<ReportPdfSummary | undefined> {
+async function summaryFor(
+  pool: pg.Pool,
+  valuation: ValuationRow,
+): Promise<{
+  summary: ReportPdfSummary | undefined;
+  exhibits: ReportPdfSection[];
+  valuationDate: string | null;
+}> {
   const calculation = await latestSucceededCalculation(pool, valuation.id);
   const payload = calculation?.inputs as { inputs?: { valuation_date?: unknown } } | undefined;
   const rawDate = payload?.inputs?.valuation_date;
+  const valuationDate = typeof rawDate === 'string' && rawDate ? rawDate.slice(0, 10) : null;
   const history = calculation ? await historyFor(pool, valuation, calculation.created_at) : [];
-  return (
-    buildReportSummary(calculation, {
-      currency: valuation.currency,
-      companyName: valuation.company_name,
-      valuationDate: typeof rawDate === 'string' ? rawDate.slice(0, 10) : null,
-      history,
-    }) ?? undefined
-  );
+  const context = { currency: valuation.currency, companyName: valuation.company_name, valuationDate };
+  return {
+    summary: buildReportSummary(calculation, { ...context, history }) ?? undefined,
+    // Built from the same calculation the summary is, so a figure on the
+    // summary page and the schedule behind it cannot come from different runs.
+    exhibits: buildExhibits(calculation, context),
+    valuationDate,
+  };
 }
 
 async function renderVersionPdf(
@@ -199,19 +248,27 @@ async function renderVersionPdf(
   // One instant for both the cover's "Rendered" line and the PDF's own
   // CreationDate, so a reader comparing the two never sees them disagree.
   const renderedAt = new Date();
+  const { summary, exhibits, valuationDate } = await summaryFor(pool, valuation);
   const pdf = await renderReportPdf({
     title: content.title,
     company_name: valuation.company_name,
     meta: [
       { label: 'Engagement', value: valuation.id },
       { label: 'Kind', value: valuation.kind },
+      // Ahead of "Rendered", and stated separately from it. A reader who takes
+      // the cover date as the valuation date takes the wrong one otherwise, and
+      // on a §409A the valuation date is what a grant's safe harbour is measured
+      // from. Only shown when the engagement has one — an unrun valuation has no
+      // date to state and inventing one would be worse than the omission.
+      ...(valuationDate ? [{ label: 'Valuation date', value: valuationDate }] : []),
       { label: 'Template', value: report.template_version },
       { label: 'Version', value: `v${version}` },
       { label: 'Currency', value: valuation.currency },
       { label: 'Rendered', value: renderedAt.toISOString().slice(0, 10) },
     ],
-    sections: content.sections.map((s) => ({ heading: s.heading, html: s.html })),
-    summary: await summaryFor(pool, valuation),
+    // The authored body first, then the computed schedules it refers to.
+    sections: [...content.sections.map((s) => ({ heading: s.heading, html: s.html })), ...exhibits],
+    summary,
     branding: await brandingFor(pool, valuation),
     generated_at: renderedAt,
     keywords: [valuation.company_name, valuation.kind, 'valuation', `v${version}`],

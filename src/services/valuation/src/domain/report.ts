@@ -264,9 +264,34 @@ const P = (text: string) => `<p>${text}</p>`;
  * v54 adds the sections a reviewing auditor expects to find and the earlier
  * skeleton omitted: standard/premise of value, sources of information, the
  * §409A safe-harbor statement and the appraiser certification.
+ *
+ * v55 closes the rest of that list against the structure a reviewing appraiser
+ * works through — Rev. Rul. 59-60, the AICPA valuation-of-privately-held-equity
+ * practice aid, and USPAP/SSVS-1 reporting requirements between them ask for
+ * each of the following, and the skeleton had none of them:
+ *
+ *   * capital structure — the rights that decide how value is split, described
+ *     before the section that splits it;
+ *   * economic outlook — Rev. Rul. 59-60 §4.02(b) makes the economic and
+ *     industry outlook a mandatory factor, and only the industry half was here;
+ *   * one section per approach applied. The skeleton described all four in a
+ *     single "Valuation Methodology" paragraph, so a report that ran a DCF and
+ *     a guideline-company analysis had nowhere to say what was in either;
+ *   * reconciliation — how the indications were weighted into one conclusion,
+ *     which is the paragraph a reviewer challenges first;
+ *   * DLOC. The engine has always applied one and the summary page has always
+ *     printed it, and the deliverable never said why. A minority discount that
+ *     appears in the arithmetic and nowhere in the prose is exactly the kind of
+ *     unsupported adjustment that costs a valuation its safe harbour;
+ *   * analyst qualifications — SSVS-1 §52 and USPAP Standards Rule 10-3 both
+ *     require the appraiser's credentials in the report itself.
+ *
+ * Each new section names the exhibit that carries its figures (domain/
+ * reportExhibits.ts), so the authored prose and the computed schedules read as
+ * one document rather than two.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v54',
+  version: '409a.v55',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -314,6 +339,31 @@ const TEMPLATE_409A: ReportTemplate = {
       ),
     },
     {
+      key: 'capital_structure',
+      heading: 'Capital Structure',
+      html:
+        P(
+          'The capitalization of {{company_name}} as of the valuation date is set out in <strong>Exhibit A</strong>. Describe each class of stock outstanding and the economic rights that bear on the allocation of equity value:',
+        ) +
+        '<ul>' +
+        '<li>Liquidation preference of each preferred series, its seniority rank, and whether ranks are pari passu</li>' +
+        '<li>Participation rights and any participation cap</li>' +
+        '<li>Conversion ratios and any anti-dilution adjustments in effect</li>' +
+        '<li>Options, warrants and other dilutive instruments, with their exercise prices</li>' +
+        '<li>Convertible notes and SAFEs outstanding, and the terms on which they convert</li>' +
+        '</ul>' +
+        P(
+          'These rights determine the payoff of each class at a liquidity event and are the direct inputs to the allocation described below.',
+        ),
+    },
+    {
+      key: 'economic_outlook',
+      heading: 'Economic Outlook',
+      html: P(
+        'Revenue Ruling 59-60 §4.01(b) requires consideration of the economic outlook in general, and the condition and outlook of the specific industry in particular. Summarize the macroeconomic conditions prevailing at the valuation date that bear on this valuation — growth, inflation, the interest-rate environment underlying the risk-free rate applied below, and the state of the private capital markets on which the company depends for funding.',
+      ),
+    },
+    {
       key: 'industry_market',
       heading: 'Industry & Market Analysis',
       html: P('Summarize the industry landscape, market size and growth, and competitive positioning.'),
@@ -335,23 +385,86 @@ const TEMPLATE_409A: ReportTemplate = {
         '<ul><li>Asset approach</li><li>Income approach</li><li>Market approach</li><li>Option-pricing (backsolve)</li></ul>',
     },
     {
+      key: 'income_approach',
+      heading: 'Income Approach',
+      html:
+        P(
+          'The income approach measures value as the present worth of the future economic benefits of the business. We applied the discounted cash flow method: management’s projected free cash flows over the explicit forecast period are discounted to present value at a rate reflecting the risk of achieving them, and a terminal value representing the cash flows beyond that period is discounted alongside them.',
+        ) +
+        P(
+          'State the source and reliability of the projections, the derivation of the discount rate, and the basis for the terminal growth rate. The forecast, the discount factors and the bridge from enterprise to equity value are set out in <strong>Exhibit C</strong>.',
+        ),
+    },
+    {
+      key: 'market_approach',
+      heading: 'Market Approach',
+      html:
+        P(
+          'The market approach measures value by reference to prices at which comparable businesses or interests have changed hands. We considered the guideline public company method and the guideline transaction method, applying multiples observed for the selected comparables to the corresponding metric of {{company_name}}.',
+        ) +
+        P(
+          'Identify the guideline companies or transactions selected, the basis for selecting them, the metric and period chosen, and any adjustments made for differences in size, growth, margin or stage. The observed multiples and the resulting indication are set out in <strong>Exhibit D</strong>.',
+        ),
+    },
+    {
+      key: 'asset_approach',
+      heading: 'Asset Approach',
+      html: P(
+        'The asset approach measures value as the value of the underlying assets net of liabilities, on either a net-asset-value or a cost-to-replicate basis. State whether the approach was applied and the weight assigned to it; for a going concern whose value rests on intangible assets and future earnings rather than tangible net assets, explain the reason for a low weight or for excluding it. The computation, where applied, is set out in <strong>Exhibit E</strong>.',
+      ),
+    },
+    {
+      key: 'reconciliation',
+      heading: 'Reconciliation of Value Indications',
+      html:
+        P(
+          'The approaches applied produce separate indications of total equity value. <strong>Exhibit B</strong> sets out each indication, the weight assigned to it, and the resulting concluded equity value.',
+        ) +
+        P(
+          'Explain the weighting: the relevance of each approach to a company of this stage and sector, the quality of the inputs available to it, and the reason any approach considered was assigned no weight. The concluded equity value carried forward to the allocation below is the weighted result.',
+        ),
+    },
+    {
       key: 'allocation',
       heading: 'Allocation of Equity Value',
-      html: P(
-        'Describe the option-pricing model allocation across share classes, including term, volatility and risk-free-rate inputs.',
-      ),
+      html:
+        P(
+          'Describe the option-pricing model allocation across share classes, including term, volatility and risk-free-rate inputs.',
+        ) +
+        P(
+          'Under the breakpoint method the payoff of each class is piecewise linear in exit equity value, so its expected value is the sum of Black-Scholes call spreads between consecutive breakpoints. The breakpoints, the value of each tranche and the resulting value of each class are set out in <strong>Exhibit F</strong>. State the source of the expected volatility and the basis for the expected time to a liquidity event.',
+        ),
+    },
+    {
+      key: 'dloc',
+      heading: 'Discount for Lack of Control',
+      html:
+        P(
+          'The allocation above produces the value of a common share on a controlling basis. A holder of common stock in {{company_name}} holds a minority interest: it cannot compel a liquidity event, set the timing or terms of an exit, direct the business, or access the company’s cash flows. A discount for lack of control is therefore applied to reflect the difference between a controlling and a minority interest in the same equity.',
+        ) +
+        P(
+          'State the basis for the concluded discount — control premium studies, the specific rights held by the preferred classes, or the analyst’s qualitative assessment — and the concluded percentage. The discount as applied is set out in <strong>Exhibit H</strong>.',
+        ),
     },
     {
       key: 'dlom',
       heading: 'Discount for Lack of Marketability',
-      html: P('Describe the DLOM analysis (Chaffee / Finnerty / qualitative) and the concluded discount.'),
+      html:
+        P('Describe the DLOM analysis (Chaffee / Finnerty / qualitative) and the concluded discount.') +
+        P(
+          'No public market exists for the common stock of {{company_name}}, and transfer is further restricted by the company’s charter and by the terms of its stock plan. A discount for lack of marketability is applied to reflect the cost and delay of achieving liquidity. Where an option-based model is applied, state the volatility and holding period assumed. The discount as applied is set out in <strong>Exhibit H</strong>.',
+        ),
     },
     {
       key: 'conclusion',
       heading: 'Conclusion of Value',
-      html: P(
-        'Based on the analyses described herein, the fair market value of one share of common stock of {{company_name}} as of {{date}} is $ … per share.',
-      ),
+      html:
+        P(
+          'Based on the analyses described herein, the fair market value of one share of common stock of {{company_name}} as of {{date}} is $ … per share.',
+        ) +
+        P(
+          'The conclusion is stated on a non-marketable, minority-interest basis. The derivation from the allocated common value per share through the discounts applied is set out in <strong>Exhibit H</strong>, and the concluded figure is stated on the summary page of this report.',
+        ),
     },
     {
       key: 'asc718',
@@ -404,6 +517,39 @@ const TEMPLATE_409A: ReportTemplate = {
         '<li>Our compensation is not contingent on the reporting of a predetermined value, on the amount of the value opinion, or on the occurrence of any subsequent event.</li>' +
         '<li>No one provided significant professional assistance to the persons signing this report except as disclosed herein.</li>' +
         '</ul>',
+    },
+    {
+      key: 'qualifications',
+      heading: 'Qualifications of the Valuation Analyst',
+      html:
+        P(
+          'Set out the professional qualifications of the analyst or analysts responsible for this valuation, as required by SSVS-1 and by the independent-appraiser condition of Treasury Regulation §1.409A-1(b)(5)(iv)(B)(1):',
+        ) +
+        '<ul>' +
+        '<li>Name, role and firm</li>' +
+        '<li>Professional credentials held (ABV, ASA, CFA, CVA or equivalent)</li>' +
+        '<li>Relevant experience in the valuation of privately held equity securities</li>' +
+        '<li>Extent of the analyst’s participation in the analyses and conclusions reported</li>' +
+        '</ul>',
+    },
+    {
+      key: 'exhibit_index',
+      heading: 'Index of Exhibits',
+      html:
+        P('The exhibits that follow are generated from the valuation model supporting this report.') +
+        '<ul>' +
+        '<li>Exhibit A — Capitalization Table</li>' +
+        '<li>Exhibit B — Reconciliation of Valuation Approaches</li>' +
+        '<li>Exhibit C — Income Approach (Discounted Cash Flow)</li>' +
+        '<li>Exhibit D — Market Approach (Guideline Multiples)</li>' +
+        '<li>Exhibit E — Asset Approach</li>' +
+        '<li>Exhibit F — Allocation of Equity Value</li>' +
+        '<li>Exhibit G — Probability-Weighted Expected Return Scenarios</li>' +
+        '<li>Exhibit H — Discounts and Concluded Value</li>' +
+        '</ul>' +
+        P(
+          'An exhibit is included only where the corresponding analysis was applied in this valuation; exhibits for approaches and methods not used are omitted.',
+        ),
     },
   ],
 };

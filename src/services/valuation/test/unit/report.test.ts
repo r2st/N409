@@ -75,13 +75,13 @@ describe('sanitizeHtml', () => {
 });
 
 describe('report templates', () => {
-  it('registers the 409a.v54 and generic templates', () => {
-    expect(REPORT_TEMPLATES.has('409a.v54')).toBe(true);
+  it('registers the 409a.v55 and generic templates', () => {
+    expect(REPORT_TEMPLATES.has('409a.v55')).toBe(true);
     expect(REPORT_TEMPLATES.has('generic.v1')).toBe(true);
   });
 
-  it('selects 409a.v54 for 409a and generic for every other kind', () => {
-    expect(templateForKind('409a').version).toBe('409a.v54');
+  it('selects 409a.v55 for 409a and generic for every other kind', () => {
+    expect(templateForKind('409a').version).toBe('409a.v55');
     expect(templateForKind('gifts').version).toBe('generic.v1');
     expect(templateForKind('718').version).toBe('generic.v1');
   });
@@ -115,14 +115,44 @@ describe('report templates', () => {
     for (const key of [
       'standard_of_value',
       'sources_of_information',
+      'capital_structure',
+      'economic_outlook',
       'methodology',
+      'income_approach',
+      'market_approach',
+      'asset_approach',
+      'reconciliation',
+      'allocation',
+      'dloc',
+      'dlom',
       'conclusion',
       'limiting_conditions',
       'safe_harbor',
       'certification',
+      'qualifications',
     ]) {
       expect(byKey.has(key), key).toBe(true);
     }
+
+    // A discount the engine applies and the summary page prints has to be
+    // supported in the prose too — an unexplained minority discount is the kind
+    // of unsupported adjustment that costs a valuation its safe harbour.
+    expect(byKey.get('dloc')!.html).toMatch(/minority/i);
+    expect(byKey.get('dloc')!.html).toMatch(/control/i);
+
+    // Rev. Rul. 59-60 §4.01(b) asks for the economic outlook, not only the
+    // industry one.
+    expect(byKey.get('economic_outlook')!.html).toMatch(/59-60/);
+
+    // SSVS-1 requires the appraiser's credentials in the report itself.
+    expect(byKey.get('qualifications')!.html).toMatch(/ABV|ASA|CFA|CVA/);
+
+    // Each approach section points at the schedule carrying its figures.
+    expect(byKey.get('income_approach')!.html).toContain('Exhibit C');
+    expect(byKey.get('market_approach')!.html).toContain('Exhibit D');
+    expect(byKey.get('reconciliation')!.html).toContain('Exhibit B');
+    expect(byKey.get('allocation')!.html).toContain('Exhibit F');
+    expect(byKey.get('capital_structure')!.html).toContain('Exhibit A');
 
     // Rev. Rul. 59-60 fair market value and the going-concern premise.
     expect(byKey.get('standard_of_value')!.html).toMatch(/59-60/);
@@ -144,7 +174,23 @@ describe('report templates', () => {
     expect(at('sources_of_information')).toBeLessThan(at('financial_analysis'));
     expect(at('methodology')).toBeLessThan(at('conclusion'));
     expect(at('conclusion')).toBeLessThan(at('safe_harbor'));
-    expect(at('certification')).toBe(keys.length - 1);
+    // The rights are described before the section that splits value on them.
+    expect(at('capital_structure')).toBeLessThan(at('allocation'));
+    // Each approach, then the weighting of their indications, then the
+    // allocation of the weighted result.
+    for (const approach of ['income_approach', 'market_approach', 'asset_approach']) {
+      expect(at('methodology'), approach).toBeLessThan(at(approach));
+      expect(at(approach), approach).toBeLessThan(at('reconciliation'));
+    }
+    expect(at('reconciliation')).toBeLessThan(at('allocation'));
+    // Discounts apply to the allocated value, in the order the engine applies
+    // them: DLOC, then DLOM.
+    expect(at('allocation')).toBeLessThan(at('dloc'));
+    expect(at('dloc')).toBeLessThan(at('dlom'));
+    expect(at('dlom')).toBeLessThan(at('conclusion'));
+    // The exhibit index is last, because the exhibits are appended after it.
+    expect(at('exhibit_index')).toBe(keys.length - 1);
+    expect(at('certification')).toBeLessThan(at('qualifications'));
   });
 
   it('instantiates with placeholders resolved', () => {
