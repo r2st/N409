@@ -94,6 +94,7 @@ interface ResultsShape {
   equity_value?: unknown;
   common_equity_value?: unknown;
   fully_diluted_common?: unknown;
+  fully_diluted_basis?: unknown;
   allocation_method?: unknown;
   allocation?: { method?: unknown; common_per_share?: unknown } | null;
   approaches?: Record<string, { weight?: unknown; equity_value?: unknown }> | null;
@@ -303,10 +304,25 @@ export function buildReportSummary(
     figures.push({ label: 'Concluded equity value', value: formatCurrency(equity, currency, 0) });
   }
   if (dilutedShares !== null && dilutedShares > 0) {
+    // Which count this is depends on how the equity was allocated, and the two
+    // are different numbers. Under the cap-table waterfall the option pool is
+    // its own class holding its own value, so the concluded per-share figure is
+    // over the common classes alone; under the aggregate models the pool is
+    // folded into fully diluted common and shares one slice with it.
+    //
+    // Naming the wrong one is what made the page contradict itself: it printed
+    // the fully diluted count beside a common equity value that excluded the
+    // pool, so a board dividing the two got a figure well under the FMV the
+    // same page asked them to adopt. The engine now says which basis it used
+    // (`fully_diluted_basis`); older calculations predate the field and took
+    // the aggregate wording, which is what they were computed on.
+    const capTableBasis = results.fully_diluted_basis === 'cap_table_common';
     figures.push({
-      label: 'Fully diluted common',
+      label: capTableBasis ? 'Common shares outstanding' : 'Fully diluted common',
       value: new Intl.NumberFormat('en-US').format(Math.round(dilutedShares)),
-      note: 'Common shares plus options outstanding',
+      note: capTableBasis
+        ? 'Common classes per the cap table; options are allocated separately'
+        : 'Common shares plus options outstanding',
     });
   }
   figures.push({

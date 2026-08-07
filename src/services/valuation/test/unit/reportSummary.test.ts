@@ -251,6 +251,50 @@ describe('buildReportSummary', () => {
     expect(summary.charts!.map((c) => c.type)).toEqual(['bar', 'donut', 'waterfall']);
   });
 
+  /**
+   * The share count on the summary page is the denominator behind the headline
+   * FMV, and the two allocation families use different ones. Under the
+   * cap-table waterfall the option pool is its own class holding its own value,
+   * so the common equity value beside it excludes the pool; under the aggregate
+   * models the pool is folded into fully diluted common. Labelling every run
+   * "Fully diluted common · common shares plus options outstanding" made the
+   * first case contradict itself — a board dividing the printed equity by the
+   * printed count landed well under the FMV the same page asked them to adopt.
+   */
+  describe('the share count is labelled as the basis the engine actually used', () => {
+    const figureFor = (results: Record<string, unknown>) => {
+      const summary = buildReportSummary(calculation({ results: { ...RESULTS, ...results } }), CONTEXT)!;
+      return summary.figures!.find((f) => f.value === '8,000,000');
+    };
+
+    it('names the cap table when the waterfall allocated on common alone', () => {
+      expect(
+        figureFor({ fully_diluted_common: 8_000_000, fully_diluted_basis: 'cap_table_common' }),
+      ).toMatchObject({
+        label: 'Common shares outstanding',
+        note: 'Common classes per the cap table; options are allocated separately',
+      });
+    });
+
+    it('keeps the fully diluted wording for the aggregate allocation models', () => {
+      expect(
+        figureFor({ fully_diluted_common: 8_000_000, fully_diluted_basis: 'common_plus_options' }),
+      ).toMatchObject({
+        label: 'Fully diluted common',
+        note: 'Common shares plus options outstanding',
+      });
+    });
+
+    it('reads a calculation stored before the basis existed as the aggregate one', () => {
+      // Which is what those runs were computed on — the field is new, the
+      // arithmetic behind the old rows is not.
+      expect(figureFor({ fully_diluted_common: 8_000_000 })).toMatchObject({
+        label: 'Fully diluted common',
+        note: 'Common shares plus options outstanding',
+      });
+    });
+  });
+
   it('appends the trend line only once there is a prior valuation to trend against', () => {
     const withHistory = buildReportSummary(calculation(), {
       ...CONTEXT,

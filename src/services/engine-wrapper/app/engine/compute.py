@@ -328,11 +328,15 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
     allocation = _pwerm_allocation(inputs)
     equity_value = allocation["equity_value"]
 
-    common_shares = _req(
-        inputs.get("shares_outstanding_common"), "shares_outstanding_common", positive=True
-    )
-    options = _num(inputs.get("options_outstanding"), "options_outstanding", nonneg=True) or 0.0
-    fully_diluted_common = common_shares + options
+    # Still required and still validated — a PWERM payload without a common
+    # share count is incomplete, and a negative pool is a typo either way — but
+    # the *reported* basis comes from the waterfall below, not from these. PWERM
+    # allocates through `exit_allocation`, which values the option pool as its
+    # own class, so its `common_per_share` is over the cap table's common
+    # shares. See the note in `_opm_allocate`.
+    _req(inputs.get("shares_outstanding_common"), "shares_outstanding_common", positive=True)
+    _num(inputs.get("options_outstanding"), "options_outstanding", nonneg=True)
+    fully_diluted_common = allocation["common_shares"]
 
     # Expected (probability-weighted) time to exit drives any model DLOM.
     t = allocation["expected_time_to_exit_years"]
@@ -360,6 +364,7 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
         },
         "discounts": {"dloc": dloc, "dlom": dlom, "dlom_method": dlom_method},
         "fully_diluted_common": fully_diluted_common,
+        "fully_diluted_basis": "cap_table_common",
         "fmv_per_share": round(fmv_per_share, 4),
     }
     return {"engine_version": ENGINE_VERSION, "results": results}
@@ -533,12 +538,35 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
     if needs_vol and volatility is None:
         raise EngineInputError("volatility is required (OPM allocation / model DLOM)")
 
+    # The share count the reported common per-share figure is actually divided
+    # by, and a word naming which count it is.
+    #
+    # `common_shares + options` is right for the two aggregate branches below,
+    # because both fold the pool into fully-diluted common and hand that whole
+    # base one slice of the equity. The breakpoint waterfall does not: it values
+    # the option pool as its own class, at its own strike, and `common_value` is
+    # what is left for the *common* classes alone — so its `common_per_share` is
+    # over the cap table's common shares.
+    #
+    # Reporting the fully-diluted count anyway made the deliverable disagree
+    # with itself: on 8M common, a 2M pool and 4M preferred behind a $10M
+    # preference, the summary page printed a $1.2004 concluded FMV, a
+    # $9,603,107 common equity value and 10,000,000 fully diluted common — and
+    # a reader dividing the two got $0.9603, 20% under the headline they were
+    # asked to adopt. Both figures were individually right; only the pairing was
+    # not. `current_value.allocate_cvm` already reports the waterfall's own
+    # count for exactly this reason, so this is the OPM/PWERM paths catching up.
+    share_basis = fully_diluted_common
+    basis_kind = "common_plus_options"
+
     waterfall_per_share: float | None = None
     if has_waterfall:
         # Full cap-table waterfall (remaining-gaps §2 — multi-breakpoint).
         allocation = allocate_waterfall(equity_value, share_classes, t, r, volatility or 0.0)
         common_equity = allocation["common_value"]
         waterfall_per_share = allocation["common_per_share"]
+        share_basis = allocation["common_shares"]
+        basis_kind = "cap_table_common"
     elif preferred_shares > 0 and liquidation_preference > 0:
         upside = bs_call(equity_value, liquidation_preference, t, r, volatility or 0.0)
         common_fraction = fully_diluted_common / (fully_diluted_common + preferred_shares)
@@ -564,7 +592,8 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
     return {
         "allocation": allocation,
         "common_equity": common_equity,
-        "fully_diluted_common": fully_diluted_common,
+        "fully_diluted_common": share_basis,
+        "fully_diluted_basis": basis_kind,
         "volatility": volatility,
         "common_per_share": common_per_share,
     }
@@ -601,6 +630,7 @@ def _compute_opm(params: dict, inputs: dict, recompute: list[str] | None, prior:
         },
         "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
         "fully_diluted_common": alloc["fully_diluted_common"],
+        "fully_diluted_basis": alloc["fully_diluted_basis"],
         "fmv_per_share": round(fmv_per_share, 4),
     }
     if recompute is not None:
@@ -638,6 +668,12 @@ def _compute_cvm(params: dict, inputs: dict, recompute: list[str] | None, prior:
         },
         "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
         "fully_diluted_common": allocation["fully_diluted_common"],
+        # `allocate_cvm` already reports the count its own per-share figure is
+        # over — the cap table's common on the waterfall path, common + options
+        # on the simplified one — so the label follows the method it chose.
+        "fully_diluted_basis": (
+            "cap_table_common" if allocation["method"] == "cvm_waterfall" else "common_plus_options"
+        ),
         "fmv_per_share": round(fmv_per_share, 4),
     }
     if recompute is not None:
@@ -693,6 +729,7 @@ def _compute_hybrid(params: dict, inputs: dict, recompute: list[str] | None, pri
         },
         "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
         "fully_diluted_common": fully_diluted_common,
+        "fully_diluted_basis": opm_alloc["fully_diluted_basis"],
         "fmv_per_share": round(fmv_per_share, 4),
     }
     if recompute is not None:

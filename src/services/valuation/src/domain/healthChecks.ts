@@ -316,20 +316,32 @@ export function runHealthChecks(args: {
         : `FMV/share ${fmv} exceeds the entire equity value ${equity}`,
     );
   }
-  // Fully diluted reconciliation from the engine results.
+  // Share-count reconciliation against the basis the engine actually divided
+  // by. The two allocation families disclose different counts: the cap-table
+  // waterfall values the option pool as its own class, so its per-share figure
+  // is over the common classes alone, while the aggregate models fold the pool
+  // into fully diluted common. Checking every calculation against
+  // `common + options` therefore graded a correct waterfall run as a mismatch —
+  // and, worse, passed a run whose disclosed count was the one that did *not*
+  // produce its own headline FMV.
   const fdCommon = num(results.fully_diluted_common);
   const options = num(engineInputs.options_outstanding) ?? 0;
-  if (fdCommon !== null && commonShares !== null) {
-    const expected = commonShares + options;
+  const capTableBasis = results.fully_diluted_basis === 'cap_table_common';
+  const capTableCommon = shareClasses
+    .filter((c) => obj(c).kind === 'common')
+    .reduce<number>((sum, c) => sum + (num(obj(c).shares) ?? 0), 0);
+  const expected = capTableBasis ? capTableCommon : commonShares === null ? null : commonShares + options;
+  if (fdCommon !== null && expected !== null && expected > 0) {
     const ok = Math.abs(fdCommon - expected) <= 1;
+    const what = capTableBasis ? "the cap table's common shares" : 'common + options';
     add(
       'mathematical',
       'share_counts_match',
       'Share counts reconcile',
       ok ? 'ok' : 'warning',
       ok
-        ? 'Fully diluted common = common + options'
-        : `Fully diluted common ${fdCommon.toLocaleString()} ≠ common + options ${expected.toLocaleString()}`,
+        ? `Allocation basis (${fdCommon.toLocaleString()}) = ${what}`
+        : `Allocation basis ${fdCommon.toLocaleString()} ≠ ${what} ${expected.toLocaleString()}`,
     );
   }
 

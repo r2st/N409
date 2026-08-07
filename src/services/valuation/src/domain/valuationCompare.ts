@@ -57,6 +57,7 @@ interface Results {
   equity_value?: unknown;
   common_equity_value?: unknown;
   fully_diluted_common?: unknown;
+  fully_diluted_basis?: unknown;
   allocation_method?: unknown;
   allocation?: { method?: unknown; common_per_share?: unknown } | null;
   approaches?: Record<string, { weight?: unknown; equity_value?: unknown }> | null;
@@ -188,6 +189,16 @@ function timeToExit(r: Results): number | null {
 }
 
 /**
+ * Whether this run's per-share figure was taken over the cap table's common
+ * classes alone. Absent on calculations stored before the engine said so, which
+ * were computed on common + options — the aggregate wording, which is the
+ * default here.
+ */
+function capTableBasis(r: Results): boolean {
+  return r.fully_diluted_basis === 'cap_table_common';
+}
+
+/**
  * The comparison table for two sides.
  *
  * Currency is taken from side A: comparing two valuations denominated
@@ -224,7 +235,16 @@ export function compareValuations(a: CompareSide, b: CompareSide): CompareGroup[
     ),
     make(
       'fully_diluted_common',
-      'Fully diluted common',
+      // The row is the denominator behind the FMV above it, and the two
+      // allocation families divide by different counts — the cap table's
+      // common classes under the breakpoint waterfall (the option pool is its
+      // own class there), common + options under the aggregate models. Calling
+      // both "fully diluted" would mislabel a waterfall run against the very
+      // common equity value sitting one row up. Named from the pair, so a
+      // comparison of two runs of the same engagement — which is what this
+      // page is for — reads correctly; a mixed pair keeps the neutral wording
+      // and the delta is what shows the basis moved.
+      capTableBasis(ra) && capTableBasis(rb) ? 'Common shares outstanding' : 'Fully diluted common',
       'integer',
       num(ra.fully_diluted_common),
       num(rb.fully_diluted_common),

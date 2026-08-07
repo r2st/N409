@@ -217,6 +217,52 @@ describe('compareValuations — partial and mismatched results', () => {
     expect(rows.get('time_to_exit')!.changed).toBe(false);
   });
 
+  /**
+   * The share-count row is the denominator behind the FMV row above it, and the
+   * two allocation families divide by different counts: the cap table's common
+   * classes under the breakpoint waterfall (the option pool is its own class
+   * there), common + options under the aggregate models.
+   */
+  describe('the share-count row names the basis it is showing', () => {
+    const withBasis = (basis?: string) => ({
+      fmv_per_share: 1.42,
+      common_equity_value: 11_360_000,
+      fully_diluted_common: 8_000_000,
+      ...(basis ? { fully_diluted_basis: basis } : {}),
+    });
+
+    it('names the cap table when both runs allocated on common alone', () => {
+      const groups = compareValuations(
+        side({ results: withBasis('cap_table_common') }),
+        side({ results: withBasis('cap_table_common') }),
+      );
+      expect(rowsOf(groups).get('fully_diluted_common')!.label).toBe('Common shares outstanding');
+    });
+
+    it('keeps the fully diluted wording for the aggregate models', () => {
+      const groups = compareValuations(
+        side({ results: withBasis('common_plus_options') }),
+        side({ results: withBasis('common_plus_options') }),
+      );
+      expect(rowsOf(groups).get('fully_diluted_common')!.label).toBe('Fully diluted common');
+    });
+
+    it('stays neutral when the two runs disagree about the basis', () => {
+      // Either label would be wrong for one side; the delta is what tells the
+      // analyst the basis moved.
+      const groups = compareValuations(
+        side({ results: withBasis('common_plus_options') }),
+        side({ results: withBasis('cap_table_common') }),
+      );
+      expect(rowsOf(groups).get('fully_diluted_common')!.label).toBe('Fully diluted common');
+    });
+
+    it('reads a run stored before the basis existed as the aggregate one', () => {
+      const groups = compareValuations(side({ results: withBasis() }), side({ results: withBasis() }));
+      expect(rowsOf(groups).get('fully_diluted_common')!.label).toBe('Fully diluted common');
+    });
+  });
+
   it('formats in the baseline currency', () => {
     const groups = compareValuations(
       side({ currency: 'GBP', results: { equity_value: 1_000_000 } }),

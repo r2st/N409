@@ -153,4 +153,60 @@ describe('runHealthChecks', () => {
     const report = runHealthChecks(h);
     expect(byKey(report, 'fmv_below_equity')?.severity).toBe('error');
   });
+
+  /**
+   * `share_counts_match` grades the count the engine divided by, and the two
+   * allocation families divide by different ones: the cap-table waterfall by
+   * the common classes alone (the option pool is a separate class holding its
+   * own value), the aggregate models by common + options. Checking every run
+   * against common + options graded a correct waterfall run as a mismatch —
+   * and passed a run whose disclosed count was not the one that produced its
+   * own headline FMV.
+   */
+  describe('share count reconciliation follows the allocation basis', () => {
+    it('accepts a waterfall run disclosing the cap table´s common shares', () => {
+      const h = healthy();
+      h.calculation.results = {
+        fully_diluted_common: 8_000_000, // common classes only
+        fully_diluted_basis: 'cap_table_common',
+      };
+      const check = byKey(runHealthChecks(h), 'share_counts_match');
+      expect(check?.severity).toBe('ok');
+      expect(check?.detail).toContain("the cap table's common shares");
+    });
+
+    it('warns when a waterfall run discloses the fully diluted count instead', () => {
+      const h = healthy();
+      h.calculation.results = {
+        fully_diluted_common: 9_000_000, // common + options: not what it divided by
+        fully_diluted_basis: 'cap_table_common',
+      };
+      expect(byKey(runHealthChecks(h), 'share_counts_match')?.severity).toBe('warning');
+    });
+
+    it('still holds the aggregate models to common + options', () => {
+      const h = healthy();
+      h.calculation.results = {
+        fully_diluted_common: 9_000_000,
+        fully_diluted_basis: 'common_plus_options',
+      };
+      expect(byKey(runHealthChecks(h), 'share_counts_match')?.severity).toBe('ok');
+
+      h.calculation.results.fully_diluted_common = 8_000_000;
+      expect(byKey(runHealthChecks(h), 'share_counts_match')?.severity).toBe('warning');
+    });
+
+    it('reads a calculation stored before the basis existed as the aggregate one', () => {
+      const h = healthy();
+      h.calculation.results = { fully_diluted_common: 9_000_000 };
+      expect(byKey(runHealthChecks(h), 'share_counts_match')?.severity).toBe('ok');
+    });
+
+    it('skips the check rather than inventing a basis when neither count is known', () => {
+      const h = healthy();
+      h.calculation.results = { fully_diluted_common: 9_000_000, fully_diluted_basis: 'cap_table_common' };
+      h.calculation.inputs.inputs.share_classes = [];
+      expect(byKey(runHealthChecks(h), 'share_counts_match')).toBeUndefined();
+    });
+  });
 });
