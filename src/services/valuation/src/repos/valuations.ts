@@ -51,41 +51,56 @@ export interface CreateValuationInput {
   gclid?: string;
 }
 
+/**
+ * The aggregate root + its 1:1 params row + the birth event, on a caller's
+ * transaction.
+ *
+ * Exported separately from `createValuation` so a caller that has more to do
+ * atomically — converting a submitted client-intake link, which must claim the
+ * link and seed the questionnaire in the same breath — can compose with it
+ * rather than re-spelling this INSERT and drifting from it.
+ */
+export async function insertValuation(
+  client: pg.PoolClient,
+  input: CreateValuationInput,
+  actor: EventActor,
+): Promise<ValuationRow> {
+  const id = newUlid();
+  const { rows } = await client.query<ValuationRow>(
+    `INSERT INTO valuations
+       (id, kind, company_name, service_name, user_id, partner_id, source, currency, service_countries, gclid)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING *`,
+    [
+      id,
+      input.kind,
+      input.companyName,
+      input.serviceName ?? null,
+      input.userId,
+      input.partnerId ?? null,
+      input.source ?? null,
+      input.currency ?? 'USD',
+      input.serviceCountries ?? [],
+      input.gclid ?? null,
+    ],
+  );
+  await client.query('INSERT INTO valuation_params (valuation_id) VALUES ($1)', [id]);
+  await recordEvent(client, {
+    valuationId: id,
+    type: EVENT_TYPES.created,
+    actor,
+    payload: { kind: input.kind, company_name: input.companyName, state: 'pending' },
+  });
+  return rows[0]!;
+}
+
 /** Creates the aggregate root + its 1:1 params row + the birth event, atomically. */
 export async function createValuation(
   pool: pg.Pool,
   input: CreateValuationInput,
   actor: EventActor,
 ): Promise<ValuationRow> {
-  return withTransaction(pool, async (client) => {
-    const id = newUlid();
-    const { rows } = await client.query<ValuationRow>(
-      `INSERT INTO valuations
-         (id, kind, company_name, service_name, user_id, partner_id, source, currency, service_countries, gclid)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING *`,
-      [
-        id,
-        input.kind,
-        input.companyName,
-        input.serviceName ?? null,
-        input.userId,
-        input.partnerId ?? null,
-        input.source ?? null,
-        input.currency ?? 'USD',
-        input.serviceCountries ?? [],
-        input.gclid ?? null,
-      ],
-    );
-    await client.query('INSERT INTO valuation_params (valuation_id) VALUES ($1)', [id]);
-    await recordEvent(client, {
-      valuationId: id,
-      type: EVENT_TYPES.created,
-      actor,
-      payload: { kind: input.kind, company_name: input.companyName, state: 'pending' },
-    });
-    return rows[0]!;
-  });
+  return withTransaction(pool, async (client) => insertValuation(client, input, actor));
 }
 
 /**

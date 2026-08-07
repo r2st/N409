@@ -1,6 +1,16 @@
 import type pg from 'pg';
 import { createHash, randomBytes } from 'node:crypto';
 import { newUlid } from '@n409/shared';
+import { withTransaction } from '../db/pool.js';
+import { INTAKE_EVENT_TYPES } from '../domain/intake.js';
+import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
+import { recordEvent, type EventActor } from '../events/record.js';
+import { insertValuation, type CreateValuationInput, type ValuationRow } from './valuations.js';
+import { PARAM_COLUMNS } from './params.js';
+
+/** Columns `convertIntakeLink` may write. Kept as a set of plain strings
+ * because these become raw SQL identifiers. */
+const SEEDABLE_PARAM_COLUMNS: ReadonlySet<string> = new Set(PARAM_COLUMNS);
 
 /**
  * Firm-branded client intake links (migration 0092).
@@ -184,4 +194,92 @@ export async function attachIntakeValuation(
     [id, partnerId, valuationId],
   );
   return rows[0] ?? null;
+}
+
+/** Why a link cannot become an engagement, or `null` when it can. */
+export type IntakeConversionRefusal = 'not_found' | 'not_submitted' | 'already_converted';
+
+export interface IntakeConversion {
+  link: ClientIntakeLinkRow;
+  valuation: ValuationRow;
+}
+
+/**
+ * Turn a submitted intake into the engagement it was collected for.
+ *
+ * Everything here is one transaction because the link's `valuation_id` is the
+ * only thing that makes conversion once-only. Creating the valuation first and
+ * claiming the link afterwards leaves a double-click owning two engagements for
+ * one client, with the second one orphaned — so the row is locked before
+ * anything is created, and the whole set (valuation, params row, birth event,
+ * seeded questionnaire, claim) commits or none of it does.
+ *
+ * The answers are copied into `intake_questionnaires` rather than referenced:
+ * from here on the analyst edits the engagement's questionnaire, and the intake
+ * link stays the immutable record of what the prospect actually submitted.
+ */
+export async function convertIntakeLink(
+  pool: pg.Pool,
+  args: {
+    partnerId: string;
+    id: string;
+    valuation: Omit<CreateValuationInput, 'companyName' | 'partnerId'> & { companyName: string };
+    paramsPatch: Record<string, unknown>;
+    actor: EventActor;
+  },
+): Promise<IntakeConversion | IntakeConversionRefusal> {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<ClientIntakeLinkRow>(
+      'SELECT * FROM client_intake_links WHERE id = $1 AND partner_id = $2 FOR UPDATE',
+      [args.id, args.partnerId],
+    );
+    const link = rows[0];
+    if (!link) return 'not_found';
+    if (!link.submitted_at) return 'not_submitted';
+    if (link.valuation_id) return 'already_converted';
+
+    const valuation = await insertValuation(
+      client,
+      { ...args.valuation, partnerId: args.partnerId },
+      args.actor,
+    );
+
+    const answers = link.answers ?? {};
+    await client.query(
+      `INSERT INTO intake_questionnaires (id, valuation_id, answers, submitted_at)
+       VALUES ($1, $2, $3, $4)`,
+      [newUlid(), valuation.id, JSON.stringify(answers), link.submitted_at],
+    );
+    await recordEvent(client, {
+      valuationId: valuation.id,
+      type: INTAKE_EVENT_TYPES.submitted,
+      actor: args.actor,
+      payload: { source: 'client_intake_link', intake_link_id: link.id },
+    });
+
+    // The allow-list is re-applied here rather than trusted from the caller:
+    // these keys become raw SQL identifiers, so an unexpected one must be
+    // impossible, not merely unlikely. Same discipline as `updateOwnProfile`.
+    const patchEntries = Object.entries(args.paramsPatch).filter(([key]) => SEEDABLE_PARAM_COLUMNS.has(key));
+    if (patchEntries.length > 0) {
+      const sets = patchEntries.map(([key], i) => `${key} = $${i + 1}`);
+      await client.query(
+        `UPDATE valuation_params SET ${sets.join(', ')}, updated_at = now()
+          WHERE valuation_id = $${patchEntries.length + 1}`,
+        [...patchEntries.map(([, value]) => value), valuation.id],
+      );
+      await recordEvent(client, {
+        valuationId: valuation.id,
+        type: PIPELINE_EVENT_TYPES.paramsUpdated,
+        actor: args.actor,
+        payload: { seeded_from_intake: Object.keys(args.paramsPatch) },
+      });
+    }
+
+    const { rows: claimed } = await client.query<ClientIntakeLinkRow>(
+      'UPDATE client_intake_links SET valuation_id = $2 WHERE id = $1 RETURNING *',
+      [link.id, valuation.id],
+    );
+    return { link: claimed[0]!, valuation };
+  });
 }

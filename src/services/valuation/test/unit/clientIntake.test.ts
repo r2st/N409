@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   filterIntakeAnswers,
+  intakeCompanyName,
+  intakeParamsPatch,
   INTAKE_LINK_STATUSES,
   intakeLinkStatus,
   isIntakeLinkOpen,
@@ -143,5 +145,97 @@ describe('summarizeIntakeLink', () => {
     const summary = summarizeIntakeLink({ ...link(), answers: {} }, NOW);
     expect(summary.completion.percentComplete).toBe(0);
     expect(summary.completion.ready).toBe(false);
+  });
+});
+
+/**
+ * Conversion turns a submitted questionnaire into the engagement it was
+ * collected for. What is mapped and what is deliberately not mapped is a
+ * judgement, so it is pinned here rather than left to the route.
+ */
+describe('intakeCompanyName', () => {
+  it('prefers the legal name the client typed', () => {
+    expect(intakeCompanyName({ legal_name: '  Northwind Robotics, Inc. ' }, 'Northwind')).toBe(
+      'Northwind Robotics, Inc.',
+    );
+  });
+
+  it('falls back to the name the link was addressed to', () => {
+    // A firm may convert a partial intake to get moving. A missing legal name
+    // must not be an error about a field the client never filled in.
+    expect(intakeCompanyName({}, 'Halcyon Bio')).toBe('Halcyon Bio');
+    expect(intakeCompanyName({ legal_name: '   ' }, 'Halcyon Bio')).toBe('Halcyon Bio');
+  });
+
+  it('always produces a name, because a valuation must have one', () => {
+    expect(intakeCompanyName({}, null)).toBe('Unnamed company');
+    expect(intakeCompanyName({ legal_name: '' }, '  ')).toBe('Unnamed company');
+  });
+
+  it('keeps the name inside the column it is written to', () => {
+    expect(intakeCompanyName({ legal_name: 'x'.repeat(400) }, null)).toHaveLength(300);
+  });
+});
+
+describe('intakeParamsPatch', () => {
+  it('maps the answers that have a typed column waiting for them', () => {
+    expect(
+      intakeParamsPatch({
+        business_description: '  Autonomous warehouse robots. ',
+        revenue_status: 'post_revenue',
+        incorporation_date: '2021-03-04',
+        last_round_date: '2024-05-01',
+        last_fy_revenue: 1_234.56,
+        ytd_revenue: 900,
+      }),
+    ).toEqual({
+      business_overview: 'Autonomous warehouse robots.',
+      revenue_status: 'post_revenue',
+      inception_date: '2021-03-04',
+      last_round_date: '2024-05-01',
+      last_year_revenue_cents: 123_456,
+      ytd_revenue_cents: 90_000,
+    });
+  });
+
+  it('omits a key rather than nulling it', () => {
+    // `patchParams` diffs what it is given: an absent key leaves the analyst's
+    // own entry standing, an explicit null overwrites it.
+    expect(intakeParamsPatch({})).toEqual({});
+    expect(intakeParamsPatch({ business_description: '   ', last_fy_revenue: null })).toEqual({});
+  });
+
+  it('refuses a revenue stage that is not one of the two', () => {
+    expect(intakeParamsPatch({ revenue_status: 'maybe' })).toEqual({});
+    expect(intakeParamsPatch({ revenue_status: 7 })).toEqual({});
+  });
+
+  it('refuses a date that is not a real calendar day', () => {
+    expect(intakeParamsPatch({ incorporation_date: '2023-02-30' })).toEqual({});
+    expect(intakeParamsPatch({ incorporation_date: '04/03/2021' })).toEqual({});
+  });
+
+  it('refuses money that cannot be cents', () => {
+    expect(intakeParamsPatch({ last_fy_revenue: -1 })).toEqual({});
+    expect(intakeParamsPatch({ last_fy_revenue: Number.POSITIVE_INFINITY })).toEqual({});
+    // Above MAX_SAFE_INTEGER the figure has already stopped being the one the
+    // client typed, so it is not carried across as though it were.
+    expect(intakeParamsPatch({ last_fy_revenue: 1e17 })).toEqual({});
+  });
+
+  it('rounds to whole cents rather than truncating', () => {
+    expect(intakeParamsPatch({ ytd_revenue: 0.005 })).toEqual({ ytd_revenue_cents: 1 });
+    expect(intakeParamsPatch({ ytd_revenue: 0 })).toEqual({ ytd_revenue_cents: 0 });
+  });
+
+  it('seeds nothing that is the analyst’s judgement', () => {
+    const patch = intakeParamsPatch({
+      business_description: 'Robots.',
+      total_shares_outstanding: 10_000_000,
+      option_pool_size: 1_000_000,
+    });
+    for (const key of ['weight_opm', 'weight_asset', 'dlom', 'dloc', 'allocation_method', 'runway_months']) {
+      expect(patch).not.toHaveProperty(key);
+    }
   });
 });

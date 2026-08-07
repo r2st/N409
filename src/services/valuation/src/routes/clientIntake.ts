@@ -13,13 +13,18 @@ import {
 } from '../domain/intake.js';
 import {
   filterIntakeAnswers,
+  intakeCompanyName,
   intakeLinkStatus,
+  intakeParamsPatch,
   isIntakeLinkOpen,
   summarizeIntakeLink,
 } from '../domain/clientIntake.js';
 import { resolveBranding } from '../domain/branding.js';
+import { CurrencyCode } from '../domain/currency.js';
+import { VALUATION_KINDS } from '../domain/valuation.js';
 import { findBrandingByPartnerId } from '../repos/branding.js';
 import {
+  convertIntakeLink,
   createIntakeLink,
   findIntakeLink,
   listIntakeLinks,
@@ -58,6 +63,18 @@ const CreateBody = z.object({
 
 const TokenBody = z.object({ token: z.string().min(1) });
 const SaveBody = TokenBody.extend({ answers: z.record(z.string(), z.unknown()) });
+
+/**
+ * Converting is a firm decision, so the two things the questionnaire does not
+ * ask about are the two things the firm may state here. Everything else comes
+ * from what the client answered.
+ */
+const ConvertBody = z.object({
+  kind: z.enum(VALUATION_KINDS).default('409a'),
+  currency: CurrencyCode.optional(),
+  /** Overrides the legal name the client typed, when the firm knows better. */
+  company_name: z.string().trim().min(1).max(300).optional(),
+});
 
 /**
  * The portal routes authenticate on the token alone, so an unlimited endpoint
@@ -156,6 +173,61 @@ export function registerClientIntakeRoutes(
       answers: row.answers ?? {},
       sections: INTAKE_SECTIONS,
     };
+  });
+
+  /**
+   * Turn a submitted questionnaire into the engagement it was collected for.
+   *
+   * Without this the feature stopped one step short of its own purpose: a firm
+   * could send the form, watch it fill in and read what came back, and then had
+   * to retype every answer into a new valuation by hand. The `converted` status
+   * existed, was styled and labelled, and no code path could ever produce it.
+   *
+   * The new valuation belongs to the firm and to the member who converted it —
+   * the prospect still has no account, which is the whole premise of intake —
+   * and it starts life with the questionnaire already answered and the params
+   * intake can speak for already set.
+   */
+  app.post('/api/v1/firm/intake-links/:id/convert', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const query = PartnerQuery.safeParse(req.query);
+    if (!query.success) throw problems.badRequest('Invalid query');
+    const partnerId = resolveFirm(principal, query.data.partner_id);
+
+    const parsed = ConvertBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
+
+    const existing = await findIntakeLink(deps.pool, partnerId, id);
+    if (!existing) throw problems.notFound();
+    const answers = existing.answers ?? {};
+
+    const result = await convertIntakeLink(deps.pool, {
+      partnerId,
+      id,
+      valuation: {
+        kind: parsed.data.kind,
+        companyName: parsed.data.company_name ?? intakeCompanyName(answers, existing.client_name),
+        userId: principal.id,
+        source: 'partner',
+        currency: parsed.data.currency,
+      },
+      paramsPatch: intakeParamsPatch(answers),
+      actor: { actorType: 'human', actorId: principal.id, source: 'api' },
+    });
+
+    if (result === 'not_found') throw problems.notFound();
+    if (result === 'not_submitted') {
+      throw problems.conflict('This questionnaire has not been submitted yet');
+    }
+    if (result === 'already_converted') {
+      throw problems.conflict('This intake has already been converted into a valuation');
+    }
+
+    return reply.status(201).send({
+      valuation: result.valuation,
+      link: { ...toPublicLink(result.link), ...summarizeIntakeLink(result.link, new Date()) },
+    });
   });
 
   app.delete('/api/v1/firm/intake-links/:id', { preHandler: app.authenticate }, async (req, reply) => {
