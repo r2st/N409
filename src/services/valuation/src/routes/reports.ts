@@ -23,6 +23,7 @@ import {
   type ReportRow,
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
+import { sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findPartnerById } from '../repos/adminUsers.js';
@@ -133,8 +134,9 @@ async function brandingFor(
  * Concluded FMV of every prior valuation of the same company, oldest first —
  * the trend chart on the summary page.
  *
- * Scoped to the same owner and company name, exactly as the analytics endpoint
- * scopes its series, so a report can never plot another client's history. Only
+ * Scoped by `sameCompanyFilter`, shared with the analytics endpoint so the two
+ * cannot answer "the same client" differently — which they did, both of them
+ * wrongly, for a firm whose engagements are spread across its members. Only
  * runs strictly before this one count: a report states what was known on the
  * day it was drawn, and a later revision appearing in its own history chart
  * would be a document that changes after signature.
@@ -144,6 +146,7 @@ async function historyFor(
   valuation: ValuationRow,
   before: Date,
 ): Promise<Array<{ as_of: string; fmv_per_share: number }>> {
+  const scope = sameCompanyFilter(valuation);
   const { rows } = await pool.query<{ as_of: Date; fmv_per_share: string | null }>(
     `SELECT c.created_at AS as_of, c.fmv_per_share
        FROM valuations v
@@ -157,10 +160,9 @@ async function historyFor(
           ORDER BY created_at DESC
           LIMIT 1
        ) c ON true
-      WHERE v.user_id = $1
-        AND lower(trim(v.company_name)) = lower(trim($2))
+      WHERE ${scope.clause}
       ORDER BY c.created_at ASC`,
-    [valuation.user_id, valuation.company_name, before],
+    [...scope.params, before],
   );
   return rows
     .map((r) => ({ as_of: new Date(r.as_of).toISOString(), fmv_per_share: Number(r.fmv_per_share) }))

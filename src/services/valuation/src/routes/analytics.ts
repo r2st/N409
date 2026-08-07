@@ -4,6 +4,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { buildAnalytics, type CalcInput } from '../domain/valuationAnalytics.js';
+import { sameCompanyFilter } from '../domain/valuationHistory.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -31,6 +32,10 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: { pool: pg.P
     const valuation = await load(principal, id);
 
     // Latest successful calculation of each same-company valuation, chronological.
+    // `sameCompanyFilter` is shared with the report's trend chart: the two are
+    // the same question, and answering it twice is how they came to disagree
+    // with the firm console about which engagements belong to one client.
+    const scope = sameCompanyFilter(valuation);
     const { rows } = await deps.pool.query<{
       calculation_id: string;
       valuation_id: string;
@@ -47,10 +52,9 @@ export function registerAnalyticsRoutes(app: FastifyInstance, deps: { pool: pg.P
             ORDER BY created_at DESC
             LIMIT 1
          ) c ON true
-        WHERE v.user_id = $1
-          AND lower(trim(v.company_name)) = lower(trim($2))
+        WHERE ${scope.clause}
         ORDER BY c.created_at ASC`,
-      [valuation.user_id, valuation.company_name],
+      scope.params,
     );
 
     const calcs: CalcInput[] = rows.map((r) => ({
