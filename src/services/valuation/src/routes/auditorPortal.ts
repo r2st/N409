@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
-import { isOps, type Principal } from '../auth/rbac.js';
+import { isOps, REPORT_VISIBLE_STATES, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { findReportByValuation, getVersion } from '../repos/reports.js';
@@ -21,9 +21,10 @@ import { requirePrincipal } from '../plugins/auth.js';
 /**
  * External auditor portal (feature 8). An ops user (or the valuation owner)
  * mints a shareable, expiring link; an outside auditor opens it — without an
- * account — and sees a read-only bundle for that one valuation: the report,
- * the assumptions, an evidence summary and the audit-defense Q&A. No billing,
- * no other clients, no admin surface is reachable through the token.
+ * account — and sees a read-only bundle for that one valuation: the report
+ * (once it has been shared), the assumptions, an evidence summary and the
+ * audit-defense Q&A. No billing, no other clients, no admin surface is
+ * reachable through the token.
  */
 
 const MAX_EXPIRY_DAYS = 180;
@@ -115,9 +116,26 @@ export function registerAuditorPortalRoutes(
     const valuation = await findValuationById(deps.pool, access.valuation_id);
     if (!valuation) throw problems.notFound();
 
-    // Report content (current published/draft version), if any.
+    // Report content (current shared version), if any.
+    //
+    // Gated on the same states `canReadReport` gates every other reader on. A
+    // report row exists from the moment an analyst instantiates the template,
+    // and ops render and re-render it to check their own work long before
+    // `drafted` — so serving `current_version` on state alone handed an outside
+    // auditor a working draft that the client themselves is answered 404 for.
+    //
+    // Which mattered most for the one reader who is not outside: `loadManageable`
+    // lets the valuation's *owner* mint a link, so a client who wanted to see
+    // the draft early could mint themselves an auditor token and read through
+    // this endpoint exactly what `GET /report` had just refused them. A token
+    // that grants more than the account that minted it is not a sharing link,
+    // it is a way around the gate.
+    //
+    // The rest of the bundle is unchanged: the conclusion, the assumptions and
+    // the QA record are what an auditor is here for and are not the deliverable.
     let report: { template_version: string; status: string; content: unknown } | null = null;
-    const reportRow = await findReportByValuation(deps.pool, valuation.id);
+    const reportShared = REPORT_VISIBLE_STATES.has(valuation.state);
+    const reportRow = reportShared ? await findReportByValuation(deps.pool, valuation.id) : null;
     if (reportRow) {
       const version = await getVersion(deps.pool, reportRow.id, reportRow.current_version);
       report = version

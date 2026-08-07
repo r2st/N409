@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { createCalculation } from '../../src/repos/calculations.js';
+import { createReport } from '../../src/repos/reports.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -101,5 +102,64 @@ describe.skipIf(!dbUp)('external auditor portal (feature 8)', () => {
 
   it('rejects a garbage token', async () => {
     expect((await redeem('not-a-real-token')).statusCode).toBe(401);
+  });
+
+  /**
+   * The portal used to serve `reports.current_version` whenever a report row
+   * existed, which is from the moment an analyst instantiates the template —
+   * long before the draft is shared. Because the valuation's owner may mint a
+   * link, that made the portal a way for a client to read the working draft
+   * their own `GET /report` answers 404 for.
+   */
+  describe('the deliverable is only served once it has been shared', () => {
+    async function seedReport(valuationId: string) {
+      const { report } = await createReport(ctx.pool, {
+        valuationId,
+        templateVersion: 'v1',
+        content: { title: 'Draft in progress', sections: [] } as never,
+        actor: { ...actor, actorId: owner.id },
+      });
+      return report;
+    }
+
+    it('withholds a report the valuation has not reached a shared state for', async () => {
+      const v = await seedValuation();
+      await seedReport(v.id);
+      const { token } = (await createLink(owner.token, v.id)).json();
+
+      const body = (await redeem(token)).json();
+      expect(body.report).toBeNull();
+      expect(body.evidence_summary.has_report).toBe(false);
+      // Everything an auditor is actually here for still arrives.
+      expect(body.conclusion.fmv_per_share).toBe('3.25');
+      expect(body.valuation.company_name).toBe('Auditee Inc');
+    });
+
+    it.each(['drafted', 'draft_accepted', 'published'])('serves it once %s', async (state) => {
+      const v = await seedValuation();
+      await seedReport(v.id);
+      await ctx.pool.query('UPDATE valuations SET state = $2 WHERE id = $1', [v.id, state]);
+      const { token } = (await createLink(owner.token, v.id)).json();
+
+      const body = (await redeem(token)).json();
+      expect(body.report).not.toBeNull();
+      expect(body.report.content.title).toBe('Draft in progress');
+      expect(body.evidence_summary.has_report).toBe(true);
+    });
+
+    it('agrees with what the owner is served directly', async () => {
+      const v = await seedValuation();
+      await seedReport(v.id);
+      const { token } = (await createLink(owner.token, v.id)).json();
+
+      // The gate the portal now mirrors: the owner cannot read this report.
+      const direct = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${v.id}/report`,
+        headers: authHeader(owner.token),
+      });
+      expect(direct.statusCode).toBe(404);
+      expect((await redeem(token)).json().report).toBeNull();
+    });
   });
 });
