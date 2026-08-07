@@ -24,6 +24,8 @@ interface ClassRow {
   preference: string;
   seniority: string;
   participating: boolean;
+  /** Total proceeds cap on a participating class; blank means uncapped. */
+  participation_cap: string;
   conversion_ratio: string;
   strike: string;
 }
@@ -61,6 +63,7 @@ const emptyClass = (kind: ClassRow['kind'] = 'common'): ClassRow => ({
   preference: '',
   seniority: '1',
   participating: false,
+  participation_cap: '',
   conversion_ratio: '1',
   strike: '',
 });
@@ -102,6 +105,7 @@ function fromInputs(ei: EngineInputs): FormState {
       preference: str(c.preference),
       seniority: str(c.seniority ?? 1),
       participating: Boolean(c.participating),
+      participation_cap: str(c.participation_cap),
       conversion_ratio: str(c.conversion_ratio ?? 1),
       strike: str(c.strike),
     })),
@@ -163,6 +167,10 @@ function toBody(form: FormState): EngineInputs {
           preference: numOrNull(c.preference) ?? 0,
           seniority: numOrNull(c.seniority) ?? 1,
           participating: c.participating,
+          // Only a participating class may carry one, and the engine refuses a
+          // cap on one that is not — so an analyst who ticks the cap and then
+          // unticks Participating sends no cap rather than a 422.
+          participation_cap: c.participating ? numOrNull(c.participation_cap) : null,
           conversion_ratio: numOrNull(c.conversion_ratio) ?? 1,
         };
       }
@@ -430,6 +438,20 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
                       />
                       Participating
                     </label>
+                    {c.participating && (
+                      <Field label="Participation cap">
+                        <TextInput
+                          type="number"
+                          step="any"
+                          min={0}
+                          disabled={readOnly}
+                          value={c.participation_cap}
+                          placeholder="Uncapped"
+                          aria-label={`Share class ${i + 1} participation cap`}
+                          onChange={(e) => setClass(i, { participation_cap: e.target.value })}
+                        />
+                      </Field>
+                    )}
                   </>
                 )}
                 {c.kind === 'option' && (

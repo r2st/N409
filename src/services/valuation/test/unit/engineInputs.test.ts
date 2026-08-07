@@ -43,6 +43,62 @@ describe('EngineInputsBody', () => {
     expect(series).toMatchObject({ seniority: 1, participating: false, conversion_ratio: 1 });
   });
 
+  it('carries a participation cap on a participating class', () => {
+    const parsed = EngineInputsBody.parse({
+      share_classes: [
+        { kind: 'common', name: 'Common', shares: 8_000_000 },
+        {
+          kind: 'preferred',
+          name: 'Series A',
+          shares: 4_000_000,
+          preference: 10_000_000,
+          participating: true,
+          participation_cap: 20_000_000,
+        },
+      ],
+    });
+    expect(parsed.share_classes?.[1]).toMatchObject({ participating: true, participation_cap: 20_000_000 });
+  });
+
+  it('treats an absent participation cap as uncapped rather than defaulting one', () => {
+    const parsed = EngineInputsBody.parse(fullModel);
+    const series = parsed.share_classes?.find((c) => c.name === 'Series A');
+    expect(series).not.toHaveProperty('participation_cap', expect.any(Number));
+  });
+
+  it('rejects a participation cap that is not a positive number', () => {
+    for (const participation_cap of [0, -1, 'lots']) {
+      const res = EngineInputsBody.safeParse({
+        share_classes: [
+          { kind: 'common', name: 'Common', shares: 100 },
+          {
+            kind: 'preferred',
+            name: 'A',
+            shares: 100,
+            preference: 1000,
+            participating: true,
+            participation_cap,
+          },
+        ],
+      });
+      expect(res.success, String(participation_cap)).toBe(false);
+    }
+  });
+
+  it('leaves the cap-versus-preference rule to the engine, which owns it', () => {
+    // A cap at or below the preference, and a cap on a non-participating class,
+    // are both refusals — but they are refusals the pre-flight validator and
+    // the allocation state in one voice. Restating them here would let the two
+    // drift; the schema's job is the shape.
+    const res = EngineInputsBody.safeParse({
+      share_classes: [
+        { kind: 'common', name: 'Common', shares: 100 },
+        { kind: 'preferred', name: 'A', shares: 100, preference: 1000, participation_cap: 500 },
+      ],
+    });
+    expect(res.success).toBe(true);
+  });
+
   it('rejects unknown top-level fields', () => {
     expect(EngineInputsBody.safeParse({ ...fullModel, bogus: 1 }).success).toBe(false);
   });

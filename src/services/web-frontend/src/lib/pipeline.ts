@@ -228,6 +228,8 @@ export interface ShareClassInput {
   preference?: number;
   seniority?: number;
   participating?: boolean;
+  /** Total proceeds cap on a participating class; null/absent is uncapped. */
+  participation_cap?: number | null;
   conversion_ratio?: number;
   /** option */
   strike?: number;

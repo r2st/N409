@@ -534,6 +534,35 @@ def _check_share_classes(c: _Collector, classes: list) -> None:
                         f"{path}.conversion_ratio",
                         f"'{label}': conversion_ratio must be positive (got {ratio:g})",
                     )
+            # Mirrors `waterfall._normalize`: a cap only means something on a
+            # participating class, and only above the preference. Both are
+            # refusals in the allocation, so both belong here rather than
+            # reaching the analyst as a bare `detail` from `/compute`.
+            if raw.get("participation_cap") is not None:
+                cap = _finite(raw["participation_cap"])
+                if cap is None:
+                    c.error(
+                        "not_a_number",
+                        f"{path}.participation_cap",
+                        f"'{label}': participation_cap must be a number",
+                    )
+                elif not bool(raw.get("participating", False)):
+                    c.error(
+                        "invalid_shape",
+                        f"{path}.participation_cap",
+                        f"'{label}': participation_cap applies only to participating preferred",
+                        "Set participating: true, or drop the cap — a non-participating class "
+                        "already stops at its preference.",
+                    )
+                elif preference is not None and cap <= preference:
+                    c.error(
+                        "out_of_range",
+                        f"{path}.participation_cap",
+                        f"'{label}': participation_cap ({cap:g}) must exceed the liquidation "
+                        f"preference ({preference:g})",
+                        "The cap is the total the class may take, preference included, so a cap "
+                        "at or below the preference is `participating: false`.",
+                    )
         elif kind == "option":
             strike = _finite(raw.get("strike"))
             if strike is None:

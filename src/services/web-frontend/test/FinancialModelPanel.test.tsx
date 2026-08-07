@@ -61,6 +61,81 @@ describe('FinancialModelPanel', () => {
     expect(await screen.findByText('Financial model saved.')).toBeInTheDocument();
   });
 
+  it('offers a participation cap only once a class is marked participating', async () => {
+    mockGet({
+      ...seeded,
+      share_classes: [
+        { kind: 'common', name: 'Common', shares: 8_000_000 },
+        { kind: 'preferred', name: 'Series A', shares: 4_000_000, preference: 10_000_000 },
+      ],
+    });
+    render(<FinancialModelPanel valuationId="v1" readOnly={false} />);
+
+    await screen.findByLabelText('Share class 2 name');
+    // A cap is meaningless on a non-participating class, and the engine refuses
+    // one — so the field is not there to be filled in.
+    expect(screen.queryByLabelText('Share class 2 participation cap')).toBeNull();
+
+    await userEvent.click(screen.getAllByLabelText('Participating')[0]!);
+    expect(await screen.findByLabelText('Share class 2 participation cap')).toBeInTheDocument();
+  });
+
+  it('sends the participation cap the analyst entered', async () => {
+    const fetchMock = mockGet({
+      ...seeded,
+      share_classes: [
+        { kind: 'common', name: 'Common', shares: 8_000_000 },
+        {
+          kind: 'preferred',
+          name: 'Series A',
+          shares: 4_000_000,
+          preference: 10_000_000,
+          participating: true,
+          participation_cap: 20_000_000,
+        },
+      ],
+    });
+    render(<FinancialModelPanel valuationId="v1" readOnly={false} />);
+
+    expect(await screen.findByLabelText('Share class 2 participation cap')).toHaveValue(20_000_000);
+    await userEvent.click(screen.getByRole('button', { name: 'Save financial model' }));
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
+      const body = JSON.parse(String(patch![1]!.body));
+      expect(body.share_classes[1].participation_cap).toBe(20_000_000);
+    });
+  });
+
+  it('drops the cap when the class stops participating, rather than sending a 422', async () => {
+    const fetchMock = mockGet({
+      ...seeded,
+      share_classes: [
+        { kind: 'common', name: 'Common', shares: 8_000_000 },
+        {
+          kind: 'preferred',
+          name: 'Series A',
+          shares: 4_000_000,
+          preference: 10_000_000,
+          participating: true,
+          participation_cap: 20_000_000,
+        },
+      ],
+    });
+    render(<FinancialModelPanel valuationId="v1" readOnly={false} />);
+
+    await screen.findByLabelText('Share class 2 participation cap');
+    await userEvent.click(screen.getAllByLabelText('Participating')[0]!);
+    await userEvent.click(screen.getByRole('button', { name: 'Save financial model' }));
+
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
+      const body = JSON.parse(String(patch![1]!.body));
+      expect(body.share_classes[1].participating).toBe(false);
+      expect(body.share_classes[1].participation_cap).toBeNull();
+    });
+  });
+
   it('blocks saving when the discount rate is not above terminal growth', async () => {
     mockGet({ income: { discount_rate: 0.25, terminal_growth: 0.03 } });
     render(<FinancialModelPanel valuationId="v1" readOnly={false} />);

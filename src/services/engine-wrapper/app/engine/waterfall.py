@@ -17,9 +17,16 @@ Breakpoints, in order:
    jump corrections are needed and the class values conserve exactly:
    Σ class values == bs_call(E, 0) == E.
 
-Simplifications (documented): participating preferred has no participation
-cap; options are pools with a single strike each and their exercise proceeds
-are captured by the slope algebra rather than modeled as a cash inflow.
+3. Participation caps. A participating class carrying ``participation_cap``
+   stops drawing residual once its cumulative proceeds — preference plus
+   participation — reach the cap, and converts to common at the exit value
+   where the as-converted slice is worth more than the cap. Both events are
+   breakpoints and both keep the payoff continuous, so the call-spread
+   decomposition below still holds.
+
+Simplifications (documented): options are pools with a single strike each and
+their exercise proceeds are captured by the slope algebra rather than modeled
+as a cash inflow.
 """
 
 from __future__ import annotations
@@ -151,11 +158,47 @@ def _normalize(classes: list[dict]) -> list[dict]:
                     "representable as-converted share count — the allocation is computed on the "
                     "converted count, so check both figures"
                 )
+            participating = bool(raw.get("participating", False))
+            # Participation cap: the most the class can take in total — its
+            # preference plus everything it draws from the residual — before it
+            # stops participating. Expressed as a currency amount rather than a
+            # multiple of the preference, because that is what the term sheet's
+            # "2x cap" resolves to once the round's actual preference is known,
+            # and because a class whose preference is zero has no multiple to
+            # take. Absent (or null) means uncapped, which is what every cap
+            # table stored before this field existed meant.
+            raw_cap = raw.get("participation_cap")
+            cap: float | None = None
+            if raw_cap is not None:
+                try:
+                    cap = float(raw_cap)
+                except (TypeError, ValueError):
+                    raise EngineInputError(f"'{name}': participation_cap must be a number") from None
+                _finite(cap, f"'{name}': participation_cap")
+                if not participating:
+                    raise EngineInputError(
+                        f"'{name}': participation_cap applies only to participating preferred — "
+                        "a non-participating class already stops at its preference"
+                    )
+                # At or below the preference the class draws no residual at all,
+                # which is not a capped participating class but a
+                # non-participating one described in a way the allocation would
+                # silently disagree with: `_segments` would emit a cap event at
+                # or before the residual opens and the class would look
+                # participating in the breakpoint table while receiving nothing
+                # for it.
+                if cap <= pref:
+                    raise EngineInputError(
+                        f"'{name}': participation_cap ({cap:g}) must exceed the liquidation "
+                        f"preference ({pref:g}) — a cap at or below the preference means the "
+                        "class does not participate, which is `participating: false`"
+                    )
             cls.update(
                 preference=pref,
                 seniority=seniority,
-                participating=bool(raw.get("participating", False)),
+                participating=participating,
                 conversion_ratio=ratio,
+                participation_cap=cap,
             )
         elif kind == "option":
             try:
@@ -220,6 +263,15 @@ def _segments(classes: list[dict]) -> list[dict]:
             pool[c["name"]] = c["shares"] * c["conversion_ratio"]
     pending_conversions = [c for c in preferred if not c["participating"]]
     pending_options = list(options)
+    # Capped participating classes, in the two states they pass through: still
+    # drawing residual toward the cap, then flat at the cap waiting for the exit
+    # value where converting beats holding it. `drawn` tracks what each has
+    # taken so far, which at the top of the residual is its preference — the
+    # segment slopes below are integrated incrementally, so the cap breakpoint
+    # has to be found the same way.
+    capped_drawing = [c for c in preferred if c["participating"] and c["participation_cap"] is not None]
+    capped_at_cap: list[dict] = []
+    drawn: dict[str, float] = {c["name"]: c["preference"] for c in capped_drawing}
     p_cur = sum(c["preference"] for c in preferred)  # preferences still being taken
     b_cur = cursor  # == total preferences
 
@@ -230,6 +282,20 @@ def _segments(classes: list[dict]) -> list[dict]:
             s_conv = c["shares"] * c["conversion_ratio"]
             x_star = (p_cur - c["preference"]) + c["preference"] * (s_cur + s_conv) / s_conv
             candidates.append((max(x_star, b_cur), "convert", c))
+        for c in capped_drawing:
+            # The slope is flat inside a segment, so the cap is reached where
+            # the remaining headroom divided by this class's share of the
+            # residual runs out.
+            x_star = b_cur + (c["participation_cap"] - drawn[c["name"]]) * s_cur / pool[c["name"]]
+            candidates.append((max(x_star, b_cur), "cap", c))
+        for c in capped_at_cap:
+            # The same conversion algebra as a non-participating class, with the
+            # cap in place of the preference: what a class gives up by
+            # converting is whatever it holds *without* converting, and for a
+            # capped class that has stopped participating that is the cap.
+            s_conv = c["shares"] * c["conversion_ratio"]
+            x_star = (p_cur - c["preference"]) + c["participation_cap"] * (s_cur + s_conv) / s_conv
+            candidates.append((max(x_star, b_cur), "convert_capped", c))
         for o in pending_options:
             candidates.append((max(p_cur + o["strike"] * s_cur, b_cur), "exercise", o))
         if not candidates:
@@ -243,10 +309,24 @@ def _segments(classes: list[dict]) -> list[dict]:
                     "participants": {name: sh / s_cur for name, sh in pool.items()},
                 }
             )
+            for c in capped_drawing:
+                drawn[c["name"]] += (x_next - b_cur) * pool[c["name"]] / s_cur
         if action == "convert":
             pool[cls["name"]] = cls["shares"] * cls["conversion_ratio"]
             p_cur -= cls["preference"]
             pending_conversions.remove(cls)
+        elif action == "cap":
+            # Out of the pool: the payoff is flat at the cap from here, so the
+            # residual this class was drawing passes to everyone still in.
+            del pool[cls["name"]]
+            capped_drawing.remove(cls)
+            capped_at_cap.append(cls)
+        elif action == "convert_capped":
+            # Back in at the as-converted count, giving up the preference it
+            # took in the stack — the residual base widens by exactly that.
+            pool[cls["name"]] = cls["shares"] * cls["conversion_ratio"]
+            p_cur -= cls["preference"]
+            capped_at_cap.remove(cls)
         else:
             pool[cls["name"]] = cls["shares"]
             pending_options.remove(cls)
@@ -342,6 +422,12 @@ def allocate_waterfall(
     by_class = {
         c["name"]: {
             "kind": c["kind"],
+            # `shares` alongside the value, as `exit_allocation` and
+            # `allocate_pwerm` already report it. The allocation exhibit on the
+            # report tabulates value, shares and value per share side by side,
+            # and reading the share count back out of `value / per_share` is a
+            # division by a figure this response has already rounded.
+            "shares": c["shares"],
             "value": round(values[c["name"]], 2),
             "per_share": round(values[c["name"]] / c["shares"], 6),
         }
