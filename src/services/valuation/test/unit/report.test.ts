@@ -80,12 +80,8 @@ describe('report templates', () => {
     expect(REPORT_TEMPLATES.has('generic.v1')).toBe(true);
   });
 
-  it('selects 409a.v55 for 409a and generic for kinds without a dedicated skeleton', () => {
+  it('selects 409a.v55 for 409a and generic for the workbook-first kinds', () => {
     expect(templateForKind('409a').version).toBe('409a.v55');
-    expect(templateForKind('gifts').version).toBe('generic.v1');
-    expect(templateForKind('718').version).toBe('generic.v1');
-    expect(templateForKind('820').version).toBe('generic.v1');
-    expect(templateForKind('ifrs2').version).toBe('generic.v1');
     expect(templateForKind('fund').version).toBe('generic.v1');
     expect(templateForKind('debt').version).toBe('generic.v1');
   });
@@ -99,6 +95,10 @@ describe('report templates', () => {
     expect(templateForKind('emi').version).toBe('emi.v1');
     expect(templateForKind('csop').version).toBe('csop.v1');
     expect(templateForKind('ip').version).toBe('ip.v1');
+    expect(templateForKind('718').version).toBe('718.v1');
+    expect(templateForKind('820').version).toBe('820.v1');
+    expect(templateForKind('gifts').version).toBe('gifts.v1');
+    expect(templateForKind('ifrs2').version).toBe('ifrs2.v1');
   });
 
   it('registers every specialty skeleton in the registry under its version', () => {
@@ -111,9 +111,30 @@ describe('report templates', () => {
       'emi.v1',
       'csop.v1',
       'ip.v1',
+      '718.v1',
+      '820.v1',
+      'gifts.v1',
+      'ifrs2.v1',
     ]) {
       expect(REPORT_TEMPLATES.has(version), version).toBe(true);
     }
+  });
+
+  it('carries the sections a reviewer of each accounting deliverable expects', () => {
+    const keysOf = (kind: Parameters<typeof templateForKind>[0]) =>
+      templateForKind(kind).sections.map((s) => s.key);
+    expect(keysOf('718')).toEqual(
+      expect.arrayContaining(['measurement_objective', 'model_and_assumptions', 'expense_recognition']),
+    );
+    expect(keysOf('820')).toEqual(
+      expect.arrayContaining(['hierarchy', 'methodology', 'unobservable_inputs']),
+    );
+    expect(keysOf('gifts')).toEqual(
+      expect.arrayContaining(['interest_description', 'discounts', 'chapter_14', 'adequate_disclosure']),
+    );
+    expect(keysOf('ifrs2')).toEqual(
+      expect.arrayContaining(['measurement_principles', 'model_and_assumptions', 'expense_recognition']),
+    );
   });
 
   it('carries the sections a reviewer of each specialty deliverable expects', () => {

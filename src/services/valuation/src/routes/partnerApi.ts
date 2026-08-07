@@ -1,7 +1,25 @@
+import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
+import {
+  buildWebhookPayload,
+  isValidWebhookUrl,
+  newWebhookSecret,
+  WEBHOOK_EVENT_TYPES,
+} from '../domain/partnerWebhooks.js';
+import { deliverToWebhook } from '../hooks/partnerWebhooks.js';
+import {
+  createWebhook,
+  deleteWebhook,
+  findIdempotentResponse,
+  findWebhook,
+  listDeliveries,
+  listWebhooks,
+  storeIdempotentResponse,
+  type PartnerWebhookRow,
+} from '../repos/partnerWebhooks.js';
 import { canReadReport, type Principal } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
@@ -44,12 +62,13 @@ export const PARTNER_API_RATE_LIMIT = 120;
 export const PARTNER_API_RATE_WINDOW_MS = 60_000;
 
 export interface PartnerEndpointDoc {
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'DELETE';
   path: string;
   summary: string;
   auth: 'api_key' | 'none';
   body?: Record<string, string>;
   query?: Record<string, string>;
+  headers?: Record<string, string>;
   response: string;
 }
 
@@ -178,7 +197,56 @@ export function registerPartnerApiRoutes(
       ...(opts.bodyLimit ? { bodyLimit: opts.bodyLimit } : {}),
     };
     if (doc.method === 'GET') app.get(url, routeOpts, handler);
+    else if (doc.method === 'DELETE') app.delete(url, routeOpts, handler);
     else app.post(url, routeOpts, handler);
+  };
+
+  /**
+   * Idempotency-Key support (partner API enhancements). A retried POST with
+   * the same key replays the stored first response instead of re-executing;
+   * the same key on a DIFFERENT body is a client bug and is refused. Keys are
+   * scoped per partner, so two organisations cannot collide.
+   */
+  const withIdempotency = async (
+    req: FastifyRequest,
+    reply: FastifyReply,
+    token: PartnerApiToken,
+    run: () => Promise<{ status: number; body: Record<string, unknown> }>,
+  ): Promise<unknown> => {
+    const key = req.headers['idempotency-key'];
+    if (typeof key !== 'string' || key.trim() === '') {
+      const out = await run();
+      return reply.status(out.status).send(out.body);
+    }
+    if (key.length > 200) throw problems.unprocessable('Idempotency-Key must be 200 characters or fewer');
+    const requestHash = createHash('sha256')
+      .update(JSON.stringify(req.body ?? null))
+      .digest('hex');
+    const stored = await findIdempotentResponse(deps.pool, token.partnerId, key);
+    if (stored) {
+      if (stored.request_hash !== requestHash) {
+        throw problems.conflict(
+          'This Idempotency-Key was already used for a different request body — use a fresh key per request',
+        );
+      }
+      return reply
+        .status(stored.response_status)
+        .header('x-idempotent-replay', 'true')
+        .send(stored.response_body);
+    }
+    const out = await run();
+    // Only success is worth replaying: a validation failure should be retried
+    // with a corrected body under the same key, not replayed forever.
+    if (out.status < 400) {
+      await storeIdempotentResponse(deps.pool, {
+        partnerId: token.partnerId,
+        key,
+        requestHash,
+        status: out.status,
+        body: out.body,
+      });
+    }
+    return reply.status(out.status).send(out.body);
   };
 
   define(
@@ -211,7 +279,7 @@ export function registerPartnerApiRoutes(
     {
       method: 'POST',
       path: '/valuations',
-      summary: 'Create a valuation for your partner organization.',
+      summary: 'Create a valuation of any report type for your partner organization.',
       auth: 'api_key',
       body: {
         kind: `Valuation kind — one of: ${VALUATION_KINDS.join(', ')}`,
@@ -220,27 +288,34 @@ export function registerPartnerApiRoutes(
         currency: 'ISO-4217 code, defaults to USD',
         service_countries: 'Optional ISO-3166 alpha-2 country list',
       },
+      headers: {
+        'Idempotency-Key':
+          'Optional. A retried request with the same key replays the original response instead of ' +
+          'creating a second valuation; reusing a key with a different body is refused.',
+      },
       response: '201 { valuation }',
     },
     async (req, reply) => {
       const { principal, token } = requireToken(req);
       const parsed = CreateBody.safeParse(req.body);
       if (!parsed.success) throw problems.unprocessable('Invalid valuation', { errors: parsed.error.issues });
-      const valuation = await createValuation(
-        deps.pool,
-        {
-          kind: parsed.data.kind,
-          companyName: parsed.data.company_name,
-          serviceName: parsed.data.service_name,
-          userId: principal.id,
-          partnerId: token.partnerId,
-          source: 'partner',
-          currency: parsed.data.currency,
-          serviceCountries: parsed.data.service_countries,
-        },
-        actorFor(principal),
-      );
-      return reply.status(201).send({ valuation: publicValuation(valuation) });
+      return withIdempotency(req, reply, token, async () => {
+        const valuation = await createValuation(
+          deps.pool,
+          {
+            kind: parsed.data.kind,
+            companyName: parsed.data.company_name,
+            serviceName: parsed.data.service_name,
+            userId: principal.id,
+            partnerId: token.partnerId,
+            source: 'partner',
+            currency: parsed.data.currency,
+            serviceCountries: parsed.data.service_countries,
+          },
+          actorFor(principal),
+        );
+        return { status: 201, body: { valuation: publicValuation(valuation) } };
+      });
     },
   );
 
@@ -430,6 +505,147 @@ export function registerPartnerApiRoutes(
           `attachment; filename="report-${valuation.number}-v${full.version}.pdf"`,
         )
         .send(full.pdf);
+    },
+  );
+
+  // ── Webhooks ────────────────────────────────────────────────────────────────
+
+  /** The projection the API returns — the signing secret only travels once. */
+  const publicWebhook = (w: PartnerWebhookRow, includeSecret = false) => ({
+    id: w.id,
+    url: w.url,
+    events: w.events,
+    enabled: w.enabled,
+    created_at: w.created_at,
+    ...(includeSecret ? { secret: w.secret } : {}),
+  });
+
+  const WebhookBody = z.object({
+    url: z.string().min(1).max(2000),
+    /** Empty or omitted = every event. */
+    events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).max(20).default([]),
+  });
+
+  define(
+    {
+      method: 'POST',
+      path: '/webhooks',
+      summary:
+        'Register a webhook endpoint. Events fire for every report type; deliveries are signed ' +
+        'HMAC-SHA256 over the raw body (x-n409-signature: sha256=<hex>).',
+      auth: 'api_key',
+      body: {
+        url: 'HTTPS endpoint to deliver events to',
+        events: `Optional event whitelist — any of: ${WEBHOOK_EVENT_TYPES.join(', ')} (empty = all)`,
+      },
+      response: '201 { webhook } — includes the signing secret, shown only in this response',
+    },
+    async (req, reply) => {
+      const { principal, token } = requireToken(req);
+      const parsed = WebhookBody.safeParse(req.body);
+      if (!parsed.success) throw problems.unprocessable('Invalid webhook', { errors: parsed.error.issues });
+      if (!isValidWebhookUrl(parsed.data.url)) {
+        throw problems.unprocessable('Webhook URL must be http(s)');
+      }
+      const existing = await listWebhooks(deps.pool, token.partnerId);
+      if (existing.length >= 10) {
+        throw problems.conflict('A partner may register at most 10 webhooks — delete one first');
+      }
+      const webhook = await createWebhook(deps.pool, {
+        partnerId: token.partnerId,
+        url: parsed.data.url,
+        secret: newWebhookSecret(),
+        events: parsed.data.events,
+        createdBy: principal.id,
+      });
+      return reply.status(201).send({ webhook: publicWebhook(webhook, true) });
+    },
+  );
+
+  define(
+    {
+      method: 'GET',
+      path: '/webhooks',
+      summary: "List your organization's webhooks (signing secrets are not repeated).",
+      auth: 'api_key',
+      response: '{ webhooks[] }',
+    },
+    async (req) => {
+      const { token } = requireToken(req);
+      return { webhooks: (await listWebhooks(deps.pool, token.partnerId)).map((w) => publicWebhook(w)) };
+    },
+  );
+
+  define(
+    {
+      method: 'DELETE',
+      path: '/webhooks/{id}',
+      summary: 'Delete a webhook.',
+      auth: 'api_key',
+      response: '{ deleted: true }',
+    },
+    async (req) => {
+      const { token } = requireToken(req);
+      const { id } = req.params as { id: string };
+      if (!isUlid(id) || !(await deleteWebhook(deps.pool, token.partnerId, id))) {
+        throw problems.notFound();
+      }
+      return { deleted: true };
+    },
+  );
+
+  define(
+    {
+      method: 'GET',
+      path: '/webhooks/{id}/deliveries',
+      summary: 'Recent delivery attempts for a webhook — your audit trail for missed events.',
+      auth: 'api_key',
+      response: '{ deliveries[] } — event_type, status, attempts, last_error, created_at',
+    },
+    async (req) => {
+      const { token } = requireToken(req);
+      const { id } = req.params as { id: string };
+      if (!isUlid(id)) throw problems.notFound();
+      const webhook = await findWebhook(deps.pool, token.partnerId, id);
+      if (!webhook) throw problems.notFound();
+      const deliveries = await listDeliveries(deps.pool, id);
+      return {
+        deliveries: deliveries.map((d) => ({
+          id: d.id,
+          event_type: d.event_type,
+          valuation_id: d.valuation_id,
+          status: d.status,
+          attempts: d.attempts,
+          last_error: d.last_error,
+          created_at: d.created_at,
+          delivered_at: d.delivered_at,
+        })),
+      };
+    },
+  );
+
+  define(
+    {
+      method: 'POST',
+      path: '/webhooks/{id}/test',
+      summary: 'Send a signed webhook.test ping so you can verify your receiver end-to-end.',
+      auth: 'api_key',
+      response: '{ delivered: boolean }',
+    },
+    async (req) => {
+      const { token } = requireToken(req);
+      const { id } = req.params as { id: string };
+      if (!isUlid(id)) throw problems.notFound();
+      const webhook = await findWebhook(deps.pool, token.partnerId, id);
+      if (!webhook) throw problems.notFound();
+      const payload = buildWebhookPayload('webhook.test', null, { webhook_id: webhook.id });
+      const outcome = await deliverToWebhook(
+        { pool: deps.pool, log: req.log },
+        webhook,
+        'webhook.test',
+        payload,
+      );
+      return { delivered: outcome === 'delivered' };
     },
   );
 }

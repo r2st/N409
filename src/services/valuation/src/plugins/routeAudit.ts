@@ -140,6 +140,11 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
     url: '/api/v1/contact',
     reason: 'public contact form; rate-limited and captcha-free by design',
   },
+  {
+    method: 'POST',
+    url: '/api/v1/valuation-selector',
+    reason: 'public "which valuation?" quiz; pure computation, no data touched',
+  },
   { method: 'GET', url: '/api/partner/v1/docs', reason: 'self-describing partner API documentation' },
 ];
 

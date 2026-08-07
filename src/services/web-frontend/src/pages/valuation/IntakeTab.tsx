@@ -70,14 +70,16 @@ export function IntakeTab() {
   }, [valuation.id]);
 
   useEffect(() => {
-    void api<{ sections: IntakeSection[]; cross_rules?: IntakeCrossRule[] }>('/intake/schema')
+    void api<{ sections: IntakeSection[]; cross_rules?: IntakeCrossRule[] }>(
+      `/intake/schema?kind=${encodeURIComponent(valuation.kind)}`,
+    )
       .then((r) => {
         setSchema(r.sections);
         setCrossRules(r.cross_rules ?? []);
       })
       .catch(() => setSchema([]));
     void load();
-  }, [load]);
+  }, [load, valuation.kind]);
 
   const setField = (key: string, value: unknown) => setAnswers((a) => ({ ...a, [key]: value }));
 

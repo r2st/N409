@@ -96,6 +96,8 @@ import { registerAuditTrailRoutes } from './routes/auditTrail.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
+import { registerSpecialtyRoutes } from './routes/specialty.js';
+import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
 import { probeReady } from './clients/internal.js';
 
@@ -327,6 +329,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerOnboardingRoutes(app, { pool });
   registerAuditTrailRoutes(app, { pool });
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  // Specialty report-type pipeline — kind-specific engine orchestration
+  registerSpecialtyRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerBridgeRoutes(app, { pool });
   registerAnalyticsRoutes(app, { pool });
   registerCompareRoutes(app, { pool });
@@ -393,6 +397,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSupportRoutes(app, { pool });
   // P3 gap #28 — public marketing contact form + ops triage queue
   registerContactRoutes(app, { pool });
+  // Remaining-gaps §selector — public "which valuation do I need?" quiz
+  registerValuationSelectorRoutes(app);
   // P2 #12 — global activity audit viewer
   registerAdminEventRoutes(app, { pool });
   // P2 #10 — help / knowledge base

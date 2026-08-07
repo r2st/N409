@@ -41,8 +41,11 @@ export async function saveQuestionnaire(
   valuationId: string,
   answers: Record<string, unknown>,
   actor: EventActor,
+  // Kind-specific questionnaires (domain/intakeKinds.ts) pass their own key
+  // set; the default is the 409A form's, matching the schema default served.
+  keys?: ReadonlySet<string>,
 ): Promise<QuestionnaireRow> {
-  const clean = sanitizeAnswers(answers);
+  const clean = sanitizeAnswers(answers, keys);
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<QuestionnaireRow>(
       `INSERT INTO intake_questionnaires (id, valuation_id, answers)

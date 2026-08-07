@@ -14,11 +14,11 @@ import { withTransaction } from '../db/pool.js';
 import {
   computeCompletion,
   hasBlockingIssues,
-  INTAKE_CROSS_RULES,
   INTAKE_EVENT_TYPES,
-  INTAKE_SECTIONS,
   validateIntake,
 } from '../domain/intake.js';
+import { intakeCrossRulesFor, intakeFieldKeysFor, intakeSectionsFor } from '../domain/intakeKinds.js';
+import { VALUATION_KINDS, type ValuationKind } from '../domain/valuation.js';
 import { REQUIRED_DOCUMENT_KINDS } from '../domain/progress.js';
 import { findQuestionnaire, saveQuestionnaire, submitQuestionnaire } from '../repos/intake.js';
 
@@ -59,29 +59,43 @@ export function registerIntakeRoutes(
   app: FastifyInstance,
   deps: { pool: pg.Pool; transport?: EmailTransport },
 ): void {
-  // The questionnaire schema is static — expose it so the wizard renders from
-  // the same source of truth as the completion calculation.
+  // The questionnaire schema is static per kind — expose it so the wizard
+  // renders from the same source of truth as the completion calculation.
   // The rules ride along with the schema so the wizard warns as the client
   // types without a round trip, and judges answers exactly as submit will.
-  app.get('/api/v1/intake/schema', { preHandler: app.authenticate }, async () => ({
-    sections: INTAKE_SECTIONS,
-    cross_rules: INTAKE_CROSS_RULES,
-  }));
+  // `?kind=` selects the report type's form; the default stays the 409A form
+  // so existing callers see exactly what they always saw.
+  app.get('/api/v1/intake/schema', { preHandler: app.authenticate }, async (req) => {
+    const parsed = z.object({ kind: z.enum(VALUATION_KINDS).default('409a') }).safeParse(req.query ?? {});
+    if (!parsed.success) throw problems.badRequest('Invalid kind', { errors: parsed.error.issues });
+    const kind = parsed.data.kind;
+    return {
+      kind,
+      sections: intakeSectionsFor(kind),
+      cross_rules: intakeCrossRulesFor(kind),
+    };
+  });
 
-  // Questionnaire + completion + document checklist for a valuation.
+  // Questionnaire + completion + document checklist for a valuation. The
+  // schema, completion and validation all follow the valuation's kind.
   app.get('/api/v1/valuations/:id/questionnaire', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
-    await loadReadable(deps.pool, id, principal);
+    const valuation = await loadReadable(deps.pool, id, principal);
+    const kind = valuation.kind as ValuationKind;
+    const sections = intakeSectionsFor(kind);
     const row = await findQuestionnaire(deps.pool, id);
     const answers = row?.answers ?? {};
     return {
+      kind,
+      sections,
+      cross_rules: intakeCrossRulesFor(kind),
       answers,
       submitted_at: row?.submitted_at ?? null,
-      completion: computeCompletion(answers),
-      issues: validateIntake(answers),
+      completion: computeCompletion(answers, sections),
+      issues: validateIntake(answers, { sections, crossRules: intakeCrossRulesFor(kind) }),
       missing_documents: await missingDocuments(deps.pool, id),
-      can_edit: canEditIntake(principal, await findValuationById(deps.pool, id).then((v) => v!)),
+      can_edit: canEditIntake(principal, valuation),
     };
   });
 
@@ -96,15 +110,20 @@ export function registerIntakeRoutes(
     const parsed = SaveBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid answers', { errors: parsed.error.issues });
 
-    const row = await saveQuestionnaire(deps.pool, id, parsed.data.answers, {
-      actorType: 'human',
-      actorId: principal.id,
-    });
+    const kind = valuation.kind as ValuationKind;
+    const sections = intakeSectionsFor(kind);
+    const row = await saveQuestionnaire(
+      deps.pool,
+      id,
+      parsed.data.answers,
+      { actorType: 'human', actorId: principal.id },
+      intakeFieldKeysFor(kind),
+    );
     return {
       answers: row.answers,
       submitted_at: row.submitted_at,
-      completion: computeCompletion(row.answers),
-      issues: validateIntake(row.answers),
+      completion: computeCompletion(row.answers, sections),
+      issues: validateIntake(row.answers, { sections, crossRules: intakeCrossRulesFor(kind) }),
     };
   });
 
@@ -116,9 +135,11 @@ export function registerIntakeRoutes(
     if (!canEditIntake(principal, valuation)) {
       throw problems.forbidden('Only the client or operations can submit the questionnaire');
     }
+    const kind = valuation.kind as ValuationKind;
+    const sections = intakeSectionsFor(kind);
     const row = await findQuestionnaire(deps.pool, id);
     const answers = row?.answers ?? {};
-    const completion = computeCompletion(answers);
+    const completion = computeCompletion(answers, sections);
     if (!completion.ready) {
       throw problems.unprocessable('Complete all required fields before submitting', {
         completion,
@@ -126,7 +147,7 @@ export function registerIntakeRoutes(
     }
     // Warnings are the client's judgement call; errors are answers that cannot
     // be true, and an analyst would only have to send them back.
-    const issues = validateIntake(answers);
+    const issues = validateIntake(answers, { sections, crossRules: intakeCrossRulesFor(kind) });
     if (hasBlockingIssues(issues)) {
       throw problems.unprocessable('Correct the highlighted answers before submitting', {
         issues: issues.filter((i) => i.severity === 'error'),

@@ -1,0 +1,328 @@
+/**
+ * Specialty report-type orchestration (remaining-gaps §report-types): the
+ * assembly step between a kind's intake questionnaire (domain/intakeKinds.ts)
+ * and its engine endpoint (engine-wrapper main.py). Pure — the route owns the
+ * HTTP call and persistence; this module owns which endpoint a kind uses and
+ * how a questionnaire's answers become that endpoint's request body.
+ *
+ * Deliberately lenient about *values*: the engine is the validator of record
+ * (every endpoint 422s with a field-named message), and re-stating its rules
+ * here is how two rule sets drift. What IS enforced here is *shape* — the
+ * facts that decide which request to build at all (which impairment test,
+ * which IP method, whether a PPA has an intangible schedule).
+ */
+
+import type { ValuationKind } from './valuation.js';
+
+/** Kinds whose calculation runs through a dedicated specialty engine endpoint. */
+export const SPECIALTY_KINDS = ['qsbs', 'ppa', 'goodwill', 'esop', 'fmv', 'emi', 'csop', 'ip'] as const;
+export type SpecialtyKind = (typeof SPECIALTY_KINDS)[number];
+
+export function isSpecialtyKind(kind: ValuationKind): kind is SpecialtyKind {
+  return (SPECIALTY_KINDS as readonly string[]).includes(kind);
+}
+
+/** An input problem the analyst has to fix — the route maps it to a 422. */
+export class SpecialtyInputError extends Error {}
+
+export interface SpecialtyRequest {
+  /** Engine endpoint path, e.g. `/engine/v1/qsbs`. */
+  path: string;
+  /** Request body in that endpoint's own shape. */
+  body: Record<string, unknown>;
+}
+
+type Answers = Record<string, unknown>;
+
+const num = (answers: Answers, key: string): number | null => {
+  const v = answers[key];
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+};
+
+const str = (answers: Answers, key: string): string | null => {
+  const v = answers[key];
+  return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+};
+
+const bool = (answers: Answers, key: string): boolean | null =>
+  typeof answers[key] === 'boolean' ? (answers[key] as boolean) : null;
+
+/** Add `key: value` only when the answer exists — engine defaults stay in charge. */
+function put(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (value !== null && value !== undefined) target[key] = value;
+}
+
+function require<T>(value: T | null, message: string): T {
+  if (value === null) throw new SpecialtyInputError(message);
+  return value;
+}
+
+/** "120000, 130000, 90000" → [120000, 130000, 90000]. */
+function csvNumbers(value: string | null): number[] | null {
+  if (!value) return null;
+  const parts = value
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p !== '');
+  if (parts.length === 0) return null;
+  const numbers = parts.map(Number);
+  if (numbers.some((n) => !Number.isFinite(n))) {
+    throw new SpecialtyInputError(
+      'Undiscounted cash flows must be a comma-separated list of numbers, e.g. 120000, 130000, 90000.',
+    );
+  }
+  return numbers;
+}
+
+function qsbsRequest(answers: Answers, overrides: Answers, today: string): SpecialtyRequest {
+  const inputs: Record<string, unknown> = {
+    entity_type: require(str(answers, 'entity_type'), 'Answer the entity-type question first.'),
+    industry: require(str(answers, 'industry'), 'Answer the industry question first.'),
+    acquisition_date: require(str(
+      answers,
+      'acquisition_date',
+    ), 'Answer the acquisition-date question first.'),
+    assessment_date: today,
+    gross_assets_before_issuance: num(answers, 'gross_assets_before_issuance'),
+    gross_assets_after_issuance: num(answers, 'gross_assets_after_issuance'),
+    active_business_asset_pct: num(answers, 'active_business_asset_pct'),
+    acquired_at_original_issue: bool(answers, 'acquired_at_original_issue') ?? false,
+  };
+  put(inputs, 'is_domestic', bool(answers, 'is_domestic'));
+  put(inputs, 'aggregate_basis', num(answers, 'aggregate_basis'));
+  put(inputs, 'prior_1202_exclusions', num(answers, 'prior_1202_exclusions'));
+  put(inputs, 'redemptions_within_window', bool(answers, 'redemptions_within_window'));
+  return { path: '/engine/v1/qsbs', body: { inputs: { ...inputs, ...overrides } } };
+}
+
+function ppaRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
+  const intangibles = overrides.intangibles;
+  if (!Array.isArray(intangibles) || intangibles.length === 0) {
+    throw new SpecialtyInputError(
+      'A purchase price allocation needs the intangible asset schedule — pass `intangibles` in the ' +
+        'run inputs as a list of { name, method, params } rows. The questionnaire collects only the ' +
+        'consideration and the tangible balance-sheet positions.',
+    );
+  }
+  const inputs: Record<string, unknown> = {
+    consideration_transferred: num(answers, 'consideration_transferred'),
+    net_working_capital: num(answers, 'net_working_capital') ?? 0,
+    fixed_assets: num(answers, 'fixed_assets') ?? 0,
+    other_tangible_assets: num(answers, 'other_tangible_assets') ?? 0,
+    assumed_liabilities: num(answers, 'assumed_liabilities') ?? 0,
+    deferred_revenue_haircut: num(answers, 'deferred_revenue_haircut') ?? 0,
+  };
+  return { path: '/engine/v1/ppa', body: { inputs: { ...inputs, ...overrides } } };
+}
+
+function ipRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
+  const method = require(str(answers, 'valuation_method'), 'Answer the valuation-method question first.');
+  const params: Record<string, unknown> = {};
+  put(params, 'discount_rate', num(answers, 'discount_rate'));
+  put(params, 'tax_rate', num(answers, 'tax_rate'));
+  if (method === 'relief_from_royalty') {
+    put(params, 'royalty_rate', num(answers, 'royalty_rate'));
+    // A flat forecast over the remaining life is the default the questionnaire
+    // can support; a real forecast arrives through the run inputs as
+    // `revenues` and replaces it.
+    const revenue = num(answers, 'annual_revenue');
+    const life = num(answers, 'remaining_life_years');
+    if (revenue !== null && life !== null && life >= 1) {
+      params.revenues = Array.from({ length: Math.min(Math.round(life), 40) }, () => revenue);
+    }
+  }
+  return { path: '/engine/v1/intangible', body: { method, params: { ...params, ...overrides } } };
+}
+
+function impairmentRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
+  const test = require(str(answers, 'impairment_test'), 'Answer the impairment-test question first.');
+  const params: Record<string, unknown> = {
+    carrying_amount: num(answers, 'carrying_amount'),
+    fair_value: num(answers, 'fair_value'),
+  };
+  const unit = str(answers, 'reporting_unit');
+  if (test === 'goodwill') {
+    put(params, 'reporting_unit', unit);
+    params.goodwill_carrying_amount = require(num(
+      answers,
+      'goodwill_carrying_amount',
+    ), 'The goodwill test needs the goodwill carrying amount on the books.');
+    put(params, 'qualitative_only', bool(answers, 'qualitative_only'));
+  } else if (test === 'indefinite_lived') {
+    put(params, 'asset', unit);
+  } else {
+    put(params, 'asset_group', unit);
+    params.undiscounted_cash_flows = require(csvNumbers(
+      str(answers, 'undiscounted_cash_flows'),
+    ), 'The long-lived test needs the undiscounted annual cash flows (comma-separated).');
+  }
+  return { path: '/engine/v1/impairment', body: { test, params: { ...params, ...overrides } } };
+}
+
+function esopRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
+  const inputs: Record<string, unknown> = {
+    equity_value: num(answers, 'equity_value'),
+    shares_outstanding: num(answers, 'shares_outstanding'),
+    value_basis: str(answers, 'value_basis') ?? 'control',
+  };
+  put(inputs, 'control_premium', num(answers, 'control_premium'));
+  put(inputs, 'dloc', num(answers, 'dloc'));
+  put(inputs, 'dlom', num(answers, 'dlom'));
+  put(inputs, 'esop_shares', num(answers, 'esop_shares'));
+
+  const { repurchase: repurchaseOverride, ...inputOverrides } = overrides as {
+    repurchase?: Record<string, unknown>;
+  } & Record<string, unknown>;
+
+  const body: Record<string, unknown> = { inputs: { ...inputs, ...inputOverrides } };
+
+  // The repurchase projection runs only when the plan facts for it exist —
+  // an ESOP valuation without a repurchase study is a complete deliverable.
+  const balance = num(answers, 'esop_share_balance');
+  const redemption = num(answers, 'annual_redemption_rate');
+  if ((balance !== null && redemption !== null) || repurchaseOverride) {
+    const repurchase: Record<string, unknown> = {};
+    put(repurchase, 'esop_share_balance', balance);
+    put(repurchase, 'annual_redemption_rate', redemption);
+    put(repurchase, 'share_value_growth', num(answers, 'share_value_growth'));
+    put(repurchase, 'years', num(answers, 'projection_years'));
+    put(repurchase, 'discount_rate', num(answers, 'repurchase_discount_rate'));
+    body.repurchase = { ...repurchase, ...(repurchaseOverride ?? {}) };
+  }
+  return { path: '/engine/v1/esop', body };
+}
+
+function smbRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
+  const sdeInputs: Record<string, unknown> = {
+    pretax_income: num(answers, 'pretax_income'),
+  };
+  for (const key of [
+    'owner_compensation',
+    'interest_expense',
+    'depreciation_amortization',
+    'one_time_expenses',
+    'discretionary_expenses',
+    'one_time_income',
+    'fair_market_replacement_wage',
+  ]) {
+    put(sdeInputs, key, num(answers, key));
+  }
+  const inputs: Record<string, unknown> = { sde_inputs: sdeInputs };
+  put(inputs, 'annual_revenue', num(answers, 'annual_revenue'));
+  put(inputs, 'sde_multiple', num(answers, 'sde_multiple'));
+  put(inputs, 'revenue_multiple', num(answers, 'revenue_multiple'));
+
+  const rfr = num(answers, 'risk_free_rate');
+  const erp = num(answers, 'equity_risk_premium');
+  if (rfr !== null && erp !== null) {
+    const cap: Record<string, unknown> = { risk_free_rate: rfr, equity_risk_premium: erp };
+    put(cap, 'size_premium', num(answers, 'size_premium'));
+    put(cap, 'company_specific_premium', num(answers, 'company_specific_premium'));
+    put(cap, 'long_term_growth', num(answers, 'long_term_growth'));
+    inputs.cap_rate_inputs = cap;
+  }
+  return { path: '/engine/v1/smb', body: { inputs: { ...inputs, ...overrides } } };
+}
+
+function emiCsopRequest(scheme: 'emi' | 'csop', answers: Answers, overrides: Answers): SpecialtyRequest {
+  const params: Record<string, unknown> = {
+    equity_value: num(answers, 'equity_value'),
+    total_shares: num(answers, 'total_shares'),
+    options_granted: num(answers, 'options_granted'),
+  };
+  put(params, 'minority_discount', num(answers, 'minority_discount'));
+  put(params, 'restriction_discount', num(answers, 'restriction_discount'));
+  put(params, 'individual_prior_grants_umv', num(answers, 'individual_prior_grants_umv'));
+  if (scheme === 'emi') {
+    put(params, 'gross_assets', num(answers, 'gross_assets'));
+    put(params, 'employee_count', num(answers, 'fte_employee_count'));
+    put(params, 'company_unexercised_umv', num(answers, 'company_unexercised_umv'));
+    put(params, 'is_independent', bool(answers, 'is_independent'));
+    put(params, 'has_qualifying_trade', bool(answers, 'has_qualifying_trade'));
+    put(params, 'works_25_hours_or_75_pct', bool(answers, 'works_25_hours_or_75_pct'));
+  } else {
+    put(params, 'exercise_price', num(answers, 'exercise_price'));
+  }
+  return { path: '/engine/v1/emi-csop', body: { scheme, params: { ...params, ...overrides } } };
+}
+
+/**
+ * The engine request for a kind: the questionnaire's answers assembled into
+ * the endpoint's shape, with the analyst's run `overrides` merged over the
+ * assembled inputs/params (shallow — an override replaces the assembled key).
+ *
+ * `today` is the assessment date (YYYY-MM-DD) for kinds that need one.
+ */
+export function specialtyEngineRequest(
+  kind: SpecialtyKind,
+  answers: Answers,
+  overrides: Answers = {},
+  today: string = new Date().toISOString().slice(0, 10),
+): SpecialtyRequest {
+  switch (kind) {
+    case 'qsbs':
+      return qsbsRequest(answers, overrides, today);
+    case 'ppa':
+      return ppaRequest(answers, overrides);
+    case 'ip':
+      return ipRequest(answers, overrides);
+    case 'goodwill':
+      return impairmentRequest(answers, overrides);
+    case 'esop':
+      return esopRequest(answers, overrides);
+    case 'fmv':
+      return smbRequest(answers, overrides);
+    case 'emi':
+      return emiCsopRequest('emi', answers, overrides);
+    case 'csop':
+      return emiCsopRequest('csop', answers, overrides);
+  }
+}
+
+const resultNum = (result: Record<string, unknown>, key: string): number | null => {
+  const v = result[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+};
+
+const bodyNum = (body: Record<string, unknown>, section: string, key: string): number | null => {
+  const s = body[section];
+  if (!s || typeof s !== 'object') return null;
+  const v = (s as Record<string, unknown>)[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+};
+
+/**
+ * The headline figures a specialty run contributes to the calculation row's
+ * typed columns. Kinds whose deliverable has no per-share or equity figure
+ * (a QSBS attestation, an impairment memo, a PPA) contribute nothing — null
+ * is the true answer there, not a missing one.
+ */
+export function specialtyHeadline(
+  kind: SpecialtyKind,
+  request: SpecialtyRequest,
+  result: Record<string, unknown>,
+): { equityValue: number | null; fmvPerShare: number | null } {
+  switch (kind) {
+    case 'esop':
+      return {
+        equityValue: bodyNum(request.body, 'inputs', 'equity_value'),
+        fmvPerShare: resultNum(result, 'fmv_per_share'),
+      };
+    case 'fmv':
+      return { equityValue: resultNum(result, 'equity_value'), fmvPerShare: null };
+    case 'emi':
+    case 'csop':
+      // AMV is the figure the scheme grants at — the UMV rides in the results.
+      return {
+        equityValue: bodyNum(request.body, 'params', 'equity_value'),
+        fmvPerShare: resultNum(result, 'amv_per_share'),
+      };
+    default:
+      return { equityValue: null, fmvPerShare: null };
+  }
+}

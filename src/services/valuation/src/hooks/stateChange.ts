@@ -15,6 +15,7 @@ import { channelsFor, preferenceOverrides } from '../repos/notificationPreferenc
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../repos/emailOutbox.js';
 import { applyTemplateOverrides, valuationTemplateVars } from '../domain/communications.js';
 import { templateOverrides } from '../repos/communications.js';
+import { firePartnerWebhooksForTransition } from './partnerWebhooks.js';
 
 /**
  * Fires the auto email workflows + in-app notifications for a state change
@@ -58,6 +59,17 @@ export async function onStateChanged(
   valuation: ValuationSnapshot,
   to: ValuationState,
 ): Promise<void> {
+  // Partner webhooks ride every transition of a partner engagement — including
+  // the many transitions that trigger no email. Delivery failures are recorded
+  // on the delivery row, never thrown into the state change that caused them.
+  if (valuation.partner_id) {
+    try {
+      await firePartnerWebhooksForTransition({ pool: deps.pool, log: deps.log }, valuation.id, to);
+    } catch (err) {
+      deps.log?.warn({ err, valuationId: valuation.id }, 'partner webhook dispatch failed');
+    }
+  }
+
   let emailSpecs = emailsForTransition(valuation, to);
   const notifySpecs = notificationsForTransition(valuation, to);
   if (emailSpecs.length === 0 && notifySpecs.length === 0) return;

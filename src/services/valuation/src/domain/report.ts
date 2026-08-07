@@ -593,10 +593,9 @@ const TEMPLATE_GENERIC: ReportTemplate = {
  * /smb, /emi-csop, /intangible) so prose and calculation stay one document,
  * the same contract TEMPLATE_409A has with its exhibits.
  *
- * Kinds deliberately left on the generic skeleton: '718' and '820' (their
- * deliverables are schedules produced by the asc718/fund flows, not authored
- * reports), 'gifts' and 'ifrs2' (the 409A/718 bodies with different framing —
- * pending their own treatment), 'fund' and 'debt' (workbook-first flows).
+ * Kinds deliberately left on the generic skeleton: 'fund' and 'debt', whose
+ * deliverables are the workbook/instrument flows rather than authored reports.
+ * '718', '820', 'gifts' and 'ifrs2' have their own skeletons further down.
  */
 const TEMPLATE_QSBS: ReportTemplate = {
   version: 'qsbs.v1',
@@ -952,6 +951,331 @@ const TEMPLATE_IP: ReportTemplate = {
   ],
 };
 
+const TEMPLATE_718: ReportTemplate = {
+  version: '718.v1',
+  name: 'ASC 718 Stock-Based Compensation Report',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our determination of the grant-date fair value of the share-based awards of <strong>{{company_name}}</strong> and the related compensation cost recognized under ASC 718, as of {{date}}.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'measurement_objective',
+      heading: 'Measurement Objective',
+      html:
+        P(
+          'ASC 718 requires share-based payment awards to employees and nonemployees to be measured at <strong>fair value on the grant date</strong> — the date the employer and employee reach a mutual understanding of the award’s key terms — and recognized as compensation cost over the requisite service period.',
+        ) +
+        P(
+          'For an option award, fair value is estimated with an option-pricing model; for a share award, it is the fair value of the underlying share, adjusted for any post-vesting restrictions that a market participant would price.',
+        ),
+    },
+    {
+      key: 'awards',
+      heading: 'Awards Measured',
+      html: P(
+        'Describe the awards covered by this measurement: instrument (options, RSUs, ESPP rights), grant dates, counts, exercise prices, vesting schedules, and any performance or market conditions attached.',
+      ),
+    },
+    {
+      key: 'underlying_value',
+      heading: 'Fair Value of the Underlying Share',
+      html: P(
+        'State the fair value of the underlying share at the measurement date and its source. For a private company this is the concluded value of the concurrent 409A valuation; for a public company it is the observed market price. If the measurement relies on a separate valuation report, cite it and its valuation date.',
+      ),
+    },
+    {
+      key: 'model_and_assumptions',
+      heading: 'Valuation Model & Assumptions',
+      html:
+        P(
+          'State the model applied — Black-Scholes-Merton for plain awards, a lattice or Monte-Carlo simulation where exercise behaviour or market conditions require one — and the basis for each assumption:',
+        ) +
+        '<ul>' +
+        '<li>Expected term — SAB Topic 14 simplified method, historical exercise data, or lattice-derived</li>' +
+        '<li>Expected volatility — the issuer’s own history or a guideline peer group, and the period matched to the term</li>' +
+        '<li>Risk-free rate — the zero-coupon Treasury (or equivalent) yield matched to the term</li>' +
+        '<li>Dividend yield — the expected yield over the term</li>' +
+        '</ul>',
+    },
+    {
+      key: 'expense_recognition',
+      heading: 'Expense Recognition',
+      html: P(
+        'Describe the attribution: straight-line or graded over the requisite service period, the forfeiture policy elected (estimated forfeitures or as-incurred), the treatment of performance conditions (recognize when probable) and of market conditions (never reversed for failure to meet the market condition), and any modification accounting in the period.',
+      ),
+    },
+    {
+      key: 'schedule',
+      heading: 'Compensation Cost Schedule',
+      html:
+        P('Summarize the measurement per grant and the cost recognized:') +
+        '<table><thead><tr><th>Grant</th><th>Awards</th><th>Fair value per award</th><th>Total fair value</th><th>Service period</th></tr></thead><tbody>' +
+        '<tr><td>…</td><td>…</td><td>$ …</td><td>$ …</td><td>… years</td></tr>' +
+        '</tbody></table>',
+    },
+    {
+      key: 'limiting_conditions',
+      heading: 'Assumptions & Limiting Conditions',
+      html: P(
+        'This report is valid only for the stated purpose and date, and relies on information provided by management, which we have not audited.',
+      ),
+    },
+  ],
+};
+
+const TEMPLATE_820: ReportTemplate = {
+  version: '820.v1',
+  name: 'ASC 820 Fair Value Measurement Report',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our measurement of the fair value of the investment portfolio of <strong>{{company_name}}</strong> as of {{date}}, in accordance with ASC 820.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'standard_of_value',
+      heading: 'Standard of Value',
+      html: P(
+        'Fair value under ASC 820 is an <strong>exit price</strong>: the price that would be received to sell an asset in an orderly transaction between market participants at the measurement date. The measurement assumes the principal (or most advantageous) market and the highest and best use for nonfinancial assets; it is a market-based measurement, not an entity-specific one.',
+      ),
+    },
+    {
+      key: 'hierarchy',
+      heading: 'Fair Value Hierarchy',
+      html:
+        P('Each position is classified by the observability of its significant inputs:') +
+        '<ul>' +
+        '<li><strong>Level 1</strong> — quoted prices in active markets for identical assets</li>' +
+        '<li><strong>Level 2</strong> — other observable inputs: quoted prices for similar assets, recent transactions, observable yields</li>' +
+        '<li><strong>Level 3</strong> — significant unobservable inputs: model values calibrated to the entry transaction and adjusted for changes since</li>' +
+        '</ul>' +
+        P(
+          'State the level assigned to each position and the reason for any transfers between levels in the period.',
+        ),
+    },
+    {
+      key: 'methodology',
+      heading: 'Valuation Methodology',
+      html:
+        P(
+          'Describe the technique applied to each position class — market quotation, recent-round calibration (the backsolve), guideline multiples, discounted cash flows, or NAV as a practical expedient — and why that technique is appropriate for the position.',
+        ) +
+        P(
+          'Where a round-calibrated model is used, state the calibration: the implied assumptions at the entry round, what has changed since, and how the model was rolled forward to the measurement date.',
+        ),
+    },
+    {
+      key: 'portfolio_summary',
+      heading: 'Portfolio Summary',
+      html:
+        P('Summarize the marks:') +
+        '<table><thead><tr><th>Position</th><th>Method</th><th>Level</th><th>Cost basis</th><th>Fair value</th></tr></thead><tbody>' +
+        '<tr><td>…</td><td>…</td><td>…</td><td>$ …</td><td>$ …</td></tr>' +
+        '</tbody></table>',
+    },
+    {
+      key: 'unobservable_inputs',
+      heading: 'Significant Unobservable Inputs',
+      html: P(
+        'For Level 3 positions, disclose the significant unobservable inputs — volatility, time to liquidity, multiples, discount rates — the range applied, and the sensitivity of the measurement to reasonable alternative values.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion',
+      html: P(
+        'State the concluded fair value of the portfolio, the net asset value it implies, and any measurement uncertainty a reader should weigh.',
+      ),
+    },
+    {
+      key: 'limiting_conditions',
+      heading: 'Assumptions & Limiting Conditions',
+      html: P(
+        'This report is valid only for the stated purpose and date, and relies on information provided by management, which we have not audited.',
+      ),
+    },
+  ],
+};
+
+const TEMPLATE_GIFTS: ReportTemplate = {
+  version: 'gifts.v1',
+  name: 'Gift & Estate Tax Valuation Report',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our determination of the fair market value of the interest in <strong>{{company_name}}</strong> described below, as of {{date}}, for federal gift and estate tax purposes.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'standard_of_value',
+      heading: 'Standard of Value',
+      html:
+        P(
+          'The standard of value is <strong>fair market value</strong> as defined in Treasury Regulations §20.2031-1(b) and §25.2512-1: the price at which the property would change hands between a willing buyer and a willing seller, neither being under any compulsion to buy or to sell and both having reasonable knowledge of relevant facts.',
+        ) +
+        P(
+          'The analysis follows the factors of Revenue Ruling 59-60 — the nature and history of the business, economic and industry outlook, book value and financial condition, earning and dividend-paying capacity, goodwill, prior sales, and comparable public companies.',
+        ),
+    },
+    {
+      key: 'interest_description',
+      heading: 'Description of the Interest',
+      html: P(
+        'Describe the interest transferred: the class of equity, the percentage of the outstanding class and of the whole, the transfer (gift, bequest, generation-skipping transfer, or sale), the transferor and transferee, and the rights and restrictions attaching to the interest under the governing documents.',
+      ),
+    },
+    {
+      key: 'company_overview',
+      heading: 'Company Overview',
+      html: P(
+        'Describe the business of {{company_name}}: history, operations, management, financial condition and distribution history.',
+      ),
+    },
+    {
+      key: 'valuation_analysis',
+      heading: 'Valuation of the Underlying Entity',
+      html: P(
+        'Describe the approaches applied to value the entity — asset, income, and market — the indications each produced, and the weighting that reached the concluded entity value before interest-level adjustments.',
+      ),
+    },
+    {
+      key: 'discounts',
+      heading: 'Interest-Level Discounts',
+      html:
+        P(
+          'The interest transferred is a minority, non-marketable interest, and the willing buyer prices those facts:',
+        ) +
+        '<ul>' +
+        '<li><strong>Discount for lack of control</strong> — the interest cannot compel distributions, a sale, or liquidation; state the basis in control-premium and closed-end fund studies and in the entity’s governing documents.</li>' +
+        '<li><strong>Discount for lack of marketability</strong> — no ready market exists for the interest; state the basis in restricted-stock and pre-IPO studies or an option-based model, and weigh the Mandelbaum factors: distribution history, holding-period risk, transfer restrictions, and the pool of likely buyers.</li>' +
+        '</ul>' +
+        P('State each concluded discount and the order of application.'),
+    },
+    {
+      key: 'chapter_14',
+      heading: 'Chapter 14 Considerations',
+      html: P(
+        'Address the special valuation rules of IRC §§2701–2704 where applicable: rights valued at zero under §2701, lapsing rights and restrictions disregarded under §2704, and any buy-sell or option agreement tested under §2703.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion of Value',
+      html: P(
+        'State the concluded fair market value of the interest as of {{date}}, showing the bridge from the entity value through the interest’s pro-rata share and the discounts applied.',
+      ),
+    },
+    {
+      key: 'adequate_disclosure',
+      heading: 'Adequate Disclosure Statement',
+      html: P(
+        'This report is intended to satisfy the adequate-disclosure requirements of Treasury Regulation §301.6501(c)-1(f)(3): it describes the transferred property, the parties and their relationship, and the method, factors and assumptions used in determining the reported value, and it is prepared by an appraiser holding the qualifications described herein.',
+      ),
+    },
+    {
+      key: 'certification',
+      heading: 'Appraiser Certification',
+      html:
+        P('We certify that, to the best of our knowledge and belief:') +
+        '<ul>' +
+        '<li>The statements of fact in this report are true and correct.</li>' +
+        '<li>The analyses, opinions and conclusions are our personal, impartial and unbiased professional analyses.</li>' +
+        '<li>We have no present or prospective interest in the property valued and no bias with respect to the parties.</li>' +
+        '<li>Our compensation is not contingent on the reporting of a predetermined value or the amount of the value opinion.</li>' +
+        '</ul>',
+    },
+    {
+      key: 'limiting_conditions',
+      heading: 'Assumptions & Limiting Conditions',
+      html: P(
+        'This report is valid only for the stated purpose and date, and relies on information provided by management and the transferor, which we have not audited.',
+      ),
+    },
+  ],
+};
+
+const TEMPLATE_IFRS2: ReportTemplate = {
+  version: 'ifrs2.v1',
+  name: 'IFRS 2 Share-Based Payment Report',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our measurement of the share-based payment arrangements of <strong>{{company_name}}</strong> under IFRS 2, as of {{date}}.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'measurement_principles',
+      heading: 'Measurement Principles',
+      html:
+        P(
+          'IFRS 2 measures <strong>equity-settled</strong> awards to employees at the fair value of the equity instruments at <strong>grant date</strong>, not remeasured; <strong>cash-settled</strong> awards are measured at the fair value of the liability and remeasured at each reporting date until settlement.',
+        ) +
+        P(
+          'Vesting conditions other than market conditions are reflected by adjusting the number of awards expected to vest; <strong>market conditions and non-vesting conditions are reflected in the grant-date fair value itself</strong> and never trued up. This is the principal difference a reader coming from ASC 718 should note, together with graded-vesting attribution: IFRS 2 treats each tranche as a separate award.',
+        ),
+    },
+    {
+      key: 'awards',
+      heading: 'Awards Measured',
+      html: P(
+        'Describe the arrangements: instruments granted, grant dates, counterparties, exercise prices, vesting conditions (service, performance, market), and settlement (equity or cash).',
+      ),
+    },
+    {
+      key: 'model_and_assumptions',
+      heading: 'Valuation Model & Assumptions',
+      html:
+        P(
+          'State the model applied — Black-Scholes-Merton, a binomial lattice, or Monte-Carlo simulation where a market condition requires one — and the basis for each input:',
+        ) +
+        '<ul>' +
+        '<li>Share price at grant date and its source</li>' +
+        '<li>Expected life, reflecting exercise behaviour and post-vesting restrictions</li>' +
+        '<li>Expected volatility and the period it was measured over</li>' +
+        '<li>Risk-free rate matched to the expected life</li>' +
+        '<li>Expected dividends</li>' +
+        '</ul>',
+    },
+    {
+      key: 'expense_recognition',
+      heading: 'Expense Recognition',
+      html: P(
+        'Describe the recognition: the vesting period of each tranche, the estimate of awards expected to vest and how it is revised, the treatment of modifications and cancellations (incremental fair value; acceleration on cancellation), and the liability remeasurement for cash-settled awards.',
+      ),
+    },
+    {
+      key: 'schedule',
+      heading: 'Measurement Schedule',
+      html:
+        P('Summarize the measurement per grant:') +
+        '<table><thead><tr><th>Grant</th><th>Awards</th><th>Fair value per award</th><th>Total fair value</th><th>Vesting period</th></tr></thead><tbody>' +
+        '<tr><td>…</td><td>…</td><td>…</td><td>…</td><td>… years</td></tr>' +
+        '</tbody></table>',
+    },
+    {
+      key: 'limiting_conditions',
+      heading: 'Assumptions & Limiting Conditions',
+      html: P(
+        'This report is valid only for the stated purpose and date, and relies on information provided by management, which we have not audited.',
+      ),
+    },
+  ],
+};
+
 const TEMPLATE_BY_KIND: Partial<Record<ValuationKind, ReportTemplate>> = {
   '409a': TEMPLATE_409A,
   qsbs: TEMPLATE_QSBS,
@@ -962,6 +1286,10 @@ const TEMPLATE_BY_KIND: Partial<Record<ValuationKind, ReportTemplate>> = {
   emi: TEMPLATE_EMI,
   csop: TEMPLATE_CSOP,
   ip: TEMPLATE_IP,
+  '718': TEMPLATE_718,
+  '820': TEMPLATE_820,
+  gifts: TEMPLATE_GIFTS,
+  ifrs2: TEMPLATE_IFRS2,
 };
 
 export const REPORT_TEMPLATES: ReadonlyMap<string, ReportTemplate> = new Map([

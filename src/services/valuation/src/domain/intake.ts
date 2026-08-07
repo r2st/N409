@@ -253,9 +253,18 @@ export interface IntakeCompletion {
   ready: boolean;
 }
 
-/** Compute per-section and overall completion of the questionnaire. */
-export function computeCompletion(answers: Record<string, unknown>): IntakeCompletion {
-  const sections: SectionCompletion[] = INTAKE_SECTIONS.map((section) => {
+/**
+ * Compute per-section and overall completion of the questionnaire.
+ *
+ * `sections` defaults to the 409A questionnaire; kind-specific callers pass
+ * `intakeSectionsFor(kind)` (domain/intakeKinds.ts) so completion is judged
+ * against the form the client was actually shown.
+ */
+export function computeCompletion(
+  answers: Record<string, unknown>,
+  sectionDefs: readonly IntakeSection[] = INTAKE_SECTIONS,
+): IntakeCompletion {
+  const sections: SectionCompletion[] = sectionDefs.map((section) => {
     const required = section.fields.filter((f) => f.required);
     const requiredAnswered = required.filter((f) => isAnswered(answers[f.key])).length;
     const answeredTotal = section.fields.filter((f) => isAnswered(answers[f.key])).length;
@@ -310,10 +319,13 @@ export const INTAKE_FIELDS_BY_KEY: ReadonlyMap<string, IntakeField> = new Map(
  * form asks for a choice — is `validateIntake`'s question, and it answers it
  * with an error the client can see.
  */
-export function narrowIntakeAnswers(answers: Record<string, unknown>): Record<string, unknown> {
+export function narrowIntakeAnswers(
+  answers: Record<string, unknown>,
+  keys: ReadonlySet<string> = INTAKE_FIELD_KEYS,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(answers)) {
-    if (!INTAKE_FIELD_KEYS.has(key)) continue;
+    if (!keys.has(key)) continue;
     if (value === null || value === undefined) {
       // Explicit null is how the wizard clears an answer; undefined cannot
       // survive JSON, but a direct caller of this function can still send it.

@@ -1,6 +1,7 @@
 import type { ReportPdfSection } from '@n409/report/pdf';
 import type { CalculationRow } from '../repos/calculations.js';
 import { APPROACH_LABELS, ALLOCATION_LABELS, formatCurrency, formatPercent, num } from './reportSummary.js';
+import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 
 /**
  * The supporting exhibits of the deliverable — the schedules a reviewer checks
@@ -708,6 +709,12 @@ export function discountExhibit(
  */
 export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitContext): ReportPdfSection[] {
   if (!calculation || calculation.status !== 'succeeded' || !calculation.results) return [];
+  // A specialty run (routes/specialty.ts) records its engine's result under
+  // results.specialty — none of the 409A schedules below can read it, and its
+  // own schedules live in domain/specialtyExhibits.ts.
+  if (calculation.results.specialty && typeof calculation.results.specialty === 'object') {
+    return buildSpecialtyExhibits(calculation, ctx);
+  }
   const results = calculation.results;
   const payload = (calculation.inputs ?? {}) as Payload;
   const inputs = record(payload.inputs) ?? {};
