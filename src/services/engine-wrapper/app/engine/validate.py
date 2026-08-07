@@ -30,6 +30,11 @@ from dataclasses import dataclass, field as dc_field
 from datetime import date
 
 from .projection import MAX_FORECAST_YEARS
+# The two modules that own a shape this validator mirrors. Imported rather than
+# restated so a bound or a vocabulary changing in one place cannot leave the
+# pre-flight quietly disagreeing with the engine about what is legal.
+from .pwerm import SCENARIO_TYPES
+from .waterfall import MAX_SHARE_CLASSES
 
 ERROR = "error"
 WARNING = "warning"
@@ -170,14 +175,38 @@ def _check_weights(c: _Collector, params: dict) -> dict[str, float]:
 
 def _check_asset(c: _Collector, params: dict, inputs: dict) -> None:
     asset = _dict(inputs.get("asset"))
-    if params.get("asset_method") == "cost_to_replicate":
-        _require_number(
+    method = params.get("asset_method")
+    # The same dispatch `approaches.asset_value` makes, and it makes two tests,
+    # not one: an explicit `cost_to_replicate`, *or* no method at all with a
+    # cost supplied — in which case it values on the cost and never looks at the
+    # balance sheet. Only the first was mirrored here, so the validator demanded
+    # `total_assets` and `total_liabilities` for a payload the engine values
+    # perfectly well without them.
+    #
+    # `/compute` pre-flights and refuses on any error, so this was not a stale
+    # message on an otherwise-fine run: it was a 422 blocking a valuation the
+    # engine would have completed. And it is the ordinary shape, not an exotic
+    # one — `params.asset_method` is nullable and the params form's own default
+    # is blank, so an analyst who fills in the rebuild cost and leaves the
+    # method dropdown alone gets told two balance-sheet fields are required for
+    # a method that does not use a balance sheet.
+    if method == "cost_to_replicate" or (method is None and asset.get("cost_to_replicate") is not None):
+        # Non-negative, not positive: `asset_value` refuses only `< 0`, and a
+        # zero rebuild cost is a real (if unusual) answer for a company whose
+        # asset base is worth nothing. Refusing it here would be the same
+        # too-strict pre-flight one line up, one bound narrower.
+        cost = _require_number(
             c,
             asset.get("cost_to_replicate"),
             "inputs.asset.cost_to_replicate",
-            positive=True,
             hint="The cost-to-replicate method needs the rebuild cost of the asset base.",
         )
+        if cost is not None and cost < 0:
+            c.error(
+                "out_of_range",
+                "inputs.asset.cost_to_replicate",
+                f"cost_to_replicate cannot be negative (got {cost:g})",
+            )
         return
     total_assets = _require_number(c, asset.get("total_assets"), "inputs.asset.total_assets")
     total_liabilities = _require_number(
@@ -331,7 +360,31 @@ def _check_market(c: _Collector, inputs: dict, *, auto_comparables: bool = False
                 "Run the comparables pipeline, or enter the trading multiples manually.",
             )
     else:
-        clean = [m for m in (_finite(x) for x in multiples) if m is not None and m > 0]
+        # Every entry, by index — not "does at least one survive".
+        #
+        # `compute._weighted_equity` coerces the whole list with `_req`, so one
+        # unusable entry fails the run. The filter below only ever asked whether
+        # *something* was left after dropping the bad ones, so `[8.0, null]`,
+        # `[8.0, "12.5x"]` and `[8.0, true]` all cleared the pre-flight with
+        # `ok: true` and were then refused by the calculation they had just
+        # cleared — the mismatch this module's contract exists to rule out, and
+        # the one `compute` names in its own comment on that coercion.
+        #
+        # It is the normal way a comparables list goes wrong, too: the market
+        # feed returns `None` for a ticker with no multiple for the chosen
+        # metric, and a hand-typed set carries the "x" suffix an analyst reads
+        # the figure with. Reported per element, like `free_cash_flows`, so the
+        # form can point at the offending row rather than the whole list.
+        parsed = [_finite(x) for x in multiples]
+        for i, value in enumerate(parsed):
+            if value is None:
+                c.error(
+                    "not_a_number",
+                    f"inputs.market.multiples[{i}]",
+                    f"market.multiples[{i}] must be a finite number",
+                    "Remove the comparable, or enter its multiple as a bare number (12.5, not '12.5x').",
+                )
+        clean = [m for m in parsed if m is not None and m > 0]
         if not clean:
             c.error(
                 "not_positive",
@@ -361,6 +414,149 @@ def _check_market(c: _Collector, inputs: dict, *, auto_comparables: bool = False
         positive=True,
         hint="The metric is the revenue or EBITDA the multiple is applied to.",
     )
+
+
+def _check_share_classes(c: _Collector, classes: list) -> None:
+    """The cap table, class by class — mirrors ``waterfall._normalize``.
+
+    Nothing looked inside ``share_classes`` before. The list's *shape* was
+    checked and its contents were left to the normaliser, which runs inside
+    ``compute`` and is fail-fast: it raises on the first bad class, so a cap
+    table with four problems took four round trips, and every message arrived
+    as a bare string with no field path for the form to point at. That is
+    precisely the loop this module exists to collapse — and the cap table is
+    the input most likely to need it, because it is imported from a
+    spreadsheet rather than typed into four boxes.
+
+    The class-level checks are the ones an import gets wrong: a missing name, a
+    kind spelled `preference` instead of `preferred`, a share count that came
+    through as a string with a thousands separator, a preferred class whose
+    preference column was blank, an option pool with no strike. Two duplicated
+    class names is the other common one — spreadsheets carry a "Series A" and a
+    "Series A-1" that both trim to the same label.
+
+    Not mirrored: the representability guards (`shares × conversion_ratio`
+    leaving the doubles, the fully-diluted total overflowing). Those are
+    properties of the arithmetic on figures that individually pass everything
+    here, they carry their own explanatory messages, and no analyst reaches
+    them by accident — ``compute`` stays the authority on those, as this
+    module's contract says it does on anything a pre-flight cannot see.
+    """
+    if len(classes) > MAX_SHARE_CLASSES:
+        c.error(
+            "too_many",
+            "inputs.share_classes",
+            f"share_classes accepts at most {MAX_SHARE_CLASSES} classes (got {len(classes)})",
+            "The breakpoint allocation grows with the square of the class count; "
+            "consolidate classes that share economics.",
+        )
+        return
+
+    seen: set[str] = set()
+    has_common = False
+    for i, raw in enumerate(classes):
+        path = f"inputs.share_classes[{i}]"
+        if not isinstance(raw, dict):
+            c.error("invalid_shape", path, f"share_classes[{i}] must be an object")
+            continue
+
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            c.error("required", f"{path}.name", f"share_classes[{i}].name is required")
+        elif name in seen:
+            c.error(
+                "duplicate",
+                f"{path}.name",
+                f"share_classes: duplicate class name '{name}'",
+                "Each class needs a distinct label — the allocation is keyed by name.",
+            )
+        else:
+            seen.add(name)
+        label = name or f"share_classes[{i}]"
+
+        kind = raw.get("kind")
+        if kind not in ("preferred", "common", "option"):
+            c.error(
+                "out_of_range",
+                f"{path}.kind",
+                f"share_classes[{i}].kind must be one of ('preferred', 'common', 'option')",
+            )
+        elif kind == "common":
+            has_common = True
+
+        shares = _finite(raw.get("shares"))
+        if shares is None:
+            c.error("not_a_number", f"{path}.shares", f"'{label}': shares must be a number")
+        elif shares <= 0:
+            c.error(
+                "not_positive",
+                f"{path}.shares",
+                f"'{label}': shares must be positive (got {shares:g})",
+            )
+
+        if kind == "preferred":
+            preference = _finite(raw.get("preference"))
+            if preference is None:
+                c.error(
+                    "required",
+                    f"{path}.preference",
+                    f"'{label}': preference (total) is required for preferred",
+                    "The total liquidation preference of the class, not the per-share amount.",
+                )
+            elif preference < 0:
+                c.error(
+                    "out_of_range",
+                    f"{path}.preference",
+                    f"'{label}': preference must be >= 0 (got {preference:g})",
+                )
+            seniority = raw.get("seniority", 1)
+            if not isinstance(seniority, int) or isinstance(seniority, bool) or seniority < 1:
+                c.error(
+                    "out_of_range",
+                    f"{path}.seniority",
+                    f"'{label}': seniority must be an integer >= 1",
+                    "1 is the most senior rank; classes sharing a rank split pari passu.",
+                )
+            # `None` defaults to 1:1; anything else present has to be a positive
+            # number, because a zero ratio would value a class as if it converted
+            # normally while converting into nothing.
+            if raw.get("conversion_ratio") is not None:
+                ratio = _finite(raw["conversion_ratio"])
+                if ratio is None:
+                    c.error(
+                        "not_a_number",
+                        f"{path}.conversion_ratio",
+                        f"'{label}': conversion_ratio must be a number",
+                    )
+                elif ratio <= 0:
+                    c.error(
+                        "not_positive",
+                        f"{path}.conversion_ratio",
+                        f"'{label}': conversion_ratio must be positive (got {ratio:g})",
+                    )
+        elif kind == "option":
+            strike = _finite(raw.get("strike"))
+            if strike is None:
+                c.error(
+                    "required",
+                    f"{path}.strike",
+                    f"'{label}': strike is required for options",
+                )
+            elif strike <= 0:
+                c.error(
+                    "not_positive",
+                    f"{path}.strike",
+                    f"'{label}': strike must be positive (got {strike:g})",
+                )
+
+    if not has_common:
+        c.error(
+            "required",
+            "inputs.share_classes",
+            "share_classes must include at least one 'common' class",
+            "The residual after the preference stack is shared on the common classes; "
+            "without one there is nothing to conclude a per-share value on.",
+        )
 
 
 def _check_cap_table(
@@ -412,7 +608,10 @@ def _check_cap_table(
             )
 
     share_classes = inputs.get("share_classes")
-    has_waterfall = isinstance(share_classes, list) and len(share_classes) > 0
+    has_waterfall = False
+    if isinstance(share_classes, list) and share_classes:
+        has_waterfall = True
+        _check_share_classes(c, share_classes)
     if share_classes is not None and not isinstance(share_classes, list):
         c.error(
             "invalid_shape",
@@ -595,38 +794,122 @@ def _check_pwerm(c: _Collector, inputs: dict) -> None:
         )
 
     total = 0.0
+    countable = True
     for i, scenario in enumerate(scenarios):
+        path = f"inputs.pwerm.scenarios[{i}]"
         if not isinstance(scenario, dict):
-            c.error("invalid_shape", f"inputs.pwerm.scenarios[{i}]", f"scenarios[{i}] must be an object")
+            c.error("invalid_shape", path, f"scenarios[{i}] must be an object")
+            countable = False
             continue
         probability = _finite(scenario.get("probability"))
         if probability is None:
-            c.error(
-                "required",
-                f"inputs.pwerm.scenarios[{i}].probability",
-                f"scenarios[{i}].probability is required",
-            )
+            c.error("required", f"{path}.probability", f"scenarios[{i}].probability is required")
+            countable = False
         elif probability < 0:
             c.error(
                 "out_of_range",
-                f"inputs.pwerm.scenarios[{i}].probability",
+                f"{path}.probability",
                 f"scenarios[{i}].probability must be >= 0",
             )
+            countable = False
         else:
             total += probability
+
         if scenario.get("equity_value") is None and scenario.get("enterprise_value") is None:
             c.error(
                 "required",
-                f"inputs.pwerm.scenarios[{i}].equity_value",
+                f"{path}.equity_value",
                 f"scenarios[{i}] needs an equity_value or enterprise_value",
             )
+        else:
+            # `_scenario_equity` refuses a negative exit. It cannot be bridged
+            # here — the cash/debt that turn an enterprise value into an equity
+            # value live outside the scenario — so only a directly-stated
+            # equity value is checked, which is the one the analyst types.
+            stated = scenario.get("equity_value")
+            if stated is not None:
+                equity = _finite(stated)
+                if equity is None:
+                    c.error(
+                        "not_a_number",
+                        f"{path}.equity_value",
+                        f"scenarios[{i}].equity_value must be a finite number",
+                    )
+                elif equity < 0:
+                    c.error(
+                        "out_of_range",
+                        f"{path}.equity_value",
+                        f"scenarios[{i}] exit equity value is negative ({equity:.2f})",
+                        "A liquidation scenario bottoms out at zero — equity holders are not "
+                        "liable beyond their investment.",
+                    )
+            elif _finite(scenario.get("enterprise_value")) is None:
+                c.error(
+                    "not_a_number",
+                    f"{path}.enterprise_value",
+                    f"scenarios[{i}].enterprise_value must be a finite number",
+                )
 
-    if total > 0 and abs(total - 1.0) > 1e-6:
-        c.warn(
+        scenario_type = scenario.get("type")
+        if scenario_type is not None and scenario_type not in SCENARIO_TYPES:
+            c.error(
+                "out_of_range",
+                f"{path}.type",
+                f"scenarios[{i}].type must be one of {SCENARIO_TYPES}",
+            )
+
+        if scenario.get("time_to_exit_years") is not None:
+            years = _finite(scenario["time_to_exit_years"])
+            if years is None:
+                c.error(
+                    "not_a_number",
+                    f"{path}.time_to_exit_years",
+                    f"scenarios[{i}].time_to_exit_years must be a finite number",
+                )
+            elif years < 0:
+                c.error(
+                    "out_of_range",
+                    f"{path}.time_to_exit_years",
+                    f"scenarios[{i}].time_to_exit_years must be >= 0",
+                )
+
+        if scenario.get("discount_rate") is not None:
+            rate = _finite(scenario["discount_rate"])
+            if rate is None:
+                c.error(
+                    "not_a_number",
+                    f"{path}.discount_rate",
+                    f"scenarios[{i}].discount_rate must be a finite number",
+                )
+            elif rate <= -1:
+                c.error(
+                    "out_of_range",
+                    f"{path}.discount_rate",
+                    f"scenarios[{i}].discount_rate must exceed -1 (i.e. > -100%)",
+                )
+
+    # An error, not a warning — and unconditional, not `if total > 0`.
+    #
+    # `allocate_pwerm` refuses a set that does not sum to 1; it does not
+    # normalise anything, which is what the warning this replaces told the
+    # analyst it would do. So a PWERM payload whose probabilities came to 0.9
+    # was reported `ok: true` with a reassuring note, and then refused by
+    # `/compute` with a bare `detail` string and no field path — the analyst
+    # having been told, in writing, that the engine would handle it.
+    #
+    # The `total > 0` guard was the same bug with the volume off: a set that is
+    # all zeros (or whose every probability failed a check above) summed to 0,
+    # skipped the warning entirely, and produced no issue of any kind for a
+    # payload the engine cannot run. `countable` is what keeps that from
+    # double-reporting — a probability already named as missing or negative has
+    # its own error, and a sum computed without it means nothing.
+    if countable and abs(total - 1.0) > 1e-6:
+        c.error(
             "probabilities_sum",
             "inputs.pwerm.scenarios",
-            f"scenario probabilities sum to {total:.4f}, not 1.0",
-            "The engine normalises them, but a reviewer will ask why they don't total 100%.",
+            f"pwerm scenario probabilities must sum to 1.0 (got {total:.4f})",
+            "Adjust the scenario probabilities so they total 100% — the engine weights "
+            "each exit by its own probability and does not rescale them.",
         )
 
 
