@@ -5,6 +5,7 @@ import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../../components/ui';
 import { FieldWarnings, ValidationSummary } from '../../components/ValidationNotes';
+import { answerFromControl, controlValue } from '../../lib/intakeAnswers';
 import {
   hasBlockingIssues,
   issuesByField,
@@ -43,13 +44,6 @@ interface QuestionnaireResponse {
   completion: Completion;
   missing_documents: MissingDoc[];
   can_edit: boolean;
-}
-
-function fieldValue(answers: Record<string, unknown>, key: string): string {
-  const v = answers[key];
-  if (v === null || v === undefined) return '';
-  if (typeof v === 'boolean') return v ? 'yes' : 'no';
-  return String(v);
 }
 
 export function IntakeTab() {
@@ -189,16 +183,17 @@ export function IntakeTab() {
                     {f.type === 'textarea' ? (
                       <textarea
                         disabled={!canEdit}
-                        value={fieldValue(answers, f.key)}
-                        onChange={(e) => setField(f.key, e.target.value)}
+                        value={controlValue(answers, f.key)}
+                        onChange={(e) => setField(f.key, answerFromControl(f, e.target.value))}
                         rows={3}
+                        maxLength={f.rules?.maxLength}
                         className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none disabled:bg-paper-100"
                       />
                     ) : f.type === 'boolean' ? (
                       <Select
                         disabled={!canEdit}
-                        value={fieldValue(answers, f.key)}
-                        onChange={(e) => setField(f.key, e.target.value === 'yes')}
+                        value={controlValue(answers, f.key)}
+                        onChange={(e) => setField(f.key, answerFromControl(f, e.target.value))}
                       >
                         <option value="">—</option>
                         <option value="yes">Yes</option>
@@ -207,8 +202,8 @@ export function IntakeTab() {
                     ) : f.type === 'select' ? (
                       <Select
                         disabled={!canEdit}
-                        value={fieldValue(answers, f.key)}
-                        onChange={(e) => setField(f.key, e.target.value)}
+                        value={controlValue(answers, f.key)}
+                        onChange={(e) => setField(f.key, answerFromControl(f, e.target.value))}
                       >
                         <option value="">—</option>
                         {f.options?.map((o) => (
@@ -221,17 +216,9 @@ export function IntakeTab() {
                       <TextInput
                         disabled={!canEdit}
                         type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
-                        value={fieldValue(answers, f.key)}
-                        onChange={(e) =>
-                          setField(
-                            f.key,
-                            f.type === 'number'
-                              ? e.target.value === ''
-                                ? null
-                                : Number(e.target.value)
-                              : e.target.value,
-                          )
-                        }
+                        maxLength={f.type === 'text' ? f.rules?.maxLength : undefined}
+                        value={controlValue(answers, f.key)}
+                        onChange={(e) => setField(f.key, answerFromControl(f, e.target.value))}
                       />
                     )}
                   </Field>

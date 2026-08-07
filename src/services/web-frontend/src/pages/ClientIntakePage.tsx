@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { FieldWarnings, ValidationSummary } from '../components/ValidationNotes';
 import { PLATFORM_BRANDING, type Branding } from '../lib/branding';
+import { answerFromControl, controlValue } from '../lib/intakeAnswers';
 import {
   hasBlockingIssues,
   issuesByField,
@@ -76,14 +77,6 @@ const post = async <T,>(path: string, body: unknown): Promise<T> => {
   }
   return (await res.json()) as T;
 };
-
-/** The string a control shows for an answer. Booleans become yes/no. */
-function controlValue(answers: Record<string, unknown>, key: string): string {
-  const v = answers[key];
-  if (v === null || v === undefined) return '';
-  if (typeof v === 'boolean') return v ? 'yes' : 'no';
-  return String(v);
-}
 
 /** The prose a review row shows. Unanswered reads as "Not answered", not blank. */
 function displayValue(field: IntakeField, value: unknown): string {
@@ -409,25 +402,23 @@ function Control({
   onChange: (key: string, value: unknown) => void;
 }) {
   const value = controlValue(answers, field.key);
+  const set = (raw: string) => onChange(field.key, answerFromControl(field, raw));
 
   if (field.type === 'textarea') {
     return (
       <textarea
         disabled={disabled}
         rows={4}
+        maxLength={field.rules?.maxLength}
         value={value}
-        onChange={(e) => onChange(field.key, e.target.value)}
+        onChange={(e) => set(e.target.value)}
         className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none disabled:bg-paper-100"
       />
     );
   }
   if (field.type === 'boolean') {
     return (
-      <Select
-        disabled={disabled}
-        value={value}
-        onChange={(e) => onChange(field.key, e.target.value === '' ? null : e.target.value === 'yes')}
-      >
+      <Select disabled={disabled} value={value} onChange={(e) => set(e.target.value)}>
         <option value="">Select…</option>
         <option value="yes">Yes</option>
         <option value="no">No</option>
@@ -436,7 +427,7 @@ function Control({
   }
   if (field.type === 'select') {
     return (
-      <Select disabled={disabled} value={value} onChange={(e) => onChange(field.key, e.target.value)}>
+      <Select disabled={disabled} value={value} onChange={(e) => set(e.target.value)}>
         <option value="">Select…</option>
         {field.options?.map((o) => (
           <option key={o} value={o}>
@@ -450,13 +441,9 @@ function Control({
     <TextInput
       disabled={disabled}
       type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
+      maxLength={field.type === 'text' ? field.rules?.maxLength : undefined}
       value={value}
-      onChange={(e) =>
-        onChange(
-          field.key,
-          field.type === 'number' ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value,
-        )
-      }
+      onChange={(e) => set(e.target.value)}
     />
   );
 }
