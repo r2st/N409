@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
-import { invalidateValuation } from './valuations.js';
+import { invalidateValuationAfter } from './valuations.js';
 
 /**
  * Auto-pipeline run tracking (final-status §4.4 #3). One row per orchestrated
@@ -146,17 +146,19 @@ export async function setValuationAutoPipeline(
   actor: EventActor,
 ): Promise<{ auto_pipeline: boolean }> {
   if (valuation.auto_pipeline === enabled) return { auto_pipeline: enabled };
-  return withTransaction(pool, async (client) => {
-    await client.query('UPDATE valuations SET auto_pipeline = $1 WHERE id = $2', [enabled, valuation.id]);
-    invalidateValuation(valuation.id);
-    await recordEvent(client, {
-      valuationId: valuation.id,
-      type: 'auto_pipeline_toggled',
-      actor,
-      payload: { enabled },
-    });
-    return { auto_pipeline: enabled };
-  });
+  // After the commit, not after the UPDATE — see `invalidateValuationAfter`.
+  return invalidateValuationAfter(valuation.id, () =>
+    withTransaction(pool, async (client) => {
+      await client.query('UPDATE valuations SET auto_pipeline = $1 WHERE id = $2', [enabled, valuation.id]);
+      await recordEvent(client, {
+        valuationId: valuation.id,
+        type: 'auto_pipeline_toggled',
+        actor,
+        payload: { enabled },
+      });
+      return { auto_pipeline: enabled };
+    }),
+  );
 }
 
 /**

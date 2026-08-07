@@ -114,12 +114,18 @@ export async function createValuation(
  * each other.
  *
  * Correctness rests on invalidation, not on the TTL: every statement in this
- * service that writes to `valuations` calls `invalidateValuation`, and there
+ * service that writes to `valuations` invalidates the row afterwards, and there
  * are only eight of them (this file, plus comments, organizations, retention
- * and pipelineRuns — see the callers of the export). The TTL is the backstop
- * for a writer nobody remembered to wire up and for the day this service runs
- * more than one process, and it is deliberately short enough that a stale read
- * cannot outlive a page view.
+ * and pipelineRuns — see the callers of the two exports). The TTL is the
+ * backstop for a writer nobody remembered to wire up and for the day this
+ * service runs more than one process, and it is deliberately short enough that
+ * a stale read cannot outlive a page view.
+ *
+ * *Afterwards* is load-bearing, and is why there are two exports rather than
+ * one: a transactional writer must invalidate after its COMMIT, because a drop
+ * issued before the commit is a drop a concurrent reader can refill from the
+ * pre-commit row. {@link invalidateValuationAfter} is the wrapper for those;
+ * {@link invalidateValuation} is for the auto-commit single statements.
  *
  * `getOrLoad` also collapses concurrent identical lookups into one query, which
  * is what actually helps the fan-out above: those six requests arrive together,
@@ -137,9 +143,45 @@ const valuationCache = new TtlCache<ValuationRow | null>({
  * Drops a valuation from the read cache. Call after any statement that writes
  * to the `valuations` row — including from other repos, which is why this is
  * exported rather than kept private to this module.
+ *
+ * *After the write is visible to other connections*, which for a transactional
+ * writer means after COMMIT, not after the UPDATE. `TtlCache` already handles an
+ * invalidation that lands mid-load — it marks the in-flight load stale so its
+ * result is not published — but that defence only covers a load that had already
+ * started. Called from inside the transaction, this drops the entry and then
+ * leaves a window, up to the length of the rest of the transaction, in which a
+ * concurrent reader starts a *fresh* load, reads the pre-commit row on its own
+ * connection, and caches it. No invalidation follows it, so the superseded row
+ * is then served for a full TTL — the failure this cache says it does not have,
+ * arrived at from the opposite direction.
+ *
+ * It is not academic: `patchValuation` writes the row, records one or two
+ * events, and only then commits, and every state transition on the platform
+ * goes through it. A read landing in that window pins the *old* `state` — the
+ * field `canReadReport` and the whole publication gate gate on — for five
+ * seconds after the transition committed.
+ *
+ * {@link invalidateValuationAfter} is the shape that cannot get this wrong.
  */
 export function invalidateValuation(id: string): void {
   valuationCache.delete(id);
+}
+
+/**
+ * Runs a transactional write and invalidates the row's cache entry once it has
+ * committed, whatever the outcome of the write.
+ *
+ * Invalidating on the failure path too is deliberate and free: a rolled-back
+ * transaction has changed nothing, so the drop costs one re-read and cannot be
+ * wrong, whereas working out which failures could not have touched the row is
+ * exactly the reasoning that produces a stale cache entry later.
+ */
+export async function invalidateValuationAfter<T>(id: string, write: () => Promise<T>): Promise<T> {
+  try {
+    return await write();
+  } finally {
+    valuationCache.delete(id);
+  }
 }
 
 /** Empties the cache. For tests, and for anything that rewrites rows in bulk. */
@@ -633,41 +675,42 @@ export async function patchValuation(
   const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
   if (entries.length === 0) return current;
 
-  return withTransaction(pool, async (client) => {
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    for (const [key, value] of entries) {
-      params.push(value);
-      sets.push(`${key} = $${params.length}`);
-    }
+  return invalidateValuationAfter(current.id, () =>
+    withTransaction(pool, async (client) => {
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      for (const [key, value] of entries) {
+        params.push(value);
+        sets.push(`${key} = $${params.length}`);
+      }
 
-    const newState = fields.state as ValuationState | undefined;
-    if (newState && newState !== current.state) {
-      const tsColumn = TIMESTAMP_ON_STATE[newState];
-      if (tsColumn) sets.push(`${tsColumn} = now()`);
-    }
+      const newState = fields.state as ValuationState | undefined;
+      if (newState && newState !== current.state) {
+        const tsColumn = TIMESTAMP_ON_STATE[newState];
+        if (tsColumn) sets.push(`${tsColumn} = now()`);
+      }
 
-    params.push(current.id);
-    const { rows } = await client.query<ValuationRow>(
-      `UPDATE valuations SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
-      params,
-    );
-    invalidateValuation(current.id);
+      params.push(current.id);
+      const { rows } = await client.query<ValuationRow>(
+        `UPDATE valuations SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+        params,
+      );
 
-    await recordEvent(client, {
-      valuationId: current.id,
-      type: EVENT_TYPES.updated,
-      actor,
-      payload: { changes },
-    });
-    if (newState && newState !== current.state) {
       await recordEvent(client, {
         valuationId: current.id,
-        type: EVENT_TYPES.stateChanged,
+        type: EVENT_TYPES.updated,
         actor,
-        payload: { from: current.state, to: newState },
+        payload: { changes },
       });
-    }
-    return rows[0]!;
-  });
+      if (newState && newState !== current.state) {
+        await recordEvent(client, {
+          valuationId: current.id,
+          type: EVENT_TYPES.stateChanged,
+          actor,
+          payload: { from: current.state, to: newState },
+        });
+      }
+      return rows[0]!;
+    }),
+  );
 }

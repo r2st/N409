@@ -3,7 +3,7 @@ import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { OPERATIONS_EVENT_TYPES, type CommentKind } from '../domain/operations.js';
-import { invalidateValuation } from './valuations.js';
+import { invalidateValuationAfter } from './valuations.js';
 
 export interface CommentRow {
   id: string;
@@ -65,47 +65,51 @@ export async function createComment(
   input: CreateCommentInput,
   actor: EventActor,
 ): Promise<{ comment: CommentRow; created: boolean }> {
-  return withTransaction(pool, async (client) => {
-    const messageId = input.emailMeta?.message_id;
-    if (input.kind === 'email' && messageId) {
-      const { rows: existing } = await client.query<CommentRow>(
-        `SELECT * FROM valuation_comments
+  // Invalidated after the commit, not after the UPDATE — see
+  // `invalidateValuationAfter`. Inside the transaction the drop leaves a window
+  // in which a concurrent reader caches the pre-commit row for a full TTL.
+  return invalidateValuationAfter(input.valuationId, () =>
+    withTransaction(pool, async (client) => {
+      const messageId = input.emailMeta?.message_id;
+      if (input.kind === 'email' && messageId) {
+        const { rows: existing } = await client.query<CommentRow>(
+          `SELECT * FROM valuation_comments
          WHERE valuation_id = $1 AND kind = 'email' AND email_meta->>'message_id' = $2`,
-        [input.valuationId, messageId],
-      );
-      if (existing[0]) return { comment: existing[0], created: false };
-    }
+          [input.valuationId, messageId],
+        );
+        if (existing[0]) return { comment: existing[0], created: false };
+      }
 
-    const { rows } = await client.query<CommentRow>(
-      `INSERT INTO valuation_comments (id, valuation_id, kind, author_id, body, email_meta, pinned)
+      const { rows } = await client.query<CommentRow>(
+        `INSERT INTO valuation_comments (id, valuation_id, kind, author_id, body, email_meta, pinned)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [
-        newUlid(),
-        input.valuationId,
-        input.kind,
-        input.authorId,
-        input.body,
-        input.emailMeta ? JSON.stringify(input.emailMeta) : null,
-        input.pinned ?? false,
-      ],
-    );
-    const comment = rows[0]!;
-    await client.query('UPDATE valuations SET last_comment_at = now() WHERE id = $1', [input.valuationId]);
-    invalidateValuation(input.valuationId);
-    await recordEvent(client, {
-      valuationId: input.valuationId,
-      type:
-        input.kind === 'email' ? OPERATIONS_EVENT_TYPES.emailReceived : OPERATIONS_EVENT_TYPES.commentAdded,
-      actor,
-      payload: {
-        comment_id: comment.id,
-        kind: input.kind,
-        ...(input.emailMeta?.from ? { from: input.emailMeta.from } : {}),
-      },
-    });
-    return { comment, created: true };
-  });
+        [
+          newUlid(),
+          input.valuationId,
+          input.kind,
+          input.authorId,
+          input.body,
+          input.emailMeta ? JSON.stringify(input.emailMeta) : null,
+          input.pinned ?? false,
+        ],
+      );
+      const comment = rows[0]!;
+      await client.query('UPDATE valuations SET last_comment_at = now() WHERE id = $1', [input.valuationId]);
+      await recordEvent(client, {
+        valuationId: input.valuationId,
+        type:
+          input.kind === 'email' ? OPERATIONS_EVENT_TYPES.emailReceived : OPERATIONS_EVENT_TYPES.commentAdded,
+        actor,
+        payload: {
+          comment_id: comment.id,
+          kind: input.kind,
+          ...(input.emailMeta?.from ? { from: input.emailMeta.from } : {}),
+        },
+      });
+      return { comment, created: true };
+    }),
+  );
 }
 
 export async function updateComment(

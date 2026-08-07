@@ -181,4 +181,141 @@ describe.skipIf(!dbUp)('valuation read cache', () => {
     const v = await create('Exists After A Miss');
     expect((await findValuationById(ctx.pool, v.id))?.id).toBe(v.id);
   });
+
+  /**
+   * The writes above all invalidate, and all of them used to do it from *inside*
+   * the transaction — after the UPDATE but before the COMMIT. `TtlCache` marks
+   * an already-running load stale so its result is not published, but that only
+   * covers a load that had started before the drop. A read arriving in the
+   * window between the drop and the commit starts a fresh load, reads the
+   * pre-commit row on its own pooled connection, and caches it — and no
+   * invalidation follows, so the superseded row is then served for a full TTL.
+   *
+   * `patchValuation` records one or two events between its UPDATE and its
+   * commit, so the window is a real one, and every state transition on the
+   * platform goes through it.
+   */
+  describe('a read that lands mid-transaction', () => {
+    /**
+     * Runs `duringTransaction` once, at the last possible moment before a
+     * transaction that has written the `valuations` row commits.
+     *
+     * That instant is the whole point: it is *after* the writer has done
+     * whatever invalidating it is going to do and *before* the row it wrote is
+     * visible to anyone else, so a read taken here is guaranteed to load the
+     * superseded row. If the invalidation happened inside the transaction, this
+     * read is the one that republishes it for a full TTL; if it happens after
+     * the commit, this read is harmless because the drop is still to come.
+     */
+    function onWriteBeforeCommit(duringTransaction: () => Promise<unknown>): { restore: () => void } {
+      const originalConnect = ctx.pool.connect.bind(ctx.pool);
+      // Clients are pooled and handed out again, so every one we wrap has to be
+      // put back exactly as it was — otherwise the hook outlives this test.
+      const unwrap: Array<() => void> = [];
+      let fired = false;
+
+      (ctx.pool as any).connect = (...args: unknown[]) => {
+        // pg's connect is callback-or-promise; only the promise form is ours to
+        // wrap, and it is the form `withTransaction` uses.
+        if (args.length > 0) return (originalConnect as any)(...args);
+        return (originalConnect as any)().then((client: any) => {
+          const originalQuery = client.query.bind(client);
+          unwrap.push(() => void (client.query = originalQuery));
+          let wroteValuation = false;
+          client.query = async (...qargs: unknown[]) => {
+            const sql = typeof qargs[0] === 'string' ? qargs[0] : '';
+            if (/^\s*UPDATE valuations SET/i.test(sql)) wroteValuation = true;
+            if (wroteValuation && !fired && /^\s*COMMIT\s*$/i.test(sql)) {
+              fired = true;
+              await duringTransaction();
+            }
+            return originalQuery(...qargs);
+          };
+          return client;
+        });
+      };
+      return {
+        restore: () => {
+          (ctx.pool as any).connect = originalConnect;
+          for (const undo of unwrap) undo();
+        },
+      };
+    }
+
+    it('does not leave the pre-commit row cached after the commit', async () => {
+      const v = await create('Mid Transaction Co');
+      await findValuationById(ctx.pool, v.id); // warm, as a page load would
+
+      // Reads the row on another connection while the PATCH is still open, so
+      // it necessarily sees the old name and repopulates the cache with it.
+      let seenDuring: string | undefined;
+      const hook = onWriteBeforeCommit(async () => {
+        seenDuring = (await findValuationById(ctx.pool, v.id))?.company_name;
+      });
+      try {
+        const patched = await ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/valuations/${v.id}`,
+          headers: authHeader(client.token),
+          payload: { company_name: 'Committed Co' },
+        });
+        expect(patched.statusCode).toBe(200);
+      } finally {
+        hook.restore();
+      }
+
+      // The interleaving actually happened — otherwise the assertion below
+      // would pass for the trivial reason that nothing raced.
+      expect(seenDuring).toBe('Mid Transaction Co');
+      expect((await findValuationById(ctx.pool, v.id))?.company_name).toBe('Committed Co');
+    });
+
+    it('does not pin the old state for the reader the transition is about', async () => {
+      // The damaging shape of the same race: `state` is what `canReadReport`
+      // and the whole publication gate read, so a stale one is not cosmetic.
+      const v = await create('Racing Transition Co');
+      await findValuationById(ctx.pool, v.id);
+
+      const hook = onWriteBeforeCommit(() => findValuationById(ctx.pool, v.id));
+      try {
+        const moved = await ctx.app.inject({
+          method: 'PATCH',
+          url: `/api/v1/valuations/${v.id}`,
+          headers: authHeader(ops.token),
+          payload: { state: 'drafted' },
+        });
+        expect(moved.statusCode).toBe(200);
+      } finally {
+        hook.restore();
+      }
+
+      const seen = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${v.id}`,
+        headers: authHeader(client.token),
+      });
+      expect(seen.json().valuation.state).toBe('drafted');
+    });
+
+    it('holds for a comment, which bumps the row from its own transaction too', async () => {
+      const v = await create('Commented Co');
+      await findValuationById(ctx.pool, v.id);
+      const before = (await findValuationById(ctx.pool, v.id))?.last_comment_at ?? null;
+
+      const hook = onWriteBeforeCommit(() => findValuationById(ctx.pool, v.id));
+      try {
+        const posted = await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${v.id}/comments`,
+          headers: authHeader(ops.token),
+          payload: { kind: 'chat', body: 'Racing the cache' },
+        });
+        expect(posted.statusCode).toBe(201);
+      } finally {
+        hook.restore();
+      }
+
+      expect((await findValuationById(ctx.pool, v.id))?.last_comment_at).not.toEqual(before);
+    });
+  });
 });
