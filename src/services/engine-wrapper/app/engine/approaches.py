@@ -155,6 +155,7 @@ def opm_backsolve(
     preferred_shares: float | None = None,
     liquidation_preference: float | None = None,
     common_shares: float | None = None,
+    options_shares: float | None = None,
     t: float | None = None,
     r: float | None = None,
     sigma: float | None = None,
@@ -166,11 +167,40 @@ def opm_backsolve(
     against the full cap-table waterfall when share_classes is provided,
     else against the aggregate single-breakpoint model. Falls back to the
     post-money passthrough when the PPS inputs are absent (the M1 behavior).
+
+    ``options_shares`` is the outstanding option pool. It belongs here because
+    the single-breakpoint model this function inverts has to be *the same model*
+    ``compute._opm_allocate`` then runs forward — see the comment on
+    ``_single_breakpoint_base`` below.
     """
     # Lazy imports: newton/waterfall depend on this module's sibling `errors`.
     from .newton import implied_volatility, newton_raphson
 
     have_model = t is not None and r is not None and sigma is not None and sigma > 0
+
+    # The junior share base the aggregate model splits residual upside on.
+    #
+    # `compute._opm_allocate` gives common `upside x fd / (fd + preferred)`,
+    # where `fd` is common *plus the option pool* — options are folded into
+    # fully-diluted common by the single-breakpoint simplification. The
+    # backsolve is the inverse of exactly that allocation, so it has to use
+    # exactly that denominator, and it did not: it split the upside on bare
+    # common. Solve with one cap table, allocate with another, and the round
+    # does not reprice to its own PPS under the model that produced the
+    # opinion — which is the one property a backsolve exists to have.
+    #
+    # It is not a rounding difference. The omitted pool makes the preferred's
+    # slice of the upside too large, so the equity value that hits the target
+    # PPS comes out too low, and the understatement is roughly the size of the
+    # pool: on 8M common, a 2M pool, 4M preferred behind a $10M preference at
+    # 65% vol over four years, a $2.50 round backsolved to $18.0M where the
+    # allocation model says $19.6M, and the concluded FMV per common share came
+    # out 11.9% light — in the direction that under-prices employee options.
+    #
+    # `or 0.0` rather than a required argument: every other cap-table scalar on
+    # this path is optional, and a caller that does not model a pool is not
+    # wrong, it just has no pool.
+    fully_diluted_common = (common_shares or 0.0) + (options_shares or 0.0)
 
     def _bounds(total_claim: float) -> tuple[float, float]:
         hi = max(total_claim * 1000.0, 1e6)
@@ -227,14 +257,18 @@ def opm_backsolve(
             from .bs import bs_call
 
             target = float(last_round_pps)
-            pref_fraction = preferred_shares / (preferred_shares + common_shares)
+            pref_fraction = preferred_shares / (preferred_shares + fully_diluted_common)
 
             def preferred_per_share(equity: float) -> float:
                 upside = bs_call(equity, liquidation_preference, t, r, sigma)
                 return ((equity - upside) + pref_fraction * upside) / preferred_shares
 
-            lo, hi = _bounds(target * (preferred_shares + common_shares))
-            x0 = last_round_post_money if last_round_post_money and last_round_post_money > 0 else target * (preferred_shares + common_shares)
+            lo, hi = _bounds(target * (preferred_shares + fully_diluted_common))
+            x0 = (
+                last_round_post_money
+                if last_round_post_money and last_round_post_money > 0
+                else target * (preferred_shares + fully_diluted_common)
+            )
             equity, iterations = newton_raphson(
                 lambda e: preferred_per_share(e) - target, x0, tol=1e-7, min_x=lo, max_x=hi
             )
@@ -259,7 +293,9 @@ def opm_backsolve(
                     # Preferred value = (E − C) + f_p·C, so the implied common-
                     # side call value is C = (E − preferred_value) / (1 − f_p);
                     # invert Black-Scholes on that for the round's implied vol.
-                    pref_fraction = preferred_shares / (preferred_shares + common_shares)
+                    # Same junior base as the solve above, for the same reason:
+                    # this inverts the identical payoff split.
+                    pref_fraction = preferred_shares / (preferred_shares + fully_diluted_common)
                     # `1 − f_p` is a subtraction of two nearby doubles and it
                     # reaches exactly zero well before the *shares* do. Any cap
                     # table where the common count is more than ~2^53 times

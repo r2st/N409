@@ -420,6 +420,14 @@ def _weighted_equity(
                         inputs.get("liquidation_preference"), "liquidation_preference"
                     ),
                     common_shares=_num(inputs.get("shares_outstanding_common"), "shares_outstanding_common"),
+                    # The pool travels with the common count, because
+                    # `_opm_allocate` folds it into fully-diluted common and the
+                    # backsolve inverts that same split. Leaving it out here
+                    # solved the round against a cap table the allocation does
+                    # not use — see `opm_backsolve`'s `fully_diluted_common`.
+                    options_shares=_num(
+                        inputs.get("options_outstanding"), "options_outstanding", nonneg=True
+                    ),
                     t=t,
                     r=r,
                     sigma=vol_early,

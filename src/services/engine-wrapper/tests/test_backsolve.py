@@ -252,3 +252,154 @@ def test_allocation_still_conserves_value_after_the_split():
 def test_class_per_share_still_rejects_an_unknown_class():
     with pytest.raises(EngineInputError, match="not found in share_classes"):
         class_per_share(20_000_000.0, CLASSES, "Series Z", T, R, SIGMA)
+
+
+# ── The single-breakpoint backsolve and the allocation share one cap table ───
+#
+# `_opm_allocate` splits residual upside `fd / (fd + preferred)`, where `fd` is
+# common *plus the option pool*. The backsolve inverts that same split and used
+# to leave the pool out, so the equity value it solved was calibrated against a
+# cap table the very next step did not use: the round did not reprice to its own
+# PPS under the model that produced the opinion, and the concluded FMV came out
+# low by roughly the size of the pool.
+
+SB_COMMON = 8_000_000.0
+SB_OPTIONS = 2_000_000.0
+SB_PREFERRED = 4_000_000.0
+SB_LP = 10_000_000.0
+SB_T, SB_R, SB_SIGMA = 4.0, 0.04, 0.65
+
+
+def _allocation_model_pps(equity: float, junior_base: float) -> float:
+    """Preferred per share under `compute._opm_allocate`'s payoff split."""
+    upside = bs_call(equity, SB_LP, SB_T, SB_R, SB_SIGMA)
+    pref_fraction = SB_PREFERRED / (SB_PREFERRED + junior_base)
+    return ((equity - upside) + pref_fraction * upside) / SB_PREFERRED
+
+
+def test_single_breakpoint_backsolve_uses_fully_diluted_common():
+    """The solved equity reprices the round under the *allocation's* cap table."""
+    target = 2.50
+    out = opm_backsolve(
+        last_round_pps=target,
+        preferred_shares=SB_PREFERRED,
+        liquidation_preference=SB_LP,
+        common_shares=SB_COMMON,
+        options_shares=SB_OPTIONS,
+        t=SB_T,
+        r=SB_R,
+        sigma=SB_SIGMA,
+    )
+    assert out["method"] == "backsolve_single"
+    fully_diluted = SB_COMMON + SB_OPTIONS
+    assert _allocation_model_pps(out["equity_value"], fully_diluted) == pytest.approx(target, rel=1e-9)
+    # And it is *not* the answer the bare-common model gives — the two differ by
+    # far more than solver tolerance, which is why the mismatch mattered.
+    assert _allocation_model_pps(out["equity_value"], SB_COMMON) != pytest.approx(target, rel=1e-3)
+
+
+def test_single_breakpoint_backsolve_without_a_pool_is_unchanged():
+    """No option pool, no difference — the pool is the whole of the change."""
+    target = 2.50
+    with_none = opm_backsolve(
+        last_round_pps=target,
+        preferred_shares=SB_PREFERRED,
+        liquidation_preference=SB_LP,
+        common_shares=SB_COMMON,
+        t=SB_T,
+        r=SB_R,
+        sigma=SB_SIGMA,
+    )
+    with_zero = opm_backsolve(
+        last_round_pps=target,
+        preferred_shares=SB_PREFERRED,
+        liquidation_preference=SB_LP,
+        common_shares=SB_COMMON,
+        options_shares=0.0,
+        t=SB_T,
+        r=SB_R,
+        sigma=SB_SIGMA,
+    )
+    assert with_none["equity_value"] == pytest.approx(with_zero["equity_value"], rel=1e-12)
+    assert _allocation_model_pps(with_none["equity_value"], SB_COMMON) == pytest.approx(target, rel=1e-9)
+
+
+def test_compute_single_breakpoint_round_trips_the_last_round_price():
+    """End to end: the priced round survives the backsolve → allocation chain.
+
+    This is the property the whole approach is for, and nothing asserted it on
+    the aggregate path. With the pool omitted from the solve it failed by 5.7%
+    on this cap table.
+    """
+    target = 2.50
+    params = {
+        "weight_asset": 0.0,
+        "weight_opm": 1.0,
+        "weight_income": 0.0,
+        "weight_market": 0.0,
+        "dloc": 0.0,
+        "dlom": 0.0,
+    }
+    res = compute(
+        params,
+        {
+            "shares_outstanding_common": SB_COMMON,
+            "options_outstanding": SB_OPTIONS,
+            "shares_outstanding_preferred": SB_PREFERRED,
+            "liquidation_preference": SB_LP,
+            "last_round_price_per_share": target,
+            "last_round_post_money": 30_000_000,
+            "volatility": SB_SIGMA,
+            "risk_free_rate": SB_R,
+            "time_to_exit_years": SB_T,
+        },
+    )["results"]
+
+    assert res["approaches"]["opm_backsolve"]["method"] == "backsolve_single"
+    assert res["allocation"]["method"] == "opm_single_breakpoint"
+    equity = res["equity_value"]
+
+    # The allocation the engine actually ran must value the round's preferred at
+    # the round's own price.
+    fully_diluted = res["fully_diluted_common"]
+    assert fully_diluted == SB_COMMON + SB_OPTIONS
+    assert _allocation_model_pps(equity, fully_diluted) == pytest.approx(target, rel=1e-6)
+
+    # Common's share of that same allocation is what the FMV is built from, so
+    # the two halves have to agree to the cent.
+    upside = bs_call(equity, SB_LP, SB_T, SB_R, SB_SIGMA)
+    common_equity = upside * fully_diluted / (fully_diluted + SB_PREFERRED)
+    assert res["fmv_per_share"] == pytest.approx(common_equity / fully_diluted, abs=5e-5)
+
+
+def test_compute_single_breakpoint_no_longer_understates_the_pool_case():
+    """A regression pin on the magnitude, not just the property.
+
+    The old behaviour solved $18,014,475 and concluded $0.8587 per common share
+    on these inputs. Both figures are wrong by the size of the option pool.
+    """
+    params = {
+        "weight_asset": 0.0,
+        "weight_opm": 1.0,
+        "weight_income": 0.0,
+        "weight_market": 0.0,
+        "dloc": 0.0,
+        "dlom": 0.0,
+    }
+    res = compute(
+        params,
+        {
+            "shares_outstanding_common": SB_COMMON,
+            "options_outstanding": SB_OPTIONS,
+            "shares_outstanding_preferred": SB_PREFERRED,
+            "liquidation_preference": SB_LP,
+            "last_round_price_per_share": 2.50,
+            "last_round_post_money": 30_000_000,
+            "volatility": SB_SIGMA,
+            "risk_free_rate": SB_R,
+            "time_to_exit_years": SB_T,
+        },
+    )["results"]
+
+    assert res["equity_value"] == pytest.approx(19_604_375.79, rel=1e-6)
+    assert res["fmv_per_share"] == pytest.approx(0.9604, abs=5e-5)
