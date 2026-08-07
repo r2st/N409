@@ -26,6 +26,7 @@ export interface IntakeFieldRules {
   integer?: boolean;
   notFuture?: boolean;
   minDate?: string;
+  maxLength?: number;
 }
 
 export type IntakeFieldType = 'text' | 'textarea' | 'number' | 'date' | 'boolean' | 'select';
@@ -136,8 +137,31 @@ function fieldIssues(field: IntakeField, value: unknown, today: string): IntakeI
     return issues;
   }
 
-  if (field.type === 'select' && field.options && typeof value === 'string' && value.trim() !== '') {
-    if (!field.options.includes(value)) at('error', `${field.label} is not one of the offered choices.`);
+  if (field.type === 'select') {
+    if (typeof value !== 'string') {
+      at('error', `${field.label} must be one of the offered choices.`);
+    } else if (field.options && value.trim() !== '' && !field.options.includes(value)) {
+      at('error', `${field.label} is not one of the offered choices.`);
+    }
+    return issues;
+  }
+
+  if (field.type === 'boolean' && typeof value !== 'boolean') {
+    at('error', `${field.label} must be answered yes or no.`);
+    return issues;
+  }
+
+  if (field.type === 'text' || field.type === 'textarea') {
+    if (typeof value !== 'string') {
+      at('error', `${field.label} must be text.`);
+      return issues;
+    }
+    // Code points, not UTF-16 units — the same count the server applies, so the
+    // browser never says "fine" about a value the submit will refuse.
+    const length = [...value].length;
+    if (rules.maxLength !== undefined && length > rules.maxLength) {
+      at('error', `${field.label} must be ${rules.maxLength} characters or fewer (currently ${length}).`);
+    }
   }
   return issues;
 }

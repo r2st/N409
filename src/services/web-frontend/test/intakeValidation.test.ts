@@ -64,6 +64,26 @@ const SECTIONS: IntakeSection[] = [
       { key: 'cash_on_hand', label: 'Cash on hand', type: 'number', required: false, rules: { min: 0 } },
     ],
   },
+  {
+    key: 'legal',
+    title: 'Legal & governance',
+    description: '',
+    fields: [
+      {
+        key: 'business_description',
+        label: 'Business description',
+        type: 'textarea',
+        required: true,
+        rules: { maxLength: 20 },
+      },
+      {
+        key: 'has_articles',
+        label: 'Articles of incorporation available?',
+        type: 'boolean',
+        required: true,
+      },
+    ],
+  },
 ];
 
 const CROSS_RULES: IntakeCrossRule[] = [
@@ -157,6 +177,53 @@ describe('validateIntake', () => {
   it('reports issues in schema order so the list reads like the form', () => {
     const issues = check({ employee_count: -1, last_fy_revenue: -1 });
     expect(issues.map((i) => i.field)).toEqual(['employee_count', 'last_fy_revenue']);
+  });
+
+  /**
+   * These four mirror `domain/intake.ts` exactly. The server's option check
+   * used to be skipped rather than failed when the answer was not a string, and
+   * text answers had no shape or length rule at all — so both evaluators are
+   * pinned to the same messages here, because the whole point of shipping the
+   * rules on the wire is that the browser says what the submit will say.
+   */
+  it('fails a non-string choice rather than skipping the check', () => {
+    expect(check({ revenue_status: 7 })).toEqual([
+      {
+        field: 'revenue_status',
+        severity: 'error',
+        message: 'Revenue stage must be one of the offered choices.',
+      },
+    ]);
+  });
+
+  it('refuses a non-string answer to a text field', () => {
+    expect(check({ business_description: { a: 1 } })).toEqual([
+      { field: 'business_description', severity: 'error', message: 'Business description must be text.' },
+    ]);
+  });
+
+  it('refuses a non-boolean answer to a yes/no field', () => {
+    expect(check({ has_articles: 'yes' })).toEqual([
+      {
+        field: 'has_articles',
+        severity: 'error',
+        message: 'Articles of incorporation available? must be answered yes or no.',
+      },
+    ]);
+    expect(check({ has_articles: false })).toEqual([]);
+  });
+
+  it('enforces the length ceiling the schema carries, in code points', () => {
+    expect(check({ business_description: 'x'.repeat(20) })).toEqual([]);
+    expect(check({ business_description: 'x'.repeat(21) })).toEqual([
+      {
+        field: 'business_description',
+        severity: 'error',
+        message: 'Business description must be 20 characters or fewer (currently 21).',
+      },
+    ]);
+    // 20 astral characters are 40 UTF-16 units; the client typed 20.
+    expect(check({ business_description: '𝄞'.repeat(20) })).toEqual([]);
   });
 
   it('evaluates no rules when the server sent none', () => {

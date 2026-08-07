@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
-import { INTAKE_EVENT_TYPES, INTAKE_FIELD_KEYS } from '../domain/intake.js';
+import { INTAKE_EVENT_TYPES, narrowIntakeAnswers } from '../domain/intake.js';
 
 export interface QuestionnaireRow {
   id: string;
@@ -24,14 +24,12 @@ export async function findQuestionnaire(
   return rows[0] ?? null;
 }
 
-/** Filter incoming answers to known field keys before persisting. */
-function sanitizeAnswers(answers: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(answers)) {
-    if (INTAKE_FIELD_KEYS.has(key)) out[key] = value;
-  }
-  return out;
-}
+/**
+ * Filter incoming answers to known field keys — and to the value shapes those
+ * fields can hold — before persisting. Shared with the anonymous portal so the
+ * two questionnaires cannot disagree about what a stored answer may be.
+ */
+const sanitizeAnswers = narrowIntakeAnswers;
 
 /**
  * Merge-save the questionnaire answers (create on first save). Answers are

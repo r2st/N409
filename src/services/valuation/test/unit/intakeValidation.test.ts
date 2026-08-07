@@ -5,6 +5,9 @@ import {
   INTAKE_CROSS_RULES,
   INTAKE_SECTIONS,
   isValidIsoDate,
+  MAX_TEXT_LENGTH,
+  MAX_TEXTAREA_LENGTH,
+  narrowIntakeAnswers,
   validateIntake,
   type IntakeIssue,
 } from '../../src/domain/intake.js';
@@ -154,6 +157,119 @@ describe('validateIntake — select fields', () => {
 
   it('accepts an offered option', () => {
     expect(validate({ revenue_status: 'post_revenue' })).toEqual([]);
+  });
+
+  /**
+   * The option check used to require `typeof value === 'string'` as part of its
+   * *condition*, so a non-string answer skipped it rather than failing it. That
+   * is not a theoretical hole: `isAnswered` counts any non-blank value, so a
+   * required select answered with an object read as complete AND as valid, and
+   * the submit gate — which only asks those two questions — let it through.
+   */
+  it('rejects a non-string answer instead of skipping the check', () => {
+    for (const value of [5, true, { $ne: null }, ['post_revenue']]) {
+      expect(messagesFor({ revenue_status: value }, 'revenue_status'), JSON.stringify(value)).toEqual([
+        'Revenue stage must be one of the offered choices.',
+      ]);
+    }
+  });
+});
+
+describe('validateIntake — text and boolean shapes', () => {
+  it('refuses a non-string answer to a text field', () => {
+    expect(messagesFor({ legal_name: { toString: 'Acme' } }, 'legal_name')).toEqual([
+      'Legal company name must be text.',
+    ]);
+    expect(messagesFor({ business_description: [1, 2] }, 'business_description')).toEqual([
+      'Business description must be text.',
+    ]);
+  });
+
+  it('refuses a non-boolean answer to a yes/no field', () => {
+    expect(messagesFor({ has_articles: 'yes' }, 'has_articles')).toEqual([
+      'Articles of incorporation available? must be answered yes or no.',
+    ]);
+    expect(messagesFor({ pending_litigation: 1 }, 'pending_litigation')).toEqual([
+      'Any pending litigation? must be answered yes or no.',
+    ]);
+  });
+
+  it('accepts either boolean', () => {
+    expect(validate({ has_articles: true, pending_litigation: false })).toEqual([]);
+  });
+
+  it('caps free text at the length the schema advertises', () => {
+    expect(messagesFor({ legal_name: 'a'.repeat(301) }, 'legal_name')).toEqual([
+      'Legal company name must be 300 characters or fewer (currently 301).',
+    ]);
+    expect(validate({ legal_name: 'a'.repeat(300) })).toEqual([]);
+  });
+
+  it('gives the textarea more room than a one-line field', () => {
+    expect(validate({ business_description: 'x'.repeat(5000) })).toEqual([]);
+    expect(messagesFor({ business_description: 'x'.repeat(5001) }, 'business_description')).toHaveLength(1);
+  });
+
+  it('counts length in code points, not UTF-16 units', () => {
+    // '𝄞' is one character to the person typing it and two to `String.length`.
+    // Counting units would refuse a 151-note name against a 300 limit.
+    expect(validate({ legal_name: '𝄞'.repeat(300) })).toEqual([]);
+    expect(messagesFor({ legal_name: '𝄞'.repeat(301) }, 'legal_name')).toEqual([
+      'Legal company name must be 300 characters or fewer (currently 301).',
+    ]);
+  });
+
+  it('gives every free-text field a length ceiling', () => {
+    const textFields = INTAKE_SECTIONS.flatMap((s) => s.fields).filter(
+      (f) => f.type === 'text' || f.type === 'textarea',
+    );
+    expect(textFields.length).toBeGreaterThan(0);
+    for (const f of textFields) {
+      expect(f.rules?.maxLength, f.key).toBe(f.type === 'textarea' ? MAX_TEXTAREA_LENGTH : MAX_TEXT_LENGTH);
+    }
+  });
+});
+
+describe('narrowIntakeAnswers', () => {
+  /**
+   * The portal write endpoint is anonymous and its body is `record(unknown)`,
+   * so this is the only thing between a hand-written request and a jsonb
+   * column. It ran on keys alone: `{"legal_name": {...}}` was stored verbatim
+   * and the firm console rendered the company's legal name as "[object
+   * Object]".
+   */
+  it('drops keys the questionnaire does not define', () => {
+    expect(narrowIntakeAnswers({ legal_name: 'Acme', nope: 'x', __proto__: 'y' })).toEqual({
+      legal_name: 'Acme',
+    });
+  });
+
+  it('drops objects and arrays, whatever their key', () => {
+    expect(
+      narrowIntakeAnswers({
+        legal_name: { $ne: null },
+        business_description: ['a', 'b'],
+        revenue_status: {},
+        industry: 'Robotics',
+      }),
+    ).toEqual({ industry: 'Robotics' });
+  });
+
+  it('keeps every scalar the wizard can produce, including the falsy ones', () => {
+    expect(
+      narrowIntakeAnswers({
+        legal_name: '',
+        employee_count: 0,
+        has_articles: false,
+        last_round_date: null,
+      }),
+    ).toEqual({ legal_name: '', employee_count: 0, has_articles: false, last_round_date: null });
+  });
+
+  it('leaves a dropped value absent rather than nulling the stored answer', () => {
+    // Saves merge in SQL (`answers || $2`), so writing `null` here would erase
+    // an answer the client gave earlier. Omission leaves it standing.
+    expect(narrowIntakeAnswers({ legal_name: { bad: true } })).toEqual({});
   });
 });
 

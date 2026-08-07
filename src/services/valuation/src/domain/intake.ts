@@ -36,6 +36,8 @@ export interface IntakeFieldRules {
   notFuture?: boolean;
   /** `date` answers may not be before this YYYY-MM-DD. */
   minDate?: string;
+  /** Character ceiling for `text` / `textarea` answers. */
+  maxLength?: number;
 }
 
 export interface IntakeField {
@@ -62,18 +64,39 @@ export interface IntakeSection {
  */
 export const EARLIEST_PLAUSIBLE_DATE = '1900-01-01';
 
+/**
+ * Ceilings for the two free-text shapes.
+ *
+ * Not a style preference — the portal write endpoint is anonymous, so without a
+ * bound the only limit on what lands in the jsonb column is Fastify's 1 MB body
+ * cap, per save, forever. A company name is a company name; the description is
+ * "a few sentences", as its own hint says. Both are generous enough that no
+ * client who is answering the question honestly will meet them, and the number
+ * travels to the browser inside the schema so the textarea can stop at the same
+ * place the server refuses.
+ */
+export const MAX_TEXT_LENGTH = 300;
+export const MAX_TEXTAREA_LENGTH = 5_000;
+
 export const INTAKE_SECTIONS: readonly IntakeSection[] = [
   {
     key: 'company',
     title: 'Company information',
     description: 'Tell us about the company being valued.',
     fields: [
-      { key: 'legal_name', label: 'Legal company name', type: 'text', required: true },
+      {
+        key: 'legal_name',
+        label: 'Legal company name',
+        type: 'text',
+        required: true,
+        rules: { maxLength: MAX_TEXT_LENGTH },
+      },
       {
         key: 'state_of_incorporation',
         label: 'State / country of incorporation',
         type: 'text',
         required: true,
+        rules: { maxLength: MAX_TEXT_LENGTH },
       },
       {
         key: 'incorporation_date',
@@ -82,7 +105,13 @@ export const INTAKE_SECTIONS: readonly IntakeSection[] = [
         required: true,
         rules: { notFuture: true, minDate: EARLIEST_PLAUSIBLE_DATE },
       },
-      { key: 'industry', label: 'Industry / sector', type: 'text', required: true },
+      {
+        key: 'industry',
+        label: 'Industry / sector',
+        type: 'text',
+        required: true,
+        rules: { maxLength: MAX_TEXT_LENGTH },
+      },
       {
         key: 'employee_count',
         label: 'Number of employees',
@@ -96,6 +125,7 @@ export const INTAKE_SECTIONS: readonly IntakeSection[] = [
         type: 'textarea',
         required: true,
         hint: 'A few sentences on what the company does.',
+        rules: { maxLength: MAX_TEXTAREA_LENGTH },
       },
     ],
   },
@@ -155,7 +185,13 @@ export const INTAKE_SECTIONS: readonly IntakeSection[] = [
         required: false,
         rules: { min: 0, integer: true },
       },
-      { key: 'last_round_name', label: 'Most recent financing round', type: 'text', required: false },
+      {
+        key: 'last_round_name',
+        label: 'Most recent financing round',
+        type: 'text',
+        required: false,
+        rules: { maxLength: MAX_TEXT_LENGTH },
+      },
       {
         key: 'last_round_price',
         label: 'Most recent price per share',
@@ -185,6 +221,7 @@ export const INTAKE_SECTIONS: readonly IntakeSection[] = [
         label: 'Anticipated liquidity event / timeline',
         type: 'text',
         required: false,
+        rules: { maxLength: MAX_TEXT_LENGTH },
       },
     ],
   },
@@ -247,6 +284,47 @@ export function computeCompletion(answers: Record<string, unknown>): IntakeCompl
 export const INTAKE_FIELD_KEYS: ReadonlySet<string> = new Set(
   INTAKE_SECTIONS.flatMap((s) => s.fields.map((f) => f.key)),
 );
+
+/** Every field by key — what the narrowing and validation below look a key up in. */
+export const INTAKE_FIELDS_BY_KEY: ReadonlyMap<string, IntakeField> = new Map(
+  INTAKE_SECTIONS.flatMap((s) => s.fields.map((f) => [f.key, f] as const)),
+);
+
+/**
+ * Answers narrowed to what the questionnaire can actually hold.
+ *
+ * Both write paths — the anonymous portal and the signed-in wizard — filtered
+ * to the known *key* set and then wrote whatever value came with it into a jsonb
+ * column. A key set is only half the guard: `{"legal_name": {"$ne": null}}` has
+ * a legal key, so it was stored, and the firm console then rendered the
+ * company's legal name as "[object Object]". Worse for the required `select`,
+ * where `isAnswered({})` is true and the option check below only ran on strings
+ * — an object satisfied "every required field is answered" *and* skipped the
+ * choice check, so a questionnaire could be submitted with a revenue stage that
+ * is not one of the two offered.
+ *
+ * An answer is a scalar. Nothing the wizard can produce is an object or an
+ * array, so anything that is drops here rather than being reported: this runs on
+ * every keystroke's autosave, and a message about a value the client cannot have
+ * typed is noise. What a *scalar of the wrong shape* does — a number where the
+ * form asks for a choice — is `validateIntake`'s question, and it answers it
+ * with an error the client can see.
+ */
+export function narrowIntakeAnswers(answers: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(answers)) {
+    if (!INTAKE_FIELD_KEYS.has(key)) continue;
+    if (value === null || value === undefined) {
+      // Explicit null is how the wizard clears an answer; undefined cannot
+      // survive JSON, but a direct caller of this function can still send it.
+      out[key] = null;
+      continue;
+    }
+    const t = typeof value;
+    if (t === 'string' || t === 'number' || t === 'boolean') out[key] = value;
+  }
+  return out;
+}
 
 // ── Answer validation ─────────────────────────────────────────────────────────
 
@@ -438,8 +516,36 @@ function fieldIssues(field: IntakeField, value: unknown, today: string): IntakeI
     return issues;
   }
 
-  if (field.type === 'select' && field.options && typeof value === 'string' && value.trim() !== '') {
-    if (!field.options.includes(value)) at('error', `${field.label} is not one of the offered choices.`);
+  if (field.type === 'select') {
+    // `typeof value === 'string'` used to be part of the *condition*, so a
+    // non-string answer skipped the check entirely rather than failing it — and
+    // `isAnswered` counts any non-blank value, so a required select answered
+    // with `5` read as complete and valid.
+    if (typeof value !== 'string') {
+      at('error', `${field.label} must be one of the offered choices.`);
+    } else if (field.options && value.trim() !== '' && !field.options.includes(value)) {
+      at('error', `${field.label} is not one of the offered choices.`);
+    }
+    return issues;
+  }
+
+  if (field.type === 'boolean' && typeof value !== 'boolean') {
+    at('error', `${field.label} must be answered yes or no.`);
+    return issues;
+  }
+
+  if (field.type === 'text' || field.type === 'textarea') {
+    if (typeof value !== 'string') {
+      at('error', `${field.label} must be text.`);
+      return issues;
+    }
+    // Length is measured in code points, not UTF-16 units, so a name written in
+    // emoji or in a non-BMP script is counted the way the person typing it
+    // counts it rather than at half the allowance.
+    const length = [...value].length;
+    if (rules.maxLength !== undefined && length > rules.maxLength) {
+      at('error', `${field.label} must be ${rules.maxLength} characters or fewer (currently ${length}).`);
+    }
   }
   return issues;
 }
