@@ -24,9 +24,49 @@ export interface QaChecksResult {
 export interface QaCalculation {
   /** Stored engine payload: { params, inputs }. */
   inputs: Record<string, unknown>;
+  /**
+   * The engine's own result document. Optional only so a caller checking a run
+   * that produced none still type-checks; when it is there it is authoritative
+   * for the discounts — see {@link appliedDiscount}.
+   */
+  results?: Record<string, unknown> | null;
   equity_value: string | number | null;
   fmv_per_share: string | number | null;
   created_at: Date | string;
+}
+
+/**
+ * The discount the engine actually applied, not the one the analyst typed.
+ *
+ * `params.dlom` is an *input*, and for two of the four DLOM methods the engine
+ * ignores it outright: `compute._resolve_discounts` derives the discount from
+ * volatility and time to exit under `chaffee` / `finnerty` and reports what it
+ * used in `results.discounts.dlom`. Reading the param therefore graded the
+ * wrong number on the one check that is a publish gate:
+ *
+ *   - with `dlom` left null (the normal shape for a model DLOM) the check did
+ *     not run at all, so a Chaffee discount of any size published unexamined —
+ *     and a model DLOM clears the 35% benchmark easily: 65% volatility over a
+ *     four-year horizon puts Chaffee near 45%;
+ *   - with a stale `dlom` still sitting on the row from before the method was
+ *     switched, it graded that instead — the gate passing on a figure the
+ *     deliverable does not contain, while the report's own summary page prints
+ *     `results.discounts.dlom` beside it.
+ *
+ * The engine's pre-flight has the same hole by design (`validate._check_discounts`
+ * sets `dlom = None` for the model methods, because at validation time there is
+ * nothing to check yet). Post-run there is, and this is the only place that
+ * looks at a completed run — so this is where the applied figure gets read.
+ */
+export function appliedDiscount(
+  calculation: QaCalculation,
+  key: 'dlom' | 'dloc',
+): { value: number; fromResults: boolean } | null {
+  const discounts = obj(obj(calculation.results ?? {}).discounts);
+  const applied = num(discounts[key]);
+  if (applied !== null) return { value: applied, fromResults: true };
+  const param = num(obj(obj(calculation.inputs).params)[key]);
+  return param === null ? null : { value: param, fromResults: false };
 }
 
 const SEVERITY: Record<QaStatus, number> = { pass: 0, warn: 1, fail: 2 };
@@ -108,22 +148,32 @@ export function runQaChecks(args: {
   }
 
   // ── Discounts (benchmarks from IMPROVEMENTS_RESEARCH §4.3) ──────────────
-  const dlom = num(engineParams.dlom);
-  if (dlom !== null) {
+  //
+  // Read off the run, not off the params — see `appliedDiscount`. The detail
+  // names the model when one produced the figure, so a reviewer reading a
+  // warning can tell "the analyst chose 45%" from "Chaffee produced 45% at the
+  // volatility and horizon this run used", which are different conversations.
+  const dlomMethod = engineParams.dlom_method;
+  const modelDlom = dlomMethod === 'chaffee' || dlomMethod === 'finnerty';
+  const dlomSource = appliedDiscount(args.calculation, 'dlom');
+  if (dlomSource !== null) {
+    const dlom = dlomSource.value;
+    const via = dlomSource.fromResults && modelDlom ? ` (${String(dlomMethod)} model)` : '';
     const status: QaStatus = dlom < 0 || dlom > 0.6 ? 'fail' : dlom > 0.35 ? 'warn' : 'pass';
     add(
       'dlom_range',
       'DLOM within market norms',
       status,
       status === 'pass'
-        ? `DLOM ${pct(dlom)} is within the typical 0–35% band`
+        ? `DLOM ${pct(dlom)}${via} is within the typical 0–35% band`
         : status === 'warn'
-          ? `DLOM ${pct(dlom)} exceeds the 35% benchmark auditors scrutinize`
-          : `DLOM ${pct(dlom)} is outside any defensible range`,
+          ? `DLOM ${pct(dlom)}${via} exceeds the 35% benchmark auditors scrutinize`
+          : `DLOM ${pct(dlom)}${via} is outside any defensible range`,
     );
   }
-  const dloc = num(engineParams.dloc);
-  if (dloc !== null) {
+  const dlocSource = appliedDiscount(args.calculation, 'dloc');
+  if (dlocSource !== null) {
+    const dloc = dlocSource.value;
     const status: QaStatus = dloc < 0 || dloc > 0.5 ? 'fail' : dloc > 0.4 ? 'warn' : 'pass';
     add(
       'dloc_range',

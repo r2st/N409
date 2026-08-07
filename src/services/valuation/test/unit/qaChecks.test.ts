@@ -4,12 +4,14 @@ import { runQaChecks, worstStatus, type QaCalculation } from '../../src/domain/q
 function calc(overrides: {
   params?: Record<string, unknown>;
   inputs?: Record<string, unknown>;
+  results?: Record<string, unknown> | null;
   equity?: number | string | null;
   fmv?: number | string | null;
   createdAt?: string;
 }): QaCalculation {
   return {
     inputs: { params: overrides.params ?? {}, inputs: overrides.inputs ?? {} },
+    ...(overrides.results !== undefined ? { results: overrides.results } : {}),
     equity_value: overrides.equity ?? '20000000',
     fmv_per_share: overrides.fmv ?? '2',
     created_at: overrides.createdAt ?? '2026-07-01T00:00:00Z',
@@ -88,6 +90,74 @@ describe('deterministic QA checks', () => {
     expect(byKey(runQaChecks({ calculation: calc({ params: { dlom: 0.7 } }) }), 'dlom_range')?.status).toBe(
       'fail',
     );
+  });
+
+  /**
+   * The gate has to grade the discount the engine applied, not the one the
+   * analyst typed — the two are different numbers under a model DLOM, and this
+   * check is what stands between a run and `published`.
+   */
+  describe('grades the discount the run applied, not the param', () => {
+    const modelRun = (dlom: number) => ({
+      params: { dlom_method: 'chaffee', dlom: null },
+      results: { discounts: { dloc: 0, dlom, dlom_method: 'chaffee' } },
+    });
+
+    it('grades a Chaffee DLOM that no param records', () => {
+      // The normal shape for a model DLOM: params.dlom is null because the
+      // engine derives it. This used to skip the check entirely.
+      const result = runQaChecks({ calculation: calc(modelRun(0.45)) });
+      const check = byKey(result, 'dlom_range');
+      expect(check?.status).toBe('warn');
+      expect(check?.detail).toContain('45.0%');
+      expect(check?.detail).toContain('chaffee model');
+      expect(result.status).toBe('warn');
+    });
+
+    it('fails a model DLOM outside any defensible range', () => {
+      expect(byKey(runQaChecks({ calculation: calc(modelRun(0.72)) }), 'dlom_range')?.status).toBe('fail');
+    });
+
+    it('passes a model DLOM inside the band', () => {
+      expect(byKey(runQaChecks({ calculation: calc(modelRun(0.28)) }), 'dlom_range')?.status).toBe('pass');
+    });
+
+    it('prefers the applied DLOM over a stale param left on the row', () => {
+      // The analyst set 20% by hand, then switched to Finnerty; the param is
+      // now decorative and the run applied 52%. Grading the param passed the
+      // gate on a figure the deliverable does not contain.
+      const result = runQaChecks({
+        calculation: calc({
+          params: { dlom: 0.2, dlom_method: 'finnerty' },
+          results: { discounts: { dloc: 0, dlom: 0.52, dlom_method: 'finnerty' } },
+        }),
+      });
+      const check = byKey(result, 'dlom_range');
+      expect(check?.status).toBe('warn');
+      expect(check?.detail).toContain('52.0%');
+      expect(check?.detail).not.toContain('20.0%');
+    });
+
+    it('grades the applied DLOC the same way', () => {
+      const result = runQaChecks({
+        calculation: calc({ params: { dloc: 0.05 }, results: { discounts: { dloc: 0.45, dlom: 0.2 } } }),
+      });
+      expect(byKey(result, 'dloc_range')?.status).toBe('warn');
+      expect(byKey(result, 'dloc_range')?.detail).toContain('45.0%');
+    });
+
+    it('falls back to the param when the run reports no discounts', () => {
+      // Calculations stored before the engine emitted `discounts`, and the
+      // qualitative/explicit methods where the param *is* what was applied.
+      const result = runQaChecks({ calculation: calc({ params: { dlom: 0.7 }, results: {} }) });
+      expect(byKey(result, 'dlom_range')?.status).toBe('fail');
+      expect(byKey(result, 'dlom_range')?.detail).not.toContain('model');
+    });
+
+    it('leaves the check off entirely when neither side reports a discount', () => {
+      expect(byKey(runQaChecks({ calculation: calc({ results: {} }) }), 'dlom_range')).toBeUndefined();
+      expect(byKey(runQaChecks({ calculation: calc({ results: {} }) }), 'dloc_range')).toBeUndefined();
+    });
   });
 
   it('warns on volatility outliers and fails non-positive volatility', () => {
