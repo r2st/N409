@@ -1,97 +1,106 @@
-fed0db492511c94031577369886f1b94a3f7a716
+2bd920a12924a2a78d59c56873fcd281c833482b
 # N409 deployed revision
-# commit:    fed0db492511c94031577369886f1b94a3f7a716
-# subject:   feat(engine): specialty report-type engines — QSBS, PPA/IP,
-#            impairment, ESOP, SMB, EMI/CSOP
-# previous:  570aafc (fix(report): the deliverable carried no schedule of
-#            anything the engine computed) — BUILD_SHA read 570aafc before this
-#            deploy, and this file agreed with it for once: 11e7ce2 recorded
-#            that deploy and nothing shipped between.
-# includes:  1 feature commit. The platform lists fifteen valuation kinds and
-#            could compute five of them; this closes the calculation half of
-#            the gap for the specialty kinds. Six new pure engine modules in
-#            engine-wrapper behind seven /engine/v1 endpoints, and a dedicated
-#            report skeleton per specialty kind.
+# commit:    2bd920a12924a2a78d59c56873fcd281c833482b
+# subject:   feat(valuation): specialty orchestration — per-kind intake,
+#            pipeline routes, exhibits, partner webhooks, selector
+# previous:  fed0db4 (specialty report-type engines) — b16c662 recorded that
+#            deploy and nothing shipped between.
+# includes:  1 feature commit. fed0db4 built the engines; this connects them.
+#            The "compute-only" gap that deploy recorded is closed end to end:
+#            intake collects the kind's facts, a route runs its engine, the
+#            result persists as a calculation, and the deliverable renders a
+#            schedule of it.
 #
-#            qsbs.py — IRC §1202 eligibility for the attestation letter.
-#              Per-test breakdown rather than a single verdict (the letter
-#              names every failed requirement), exclusion % fixed by the
-#              acquisition date, per-issuer cap as max($10M less prior
-#              exclusions, 10x basis). The holding-period test compares the
-#              calendar anniversary, not days/365.25 — a span holding two leap
-#              days makes exactly-five-years read as "more than five", and the
-#              statute says more than.
+#            intakeKinds.ts — a questionnaire per report type (14 kinds; debt
+#              stays on the instrument workflow). Every form opens with the
+#              shared company section; the kind-specific sections use the
+#              ENGINE'S kwarg names as field keys so a submitted questionnaire
+#              assembles into an engine payload without a translation table.
+#              GET /intake/schema?kind=…; the valuation-scoped questionnaire
+#              routes judge completion, validation and answer-narrowing
+#              against the valuation's kind. One collision found the rule:
+#              EMI's FTE headcount is fte_employee_count because the company
+#              section already owns employee_count and they are genuinely
+#              different figures.
 #
-#            intangibles.py — one module for PPA and IP because they are the
-#              same four methods differently orchestrated: relief-from-royalty
-#              (optional Gordon terminal), MEEM (attrition survival from year
-#              1, aggregate contributory charge), with-and-without, cost less
-#              multiplicatively-layered obsolescence. Income methods gross up
-#              by the §197 TAB fixed point 1/(1 − t·A) at the same full-year
-#              convention as the flows they scale. purchase_price_allocation
-#              values each listed intangible and takes goodwill as the
-#              residual; a negative residual reports as a bargain-purchase
-#              gain (805-30-25-2), never negative goodwill.
+#            specialty.ts + routes/specialty.ts — POST /valuations/:id/
+#              specialty assembles answers → engine request for qsbs/ppa/ip/
+#              goodwill/esop/fmv/emi/csop, merges the analyst's run inputs
+#              over the assembly, and stores the result as a calculation row
+#              ({kind, specialty} in results, headline figures in the typed
+#              columns where the kind concludes one: ESOP fmv_per_share,
+#              SMB equity, EMI/CSOP grant at AMV). Deliberately lenient on
+#              values — the engine 422s with field-named messages and
+#              re-stating its rules is how two rule sets drift — but strict on
+#              shape: which impairment test, which IP method, whether a PPA
+#              has an intangible schedule are refused here with an
+#              actionable message.
 #
-#            impairment.py — the three standards kept distinct because their
-#              rules differ where it costs money: 350-20 caps the loss at the
-#              goodwill on the books, 350-30 has no screen and no cap, and
-#              360-10 screens against UNdiscounted flows — so a group whose
-#              fair value is below carrying but whose undiscounted flows cover
-#              it is explicitly reported unimpaired, the outcome analysts most
-#              often have to defend to an audit committee.
+#            specialtyExhibits.ts — the render-time schedules for the new
+#              result shapes, dispatched from buildExhibits on
+#              results.specialty. §1202 per-test table + holding period + cap
+#              components; PPA allocation with goodwill residual or bargain
+#              purchase; the three impairment standards (including the
+#              360-10 "not recoverable ≠ impaired" line an audit committee
+#              asks about); ESOP level-of-value chain + repurchase schedule;
+#              SMB SDE normalization + weighted methods; EMI/CSOP UMV/AMV +
+#              Schedule 5/4 checks. Same contract as the 409A exhibits:
+#              unfamiliar shapes drop the exhibit, never throw in a render.
+#              buildReportSummary intentionally returns null for specialty
+#              calculations — its statement is 409A wording.
 #
-#            esop.py — the level-of-value chain made explicit (controlling →
-#              marketable minority → nonmarketable minority), with DLOC and
-#              control premium refused together: they are one fact stated from
-#              opposite sides, and if they disagree the report would carry
-#              whichever the code picked. Repurchase obligation projected as a
-#              survival process (10%/yr does not exhaust in ten years), priced
-#              by default at the per-share value the same run concluded.
+#            report.ts — dedicated skeletons for the last four authored kinds:
+#              718.v1, 820.v1, gifts.v1 (Rev. Rul. 59-60 factors, interest-
+#              level discounts, Chapter 14, adequate-disclosure statement),
+#              ifrs2.v1 (the ASC 718 differences a reviewer checks: market
+#              conditions in fair value never trued up, graded vesting as
+#              separate awards). Only fund/debt remain generic — their
+#              deliverables are the workbook/instrument flows.
 #
-#            smb.py — SDE normalization (owner add-backs, replacement wage for
-#              the second owner), build-up capitalization of earnings, SDE and
-#              rule-of-thumb revenue multiples, weighted like the 409A
-#              approaches — including refusing a weight on a method the inputs
-#              could not support rather than renormalizing it away.
+#            partner API — migration 0102. Webhooks: CRUD + test ping +
+#              delivery log under /api/partner/v1/webhooks; per-endpoint
+#              n409_whsec_ secret returned once; deliveries HMAC-signed
+#              (x-n409-signature: sha256=<hex> over the raw body) with event
+#              and delivery-id headers. Firing rides onStateChanged — the one
+#              choke point every path into a state already crosses — so every
+#              report type gets valuation.state_changed, and drafted/
+#              published also fire valuation.report_ready. Delivery rows are
+#              written BEFORE the attempt (the email-outbox rule). One
+#              attempt per event; the log is the partner's audit trail.
+#              Idempotency-Key on POST /valuations stores the first response
+#              against (partner, key) + body hash: replays return it with
+#              x-idempotent-replay, a reused key with a different body 409s.
 #
-#            emi_csop.py — UMV and AMV per share (minority discount hits both,
-#              the restriction discount is what separates them), Schedule 5 /
-#              Schedule 4 limits tested at the UMV this engagement concluded
-#              rather than a caller-supplied figure. EMI £30M/250-FTE/£250k/
-#              £3M; CSOP £60k and no discounted strike.
+#            valuationSelector.ts — public POST /api/v1/valuation-selector:
+#              additive rule scoring over a situation questionnaire into
+#              ranked kinds with stated reasons; EMI/CSOP split on the
+#              Schedule 5 250-FTE limit, reporting routed by accounting
+#              standard, response carries the input vocabulary so the quiz
+#              renders from what the server scores.
 #
-#            main.py — /engine/v1/{qsbs,intangible,ppa,impairment,esop,smb,
-#              emi-csop}. The free-form inputs-dict endpoints map TypeError
-#              from a wrong kwarg name to the same 422 the engine's own
-#              validation gets, so a misspelled field never surfaces as a 500.
-#
-#            report.ts — templateForKind now returns a dedicated skeleton for
-#              qsbs/ppa/goodwill/esop/fmv/emi/csop/ip: the section list a
-#              reviewer of THAT deliverable works through, not the 409A
-#              skeleton retitled. 718/820/gifts/ifrs2/fund/debt stay generic
-#              deliberately — their deliverables are schedules or pending
-#              their own treatment.
-#
-# tests:      1319 engine (+150), 2470 valuation (+7), 787 frontend, 341 ai,
-#             205 shared, 189 report. Lint and prettier clean.
-# deploy:     HOST=root@204.168.241.124 infra/deploy.sh --apply. Thirteen files
-#             added, three changed, nothing deleted. All five units restarted;
-#             BUILD_SHA and both health checks report fed0db4, and the qsbs and
-#             impairment endpoints answered correctly on the host through the
-#             internal-token gate.
+# tests:      2478 valuation (+56 across 9 files), 787 frontend, 205 shared,
+#             189 report, 42 web; 1319 engine + 341 ai pytest. Lint and
+#             prettier clean.
+# deploy:     HOST=root@204.168.241.124 infra/deploy.sh --apply. Eighteen
+#             files added, eleven changed. All units restarted; BUILD_SHA and
+#             /health report 2bd920a, the selector answered a US options quiz
+#             with 409a on the host, and the partner docs endpoint lists the
+#             five webhook routes.
 # note:      This file is tracked, so it always names the *previous* deploy at
 #            the moment the archive is built — the commit recording a deploy
 #            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
 #            authoritative record of what is running; it is written by the
 #            deploy script from the local HEAD after a successful build, and is
 #            what /health reports.
-# gap:       the new engines are compute-only. No valuation-service route calls
-#            them yet, no intake form collects their inputs, and the specialty
-#            skeletons render with authored prose but no exhibits — the
-#            orchestration half (routes, intake schemas per kind, pipeline
-#            wiring, reportExhibits for the new result shapes) is the next
-#            session's work.
+# gap:       specialty webhooks retry never: one delivery attempt per event,
+#            outcome on the row. A partner whose receiver was down during a
+#            publish sees it only in the delivery log. A retry scan (the
+#            auto-email loop's shape: claim pending/failed rows, backoff,
+#            max_attempts) is the natural next step.
+# gap:       the specialty pipeline has no workspace UI. Ops run it over the
+#            API; the Calculations tab still shows only the 409A engines. A
+#            "Run <kind> engine" button + result panel on the workspace, fed
+#            by GET /valuations/:id/specialty, is frontend-only work.
 # gap:       stored calculations keep the old backsolved equity value. 99383b2
 #            changed what the engine computes from then on; every calculation
 #            already in the table that took the single-breakpoint backsolve path
