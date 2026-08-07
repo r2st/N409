@@ -1,77 +1,119 @@
-b04789302a749da1976f87d6cba0df8c5583604f
+c8f79eb22618dc435c2be094f5d82fdae454d2c8
 # N409 deployed revision
-# commit:    b04789302a749da1976f87d6cba0df8c5583604f
-# subject:   feat(intake): convert a submitted intake into the engagement it was
-#            collected for
-# previous:  e43aa6d (chore(format): run prettier over two test files that
-#            predate this branch)
-# includes:  3 commits, all client intake. Two fix what the questionnaire was
-#            willing to store; the third finishes what the feature was for.
+# commit:    c8f79eb22618dc435c2be094f5d82fdae454d2c8
+# subject:   feat(intake): the firm console can convert a submitted questionnaire
+# previous:  b047893 (feat(intake): convert a submitted intake into the
+#            engagement it was collected for)
+# includes:  4 commits. Three fixes — one of them a wrong number on a signed
+#            409A — and the UI half of last round's convert endpoint.
 #
-#            2f27b03 intake — both write paths filtered incoming answers to the
-#              known *key* set and then stored whatever value arrived with the
-#              key. A key set is only half a guard: `{"legal_name": {"$ne":
-#              null}}` has a legal key, so the firm console showed the company's
-#              legal name as "[object Object]". Worse on a required `select` —
-#              `isAnswered` counts any non-blank value and the option check ran
-#              inside a `typeof value === 'string'` *condition*, so a non-string
-#              skipped the check instead of failing it, and a questionnaire
-#              could be submitted with a revenue stage that is neither offered
-#              choice. narrowIntakeAnswers now filters keys *and* value shapes,
-#              shared by both repos; select / boolean / text each reject a
-#              wrong-typed scalar with an error the client can see. Free text
-#              also gained a ceiling (300 / 5,000 code points) — the portal
-#              write endpoint is anonymous, so the only prior bound was
-#              Fastify's 1 MB body cap, per save, forever. This closes the gap
-#              this file carried as unresolved last round.
-#            cbe2a11 intake UI — the two surfaces render the same schema and had
-#              each grown their own answer<->control conversion. They disagreed
-#              on one case, and it was not cosmetic: the valuation wizard read
-#              the blank option of a yes/no field as `false`, so a client who
-#              left "Any pending litigation?" unselected recorded a denial they
-#              never made — and `false` counts as answered, so the completion
-#              tracker then stopped asking for the real one. One implementation,
-#              two callers; empty is always null.
-#            b047893 intake — the feature stopped one step short of its purpose.
-#              A firm could send the link, watch it fill in and read what came
-#              back, then had to retype every answer by hand. The `converted`
-#              status existed, was styled and labelled, and no code path could
-#              produce it. POST /api/v1/firm/intake-links/:id/convert creates
-#              the valuation, copies the answers into the engagement's own
-#              questionnaire, seeds the five params that land in a typed column,
-#              and claims the link — one transaction, row locked first, because
-#              `valuation_id` is the only thing making conversion once-only and
-#              a double-click would otherwise own two engagements for one client
-#              with the second orphaned.
-# deployed:  2026-08-07T04:27Z (UTC)
+#            99383b2 engine — the single-breakpoint OPM backsolve inverted a
+#              model the allocation does not use. `_opm_allocate` splits
+#              residual upside `fd / (fd + preferred)` where `fd` is common
+#              *plus the option pool*; the backsolve split it on bare common,
+#              because the pool was never passed to `opm_backsolve`. So the
+#              equity value was calibrated against one cap table and then
+#              allocated with another, and the round did not reprice to its own
+#              PPS under the model that produced the opinion. On 8M common, a 2M
+#              pool and 4M preferred behind a $10M preference at 65% vol over
+#              four years, a $2.50 round solved to $18,014,475 — at which the
+#              allocation values that preferred at $2.357. Solving the right
+#              model gives $19,604,376 and moves the concluded FMV from $0.8587
+#              to $0.9604: the old figure was 11.9% light, in the direction that
+#              under-prices employee options, and the error grows with the pool.
+#              The waterfall backsolve path was already consistent (it re-runs
+#              the real waterfall, pool included) and `current_value.py` already
+#              folds options in with a comment saying it matches the OPM
+#              fallback — this path was the outlier. Missed until now because
+#              the tests built their target PPS with the same bare-common
+#              formula the solver used, so the two agreed with each other and
+#              disagreed with the engine; the new ones assert the round trip
+#              against `compute`'s own output.
+#            020e074 security — `partners.logo_url` is a stored, caller-supplied
+#              URL and rendering any report PDF for that partner fetched it
+#              server-side, checked only for "parses" and "http(s)". Downloading
+#              a deliverable was enough to make the estate GET
+#              169.254.169.254, 127.0.0.1:3001 or anything on 10/8 from inside
+#              its own perimeter. The PNG/JPEG sniff made it blind, not safe: a
+#              blind GET still maps hosts and ports by how fast it fails. The
+#              destination is now resolved and every address it returns must be
+#              public — private, loopback, link-local, CGNAT, benchmarking,
+#              multicast and reserved for both families, the v4 addresses inside
+#              IPv4-mapped / 6to4 / NAT64, and `localhost` / `.internal` by
+#              name. `redirect: 'follow'` had to go with it, since undici
+#              resolves the chain itself and only the first URL would ever be
+#              checked; hops are followed by hand, three at most, each
+#              re-checked, under the one 3s deadline. The v6 check parses the
+#              sixteen bytes rather than matching text, because `new URL()`
+#              re-serialises `[::ffff:127.0.0.1]` as `::ffff:7f00:1`.
+#            0ff9df8 report/analytics — the FMV trend chart and the analytics
+#              series each carried their own copy of "every valuation of the
+#              same client" and both scoped it to `user_id`. `firmClients`
+#              groups the firm roster by `(partner_id, company_name)`, so a firm
+#              whose engagements for one company were opened by two members had
+#              one client on the console and two strangers everywhere history is
+#              drawn — and the chart is suppressed below two points, so the
+#              deliverable silently dropped the year-on-year comparison. Client
+#              intake made this the normal case: a converted intake is owned by
+#              whoever pressed Convert. One `sameCompanyFilter`, both callers;
+#              direct clients keep owner scoping.
+#            c8f79eb intake UI — closes the gap this file carried last round.
+#              Convert on a submitted row, pre-filled with the legal name the
+#              client typed, valuation type selectable, refusals shown inside
+#              the modal (the panel-level note renders behind it), and
+#              afterwards the row carries the `converted` status the panel could
+#              previously only render. Also deletes `attachIntakeValuation`,
+#              unreferenced since `convertIntakeLink` started claiming the link
+#              inside its own transaction.
+# deployed:  2026-08-07T05:53Z (UTC)
 # method:    infra/deploy.sh --apply (git archive + scp + tar extract, npm ci &&
 #            npm run build on host, BUILD_SHA written after the build, valuation
 #            restarted and awaited before the other four).
-# verified:  BUILD_SHA on the host reads b047893, all five units active, /health
-#            on :3000 and :3001 both reporting b047893 from build_sha_source
-#            "file", and https://n409.aiknol.com/health 200 through Caddy.
-# tests:     4,916 green before the push — 3,499 JS across the five workspaces
-#            (npm test: 205 shared, 189 report, 2,294 valuation, 42 web, 769
-#            web-frontend), 341 ai, 1,076 engine-wrapper. eslint clean; three
-#            touched files needed prettier and were reformatted before the
-#            commits, so format:check is green.
-# note:      no migrations, no dependency changes and no deletions since
-#            e43aa6d, so the deletion sweep was empty, npm ci had nothing new to
-#            fetch and no pip install was needed. schema_migrations stays at
-#            0100. The two Python services restarted only because the script
-#            restarts the whole set — no Python file changed this round.
+# verified:  BUILD_SHA on the host reads c8f79eb, all five units active, /health
+#            on 3000/3001/3004 reporting c8f79eb from build_sha_source "file",
+#            :3002 and :3003 ok, and https://n409.aiknol.com/health 200 through
+#            Caddy.
+# tests:     4,957 green before the push — 3,522 JS across the five workspaces
+#            (npm test: 205 shared, 189 report, 2,311 valuation, 42 web, 775
+#            web-frontend), 341 ai, 1,080 engine-wrapper. That is +41 over last
+#            round: 4 engine backsolve, 12 SSRF/address-classification, 4
+#            sameCompanyFilter unit + 3 analytics scoping integration, 6 convert
+#            UI, and the existing logo tests rewritten to inject a resolver.
+#            eslint clean; three touched files needed prettier and were
+#            reformatted before the commits, so format:check is green.
+# note:      no migrations and no dependency changes, so schema_migrations stays
+#            at 0100 and npm ci had nothing new to fetch. One file added
+#            (domain/valuationHistory.ts) and none deleted, so the deletion
+#            sweep was empty. `approaches.py` and `compute.py` changed, so the
+#            engine-wrapper restart matters this time rather than being
+#            incidental.
 # note:      This file is tracked, so it always names the *previous* deploy at
 #            the moment the archive is built — the commit recording a deploy
 #            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
 #            authoritative record of what is running; it is written by the
 #            deploy script from the local HEAD after a successful build, and is
 #            what /health reports.
-# gap:       the convert endpoint ships without a caller. IntakeLinksPanel
-#            styles and labels the `converted` status but has no Convert
-#            control, so the transition is reachable only over the API and the
-#            firm console still cannot produce the status it renders. The
-#            half-fixed shape of the original gap has moved one layer up rather
-#            than closed: server done, UI not. Next round.
+# gap:       stored calculations keep the old backsolved equity value. 99383b2
+#            changes what the engine computes from now on; every calculation
+#            already in the table that took the single-breakpoint backsolve path
+#            with a non-zero option pool holds a figure that is low by roughly
+#            the pool's share, and any report rendered from one still says so.
+#            Nothing re-runs them, and nothing flags which ones are affected —
+#            the query is `results.approaches.opm_backsolve.method =
+#            'backsolve_single'` against a calculation whose inputs carry
+#            `options_outstanding > 0`. Published opinions cannot be silently
+#            rewritten, so this needs a list before it needs a migration.
+# gap:       the report's "Fully diluted common" is taken from the scalar
+#            `shares_outstanding_common + options_outstanding` while
+#            `common_per_share` comes from the cap table when one is supplied,
+#            so a reader who divides `common_equity_value` by the disclosed
+#            share count does not get the headline FMV. Both figures are
+#            defensible alone; printing them side by side is what is not.
+# gap:       board sign-off tokens do not expire. An auditor link is capped at
+#            180 days and an intake link at 90, but a board member's emailed
+#            token grants POST /board/resolution — the FMV conclusion and the
+#            resolution text — for as long as the row exists. Revocable by
+#            deleting the member, which is not the same thing.
 # gap:       Stripe is still unconfigured in production — /opt/N409/.env has no
 #            STRIPE_SECRET_KEY and no webhook secrets, so every client still
 #            sees "Online payment is not available yet — we will invoice you
