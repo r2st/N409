@@ -47,3 +47,27 @@ export function sameCompanyFilter(valuation: CompanyHistoryRef): CompanyHistoryF
     ? { clause: `v.partner_id = $1 AND ${name}`, params: [valuation.partner_id, valuation.company_name] }
     : { clause: `v.user_id = $1 AND ${name}`, params: [valuation.user_id, valuation.company_name] };
 }
+
+/** How `lower(trim(company_name))` folds in SQL, in TypeScript. */
+const foldName = (name: string): string => name.trim().toLowerCase();
+
+/**
+ * The same equivalence class as {@link sameCompanyFilter}, decided between two
+ * rows already in hand rather than in a WHERE clause.
+ *
+ * The value bridge needs the predicate rather than the filter: it is handed two
+ * valuation ids and has to say whether they are two periods of one client's
+ * history before it will draw a bridge between them. Expressed here so it cannot
+ * answer differently from the query that produced the candidate list the user
+ * picked from — a candidate list offering a valuation the guard then refuses is
+ * the worst of both spellings.
+ *
+ * A partner-owned valuation and a direct one never match, even under the same
+ * name: neither one's filter would return the other, and joining them would put
+ * a firm's engagement and a self-serve account's into one company's history.
+ */
+export function sameCompany(a: CompanyHistoryRef, b: CompanyHistoryRef): boolean {
+  if (foldName(a.company_name) !== foldName(b.company_name)) return false;
+  if (a.partner_id !== b.partner_id) return false;
+  return a.partner_id !== null || a.user_id === b.user_id;
+}

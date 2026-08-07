@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { createCalculation } from '../../src/repos/calculations.js';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -102,5 +102,115 @@ describe.skipIf(!dbUp)('value bridge endpoint (feature 3)', () => {
       headers: authHeader(ops.token),
     });
     expect(res.statusCode).toBe(422);
+  });
+
+  /**
+   * The bridge was the caller `sameCompanyFilter` never reached. It kept its own
+   * `user_id = … AND company_name = …` in both halves — the candidate list and
+   * the guard — so a firm whose successive 409As were opened by different
+   * members was offered nothing to bridge to, and answered "Both valuations
+   * must be for the same company" if it named last year's directly.
+   */
+  describe("a firm's client, across two of its members", () => {
+    let firmId: string;
+    let alice: Awaited<ReturnType<typeof seedUser>>;
+    let bob: Awaited<ReturnType<typeof seedUser>>;
+
+    beforeAll(async () => {
+      firmId = await seedPartner(ctx, `Bridge Firm ${Date.now()}`);
+      alice = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+      bob = await seedUser(ctx, { roles: ['member'], partnerId: firmId });
+    });
+
+    async function seedFirmValuation(
+      owner: { id: string },
+      company: string,
+      fmv: number,
+      partnerId: string = firmId,
+    ) {
+      const v = await createValuation(
+        ctx.pool,
+        { kind: '409a', companyName: company, userId: owner.id, partnerId },
+        { ...actor, actorId: owner.id },
+      );
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: v.id,
+          engineVersion: 'test',
+          status: 'succeeded',
+          inputs: {},
+          results: calcResults(fmv, fmv * 1_000_000, 0.2),
+          equityValue: fmv * 1_000_000,
+          fmvPerShare: fmv,
+          createdBy: owner.id,
+        },
+        { ...actor, actorId: owner.id },
+      );
+      return v;
+    }
+
+    it("offers last year's engagement even though a different member opened it", async () => {
+      const lastYear = await seedFirmValuation(alice, 'Halcyon Bio', 2.0);
+      const thisYear = await seedFirmValuation(bob, 'Halcyon Bio', 3.0);
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${thisYear.id}/bridge-candidates`,
+        headers: authHeader(bob.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().candidates.map((c: { id: string }) => c.id)).toContain(lastYear.id);
+    });
+
+    it('draws the bridge between them', async () => {
+      const lastYear = await seedFirmValuation(alice, 'Kestrel Labs', 2.0);
+      const thisYear = await seedFirmValuation(bob, 'Kestrel Labs', 3.0);
+
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${thisYear.id}/bridge/${lastYear.id}`,
+        headers: authHeader(bob.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().bridge.from_fmv).toBeCloseTo(2.0, 6);
+      expect(res.json().bridge.to_fmv).toBeCloseTo(3.0, 6);
+    });
+
+    it('still keeps another firm out, under the very same company name', async () => {
+      const otherFirm = await seedPartner(ctx, `Rival Firm ${Date.now()}`);
+      const carol = await seedUser(ctx, { roles: ['partner'], partnerId: otherFirm });
+      const theirs = await seedFirmValuation(carol, 'Contested Name', 9.0, otherFirm);
+      const ours = await seedFirmValuation(alice, 'Contested Name', 2.0);
+
+      const candidates = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${ours.id}/bridge-candidates`,
+        headers: authHeader(alice.token),
+      });
+      expect(candidates.json().candidates.map((c: { id: string }) => c.id)).not.toContain(theirs.id);
+
+      // And the guard agrees with the list it is guarding — a 404 because the
+      // other firm's valuation is not readable here at all.
+      const bridged = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${ours.id}/bridge/${theirs.id}`,
+        headers: authHeader(alice.token),
+      });
+      expect(bridged.statusCode).toBe(404);
+    });
+
+    it('does not join a direct client to a firm engagement of the same name', async () => {
+      // `ops` here is a plain valuation_user with no partner.
+      const direct = await seedValuation('Ambiguous Co', 4.0, 4_000_000, 0.2);
+      const firmSide = await seedFirmValuation(alice, 'Ambiguous Co', 5.0);
+
+      const candidates = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${firmSide.id}/bridge-candidates`,
+        headers: authHeader(alice.token),
+      });
+      expect(candidates.json().candidates.map((c: { id: string }) => c.id)).not.toContain(direct.id);
+    });
   });
 });

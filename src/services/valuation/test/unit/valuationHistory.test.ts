@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sameCompanyFilter } from '../../src/domain/valuationHistory.js';
+import { sameCompany, sameCompanyFilter } from '../../src/domain/valuationHistory.js';
 
 /**
  * Which engagements count as "the same client".
@@ -54,5 +54,60 @@ describe('sameCompanyFilter', () => {
       expect(clause.match(/\$1/g)).toHaveLength(1);
       expect(clause.match(/\$2/g)).toHaveLength(1);
     }
+  });
+});
+
+/**
+ * The same question decided between two rows in hand — what the value bridge
+ * needs, and the one caller that was left spelling the superseded rule itself.
+ */
+describe('sameCompany', () => {
+  const firm = '01FIRM00000000000000000A';
+  const alice = '01USER0000000000000000AL';
+  const bob = '01USER0000000000000000BO';
+  const ref = (over: Partial<{ user_id: string; partner_id: string | null; company_name: string }> = {}) => ({
+    user_id: alice,
+    partner_id: firm as string | null,
+    company_name: 'Halcyon Bio, Inc.',
+    ...over,
+  });
+
+  it('joins two engagements one firm opened under different members', () => {
+    // The case the whole fix is about: client intake gives a converted
+    // questionnaire to whoever pressed Convert, so this is the ordinary shape.
+    expect(sameCompany(ref(), ref({ user_id: bob }))).toBe(true);
+  });
+
+  it('keeps two firms apart even under an identical company name', () => {
+    expect(sameCompany(ref(), ref({ partner_id: '01FIRM00000000000000000B' }))).toBe(false);
+  });
+
+  it('scopes a direct client to its owner, since there is no firm to group under', () => {
+    const direct = ref({ partner_id: null });
+    expect(sameCompany(direct, ref({ partner_id: null }))).toBe(true);
+    expect(sameCompany(direct, ref({ partner_id: null, user_id: bob }))).toBe(false);
+  });
+
+  it('never joins a firm engagement to a direct one', () => {
+    // Neither side's `sameCompanyFilter` would return the other, so the
+    // predicate must not either — a firm's client and a self-serve account are
+    // not one company's history.
+    expect(sameCompany(ref(), ref({ partner_id: null }))).toBe(false);
+    expect(sameCompany(ref({ partner_id: null }), ref())).toBe(false);
+  });
+
+  it('folds the company name exactly as the SQL does', () => {
+    expect(sameCompany(ref(), ref({ company_name: '  halcyon bio, inc. ' }))).toBe(true);
+    expect(sameCompany(ref(), ref({ company_name: 'Halcyon Biosciences' }))).toBe(false);
+  });
+
+  it('is symmetric', () => {
+    const pairs: Array<[ReturnType<typeof ref>, ReturnType<typeof ref>]> = [
+      [ref(), ref({ user_id: bob })],
+      [ref(), ref({ partner_id: null })],
+      [ref({ partner_id: null }), ref({ partner_id: null, user_id: bob })],
+      [ref(), ref({ company_name: 'Other Co' })],
+    ];
+    for (const [a, b] of pairs) expect(sameCompany(a, b)).toBe(sameCompany(b, a));
   });
 });

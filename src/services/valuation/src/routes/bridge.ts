@@ -5,12 +5,26 @@ import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { buildBridge } from '../domain/valuationBridge.js';
+import { sameCompany, sameCompanyFilter } from '../domain/valuationHistory.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
  * Cross-period value-bridge (feature 3): GET /valuations/:id/bridge/:compareId
- * explains the per-share FMV change between two valuations of the same company
- * (same client + company name), using the latest successful calculation of each.
+ * explains the per-share FMV change between two valuations of the same company,
+ * using the latest successful calculation of each.
+ *
+ * "The same company" is `sameCompanyFilter` — the one definition the report's
+ * trend chart and the analytics time series were moved onto, and which this
+ * endpoint was left out of. It had its own copy of the equivalence class that
+ * change replaced, `v.user_id = $1 AND company_name = $2`, in both halves: the
+ * candidate list a firm picks from, and the guard on the comparison itself.
+ *
+ * So a firm whose 409As were opened by different members — which client intake
+ * makes ordinary, since a converted intake belongs to whoever pressed Convert —
+ * saw an empty candidate list on this year's valuation, and was answered "Both
+ * valuations must be for the same company" if it reached for last year's
+ * directly. That is the bridge refusing to draw the one comparison it exists
+ * for, on the firm's own client, over a field the firm never chose.
  */
 export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   const load = async (principal: Principal, id: string) => {
@@ -31,6 +45,7 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await load(principal, id);
+    const scope = sameCompanyFilter(valuation);
     const { rows } = await deps.pool.query<{
       id: string;
       number: string;
@@ -42,14 +57,13 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
                  WHERE c.valuation_id = v.id AND c.status = 'succeeded'
                  ORDER BY c.created_at DESC LIMIT 1) AS fmv_per_share
          FROM valuations v
-        WHERE v.user_id = $1
-          AND lower(trim(v.company_name)) = lower(trim($2))
+        WHERE ${scope.clause}
           AND v.id <> $3
           AND EXISTS (SELECT 1 FROM calculations c
                         WHERE c.valuation_id = v.id AND c.status = 'succeeded')
         ORDER BY v.created_at DESC
         LIMIT 50`,
-      [valuation.user_id, valuation.company_name, id],
+      [...scope.params, id],
     );
     return { candidates: rows };
   });
@@ -61,11 +75,9 @@ export function registerBridgeRoutes(app: FastifyInstance, deps: { pool: pg.Pool
 
     const [to, from] = await Promise.all([load(principal, id), load(principal, compareId)]);
 
-    // The bridge only makes sense within one company's history.
-    if (
-      to.user_id !== from.user_id ||
-      to.company_name.trim().toLowerCase() !== from.company_name.trim().toLowerCase()
-    ) {
+    // The bridge only makes sense within one company's history — the same
+    // "one client" the candidate list above is drawn from.
+    if (!sameCompany(to, from)) {
       throw problems.unprocessable('Both valuations must be for the same company');
     }
 
