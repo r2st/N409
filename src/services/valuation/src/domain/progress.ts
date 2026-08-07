@@ -140,6 +140,27 @@ export interface NextAction {
 }
 
 /**
+ * The three states the `draft` stage collapses, and which of them is the
+ * client's turn.
+ *
+ * Only `drafted` is: a draft has been shared and nobody has responded to it.
+ * `draft_changes` means the client already told us what to change and we are
+ * changing it; `draft_accepted` means they already accepted and we are
+ * publishing. In both, the ball is ours.
+ *
+ * The stage stepper is right to group all three — a client does not want three
+ * boxes for one round of review — but the call-to-action is not the stepper,
+ * and driving it off the stage index alone made the portal ask for something
+ * that had already been done. A client who accepted a draft on Monday was still
+ * being shown "Review the draft report — read the draft and either accept it or
+ * tell us what to change", flagged `client_action_required: true`, for the whole
+ * time it took to publish; so was a client waiting on the revisions they had
+ * themselves requested. Both then chase support about a button that does
+ * nothing, which is the opposite of what this endpoint is for.
+ */
+export const DRAFT_AWAITING_CLIENT: ReadonlySet<ValuationState> = new Set(['drafted']);
+
+/**
  * The single next thing the client should do. Precedence matters: a halted
  * engagement overrides everything, a ready report beats an outstanding
  * checklist (they can still upload later), and "we're working on it" is the
@@ -148,6 +169,13 @@ export interface NextAction {
 export function nextClientAction(args: {
   halted: boolean;
   stageIndex: number;
+  /**
+   * The valuation's own state. The stage index cannot answer "is this the
+   * client's turn?" on its own — see {@link DRAFT_AWAITING_CLIENT}. Optional so
+   * a caller that has only the stage still type-checks; omitted, the draft
+   * stage keeps its old meaning.
+   */
+  state?: ValuationState;
   waitingOnClient: boolean;
   missingDocuments: number;
   reportAvailable: boolean;
@@ -172,7 +200,7 @@ export function nextClientAction(args: {
       client_action_required: false,
     };
   }
-  if (stageIndex === 3) {
+  if (stageIndex === 3 && (args.state === undefined || DRAFT_AWAITING_CLIENT.has(args.state))) {
     return {
       key: 'review_draft',
       label: 'Review the draft report',
@@ -181,7 +209,14 @@ export function nextClientAction(args: {
       client_action_required: true,
     };
   }
-  if (missingDocuments > 0) {
+  // "We cannot finish the analysis until the checklist is complete" stops being
+  // true once the analysis is finished, and a draft report is proof that it is.
+  // The checklist is rarely fully ticked in practice — six kinds, several of
+  // which many companies do not have — so without this bound every engagement
+  // in review or later fell through to a nag about documents it no longer
+  // needs. Previously masked at the draft stage by the unconditional
+  // `review_draft` above it; the fix to that is what makes the bound necessary.
+  if (missingDocuments > 0 && stageIndex <= 2) {
     return {
       key: 'upload_documents',
       label: `Upload ${missingDocuments} remaining document${missingDocuments === 1 ? '' : 's'}`,

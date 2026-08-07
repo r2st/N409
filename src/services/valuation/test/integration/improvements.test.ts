@@ -73,9 +73,21 @@ describe.skipIf(!dbUp)('improvements phase 1', () => {
       const body = req.body as Record<string, any>;
       const dr = body.inputs?.income?.discount_rate ?? 0.25;
       const equity = Math.round(20_000_000 * (0.25 / dr));
+      // The real engine derives the DLOM from volatility and time to exit under
+      // the two model methods and reports what it used in `results.discounts` —
+      // `params.dlom` plays no part. Mirrored here so the QA gate is exercised
+      // against a run shaped like the ones it actually grades. Absent a model
+      // method the stub reports no discounts, as it always has.
+      const dlomMethod = body.params?.dlom_method;
+      const modelDlom = dlomMethod === 'chaffee' || dlomMethod === 'finnerty';
       return {
         engine_version: 'py-stub',
-        results: { equity_value: equity, fmv_per_share: equity / 10_000_000, approaches: {} },
+        results: {
+          equity_value: equity,
+          fmv_per_share: equity / 10_000_000,
+          approaches: {},
+          ...(modelDlom ? { discounts: { dloc: 0, dlom: 0.46, dlom_method: dlomMethod } } : {}),
+        },
       };
     });
     await engineStub.listen({ port: 0, host: '127.0.0.1' });
@@ -158,6 +170,44 @@ describe.skipIf(!dbUp)('improvements phase 1', () => {
         });
         expect(res.statusCode).toBe(403);
       }
+    });
+
+    /**
+     * A model DLOM never touches `params.dlom` — the engine derives it and
+     * reports it on the run. Grading the param meant the gate looked at a null
+     * (and skipped the check) or at a stale hand-entered figure, so a 46%
+     * Chaffee discount reached `published` with the reasonableness check that
+     * exists to catch it never having run.
+     */
+    it('grades the DLOM the engine applied, not the one the params carry', async () => {
+      const id = await createValuation('ModelDlomCo');
+      const patched = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${id}/params`,
+        headers: authHeader(ops.token),
+        // The shape a model DLOM actually has: a method, and no `dlom`.
+        payload: { dlom_method: 'chaffee', dlom: null },
+      });
+      expect(patched.statusCode).toBe(200);
+
+      const calculation = await runCalculation(id);
+      expect(calculation.results.discounts.dlom).toBeCloseTo(0.46, 6);
+
+      const qa = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/qa`,
+        headers: authHeader(ops.token),
+      });
+      expect(qa.statusCode).toBe(201);
+      const review = qa.json().review;
+      const dlomCheck = review.checks.find((c: { key: string }) => c.key === 'dlom_range');
+      expect(dlomCheck).toBeDefined();
+      expect(dlomCheck.status).toBe('warn');
+      expect(dlomCheck.detail).toContain('46.0%');
+      expect(dlomCheck.detail).toContain('chaffee model');
+      // A warning does not block the gate — but it is now on the review a
+      // reviewer signs, which is the whole point.
+      expect(review.status).toBe('warn');
     });
 
     it('blocks publish until a QA review exists, then allows it', async () => {
@@ -446,6 +496,55 @@ describe.skipIf(!dbUp)('improvements phase 1', () => {
         headers: authHeader(otherClient.token),
       });
       expect(res.statusCode).toBe(404);
+    });
+
+    /**
+     * The draft stage groups three states; only `drafted` is the client's turn.
+     * The call-to-action has to follow the state, not the stage box.
+     */
+    it('stops asking for a draft review once the client has acted on it', async () => {
+      const id = await createValuation('DraftActionCo');
+      const nextAction = async () => {
+        const res = await app.inject({
+          method: 'GET',
+          url: `/api/v1/valuations/${id}/progress`,
+          headers: authHeader(client.token),
+        });
+        expect(res.statusCode).toBe(200);
+        return res.json().next_action as { key: string; client_action_required: boolean };
+      };
+      const setState = async (state: string) => {
+        const res = await app.inject({
+          method: 'PATCH',
+          url: `/api/v1/valuations/${id}`,
+          headers: authHeader(ops.token),
+          payload: { state },
+        });
+        expect(res.statusCode).toBe(200);
+      };
+
+      // pending → … → drafted, the happy path this stage exists for.
+      for (const state of [
+        'started',
+        'onboarding_completed',
+        'user_finished',
+        'completed',
+        'review',
+        'reviewed',
+        'drafted',
+      ]) {
+        await setState(state);
+      }
+      expect(await nextAction()).toMatchObject({ key: 'review_draft', client_action_required: true });
+
+      // They asked for changes — we are the ones with work to do.
+      await setState('draft_changes');
+      expect(await nextAction()).toMatchObject({ key: 'awaiting_us', client_action_required: false });
+
+      // …and once they accept, we are publishing. Still not their move.
+      await setState('drafted');
+      await setState('draft_accepted');
+      expect(await nextAction()).toMatchObject({ key: 'awaiting_us', client_action_required: false });
     });
   });
 

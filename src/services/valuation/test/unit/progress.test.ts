@@ -257,6 +257,58 @@ describe('nextClientAction', () => {
     expect(action.key).toBe('review_draft');
   });
 
+  /**
+   * The draft stage covers three states and only one of them is the client's
+   * turn. Asking someone to review a draft they have already accepted — or to
+   * respond to revisions they themselves requested — is a call-to-action for
+   * work that is finished, and it stays on their dashboard until we publish.
+   */
+  describe('inside the draft stage', () => {
+    it('asks for the review while the draft is out for one', () => {
+      const action = nextClientAction({ ...base, stageIndex: 3, state: 'drafted' });
+      expect(action.key).toBe('review_draft');
+      expect(action.client_action_required).toBe(true);
+    });
+
+    it('stops asking once the client has accepted', () => {
+      const action = nextClientAction({ ...base, stageIndex: 3, state: 'draft_accepted' });
+      expect(action.key).toBe('awaiting_us');
+      expect(action.client_action_required).toBe(false);
+    });
+
+    it('stops asking while we are making the changes they asked for', () => {
+      const action = nextClientAction({ ...base, stageIndex: 3, state: 'draft_changes' });
+      expect(action.key).toBe('awaiting_us');
+      expect(action.client_action_required).toBe(false);
+    });
+
+    it('still surfaces a question we have put to them', () => {
+      const action = nextClientAction({
+        ...base,
+        stageIndex: 3,
+        state: 'draft_accepted',
+        waitingOnClient: true,
+      });
+      expect(action.key).toBe('respond_to_request');
+    });
+
+    it('does not fall through to a document nag once the analysis is done', () => {
+      // The checklist is six kinds wide and rarely fully ticked; "we cannot
+      // finish the analysis until it is complete" is false by the draft stage.
+      const action = nextClientAction({
+        ...base,
+        stageIndex: 3,
+        state: 'draft_accepted',
+        missingDocuments: 3,
+      });
+      expect(action.key).toBe('awaiting_us');
+    });
+
+    it('keeps its old meaning when no state is supplied', () => {
+      expect(nextClientAction({ ...base, stageIndex: 3 }).key).toBe('review_draft');
+    });
+  });
+
   it('asks for missing documents, pluralised', () => {
     expect(nextClientAction({ ...base, missingDocuments: 1 }).label).toContain('1 remaining document');
     expect(nextClientAction({ ...base, missingDocuments: 3 }).label).toContain('3 remaining documents');

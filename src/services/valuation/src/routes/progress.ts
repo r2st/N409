@@ -134,6 +134,7 @@ export function registerProgressRoutes(app: FastifyInstance, deps: { pool: pg.Po
       next_action: nextClientAction({
         halted,
         stageIndex: currentIndex,
+        state: valuation.state,
         waitingOnClient: valuation.waiting_on_client,
         missingDocuments,
         reportAvailable,
