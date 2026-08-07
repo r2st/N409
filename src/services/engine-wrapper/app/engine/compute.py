@@ -508,6 +508,45 @@ def _weighted_equity(
     }
 
 
+def _require_preferred_behind_preference(preferred_shares: float, liquidation_preference: float) -> None:
+    """Refuse a preference stack with nobody holding it.
+
+    Every aggregate allocation branch — here and in ``current_value.allocate_cvm``
+    — guards the preference with ``preferred_shares > 0 and liquidation_preference
+    > 0``, because the split needs both: the preference sets the breakpoint and
+    the preferred share count sets what fraction of the upside sits behind it.
+    With a preference but no shares the guard simply fails, and the run falls
+    through to as-converted (OPM) or common-only (CVM), where common receives the
+    *entire* equity value and the preference is not mentioned again — no error, no
+    warning, and nothing in the result naming what was dropped.
+
+    That is the same failure mode, and the same direction, as the negative
+    ``shares_outstanding_preferred`` that ``validate._check_cap_table`` already
+    refuses: the whole preference stack silently leaves the model and the
+    concluded FMV is overstated by whatever it was worth. Measured on the
+    reference payload — 8M common, a 2M pool, $10M of preference — dropping the
+    4M preferred count moves the concluded FMV from $0.9761 to $1.5789, and it is
+    the option strike prices that are set from that figure.
+
+    It is reachable by omission rather than by typo, which is what makes it
+    likelier than the negative: ``shares_outstanding_preferred`` is optional on
+    the analyst form and on the extraction schema, while the preference is the
+    figure that gets typed first because it is the one on the term sheet.
+
+    Nothing is inferred from the preference — a preference of $10M says nothing
+    about how many shares hold it — so the honest answer is to refuse. Only on
+    the aggregate paths: with ``share_classes`` present the waterfall reads the
+    per-class preferences and these two scalars are not consulted at all.
+    """
+    if liquidation_preference > 0 and preferred_shares <= 0:
+        raise EngineInputError(
+            "liquidation_preference is set but shares_outstanding_preferred is not — the "
+            "allocation splits the upside behind the preference by preferred share count, so "
+            "both are required; enter the preferred shares outstanding, or clear the preference "
+            "if there is no preferred stock"
+        )
+
+
 def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: float) -> dict:
     """OPM allocation of ``equity_value`` to common (waterfall / single
     breakpoint / as-converted). Returns the allocation metadata, common equity,
@@ -525,6 +564,9 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
 
     share_classes = inputs.get("share_classes")
     has_waterfall = isinstance(share_classes, list) and len(share_classes) > 0
+
+    if not has_waterfall:
+        _require_preferred_behind_preference(preferred_shares, liquidation_preference)
 
     # Volatility must be strictly positive: a negative value would otherwise be
     # passed straight to bs_call (σ ≤ 0 → intrinsic) and silently produce a

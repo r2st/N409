@@ -84,6 +84,19 @@ def allocate_cvm(equity_value: float, inputs: dict) -> dict:
         _num(inputs.get("liquidation_preference"), "liquidation_preference", nonneg=True) or 0.0
     )
 
+    # Same rule, and the same reasoning, as `compute._require_preferred_behind_preference`:
+    # a preference with nobody holding it falls past both branches below into
+    # `cvm_common_only`, where common takes the whole equity value and the
+    # preference is never mentioned again. Stated here as well as there because
+    # this path does not run through `_opm_allocate`.
+    if liquidation_preference > 0 and preferred_shares <= 0:
+        raise EngineInputError(
+            "liquidation_preference is set but shares_outstanding_preferred is not — the "
+            "allocation splits the residual behind the preference by preferred share count, so "
+            "both are required; enter the preferred shares outstanding, or clear the preference "
+            "if there is no preferred stock"
+        )
+
     if preferred_shares > 0 and liquidation_preference > 0:
         # Reuse the deterministic waterfall via a synthetic two-class cap table
         # so conversion economics (pref vs. as-converted) are handled exactly.

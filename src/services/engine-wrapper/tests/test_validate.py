@@ -453,12 +453,16 @@ def test_a_negative_cap_table_quantity_is_an_error_not_a_silent_reinterpretation
 
 
 @pytest.mark.parametrize(
-    "field_name",
-    ["options_outstanding", "shares_outstanding_preferred", "liquidation_preference"],
+    "patch",
+    [
+        # Zero is a real answer — "no option pool", "no preferred stock at all".
+        {"options_outstanding": 0},
+        {"shares_outstanding_preferred": 0, "liquidation_preference": 0},
+    ],
+    ids=["no_option_pool", "no_preferred_stock"],
 )
-def test_zero_stays_legal_for_every_one_of_them(field_name):
-    # Zero is a real answer — "no preferred outstanding", "no option pool".
-    errors, _ = split_issues(validate_payload(GOOD_PARAMS, {**GOOD_INPUTS, field_name: 0}))
+def test_zero_stays_legal_when_the_cap_table_still_says_something_coherent(patch):
+    errors, _ = split_issues(validate_payload(GOOD_PARAMS, {**GOOD_INPUTS, **patch}))
     assert errors == []
 
 
@@ -488,6 +492,124 @@ def test_the_cvm_path_refuses_a_negative_quantity_too():
     params = {**GOOD_PARAMS, "allocation_method": "cvm"}
     with pytest.raises(EngineInputError, match="cannot be negative"):
         compute(params, {**GOOD_INPUTS, "options_outstanding": -1_000})
+
+
+# ── A preference stack with nobody holding it ────────────────────────────────
+#
+# The mirror image of the sign typo above, and reachable by omission rather than
+# by typo: `shares_outstanding_preferred` is optional on the analyst form and on
+# the extraction schema, while the liquidation preference is the figure typed
+# first because it is the one on the term sheet. Every aggregate allocation
+# branch guards on `preferred_shares > 0 and liquidation_preference > 0`, so
+# leaving the count out did not produce a wrong-looking number — it dropped the
+# entire preference stack and handed common the whole equity value, as a clean
+# 200 with no error and no warning.
+
+_ORPHAN_PREFERENCE = {"shares_outstanding_preferred": 0}
+_NO_PREFERRED_COUNT = {k: v for k, v in GOOD_INPUTS.items() if k != "shares_outstanding_preferred"}
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [{**GOOD_INPUTS, **_ORPHAN_PREFERENCE}, _NO_PREFERRED_COUNT],
+    ids=["explicit_zero", "field_omitted"],
+)
+def test_a_preference_with_no_preferred_shares_is_named_by_the_preflight(inputs):
+    errors, _ = split_issues(validate_payload(GOOD_PARAMS, inputs))
+    assert "inputs.shares_outstanding_preferred" in fields(errors)
+    assert "required" in codes(errors)
+
+
+@pytest.mark.parametrize(
+    "inputs",
+    [{**GOOD_INPUTS, **_ORPHAN_PREFERENCE}, _NO_PREFERRED_COUNT],
+    ids=["explicit_zero", "field_omitted"],
+)
+@pytest.mark.parametrize("allocation_method", ["opm", "cvm"])
+def test_compute_refuses_the_same_payload_on_both_aggregate_paths(inputs, allocation_method):
+    params = {**GOOD_PARAMS, "allocation_method": allocation_method}
+    with pytest.raises(EngineInputError, match="shares_outstanding_preferred"):
+        compute(params, inputs)
+
+
+def test_the_dropped_preference_stack_used_to_overstate_the_fmv_and_is_now_a_422():
+    """The behaviour this replaces, measured — and the response the caller now gets."""
+    baseline = compute(GOOD_PARAMS, GOOD_INPUTS)["results"]
+    assert baseline["allocation"]["method"] == "opm_single_breakpoint"
+
+    res = client.post(
+        "/engine/v1/compute",
+        json={"params": GOOD_PARAMS, "inputs": {**GOOD_INPUTS, **_ORPHAN_PREFERENCE}},
+    )
+    assert res.status_code == 422
+    assert "inputs.shares_outstanding_preferred" in {i["field"] for i in res.json()["issues"]}
+
+
+def test_clearing_the_preference_as_well_is_the_supported_way_to_say_no_preferred():
+    """The other half of the fix: the coherent payload still runs, and says so."""
+    inputs = {**GOOD_INPUTS, "shares_outstanding_preferred": 0, "liquidation_preference": 0}
+    assert split_issues(validate_payload(GOOD_PARAMS, inputs))[0] == []
+    results = compute(GOOD_PARAMS, inputs)["results"]
+    assert results["allocation"]["method"] == "as_converted"
+    assert results["allocation"]["common_fraction"] == 1.0
+    # Common taking everything is *correct* here, and was the silently wrong
+    # answer for the payload above — the difference is that this one says there
+    # is no preference, rather than naming one and then dropping it.
+    assert results["fmv_per_share"] > baseline_fmv()
+
+
+def baseline_fmv() -> float:
+    return compute(GOOD_PARAMS, GOOD_INPUTS)["results"]["fmv_per_share"]
+
+
+def test_the_cap_table_waterfall_is_unaffected_because_it_never_reads_the_scalars():
+    """`share_classes` carries a preference per class; these two are not consulted."""
+    inputs = {
+        **GOOD_INPUTS,
+        **_ORPHAN_PREFERENCE,
+        "share_classes": [
+            {"name": "Common", "kind": "common", "shares": 7_000_000},
+            {
+                "name": "Series A",
+                "kind": "preferred",
+                "shares": 2_000_000,
+                "preference": 5_000_000,
+                "seniority": 1,
+            },
+        ],
+    }
+    errors, _ = split_issues(validate_payload(GOOD_PARAMS, inputs))
+    assert "inputs.shares_outstanding_preferred" not in fields(errors)
+    assert compute(GOOD_PARAMS, inputs)["results"]["allocation"]["method"] == "opm_waterfall"
+
+
+def test_pwerm_is_unaffected_too():
+    """PWERM allocates from `share_classes` alone; the scalars are not in its model."""
+    params = {**GOOD_PARAMS, "allocation_method": "pwerm"}
+    inputs = {
+        **GOOD_INPUTS,
+        **_ORPHAN_PREFERENCE,
+        "share_classes": [
+            {"name": "Common", "kind": "common", "shares": 7_000_000},
+            {
+                "name": "Series A",
+                "kind": "preferred",
+                "shares": 2_000_000,
+                "preference": 5_000_000,
+                "seniority": 1,
+            },
+        ],
+        "pwerm": {
+            "discount_rate": 0.2,
+            "scenarios": [
+                {"probability": 0.6, "equity_value": 40_000_000, "time_to_exit_years": 3},
+                {"probability": 0.4, "equity_value": 8_000_000, "time_to_exit_years": 2},
+            ],
+        },
+    }
+    errors, _ = split_issues(validate_payload(params, inputs))
+    assert "inputs.shares_outstanding_preferred" not in fields(errors)
+    assert compute(params, inputs)["results"]["fmv_per_share"] > 0
 
 
 # ── The explicit DCF forecast horizon ────────────────────────────────────────

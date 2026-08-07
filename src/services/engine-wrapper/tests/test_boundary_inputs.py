@@ -67,7 +67,7 @@ def test_a_supplied_cap_table_switches_to_the_full_waterfall():
     assert out["results"]["allocation"]["method"] == "opm_waterfall"
 
 
-def test_missing_preferred_or_missing_preference_means_as_converted():
+def test_preferred_shares_without_a_preference_amount_means_as_converted():
     """`preferred_shares > 0 AND liquidation_preference > 0` — both, not either.
 
     With `or`, a company that has preferred shares but no liquidation
@@ -77,11 +77,34 @@ def test_missing_preferred_or_missing_preference_means_as_converted():
     """
     no_pref_amount = compute(OPM_PARAMS, {**OPM_INPUTS, "liquidation_preference": 0})
     assert no_pref_amount["results"]["allocation"]["method"] == "as_converted"
+    # Preferred is still outstanding, so it still takes its as-converted share.
+    assert no_pref_amount["results"]["allocation"]["common_fraction"] < 1.0
 
-    no_pref_shares = compute(OPM_PARAMS, {**OPM_INPUTS, "shares_outstanding_preferred": 0})
-    assert no_pref_shares["results"]["allocation"]["method"] == "as_converted"
-    # Nothing senior and nothing else outstanding: common gets all of it.
-    assert no_pref_shares["results"]["allocation"]["common_fraction"] == 1.0
+
+def test_a_preference_amount_without_preferred_shares_is_refused_rather_than_dropped():
+    """The other side of the same `and`, and it is not symmetric with the one above.
+
+    This case used to fall through to as-converted as well, with a
+    `common_fraction` of 1.0 — common taking the entire equity value while the
+    $20,000,000 preference the payload names is never mentioned again. There is
+    no reading of this input on which that is right: the preference is senior to
+    something, and the model needs the preferred share count to size the slice of
+    upside sitting behind it. It cannot be inferred from the preference.
+
+    The direction matters. Dropping the stack always *overstates* the concluded
+    common FMV, which is the direction that under-prices employee option strikes,
+    and it did so as a clean 200 with no error and no warning.
+    """
+    with pytest.raises(EngineInputError, match="shares_outstanding_preferred"):
+        compute(OPM_PARAMS, {**OPM_INPUTS, "shares_outstanding_preferred": 0})
+
+    # Saying "no preferred stock" — both fields cleared — is still fine, and is
+    # the payload for which common really does take everything.
+    both_cleared = compute(
+        OPM_PARAMS, {**OPM_INPUTS, "shares_outstanding_preferred": 0, "liquidation_preference": 0}
+    )
+    assert both_cleared["results"]["allocation"]["method"] == "as_converted"
+    assert both_cleared["results"]["allocation"]["common_fraction"] == 1.0
 
 
 def test_volatility_is_only_required_when_something_actually_uses_it():

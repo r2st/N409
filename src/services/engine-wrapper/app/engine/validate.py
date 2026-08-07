@@ -629,6 +629,28 @@ def _check_cap_table(
             "Without a preference the allocation falls back to as-converted, which "
             "overstates common value.",
         )
+    # The converse, and the more damaging of the two — which is why it is an
+    # error rather than the warning above. A preference with no preferred share
+    # count behind it cannot be allocated at all: the aggregate branches in
+    # `compute._opm_allocate` and `current_value.allocate_cvm` need the count to
+    # size the upside slice, so both now refuse it. This is the pre-flight saying
+    # so first, with the field path, instead of the analyst learning it from a
+    # bare `detail` on a run they had been told was fine.
+    #
+    # A missing preferred count also used to be *silent* rather than refused,
+    # which is what makes stating it here worth doing twice: the run succeeded,
+    # common took the whole equity value, and the preference stack simply was not
+    # in the model. Nothing on the response said which figure had been ignored.
+    if preference > 0 and preferred <= 0 and not has_waterfall and allocation_method != "pwerm":
+        c.error(
+            "required",
+            "inputs.shares_outstanding_preferred",
+            "a liquidation preference is set but no preferred shares are outstanding — "
+            "the allocation needs both to place the preference",
+            "Enter the preferred shares outstanding, or clear the liquidation preference "
+            "if the company has no preferred stock. Importing the cap table instead sets "
+            "share_classes, which carries a preference per class and does not use these.",
+        )
 
     volatility = _finite(inputs.get("volatility"))
     model_dlom = params.get("dlom_method") in ("chaffee", "finnerty")
