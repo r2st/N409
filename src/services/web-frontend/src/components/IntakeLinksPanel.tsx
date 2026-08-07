@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { formatDate } from '../lib/format';
-import { Button, DataTable, ErrorNote, Field, Modal, Spinner, TextInput, type Column } from './ui';
+import { formatDate, KIND_LABELS } from '../lib/format';
+import { VALUATION_KINDS, type ValuationKind } from '../lib/types';
+import { Button, DataTable, ErrorNote, Field, Modal, Select, Spinner, TextInput, type Column } from './ui';
 
 /**
  * Client intake links — the firm's side of the intake form.
@@ -87,6 +89,13 @@ interface LinkDetail {
   sections: IntakeSection[];
 }
 
+/** What the conversion modal is working on: the link, plus the firm's edits. */
+interface ConvertTarget {
+  link: IntakeLink;
+  companyName: string;
+  kind: ValuationKind;
+}
+
 function StatusBadge({ status }: { status: string }) {
   return (
     <span
@@ -114,6 +123,9 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
   const [issued, setIssued] = useState<{ url: string; name: string | null } | null>(null);
   const [copied, setCopied] = useState(false);
   const [detail, setDetail] = useState<LinkDetail | null>(null);
+  const [converting, setConverting] = useState<ConvertTarget | null>(null);
+  const [converted, setConverted] = useState<{ id: string; companyName: string } | null>(null);
+  const [convertError, setConvertError] = useState<string | null>(null);
 
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
@@ -185,6 +197,56 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
     }
   };
 
+  /**
+   * Open the conversion modal, pre-filled from what the client actually typed.
+   *
+   * The roster row does not carry the answers, so this reads the submission
+   * first: the legal name the client gave is a better default than the name the
+   * firm addressed the link to, and getting it wrong here means renaming an
+   * engagement afterwards. The firm can still override it — a prospect's typed
+   * name and its charter name are not always the same thing, and the firm is
+   * the one holding the charter.
+   */
+  const beginConvert = async (link: IntakeLink) => {
+    setError(null);
+    setConvertError(null);
+    try {
+      const submission = await api<LinkDetail>(scoped(`/firm/intake-links/${link.id}`));
+      const legal =
+        typeof submission.answers.legal_name === 'string' ? submission.answers.legal_name.trim() : '';
+      setConverting({ link, companyName: legal || link.client_name || '', kind: '409a' });
+    } catch {
+      setError('Could not load that submission.');
+    }
+  };
+
+  const confirmConvert = async () => {
+    if (!converting) return;
+    setConvertError(null);
+    setBusy(true);
+    try {
+      const res = await api<{ valuation: { id: string; company_name: string } }>(
+        scoped(`/firm/intake-links/${converting.link.id}/convert`),
+        {
+          method: 'POST',
+          body: {
+            kind: converting.kind,
+            company_name: converting.companyName.trim() || undefined,
+          },
+        },
+      );
+      setConverting(null);
+      setConverted({ id: res.valuation.id, companyName: res.valuation.company_name });
+      await load();
+    } catch (err) {
+      // Kept inside the modal: the panel-level note renders behind it, so a
+      // failure shown there is a button that silently did nothing.
+      setConvertError(err instanceof ApiError ? err.message : 'Could not convert that intake.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const copy = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -243,6 +305,26 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
           >
             View
           </button>
+          {/*
+            The point of collecting the questionnaire. Offered only on a
+            submitted link, which is also the only state the server will
+            convert — an in-progress form has nothing settled to build an
+            engagement from, and a converted one already has its engagement.
+          */}
+          {row.status === 'submitted' && (
+            <button
+              type="button"
+              className="cursor-pointer font-semibold text-bond-700 underline"
+              onClick={() => void beginConvert(row)}
+            >
+              Convert
+            </button>
+          )}
+          {row.status === 'converted' && row.valuation_id && (
+            <Link to={`/valuations/${row.valuation_id}`} className="text-bond-700 underline">
+              Open engagement
+            </Link>
+          )}
           {(row.status === 'sent' || row.status === 'in_progress') && (
             <button
               type="button"
@@ -291,6 +373,30 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
               {copied ? 'Copied' : 'Copy link'}
             </Button>
             <Button variant="ghost" onClick={() => setIssued(null)}>
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {converted && (
+        <div className="mt-4 rounded-lg border border-bond-200 bg-bond-50 p-5">
+          <h3 className="font-display text-base font-semibold text-bond-900">
+            {converted.companyName} is now an engagement
+          </h3>
+          <p className="mt-1 text-sm text-bond-800">
+            The questionnaire came across with it — the answers are already on the engagement, and the
+            assumptions intake can speak for are set.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Link
+              to={`/valuations/${converted.id}`}
+              className="font-semibold text-bond-700 underline"
+              onClick={() => setConverted(null)}
+            >
+              Open the engagement
+            </Link>
+            <Button variant="ghost" onClick={() => setConverted(null)}>
               Dismiss
             </Button>
           </div>
@@ -346,6 +452,55 @@ export function IntakeLinksPanel({ partnerId }: { partnerId?: string | null }) {
           />
         )}
       </div>
+
+      <Modal
+        open={converting !== null}
+        onClose={() => setConverting(null)}
+        title="Convert to an engagement"
+        className="max-w-lg"
+      >
+        {converting && (
+          <div className="px-5 py-4">
+            <p className="text-sm text-ink-500">
+              Creates a valuation for this client under your firm, with the questionnaire already answered.
+              The intake link is claimed at the same time, so this happens once.
+            </p>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <Field label="Company name" hint="Defaults to the legal name the client gave.">
+                <TextInput
+                  value={converting.companyName}
+                  onChange={(e) => setConverting({ ...converting, companyName: e.target.value })}
+                />
+              </Field>
+              <Field label="Valuation type">
+                <Select
+                  value={converting.kind}
+                  onChange={(e) => setConverting({ ...converting, kind: e.target.value as ValuationKind })}
+                >
+                  {VALUATION_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {KIND_LABELS[kind]}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+            {convertError && (
+              <div className="mt-4">
+                <ErrorNote>{convertError}</ErrorNote>
+              </div>
+            )}
+            <div className="mt-5 flex justify-end gap-3">
+              <Button variant="ghost" onClick={() => setConverting(null)}>
+                Cancel
+              </Button>
+              <Button disabled={busy} onClick={() => void confirmConvert()}>
+                {busy ? 'Converting…' : 'Create engagement'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={detail !== null}

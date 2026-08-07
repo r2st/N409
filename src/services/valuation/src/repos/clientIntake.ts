@@ -180,22 +180,6 @@ export async function submitIntakeLink(pool: pg.Pool, rawToken: string): Promise
   return rows[0] ?? null;
 }
 
-/** Record the engagement a submission was converted into. */
-export async function attachIntakeValuation(
-  pool: pg.Pool,
-  partnerId: string,
-  id: string,
-  valuationId: string,
-): Promise<ClientIntakeLinkRow | null> {
-  const { rows } = await pool.query<ClientIntakeLinkRow>(
-    `UPDATE client_intake_links SET valuation_id = $3
-      WHERE id = $1 AND partner_id = $2 AND valuation_id IS NULL
-      RETURNING *`,
-    [id, partnerId, valuationId],
-  );
-  return rows[0] ?? null;
-}
-
 /** Why a link cannot become an engagement, or `null` when it can. */
 export type IntakeConversionRefusal = 'not_found' | 'not_submitted' | 'already_converted';
 

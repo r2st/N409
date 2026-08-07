@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { IntakeLinksPanel } from '../src/components/IntakeLinksPanel';
 
 /**
@@ -74,10 +75,13 @@ const DETAIL = {
   ],
 };
 
-interface Call {
-  method: string;
-  path: string;
-}
+/** The panel links out to the engagement it creates, so it needs a router. */
+const renderPanel = (partnerId?: string) =>
+  render(
+    <MemoryRouter>
+      <IntakeLinksPanel partnerId={partnerId} />
+    </MemoryRouter>,
+  );
 
 /** jsdom's navigator.clipboard is a getter-only property, so it is replaced. */
 function stubClipboard(writeText: () => Promise<void>) {
@@ -87,13 +91,51 @@ function stubClipboard(writeText: () => Promise<void>) {
   });
 }
 
-function mockApi(opts: { createStatus?: number; listStatus?: number } = {}) {
+interface Call {
+  method: string;
+  path: string;
+  body?: unknown;
+}
+
+const CONVERTED_VALUATION_ID = '01N409VAL00000000000000AA';
+
+function mockApi(
+  opts: { createStatus?: number; listStatus?: number; convertStatus?: number; convertDetail?: string } = {},
+) {
   const calls: Call[] = [];
+  // Conversion is once-only server-side, and the roster reflects it on the next
+  // read — so does this stub, or the "Open engagement" affordance would be
+  // testing a render the real flow never produces.
+  let convertedLink = false;
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
     const method = init?.method ?? 'GET';
-    calls.push({ method, path });
+    calls.push({
+      method,
+      path,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    });
 
+    if (method === 'POST' && path.includes('/convert')) {
+      if (opts.convertStatus) {
+        return jsonResponse(
+          { detail: opts.convertDetail ?? 'This intake has already been converted into a valuation' },
+          opts.convertStatus,
+        );
+      }
+      convertedLink = true;
+      const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as { company_name?: string }) : {};
+      return jsonResponse(
+        {
+          valuation: {
+            id: CONVERTED_VALUATION_ID,
+            company_name: body.company_name ?? 'Halcyon Bio',
+          },
+          link: { ...LINKS[1], status: 'converted', valuation_id: CONVERTED_VALUATION_ID },
+        },
+        201,
+      );
+    }
     if (method === 'POST' && path.includes('/firm/intake-links')) {
       return opts.createStatus
         ? jsonResponse({ detail: 'Client intake is for firm accounts' }, opts.createStatus)
@@ -109,9 +151,11 @@ function mockApi(opts: { createStatus?: number; listStatus?: number } = {}) {
     if (method === 'DELETE') return new Response(null, { status: 204 });
     if (/\/firm\/intake-links\/[^?]+/.test(path)) return jsonResponse(DETAIL);
     if (path.includes('/firm/intake-links')) {
-      return opts.listStatus
-        ? jsonResponse({ title: 'no' }, opts.listStatus)
-        : jsonResponse({ links: LINKS });
+      if (opts.listStatus) return jsonResponse({ title: 'no' }, opts.listStatus);
+      const rows = convertedLink
+        ? [LINKS[0], { ...LINKS[1], status: 'converted', valuation_id: CONVERTED_VALUATION_ID }]
+        : LINKS;
+      return jsonResponse({ links: rows });
     }
     throw new Error(`unexpected fetch ${path}`);
   });
@@ -125,7 +169,7 @@ afterEach(() => {
 describe('IntakeLinksPanel', () => {
   it('lists prospects with their status and how far they got', async () => {
     mockApi();
-    render(<IntakeLinksPanel />);
+    renderPanel();
 
     expect(await screen.findByText('Northwind Robotics')).toBeInTheDocument();
     expect(screen.getByText('In progress')).toBeInTheDocument();
@@ -137,7 +181,7 @@ describe('IntakeLinksPanel', () => {
   it('shows a new link once, and says why it cannot be shown again', async () => {
     mockApi();
     const user = userEvent.setup();
-    render(<IntakeLinksPanel />);
+    renderPanel();
     await screen.findByText('Northwind Robotics');
 
     await user.click(screen.getByRole('button', { name: 'New intake link' }));
@@ -158,7 +202,7 @@ describe('IntakeLinksPanel', () => {
     // otherwise swallow the write the component makes.
     const user = userEvent.setup();
     stubClipboard(writeText);
-    render(<IntakeLinksPanel />);
+    renderPanel();
     await screen.findByText('Northwind Robotics');
 
     await user.click(screen.getByRole('button', { name: 'New intake link' }));
@@ -174,7 +218,7 @@ describe('IntakeLinksPanel', () => {
     mockApi();
     const user = userEvent.setup();
     stubClipboard(vi.fn().mockRejectedValue(new Error('denied')));
-    render(<IntakeLinksPanel />);
+    renderPanel();
     await screen.findByText('Northwind Robotics');
 
     await user.click(screen.getByRole('button', { name: 'New intake link' }));
@@ -190,7 +234,7 @@ describe('IntakeLinksPanel', () => {
 
   it('offers withdrawal only while a link is still live', async () => {
     mockApi();
-    render(<IntakeLinksPanel />);
+    renderPanel();
     await screen.findByText('Northwind Robotics');
 
     const live = screen.getByText('Northwind Robotics').closest('tr')!;
@@ -205,7 +249,7 @@ describe('IntakeLinksPanel', () => {
   it('withdraws a link and reloads the roster', async () => {
     const calls = mockApi();
     const user = userEvent.setup();
-    render(<IntakeLinksPanel />);
+    renderPanel();
     await screen.findByText('Northwind Robotics');
 
     const live = screen.getByText('Northwind Robotics').closest('tr')!;
@@ -222,7 +266,7 @@ describe('IntakeLinksPanel', () => {
   it('opens what a client sent, labelled by the questions they were asked', async () => {
     mockApi();
     const user = userEvent.setup();
-    render(<IntakeLinksPanel />);
+    renderPanel();
     await screen.findByText('Halcyon Bio');
 
     const row = screen.getByText('Halcyon Bio').closest('tr')!;
@@ -239,7 +283,7 @@ describe('IntakeLinksPanel', () => {
   it('scopes every request to the firm an ops user opened', async () => {
     const calls = mockApi();
     const user = userEvent.setup();
-    render(<IntakeLinksPanel partnerId="01N409FIRM0000000000000AA" />);
+    renderPanel('01N409FIRM0000000000000AA');
     await screen.findByText('Northwind Robotics');
 
     await user.click(screen.getByRole('button', { name: 'New intake link' }));
@@ -255,8 +299,126 @@ describe('IntakeLinksPanel', () => {
 
   it('explains a refusal rather than showing an empty roster', async () => {
     mockApi({ listStatus: 403 });
-    render(<IntakeLinksPanel />);
+    renderPanel();
 
     expect(await screen.findByRole('alert')).toHaveTextContent('available to firm accounts');
+  });
+});
+
+/**
+ * Conversion — the step the questionnaire is collected *for*.
+ *
+ * The server side of this shipped a round before the UI did, so the `converted`
+ * status was styled and labelled by a panel with no way to produce it: a firm
+ * could read the answers and then had to retype every one of them into a new
+ * valuation by hand. These pin the control that closes that.
+ */
+describe('IntakeLinksPanel — converting an intake', () => {
+  it('offers Convert only on a submitted link', async () => {
+    mockApi();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const submitted = screen.getByText('Halcyon Bio').closest('tr')!;
+    expect(within(submitted).getByRole('button', { name: 'Convert' })).toBeInTheDocument();
+
+    // Half-answered: there is nothing settled to build an engagement from, and
+    // the server refuses it — so the button must not be there to press.
+    const partial = screen.getByText('Northwind Robotics').closest('tr')!;
+    expect(within(partial).queryByRole('button', { name: 'Convert' })).not.toBeInTheDocument();
+  });
+
+  it('pre-fills the company name from the legal name the client typed', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const row = screen.getByText('Halcyon Bio').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Convert' }));
+
+    const dialog = await screen.findByRole('dialog');
+    // Not 'Halcyon Bio' — the name the firm addressed the link to — but the
+    // charter name the client gave, which is what the engagement should carry.
+    expect(within(dialog).getByLabelText(/Company name/)).toHaveValue('Halcyon Bio, Inc.');
+  });
+
+  it('creates the engagement with the firm’s chosen name and type', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const row = screen.getByText('Halcyon Bio').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Convert' }));
+    const dialog = await screen.findByRole('dialog');
+
+    const name = within(dialog).getByLabelText(/Company name/);
+    await user.clear(name);
+    await user.type(name, 'Halcyon Biosciences Ltd');
+    await user.selectOptions(within(dialog).getByLabelText(/Valuation type/), '718');
+    await user.click(within(dialog).getByRole('button', { name: 'Create engagement' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    const convert = calls.find((c) => c.method === 'POST' && c.path.includes('/convert'));
+    expect(convert?.path).toContain('01N409LINK000000000000BB');
+    expect(convert?.body).toEqual({ kind: '718', company_name: 'Halcyon Biosciences Ltd' });
+  });
+
+  it('points at the engagement it just created, and reloads the roster', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+    const before = calls.filter((c) => c.method === 'GET').length;
+
+    const row = screen.getByText('Halcyon Bio').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Convert' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Create engagement' }));
+
+    const open = await screen.findByRole('link', { name: 'Open the engagement' });
+    expect(open).toHaveAttribute('href', '/valuations/01N409VAL00000000000000AA');
+    expect(calls.filter((c) => c.method === 'GET').length).toBeGreaterThan(before);
+
+    // And the row itself now carries the status the panel could never produce.
+    const converted = (await screen.findAllByText('Converted'))[0]!.closest('tr')!;
+    expect(within(converted).getByRole('link', { name: 'Open engagement' })).toHaveAttribute(
+      'href',
+      '/valuations/01N409VAL00000000000000AA',
+    );
+    expect(within(converted).queryByRole('button', { name: 'Convert' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the modal open and explains a refusal', async () => {
+    mockApi({ convertStatus: 409 });
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const row = screen.getByText('Halcyon Bio').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Convert' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Create engagement' }));
+
+    // Behind the modal is where the panel-level error note renders, so a
+    // failure reported there reads as a button that did nothing at all.
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('already been converted');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('scopes conversion to the firm an ops user opened', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPanel('01N409FIRM0000000000000AA');
+    await screen.findByText('Halcyon Bio');
+
+    const row = screen.getByText('Halcyon Bio').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Convert' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Create engagement' }));
+
+    await waitFor(() => expect(calls.some((c) => c.path.includes('/convert'))).toBe(true));
+    for (const call of calls) expect(call.path).toContain('partner_id=01N409FIRM0000000000000AA');
   });
 });

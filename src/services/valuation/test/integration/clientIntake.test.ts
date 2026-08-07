@@ -254,10 +254,10 @@ describe.skipIf(!dbUp)('client intake links', () => {
   /**
    * Conversion is the point of the feature: a firm collects the answers so it
    * can start the engagement from them. Until this endpoint existed the whole
-   * chain stopped one step short — `attachIntakeValuation` was never called
-   * from anywhere, so the `converted` status the console styles and labels was
-   * unreachable, and a firm that had just received a completed questionnaire
-   * had to retype every answer into a new valuation by hand.
+   * chain stopped one step short — nothing anywhere set `valuation_id`, so the
+   * `converted` status the console styles and labels was unreachable, and a
+   * firm that had just received a completed questionnaire had to retype every
+   * answer into a new valuation by hand.
    */
   describe('converting a submission into an engagement', () => {
     const convert = (token: string, id: string, payload: object = {}) =>
