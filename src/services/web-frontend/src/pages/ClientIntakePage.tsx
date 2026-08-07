@@ -139,30 +139,71 @@ export function ClientIntakePage() {
       );
   }, []);
 
-  /** Write the pending keys back. Safe to call with nothing pending. */
-  const flush = useCallback(async (): Promise<void> => {
-    if (!token || pending.current.size === 0) return;
-    const keys = [...pending.current];
-    pending.current.clear();
-    const slice: Record<string, unknown> = {};
-    for (const key of keys) slice[key] = answersRef.current[key] ?? null;
+  /**
+   * The write currently in flight. Every flush queues behind it, so at most one
+   * save is ever open against this link.
+   *
+   * Three callers can flush — the autosave timer, moving between steps, and
+   * Submit — and before this they could all be open at once, which broke two
+   * things that matter on a form nobody is watching us fill in.
+   *
+   * The server merges each slice with `answers || $2::jsonb`, so the last
+   * request to *arrive* wins per key. Two overlapping saves of the same field
+   * are ordered by the network rather than by when the client typed them, and
+   * the older value can land second: the prospect watches the page say "Saved"
+   * over the figure they just corrected, and the firm converts the intake with
+   * the figure they replaced.
+   *
+   * And `flush` returned as soon as it found nothing pending — which is exactly
+   * what it finds while an earlier flush is still open, having already cleared
+   * the set. Submit awaited that, got an instant resolve, and posted /submit
+   * ahead of the answers it was submitting; the server judged completeness on
+   * what it had and answered "Complete all required fields" to a client who
+   * just had.
+   */
+  const inFlight = useRef<Promise<boolean>>(Promise.resolve(true));
 
-    setSaveState('saving');
-    try {
-      const res = await post<{ answers: Record<string, unknown>; completion: Completion }>(
-        '/api/v1/intake/portal/answers',
-        { token, answers: slice },
-      );
-      setCompletion(res.completion);
-      setSaveState('saved');
-      setSaveError(null);
-    } catch (err) {
-      // Put the keys back so the next attempt — a later edit, or leaving the
-      // step — retries them rather than dropping the client's typing.
-      for (const key of keys) pending.current.add(key);
-      setSaveState('error');
-      setSaveError(err instanceof Error ? err.message : 'Could not save your answers.');
-    }
+  /**
+   * Write the pending keys back, after any write already in flight. Resolves
+   * true when everything pending at its turn is on the server — so Submit can
+   * wait for a real answer instead of for an empty set.
+   */
+  const flush = useCallback((): Promise<boolean> => {
+    const next = inFlight.current.then(async (): Promise<boolean> => {
+      // Read at its turn, not at call time: what is pending may have grown
+      // while this call was queued, and those keys belong in this write.
+      if (!token || pending.current.size === 0) return true;
+      const keys = [...pending.current];
+      pending.current.clear();
+      const slice: Record<string, unknown> = {};
+      for (const key of keys) slice[key] = answersRef.current[key] ?? null;
+
+      setSaveState('saving');
+      try {
+        const res = await post<{ answers: Record<string, unknown>; completion: Completion }>(
+          '/api/v1/intake/portal/answers',
+          { token, answers: slice },
+        );
+        setCompletion(res.completion);
+        setSaveState('saved');
+        setSaveError(null);
+        return true;
+      } catch (err) {
+        // Put the keys back so the next attempt — a later edit, or leaving the
+        // step — retries them rather than dropping the client's typing.
+        for (const key of keys) pending.current.add(key);
+        setSaveState('error');
+        setSaveError(err instanceof Error ? err.message : 'Could not save your answers.');
+        return false;
+      }
+    });
+    // A failed write must not poison the queue for the next one; the boolean is
+    // how failure is reported, and the chain always resolves.
+    inFlight.current = next.then(
+      () => true,
+      () => true,
+    );
+    return next;
   }, [token]);
 
   const setField = (key: string, value: unknown) => {
@@ -191,7 +232,14 @@ export function ClientIntakePage() {
     setSubmitError(null);
     setSubmitting(true);
     try {
-      await flush();
+      // Submitting answers the server has not got yet is how a complete form
+      // gets told it is incomplete. If the write failed, say so in the client's
+      // own terms rather than letting the server's completeness error stand in
+      // for a network problem.
+      if (!(await flush())) {
+        setSubmitError('Your latest answers could not be saved. Check your connection and try again.');
+        return;
+      }
       const res = await post<{ submitted_at: string; completion: Completion }>(
         '/api/v1/intake/portal/submit',
         { token },

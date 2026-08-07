@@ -337,6 +337,124 @@ describe('ClientIntakePage', () => {
     expect(screen.queryByText('Thank you — that’s everything')).not.toBeInTheDocument();
   });
 
+  /**
+   * The autosave, the step change and Submit all write back, and they can all
+   * be triggered within a second of each other. Overlapping writes were ordered
+   * by the network rather than by when the client typed, and the server merges
+   * per key on arrival — so an older value could land second, and Submit could
+   * outrun the answers it was submitting.
+   */
+  describe('overlapping writes', () => {
+    /**
+     * Mocks the portal with a delay on each answers write, and records how many
+     * writes were open at the same time — the invariant under test, rather than
+     * a timing the test would have to guess at.
+     */
+    function mockSlowPortal(delaysMs: number | number[], portal: PortalOverrides = {}) {
+      const calls: Call[] = [];
+      const settled: string[] = [];
+      const delayFor = (i: number) =>
+        typeof delaysMs === 'number' ? delaysMs : (delaysMs[i] ?? delaysMs[delaysMs.length - 1] ?? 0);
+      let started = 0;
+      let open = 0;
+      let maxOpen = 0;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        const path = String(url);
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        calls.push({ path, body });
+        if (path.endsWith('/intake/portal')) return jsonResponse(portalBody(portal));
+        if (path.endsWith('/portal/answers')) {
+          const delay = delayFor(started++);
+          open += 1;
+          maxOpen = Math.max(maxOpen, open);
+          try {
+            await new Promise((r) => setTimeout(r, delay));
+            const answers = body.answers as Record<string, unknown>;
+            settled.push(JSON.stringify(answers));
+            return jsonResponse({ answers, completion: completion(Object.keys(answers).length) });
+          } finally {
+            open -= 1;
+          }
+        }
+        if (path.endsWith('/portal/submit')) {
+          settled.push('SUBMIT');
+          return jsonResponse({ submitted_at: '2026-08-01T10:00:00Z', completion: completion(3, true) });
+        }
+        throw new Error(`unexpected fetch ${path}`);
+      });
+      return { calls, settled, maxOpen: () => maxOpen };
+    }
+
+    it('never lets an older value for a field land after a newer one', async () => {
+      // The first write is slow and every later one is instant — the ordinary
+      // shape of a flaky connection. Unserialized, the correction overtakes the
+      // value it corrects, the server applies them in arrival order, and the
+      // field ends up holding what the client typed *first*.
+      const { settled, maxOpen } = mockSlowPortal([800, 0]);
+      const user = userEvent.setup();
+      render(<ClientIntakePage />);
+      await screen.findByText('Welcome, Northwind Robotics');
+
+      await user.type(screen.getByLabelText('Legal company name *'), 'Halcyon');
+      // Wait for the slow write to be open before typing the correction.
+      await waitFor(() => expect(maxOpen()).toBe(1), { timeout: 3000 });
+      await user.type(screen.getByLabelText('Legal company name *'), ' Bio');
+      await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+      await waitFor(() => expect(settled).toHaveLength(2), { timeout: 4000 });
+      // Never two open at once, and the last thing the server saw is the last
+      // thing the client typed.
+      expect(maxOpen()).toBe(1);
+      expect(settled[settled.length - 1]).toContain('Halcyon Bio');
+    });
+
+    it('does not submit ahead of the answers it is submitting', async () => {
+      // A pending write already in flight used to make `flush` resolve
+      // instantly — it found the pending set empty because the open write had
+      // taken it — so /submit reached the server first and was judged against
+      // answers that had not arrived.
+      const { settled } = mockSlowPortal(400, { answered: 2, ready: true });
+      const user = userEvent.setup();
+      render(<ClientIntakePage />);
+      await screen.findByText('Welcome, Northwind Robotics');
+
+      await user.type(screen.getByLabelText('Legal company name *'), 'Halcyon');
+      await user.click(screen.getByRole('button', { name: 'Review & submit' }));
+      await user.click(screen.getByRole('button', { name: /Submit to Meridian Valuation/ }));
+
+      expect(await screen.findByText('Thank you — that’s everything')).toBeInTheDocument();
+      expect(settled[settled.length - 1]).toBe('SUBMIT');
+      expect(settled.filter((s) => s.includes('Halcyon'))).not.toHaveLength(0);
+    });
+
+    it('refuses to submit when the answers could not be saved', async () => {
+      const user = userEvent.setup();
+      let submits = 0;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const path = String(url);
+        if (path.endsWith('/intake/portal')) return jsonResponse(portalBody({ answered: 2, ready: true }));
+        if (path.endsWith('/portal/answers')) return jsonResponse({ detail: 'Network hiccup' }, 503);
+        if (path.endsWith('/portal/submit')) {
+          submits += 1;
+          return jsonResponse({ submitted_at: '2026-08-01T10:00:00Z', completion: completion(3, true) });
+        }
+        throw new Error(`unexpected fetch ${path}`);
+      });
+
+      render(<ClientIntakePage />);
+      await screen.findByText('Welcome, Northwind Robotics');
+      await user.type(screen.getByLabelText('Legal company name *'), 'Halcyon');
+      await user.click(screen.getByRole('button', { name: 'Review & submit' }));
+      await user.click(screen.getByRole('button', { name: /Submit to Meridian Valuation/ }));
+
+      // The client is told what actually went wrong — a save that did not
+      // land — rather than the server's "you left fields blank".
+      expect(await screen.findByText(/could not be saved/)).toBeInTheDocument();
+      expect(submits).toBe(0);
+      expect(screen.queryByText('Thank you — that’s everything')).not.toBeInTheDocument();
+    });
+  });
+
   it('reports progress to assistive technology, not just visually', async () => {
     mockPortal({ portal: { answered: 2 } });
     render(<ClientIntakePage />);
