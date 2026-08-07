@@ -70,6 +70,36 @@ describe.skipIf(!dbUp)('valuation analytics endpoint (feature 5)', () => {
   });
 
   /**
+   * The benchmark has to say where the company sits in its own comparable set,
+   * and that depends entirely on which multiple you call "the company's". The
+   * engine's market approach applies the median and records it as
+   * `selected_multiple`; this endpoint used the mean, which on the skewed set
+   * every real comp group is put the company near the top of a range it is in
+   * the middle of.
+   */
+  it('benchmarks against the multiple the market approach applied', async () => {
+    const skewed = [4, 5, 6, 7, 28]; // median 6, mean 10
+    const v = await seed('SkewedComps Inc', 4.0, 0.3, skewed);
+    await ctx.pool.query(
+      `UPDATE calculations
+          SET results = jsonb_set(results, '{approaches,market,selected_multiple}', '6')
+        WHERE valuation_id = $1`,
+      [v.id],
+    );
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${v.id}/analytics`,
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(200);
+    const { analytics } = res.json();
+    expect(analytics.benchmark.company_multiple).toBeCloseTo(6, 6);
+    expect(analytics.benchmark.percentile).toBeCloseTo(0.5, 6);
+    expect(analytics.series[0].market_multiple).toBeCloseTo(6, 6);
+  });
+
+  /**
    * A firm's client is the firm's, not the seat's.
    *
    * The series used to be scoped to `user_id`, so two engagements for one

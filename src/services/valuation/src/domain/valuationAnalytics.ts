@@ -32,7 +32,11 @@ export interface Benchmark {
   median: number | null;
   p75: number | null;
   max: number | null;
-  /** The multiple the company's market approach applied (the mean of comps). */
+  /**
+   * The multiple the company's market approach applied — the engine's
+   * `selected_multiple`, which is the median of the comparable set. See
+   * {@link appliedMarketMultiple}.
+   */
   company_multiple: number | null;
   /** Where company_multiple sits within the comparable set, 0–1. */
   percentile: number | null;
@@ -58,15 +62,48 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-function marketMultiples(r: Results): number[] {
+function marketApproach(r: Results): Results | undefined {
   const approaches = (r.approaches ?? {}) as Results;
-  const market = approaches.market as Results | undefined;
-  const ms = market?.multiples;
+  const market = approaches.market;
+  return market !== null && typeof market === 'object' ? (market as Results) : undefined;
+}
+
+function marketMultiples(r: Results): number[] {
+  const ms = marketApproach(r)?.multiples;
   if (!Array.isArray(ms)) return [];
   return ms.map(Number).filter((n) => Number.isFinite(n) && n > 0);
 }
 
-const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+/** Median of a sample — `quantile(xs, 0.5)` by another name, kept explicit here. */
+const median = (xs: number[]): number | null => quantile(xs, 0.5);
+
+/**
+ * The multiple the market approach actually applied.
+ *
+ * `approaches.market.selected_multiple` is the engine's own answer, and the
+ * engine picks the **median** of the comparable set (`approaches.market_multiples`
+ * in the engine-wrapper: `selected = statistics.median(clean)`). This module
+ * used the **mean** instead, and
+ * called it "the multiple the company's market approach applied" in the type it
+ * returned. Comparable multiples are right-skewed almost by definition — one
+ * richly-priced comp in a set of five is the normal shape — so the two are
+ * routinely far apart: on `[4, 5, 6, 7, 28]` the engine values the company at
+ * 6× and this reported 10×, then ranked that 10× against the same five comps
+ * and put the company in the 90th percentile of a set it actually sits in the
+ * middle of. Both the benchmark panel and the `market_multiple` trend line read
+ * from here, so a valuation could be shown drifting up the comp range while the
+ * multiple the opinion rests on had not moved.
+ *
+ * Falling back to the median rather than the mean, because that is the figure
+ * the engine would have chosen for a calculation stored before it reported
+ * `selected_multiple` — the point is to say what the run used, and guessing
+ * with the engine's own rule is the closest available answer.
+ */
+export function appliedMarketMultiple(r: Results): number | null {
+  const selected = num(marketApproach(r)?.selected_multiple);
+  if (selected !== null && selected > 0) return selected;
+  return median(marketMultiples(r));
+}
 
 /** Linear-interpolation percentile of a sorted-or-unsorted sample, q in [0,1]. */
 export function quantile(values: number[], q: number): number | null {
@@ -120,13 +157,13 @@ export function buildAnalytics(calcs: CalcInput[]): ValuationAnalytics {
       equity_value: num(c.results.equity_value),
       dlom: num(discounts.dlom),
       volatility: num(assumptions.volatility),
-      market_multiple: mean(marketMultiples(c.results)),
+      market_multiple: appliedMarketMultiple(c.results),
     };
   });
 
   const latest = calcs[calcs.length - 1];
   const comps = latest ? marketMultiples(latest.results) : [];
-  const companyMultiple = mean(comps);
+  const companyMultiple = latest ? appliedMarketMultiple(latest.results) : null;
   const benchmark: Benchmark = {
     comparable_multiples: comps,
     count: comps.length,
