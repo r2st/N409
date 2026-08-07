@@ -1,75 +1,79 @@
-e43aa6d95c8553ad569bf81f5495ccdb4ad9efcf
+b04789302a749da1976f87d6cba0df8c5583604f
 # N409 deployed revision
-# commit:    e43aa6d95c8553ad569bf81f5495ccdb4ad9efcf
-# subject:   chore(format): run prettier over two test files that predate this branch
-# previous:  2fb9533 (fix(billing): a refunded 409A stayed paid, published, and
-#            counted as revenue)
-# includes:  5 commits — four fixes plus one formatting commit. The theme is the
-#            layer *above* the payment lifecycle work in 2fb9533: what the
-#            customer is quoted, what the deliverable says, and who is allowed
-#            to set a password.
+# commit:    b04789302a749da1976f87d6cba0df8c5583604f
+# subject:   feat(intake): convert a submitted intake into the engagement it was
+#            collected for
+# previous:  e43aa6d (chore(format): run prettier over two test files that
+#            predate this branch)
+# includes:  3 commits, all client intake. Two fix what the questionnaire was
+#            willing to store; the third finishes what the feature was for.
 #
-#            191c762 billing — plan_limits seeded per_valuation at $2,000 while
-#              the one-time checkout charges $990-$1,490 by product kind. The
-#              Billing screen renders that row as a price card, so a customer
-#              read $2,000.00 and was charged $1,190.00 for a 409A: the gap this
-#              file has carried as unresolved since the payments work landed. It
-#              is not a business call — whichever number is right, the two
-#              cannot disagree. The tier now quotes the entry price ("From
-#              $990.00") because the price genuinely varies by product, and a
-#              test pins the figure to min(priceForKind).
-#            899eef8 report — the OPM path never hoisted `allocation_method`, so
-#              the report summary fell back to `allocation.method` (a different
-#              vocabulary) and printed "Allocation method: OPM_WATERFALL" on the
-#              board-facing summary page. Fixed in the engine *and* in the label
-#              map, because stored calculations lack the key and re-rendering an
-#              archived report must not change what it says.
-#            d12cafa auth — accept-invite called neither assertPasswordStrong
-#              nor anything like it. Invitation is how every firm seat is
-#              created, so an administrator raising password_min_length secured
-#              self-service sign-ups only.
-#            1e562fb payments UI — migration 0099 added the `refunded` label and
-#              the refund/dispute columns; the frontend was never updated. The
-#              status chip is a lookup keyed on a four-value union, so a
-#              refunded row rendered `undefined` in its class list, and the
-#              refund itself was never displayed at all.
-#            e43aa6d format — two test files unformatted since before this work;
-#              format:check is a CI gate and was already red.
-# deployed:  2026-08-06T07:04Z (UTC)
+#            2f27b03 intake — both write paths filtered incoming answers to the
+#              known *key* set and then stored whatever value arrived with the
+#              key. A key set is only half a guard: `{"legal_name": {"$ne":
+#              null}}` has a legal key, so the firm console showed the company's
+#              legal name as "[object Object]". Worse on a required `select` —
+#              `isAnswered` counts any non-blank value and the option check ran
+#              inside a `typeof value === 'string'` *condition*, so a non-string
+#              skipped the check instead of failing it, and a questionnaire
+#              could be submitted with a revenue stage that is neither offered
+#              choice. narrowIntakeAnswers now filters keys *and* value shapes,
+#              shared by both repos; select / boolean / text each reject a
+#              wrong-typed scalar with an error the client can see. Free text
+#              also gained a ceiling (300 / 5,000 code points) — the portal
+#              write endpoint is anonymous, so the only prior bound was
+#              Fastify's 1 MB body cap, per save, forever. This closes the gap
+#              this file carried as unresolved last round.
+#            cbe2a11 intake UI — the two surfaces render the same schema and had
+#              each grown their own answer<->control conversion. They disagreed
+#              on one case, and it was not cosmetic: the valuation wizard read
+#              the blank option of a yes/no field as `false`, so a client who
+#              left "Any pending litigation?" unselected recorded a denial they
+#              never made — and `false` counts as answered, so the completion
+#              tracker then stopped asking for the real one. One implementation,
+#              two callers; empty is always null.
+#            b047893 intake — the feature stopped one step short of its purpose.
+#              A firm could send the link, watch it fill in and read what came
+#              back, then had to retype every answer by hand. The `converted`
+#              status existed, was styled and labelled, and no code path could
+#              produce it. POST /api/v1/firm/intake-links/:id/convert creates
+#              the valuation, copies the answers into the engagement's own
+#              questionnaire, seeds the five params that land in a typed column,
+#              and claims the link — one transaction, row locked first, because
+#              `valuation_id` is the only thing making conversion once-only and
+#              a double-click would otherwise own two engagements for one client
+#              with the second orphaned.
+# deployed:  2026-08-07T04:27Z (UTC)
 # method:    infra/deploy.sh --apply (git archive + scp + tar extract, npm ci &&
 #            npm run build on host, BUILD_SHA written after the build, valuation
 #            restarted and awaited before the other four).
-# verified:  BUILD_SHA on the host, all five units active, /health on :3000 and
-#            :3001 both reporting e43aa6d, https://n409.aiknol.com/health 200
-#            through Caddy, 0100 at the head of schema_migrations, and
-#            plan_limits.per_valuation reading 99000 in the live database.
-# tests:     4,870 green before the push — 3,453 JS across the five workspaces
-#            (npm test), 341 ai, 1,076 engine-wrapper. Each of the four fixes
-#            was confirmed to fail its new test with the fix reverted.
+# verified:  BUILD_SHA on the host reads b047893, all five units active, /health
+#            on :3000 and :3001 both reporting b047893 from build_sha_source
+#            "file", and https://n409.aiknol.com/health 200 through Caddy.
+# tests:     4,916 green before the push — 3,499 JS across the five workspaces
+#            (npm test: 205 shared, 189 report, 2,294 valuation, 42 web, 769
+#            web-frontend), 341 ai, 1,076 engine-wrapper. eslint clean; three
+#            touched files needed prettier and were reformatted before the
+#            commits, so format:check is green.
+# note:      no migrations, no dependency changes and no deletions since
+#            e43aa6d, so the deletion sweep was empty, npm ci had nothing new to
+#            fetch and no pip install was needed. schema_migrations stays at
+#            0100. The two Python services restarted only because the script
+#            restarts the whole set — no Python file changed this round.
 # note:      This file is tracked, so it always names the *previous* deploy at
 #            the moment the archive is built — the commit recording a deploy
 #            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
 #            authoritative record of what is running; it is written by the
 #            deploy script from the local HEAD after a successful build, and is
 #            what /health reports.
-# note:      no deletions and no dependency changes since 2fb9533, so the
-#            deletion sweep was empty and no pip install was needed. The only
-#            Python change is compute.py plus a new test file; ai restarted only
-#            because the script restarts the whole set.
-# note:      migration 0100 is a single guarded UPDATE (`WHERE tier =
-#            'per_valuation' AND price_cents = 200000`), so it is a no-op on any
-#            environment whose catalogue was already edited by hand rather than
-#            silently overwriting a deliberate price.
+# gap:       the convert endpoint ships without a caller. IntakeLinksPanel
+#            styles and labels the `converted` status but has no Convert
+#            control, so the transition is reachable only over the API and the
+#            firm console still cannot produce the status it renders. The
+#            half-fixed shape of the original gap has moved one layer up rather
+#            than closed: server done, UI not. Next round.
 # gap:       Stripe is still unconfigured in production — /opt/N409/.env has no
 #            STRIPE_SECRET_KEY and no webhook secrets, so every client still
 #            sees "Online payment is not available yet — we will invoice you
-#            instead" and none of the payment handlers can fire. The pricing fix
-#            above matters *before* those keys land, not after: it is what the
-#            first live charge would otherwise contradict. See
+#            instead" and none of the payment handlers can fire. See
 #            docs/billing-setup.md.
-# gap:       the client intake portal accepts any JSON value for a text or
-#            textarea answer — `filterIntakeAnswers` narrows the key set but not
-#            the value types, so an object or array is stored and later rendered
-#            as "[object Object]" in the firm console. Not a crash and not an
-#            injection (the console stringifies), but the questionnaire's own
-#            rules only cover number / date / select. Unfixed this round.
