@@ -91,16 +91,47 @@ export async function revokeApiToken(pool: pg.Pool, id: string): Promise<boolean
 
 /**
  * Resolve a presented secret to the user it acts as. Touches last_used_at.
- * Returns null for unknown or revoked tokens.
+ * Returns null for unknown or revoked tokens, and for an organisation token
+ * whose creator is no longer in that organisation.
+ *
+ * That last clause is the whole point of the join. A partner token is the only
+ * credential on this platform that carries an authority the *token row* names
+ * rather than one re-read from the presenter: `partnerApi.loadScoped` scopes
+ * every request to `token.partner_id` and never consults the user behind it. So
+ * when an admin moved a firm's org admin to another firm — or off the firm
+ * entirely — the token they had minted went on reading, creating and uploading
+ * against their old firm's engagements. One firm's client list, documents and
+ * concluded 409As, reachable by someone who had left, with the only remedy
+ * being that somebody at the old firm noticed a token in a settings page and
+ * revoked it.
+ *
+ * The session path has always re-read roles and partner from the database on
+ * every request, precisely so a change takes effect at once rather than at
+ * token expiry. This is that same rule reaching the credential that had been
+ * exempt from it.
+ *
+ * Refused rather than revoked: an admin who moves a user by mistake can move
+ * them back and the integration resumes, where a revocation on a failed auth
+ * would be permanent and would let a *stolen* token be used to kill a firm's
+ * integration. The consequence — a firm's integration stops when the member who
+ * minted its key leaves — is the correct one, and the same one every other
+ * platform's org tokens have; the firm mints a new key under a current member.
+ *
+ * Personal tokens (partner_id NULL) are unaffected: they carry only their
+ * owner's own scope, which is re-read per request already.
  */
 export async function resolveApiToken(
   pool: pg.Pool,
   secret: string,
 ): Promise<{ tokenId: string; userId: string; partnerId: string | null } | null> {
   const { rows } = await pool.query<{ id: string; created_by: string; partner_id: string | null }>(
-    `UPDATE api_tokens SET last_used_at = now()
-     WHERE token_hash = $1 AND revoked_at IS NULL
-     RETURNING id, created_by, partner_id`,
+    `UPDATE api_tokens t SET last_used_at = now()
+       FROM users u
+      WHERE t.token_hash = $1
+        AND t.revoked_at IS NULL
+        AND u.id = t.created_by
+        AND (t.partner_id IS NULL OR u.partner_id = t.partner_id)
+     RETURNING t.id, t.created_by, t.partner_id`,
     [hashToken(secret)],
   );
   const row = rows[0];

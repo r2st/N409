@@ -321,4 +321,94 @@ describe.skipIf(!dbUp)('partner API', () => {
       ).statusCode,
     ).toBe(401);
   });
+
+  /**
+   * A partner key is the one credential here that carries an authority the
+   * *token row* names rather than one re-read from the presenter: every route
+   * scopes to `token.partner_id` and never consults the user behind it. So a
+   * key kept working against the firm it named after its creator had left that
+   * firm — one firm's client list, documents and concluded 409As, reachable by
+   * a departed member, until somebody at the firm noticed the key and revoked
+   * it by hand.
+   */
+  describe('a partner key follows its creator’s membership', () => {
+    /** Mints a fresh firm, an admin in it, and that admin's org key. */
+    async function seedFirmWithKey(name: string) {
+      const firmId = await seedPartner(ctx, name);
+      const admin = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+      const minted = await app.inject({
+        method: 'POST',
+        url: `/api/v1/partners/${firmId}/tokens`,
+        headers: authHeader(admin.token),
+        payload: { name: `${name} integration` },
+      });
+      expect(minted.statusCode).toBe(201);
+      return { firmId, admin, secret: minted.json().secret as string };
+    }
+
+    const listWith = (secret: string) =>
+      app.inject({ method: 'GET', url: '/api/partner/v1/valuations', headers: keyHeader(secret) });
+
+    it('stops working when the creator is moved to another firm', async () => {
+      const { admin, secret } = await seedFirmWithKey('Departure Advisors');
+      const elsewhere = await seedPartner(ctx, 'Somewhere Else LLP');
+      expect((await listWith(secret)).statusCode).toBe(200);
+
+      await ctx.pool.query('UPDATE users SET partner_id = $2 WHERE id = $1', [admin.id, elsewhere]);
+
+      expect((await listWith(secret)).statusCode).toBe(401);
+    });
+
+    it('stops working when the creator is removed from the firm entirely', async () => {
+      const { admin, secret } = await seedFirmWithKey('Dissolved Advisors');
+      expect((await listWith(secret)).statusCode).toBe(200);
+
+      await ctx.pool.query('UPDATE users SET partner_id = NULL WHERE id = $1', [admin.id]);
+
+      expect((await listWith(secret)).statusCode).toBe(401);
+    });
+
+    it('does not touch last_used_at on a key it refuses', async () => {
+      // A refused key was not used, and a moved-out member should not be able
+      // to keep a stale key looking live in the firm's settings page.
+      const { admin, firmId, secret } = await seedFirmWithKey('Quiet Advisors');
+      await ctx.pool.query('UPDATE users SET partner_id = NULL WHERE id = $1', [admin.id]);
+      await listWith(secret);
+      const { rows } = await ctx.pool.query<{ last_used_at: Date | null }>(
+        'SELECT last_used_at FROM api_tokens WHERE partner_id = $1',
+        [firmId],
+      );
+      expect(rows[0]!.last_used_at).toBeNull();
+    });
+
+    it('comes back when the move is undone, rather than being permanently dead', async () => {
+      // Refused, not revoked: an admin who reassigns a user by mistake can put
+      // them back, and a stolen key cannot be used to kill a firm's
+      // integration for good.
+      const { admin, firmId, secret } = await seedFirmWithKey('Boomerang Advisors');
+      await ctx.pool.query('UPDATE users SET partner_id = NULL WHERE id = $1', [admin.id]);
+      expect((await listWith(secret)).statusCode).toBe(401);
+
+      await ctx.pool.query('UPDATE users SET partner_id = $2 WHERE id = $1', [admin.id, firmId]);
+      expect((await listWith(secret)).statusCode).toBe(200);
+    });
+
+    it('leaves a personal token alone — it carries only its owner’s own scope', async () => {
+      const client = await seedUser(ctx, { roles: ['valuation_user'] });
+      const minted = await app.inject({
+        method: 'POST',
+        url: '/api/v1/me/tokens',
+        headers: authHeader(client.token),
+        payload: { name: 'my script' },
+      });
+      expect(minted.statusCode).toBe(201);
+      const secret = minted.json().secret as string;
+
+      // A personal token has no organisation to be a member of; it is rejected
+      // by the partner API on its own terms, not by the membership rule.
+      const res = await listWith(secret);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().detail).toContain('personal tokens are not accepted');
+    });
+  });
 });
