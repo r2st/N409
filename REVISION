@@ -1,92 +1,97 @@
-570aafcf7bb76600e0ae78ac2c8e86615a1153a8
+fed0db492511c94031577369886f1b94a3f7a716
 # N409 deployed revision
-# commit:    570aafcf7bb76600e0ae78ac2c8e86615a1153a8
-# subject:   fix(report): the deliverable carried no schedule of anything the
-#            engine computed
-# previous:  c5386e4 (fix(bridge): a firm's own client was two companies if two
-#            members opened it) — that is what the host was actually running:
-#            BUILD_SHA read c5386e4 before this deploy. The last deploy this
-#            file recorded was 72a5657, four commits earlier, so d039c5f,
-#            39af038, cd4954e and c5386e4 all shipped without the record being
-#            updated. BUILD_SHA is why that is recoverable rather than lost, and
-#            is the reason the note below insists it is the only authority.
-# includes:  2 fixes, no features. Both came out of one question — what does a
-#            409A that leaves this platform actually say, and is it right.
+# commit:    fed0db492511c94031577369886f1b94a3f7a716
+# subject:   feat(engine): specialty report-type engines — QSBS, PPA/IP,
+#            impairment, ESOP, SMB, EMI/CSOP
+# previous:  570aafc (fix(report): the deliverable carried no schedule of
+#            anything the engine computed) — BUILD_SHA read 570aafc before this
+#            deploy, and this file agreed with it for once: 11e7ce2 recorded
+#            that deploy and nothing shipped between.
+# includes:  1 feature commit. The platform lists fifteen valuation kinds and
+#            could compute five of them; this closes the calculation half of
+#            the gap for the specialty kinds. Six new pure engine modules in
+#            engine-wrapper behind seven /engine/v1 endpoints, and a dedicated
+#            report skeleton per specialty kind.
 #
-#            1cd8c2c participation caps — `waterfall.py` documented
-#              "participating preferred has no participation cap" as a
-#              simplification. It is not one a 409A can carry. A cap is
-#              ordinary paper, and omitting it moves value in one direction
-#              only: from common to preferred, on the class an employee holds.
-#              On 8M common and 4M participating preferred behind a $10M
-#              preference capped at $20M, a $90M exit paid the preferred
-#              $36.67M against a charter that caps it at $30M — 11% of the
-#              whole common position, growing with the exit value because the
-#              uncapped model never stops paying. Confirmed on the host after
-#              this deploy: the same table now pays $30M and $60M.
+#            qsbs.py — IRC §1202 eligibility for the attestation letter.
+#              Per-test breakdown rather than a single verdict (the letter
+#              names every failed requirement), exclusion % fixed by the
+#              acquisition date, per-issuer cap as max($10M less prior
+#              exclusions, 10x basis). The holding-period test compares the
+#              calendar anniversary, not days/365.25 — a span holding two leap
+#              days makes exactly-five-years read as "more than five", and the
+#              statute says more than.
 #
-#              Two breakpoints were missing and the second is the one that is
-#              easy to get wrong. A capped class stops drawing residual at the
-#              cap; it does not stay there, because at a high enough exit value
-#              the as-converted slice beats the cap and it converts. Cap the
-#              class forever and the model errs the other way. Both events keep
-#              the payoff continuous, which is load-bearing: `_allocate` prices
-#              each class as a sum of Black-Scholes call spreads between
-#              breakpoints, and that decomposition cannot represent a jump — it
-#              would price one as if it were not there.
+#            intangibles.py — one module for PPA and IP because they are the
+#              same four methods differently orchestrated: relief-from-royalty
+#              (optional Gordon terminal), MEEM (attrition survival from year
+#              1, aggregate contributory charge), with-and-without, cost less
+#              multiplicatively-layered obsolescence. Income methods gross up
+#              by the §197 TAB fixed point 1/(1 − t·A) at the same full-year
+#              convention as the flows they scale. purchase_price_allocation
+#              values each listed intangible and takes goodwill as the
+#              residual; a negative residual reports as a bargain-purchase
+#              gain (805-30-25-2), never negative goodwill.
 #
-#              `participation_cap` is a currency amount, not a multiple: that is
-#              what "2x" resolves to once the preference is known, and a class
-#              with no preference has no multiple. Absent is uncapped, which is
-#              what every cap table stored before this field existed meant. The
-#              analyst form carries it too — an engine input the UI cannot send
-#              is one no engagement will ever use.
+#            impairment.py — the three standards kept distinct because their
+#              rules differ where it costs money: 350-20 caps the loss at the
+#              goodwill on the books, 350-30 has no screen and no cap, and
+#              360-10 screens against UNdiscounted flows — so a group whose
+#              fair value is below carrying but whose undiscounted flows cover
+#              it is explicitly reported unimpaired, the outcome analysts most
+#              often have to defend to an audit committee.
 #
-#            570aafc report exhibits — the report body was authored prose and
-#              nothing in it was ever computed. The Conclusion of Value read
-#              "$ … per share". Every figure the engine produced sat in
-#              `calculations.results`, read only by the one-page executive
-#              summary — which serves a board member wanting one number and
-#              does nothing for the auditor or reviewing appraiser, who asks
-#              for the breakpoint schedule by name and had never been shown one
-#              anywhere.
+#            esop.py — the level-of-value chain made explicit (controlling →
+#              marketable minority → nonmarketable minority), with DLOC and
+#              control premium refused together: they are one fact stated from
+#              opposite sides, and if they disagree the report would carry
+#              whichever the code picked. Repurchase obligation projected as a
+#              survival process (10%/yr does not exhaust in ten years), priced
+#              by default at the per-share value the same run concluded.
 #
-#              `domain/reportExhibits.ts` builds eight schedules from the
-#              calculation that produced the conclusion and appends them at
-#              render time rather than storing them: they cannot go stale
-#              against the engine, and they cannot be edited away in the report
-#              editor. Each is omitted rather than emptied when its analysis
-#              was not run, and a partial or unfamiliar results shape drops the
-#              exhibit rather than throwing inside a PDF render.
+#            smb.py — SDE normalization (owner add-backs, replacement wage for
+#              the second owner), build-up capitalization of earnings, SDE and
+#              rule-of-thumb revenue multiples, weighted like the 409A
+#              approaches — including refusing a weight on a method the inputs
+#              could not support rather than renormalizing it away.
 #
-#              The skeleton needed the other half of the same gap (409a.v55):
-#              capital structure, economic outlook, one section per approach
-#              applied, the reconciliation, the analyst's qualifications — and
-#              DLOC, which the engine has always applied and the prose never
-#              explained. A minority discount in the arithmetic and nowhere in
-#              the argument is the kind of unsupported adjustment that costs a
-#              valuation its safe harbour.
+#            emi_csop.py — UMV and AMV per share (minority discount hits both,
+#              the restriction discount is what separates them), Schedule 5 /
+#              Schedule 4 limits tested at the UMV this engagement concluded
+#              rather than a caller-supplied figure. EMI £30M/250-FTE/£250k/
+#              £3M; CSOP £60k and no discounted strike.
 #
-#              And the date. `{{date}}` opens and closes the report and was
-#              filled from the clock, so the body stated the day someone first
-#              opened the report tab while the summary page a page earlier
-#              printed the real valuation date. That date starts the twelve
-#              months of Treas. Reg. §1.409A-1(b)(5)(iv)(B)(1). It now comes
-#              from the calculation, and the cover states it separately from
-#              the render date.
+#            main.py — /engine/v1/{qsbs,intangible,ppa,impairment,esop,smb,
+#              emi-csop}. The free-form inputs-dict endpoints map TypeError
+#              from a wrong kwarg name to the same 422 the engine's own
+#              validation gets, so a misspelled field never surfaces as a 500.
 #
-# tests:      1169 engine (+29), 2421 valuation (+49), 787 frontend (+3), 205
-#             shared, 189 report, 42 ai-adjacent. Lint and prettier clean.
-# deploy:     infra/deploy.sh --apply against root@204.168.241.124. Three files
-#             added and eleven changed; nothing deleted, so the deletion sweep
-#             had nothing to do. All five units restarted and both health checks
-#             reported 570aafc.
+#            report.ts — templateForKind now returns a dedicated skeleton for
+#              qsbs/ppa/goodwill/esop/fmv/emi/csop/ip: the section list a
+#              reviewer of THAT deliverable works through, not the 409A
+#              skeleton retitled. 718/820/gifts/ifrs2/fund/debt stay generic
+#              deliberately — their deliverables are schedules or pending
+#              their own treatment.
+#
+# tests:      1319 engine (+150), 2470 valuation (+7), 787 frontend, 341 ai,
+#             205 shared, 189 report. Lint and prettier clean.
+# deploy:     HOST=root@204.168.241.124 infra/deploy.sh --apply. Thirteen files
+#             added, three changed, nothing deleted. All five units restarted;
+#             BUILD_SHA and both health checks report fed0db4, and the qsbs and
+#             impairment endpoints answered correctly on the host through the
+#             internal-token gate.
 # note:      This file is tracked, so it always names the *previous* deploy at
 #            the moment the archive is built — the commit recording a deploy
 #            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
 #            authoritative record of what is running; it is written by the
 #            deploy script from the local HEAD after a successful build, and is
-#            what /health reports. It read c5386e4 before this deploy.
+#            what /health reports.
+# gap:       the new engines are compute-only. No valuation-service route calls
+#            them yet, no intake form collects their inputs, and the specialty
+#            skeletons render with authored prose but no exhibits — the
+#            orchestration half (routes, intake schemas per kind, pipeline
+#            wiring, reportExhibits for the new result shapes) is the next
+#            session's work.
 # gap:       stored calculations keep the old backsolved equity value. 99383b2
 #            changed what the engine computes from then on; every calculation
 #            already in the table that took the single-breakpoint backsolve path
