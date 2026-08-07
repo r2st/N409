@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { createGrant } from '../../src/repos/grants.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 
@@ -265,22 +265,70 @@ describe.skipIf(!dbUp)('XLSX export', () => {
       expect(sheet).toContain('<f>IF(COUNT(D4,D5)&lt;2,&quot;&quot;,D4-D5)</f><v>4000000</v>');
     });
 
-    it('is readable by the owning client, not just ops', async () => {
+    // The file carries the override register, the flattened engine results and
+    // the working model — the three things `canEditWorkingData` exists to keep
+    // off a client's screen, each of them a 403 on its own endpoint. The owner
+    // of the valuation is no exception: owning the engagement is not the same
+    // as being entitled to the analyst's working papers, and the Workbook tab
+    // that offers this download is rendered for ops alone.
+    it('refuses the owning client, whose own endpoints for this data 403 too', async () => {
       const res = await ctx.app.inject({
         method: 'GET',
         url: `/api/v1/valuations/${valuationId}/workbook.xlsx`,
         headers: authHeader(client.token),
       });
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(403);
+      // Same answer the underlying working-data endpoints give the same caller.
+      for (const path of ['workbook', 'overwrites', 'calculations']) {
+        const direct = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/valuations/${valuationId}/${path}`,
+          headers: authHeader(client.token),
+        });
+        expect(direct.statusCode).toBe(403);
+      }
     });
 
-    it('hides another client’s valuation behind a 404', async () => {
+    it('refuses a firm member who can read the engagement', async () => {
+      const firm = await seedPartner(ctx, 'Workbook Leak Firm');
+      const member = await seedUser(ctx, { roles: ['member'], partnerId: firm });
+      const engagement = await createValuation('Firm Scoped Co', ops.token);
+      await ctx.pool.query('UPDATE valuations SET partner_id = $2 WHERE id = $1', [engagement, firm]);
+
+      // The member really can read the engagement…
+      const readable = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${engagement}`,
+        headers: authHeader(member.token),
+      });
+      expect(readable.statusCode).toBe(200);
+
+      // …and still may not pull the working papers out of it.
       const res = await ctx.app.inject({
         method: 'GET',
-        url: `/api/v1/valuations/${valuationId}/workbook.xlsx`,
-        headers: authHeader(otherClient.token),
+        url: `/api/v1/valuations/${engagement}/workbook.xlsx`,
+        headers: authHeader(member.token),
       });
-      expect(res.statusCode).toBe(404);
+      expect(res.statusCode).toBe(403);
+    });
+
+    // Out of scope used to be a 404 here so the id's existence stayed hidden.
+    // The capability check in front now answers every non-ops caller 403
+    // whether the row exists or not, which hides it at least as well — the
+    // oracle needed the answer to *vary* by row, and it no longer can.
+    it('answers a stranger the same 403 it answers the owner, revealing nothing', async () => {
+      const missing = '01JQTESTTESTTESTTESTTESTXX';
+      const [known, unknown] = await Promise.all(
+        [valuationId, missing].map((id) =>
+          ctx.app.inject({
+            method: 'GET',
+            url: `/api/v1/valuations/${id}/workbook.xlsx`,
+            headers: authHeader(otherClient.token),
+          }),
+        ),
+      );
+      expect(known!.statusCode).toBe(403);
+      expect(unknown!.statusCode).toBe(403);
     });
 
     it('requires authentication', async () => {
@@ -425,13 +473,18 @@ describe.skipIf(!dbUp)('XLSX export', () => {
       expect(sheet).toContain('<v>1.42</v>');
     });
 
-    it('is readable by the owning client, like the rest of the workbook', async () => {
+    // These sheets are the reason the whole export is ops-only. The register
+    // names the analyst, quotes the reason they typed, and prints the engine
+    // value they overrode; the calculation sheet carries the review warnings
+    // they proceeded past. The owning client is not a second audience for any
+    // of it — `GET /valuations/:id/overwrites` has always told them so.
+    it('does not leak the register to the owning client', async () => {
       const res = await ctx.app.inject({
         method: 'GET',
         url: `/api/v1/valuations/${valuationId}/workbook.xlsx`,
         headers: authHeader(client.token),
       });
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(403);
     });
 
     it('does not leak the register to another client', async () => {
@@ -440,7 +493,7 @@ describe.skipIf(!dbUp)('XLSX export', () => {
         url: `/api/v1/valuations/${valuationId}/workbook.xlsx`,
         headers: authHeader(otherClient.token),
       });
-      expect(res.statusCode).toBe(404);
+      expect(res.statusCode).toBe(403);
     });
   });
 });

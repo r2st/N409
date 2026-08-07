@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import { canReadValuation, valuationScope } from '../auth/rbac.js';
+import { canEditWorkingData, canReadValuation, valuationScope } from '../auth/rbac.js';
 import {
   exportValuations,
   findValuationById,
@@ -190,13 +190,37 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
   });
 
   /**
-   * The auditor workbook: summary, the three model sheets, cap table, waterfall
-   * and grant schedules. Read-scoped like every other per-valuation projection —
-   * anyone who can read the valuation can export it, because everything in the
-   * file is already visible in the workspace tabs.
+   * The auditor workbook: the assumption register and calculation record, the
+   * manual-override log, the three model sheets, cap table, waterfall and grant
+   * schedules.
+   *
+   * Working data, so `canEditWorkingData` — the same gate `GET
+   * /valuations/:id/workbook`, `GET /valuations/:id/overwrites` and `GET
+   * /valuations/:id/calculations` each apply to the rows this file is built
+   * from. It used to be read-scoped, on the stated premise that "everything in
+   * the file is already visible in the workspace tabs". That premise was never
+   * true and got less true as sheets were added: the Workbook tab is rendered
+   * `{ops && …}`, and every one of the four data sources answers a client or a
+   * firm member 403. So the export was the way around all of them, and it
+   * handed over more than the tabs hold —
+   *
+   *   - Overrides: every value an analyst set by hand, the engine value it
+   *     replaced, the reason they typed, and who they are;
+   *   - Calculation: the flattened engine `results` plus the review warnings
+   *     the analyst proceeded past, with no `REPORT_VISIBLE_STATES` gate, so a
+   *     concluded FMV was readable while the engagement was still `pending`;
+   *   - Assumption register + model sheets: the working model itself.
+   *
+   * — to the owning client and to every `member` of the partner firm, on a URL
+   * the UI never shows them. `canEditWorkingData` before the scope check, and
+   * 403 rather than 404, matching `overwrites.loadForWorkingData`: the caller is
+   * being refused a capability, not told a valuation does not exist.
    */
   app.get('/api/v1/valuations/:id/workbook.xlsx', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
+    if (!canEditWorkingData(principal)) {
+      throw problems.forbidden('The auditor workbook is operations-only');
+    }
     const { id } = req.params as { id: string };
     if (!isUlid(id)) throw problems.notFound();
 
