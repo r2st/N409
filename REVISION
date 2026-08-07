@@ -1,90 +1,127 @@
-c8f79eb22618dc435c2be094f5d82fdae454d2c8
+66a36132145486a1e58fd8237d8725cb99a553ec
 # N409 deployed revision
-# commit:    c8f79eb22618dc435c2be094f5d82fdae454d2c8
-# subject:   feat(intake): the firm console can convert a submitted questionnaire
-# previous:  b047893 (feat(intake): convert a submitted intake into the
-#            engagement it was collected for)
-# includes:  4 commits. Three fixes — one of them a wrong number on a signed
-#            409A — and the UI half of last round's convert endpoint.
+# commit:    66a36132145486a1e58fd8237d8725cb99a553ec
+# subject:   fix(engine): a waterfall backsolve disclosed a volatility from the
+#            other model
+# previous:  4a43f14 (fix(intake): a completed questionnaire could be told to
+#            complete its required fields) — deployed but never recorded here,
+#            so this entry skips a round: the file last described c8f79eb.
+# includes:  5 fixes, no features. One data leak, one publish gate grading the
+#            wrong number, one benchmark ranking a company against a multiple it
+#            never used, one client-portal call-to-action for work already done,
+#            and one engine disclosure taken from the wrong model.
 #
-#            99383b2 engine — the single-breakpoint OPM backsolve inverted a
-#              model the allocation does not use. `_opm_allocate` splits
-#              residual upside `fd / (fd + preferred)` where `fd` is common
-#              *plus the option pool*; the backsolve split it on bare common,
-#              because the pool was never passed to `opm_backsolve`. So the
-#              equity value was calibrated against one cap table and then
-#              allocated with another, and the round did not reprice to its own
-#              PPS under the model that produced the opinion. On 8M common, a 2M
-#              pool and 4M preferred behind a $10M preference at 65% vol over
-#              four years, a $2.50 round solved to $18,014,475 — at which the
-#              allocation values that preferred at $2.357. Solving the right
-#              model gives $19,604,376 and moves the concluded FMV from $0.8587
-#              to $0.9604: the old figure was 11.9% light, in the direction that
-#              under-prices employee options, and the error grows with the pool.
-#              The waterfall backsolve path was already consistent (it re-runs
-#              the real waterfall, pool included) and `current_value.py` already
-#              folds options in with a comment saying it matches the OPM
-#              fallback — this path was the outlier. Missed until now because
-#              the tests built their target PPS with the same bare-common
-#              formula the solver used, so the two agreed with each other and
-#              disagreed with the engine; the new ones assert the round trip
-#              against `compute`'s own output.
-#            020e074 security — `partners.logo_url` is a stored, caller-supplied
-#              URL and rendering any report PDF for that partner fetched it
-#              server-side, checked only for "parses" and "http(s)". Downloading
-#              a deliverable was enough to make the estate GET
-#              169.254.169.254, 127.0.0.1:3001 or anything on 10/8 from inside
-#              its own perimeter. The PNG/JPEG sniff made it blind, not safe: a
-#              blind GET still maps hosts and ports by how fast it fails. The
-#              destination is now resolved and every address it returns must be
-#              public — private, loopback, link-local, CGNAT, benchmarking,
-#              multicast and reserved for both families, the v4 addresses inside
-#              IPv4-mapped / 6to4 / NAT64, and `localhost` / `.internal` by
-#              name. `redirect: 'follow'` had to go with it, since undici
-#              resolves the chain itself and only the first URL would ever be
-#              checked; hops are followed by hand, three at most, each
-#              re-checked, under the one 3s deadline. The v6 check parses the
-#              sixteen bytes rather than matching text, because `new URL()`
-#              re-serialises `[::ffff:127.0.0.1]` as `::ffff:7f00:1`.
-#            0ff9df8 report/analytics — the FMV trend chart and the analytics
-#              series each carried their own copy of "every valuation of the
-#              same client" and both scoped it to `user_id`. `firmClients`
-#              groups the firm roster by `(partner_id, company_name)`, so a firm
-#              whose engagements for one company were opened by two members had
-#              one client on the console and two strangers everywhere history is
-#              drawn — and the chart is suppressed below two points, so the
-#              deliverable silently dropped the year-on-year comparison. Client
-#              intake made this the normal case: a converted intake is owned by
-#              whoever pressed Convert. One `sameCompanyFilter`, both callers;
-#              direct clients keep owner scoping.
-#            c8f79eb intake UI — closes the gap this file carried last round.
-#              Convert on a submitted row, pre-filled with the legal name the
-#              client typed, valuation type selectable, refusals shown inside
-#              the modal (the panel-level note renders behind it), and
-#              afterwards the row carries the `converted` status the panel could
-#              previously only render. Also deletes `attachIntakeValuation`,
-#              unreferenced since `convertIntakeLink` started claiming the link
-#              inside its own transaction.
-# deployed:  2026-08-07T05:53Z (UTC)
+#            8012f04 security — GET /valuations/:id/workbook.xlsx was gated on
+#              `canReadValuation`, on the stated premise that "everything in the
+#              file is already visible in the workspace tabs". That premise was
+#              never true and got less true as sheets were added to the file.
+#              The Workbook tab that offers the download is rendered
+#              `{ops && …}`, and all four of the export's data sources answer a
+#              client or a firm member 403 on their own endpoints —
+#              `.../workbook`, `.../overwrites` and `.../calculations` each go
+#              through `canEditWorkingData`. The export was the way around all
+#              three, and it carried more than the tabs hold: the override
+#              register (every value an analyst set by hand, the engine value it
+#              replaced, the reason they typed and who they are), the
+#              calculation sheet (the flattened engine `results` plus the review
+#              warnings the analyst proceeded past — with no
+#              REPORT_VISIBLE_STATES gate, so a concluded FMV was readable while
+#              the engagement was still `pending`), the assumption register and
+#              the three model sheets. Reachable by the owning client and by
+#              every `member` of the partner firm, on a URL the UI never shows
+#              them. Now `canEditWorkingData` before the scope check, and 403
+#              rather than 404, matching `overwrites.loadForWorkingData`. Two
+#              existing tests asserted the old behaviour — one of them named "is
+#              readable by the owning client, like the rest of the workbook",
+#              sitting directly under assertions that the sheet contains the
+#              override reasons and the diagnostics. Out of scope stops being a
+#              404 here, which hides the row at least as well: the oracle needed
+#              the answer to vary by row, and every non-ops caller now gets the
+#              same 403 whether it exists or not.
+#            9ed0aa6 qa/publish gate — `runQaChecks` read `params.dlom` and
+#              `params.dloc`, which for two of the four DLOM methods the engine
+#              ignores outright: `_resolve_discounts` derives the discount from
+#              volatility and time to exit under chaffee/finnerty and reports
+#              what it used in `results.discounts.dlom`. With `dlom` left null —
+#              the normal shape for a model DLOM — the check did not run at all,
+#              and nothing else range-checks the applied figure either: the
+#              engine's own pre-flight sets `dlom = None` for the model methods
+#              by design, because at validation time there is nothing yet to
+#              check. 65% vol over four years puts Chaffee near 45%, past the
+#              35% benchmark auditors scrutinise, and it published unexamined.
+#              With a stale hand-entered `dlom` still on the row from before the
+#              method was switched, it graded that instead — the gate passing on
+#              a figure the deliverable does not contain, while the report's own
+#              summary page prints `results.discounts.dlom` beside it.
+#              `appliedDiscount` reads the run and falls back to the param, so
+#              the qualitative and explicit methods (where the param *is* what
+#              was applied) and calculations stored before the engine emitted
+#              `discounts` are unchanged. The detail names the model when one
+#              produced the figure.
+#            6237bce analytics — `buildAnalytics` reported the *mean* of the
+#              comparable multiples as "the multiple the company's market
+#              approach applied"; the engine applies the *median*
+#              (`selected = statistics.median(clean)`) and reports it as
+#              `approaches.market.selected_multiple`. Comp sets are right-skewed
+#              almost by definition, so on [4, 5, 6, 7, 28] the engine values
+#              the company at 6x while this reported 10x — then ranked that 10x
+#              against the same five comps and put the company in the 90th
+#              percentile of a set it sits in the middle of. The
+#              `market_multiple` trend line reads the same helper, so one
+#              outlier joining the set showed a valuation drifting up the comp
+#              range while the multiple the opinion rests on had not moved. The
+#              existing benchmark test used [3, 5, 7, 9], where mean and median
+#              coincide, which is why it never caught this.
+#            76b6be7 client portal — `nextClientAction` drove the
+#              call-to-action off the stage index alone, and the `draft` stage
+#              collapses three states. Only `drafted` is the client's turn:
+#              `draft_changes` means they already told us what to change and we
+#              are changing it, `draft_accepted` means they already accepted and
+#              we are publishing. Both were shown "Review the draft report —
+#              read the draft and either accept it or tell us what to change",
+#              `client_action_required: true`, for as long as it took us to
+#              publish. The stepper keeps the grouping — nobody wants three
+#              boxes for one round of review — and the action takes the state.
+#              That un-masks the checklist nag underneath it, so that is bounded
+#              to the stages before the analysis finishes: "we cannot finish the
+#              analysis until the checklist is complete" is false once a draft
+#              report exists, and the six-kind checklist is rarely fully ticked.
+#            66a3613 engine — `opm_backsolve` attached an `implied_volatility`
+#              to any result carrying a post-money, and the algebra that
+#              produces it is the single-breakpoint payoff split and nothing
+#              else. The waterfall branch does not price a round that way —
+#              seniority ranks, participation, conversion and option-exercise
+#              points, a call spread per segment — so the disclosure came from a
+#              model the run did not use, stapled to a result whose own `method`
+#              names the one it did. Not an exotic payload: `compute` sends
+#              `shares_outstanding_preferred`, `liquidation_preference` and
+#              `shares_outstanding_common` on every run because the analyst form
+#              collects them whether or not a cap table is also supplied, so
+#              every waterfall backsolve with a post-money carried one. Scoped
+#              to `backsolve_single`, the branch it is the inverse of; omitted
+#              rather than approximated on the other, matching the existing
+#              treatment of an ill-posed inversion.
+# deployed:  2026-08-07T06:31Z (UTC)
 # method:    infra/deploy.sh --apply (git archive + scp + tar extract, npm ci &&
 #            npm run build on host, BUILD_SHA written after the build, valuation
 #            restarted and awaited before the other four).
-# verified:  BUILD_SHA on the host reads c8f79eb, all five units active, /health
-#            on 3000/3001/3004 reporting c8f79eb from build_sha_source "file",
+# verified:  BUILD_SHA on the host reads 66a3613, all five units active, /health
+#            on 3000/3001/3004 reporting 66a3613 from build_sha_source "file",
 #            :3002 and :3003 ok, and https://n409.aiknol.com/health 200 through
 #            Caddy.
-# tests:     4,957 green before the push — 3,522 JS across the five workspaces
-#            (npm test: 205 shared, 189 report, 2,311 valuation, 42 web, 775
-#            web-frontend), 341 ai, 1,080 engine-wrapper. That is +41 over last
-#            round: 4 engine backsolve, 12 SSRF/address-classification, 4
-#            sameCompanyFilter unit + 3 analytics scoping integration, 6 convert
-#            UI, and the existing logo tests rewritten to inject a resolver.
-#            eslint clean; three touched files needed prettier and were
-#            reformatted before the commits, so format:check is green.
+# tests:     5,010 green before the push — 3,574 JS across the five workspaces
+#            (npm test: 205 shared, 189 report, 2,354 valuation, 42 web, 784
+#            web-frontend), 341 ai, 1,095 engine-wrapper. That is +22 over the
+#            last round: 8 qaChecks unit + 1 QA-gate integration, 4 analytics
+#            unit + 1 integration, 6 progress unit + 1 integration, 1 engine
+#            backsolve, and the three workbook-export tests rewritten — two of
+#            which encoded the leak rather than catching it. eslint clean,
+#            prettier clean, no reformatting needed.
 # note:      no migrations and no dependency changes, so schema_migrations stays
-#            at 0100 and npm ci had nothing new to fetch. One file added
-#            (domain/valuationHistory.ts) and none deleted, so the deletion
-#            sweep was empty. `approaches.py` and `compute.py` changed, so the
+#            at 0100 and npm ci had nothing new to fetch. No files added and
+#            none deleted, so the deletion sweep was empty (the script skipped it
+#            anyway — it reads the host's BUILD_SHA through a `|| true` and did
+#            not get a usable one). `approaches.py` changed, so the
 #            engine-wrapper restart matters this time rather than being
 #            incidental.
 # note:      This file is tracked, so it always names the *previous* deploy at
@@ -92,9 +129,10 @@ c8f79eb22618dc435c2be094f5d82fdae454d2c8
 #            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
 #            authoritative record of what is running; it is written by the
 #            deploy script from the local HEAD after a successful build, and is
-#            what /health reports.
+#            what /health reports. It read 4a43f14 before this deploy, which is
+#            how the skipped round above was established.
 # gap:       stored calculations keep the old backsolved equity value. 99383b2
-#            changes what the engine computes from now on; every calculation
+#            changed what the engine computes from then on; every calculation
 #            already in the table that took the single-breakpoint backsolve path
 #            with a non-zero option pool holds a figure that is low by roughly
 #            the pool's share, and any report rendered from one still says so.
@@ -103,17 +141,16 @@ c8f79eb22618dc435c2be094f5d82fdae454d2c8
 #            'backsolve_single'` against a calculation whose inputs carry
 #            `options_outstanding > 0`. Published opinions cannot be silently
 #            rewritten, so this needs a list before it needs a migration.
-# gap:       the report's "Fully diluted common" is taken from the scalar
-#            `shares_outstanding_common + options_outstanding` while
-#            `common_per_share` comes from the cap table when one is supplied,
-#            so a reader who divides `common_equity_value` by the disclosed
-#            share count does not get the headline FMV. Both figures are
-#            defensible alone; printing them side by side is what is not.
-# gap:       board sign-off tokens do not expire. An auditor link is capped at
-#            180 days and an intake link at 90, but a board member's emailed
-#            token grants POST /board/resolution — the FMV conclusion and the
-#            resolution text — for as long as the row exists. Revocable by
-#            deleting the member, which is not the same thing.
+# gap:       QA reviews recorded before 9ed0aa6 graded the param, so a stored
+#            `dlom_range` check on a chaffee/finnerty run is either absent or
+#            about the wrong figure. Reviews are keyed to the calculation they
+#            examined and are append-only, so this corrects itself for anything
+#            re-reviewed; what it does not do is re-open the gate on a valuation
+#            already published on one. Same shape as the gap above and wants the
+#            same treatment — a list first. The query is a `qa_reviews` row whose
+#            calculation's `results.discounts.dlom_method` is chaffee or
+#            finnerty and whose `checks` carry no `dlom_range`, or one that
+#            disagrees with `results.discounts.dlom`.
 # gap:       Stripe is still unconfigured in production — /opt/N409/.env has no
 #            STRIPE_SECRET_KEY and no webhook secrets, so every client still
 #            sees "Online payment is not available yet — we will invoice you
