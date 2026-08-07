@@ -554,7 +554,7 @@ const TEMPLATE_409A: ReportTemplate = {
   ],
 };
 
-/** Fallback skeleton for the other 12 valuation kinds. */
+/** Fallback skeleton for the kinds without a dedicated skeleton below. */
 const TEMPLATE_GENERIC: ReportTemplate = {
   version: 'generic.v1',
   name: 'Valuation Report',
@@ -584,13 +584,394 @@ const TEMPLATE_GENERIC: ReportTemplate = {
   ],
 };
 
+/**
+ * Kind-specific skeletons for the specialty report types (remaining-gaps
+ * §report-types). Each is the section list a reviewer of THAT deliverable
+ * works through, in the order they expect to read it — not the 409A skeleton
+ * with the title swapped. The analysis sections name the engine that computes
+ * their figures (engine-wrapper: /engine/v1/qsbs, /ppa, /impairment, /esop,
+ * /smb, /emi-csop, /intangible) so prose and calculation stay one document,
+ * the same contract TEMPLATE_409A has with its exhibits.
+ *
+ * Kinds deliberately left on the generic skeleton: '718' and '820' (their
+ * deliverables are schedules produced by the asc718/fund flows, not authored
+ * reports), 'gifts' and 'ifrs2' (the 409A/718 bodies with different framing —
+ * pending their own treatment), 'fund' and 'debt' (workbook-first flows).
+ */
+const TEMPLATE_QSBS: ReportTemplate = {
+  version: 'qsbs.v1',
+  name: 'QSBS Attestation Letter (IRC §1202)',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This letter documents our assessment of whether the stock of <strong>{{company_name}}</strong> qualifies as Qualified Small Business Stock under Section 1202 of the Internal Revenue Code, as of {{date}}.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'entity_test',
+      heading: 'Eligible Corporation',
+      html: P(
+        'Describe the issuer’s form and domicile: qualification requires a domestic C corporation at issuance and through substantially all of the holding period (§1202(c)(1), (e)(4)).',
+      ),
+    },
+    {
+      key: 'gross_asset_test',
+      heading: 'Gross Asset Test',
+      html: P(
+        'State the aggregate gross assets immediately before and immediately after the issuance against the $50 million ceiling of §1202(d)(1), and the basis for the measurement.',
+      ),
+    },
+    {
+      key: 'active_business_test',
+      heading: 'Active Business Requirement',
+      html: P(
+        'Document that at least 80% of assets by value are used in the active conduct of a qualified trade or business (§1202(e)(1)), and that the issuer’s activity is not among the excluded businesses of §1202(e)(3).',
+      ),
+    },
+    {
+      key: 'issuance_and_holding',
+      heading: 'Original Issuance & Holding Period',
+      html: P(
+        'Confirm the stock was acquired at original issue for money, property or services (§1202(c)(1)(B)), state the acquisition date, the five-year date, and the exclusion percentage the acquisition date fixes.',
+      ),
+    },
+    {
+      key: 'exclusion_cap',
+      heading: 'Gain Exclusion Cap',
+      html: P(
+        'State the per-issuer limitation: the greater of $10 million (less previously excluded gain) or ten times the aggregate adjusted basis of stock disposed of in the taxable year (§1202(b)(1)).',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion',
+      html: P(
+        'State the conclusion reached on each requirement and the overall qualification, with the limiting conditions of this assessment.',
+      ),
+    },
+  ],
+};
+
+const TEMPLATE_PPA: ReportTemplate = {
+  version: 'ppa.v1',
+  name: 'Purchase Price Allocation (ASC 805)',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our allocation of the consideration transferred in the acquisition of <strong>{{company_name}}</strong> among the identifiable assets acquired and liabilities assumed, measured at fair value as of {{date}} in accordance with ASC 805.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'transaction_overview',
+      heading: 'Transaction Overview',
+      html: P(
+        'Describe the transaction: parties, structure, closing date, consideration transferred and its components (cash, equity, contingent consideration).',
+      ),
+    },
+    {
+      key: 'tangible_assets',
+      heading: 'Tangible Assets & Assumed Liabilities',
+      html: P(
+        'Describe the working capital, fixed assets and assumed liabilities recognized, and any deferred-revenue haircut applied.',
+      ),
+    },
+    {
+      key: 'intangible_assets',
+      heading: 'Identified Intangible Assets',
+      html: P(
+        'For each identified intangible (developed technology, customer relationships, trade names, non-competes): the valuation method applied (relief-from-royalty, multi-period excess earnings, with-and-without, cost), its key assumptions — royalty rate, attrition, contributory asset charges, discount rate — and the tax amortization benefit.',
+      ),
+    },
+    {
+      key: 'goodwill',
+      heading: 'Goodwill',
+      html: P(
+        'State goodwill as the residual of consideration over identifiable net assets, and what it represents; a negative residual is recognized as a bargain-purchase gain under ASC 805-30-25-2.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion of Allocation',
+      html: P('Present the allocation summary and confirm it ties to the consideration transferred.'),
+    },
+  ],
+};
+
+const TEMPLATE_IMPAIRMENT: ReportTemplate = {
+  version: 'impairment.v1',
+  name: 'Goodwill & Intangible Impairment Testing (ASC 350/360)',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our impairment testing of the goodwill and intangible assets of <strong>{{company_name}}</strong> as of {{date}}, performed in accordance with ASC 350 and ASC 360.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'reporting_units',
+      heading: 'Reporting Units & Asset Groups',
+      html: P(
+        'Identify the reporting units and long-lived asset groups tested, the carrying amounts on their books, and the sequencing applied (ASC 360 asset groups first, then indefinite-lived intangibles, then goodwill).',
+      ),
+    },
+    {
+      key: 'qualitative_assessment',
+      heading: 'Qualitative Assessment',
+      html: P(
+        'Where a step-zero assessment was performed, document the events and circumstances weighed and why they did or did not indicate that fair value more likely than not falls below carrying amount.',
+      ),
+    },
+    {
+      key: 'quantitative_tests',
+      heading: 'Quantitative Tests',
+      html: P(
+        'For each unit or asset tested quantitatively: the fair-value determination and its method, the recoverability screen against undiscounted cash flows for long-lived asset groups (ASC 360-10), and the resulting comparison to carrying amount.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion',
+      html: P(
+        'State each impairment loss recognized (or that none was), the carrying amounts after measurement, and the remaining headroom by reporting unit.',
+      ),
+    },
+  ],
+};
+
+const TEMPLATE_ESOP: ReportTemplate = {
+  version: 'esop.v1',
+  name: 'ESOP Valuation Report',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our determination of the fair market value of the common stock of <strong>{{company_name}}</strong> held by its employee stock ownership plan as of {{date}}, prepared for the plan trustee for purposes of ERISA §3(18) adequate consideration.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'company_overview',
+      heading: 'Company Overview',
+      html: P('Describe the business, its history, ownership and the ESOP’s position in it.'),
+    },
+    {
+      key: 'valuation_approaches',
+      heading: 'Valuation Approaches',
+      html: P(
+        'Describe the income and market approaches applied to conclude the enterprise and equity value, and the reconciliation between them.',
+      ),
+    },
+    {
+      key: 'level_of_value',
+      heading: 'Level of Value & Discounts',
+      html: P(
+        'State the level of value at which the ESOP transacts (controlling or minority), the discount for lack of control or control premium applied, the discount for lack of marketability, and the support for each — the concluded per-share value follows this chain explicitly.',
+      ),
+    },
+    {
+      key: 'repurchase_obligation',
+      heading: 'Repurchase Obligation',
+      html: P(
+        'Present the projected repurchase liability from expected participant redemptions — the schedule, its assumptions (redemption rate, share-value growth) and its present value — for the sponsor’s planning.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion of Value',
+      html: P('State the concluded fair market value per share and of the ESOP’s holding.'),
+    },
+  ],
+};
+
+const TEMPLATE_SMB: ReportTemplate = {
+  version: 'smb.v1',
+  name: 'Business Valuation Report',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our estimate of the fair market value of <strong>{{company_name}}</strong> as of {{date}}.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'company_overview',
+      heading: 'Company Overview',
+      html: P('Describe the business, its market, customers, staffing and owner involvement.'),
+    },
+    {
+      key: 'earnings_normalization',
+      heading: 'Normalized Earnings (SDE)',
+      html: P(
+        'Present seller’s discretionary earnings: pre-tax income with owner compensation, interest, depreciation and one-time or discretionary items added back, and any replacement wage deducted.',
+      ),
+    },
+    {
+      key: 'valuation_methods',
+      heading: 'Valuation Methods',
+      html: P(
+        'Describe the methods applied — capitalization of normalized earnings with a built-up rate, the SDE multiple, and any rule-of-thumb revenue multiple — with the support for the rates and multiples selected.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion of Value',
+      html: P(
+        'State the weighting of the method indications and the concluded fair market value, on a debt-free basis with the customary main-street transaction conventions.',
+      ),
+    },
+  ],
+};
+
+const TEMPLATE_EMI: ReportTemplate = {
+  version: 'emi.v1',
+  name: 'EMI Valuation Report (HMRC)',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our valuation of the ordinary shares of <strong>{{company_name}}</strong> as of {{date}}, prepared to support an Enterprise Management Incentives share-option agreement with HMRC (form VAL231).',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'company_overview',
+      heading: 'Company Overview',
+      html: P('Describe the business, its capital structure and the class of shares under option.'),
+    },
+    {
+      key: 'valuation_analysis',
+      heading: 'Valuation Analysis',
+      html: P(
+        'Describe the approach to the company’s equity value and the per-share value derived from it, including any minority discount appropriate to the holding.',
+      ),
+    },
+    {
+      key: 'umv_amv',
+      heading: 'UMV and AMV',
+      html: P(
+        'State the unrestricted market value and the actual market value per share, and the restrictions on the shares — leaver provisions, transfer restrictions — that separate the two.',
+      ),
+    },
+    {
+      key: 'scheme_limits',
+      heading: 'Scheme Qualification',
+      html: P(
+        'Document the Schedule 5 conditions at grant: gross assets within £30 million, fewer than 250 full-time-equivalent employees, the £250,000 individual limit and £3 million company limit measured at UMV, and the working-time requirement.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion',
+      html: P('State the concluded UMV and AMV per share proposed for agreement with HMRC.'),
+    },
+  ],
+};
+
+const TEMPLATE_CSOP: ReportTemplate = {
+  version: 'csop.v1',
+  name: 'CSOP Valuation Report (HMRC)',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our valuation of the ordinary shares of <strong>{{company_name}}</strong> as of {{date}}, prepared to support a Company Share Option Plan agreement with HMRC (form VAL230).',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'company_overview',
+      heading: 'Company Overview',
+      html: P('Describe the business, its capital structure and the class of shares under option.'),
+    },
+    {
+      key: 'valuation_analysis',
+      heading: 'Valuation Analysis',
+      html: P(
+        'Describe the approach to the company’s equity value and the unrestricted market value per share derived from it.',
+      ),
+    },
+    {
+      key: 'scheme_limits',
+      heading: 'Scheme Qualification',
+      html: P(
+        'Document the Schedule 4 conditions at grant: the £60,000 individual limit measured at UMV, and that the exercise price is not less than the market value of the shares at grant.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion',
+      html: P('State the concluded market value per share proposed for agreement with HMRC.'),
+    },
+  ],
+};
+
+const TEMPLATE_IP: ReportTemplate = {
+  version: 'ip.v1',
+  name: 'Intellectual Property Valuation Report',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our valuation of the identified intellectual property of <strong>{{company_name}}</strong> as of {{date}}.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'asset_description',
+      heading: 'Subject Asset',
+      html: P(
+        'Describe the asset — patents, trademarks, software, trade secrets — its legal protection, remaining life and the rights valued.',
+      ),
+    },
+    {
+      key: 'valuation_methods',
+      heading: 'Valuation Methods',
+      html: P(
+        'Describe the method applied — relief-from-royalty, multi-period excess earnings, with-and-without, or replacement cost less obsolescence — its key assumptions, and the tax amortization benefit where applicable.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion of Value',
+      html: P('State the concluded fair value of the subject asset and the limiting conditions.'),
+    },
+  ],
+};
+
+const TEMPLATE_BY_KIND: Partial<Record<ValuationKind, ReportTemplate>> = {
+  '409a': TEMPLATE_409A,
+  qsbs: TEMPLATE_QSBS,
+  ppa: TEMPLATE_PPA,
+  goodwill: TEMPLATE_IMPAIRMENT,
+  esop: TEMPLATE_ESOP,
+  fmv: TEMPLATE_SMB,
+  emi: TEMPLATE_EMI,
+  csop: TEMPLATE_CSOP,
+  ip: TEMPLATE_IP,
+};
+
 export const REPORT_TEMPLATES: ReadonlyMap<string, ReportTemplate> = new Map([
   [TEMPLATE_409A.version, TEMPLATE_409A],
   [TEMPLATE_GENERIC.version, TEMPLATE_GENERIC],
+  ...Object.values(TEMPLATE_BY_KIND).map((t): [string, ReportTemplate] => [t.version, t]),
 ]);
 
 export function templateForKind(kind: ValuationKind): ReportTemplate {
-  return kind === '409a' ? TEMPLATE_409A : TEMPLATE_GENERIC;
+  return TEMPLATE_BY_KIND[kind] ?? TEMPLATE_GENERIC;
 }
 
 /**

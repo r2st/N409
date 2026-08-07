@@ -32,6 +32,12 @@ from .engine.fund_valuation import (
     roll_forward_mark,
 )
 from .engine.debt_valuation import rating_implied_spread, value_instrument
+from .engine.emi_csop import emi_csop_valuation
+from .engine.esop import esop_share_value, repurchase_obligation
+from .engine.impairment import run_impairment_test
+from .engine.intangibles import purchase_price_allocation, value_intangible
+from .engine.qsbs import qsbs_eligibility
+from .engine.smb import smb_valuation
 from .engine.projection import project_financials
 from .engine.rollforward import roll_forward
 from .engine.sensitivity import sensitivity as run_sensitivity
@@ -183,6 +189,44 @@ class RatingSpreadRequest(BaseModel):
     rating: str
 
 
+class QsbsRequest(BaseModel):
+    # Passed through to qsbs_eligibility(**inputs); see qsbs.qsbs_eligibility.
+    inputs: dict = Field(default_factory=dict)
+
+
+class IntangibleRequest(BaseModel):
+    method: str  # relief_from_royalty | meem | with_and_without | cost_approach
+    params: dict = Field(default_factory=dict)
+
+
+class PpaRequest(BaseModel):
+    # Passed through to purchase_price_allocation(**inputs).
+    inputs: dict = Field(default_factory=dict)
+
+
+class ImpairmentRequest(BaseModel):
+    test: str  # goodwill | indefinite_lived | long_lived
+    params: dict = Field(default_factory=dict)
+
+
+class EsopRequest(BaseModel):
+    # Level-of-value inputs; see esop.esop_share_value.
+    inputs: dict = Field(default_factory=dict)
+    # Optional repurchase-obligation projection; see esop.repurchase_obligation.
+    # fmv_per_share defaults to the concluded per-share value from `inputs`.
+    repurchase: dict | None = None
+
+
+class SmbRequest(BaseModel):
+    # Passed through to smb_valuation(**inputs).
+    inputs: dict = Field(default_factory=dict)
+
+
+class EmiCsopRequest(BaseModel):
+    scheme: Literal["emi", "csop"]
+    params: dict = Field(default_factory=dict)
+
+
 class MarketFeedRequest(BaseModel):
     """Live market-data request.
 
@@ -226,6 +270,13 @@ def root() -> dict:
             "/engine/v1/wacc",
             "/engine/v1/projection",
             "/engine/v1/rollforward",
+            "/engine/v1/qsbs",
+            "/engine/v1/intangible",
+            "/engine/v1/ppa",
+            "/engine/v1/impairment",
+            "/engine/v1/esop",
+            "/engine/v1/smb",
+            "/engine/v1/emi-csop",
         ],
     }
 
@@ -499,6 +550,78 @@ def engine_debt_rating_spread(request: RatingSpreadRequest) -> dict:
     """Implied credit spread (decimal) for a letter rating."""
     try:
         return {"rating": request.rating.upper(), "spread": rating_implied_spread(request.rating)}
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _engine_input_kwargs(fn, inputs: dict, label: str) -> dict:
+    """Call an engine entry point on a free-form inputs dict, mapping the two
+    failure shapes to 422: EngineInputError from the engine's own validation,
+    TypeError from unexpected/missing keyword names."""
+    try:
+        return fn(**inputs)
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except TypeError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid {label} inputs: {exc}") from exc
+
+
+@app.post("/engine/v1/qsbs")
+def engine_qsbs(request: QsbsRequest) -> dict:
+    """IRC §1202 QSBS eligibility: per-test breakdown, exclusion %, gain cap."""
+    return _engine_input_kwargs(qsbs_eligibility, request.inputs, "qsbs")
+
+
+@app.post("/engine/v1/intangible")
+def engine_intangible(request: IntangibleRequest) -> dict:
+    """Value one intangible asset (RFR, MEEM, with/without, cost approach)."""
+    try:
+        return value_intangible(request.method, request.params)
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/ppa")
+def engine_ppa(request: PpaRequest) -> dict:
+    """ASC 805 purchase price allocation with goodwill as the residual."""
+    return _engine_input_kwargs(purchase_price_allocation, request.inputs, "ppa")
+
+
+@app.post("/engine/v1/impairment")
+def engine_impairment(request: ImpairmentRequest) -> dict:
+    """ASC 350/360 impairment tests (goodwill, indefinite-lived, long-lived)."""
+    try:
+        return run_impairment_test(request.test, request.params)
+    except EngineInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/esop")
+def engine_esop(request: EsopRequest) -> dict:
+    """ESOP level-of-value chain, optionally with the repurchase obligation."""
+    result = _engine_input_kwargs(esop_share_value, request.inputs, "esop")
+    if request.repurchase is not None:
+        repurchase_inputs = dict(request.repurchase)
+        # The projection prices redemptions at the value this run concluded
+        # unless the caller deliberately overrides it.
+        repurchase_inputs.setdefault("fmv_per_share", result["fmv_per_share"])
+        result["repurchase_obligation"] = _engine_input_kwargs(
+            repurchase_obligation, repurchase_inputs, "repurchase"
+        )
+    return result
+
+
+@app.post("/engine/v1/smb")
+def engine_smb(request: SmbRequest) -> dict:
+    """SMB fair market value (SDE, capitalization of earnings, multiples)."""
+    return _engine_input_kwargs(smb_valuation, request.inputs, "smb")
+
+
+@app.post("/engine/v1/emi-csop")
+def engine_emi_csop(request: EmiCsopRequest) -> dict:
+    """UK EMI/CSOP: UMV and AMV per share plus scheme qualification checks."""
+    try:
+        return emi_csop_valuation(request.scheme, request.params)
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

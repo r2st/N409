@@ -80,10 +80,78 @@ describe('report templates', () => {
     expect(REPORT_TEMPLATES.has('generic.v1')).toBe(true);
   });
 
-  it('selects 409a.v55 for 409a and generic for every other kind', () => {
+  it('selects 409a.v55 for 409a and generic for kinds without a dedicated skeleton', () => {
     expect(templateForKind('409a').version).toBe('409a.v55');
     expect(templateForKind('gifts').version).toBe('generic.v1');
     expect(templateForKind('718').version).toBe('generic.v1');
+    expect(templateForKind('820').version).toBe('generic.v1');
+    expect(templateForKind('ifrs2').version).toBe('generic.v1');
+    expect(templateForKind('fund').version).toBe('generic.v1');
+    expect(templateForKind('debt').version).toBe('generic.v1');
+  });
+
+  it('selects a dedicated skeleton for each specialty report type', () => {
+    expect(templateForKind('qsbs').version).toBe('qsbs.v1');
+    expect(templateForKind('ppa').version).toBe('ppa.v1');
+    expect(templateForKind('goodwill').version).toBe('impairment.v1');
+    expect(templateForKind('esop').version).toBe('esop.v1');
+    expect(templateForKind('fmv').version).toBe('smb.v1');
+    expect(templateForKind('emi').version).toBe('emi.v1');
+    expect(templateForKind('csop').version).toBe('csop.v1');
+    expect(templateForKind('ip').version).toBe('ip.v1');
+  });
+
+  it('registers every specialty skeleton in the registry under its version', () => {
+    for (const version of [
+      'qsbs.v1',
+      'ppa.v1',
+      'impairment.v1',
+      'esop.v1',
+      'smb.v1',
+      'emi.v1',
+      'csop.v1',
+      'ip.v1',
+    ]) {
+      expect(REPORT_TEMPLATES.has(version), version).toBe(true);
+    }
+  });
+
+  it('carries the sections a reviewer of each specialty deliverable expects', () => {
+    const keysOf = (kind: Parameters<typeof templateForKind>[0]) =>
+      templateForKind(kind).sections.map((s) => s.key);
+    expect(keysOf('qsbs')).toEqual(
+      expect.arrayContaining([
+        'gross_asset_test',
+        'active_business_test',
+        'issuance_and_holding',
+        'exclusion_cap',
+      ]),
+    );
+    expect(keysOf('ppa')).toEqual(
+      expect.arrayContaining(['transaction_overview', 'intangible_assets', 'goodwill']),
+    );
+    expect(keysOf('goodwill')).toEqual(
+      expect.arrayContaining(['reporting_units', 'qualitative_assessment', 'quantitative_tests']),
+    );
+    expect(keysOf('esop')).toEqual(expect.arrayContaining(['level_of_value', 'repurchase_obligation']));
+    expect(keysOf('fmv')).toEqual(expect.arrayContaining(['earnings_normalization', 'valuation_methods']));
+    expect(keysOf('emi')).toEqual(expect.arrayContaining(['umv_amv', 'scheme_limits']));
+    expect(keysOf('csop')).toEqual(expect.arrayContaining(['scheme_limits']));
+    expect(keysOf('ip')).toEqual(expect.arrayContaining(['asset_description', 'valuation_methods']));
+  });
+
+  it('instantiates a specialty skeleton with variables resolved', () => {
+    const content = instantiateTemplate(templateForKind('qsbs'), {
+      company_name: 'Acme',
+      kind: 'qsbs',
+      valuation_ref: 'VAL-42',
+      date: '2026-08-07',
+      currency: 'USD',
+    });
+    const intro = content.sections.find((s) => s.key === 'introduction');
+    expect(intro?.html).toContain('Acme');
+    expect(intro?.html).toContain('2026-08-07');
+    expect(intro?.html).not.toContain('{{');
   });
 
   it("keys the registry by each template's own version", () => {
