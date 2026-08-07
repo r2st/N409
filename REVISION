@@ -1,97 +1,92 @@
-72a56572b87ef05eef9437517d879dd3e3127433
+570aafcf7bb76600e0ae78ac2c8e86615a1153a8
 # N409 deployed revision
-# commit:    72a56572b87ef05eef9437517d879dd3e3127433
-# subject:   fix(engine): the pre-flight cleared four payloads the engine then
-#            refused
-# previous:  66a3613 (fix(engine): a waterfall backsolve disclosed a volatility
-#            from the other model) — recorded, deployed, and confirmed on the
-#            host: BUILD_SHA read 66a3613 before this deploy.
-# includes:  1 fix, no features. Round 7 was interrupted after the work was
-#            written and tested but before it was committed; this is that work,
-#            unchanged, committed and shipped.
+# commit:    570aafcf7bb76600e0ae78ac2c8e86615a1153a8
+# subject:   fix(report): the deliverable carried no schedule of anything the
+#            engine computed
+# previous:  c5386e4 (fix(bridge): a firm's own client was two companies if two
+#            members opened it) — that is what the host was actually running:
+#            BUILD_SHA read c5386e4 before this deploy. The last deploy this
+#            file recorded was 72a5657, four commits earlier, so d039c5f,
+#            39af038, cd4954e and c5386e4 all shipped without the record being
+#            updated. BUILD_SHA is why that is recoverable rather than lost, and
+#            is the reason the note below insists it is the only authority.
+# includes:  2 fixes, no features. Both came out of one question — what does a
+#            409A that leaves this platform actually say, and is it right.
 #
-#            72a5657 engine pre-flight — `validate_payload` exists to answer,
-#              before a run starts, the question `/compute` will answer by
-#              raising. Every place the two disagree is a bug in one direction
-#              or the other: an `ok: true` the engine then refuses with a bare
-#              `detail` and no field path, or a 422 on a payload the engine
-#              would have valued. Four, in both directions.
+#            1cd8c2c participation caps — `waterfall.py` documented
+#              "participating preferred has no participation cap" as a
+#              simplification. It is not one a 409A can carry. A cap is
+#              ordinary paper, and omitting it moves value in one direction
+#              only: from common to preferred, on the class an employee holds.
+#              On 8M common and 4M participating preferred behind a $10M
+#              preference capped at $20M, a $90M exit paid the preferred
+#              $36.67M against a charter that caps it at $30M — 11% of the
+#              whole common position, growing with the exit value because the
+#              uncapped model never stops paying. Confirmed on the host after
+#              this deploy: the same table now pays $30M and $60M.
 #
-#              asset method — `_check_asset` mirrored only the explicit
-#              `asset_method == "cost_to_replicate"`, but `approaches.asset_value`
-#              dispatches twice: that, *or* no method with a cost supplied, in
-#              which case it values on the cost and never reads the balance
-#              sheet. `asset_method` is nullable and the params form's default
-#              is blank, so an analyst who fills in the rebuild cost and leaves
-#              the dropdown alone was told two balance-sheet fields were
-#              required for a method that does not use one. The positivity
-#              check also ran one bound too tight: `asset_value` refuses only
-#              `< 0`, and a zero rebuild cost is a real answer.
+#              Two breakpoints were missing and the second is the one that is
+#              easy to get wrong. A capped class stops drawing residual at the
+#              cap; it does not stay there, because at a high enough exit value
+#              the as-converted slice beats the cap and it converts. Cap the
+#              class forever and the model errs the other way. Both events keep
+#              the payoff continuous, which is load-bearing: `_allocate` prices
+#              each class as a sum of Black-Scholes call spreads between
+#              breakpoints, and that decomposition cannot represent a jump — it
+#              would price one as if it were not there.
 #
-#              comparables — the multiples filter asked whether *anything*
-#              survived dropping the unusable entries, but `_weighted_equity`
-#              coerces the whole list, so one bad entry fails the run.
-#              `[8.0, null]`, `[8.0, "12.5x"]` and `[8.0, true]` all cleared the
-#              pre-flight and were then refused by the calculation they had just
-#              cleared. Both are the ordinary failure: the market feed returns
-#              `None` for a ticker with no multiple for the chosen metric, and a
-#              hand-typed set carries the "x". Now reported per index.
+#              `participation_cap` is a currency amount, not a multiple: that is
+#              what "2x" resolves to once the preference is known, and a class
+#              with no preference has no multiple. Absent is uncapped, which is
+#              what every cap table stored before this field existed meant. The
+#              analyst form carries it too — an engine input the UI cannot send
+#              is one no engagement will ever use.
 #
-#              cap table — nothing looked inside `share_classes` at all. Its
-#              shape was checked and its contents left to `waterfall._normalize`,
-#              which runs inside `compute`, is fail-fast, and raises bare
-#              strings: four problems took four round trips and arrived with no
-#              field path. That is the input most in need of the opposite,
-#              because it is imported from a spreadsheet rather than typed into
-#              four boxes. Not mirrored: the representability guards, which are
-#              properties of the arithmetic on figures that individually pass
-#              everything here and carry their own messages.
+#            570aafc report exhibits — the report body was authored prose and
+#              nothing in it was ever computed. The Conclusion of Value read
+#              "$ … per share". Every figure the engine produced sat in
+#              `calculations.results`, read only by the one-page executive
+#              summary — which serves a board member wanting one number and
+#              does nothing for the auditor or reviewing appraiser, who asks
+#              for the breakpoint schedule by name and had never been shown one
+#              anywhere.
 #
-#              pwerm probabilities — a set that missed 1.0 was a *warning*
-#              reading "the engine normalises them". `allocate_pwerm` does not
-#              normalise; it refuses. The analyst was told in writing that the
-#              engine would handle it, given `ok: true`, and then refused. The
-#              `total > 0` guard was the same bug with the volume off: an
-#              all-zero set summed to 0, skipped the check, and produced no
-#              issue at all for a payload that cannot run.
+#              `domain/reportExhibits.ts` builds eight schedules from the
+#              calculation that produced the conclusion and appends them at
+#              render time rather than storing them: they cannot go stale
+#              against the engine, and they cannot be edited away in the report
+#              editor. Each is omitted rather than emptied when its analysis
+#              was not run, and a partial or unfamiliar results shape drops the
+#              exhibit rather than throwing inside a PDF render.
 #
-#              `SCENARIO_TYPES` and `MAX_SHARE_CLASSES` are imported from the
-#              modules that own them rather than restated, so a bound changing
-#              in one place cannot leave the pre-flight quietly disagreeing
-#              again.
-# deployed:  2026-08-07T14:52Z (UTC)
-# method:    infra/deploy.sh --apply (git archive + scp + tar extract, npm ci &&
-#            npm run build on host, BUILD_SHA written after the build, valuation
-#            restarted and awaited before the other four). Dry run first.
-# verified:  BUILD_SHA on the host reads 72a5657, all five units active, /health
-#            on 3000/3001/3004 reporting 72a5657 from build_sha_source "file",
-#            :3002 and :3003 ok, and https://n409.aiknol.com/health 200 through
-#            Caddy on the new SHA. The three behaviour changes were then
-#            exercised against the live :3003 /engine/v1/validate rather than
-#            inferred from the unit tests: a cost-to-replicate payload with no
-#            `asset_method` no longer raises `inputs.asset.total_assets`;
-#            probabilities summing to 0.8 come back severity `error` with the
-#            new message; and a four-problem cap table returns all four field
-#            paths in one response.
-# tests:     5,045 green before the push — 3,574 JS across the five workspaces
-#            (npm test: 205 shared, 189 report, 2,354 valuation, 42 web, 784
-#            web-frontend), 341 ai, 1,130 engine-wrapper. +35 over the last
-#            round, all engine-wrapper, all in test_validate.py. Every one of
-#            them asserts the pre-flight names the field *and* that `compute`
-#            raises on the same payload — the only form of this test that can
-#            fail when the two drift apart, which is what the previous
-#            single-sided assertions could not do.
-# note:      no migrations and no dependency changes, so schema_migrations stays
-#            at 0100 and npm ci had nothing new to fetch. Two files changed,
-#            none added and none deleted, so the deletion sweep had nothing to
-#            do. Only `validate.py` ships behaviour, so the engine-wrapper
-#            restart is the one that matters; the other four are incidental.
+#              The skeleton needed the other half of the same gap (409a.v55):
+#              capital structure, economic outlook, one section per approach
+#              applied, the reconciliation, the analyst's qualifications — and
+#              DLOC, which the engine has always applied and the prose never
+#              explained. A minority discount in the arithmetic and nowhere in
+#              the argument is the kind of unsupported adjustment that costs a
+#              valuation its safe harbour.
+#
+#              And the date. `{{date}}` opens and closes the report and was
+#              filled from the clock, so the body stated the day someone first
+#              opened the report tab while the summary page a page earlier
+#              printed the real valuation date. That date starts the twelve
+#              months of Treas. Reg. §1.409A-1(b)(5)(iv)(B)(1). It now comes
+#              from the calculation, and the cover states it separately from
+#              the render date.
+#
+# tests:      1169 engine (+29), 2421 valuation (+49), 787 frontend (+3), 205
+#             shared, 189 report, 42 ai-adjacent. Lint and prettier clean.
+# deploy:     infra/deploy.sh --apply against root@204.168.241.124. Three files
+#             added and eleven changed; nothing deleted, so the deletion sweep
+#             had nothing to do. All five units restarted and both health checks
+#             reported 570aafc.
 # note:      This file is tracked, so it always names the *previous* deploy at
 #            the moment the archive is built — the commit recording a deploy
 #            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
 #            authoritative record of what is running; it is written by the
 #            deploy script from the local HEAD after a successful build, and is
-#            what /health reports. It read 66a3613 before this deploy.
+#            what /health reports. It read c5386e4 before this deploy.
 # gap:       stored calculations keep the old backsolved equity value. 99383b2
 #            changed what the engine computes from then on; every calculation
 #            already in the table that took the single-breakpoint backsolve path
