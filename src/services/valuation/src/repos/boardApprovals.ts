@@ -5,6 +5,7 @@ import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import {
   BOARD_EVENT_TYPES,
+  boardSignoffTokenExpiry,
   resolutionStatusFrom,
   type BoardResolutionStatus,
   type BoardSignoffStatus,
@@ -34,6 +35,8 @@ export interface BoardSignoffRow {
   member_email: string;
   member_title: string | null;
   token_sha256: string;
+  /** Deadline on the emailed token (migration 0101); re-minting pushes it out. */
+  token_expires_at: Date;
   status: BoardSignoffStatus;
   comment: string | null;
   sent_at: Date | null;
@@ -141,8 +144,9 @@ export async function addBoardMember(
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<BoardSignoffRow>(
       `INSERT INTO board_signoffs
-         (id, resolution_id, valuation_id, member_name, member_email, member_title, token_sha256)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (id, resolution_id, valuation_id, member_name, member_email, member_title,
+          token_sha256, token_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         newUlid(),
@@ -152,6 +156,7 @@ export async function addBoardMember(
         input.email.toLowerCase(),
         input.title ?? null,
         input.tokenHash,
+        boardSignoffTokenExpiry(),
       ],
     );
     await recordEvent(client, {
@@ -179,14 +184,39 @@ export async function findSignoffById(pool: pg.Pool, id: string): Promise<BoardS
   return rows[0] ?? null;
 }
 
+/**
+ * Resolve a raw signing token to its member — expiry enforced in the predicate.
+ *
+ * In SQL rather than in the routes because both public endpoints resolve
+ * through here and a deadline checked by each caller is a deadline one of them
+ * eventually forgets. `now()` is the database's clock, which is also the one
+ * that stamped the column.
+ */
 export async function findSignoffByTokenHash(
   pool: pg.Pool,
   tokenHash: string,
 ): Promise<BoardSignoffRow | null> {
-  const { rows } = await pool.query<BoardSignoffRow>('SELECT * FROM board_signoffs WHERE token_sha256 = $1', [
-    tokenHash,
-  ]);
+  const { rows } = await pool.query<BoardSignoffRow>(
+    'SELECT * FROM board_signoffs WHERE token_sha256 = $1 AND token_expires_at > now()',
+    [tokenHash],
+  );
   return rows[0] ?? null;
+}
+
+/**
+ * Re-mint the emailed token: a fresh secret and a fresh deadline, together.
+ *
+ * The two have to move as one. Rotating the hash while leaving the old deadline
+ * would hand a member a link that dies before the window they were promised,
+ * and pushing the deadline out without rotating would extend the life of a
+ * token that has already been in an inbox.
+ */
+export async function remintSignoffToken(pool: pg.Pool, signoffId: string, tokenHash: string): Promise<void> {
+  await pool.query('UPDATE board_signoffs SET token_sha256 = $2, token_expires_at = $3 WHERE id = $1', [
+    signoffId,
+    tokenHash,
+    boardSignoffTokenExpiry(),
+  ]);
 }
 
 export async function markMemberSent(pool: pg.Pool, signoffId: string): Promise<void> {

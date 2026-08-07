@@ -24,6 +24,8 @@ interface BoardMember {
   comment: string | null;
   sent_at: string | null;
   signed_at: string | null;
+  /** Deadline on this member's signing token (migration 0101). */
+  token_expires_at?: string | null;
 }
 
 interface BoardResolution {
@@ -53,6 +55,29 @@ const SIGNOFF_TONE: Record<BoardSignoffStatus, string> = {
   signed: 'bg-bond-50 text-bond-700 ring-bond-200',
   rejected: 'bg-red-50 text-red-700 ring-red-200',
 };
+
+/**
+ * What to tell ops about a pending member's signing link.
+ *
+ * Signing tokens expire (migration 0101), and the failure mode without this is
+ * silent: the director clicks a dead link, the console still says "pending",
+ * and nobody learns anything until someone chases it by email. Resend re-mints,
+ * so the fix is one click away once the state is visible.
+ */
+export function signingLinkNote(
+  member: Pick<BoardMember, 'status' | 'sent_at' | 'token_expires_at'>,
+  now: Date,
+): string | null {
+  if (member.status !== 'pending' || !member.token_expires_at) return null;
+  const expiresAt = new Date(member.token_expires_at).getTime();
+  if (!Number.isFinite(expiresAt)) return null;
+  if (expiresAt <= now.getTime()) return 'Link expired — resend';
+  // Only worth saying once the link is actually out there; an unsent member's
+  // countdown is noise on a row whose next action is "Email link" regardless.
+  if (!member.sent_at) return null;
+  const days = Math.ceil((expiresAt - now.getTime()) / (24 * 60 * 60 * 1000));
+  return days <= 7 ? `Link expires in ${days} day${days === 1 ? '' : 's'}` : null;
+}
 
 export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
   const [data, setData] = useState<BoardResponse | null>(null);
@@ -212,45 +237,49 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
               <p className="text-sm text-ink-400">No board members added yet.</p>
             ) : (
               <ul className="space-y-2">
-                {members.map((m) => (
-                  <li
-                    key={m.id}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-paper-300 px-3.5 py-2.5"
-                  >
-                    <span className="font-semibold text-ink-800">{m.member_name}</span>
-                    {m.member_title && <span className="text-sm text-ink-500">{m.member_title}</span>}
-                    <span className="text-sm text-ink-400">{m.member_email}</span>
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${SIGNOFF_TONE[m.status]}`}
+                {members.map((m) => {
+                  const linkNote = signingLinkNote(m, new Date());
+                  return (
+                    <li
+                      key={m.id}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-paper-300 px-3.5 py-2.5"
                     >
-                      {m.status}
-                    </span>
-                    {m.signed_at && (
-                      <span className="tnum text-xs text-ink-400">{formatDateTime(m.signed_at)}</span>
-                    )}
-                    <span className="ml-auto flex items-center gap-3">
-                      {m.status === 'pending' && (
-                        <button
-                          className="cursor-pointer text-xs font-semibold text-bond-600 hover:underline"
-                          disabled={busy}
-                          onClick={() => void sendLink(m.id)}
-                        >
-                          {m.sent_at ? 'Resend link' : 'Email link'}
-                        </button>
+                      <span className="font-semibold text-ink-800">{m.member_name}</span>
+                      {m.member_title && <span className="text-sm text-ink-500">{m.member_title}</span>}
+                      <span className="text-sm text-ink-400">{m.member_email}</span>
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${SIGNOFF_TONE[m.status]}`}
+                      >
+                        {m.status}
+                      </span>
+                      {m.signed_at && (
+                        <span className="tnum text-xs text-ink-400">{formatDateTime(m.signed_at)}</span>
                       )}
-                      {m.status === 'pending' && (
-                        <button
-                          className="cursor-pointer text-xs font-semibold text-red-700 hover:underline"
-                          disabled={busy}
-                          onClick={() => void removeMember(m.id)}
-                        >
-                          remove
-                        </button>
-                      )}
-                    </span>
-                    {m.comment && <p className="w-full text-xs text-ink-500 italic">“{m.comment}”</p>}
-                  </li>
-                ))}
+                      {linkNote && <span className="text-xs font-semibold text-amber-700">{linkNote}</span>}
+                      <span className="ml-auto flex items-center gap-3">
+                        {m.status === 'pending' && (
+                          <button
+                            className="cursor-pointer text-xs font-semibold text-bond-600 hover:underline"
+                            disabled={busy}
+                            onClick={() => void sendLink(m.id)}
+                          >
+                            {m.sent_at ? 'Resend link' : 'Email link'}
+                          </button>
+                        )}
+                        {m.status === 'pending' && (
+                          <button
+                            className="cursor-pointer text-xs font-semibold text-red-700 hover:underline"
+                            disabled={busy}
+                            onClick={() => void removeMember(m.id)}
+                          >
+                            remove
+                          </button>
+                        )}
+                      </span>
+                      {m.comment && <p className="w-full text-xs text-ink-500 italic">“{m.comment}”</p>}
+                    </li>
+                  );
+                })}
               </ul>
             )}
 

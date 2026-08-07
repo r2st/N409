@@ -276,4 +276,137 @@ describe.skipIf(!dbUp)('feature 5 — board approval workflow', () => {
     });
     expect(res.statusCode).toBe(404);
   });
+
+  /**
+   * The emailed signing token is a bearer credential that authenticates on
+   * nothing but itself and grants the FMV conclusion plus that member's
+   * signature on a 409A. It used to last as long as the row did — outliving the
+   * mailbox it was sent to, the director's tenure, and the engagement itself.
+   * Migration 0101 bounds it the way every sibling credential here is bounded.
+   */
+  describe('signing tokens expire (migration 0101)', () => {
+    /** A fresh valuation + resolution + one member, returning the raw token. */
+    async function seedMember(company: string, email: string) {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: company },
+      });
+      const vId = created.json().valuation.id as string;
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${vId}/board`,
+        headers: authHeader(ops.token),
+        payload: { fmv_conclusion: 2.75 },
+      });
+      const add = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${vId}/board/members`,
+        headers: authHeader(ops.token),
+        payload: { name: 'Dana Director', email },
+      });
+      expect(add.statusCode).toBe(201);
+      return { vId, token: add.json().sign_token as string, memberId: add.json().member.id as string };
+    }
+
+    const expire = (memberId: string) =>
+      pool.query("UPDATE board_signoffs SET token_expires_at = now() - interval '1 second' WHERE id = $1", [
+        memberId,
+      ]);
+
+    it('mints a member with a deadline roughly 30 days out', async () => {
+      const { memberId } = await seedMember('TtlCo', 'dana.ttl@board.example');
+      const { rows } = await pool.query<{ days: number }>(
+        'SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 AS days FROM board_signoffs WHERE id = $1',
+        [memberId],
+      );
+      expect(Number(rows[0]!.days)).toBeGreaterThan(29.9);
+      expect(Number(rows[0]!.days)).toBeLessThan(30.1);
+    });
+
+    it('refuses to show the resolution to an expired token', async () => {
+      const { token, memberId } = await seedMember('LapsedCo', 'dana.view@board.example');
+      // It works right up to the deadline.
+      const before = await app.inject({
+        method: 'POST',
+        url: '/api/v1/board/resolution',
+        payload: { token },
+      });
+      expect(before.statusCode).toBe(200);
+
+      await expire(memberId);
+      const after = await app.inject({
+        method: 'POST',
+        url: '/api/v1/board/resolution',
+        payload: { token },
+      });
+      expect(after.statusCode).toBe(404);
+      // Same answer an unknown token gets — telling the two apart tells a
+      // guesser which of their guesses was once real.
+      expect(after.json().detail).toContain('invalid or has expired');
+    });
+
+    it('refuses a signature from an expired token', async () => {
+      const { token, memberId, vId } = await seedMember('StaleCo', 'dana.sign@board.example');
+      await expire(memberId);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/board/sign',
+        payload: { token, decision: 'signed' },
+      });
+      expect(res.statusCode).toBe(404);
+
+      // And nothing was recorded: the member is still pending and the
+      // resolution has not moved.
+      const board = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vId}/board`,
+        headers: authHeader(ops.token),
+      });
+      expect(board.json().resolution.status).toBe('pending');
+      expect(board.json().members[0].status).toBe('pending');
+    });
+
+    it('re-sending mints a fresh token and a fresh deadline together', async () => {
+      const { token: stale, memberId, vId } = await seedMember('ResendCo', 'dana.resend@board.example');
+      await expire(memberId);
+
+      const sent = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${vId}/board/members/${memberId}/send`,
+        headers: authHeader(ops.token),
+      });
+      expect(sent.statusCode).toBe(200);
+
+      // The lapsed one stays dead — a re-send must not resurrect a token that
+      // has already been sitting in an inbox.
+      const old = await app.inject({
+        method: 'POST',
+        url: '/api/v1/board/resolution',
+        payload: { token: stale },
+      });
+      expect(old.statusCode).toBe(404);
+
+      const { rows } = await pool.query<{ days: number }>(
+        'SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 AS days FROM board_signoffs WHERE id = $1',
+        [memberId],
+      );
+      expect(Number(rows[0]!.days)).toBeGreaterThan(29.9);
+    });
+
+    it('shows ops the deadline so a lapsed link is visible before a member complains', async () => {
+      const { vId, memberId } = await seedMember('VisibleCo', 'dana.visible@board.example');
+      const board = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vId}/board`,
+        headers: authHeader(ops.token),
+      });
+      const member = board.json().members.find((m: { id: string }) => m.id === memberId);
+      expect(member.token_expires_at).toBeTruthy();
+      // The hash itself still never leaves the server.
+      expect(member.token_sha256).toBeUndefined();
+    });
+  });
 });

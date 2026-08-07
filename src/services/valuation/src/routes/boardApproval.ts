@@ -21,6 +21,7 @@ import {
   markMemberSent,
   mintSignoffToken,
   recordSignoff,
+  remintSignoffToken,
   upsertResolution,
   type BoardResolutionRow,
   type BoardSignoffRow,
@@ -67,6 +68,17 @@ const ResolutionBody = z.object({ token: z.string().min(1).max(200) });
 const BOARD_PUBLIC_RATE_LIMIT = 30;
 const BOARD_PUBLIC_RATE_WINDOW_MS = 10 * 60 * 1000;
 
+/**
+ * One answer for "no such token" and "that token has expired" alike.
+ *
+ * These routes authenticate on the token alone, so telling the two apart tells
+ * a guesser which of their guesses was once real. Naming expiry as a
+ * possibility is still worth doing: a director whose link lapsed needs to know
+ * to ask for another rather than to conclude the system is broken, and the
+ * sentence says that without saying which case they are in.
+ */
+const DEAD_TOKEN_DETAIL = 'This signing link is invalid or has expired — ask for a fresh one';
+
 function requireOps(principal: Principal): void {
   if (!isOps(principal)) throw problems.forbidden('Board approval is operations-only');
 }
@@ -89,6 +101,10 @@ function memberDto(row: BoardSignoffRow) {
     comment: row.comment,
     sent_at: row.sent_at,
     signed_at: row.signed_at,
+    // The token's deadline, so the console can show ops a link that has lapsed
+    // rather than leaving them to work it out from a member's complaint. The
+    // hash itself stays out, as it always has.
+    token_expires_at: row.token_expires_at,
     created_at: row.created_at,
   };
 }
@@ -241,9 +257,10 @@ export function registerBoardApprovalRoutes(
       const member = await findSignoffById(deps.pool, memberId);
       if (!member || member.valuation_id !== id) throw problems.notFound();
 
-      // Re-mint the token so the emailed link is always fresh (previous links die).
+      // Re-mint the token so the emailed link is always fresh (previous links
+      // die), and with it the deadline the new link carries.
       const { token, hash } = mintSignoffToken();
-      await deps.pool.query('UPDATE board_signoffs SET token_sha256 = $2 WHERE id = $1', [member.id, hash]);
+      await remintSignoffToken(deps.pool, member.id, hash);
       const link = `${baseUrl}/board-sign#token=${token}`;
 
       await sendTransactionalEmail(
@@ -294,9 +311,9 @@ export function registerBoardApprovalRoutes(
   app.post('/api/v1/board/resolution', async (req) => {
     throttlePublic(req);
     const parsed = ResolutionBody.safeParse(req.body);
-    if (!parsed.success) throw problems.notFound();
+    if (!parsed.success) throw problems.notFound(DEAD_TOKEN_DETAIL);
     const member = await findSignoffByTokenHash(deps.pool, hashToken(parsed.data.token));
-    if (!member) throw problems.notFound();
+    if (!member) throw problems.notFound(DEAD_TOKEN_DETAIL);
     const resolution = await findResolutionByValuation(deps.pool, member.valuation_id);
     if (!resolution) throw problems.notFound();
     return {
@@ -317,7 +334,7 @@ export function registerBoardApprovalRoutes(
     const parsed = SignBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid sign-off', { errors: parsed.error.issues });
     const member = await findSignoffByTokenHash(deps.pool, hashToken(parsed.data.token));
-    if (!member) throw problems.notFound();
+    if (!member) throw problems.notFound(DEAD_TOKEN_DETAIL);
     if (member.status !== 'pending') {
       throw problems.conflict('You have already recorded a decision on this resolution');
     }

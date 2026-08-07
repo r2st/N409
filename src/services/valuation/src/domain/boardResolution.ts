@@ -7,6 +7,22 @@
 export type BoardResolutionStatus = 'pending' | 'approved' | 'rejected';
 export type BoardSignoffStatus = 'pending' | 'signed' | 'rejected';
 
+/**
+ * How long an emailed signing token stays usable (migration 0101).
+ *
+ * A board member's token authenticates on nothing but itself and grants the
+ * FMV conclusion plus that member's signature, so it is bounded like every
+ * other bearer credential here. 30 days is the auditor link's default and is
+ * generous for a document circulated for signature; Send re-mints, so a member
+ * who lets one lapse asks for another and the stale one dies at that moment.
+ */
+export const BOARD_SIGNOFF_TOKEN_TTL_DAYS = 30;
+
+/** The deadline a token minted at `from` carries. */
+export function boardSignoffTokenExpiry(from: Date = new Date()): Date {
+  return new Date(from.getTime() + BOARD_SIGNOFF_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+}
+
 /** Event types for the audit spine — kept local (not in domain/valuation.ts) to avoid merge churn. */
 export const BOARD_EVENT_TYPES = {
   resolutionGenerated: 'board_resolution_generated',
