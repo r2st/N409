@@ -285,7 +285,36 @@ def opm_backsolve(
             if last_round_post_money and last_round_post_money > 0:
                 result["last_round_post_money"] = last_round_post_money
                 if (
-                    liquidation_preference
+                    # Only on the branch this inversion is the inverse *of*.
+                    #
+                    # The algebra below is the single-breakpoint payoff split and
+                    # nothing else: preferred takes the preference, then a
+                    # `preferred_shares / (preferred_shares + fd)` slice of one
+                    # Black-Scholes call struck at the aggregate preference. The
+                    # waterfall branch does not price the round that way — it
+                    # walks seniority ranks, participation, conversion points and
+                    # option-exercise points, and prices a call spread per
+                    # segment. Reporting a vol derived from the simple model on a
+                    # `backsolve_waterfall` result attached a figure from a model
+                    # the run did not use to a run that says which model it did,
+                    # and the two disagree by exactly as much as the cap table is
+                    # more complicated than one preference — which is the whole
+                    # reason the waterfall path exists.
+                    #
+                    # It was reachable on ordinary payloads, not exotic ones:
+                    # `compute` passes the scalar cap-table fields alongside
+                    # `share_classes` on every run, because the analyst form
+                    # collects both, so any waterfall backsolve with a post-money
+                    # carried one. An analyst comparing the disclosed implied vol
+                    # against the `volatility` assumption the opinion rests on
+                    # would read a gap that is an artifact of the wrong model.
+                    #
+                    # Omitted rather than approximated: this is a disclosure
+                    # extra — the `except EngineInputError: pass` below already
+                    # establishes that an ill-posed one is reported as nothing —
+                    # and a silently-wrong number is worse than an absent one.
+                    result["method"] == "backsolve_single"
+                    and liquidation_preference
                     and liquidation_preference > 0
                     and preferred_shares
                     and common_shares

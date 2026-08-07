@@ -78,6 +78,55 @@ def test_backsolve_reports_implied_volatility_when_well_posed():
     assert 0.01 <= out["implied_volatility"] <= 5.0
 
 
+def test_waterfall_backsolve_omits_the_single_breakpoint_implied_volatility():
+    """The inversion is of the aggregate model, so it belongs only to that branch.
+
+    `compute` passes the scalar cap-table fields on every run — the analyst form
+    collects `shares_outstanding_preferred`, `liquidation_preference` and
+    `shares_outstanding_common` whether or not a cap table is also supplied — so
+    a waterfall backsolve reaches the disclosure block with everything it used to
+    need. What it produced there was a volatility implied by a one-preference
+    payoff split, stapled to a result that names `backsolve_waterfall` as the
+    model it used, with no way for a reader to tell them apart.
+    """
+    pps = allocate_waterfall(20_000_000.0, CLASSES, T, R, SIGMA)["classes"]["Series A"]["per_share"]
+
+    out = opm_backsolve(
+        20_000_000.0,
+        last_round_pps=pps,
+        share_classes=CLASSES,
+        last_round_class="Series A",
+        # Exactly what compute sends alongside the cap table.
+        preferred_shares=2_000_000.0,
+        liquidation_preference=5_000_000.0,
+        common_shares=7_000_000.0,
+        options_shares=1_000_000.0,
+        t=T,
+        r=R,
+        sigma=SIGMA,
+    )
+    assert out["method"] == "backsolve_waterfall"
+    # The post-money still travels; only the figure from the other model does not.
+    assert out["last_round_post_money"] == 20_000_000.0
+    assert "implied_volatility" not in out
+
+    # …and the single-breakpoint branch keeps it, on the same inputs minus the
+    # cap table, so this is a scoping change and not a removal.
+    aggregate = opm_backsolve(
+        20_000_000.0,
+        last_round_pps=3.0,
+        preferred_shares=2_000_000.0,
+        liquidation_preference=5_000_000.0,
+        common_shares=7_000_000.0,
+        options_shares=1_000_000.0,
+        t=T,
+        r=R,
+        sigma=SIGMA,
+    )
+    assert aggregate["method"] == "backsolve_single"
+    assert "implied_volatility" in aggregate
+
+
 # ── compute() integration ────────────────────────────────────────────────────
 
 PARAMS = {
