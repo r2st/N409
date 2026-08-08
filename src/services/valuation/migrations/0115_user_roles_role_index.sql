@@ -1,0 +1,23 @@
+-- `user_roles` carries a primary key on (user_id, role_id), which serves every
+-- lookup that starts from a user — "what may this person do", the check on
+-- every authenticated request. It cannot serve one that starts from a role:
+-- a btree on (a, b) is no use for a predicate on b alone.
+--
+-- Which is the direction `listUserIdsWithRoles` (repos/users.ts) reads it:
+--
+--   FROM users u
+--   JOIN user_roles ur ON ur.user_id = u.id
+--   JOIN roles r ON r.id = ur.role_id
+--  WHERE r.key = ANY($1)
+--
+-- and that is the fan-out behind every ops notification — the billing alerts
+-- on a failed payment, a refund and a dispute (routes/payments.ts,
+-- routes/billing.ts). With 50k users at two roles each, the planner hashes a
+-- full scan of all 100k user_roles rows to find the handful of people holding
+-- `admin` or `finance`; with this index it walks straight to them. The
+-- selectivity is the point: an ops role is held by a few staff out of the
+-- whole platform, so the scan is discarding essentially everything it reads.
+--
+-- It also covers the role side of the FK, so removing a role no longer scans
+-- the join table to check what still references it.
+CREATE INDEX user_roles_role_idx ON user_roles (role_id);
