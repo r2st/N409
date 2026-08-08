@@ -29,6 +29,7 @@ import math
 from dataclasses import dataclass, field as dc_field
 from datetime import date
 
+from .anomalies import detect_anomalies
 from .dlom import (
     MODEL_DLOM_METHODS,
     RESTRICTED_STOCK_STUDIES,
@@ -1151,6 +1152,15 @@ def validate_payload(
     )
     _check_discounts(c, params)
     _check_dates(c, params, inputs)
+
+    # Consistency *between* the figures, after every check on their individual
+    # legality. Always warnings: an anomaly is a relationship between values
+    # each of which is legal on its own, so an analyst who has checked the
+    # source and knows the figure is right must still be able to run. Emitted
+    # through the same collector so the API surface does not grow a second
+    # vocabulary for "something is wrong with this payload".
+    for anomaly in detect_anomalies(inputs):
+        c.warn(anomaly.code, anomaly.field, anomaly.message, anomaly.hint)
 
     return c.issues
 
