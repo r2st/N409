@@ -42,6 +42,39 @@ _SYSTEM = (
 )
 
 
+def sections_for(payload: dict) -> tuple[tuple[str, str, str], ...]:
+    """The section list this run drafts, as (key, title, guidance).
+
+    The valuation service resolves the narrative prompt library (migration
+    0114 — base rows plus the report type's overrides) and ships the winners
+    as `narrative_sections`. That is what makes a QSBS memorandum come back
+    with four statutory tests instead of a DLOM discussion.
+
+    `SECTIONS` remains the fallback, and deliberately so: a database that has
+    not run 0114, or a caller that sends nothing, should still get a complete
+    409A narrative rather than a report with no prose in it. Rows missing a key
+    or guidance are skipped rather than drafted as an untitled blank.
+    """
+    raw = payload.get("narrative_sections")
+    if not isinstance(raw, list):
+        return SECTIONS
+
+    resolved: list[tuple[str, str, str]] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        key = c.clean_str(item.get("key"), limit=200).strip()
+        guidance = c.clean_str(item.get("guidance"), limit=4000).strip()
+        if not key or not guidance or key in seen:
+            continue
+        seen.add(key)
+        title = c.clean_str(item.get("label"), limit=300).strip() or key.replace("_", " ").title()
+        resolved.append((key, title, guidance))
+
+    return tuple(resolved) if resolved else SECTIONS
+
+
 def _methodology_summary(payload: dict) -> str:
     meth = payload.get("methodology")
     if isinstance(meth, dict) and meth:
@@ -49,12 +82,12 @@ def _methodology_summary(payload: dict) -> str:
     return "(infer the methodology from the calculation results)"
 
 
-def _sections(doc: Any) -> list[dict]:
-    """Every SECTION key, in order, filled from the model or blanked."""
+def _sections(doc: Any, spec: tuple[tuple[str, str, str], ...]) -> list[dict]:
+    """Every requested key, in order, filled from the model or blanked."""
     raw = doc.get("sections") if isinstance(doc, dict) else None
     by_key = raw if isinstance(raw, dict) else {}
     out: list[dict] = []
-    for key, title, _guidance in SECTIONS:
+    for key, title, _guidance in spec:
         out.append(
             {
                 "key": key,
@@ -71,7 +104,8 @@ def run_report_narrative(payload: dict) -> tuple[str, dict]:
 
     red = c.redactor(payload)
     system, model = c.prompt_overrides(payload, _SYSTEM)
-    section_spec = "\n".join(f'  "{k}": "<{g}>"' for k, _t, g in SECTIONS)
+    spec = sections_for(payload)
+    section_spec = "\n".join(f'  "{k}": "<{g}>"' for k, _t, g in spec)
     user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Params: {c.params_summary(params)}
 Methodology choices: {_methodology_summary(payload)}
@@ -89,8 +123,8 @@ If a section's approach did not carry weight, say so briefly rather than padding
     llm = c.ask(red, system, user, model)
     parsed = c.safe_result(llm)
     result = {
-        "sections": _sections(parsed),
-        "section_keys": [k for k, _t, _g in SECTIONS],
+        "sections": _sections(parsed, spec),
+        "section_keys": [k for k, _t, _g in spec],
         "anonymization": red.report(),
     }
     return llm.model, result

@@ -147,6 +147,7 @@ describe('sanitizeExtractedInputs', () => {
         'cash',
         'debt',
         'ebitda_ltm',
+        'ebitda_ntm',
         'last_round_post_money',
         'last_round_price_per_share',
         'liquidation_preference',

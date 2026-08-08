@@ -72,6 +72,7 @@ import { registerOverwriteRoutes } from './routes/overwrites.js';
 import { registerWorkbookRoutes } from './routes/workbook.js';
 import { registerReportRoutes } from './routes/reports.js';
 import { registerPromptRoutes } from './routes/prompts.js';
+import { registerNarrativePromptRoutes } from './routes/narrativePrompts.js';
 import { registerCompanyProfileRoutes } from './routes/companyProfile.js';
 import { registerPackageRoutes } from './routes/packageView.js';
 import { registerInboxRoutes } from './routes/inbox.js';
@@ -397,6 +398,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // P1/P2 remaining features — prompt registry, company profile, package
   // explorer, in-app support (docs/remaining-gaps.md)
   registerPromptRoutes(app, { pool, aiUrl: config.AI_URL });
+  // Migration 0114 — the per-section guidance behind report_narrative, edited
+  // per report type rather than per pipeline.
+  registerNarrativePromptRoutes(app, { pool });
   registerCompanyProfileRoutes(app, { pool });
   registerPackageRoutes(app, { pool });
   registerJobRoutes(app, { pool });

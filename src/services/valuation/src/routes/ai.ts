@@ -24,6 +24,8 @@ import {
   type AiJobRow,
 } from '../repos/aiJobs.js';
 import { findPromptByPipeline, latestPromptVersion } from '../repos/aiPrompts.js';
+import { listNarrativePromptsForKind } from '../repos/narrativePrompts.js';
+import { narrativeSectionsPayload } from '../domain/narrativePrompts.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { decodeFromStorage } from '../storage/documentEncryption.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -161,6 +163,17 @@ export async function runAiPipeline(
     throw problems.unprocessable(`The "${pipeline}" agent is disabled`);
   }
   const promptVersion = promptRow ? await latestPromptVersion(deps.pool, promptRow.id) : null;
+
+  // The narrative agent's *sections* are a second, per-report-type registry
+  // (migration 0114). Only that pipeline reads them, and only it pays for the
+  // query. Null on an un-migrated database, where the agent's built-in eight
+  // are the correct fallback.
+  let narrativeSections: Array<{ key: string; label: string; guidance: string }> | null = null;
+  if (pipeline === 'report_narrative') {
+    const rows = await listNarrativePromptsForKind(deps.pool, valuation.kind);
+    narrativeSections = narrativeSectionsPayload(rows, valuation.kind);
+  }
+
   const payload = {
     valuation: {
       id: valuation.id,
@@ -172,6 +185,7 @@ export async function runAiPipeline(
     params,
     documents: args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents),
     prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
+    ...(narrativeSections ? { narrative_sections: narrativeSections } : {}),
     options: { anonymize: args.anonymize },
     ...(args.extraPayload ?? {}),
   };
