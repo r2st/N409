@@ -30,7 +30,7 @@ async function startAiStub(state: StubState) {
       return reply.status(state.failWith).send({ detail: 'stubbed research outage' });
     }
     return reply.status(200).send({
-      model: 'duckduckgo+openai/gpt-oss-20b:free',
+      model: 'sonar',
       content: 'The sector traded at 4.2x forward revenue in Q2 2026.',
       citations: state.citations,
       grounded: state.citations.length > 0,
@@ -152,14 +152,12 @@ describe.skipIf(!dbUp)('market research', () => {
       const row = prompts.find((p) => p.pipeline === pipeline);
       expect(row, `${pipeline} seeded`).toBeDefined();
       expect(row!.enabled).toBe(true);
-      // Migration 0123 re-pointed these from Perplexity Sonar tiers to
-      // OpenRouter ids: the column now names only the model that writes the
-      // answer up, because the search engine is an account-level setting
-      // (RESEARCH_PROVIDER) rather than a per-prompt one. A row still holding
-      // a `sonar` tier would be sent to OpenRouter, rejected, and fall through
-      // — a wasted round trip on every research call.
-      expect(row!.model, pipeline).not.toMatch(/^sonar/);
-      expect(row!.model, pipeline).toMatch(/\//);
+      // Bound to a Sonar tier, not an OpenRouter model. Perplexity is the
+      // primary research provider (0117, restored by 0124 after 0123 briefly
+      // re-pointed these while it was removed), so the column names the tier
+      // to ask Sonar for. The keyless search fallback ignores it rather than
+      // forwarding it to OpenRouter — see `research.synthesis_model`.
+      expect(row!.model, pipeline).toMatch(/^sonar/);
     }
   });
 
@@ -195,11 +193,11 @@ describe.skipIf(!dbUp)('market research', () => {
     expect(stored.question).toBe(query);
   });
 
-  it('ships the registry’s system prompt and synthesis model with the call', async () => {
+  it('ships the registry’s system prompt and Sonar tier with the call', async () => {
     await run({ topic: 'industry_outlook' });
     const call = state.requests.filter((r) => typeof r.query === 'string').at(-1)!;
     expect(String(call.system)).toContain('valuation firm');
-    expect(call.model).toBe('google/gemma-4-31b-it:free');
+    expect(call.model).toBe('sonar-pro');
     // Outlook is time-sensitive; the registry pins how far back the search reaches.
     expect(call.recency).toBe('month');
   });

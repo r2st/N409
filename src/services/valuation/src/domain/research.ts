@@ -20,8 +20,9 @@
  * company's own name into a question this module builds, because the builders
  * below interpolate only `PublicResearchFacts`, and `PublicResearchFacts` has
  * no field that can hold any of those. The placeholder tripwire inside
- * `ai/app/research.py` stays as a second line of defence rather than the
- * only one.
+ * the AI service's own placeholder tripwire stays as a second line of defence
+ * rather than the only one — and it fires before a provider is chosen, so it
+ * covers the fallback as well as Sonar.
  *
  * `assertPublic` is the third: it re-reads the assembled question against the
  * strings the caller knows are confidential, so a future edit that widens a
@@ -67,7 +68,7 @@ export interface ResearchTopicDef {
   label: string;
   /** Shown on the tab; also the answer to "why would I run this one?". */
   description: string;
-  /** The `ai_prompts` row whose system prompt and synthesis model this topic uses. */
+  /** The `ai_prompts` row whose system prompt and Sonar tier this topic uses. */
   promptPipeline: AiPipeline;
   /** Whether `region` is meaningful — only `market_conditions` is. */
   regionScoped: boolean;

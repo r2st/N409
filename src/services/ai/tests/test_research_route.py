@@ -10,6 +10,7 @@ text again.
 import pytest
 from fastapi.testclient import TestClient
 
+from app import perplexity
 from app import research as research_mod
 from app.main import app
 from app.websearch import ProviderStatus
@@ -30,7 +31,13 @@ def _clean_env(monkeypatch):
     The route must serve research from here, because that is the whole point of
     dropping the paid provider.
     """
-    for var in ("RESEARCH_PROVIDER", "BRAVE_SEARCH_API_KEY", "SERPER_API_KEY", "TAVILY_API_KEY"):
+    for var in (
+        "RESEARCH_PROVIDER",
+        "BRAVE_SEARCH_API_KEY",
+        "SERPER_API_KEY",
+        "TAVILY_API_KEY",
+        "PERPLEXITY_API_KEY",
+    ):
         monkeypatch.delenv(var, raising=False)
     yield
 
@@ -69,11 +76,21 @@ def test_available_by_default_with_no_key_configured(answered):
     assert client.post("/ai/v1/research", json={"query": "anything public"}).status_code == 200
 
 
-def test_503_when_the_selected_provider_is_unconfigured(monkeypatch):
-    monkeypatch.setenv("RESEARCH_PROVIDER", "brave")
+def test_503_only_when_no_provider_at_all_is_configured(monkeypatch):
+    """Both paths have to be missing. A deployment with no Perplexity key but a
+    working search provider is the documented default, not an outage."""
+    monkeypatch.setenv("RESEARCH_PROVIDER", "brave")  # keyed, and no key set
+    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
     res = client.post("/ai/v1/research", json={"query": "anything public"})
     assert res.status_code == 503
-    assert "brave" in res.json()["detail"]
+    detail = res.json()["detail"]
+    assert "PERPLEXITY_API_KEY" in detail and "RESEARCH_PROVIDER" in detail
+
+
+def test_available_when_only_perplexity_is_configured(answered, monkeypatch):
+    monkeypatch.setenv("RESEARCH_PROVIDER", "brave")  # fallback unavailable
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-testkey")
+    assert client.post("/ai/v1/research", json={"query": "anything"}).status_code == 200
 
 
 def test_422_on_client_text(monkeypatch):
@@ -159,6 +176,41 @@ def test_research_is_advertised_on_root():
 
 
 class TestReadiness:
+    def test_the_primary_is_silent_when_no_key_is_set(self, monkeypatch):
+        """Unconfigured is silent — the same convention Bedrock uses. A
+        deployment running on the fallback is the documented default, and
+        reporting it as a missing key would train operators to ignore the line."""
+        monkeypatch.setattr("app.main.verify_search_provider", lambda: ProviderStatus("valid", "ok"))
+        monkeypatch.setattr("app.main.verify_api_key", _ok_key)
+        checks = client.get("/ready").json()["checks"]
+        assert "research_primary" not in checks
+
+    def test_the_primary_is_reported_when_keyed(self, monkeypatch):
+        monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-testkey")
+        monkeypatch.setattr(
+            "app.main.verify_perplexity_key",
+            lambda: perplexity.KeyStatus("valid", "Perplexity accepted the key"),
+        )
+        monkeypatch.setattr("app.main.verify_search_provider", lambda: ProviderStatus("valid", "ok"))
+        monkeypatch.setattr("app.main.verify_api_key", _ok_key)
+        checks = client.get("/ready").json()["checks"]
+        assert checks["research_primary"] == "valid"
+
+    def test_a_lapsed_primary_key_does_not_take_the_service_down(self, monkeypatch):
+        """It is reported loudly and is not fatal: the fallback answers, and
+        every pipeline works without research either way."""
+        monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-testkey")
+        monkeypatch.setattr(
+            "app.main.verify_perplexity_key",
+            lambda: perplexity.KeyStatus("invalid", "Perplexity rejected the key"),
+        )
+        monkeypatch.setattr("app.main.verify_search_provider", lambda: ProviderStatus("valid", "ok"))
+        monkeypatch.setattr("app.main.verify_api_key", _ok_key)
+        res = client.get("/ready")
+        assert res.status_code == 200
+        assert res.json()["checks"]["research_primary"] == "invalid"
+        assert res.json()["checks"]["search"] == "valid"
+
     def test_the_search_provider_is_always_named(self, monkeypatch):
         """Reported unconditionally, because the default needs no key and so is
         always configured — an operator has to be able to see which index this

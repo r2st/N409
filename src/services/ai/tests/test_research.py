@@ -13,6 +13,7 @@ import os
 import httpx
 import pytest
 
+from app import perplexity
 from app import research as research_mod
 from app import websearch
 from app.anonymize import _PLACEHOLDERS
@@ -30,7 +31,10 @@ from app.research import (
     order_by_citation,
     research,
 )
+from app.research_types import ProviderError
 from app.websearch import SearchError, SearchHit
+
+PPLX_KEY = "pplx-0123456789abcdef"
 
 HITS = [
     SearchHit("https://a.example/saas", "SaaS multiples 2026", "Public SaaS trades at 6-8x ARR."),
@@ -48,9 +52,15 @@ def _clean_env(monkeypatch):
         "BRAVE_SEARCH_API_KEY",
         "SERPER_API_KEY",
         "TAVILY_API_KEY",
+        # No Perplexity key by default, so the unqualified tests below exercise
+        # the fallback — which is the path a deployment without a key runs.
+        "PERPLEXITY_API_KEY",
+        "PERPLEXITY_MODEL",
     ):
         monkeypatch.delenv(var, raising=False)
+    perplexity.reset_key_cache()
     yield
+    perplexity.reset_key_cache()
 
 
 @pytest.fixture
@@ -340,7 +350,199 @@ class TestFailures:
         assert not isinstance(caught.value, ConfidentialityError)
 
 
-def test_recency_vocabulary_is_shared_with_the_search_layer():
-    """The route validates `recency` against this tuple before calling; two
-    copies drifting apart would 422 a filter the provider supports."""
+def test_recency_vocabulary_is_shared_across_both_providers():
+    """The route validates `recency` against this tuple before dispatching, so
+    a caller's filter has to mean the same thing whichever provider answers.
+    Three copies drifting apart would 422 a filter one of them supports."""
     assert research_mod.RECENCY_FILTERS is websearch.RECENCY_FILTERS
+    assert research_mod.RECENCY_FILTERS is perplexity.RECENCY_FILTERS
+
+
+# ── choosing between the two providers ───────────────────────────────────────
+
+
+PPLX_BODY = {
+    "model": "sonar",
+    "choices": [{"message": {"content": "Sonar says SaaS trades at 6-8x ARR."}}],
+    "search_results": [{"title": "Sonar source", "url": "https://sonar.example/idx"}],
+    "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+}
+
+
+def pplx_stub(handler) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def pplx_ok(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json=PPLX_BODY)
+
+
+@pytest.fixture
+def keyed(monkeypatch):
+    """A configured Perplexity key, so the primary path is live."""
+    monkeypatch.setenv("PERPLEXITY_API_KEY", PPLX_KEY)
+    perplexity.reset_key_cache()
+    yield
+    perplexity.reset_key_cache()
+
+
+class TestPrimaryIsPerplexity:
+    """With a key set, Sonar answers and the fallback is never touched.
+
+    Sonar stays the preferred path because it is one call against a real index
+    that returns a sourced answer, where the fallback is a scrape plus a
+    synthesis step and is only as good as the snippets it retrieved.
+    """
+
+    def test_perplexity_answers_when_configured(self, keyed, monkeypatch):
+        def explode(*args, **kwargs):
+            raise AssertionError("fell back while Perplexity was working")
+
+        monkeypatch.setattr(research_mod.websearch, "search", explode)
+        out = research("public question", perplexity_client=pplx_stub(pplx_ok))
+        assert out.content == "Sonar says SaaS trades at 6-8x ARR."
+        assert out.model == "sonar"
+        assert out.citations[0].url == "https://sonar.example/idx"
+
+    def test_primary_available_tracks_the_key(self, keyed):
+        assert research_mod.primary_available() is True
+
+    def test_without_a_key_the_primary_is_not_even_tried(self, answered, monkeypatch):
+        """No key means no round trip, not a failed one — `is_configured` is
+        checked before the socket opens."""
+
+        def explode(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("called Perplexity with no key configured")
+
+        assert research_mod.primary_available() is False
+        out = research("public question", perplexity_client=pplx_stub(explode))
+        assert out.model.startswith("duckduckgo+")
+
+    def test_a_sonar_tier_on_the_request_reaches_perplexity(self, keyed):
+        seen = {}
+
+        def capture(request: httpx.Request) -> httpx.Response:
+            import json
+
+            seen.update(json.loads(request.content))
+            return httpx.Response(200, json=PPLX_BODY)
+
+        research("public question", model="sonar-pro", perplexity_client=pplx_stub(capture))
+        assert seen["model"] == "sonar-pro"
+
+
+class TestFallsBackToSearch:
+    """Every way Sonar can fail ends with the question asked the other way."""
+
+    def test_a_rejected_key_falls_back(self, keyed, answered):
+        rejected = pplx_stub(lambda r: httpx.Response(401, text="nope"))
+        out = research("public question", perplexity_client=rejected)
+        assert out.model.startswith("duckduckgo+")
+        assert out.grounded
+
+    def test_an_exhausted_quota_falls_back(self, keyed, answered):
+        limited = pplx_stub(lambda r: httpx.Response(429, text="slow down"))
+        assert research("public question", perplexity_client=limited).grounded
+
+    def test_an_outage_falls_back(self, keyed, answered, monkeypatch):
+        monkeypatch.setenv("PERPLEXITY_CALL_BUDGET_S", "0")
+
+        def boom(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("no route", request=request)
+
+        assert research("public question", perplexity_client=pplx_stub(boom)).grounded
+
+    def test_an_unusable_200_falls_back(self, keyed, answered):
+        """A 200 carrying no completion is a failure wearing a success code —
+        the fallback exists for it as much as for a 500."""
+        empty = pplx_stub(lambda r: httpx.Response(200, json={"choices": []}))
+        assert research("public question", perplexity_client=empty).grounded
+
+    def test_the_fallback_is_silent_to_the_caller(self, keyed, answered):
+        """Same shape either way; only `model` says which path answered. A
+        caller that had to branch on which provider ran would defeat the point."""
+        out = research("public question", perplexity_client=pplx_stub(lambda r: httpx.Response(500)))
+        assert set(out.as_dict()) == {"model", "content", "citations", "grounded", "tokens"}
+
+    def test_a_sonar_tier_is_not_forwarded_to_openrouter_on_the_fallback(
+        self, keyed, answered
+    ):
+        """The prompt registry pins Sonar tiers (migration 0124). Handing
+        'sonar-pro' to OpenRouter as a preferred model would put a guaranteed
+        404 at the head of the chain every time the fallback ran."""
+        research(
+            "public question",
+            model="sonar-pro",
+            perplexity_client=pplx_stub(lambda r: httpx.Response(500)),
+        )
+        assert answered["chat"]["model"] is None
+
+    def test_an_openrouter_id_is_honoured_on_the_fallback(self, keyed, answered):
+        research(
+            "public question",
+            model="google/gemma-4-31b-it:free",
+            perplexity_client=pplx_stub(lambda r: httpx.Response(500)),
+        )
+        assert answered["chat"]["model"] == "google/gemma-4-31b-it:free"
+
+    def test_both_failing_reports_both_reasons(self, keyed, monkeypatch):
+        """An operator debugging a dead research tab needs to know that *two*
+        providers failed and why each did, not just the last one."""
+
+        def boom(query, **kwargs):
+            raise SearchError("duckduckgo HTTP 202: blocked")
+
+        monkeypatch.setattr(research_mod.websearch, "search", boom)
+        with pytest.raises(ResearchError) as caught:
+            research("public question", perplexity_client=pplx_stub(lambda r: httpx.Response(500)))
+        text = str(caught.value)
+        assert "perplexity" in text
+        assert "search failed" in text
+
+
+class TestTheGateSurvivesTheFallback:
+    """The one failure the fallback must never paper over."""
+
+    def test_client_text_is_refused_before_either_provider_is_chosen(self, keyed):
+        def explode(*args, **kwargs):
+            raise AssertionError("a provider was reached with client text")
+
+        with pytest.raises(ConfidentialityError):
+            research("How is [COMPANY] funded?", perplexity_client=pplx_stub(explode))
+
+    def test_a_refusal_does_not_fall_back_to_the_search_provider(self, keyed, monkeypatch):
+        """The heart of it. If ConfidentialityError were a ProviderError, this
+        query would be refused by Sonar and then sent to DuckDuckGo — the
+        guarantee turned inside out."""
+
+        def explode(*args, **kwargs):
+            raise AssertionError("client text was forwarded to the fallback")
+
+        monkeypatch.setattr(research_mod.websearch, "search", explode)
+        monkeypatch.setattr(research_mod, "chat", explode)
+        with pytest.raises(ConfidentialityError):
+            research("[NAME] holds 2,000,000 shares", perplexity_client=pplx_stub(pplx_ok))
+
+    def test_the_hierarchy_that_makes_that_true(self):
+        assert not issubclass(ConfidentialityError, ProviderError)
+        assert issubclass(perplexity.PerplexityError, ProviderError)
+
+
+class TestAvailability:
+    def test_configured_when_only_perplexity_has_a_key(self, keyed, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER", "brave")  # keyed, no key set
+        assert websearch.is_configured() is False
+        assert is_configured() is True
+
+    def test_configured_when_only_the_fallback_is_available(self):
+        assert research_mod.primary_available() is False
+        assert is_configured() is True
+
+    def test_unconfigured_only_when_neither_path_exists(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER", "serper")
+        assert is_configured() is False
+
+    def test_with_no_path_at_all_it_raises_rather_than_pretending(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER", "serper")
+        with pytest.raises(ResearchError, match="no research provider"):
+            research("public question")

@@ -33,7 +33,7 @@ import {
 /**
  * Web-grounded market research (design §12.3).
  *
- * `ai/app/research.py` and `POST /ai/v1/research` were complete, fenced and
+ * `ai/app/perplexity.py` and `POST /ai/v1/research` were complete, fenced and
  * tested for months, and nothing called them — so industry-conditions and
  * market-outlook paragraphs were still written from the uploaded corpus and
  * analyst knowledge alone, which is the weakest and least defensible part of a
@@ -48,9 +48,14 @@ import {
  *   * Provenance. The answer is stored with the question that produced it and
  *     the sources retrieved for it, append-only, so a report can cite research
  *     that still says what it said when the report was drafted.
- *   * Restraint. The search provider is free but not unlimited — the keyless
- *     default is rate-limited per address — so the refresh-all sweep stays
- *     ops-only and runs each topic once.
+ *   * Restraint. Neither provider is unlimited — Sonar bills per request and
+ *     the keyless fallback is rate-limited per address — so the refresh-all
+ *     sweep stays ops-only and runs each topic once.
+ *
+ * Which provider answered is not this route's business. The AI service tries
+ * Perplexity and falls back to a keyless search path on its own; the response
+ * shape is identical either way, and `model` on the stored row records which
+ * one it was.
  */
 
 /** Wall clock for one research call — above the AI service's own budget. */

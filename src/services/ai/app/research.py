@@ -1,40 +1,49 @@
-"""Web-grounded research — retrieve public sources, then answer only from them.
+"""Web-grounded research — Perplexity first, a keyless search fallback behind it.
 
-This is the module `perplexity.py` used to be, minus the vendor. Sonar sold
-retrieval and synthesis as one billed call; here `websearch.py` retrieves and
-`openrouter.chat` synthesises, which makes the whole feature free and — more
-usefully — makes the boundary between "what the public record says" and "what a
-model wrote about it" a seam in the code rather than a claim in a vendor's
-marketing.
+Two providers answer the same question by different means, and this module
+picks between them:
 
-The contract the callers depend on is unchanged: `research()` takes a question
-about a *public* subject and returns an answer, the sources behind it, and a
-`grounded` flag saying whether there were any. The valuation service still
-files only grounded answers into a report.
+  * **Perplexity Sonar** (`perplexity.py`) — preferred whenever
+    PERPLEXITY_API_KEY is set. One billed call that searches and writes the
+    answer, returning the sources it read. It is the better answer: the
+    retrieval is a real index rather than a scrape, and the synthesis sees the
+    pages rather than the snippets.
 
-Two properties are worth stating plainly, because they are the reason this is
-a separate module from `pipelines.py` rather than another pipeline in it:
+  * **Search + synthesis** (`websearch.py` + `openrouter.chat`) — the fallback,
+    and the reason the feature works at all today. `RESEARCH_PROVIDER` defaults
+    to DuckDuckGo, which needs no key, no account and no billing relationship,
+    so an installation with no Perplexity key still produces cited research
+    instead of a 503.
 
-  * Nothing confidential goes out. `pipelines._ask` redacts every prompt so a
-    409A's subject never leaves the trust boundary. A search query cannot be
+The fallback is automatic and silent to the caller: no key, a rejected key, an
+exhausted quota, a 5xx or an unparseable body all end the same way — the
+question gets asked the other way, and the caller gets a `ResearchResult`
+either way. `ResearchResult.model` names which path answered, so a stored row
+still says how it was produced.
+
+Two properties survive the choice, and both are why this is a separate module
+from `pipelines.py` rather than another pipeline in it:
+
+  * **Nothing confidential goes out.** `pipelines._ask` redacts every prompt so
+    a 409A's subject never leaves the trust boundary. A search query cannot be
     redacted and still work — "[COMPANY]" is not a searchable subject — so the
-    containment here is refusal instead: `assert_public` rejects anything
-    carrying the redactor's placeholders, because their presence is positive
-    proof that client text was routed here by mistake. `pipelines.py` does not
-    import this module, and a test asserts it.
+    containment here is refusal instead. `assert_public` runs **once, before a
+    provider is chosen**, and `ConfidentialityError` is not a `ProviderError`,
+    so the fallback below cannot catch it. A refusal that fell through to the
+    second provider would forward the same client text to a second search
+    engine, turning the guarantee inside out.
 
-  * Nothing unsourced comes back. If the search returns no pages, this module
-    does not call the model at all — it reports that the public record did not
-    answer. An LLM asked a research question with no sources in front of it
-    will produce a confident multiple from its weights, and that number landing
-    in an exhibit beside real citations, with nothing to distinguish it, is the
-    exact failure this whole path exists to prevent.
+  * **Nothing unsourced comes back.** On the fallback path, if the search
+    returns no pages the model is not called at all — an LLM asked a research
+    question with no sources in front of it will produce a confident multiple
+    from its weights, and that number landing in an exhibit beside real
+    citations, with nothing to distinguish it, is the exact failure this whole
+    path exists to prevent.
 
 Configuration:
-    RESEARCH_PROVIDER / RESEARCH_MAX_RESULTS / RESEARCH_CALL_BUDGET_S
-        see `websearch.py`
-    RESEARCH_SYNTHESIS_MODEL
-        OpenRouter model for the write-up; defaults to the usual chain
+    PERPLEXITY_API_KEY etc.     see `perplexity.py`; unset disables the primary
+    RESEARCH_PROVIDER etc.      see `websearch.py`; the fallback's backend
+    RESEARCH_SYNTHESIS_MODEL    OpenRouter model for the fallback's write-up
 """
 
 from __future__ import annotations
@@ -42,37 +51,43 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass, field
 
 import httpx
 
-from . import websearch
+from . import perplexity, websearch
 from .openrouter import OpenRouterError, chat
-from .websearch import RECENCY_FILTERS, SearchError, SearchHit
-
-#: The redaction placeholders `anonymize.py` substitutes. Their presence in a
-#: research query means client text took a wrong turn — see the module docstring.
-#: Mirrored from `anonymize._PLACEHOLDERS` rather than imported so that a
-#: placeholder retired there cannot silently stop being refused here; the test
-#: suite asserts the two agree.
-REDACTION_MARKERS = (
-    "[EMAIL]",
-    "[SSN]",
-    "[EIN]",
-    "[PHONE]",
-    "[ADDRESS]",
-    "[NAME]",
-    "[COMPANY]",
+from .perplexity import PerplexityError
+from .research_types import (
+    RECENCY_FILTERS,
+    REDACTION_MARKERS,
+    Citation,
+    ConfidentialityError,
+    ProviderError,
+    ResearchError,
+    ResearchResult,
+    assert_public,
 )
+from .websearch import SearchError, SearchHit
 
 DEFAULT_SYSTEM = (
+    "You are a research assistant for a business valuation firm. Answer only "
+    "from the sources you retrieve, cite them, and say plainly when the public "
+    "record does not answer the question. Do not estimate a figure you could "
+    "not find."
+)
+
+#: The fallback's system prompt. Says the same thing as `DEFAULT_SYSTEM` with
+#: the one addition that path needs: the sources arrive numbered, so the answer
+#: has to point at them by number for `order_by_citation` to have anything to
+#: read.
+FALLBACK_SYSTEM = (
     "You are a research assistant for a business valuation firm. Answer only "
     "from the numbered sources supplied, cite them inline as [1], [2], and say "
     "plainly when the sources do not answer the question. Do not estimate a "
     "figure you could not find in a source."
 )
 
-#: What `research` says when the search came back empty. Stated as an answer
+#: What the fallback says when the search came back empty. Stated as an answer
 #: rather than raised as an error because a question the public record does not
 #: cover is a legitimate research outcome; the empty citation list is what stops
 #: it reaching a report.
@@ -86,103 +101,54 @@ _log = logging.getLogger("research")
 _CITATION_RE = re.compile(r"\[(\d{1,2})\]")
 
 
-class ResearchError(Exception):
-    """Raised when a research call cannot be completed."""
-
-
-class ConfidentialityError(ResearchError):
-    """Raised when a query carries client text that must not be searched.
-
-    Deliberately not something callers retry or fall back on: this is a
-    programming error in whatever assembled the query, and the only correct
-    response is to stop. A caller that caught it and tried another provider
-    would forward the same client text there.
-    """
-
-
-@dataclass(frozen=True)
-class Citation:
-    """One source the answer was written from."""
-
-    url: str
-    title: str = ""
-    date: str = ""
-
-    def as_dict(self) -> dict:
-        return {"url": self.url, "title": self.title, "date": self.date}
-
-
-@dataclass
-class ResearchResult:
-    model: str
-    content: str
-    citations: list[Citation] = field(default_factory=list)
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-
-    @property
-    def total_tokens(self) -> int:
-        return self.prompt_tokens + self.completion_tokens
-
-    @property
-    def grounded(self) -> bool:
-        """Whether the answer was written from retrieved sources.
-
-        An ungrounded answer is just a completion, and the whole reason to take
-        this path is the citation list. Callers use this to decide whether an
-        answer may be quoted in a report.
-        """
-        return bool(self.citations)
-
-    def as_dict(self) -> dict:
-        return {
-            "model": self.model,
-            "content": self.content,
-            "citations": [c.as_dict() for c in self.citations],
-            "grounded": self.grounded,
-            "tokens": self.total_tokens,
-        }
-
-
 def is_configured() -> bool:
-    """Whether web-grounded research is available.
+    """Whether web-grounded research is available at all.
 
-    True by default: the keyless DuckDuckGo backend needs no account. Callers
-    use this to decide whether to offer research as an option, which must not
-    cost a round trip.
+    True by default, because the fallback's default backend needs no account.
+    Callers use this to decide whether to offer research as an option, which
+    must not cost a round trip — so it asks what is *configured*, never what
+    currently works.
     """
-    return websearch.is_configured()
+    return perplexity.is_configured() or websearch.is_configured()
 
 
-def synthesis_model() -> str | None:
-    """Preferred OpenRouter model for the write-up, or None for the usual chain."""
-    return (os.environ.get("RESEARCH_SYNTHESIS_MODEL") or "").strip() or None
+def primary_available() -> bool:
+    """Whether Sonar is configured and will therefore be tried first."""
+    return perplexity.is_configured()
 
 
-# ── Confidentiality gate ─────────────────────────────────────────────────────
+def synthesis_model(preferred: str | None = None) -> str | None:
+    """The OpenRouter model for the fallback's write-up, or None for the chain.
 
-
-def assert_public(*parts: str) -> None:
-    """Refuse text that carries redaction placeholders.
-
-    A tripwire, not a sanitiser. It cannot tell whether a plain company name is
-    a client's or a public comparable's — that judgement belongs to the caller,
-    which knows which it is holding. What it can tell, with certainty, is that
-    text reading "[COMPANY] holds 2,000,000 shares" came off a redaction pass
-    over a client document, and no correct path routes that into a web search.
+    A Sonar tier is filtered out rather than passed through. The prompt
+    registry stores one `model` per research topic and it holds a Sonar tier
+    (migration 0124), because Sonar is the primary; handing "sonar-pro" to
+    OpenRouter as a preferred model would put a guaranteed 404 at the head of
+    the fallback chain every time the fallback ran.
     """
-    for part in parts:
-        if not part:
-            continue
-        for marker in REDACTION_MARKERS:
-            if marker in part:
-                raise ConfidentialityError(
-                    f"research query contains the redaction placeholder {marker} — "
-                    "client text must not reach a web-search provider"
-                )
+    chosen = preferred or os.environ.get("RESEARCH_SYNTHESIS_MODEL") or ""
+    chosen = chosen.strip()
+    if not chosen or chosen.startswith("sonar"):
+        return None
+    return chosen
 
 
-# ── Synthesis ────────────────────────────────────────────────────────────────
+def perplexity_model(preferred: str | None = None) -> str | None:
+    """The Sonar tier to ask for, or None to let `perplexity` decide.
+
+    The mirror image of `synthesis_model`: an OpenRouter id on the request is
+    meant for the fallback's synthesis step and is not a Sonar tier, so it is
+    dropped here rather than sent to Perplexity as a model it has never heard
+    of. Routing on the id like this follows `llm_router`, which already picks a
+    provider from a model-id prefix.
+    """
+    chosen = (preferred or "").strip()
+    if not chosen:
+        return None
+    return chosen if chosen.startswith("sonar") else None
+
+
+# ── The fallback path: retrieve, then synthesise ─────────────────────────────
 
 
 def build_source_block(hits: list[SearchHit]) -> str:
@@ -220,10 +186,10 @@ def order_by_citation(hits: list[SearchHit], content: str) -> list[Citation]:
     return [Citation(url=hits[i].url, title=hits[i].title) for i in order]
 
 
-def research(
+def fallback_research(
     query: str,
     *,
-    system: str = DEFAULT_SYSTEM,
+    system: str = FALLBACK_SYSTEM,
     model: str | None = None,
     recency: str | None = None,
     domains: list[str] | None = None,
@@ -231,34 +197,25 @@ def research(
     client: httpx.Client | None = None,
     search_client: httpx.Client | None = None,
 ) -> ResearchResult:
-    """Answer a question about the public record from retrieved sources.
+    """Retrieve sources for `query`, then write an answer from only those.
 
-    Raises `ConfidentialityError` if the query carries redaction placeholders
-    and `ResearchError` if the call cannot be completed. `model` names the
-    OpenRouter model that writes the answer — the search provider is chosen by
-    `RESEARCH_PROVIDER`, not per call, because it is an account-level fact
-    rather than a per-question one.
-
-    `client` is the HTTP client for synthesis and `search_client` the one for
-    retrieval; tests stub them separately because the two legs talk to
-    different services and a single stub could not answer both.
+    Assumes the confidentiality gate has already run — `research` is the only
+    caller and runs it once for both paths. Raises `ProviderError` if either
+    leg fails, which is what lets a caller distinguish "the fallback is also
+    down" from "there was nothing to find".
     """
-    assert_public(query, system)
-    if not query.strip():
-        raise ResearchError("research query is empty")
-
     provider = websearch.configured_provider()
     try:
         hits = websearch.search(
             query, limit=limit, recency=recency, domains=domains, client=search_client
         )
     except SearchError as exc:
-        raise ResearchError(f"search failed: {exc}") from exc
+        raise ProviderError(f"search failed: {exc}") from exc
 
     if not hits:
         # No sources means no answer worth having. Returning an ungrounded
         # result rather than raising keeps a legitimately unanswerable question
-        # out of the 503 path — the empty citation list is what stops it
+        # out of the error path — the empty citation list is what stops it
         # reaching a report.
         _log.info(
             "research found no sources",
@@ -273,9 +230,9 @@ def research(
         "as [n] with the source number. If the sources do not answer it, say so."
     )
     try:
-        answer = chat(system, prompt, model=model or synthesis_model(), client=client)
+        answer = chat(system, prompt, model=synthesis_model(model), client=client)
     except OpenRouterError as exc:
-        raise ResearchError(f"synthesis failed: {exc}") from exc
+        raise ProviderError(f"synthesis failed: {exc}") from exc
 
     citations = order_by_citation(hits, answer.content)
     _log.info(
@@ -294,16 +251,104 @@ def research(
     )
 
 
+# ── The choice ───────────────────────────────────────────────────────────────
+
+
+def research(
+    query: str,
+    *,
+    system: str | None = None,
+    model: str | None = None,
+    recency: str | None = None,
+    domains: list[str] | None = None,
+    limit: int | None = None,
+    client: httpx.Client | None = None,
+    search_client: httpx.Client | None = None,
+    perplexity_client: httpx.Client | None = None,
+) -> ResearchResult:
+    """Answer a question about the public record, Sonar first.
+
+    Raises `ConfidentialityError` if the query carries redaction placeholders —
+    before either provider is touched — and `ResearchError` if every available
+    path failed.
+
+    `system` is applied to whichever provider answers; left unset, each uses
+    its own default, which differ only in that the fallback's asks for numbered
+    citations. `model` is routed by id: a `sonar` tier goes to Perplexity, an
+    OpenRouter id to the fallback's synthesis step, and each path ignores the
+    other's.
+
+    The three client arguments exist because the two paths talk to three
+    different services and a single stub could not answer for all of them.
+    """
+    assert_public(query, system or "")
+    if not query.strip():
+        raise ResearchError("research query is empty")
+
+    errors: list[str] = []
+
+    if perplexity.is_configured():
+        kwargs: dict = {
+            "model": perplexity_model(model),
+            "recency": recency,
+            "domains": domains,
+            "client": perplexity_client,
+        }
+        if system:
+            kwargs["system"] = system
+        try:
+            return perplexity.research(query, **kwargs)
+        except ConfidentialityError:
+            # Not caught by the `except PerplexityError` below, because it is
+            # not one — but re-raised explicitly so that nobody "fixes" the
+            # hierarchy later without this line failing loudly first.
+            raise
+        except PerplexityError as exc:
+            # The whole point of the fallback. A lapsed key, an exhausted
+            # quota or a bad afternoon at Perplexity degrades to the keyless
+            # path rather than to a 503 on somebody's valuation.
+            errors.append(f"perplexity: {exc}")
+            _log.warning(
+                "perplexity research failed, falling back to search",
+                extra={"event": "research_fallback", "path": websearch.configured_provider()},
+            )
+
+    if not websearch.is_configured():
+        raise ResearchError(
+            "no research provider is available"
+            + (f" ({'; '.join(errors)})" if errors else "")
+        )
+
+    fallback_kwargs: dict = {
+        "model": model,
+        "recency": recency,
+        "domains": domains,
+        "limit": limit,
+        "client": client,
+        "search_client": search_client,
+    }
+    if system:
+        fallback_kwargs["system"] = system
+    try:
+        return fallback_research(query, **fallback_kwargs)
+    except ProviderError as exc:
+        errors.append(str(exc))
+        raise ResearchError("; ".join(errors)) from exc
+
+
 __all__ = [
     "Citation",
     "ConfidentialityError",
     "DEFAULT_SYSTEM",
+    "FALLBACK_SYSTEM",
     "NO_RESULTS_ANSWER",
     "RECENCY_FILTERS",
     "REDACTION_MARKERS",
     "ResearchError",
     "ResearchResult",
     "assert_public",
+    "fallback_research",
     "is_configured",
+    "primary_available",
     "research",
 ]

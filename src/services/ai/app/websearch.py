@@ -1,36 +1,35 @@
-"""Web search providers — the retrieval half of web-grounded research.
+"""Web search providers — the retrieval half of the research fallback.
 
-This module replaces the Perplexity Sonar client. Sonar was a single vendor
-that did retrieval *and* synthesis behind one billed endpoint; it is paid-only,
-and a 409A platform that cannot cite the public record because a card expired
-is a platform with a hole in its report. So the two halves are now separate:
-this module retrieves sources, and `research.py` synthesises an answer from
-them with the model this service already pays for (OpenRouter, free tier).
+`perplexity.py` is the primary provider: one billed call that searches and
+writes the answer. This module is what answers when that one cannot — no key
+configured, a lapsed key, an exhausted quota, an outage. It retrieves sources;
+`research.py` then synthesises from them with the OpenRouter models this
+service already uses.
 
-Splitting them buys three things beyond the price:
+Being the fallback is the whole design, and it buys three things:
 
   * A keyless default. `duckduckgo` needs no account, no key and no billing
-    relationship, so web-grounded research works on a fresh checkout. That is
-    why it is the default rather than merely an option — the previous design
-    made citations an opt-in that most installations never opted into.
+    relationship, so an installation with no Perplexity key still produces
+    cited research instead of a 503. Perplexity sells no free tier, so before
+    this existed the entire research chain — schema, route, containment, tab,
+    exhibit — had never produced a single citation.
 
   * A provider you can change without changing the contract. Brave, Serper and
     Tavily all sell a better index than DuckDuckGo's scrape, and all three are
     a key and one env var away. `SearchHit` is the seam: every backend returns
     the same three fields, so `research.py` never learns which one answered.
 
-  * Honest citations. Sonar returned the sources *it* chose to disclose. Here
-    the citation list is the retrieval result itself — the exact set of pages
-    whose text was put in front of the model. Nothing can appear in a report's
-    source list that the answer was not actually written from.
+  * Honest citations. The citation list is the retrieval result itself — the
+    exact set of pages whose text was put in front of the model. Nothing can
+    appear in a report's source list that the answer was not written from.
 
 A caveat that belongs at the top rather than in a footnote: the keyless
 default scrapes an endpoint DuckDuckGo defends with an anti-bot challenge, and
 that challenge trips after a modest number of queries from one address. It is
 detected and reported honestly (`is_challenge`), never worked around. Treat
-`duckduckgo` as the zero-setup default that makes the feature work out of the
-box, and set one of the free-tier keyed providers — all four have free plans —
-for an installation doing real volume.
+`duckduckgo` as the zero-setup default that keeps the feature alive without a
+Perplexity key, and set a Perplexity key or one of the free-tier keyed
+providers for an installation doing real volume.
 
 Configuration:
     RESEARCH_PROVIDER        duckduckgo (default) | searxng | brave | serper | tavily
@@ -56,6 +55,7 @@ from dataclasses import dataclass
 import httpx
 
 from .llm_http import MAX_RETRIES, Deadline, backoff_sleep, env_float, env_int
+from .research_types import RECENCY_FILTERS
 
 DEFAULT_PROVIDER = "duckduckgo"
 DEFAULT_MAX_RESULTS = 8
@@ -64,11 +64,6 @@ DEFAULT_CALL_BUDGET_S = 60.0
 #: Providers cap their own allowlists, and a query with forty `site:` clauses
 #: is not a filter, it is a syntax error with a 200 on it.
 MAX_DOMAINS = 10
-
-#: How far back a search may reach. `None` means no filter. Kept identical to
-#: the vocabulary the old Sonar client used so callers and the stored prompt
-#: registry did not have to be rewritten for a provider swap.
-RECENCY_FILTERS = ("day", "week", "month", "year")
 
 #: DuckDuckGo's lite endpoint is a server-rendered form with no JS, no API key
 #: and no per-account quota. It is scraped rather than consumed as an API, so

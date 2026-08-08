@@ -36,8 +36,11 @@ from .research import (
     ResearchError,
 )
 from .research import is_configured as research_configured
+from .research import primary_available as perplexity_configured
 from .research import research as run_research
+from .perplexity import verify_api_key as verify_perplexity_key
 from .websearch import configured_provider as search_provider
+from .websearch import is_configured as search_configured
 from .websearch import verify_provider as verify_search_provider
 from .pipelines import PIPELINES
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
@@ -169,10 +172,12 @@ class ResearchRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=4000)
     system: str | None = Field(default=None, max_length=4000)
-    # The OpenRouter model that writes the answer up from the retrieved
-    # sources. The search engine is not selectable per call: which index this
-    # installation searches is an account-level fact (RESEARCH_PROVIDER), not a
-    # per-question one.
+    # Routed by id, the way `llm_router` already routes completions: a `sonar`
+    # tier asks Perplexity for that tier, anything else names the OpenRouter
+    # model that writes the fallback's answer up. Each path ignores the other's,
+    # so a stored prompt pinned to one still works when the other answers.
+    # Which search index the fallback uses is not selectable per call — that is
+    # an account-level fact (RESEARCH_PROVIDER).
     model: str | None = None
     # Bound the search to recent sources — a multiple from 2019 is worse than
     # no multiple when the question is what a sector trades at today.
@@ -241,15 +246,24 @@ def ready() -> JSONResponse:
         "models": configured_models(),
         "tokens_used": tokens_used(),
     }
-    # Search is reported but does not gate readiness. It powers optional
-    # web-grounded research; every pipeline this service exposes works without
-    # it, so a search provider having a bad day must not take the valuation
-    # path down with it. Reported always rather than only-when-configured,
-    # because the default provider needs no key and so is always configured —
-    # the state is here precisely so an operator can see it before someone
-    # reports missing citations.
+    # Research is reported but does not gate readiness. It is optional; every
+    # pipeline this service exposes works without it, so neither a lapsed
+    # Perplexity key nor a search provider having a bad day may take the
+    # valuation path down.
+    #
+    # Both halves are reported because the chain has two of them and an
+    # operator needs to know which one is answering. `research_primary`
+    # appears only when a Perplexity key is set — unconfigured is silent, the
+    # same convention Bedrock uses below — while the fallback is reported
+    # always, since its default backend needs no key and so is always
+    # configured. A deployment with no Perplexity key and a working search
+    # provider is not degraded: it is the documented default.
+    if perplexity_configured():
+        pplx = verify_perplexity_key()
+        checks["research_primary"] = pplx.state
+        checks["research_primary_detail"] = pplx.detail
     checks["search_provider"] = search_provider()
-    if research_configured():
+    if search_configured():
         found = verify_search_provider()
         checks["search"] = found.state
         checks["search_detail"] = found.detail
@@ -277,7 +291,7 @@ def models() -> dict:
 
 @app.post("/ai/v1/research", response_model=ResearchResponse)
 def research(request: ResearchRequest) -> ResearchResponse:
-    """Web-grounded research with citations (search provider + synthesis).
+    """Web-grounded research with citations (Perplexity, else search + synthesis).
 
     Separate from the pipelines because it is the one route whose whole purpose
     is to send its input *outward* to a search engine. The pipelines redact so
@@ -286,17 +300,24 @@ def research(request: ResearchRequest) -> ResearchResponse:
     placeholders — which would mean client text had been routed here through
     some path nobody intended.
 
-    503 when the provider is unavailable or unconfigured, matching what the
+    Which provider answered is not part of the contract: `research` tries
+    Perplexity when a key is set and falls back to the keyless search path
+    otherwise or on failure, and the caller gets the same shape either way.
+    `ResearchResponse.model` names the path that answered, so the stored row
+    still records how it was produced.
+
+    503 only when *every* path failed or none is configured, matching what the
     valuation service already does with an OpenRouterError. 422 for the
     confidentiality refusal, because that is a caller bug with a fixable
-    request, not a provider outage to retry.
+    request, not a provider outage to retry — and one that must never be
+    retried against a second provider.
     """
     if not research_configured():
         raise HTTPException(
             status_code=503,
             detail=(
-                f"search provider {search_provider()!r} is not configured — "
-                "web-grounded research unavailable"
+                "no research provider is configured — set PERPLEXITY_API_KEY or "
+                "a RESEARCH_PROVIDER backend"
             ),
         )
     if request.recency is not None and request.recency not in RECENCY_FILTERS:
