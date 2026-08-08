@@ -29,6 +29,14 @@ from .openrouter import (
     verify_api_key,
 )
 from .output_schema import validate_result
+from .perplexity import (
+    ConfidentialityError,
+    PerplexityError,
+    RECENCY_FILTERS,
+)
+from .perplexity import is_configured as perplexity_configured
+from .perplexity import research as perplexity_research
+from .perplexity import verify_api_key as verify_perplexity_key
 from .pipelines import PIPELINES
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
 
@@ -148,6 +156,35 @@ class TestRequest(BaseModel):
     options: dict = Field(default_factory=dict)
 
 
+class ResearchRequest(BaseModel):
+    """A question about the *public* record — see `perplexity`'s docstring.
+
+    There is deliberately no `documents`, no `valuation` and no `options`
+    block: this route does not take client context, because everything it is
+    handed goes to a live web search. A caller that wants a document
+    summarised wants `/ai/v1/pipelines/...`, which redacts.
+    """
+
+    query: str = Field(min_length=1, max_length=4000)
+    system: str | None = Field(default=None, max_length=4000)
+    model: str | None = None
+    # Bound the search to recent sources — a multiple from 2019 is worse than
+    # no multiple when the question is what a sector trades at today.
+    recency: str | None = None
+    # Restrict to trusted publishers (SEC, exchanges, a firm's own sources).
+    domains: list[str] = Field(default_factory=list, max_length=10)
+
+
+class ResearchResponse(BaseModel):
+    model: str
+    content: str
+    citations: list[dict]
+    # False when Sonar answered without retrieving anything. The caller must
+    # not quote an ungrounded answer in a report — see `ResearchResult.grounded`.
+    grounded: bool
+    tokens: int
+
+
 class TestResponse(BaseModel):
     model: str
     content: str
@@ -168,6 +205,7 @@ def root() -> dict:
             "/ai/v1/pipelines/{pipeline}",
             "/ai/v1/test",
             "/ai/v1/models",
+            "/ai/v1/research",
         ],
     }
 
@@ -197,6 +235,16 @@ def ready() -> JSONResponse:
         "models": configured_models(),
         "tokens_used": tokens_used(),
     }
+    # Perplexity is reported but does not gate readiness. It powers optional
+    # web-grounded research; every pipeline this service exposes works without
+    # it, so a lapsed research key must not take the valuation path down with
+    # it. Unconfigured is therefore silent, and configured-but-broken is loud
+    # in the body without being fatal — the state is here precisely so an
+    # operator can see it before someone reports missing citations.
+    if perplexity_configured():
+        pplx = verify_perplexity_key()
+        checks["perplexity_key"] = pplx.state
+        checks["perplexity_key_detail"] = pplx.detail
     return JSONResponse(
         status_code=200 if key.ok else 503,
         content={"status": "ready" if key.ok else "unavailable", "checks": checks},
@@ -207,6 +255,48 @@ def ready() -> JSONResponse:
 def models() -> dict:
     """Model candidates for the Bot Prompts model picker (default chain first)."""
     return {"models": configured_models()}
+
+
+@app.post("/ai/v1/research", response_model=ResearchResponse)
+def research(request: ResearchRequest) -> ResearchResponse:
+    """Web-grounded research with citations (Perplexity Sonar).
+
+    Separate from the pipelines because it is the one route whose whole purpose
+    is to send its input *outward* to a search engine. The pipelines redact so
+    the subject of a 409A never leaves the trust boundary; this route has no
+    client context to redact, and refuses anything bearing the redactor's
+    placeholders — which would mean client text had been routed here through
+    some path nobody intended.
+
+    503 when the provider is unavailable or unconfigured, matching what the
+    valuation service already does with an OpenRouterError. 422 for the
+    confidentiality refusal, because that is a caller bug with a fixable
+    request, not a provider outage to retry.
+    """
+    if not perplexity_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="PERPLEXITY_API_KEY is not configured — web-grounded research unavailable",
+        )
+    if request.recency is not None and request.recency not in RECENCY_FILTERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"recency must be one of {list(RECENCY_FILTERS)}",
+        )
+    kwargs: dict = {
+        "model": request.model,
+        "recency": request.recency,
+        "domains": request.domains or None,
+    }
+    if request.system:
+        kwargs["system"] = request.system
+    try:
+        result = perplexity_research(request.query, **kwargs)
+    except ConfidentialityError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PerplexityError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ResearchResponse(**result.as_dict())
 
 
 @app.post("/ai/v1/test", response_model=TestResponse)

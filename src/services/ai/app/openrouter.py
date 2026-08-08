@@ -17,6 +17,17 @@ from dataclasses import dataclass
 
 import httpx
 
+from .llm_http import (
+    MAX_RETRIES,
+    MIN_ATTEMPT_S,
+    RETRY_BACKOFF_BASE_S,
+    TIMEOUT_S,
+    Deadline as _Deadline,
+    DeadlineExceeded as _BaseDeadlineExceeded,
+    backoff_sleep as _backoff_sleep,
+    token_count as _token_count,
+)
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Key introspection endpoint. Cheapest possible live proof that the configured
 # key is real: no model is invoked, so it costs nothing and burns no quota.
@@ -33,32 +44,11 @@ DEFAULT_MODELS = [
     "meta-llama/llama-3.3-70b-instruct:free",
     "mistralai/mistral-small-3.2-24b-instruct:free",
 ]
-TIMEOUT_S = 90.0
-# Transient-failure retry policy (P2-8). A connect/transport error or a 5xx from
-# OpenRouter is usually momentary, so retry the same model a couple of times with
-# exponential backoff before falling through to the next candidate. 4xx (including
-# 429 rate-limits) are not retried here — model fallback already handles those.
-MAX_RETRIES = 2
-RETRY_BACKOFF_BASE_S = 0.5
-
-# ── Whole-call deadline ──────────────────────────────────────────────────────
-#
-# TIMEOUT_S bounds one HTTP attempt, and `chat` makes many: MAX_RETRIES + 1
-# attempts against each of the candidate models, plus backoff. With the defaults
-# that is 3 x 3 x 90s + 4.5s of sleeping — 13.6 minutes of one thread, not the
-# 90 seconds the threadpool in `limits.py` was sized against ("LLM calls block
-# up to 90s"). The handlers here are sync `def`s, so each one holds a slot in a
-# pool of 40 for its whole duration and no client disconnect reclaims it; a
-# provider having a slow afternoon takes the service down without anyone
-# attacking it.
-#
-# So the retry policy gets a wall clock as well as a count. Each attempt is
-# given whatever is left rather than a fresh 90 seconds, and once the budget is
-# spent no further model is tried — the caller gets the accumulated errors,
-# which is what it would have got at the end anyway.
+# TIMEOUT_S, MAX_RETRIES, RETRY_BACKOFF_BASE_S, MIN_ATTEMPT_S and the whole-call
+# deadline live in `llm_http` — the retry-and-wall-clock discipline is the same
+# argument for every provider, and it is imported above rather than restated so
+# a second provider cannot bound itself slightly differently.
 DEFAULT_CALL_BUDGET_S = 150.0
-# Below this there is no point starting an attempt; it would only time out.
-MIN_ATTEMPT_S = 1.0
 # httpx transport-layer failures (connect refused, DNS, timeouts, dropped
 # sockets) all derive from TransportError — treat them as retryable "connect errors".
 _RETRYABLE_HTTP_EXC = (httpx.TransportError,)
@@ -305,54 +295,12 @@ def call_budget_s() -> float:
     return DEFAULT_CALL_BUDGET_S
 
 
-class _Deadline:
-    """One `chat` call's remaining wall clock.
+class DeadlineExceeded(OpenRouterError, _BaseDeadlineExceeded):
+    """Raised when the whole-call budget ran out before any model answered.
 
-    A budget of 0 means unbounded, which is what the retry policy used to be —
-    kept configurable so an operator running a deliberately slow local model can
-    turn the ceiling off rather than raise it repeatedly.
+    Both bases on purpose: callers here catch `OpenRouterError`, and the shared
+    `Deadline` in `llm_http` raises the provider-agnostic one.
     """
-
-    def __init__(self, budget_s: float, now: float | None = None) -> None:
-        self.budget_s = budget_s
-        self._start = time.monotonic() if now is None else now
-
-    @property
-    def unbounded(self) -> bool:
-        return self.budget_s <= 0
-
-    def remaining(self) -> float:
-        if self.unbounded:
-            return float("inf")
-        return self.budget_s - (time.monotonic() - self._start)
-
-    def attempt_timeout(self) -> float:
-        """Timeout for the next HTTP attempt: what is left, capped at TIMEOUT_S."""
-        return TIMEOUT_S if self.unbounded else min(TIMEOUT_S, self.remaining())
-
-    def expired(self) -> bool:
-        """True when too little is left to be worth starting another attempt."""
-        return not self.unbounded and self.remaining() < MIN_ATTEMPT_S
-
-    def sleep(self, seconds: float) -> bool:
-        """Back off for `seconds`, trimmed to the budget. False if none is left."""
-        if self.unbounded:
-            time.sleep(seconds)
-            return True
-        allowed = min(seconds, self.remaining() - MIN_ATTEMPT_S)
-        if allowed <= 0:
-            return False
-        time.sleep(allowed)
-        return True
-
-
-class DeadlineExceeded(OpenRouterError):
-    """Raised when the whole-call budget ran out before any model answered."""
-
-
-def _backoff_sleep(attempt: int, deadline: _Deadline) -> bool:
-    """Exponential backoff between retries (attempt is 0-indexed)."""
-    return deadline.sleep(RETRY_BACKOFF_BASE_S * (2**attempt))
 
 
 def _post_once(
@@ -432,16 +380,6 @@ def _completion_text(data: dict) -> str:
         return ""
     content = message.get("content")
     return content if isinstance(content, str) else ""
-
-
-def _token_count(value: object) -> int:
-    """A usage counter as a non-negative int; 0 when the field is unusable."""
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        return 0
-    try:
-        return max(0, int(float(value)))
-    except (TypeError, ValueError):
-        return 0
 
 
 def chat(
