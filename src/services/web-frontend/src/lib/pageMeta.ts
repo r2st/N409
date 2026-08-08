@@ -68,6 +68,12 @@ function staticPages(): HeadInput[] {
         'The five kinds of 409A valuation provider — AI-native platforms, cap-table products, bundled providers, startup CPAs and independent firms — and what founders should ask before choosing one.',
     },
     {
+      path: '/blog',
+      title: 'Blog',
+      description:
+        'Notes on 409A and fair-value practice from the N409 team — methodology, audit defensibility, and what actually changes when valuation work is automated.',
+    },
+    {
       path: '/about',
       title: 'About N409',
       description:

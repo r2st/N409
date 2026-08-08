@@ -81,8 +81,24 @@ export const SPECIALTY_TAB_KINDS: ReadonlySet<string> = new Set([
   'ifrs2',
 ]);
 
+/**
+ * The header chip row and the Calculations badge (design §4.6, §7.3).
+ *
+ * Every number is outstanding work rather than a total — three pending files
+ * is a thing to do, twelve documents is a fact about the past — which is what
+ * makes zero a meaningful state and the chip worth looking at.
+ */
+export interface ValuationCounters {
+  pending_files: number;
+  my_tasks: number;
+  all_tasks: number;
+  unread_comments: number;
+  calculations: { done: number; total: number; missing: string[] };
+}
+
 export interface WorkspaceContext {
   valuation: Valuation;
+  counters: ValuationCounters | null;
   reload: () => Promise<void>;
   /** Live co-viewers of this valuation (excluding the current user). */
   viewers: Viewer[];
@@ -112,13 +128,27 @@ export function useWorkspace(): WorkspaceContext {
   return useOutletContext<WorkspaceContext>();
 }
 
-function Tab({ to, label, end = false }: { to: string; label: string; end?: boolean }) {
+function Tab({
+  to,
+  label,
+  end = false,
+  badge,
+  badgeTone = 'neutral',
+  badgeTitle,
+}: {
+  to: string;
+  label: string;
+  end?: boolean;
+  badge?: string;
+  badgeTone?: 'neutral' | 'attention';
+  badgeTitle?: string;
+}) {
   return (
     <NavLink
       to={to}
       end={end}
       className={({ isActive }) =>
-        `-mb-px border-b-2 px-1 pb-2.5 text-sm font-semibold whitespace-nowrap transition-colors ${
+        `-mb-px flex items-center gap-1.5 border-b-2 px-1 pb-2.5 text-sm font-semibold whitespace-nowrap transition-colors ${
           isActive
             ? 'border-bond-600 text-bond-700'
             : 'border-transparent text-ink-400 hover:border-ink-200 hover:text-ink-700'
@@ -126,7 +156,56 @@ function Tab({ to, label, end = false }: { to: string; label: string; end?: bool
       }
     >
       {label}
+      {badge !== undefined && (
+        <span
+          title={badgeTitle}
+          className={`tnum rounded-full px-1.5 py-0.5 text-[0.65rem] font-bold ${
+            badgeTone === 'attention' ? 'bg-amber-100 text-amber-800' : 'bg-paper-300 text-ink-500'
+          }`}
+        >
+          {badge}
+        </span>
+      )}
     </NavLink>
+  );
+}
+
+/**
+ * The four header counters (design §4.6).
+ *
+ * Rendered as links rather than as text, because every one of them is a
+ * question whose answer is on another tab: "2 pending files" that does not take
+ * you to the files is a number to memorise and then go looking for.
+ *
+ * A zero chip is dimmed rather than hidden. The row disappearing as work is
+ * cleared would make "no chips" ambiguous between "nothing outstanding" and
+ * "not loaded yet", and the reader would have to check.
+ */
+function CounterChips({ base, counters }: { base: string; counters: ValuationCounters }) {
+  const chips: Array<{ to: string; label: string; value: number; attention?: boolean }> = [
+    { to: `${base}/documents`, label: 'Pending files', value: counters.pending_files },
+    { to: `${base}/tasks`, label: 'My tasks', value: counters.my_tasks, attention: true },
+    { to: `${base}/tasks`, label: 'All tasks', value: counters.all_tasks },
+    { to: `${base}/engagement`, label: 'Unread chat', value: counters.unread_comments, attention: true },
+  ];
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      {chips.map((chip) => (
+        <Link
+          key={chip.label}
+          to={chip.to}
+          className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${
+            chip.value === 0
+              ? 'border-paper-300 bg-surface text-ink-400 hover:border-ink-200'
+              : chip.attention
+                ? 'border-amber-200 bg-amber-50 text-amber-800 hover:border-amber-300'
+                : 'border-bond-200 bg-bond-50 text-bond-800 hover:border-bond-300'
+          }`}
+        >
+          {chip.label} <span className="tnum">({chip.value})</span>
+        </Link>
+      ))}
+    </div>
   );
 }
 
@@ -190,14 +269,19 @@ export function ValuationWorkspace() {
   const { user } = useAuth();
   const location = useLocation();
   const [valuation, setValuation] = useState<Valuation | null>(null);
+  const [counters, setCounters] = useState<ValuationCounters | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { viewers, commentTick } = useValuationStream(id ?? '');
 
   const reload = useCallback(async () => {
     if (!id) return;
     try {
-      const { valuation: v } = await api<{ valuation: Valuation }>(`/valuations/${id}`);
+      const { valuation: v, counters: c } = await api<{
+        valuation: Valuation;
+        counters?: ValuationCounters;
+      }>(`/valuations/${id}`);
       setValuation(v);
+      setCounters(c ?? null);
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 404
@@ -260,6 +344,11 @@ export function ValuationWorkspace() {
       </div>
       <p className="tnum mt-1.5 text-xs text-ink-400">Ref {valuation.id}</p>
 
+      {/* Ops only: the chips count analyst working state — files an analyst has
+          cleared, tasks in the review queue — none of which a client has a
+          view of or an action on. */}
+      {ops && counters && <CounterChips base={base} counters={counters} />}
+
       <ScrollableTabs label="Valuation workspace" activeKey={activeTab}>
         <Tab to={base} label="Overview" end />
         <Tab to={`${base}/progress`} label="Progress" />
@@ -274,7 +363,24 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/ai`} label="AI" />}
         {ops && <Tab to={`${base}/engagement`} label="Engagement" />}
         {ops && <Tab to={`${base}/tasks`} label="Tasks" />}
-        {ops && <Tab to={`${base}/calculations`} label="Calculations" />}
+        {ops && (
+          /* §7.3 — `n/m`: approaches computed over approaches the weighting
+             asks for. Amber while short, because a 2/4 that reads like a 4/4
+             is worse than no badge. */
+          <Tab
+            to={`${base}/calculations`}
+            label="Calculations"
+            badge={counters ? `${counters.calculations.done}/${counters.calculations.total}` : undefined}
+            badgeTone={
+              counters && counters.calculations.done < counters.calculations.total ? 'attention' : 'neutral'
+            }
+            badgeTitle={
+              counters && counters.calculations.missing.length > 0
+                ? `Not yet computed: ${counters.calculations.missing.join(', ')}`
+                : 'Every weighted approach has a result'
+            }
+          />
+        )}
         {ops && SPECIALTY_TAB_KINDS.has(valuation.kind) && (
           <Tab to={`${base}/specialty`} label="Specialty Engine" />
         )}
@@ -316,6 +422,7 @@ export function ValuationWorkspace() {
             context={
               {
                 valuation,
+                counters,
                 reload,
                 viewers: viewers.filter((v) => v.user_id !== user?.id),
                 commentTick,

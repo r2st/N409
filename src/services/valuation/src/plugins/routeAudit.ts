@@ -153,6 +153,16 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
     reason: 'public "which valuation?" quiz; pure computation, no data touched',
   },
   { method: 'GET', url: '/api/partner/v1/docs', reason: 'self-describing partner API documentation' },
+  {
+    method: 'GET',
+    url: '/api/v1/blog/posts',
+    reason: 'published marketing articles; a blog index a crawler cannot read is not a blog',
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/blog/posts/:slug',
+    reason: 'a published marketing article; drafts are served only from /admin/blog',
+  },
 ];
 
 const key = (method: string, url: string): string => `${method.toUpperCase()} ${url}`;

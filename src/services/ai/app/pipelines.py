@@ -14,7 +14,8 @@ from typing import Any
 
 from .anonymize import Redactor
 from .documents import DocText, extract_texts, render_corpus
-from .openrouter import LlmResult, chat, extract_json
+from .llm_router import chat
+from .openrouter import LlmResult, extract_json
 
 # Fields the extraction pipeline may emit — everything else is dropped so a
 # hallucinated key can never reach the calculation engine.

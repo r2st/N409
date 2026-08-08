@@ -20,6 +20,7 @@ import {
   deleteDocument,
   findDocumentById,
   listDocuments,
+  setDocumentReviewed,
   type DocumentRow,
 } from '../repos/documents.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -274,6 +275,35 @@ export function registerDocumentRoutes(
         .header('content-disposition', contentDisposition(doc.filename))
         .header('x-content-type-options', 'nosniff')
         .send(plain);
+    },
+  );
+
+  /**
+   * Clear a document off the "pending files" counter, or put it back (§4.6).
+   *
+   * Ops-only, because the counter is an analyst's own working state: it says
+   * "I have taken this file into account", and a client marking their own
+   * upload reviewed would empty the queue that exists to be worked through.
+   *
+   * A toggle rather than two endpoints — the mistaken click is the common case,
+   * and a one-way action turns it into a wrong number nobody can fix.
+   */
+  app.post(
+    '/api/v1/valuations/:id/documents/:documentId/review',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      const { id, documentId } = req.params as { id: string; documentId: string };
+      const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+      if (!isOps(principal)) throw problems.forbidden('Marking a document reviewed is operations-only');
+
+      const parsed = z.object({ reviewed: z.boolean().default(true) }).safeParse(req.body ?? {});
+      if (!parsed.success) throw problems.unprocessable('Invalid body', { errors: parsed.error.issues });
+
+      await loadDocument(deps.pool, valuation.id, documentId);
+      const document = await setDocumentReviewed(deps.pool, documentId, parsed.data.reviewed, principal.id);
+      if (!document) throw problems.notFound();
+      return { document };
     },
   );
 

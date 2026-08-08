@@ -1,0 +1,239 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+
+const dbUp = await isDbAvailable();
+
+/**
+ * Legacy document triage (design §9.2, P2-16).
+ *
+ * The queue is only worth having if it is exactly the rows a human should
+ * look at, and if working through it leaves a trail. Both are asserted here:
+ * a file someone deliberately filed under "Other documents" with a stated kind
+ * is not in the queue, and a re-filing writes an event on the engagement.
+ */
+describe.skipIf(!dbUp)('document triage queue', () => {
+  let ctx: TestApp;
+  let admin: Awaited<ReturnType<typeof seedUser>>;
+  let owner: Awaited<ReturnType<typeof seedUser>>;
+  let client: Awaited<ReturnType<typeof seedUser>>;
+  let valuationId: string;
+
+  const upload = async (filename: string, fields: Record<string, string> = {}) => {
+    const boundary = '----n409triage';
+    const parts = Object.entries(fields).map(
+      ([k, v]) => `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`,
+    );
+    parts.push(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
+        `Content-Type: text/plain\r\n\r\ncontents of ${filename}\r\n`,
+    );
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/documents`,
+      headers: {
+        ...authHeader(admin.token),
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      payload: Buffer.from(`${parts.join('')}--${boundary}--\r\n`),
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return res.json().document as { id: string; category: string; kind: string };
+  };
+
+  interface TriageRow {
+    id: string;
+    filename: string;
+    company_name: string;
+    valuation_number: number;
+    suggestion: { category: string; matched: string } | null;
+  }
+
+  const queue = async (token = admin.token) => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/documents/triage',
+      headers: authHeader(token),
+    });
+    return res;
+  };
+
+  const queueBody = async () => {
+    const res = await queue();
+    expect(res.statusCode, res.body).toBe(200);
+    return res.json() as {
+      documents: TriageRow[];
+      total: number;
+      truncated: boolean;
+      suggested: number;
+      max_assign: number;
+      categories: Array<{ key: string; label: string }>;
+    };
+  };
+
+  const file = async (assignments: Array<{ document_id: string; category: string }>, token = admin.token) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/documents/triage',
+      headers: authHeader(token),
+      payload: { assignments },
+    });
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+    admin = await seedUser(ctx, { roles: ['admin'] });
+    owner = await seedUser(ctx, { roles: ['valuation_user'] });
+    client = await seedUser(ctx, { roles: ['valuation_user'] });
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(owner.token),
+      payload: { kind: '409a', company_name: 'Legacy Co' },
+    });
+    valuationId = created.json().valuation.id;
+  });
+  afterAll(async () => ctx?.teardown());
+
+  it('queues exactly the uploads with no category and no kind', async () => {
+    const unfiled = await upload('Bylaws_Amended_2023.pdf');
+    expect(unfiled).toMatchObject({ category: 'uploads', kind: 'other' });
+
+    // Filed on purpose under `uploads` with a stated kind — the uploader saw
+    // the choices and chose. Not a triage row.
+    await upload('deliberate.txt', { category: 'uploads', kind: 'cap_table' });
+    // Filed into a named bucket. Also not a triage row.
+    await upload('deck.txt', { category: 'pitch_deck' });
+
+    const body = await queueBody();
+    expect(body.documents.map((d) => d.filename)).toEqual(['Bylaws_Amended_2023.pdf']);
+    expect(body.total).toBe(1);
+    expect(body.truncated).toBe(false);
+    expect(body.documents[0]!.company_name).toBe('Legacy Co');
+  });
+
+  it('offers the buckets to file into, and never “uploads” itself', async () => {
+    const body = await queueBody();
+    expect(body.categories.map((c) => c.key)).not.toContain('uploads');
+    expect(body.categories.map((c) => c.key)).toContain('board_resolutions');
+  });
+
+  it('suggests a bucket with the term it matched, and pre-selects nothing', async () => {
+    const body = await queueBody();
+    const row = body.documents.find((d) => d.filename === 'Bylaws_Amended_2023.pdf')!;
+    expect(row.suggestion).toEqual({ category: 'corporate_documents', matched: 'bylaws' });
+    expect(body.suggested).toBe(1);
+
+    // The suggestion has not moved anything: the row is still in the queue,
+    // which is the whole difference between a suggestion and a sweep.
+    const docs = await ctx.pool.query('SELECT category FROM documents WHERE id = $1', [row.id]);
+    expect(docs.rows[0].category).toBe('uploads');
+  });
+
+  it('leaves an ambiguous filename without a suggestion', async () => {
+    await upload('scan_0012.pdf');
+    const body = await queueBody();
+    const row = body.documents.find((d) => d.filename === 'scan_0012.pdf')!;
+    expect(row.suggestion).toBeNull();
+  });
+
+  it('re-files a selected set, moving the bucket and not the extractor’s kind', async () => {
+    const doc = await upload('Acme 2021 Stock Option Plan.pdf');
+    const res = await file([{ document_id: doc.id, category: 'stock_option_plan' }]);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ succeeded: 1, failed: 0 });
+
+    // The kind stays `other`: the operator answered "which thing we asked for
+    // is this", not "which extractor should read it".
+    const { rows } = await ctx.pool.query('SELECT category, kind FROM documents WHERE id = $1', [doc.id]);
+    expect(rows[0]).toEqual({ category: 'stock_option_plan', kind: 'other' });
+
+    // And it leaves the queue.
+    const body = await queueBody();
+    expect(body.documents.map((d) => d.id)).not.toContain(doc.id);
+  });
+
+  it('takes the bucket’s kind where `other` does not fit it', async () => {
+    // The finance buckets refuse `other`, so a re-file into one has to state a
+    // kind — a (kind, category) pair that contradicts itself cannot be written.
+    const doc = await upload('mystery-spreadsheet.xlsx');
+    const res = await file([{ document_id: doc.id, category: 'balance_sheets' }]);
+    expect(res.statusCode, res.body).toBe(200);
+    const { rows } = await ctx.pool.query('SELECT category, kind FROM documents WHERE id = $1', [doc.id]);
+    expect(rows[0]).toEqual({ category: 'balance_sheets', kind: 'balance_sheet' });
+  });
+
+  it('records the move on the engagement’s trail, with the bucket it came from', async () => {
+    const doc = await upload('Board Consent March.pdf');
+    await file([{ document_id: doc.id, category: 'board_resolutions' }]);
+
+    const { rows } = await ctx.pool.query(
+      `SELECT payload FROM valuation_events
+        WHERE valuation_id = $1 AND type = 'document_refiled'
+        ORDER BY occurred_at DESC LIMIT 1`,
+      [valuationId],
+    );
+    expect(rows[0].payload).toMatchObject({
+      document_id: doc.id,
+      from_category: 'uploads',
+      to_category: 'board_resolutions',
+      from_kind: 'other',
+      to_kind: 'other',
+    });
+  });
+
+  it('refuses to “file” something back into uploads', async () => {
+    const doc = await upload('nothing-in-particular.pdf');
+    const res = await file([{ document_id: doc.id, category: 'uploads' }]);
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { failed: number; results: Array<{ error?: string }> };
+    expect(body.failed).toBe(1);
+    expect(body.results[0]!.error).toMatch(/not a filing/i);
+  });
+
+  it('reports a row that was filed since the list loaded, and keeps the rest', async () => {
+    const stale = await upload('already-done.pdf');
+    const fresh = await upload('still-open.pdf');
+    await file([{ document_id: stale.id, category: 'corporate_documents' }]);
+
+    // Re-submitting the whole selection, as an operator working from a list
+    // that is a page load old would.
+    const res = await file([
+      { document_id: stale.id, category: 'corporate_documents' },
+      { document_id: fresh.id, category: 'intellectual_property' },
+    ]);
+    const body = res.json() as {
+      succeeded: number;
+      failed: number;
+      results: Array<{ document_id: string; ok: boolean; error?: string }>;
+    };
+    expect(body).toMatchObject({ succeeded: 1, failed: 1 });
+    expect(body.results.find((r) => r.document_id === stale.id)!.error).toMatch(/already filed/i);
+
+    const { rows } = await ctx.pool.query('SELECT category FROM documents WHERE id = $1', [fresh.id]);
+    expect(rows[0].category).toBe('intellectual_property');
+  });
+
+  it('reports an unknown id without failing the batch', async () => {
+    const doc = await upload('good-one.pdf');
+    const res = await file([
+      { document_id: 'not-a-ulid', category: 'corporate_documents' },
+      { document_id: doc.id, category: 'corporate_documents' },
+    ]);
+    expect(res.json()).toMatchObject({ succeeded: 1, failed: 1 });
+  });
+
+  it('is operations-only', async () => {
+    expect((await queue(client.token)).statusCode).toBe(403);
+    const doc = await upload('client-cannot-file.pdf');
+    const res = await file([{ document_id: doc.id, category: 'corporate_documents' }], client.token);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('refuses an empty or oversized batch rather than reporting nothing done', async () => {
+    expect((await file([])).statusCode).toBe(422);
+    const many = Array.from({ length: 101 }, () => ({
+      document_id: '01N409DOC0000000000000001A',
+      category: 'corporate_documents',
+    }));
+    expect((await file(many)).statusCode).toBe(422);
+  });
+});

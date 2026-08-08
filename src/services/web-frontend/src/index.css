@@ -321,6 +321,56 @@ html {
   font-weight: 600;
 }
 
+/* Authored article bodies — the blog (design §16.2) and anywhere else server-
+   sanitised HTML is rendered at reading width. Larger than `.report-editor`
+   because a report is scanned in a workspace and an article is read on a page,
+   and Tailwind preflight resets all of it either way. */
+.prose-n409 h2 {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 600;
+  color: var(--color-ink-900);
+  margin: 1.8em 0 0.5em;
+}
+.prose-n409 h3 {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--color-ink-900);
+  margin: 1.4em 0 0.4em;
+}
+.prose-n409 p {
+  margin: 1em 0;
+}
+.prose-n409 ul,
+.prose-n409 ol {
+  margin: 1em 0;
+  padding-left: 1.5em;
+}
+.prose-n409 ul {
+  list-style: disc;
+}
+.prose-n409 ol {
+  list-style: decimal;
+}
+.prose-n409 li {
+  margin: 0.35em 0;
+}
+.prose-n409 strong {
+  font-weight: 650;
+  color: var(--color-ink-900);
+}
+.prose-n409 a {
+  color: var(--color-bond-600);
+  text-decoration: underline;
+}
+.prose-n409 blockquote {
+  border-left: 3px solid var(--color-paper-300);
+  padding-left: 1em;
+  margin: 1.2em 0;
+  color: var(--color-ink-600);
+}
+
 @keyframes n409-sheen {
   from {
     background-position: 150% 0;

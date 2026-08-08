@@ -38,6 +38,8 @@ const ProductPage = named(() => import('./pages/marketing/ProductPage'), 'Produc
 const WhichValuationPage = named(() => import('./pages/marketing/WhichValuationPage'), 'WhichValuationPage');
 const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
 const CompareHubPage = named(() => import('./pages/marketing/CompareHubPage'), 'CompareHubPage');
+const BlogIndexPage = named(() => import('./pages/marketing/BlogPages'), 'BlogIndexPage');
+const BlogPostPage = named(() => import('./pages/marketing/BlogPages'), 'BlogPostPage');
 const AboutPage = named(() => import('./pages/marketing/StaticPages'), 'AboutPage');
 const ContactPage = named(() => import('./pages/marketing/StaticPages'), 'ContactPage');
 const PrivacyPage = named(() => import('./pages/marketing/StaticPages'), 'PrivacyPage');
@@ -108,6 +110,7 @@ const AdminSsoPage = named(() => import('./pages/AdminSsoPage'), 'AdminSsoPage')
 const AdminRetentionPage = named(() => import('./pages/AdminRetentionPage'), 'AdminRetentionPage');
 const AdminUsersPage = named(() => import('./pages/AdminUsersPage'), 'AdminUsersPage');
 const AdminPartnersPage = named(() => import('./pages/AdminPartnersPage'), 'AdminPartnersPage');
+const AdminApiTokensPage = named(() => import('./pages/AdminApiTokensPage'), 'AdminApiTokensPage');
 const PartnerDetailPage = named(() => import('./pages/PartnerDetailPage'), 'PartnerDetailPage');
 const EmailOutboxPage = named(() => import('./pages/EmailOutboxPage'), 'EmailOutboxPage');
 const AdminJobsPage = named(() => import('./pages/AdminJobsPage'), 'AdminJobsPage');
@@ -124,6 +127,7 @@ const AdminNarrativePromptsPage = named(
   () => import('./pages/AdminNarrativePromptsPage'),
   'AdminNarrativePromptsPage',
 );
+const AdminDocumentsPage = named(() => import('./pages/AdminDocumentsPage'), 'AdminDocumentsPage');
 const AdminDataRemediationPage = named(
   () => import('./pages/AdminDataRemediationPage'),
   'AdminDataRemediationPage',
@@ -132,6 +136,7 @@ const ActivityLogPage = named(() => import('./pages/ActivityLogPage'), 'Activity
 const HelpPage = named(() => import('./pages/HelpPage'), 'HelpPage');
 const FeaturesPage = named(() => import('./pages/FeaturesPage'), 'FeaturesPage');
 const AdminHelpPage = named(() => import('./pages/AdminHelpPage'), 'AdminHelpPage');
+const AdminBlogPage = named(() => import('./pages/AdminBlogPage'), 'AdminBlogPage');
 const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
 const SupportInboxPage = named(() => import('./pages/SupportInboxPage'), 'SupportInboxPage');
 const CommunicationsPage = named(() => import('./pages/CommunicationsPage'), 'CommunicationsPage');
@@ -193,6 +198,8 @@ export default function App() {
           {/* Hub route must precede the :slug catch-all (gap #30) */}
           <Route path="/compare/409a-valuation-providers" element={<CompareHubPage />} />
           <Route path="/compare/:slug" element={<ComparePage />} />
+          <Route path="/blog" element={<BlogIndexPage />} />
+          <Route path="/blog/:slug" element={<BlogPostPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/contact" element={<ContactPage />} />
           <Route path="/terms-of-service" element={<TermsPage />} />
@@ -273,12 +280,14 @@ export default function App() {
             <Route path="/admin/prompts" element={<BotPromptsPage />} />
             <Route path="/admin/narrative-prompts" element={<AdminNarrativePromptsPage />} />
             <Route path="/admin/data-remediation" element={<AdminDataRemediationPage />} />
+            <Route path="/admin/documents" element={<AdminDocumentsPage />} />
             <Route path="/admin/support" element={<SupportInboxPage />} />
             <Route path="/admin/outbox" element={<EmailOutboxPage />} />
             <Route path="/admin/jobs" element={<AdminJobsPage />} />
             <Route path="/admin/communications" element={<CommunicationsPage />} />
             <Route path="/admin/activity" element={<ActivityLogPage />} />
             <Route path="/admin/help" element={<AdminHelpPage />} />
+            <Route path="/admin/blog" element={<AdminBlogPage />} />
             {/* Ops read the settings; the API rejects writes from non-admins. */}
             <Route path="/admin/settings" element={<AdminSettingsPage />} />
           </Route>
@@ -289,6 +298,7 @@ export default function App() {
             <Route path="/admin/retention" element={<AdminRetentionPage />} />
             <Route path="/admin/partners" element={<AdminPartnersPage />} />
             <Route path="/admin/partners/:id" element={<PartnerDetailPage />} />
+            <Route path="/admin/api-tokens" element={<AdminApiTokensPage />} />
           </Route>
           {/* Partner portal */}
           <Route element={<RequireRole allow={isPartner} />}>

@@ -72,6 +72,10 @@ export const EVENT_CATALOG: Readonly<Record<string, EventDescriptor>> = {
   // ── Documents & intake ──────────────────────────────────────────────────
   document_uploaded: D('Document uploaded', 'documents', 'notice', 'client'),
   document_deleted: D('Document deleted', 'documents', 'notice', 'client'),
+  // Visible to the client: the bucket a document sits in is what the
+  // deliverable's evidence list prints, so a re-filing changes what the
+  // engagement says it relied on.
+  document_refiled: D('Document re-filed', 'documents', 'notice', 'client'),
   document_reminder_sent: D('Document reminder sent', 'documents', 'info', 'client'),
   intake_saved: D('Intake saved', 'documents', 'info', 'client'),
   intake_submitted: D('Intake submitted', 'documents', 'notice', 'client'),

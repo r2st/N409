@@ -3,13 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, apiDownload, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
-import {
-  displayName,
-  formatDate,
-  KIND_LABELS,
-  SOURCE_LABELS,
-  STATE_LABELS,
-} from '../lib/format';
+import { displayName, formatDate, KIND_LABELS, SOURCE_LABELS, STATE_LABELS } from '../lib/format';
 import { parseSortParam, serializeSort, sortIndicator, toggleSort } from '../lib/sort';
 import type { SortableColumn } from '../lib/sort';
 import { VALUATION_KINDS, VALUATION_STATES } from '../lib/types';
@@ -273,6 +267,8 @@ export function ValuationsPage() {
     label: b.label,
   }));
 
+  const scopedPartner = partners.find((p) => p.id === params.get('partner_id')) ?? null;
+
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -301,6 +297,31 @@ export function ValuationsPage() {
           <Button onClick={() => navigate('/valuations/new')}>+ New valuation</Button>
         </div>
       </div>
+
+      {/* The partner-scoped listing says so (design §4.4). Every count and
+          every tab on this page is scoped to the firm when `partner_id` is
+          set, and a scoped listing that looks identical to the unscoped one is
+          how an operator concludes a firm has four engagements in total. */}
+      {ops && scopedPartner && (
+        <div className="mt-6 flex flex-wrap items-center gap-3 rounded-lg border border-bond-200 bg-bond-50 px-4 py-2.5">
+          <span className="text-sm text-bond-900">
+            Scoped to <span className="font-semibold">{scopedPartner.name}</span> — counts and tabs below
+            cover this firm only.
+          </span>
+          <Link
+            to={`/admin/partners/${scopedPartner.id}`}
+            className="text-sm font-semibold text-bond-700 hover:text-bond-800"
+          >
+            Firm page
+          </Link>
+          <button
+            onClick={() => setFilter('partner_id', '')}
+            className="cursor-pointer text-sm font-semibold text-ink-500 hover:text-ink-700"
+          >
+            Clear scope
+          </button>
+        </div>
+      )}
 
       {/* Tabbed scopes with live counts (M3 feature 15) */}
       <div className="mt-6 flex flex-wrap gap-1 border-b border-paper-300" role="tablist">
@@ -591,7 +612,9 @@ export function ValuationsPage() {
 
       {data && data.valuations.length === 0 && (
         <div className="mt-6">
-          <EmptyState title={hasFilters || bucket || group ? 'Nothing matches these filters' : 'No valuations yet'}>
+          <EmptyState
+            title={hasFilters || bucket || group ? 'Nothing matches these filters' : 'No valuations yet'}
+          >
             {hasFilters || bucket || group ? (
               'Try clearing a filter.'
             ) : (

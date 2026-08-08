@@ -32,6 +32,8 @@ import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
 import { pageParam } from '../domain/pagination.js';
 import { int4Positive } from '../domain/int4.js';
+import { visibleCommentKinds } from '../auth/operations.js';
+import { loadValuationCounters } from '../repos/valuationCounters.js';
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
@@ -239,7 +241,25 @@ export function registerValuationRoutes(
     // (gap 4). Ops read the admin marker; the owner reads the user marker.
     if (isOps(principal)) await markValuationRead(deps.pool, valuation.id, 'admin');
     else if (principal.id === valuation.user_id) await markValuationRead(deps.pool, valuation.id, 'user');
-    return { valuation };
+
+    /**
+     * The header chip row and the Calculations nav badge (design §4.6, §7.3).
+     *
+     * Served on the detail read rather than as its own endpoint: the workspace
+     * cannot render its header without them, and a second request for five
+     * numbers is a second chance for the header to disagree with the page
+     * under it.
+     *
+     * Computed after the read marker is cleared, deliberately. The marker and
+     * `unread_comments` are different things — one is "has anyone looked at
+     * this engagement", the other is "what has been said since *I* last read
+     * the thread" — and the comment count is not cleared by opening the
+     * workspace, only by opening the thread.
+     */
+    const counters = await loadValuationCounters(deps.pool, valuation.id, principal.id, [
+      ...visibleCommentKinds(principal),
+    ]);
+    return { valuation, counters };
   });
 
   app.patch('/api/v1/valuations/:id', { preHandler: app.authenticate }, async (req) => {

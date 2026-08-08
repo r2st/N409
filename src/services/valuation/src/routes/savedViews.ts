@@ -13,6 +13,7 @@ import {
   VIEW_VISIBILITIES,
   type SavedViewWithOwner,
 } from '../repos/savedViews.js';
+import { findPartnerById } from '../repos/adminUsers.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -178,6 +179,62 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
       });
       if (!row) throw problems.notFound();
       return { view: { ...row, is_owner: true } };
+    } catch (err) {
+      if (isUniqueViolation(err)) throw problems.conflict('You already have a view with that name');
+      throw err;
+    }
+  });
+
+  /**
+   * Pin a firm's engagement listing as a saved view (design §4.4, P2-19).
+   *
+   * The gap was a *saved entry point*, not a second listing page: a partner
+   * listing that has to be reconstructed by picking a firm out of a dropdown
+   * every morning is not an entry point. Building a second page for it would
+   * duplicate the filter, sort, export and scope logic the sweep test covers
+   * on the first one — and a second listing is a second place for the scope
+   * rules to be wrong.
+   *
+   * So it is one row in `saved_views`, holding the same `?partner_id=…` query
+   * the listing already understands and re-scopes on replay. Shared, because a
+   * firm's queue is a team artefact and one analyst pinning it should not mean
+   * every other analyst pins their own copy.
+   *
+   * Idempotent by construction: pinning a firm that is already pinned returns
+   * the existing view rather than a conflict. The button says "open the firm's
+   * queue" to the operator, and a second click has to mean that too.
+   */
+  app.post('/api/v1/partners/:partnerId/saved-view', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('Partner views are an operations artefact');
+
+    const { partnerId } = req.params as { partnerId: string };
+    if (!isUlid(partnerId)) throw problems.notFound();
+    const partner = await findPartnerById(deps.pool, partnerId);
+    if (!partner) throw problems.notFound();
+
+    const query = normalizeViewQuery(`partner_id=${partner.id}`);
+    // Matched on the query rather than on the name: a firm renamed after its
+    // view was pinned must not get a second one, and the query is what the
+    // view actually *is*.
+    const existing = (await listVisibleViews(deps.pool, { userId: principal.id, includeShared: true })).find(
+      (v) => v.query === query,
+    );
+    if (existing) return { view: toJson(existing, principal.id), created: false };
+
+    if ((await countSavedViews(deps.pool, principal.id)) >= MAX_VIEWS_PER_USER) {
+      throw problems.unprocessable(`You can save at most ${MAX_VIEWS_PER_USER} views`);
+    }
+    try {
+      const row = await createSavedView(deps.pool, {
+        ownerId: principal.id,
+        name: partner.name.slice(0, 80),
+        query,
+        visibility: 'shared',
+        isDefault: false,
+      });
+      reply.code(201);
+      return { view: { ...row, is_owner: true }, created: true };
     } catch (err) {
       if (isUniqueViolation(err)) throw problems.conflict('You already have a view with that name');
       throw err;

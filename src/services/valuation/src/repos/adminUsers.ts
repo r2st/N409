@@ -3,6 +3,7 @@ import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { likeContains } from '../db/like.js';
 import { stateGroupOf } from '../domain/operations.js';
+import { NAMED_BUCKET_KEYS, namedBucketsFor } from '../domain/workflow.js';
 import { assignRoles, type UserWithRoles } from './users.js';
 import type { RoleKey } from '../domain/roles.js';
 
@@ -279,6 +280,14 @@ export async function updatePartner(
 
 export interface PartnerDetail extends PartnerRow {
   valuations_by_group: Record<string, number>;
+  /**
+   * The nine named buckets (design §4.2), scoped to this firm — the counts the
+   * partner-scoped entry point carries (§4.4). The listing tab strip and the
+   * sidebar badges read the same definition from `domain/workflow.ts`, so this
+   * page and the page it links to cannot disagree about what "in progress"
+   * means.
+   */
+  valuations_by_bucket: Record<string, number>;
   last_activity_at: Date | null;
   users: Array<{
     id: string;
@@ -295,9 +304,9 @@ export async function getPartnerDetail(pool: pg.Pool, id: string): Promise<Partn
   if (!partner) return null;
 
   const [{ rows: groups }, { rows: users }, { rows: activity }] = await Promise.all([
-    pool.query<{ state: string; count: number }>(
-      `SELECT state::text, count(*)::int AS count FROM valuations
-       WHERE partner_id = $1 GROUP BY state`,
+    pool.query<{ state: string; waiting_on_client: boolean; count: number }>(
+      `SELECT state::text, waiting_on_client, count(*)::int AS count FROM valuations
+       WHERE partner_id = $1 GROUP BY state, waiting_on_client`,
       [id],
     ),
     pool.query(
@@ -321,13 +330,22 @@ export async function getPartnerDetail(pool: pg.Pool, id: string): Promise<Partn
   ]);
 
   const byGroup: Record<string, number> = {};
+  const byBucket: Record<string, number> = Object.fromEntries(NAMED_BUCKET_KEYS.map((k) => [k, 0]));
   for (const row of groups) {
-    const group = stateGroupOf(row.state as Parameters<typeof stateGroupOf>[0]);
-    byGroup[group] = (byGroup[group] ?? 0) + row.count;
+    const state = row.state as Parameters<typeof stateGroupOf>[0];
+    byGroup[stateGroupOf(state)] = (byGroup[stateGroupOf(state)] ?? 0) + row.count;
+    // `namedBucketsFor` already returns `all`, and a state in none of the
+    // named buckets deliberately has no fallback — it shows up as counts that
+    // do not add up rather than being filed silently under Ignored.
+    for (const key of namedBucketsFor(state)) byBucket[key] = (byBucket[key] ?? 0) + row.count;
+    if (row.waiting_on_client) {
+      byBucket.waiting_on_client = (byBucket.waiting_on_client ?? 0) + row.count;
+    }
   }
   return {
     ...partner,
     valuations_by_group: byGroup,
+    valuations_by_bucket: byBucket,
     last_activity_at: activity[0]?.last_activity_at ?? null,
     users: users as PartnerDetail['users'],
   };

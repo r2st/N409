@@ -107,6 +107,7 @@ export const PIPELINE_EVENT_TYPES = {
   taskUpdated: 'review_task_updated',
   documentUploaded: 'document_uploaded',
   documentDeleted: 'document_deleted',
+  documentRefiled: 'document_refiled',
   paramsUpdated: 'params_updated',
   aiJobCompleted: 'ai_job_completed',
   calculationCompleted: 'calculation_completed',

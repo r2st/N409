@@ -264,12 +264,18 @@ d15d0c540dc39c993c158098692814a5447f908c
 #            sees "Online payment is not available yet — we will invoice you
 #            instead" and none of the payment handlers can fire. See
 #            docs/billing-setup.md.
-# gap:       the seven new document categories are reachable and nothing was
+# closed:    the seven new document categories were reachable and nothing had
+#            been moved into them — built on exactly the query this line named.
+#            GET/POST /admin/documents/triage is the ops queue over
+#            `category = 'uploads' AND kind = 'other'`, with a filename
+#            suggestion that carries the term it matched and is never applied
+#            without a human choosing. A re-file writes `document_refiled` on
+#            the engagement with the bucket it came from, so the move is
+#            reversible from the trail. Description of the original gap follows.
+#            the seven new document categories are reachable and nothing was
 #            moved into them. Every corporate file already on the platform is
 #            still in `uploads`, because re-filing one from its filename is the
-#            silent reclassification 0105 exists to prevent. Somebody has to
-#            re-file them by hand, or they stay where they are — the query is
-#            `documents WHERE category = 'uploads' AND kind = 'other'`.
+#            silent reclassification 0105 exists to prevent.
 # closed:    the job monitor reports, and nothing alerts — built on exactly the
 #            figure this line named. 0120 adds a per-queue threshold table and
 #            an alert ledger; `domain/jobAlerts.ts` evaluates the age of the
@@ -294,7 +300,8 @@ d15d0c540dc39c993c158098692814a5447f908c
 #            per-reader unread tallies (the same figures the sidebar badges
 #            read, from one query), the two SLA counts, twelve weeks of
 #            publish throughput, and a scope-filtered activity feed.
-# gap:       the shared inbox has no compose box. Replying goes through the
-#            engagement's own thread, which is correct (one write path owns the
-#            kind rules, mention parsing and the realtime broadcast) but means
-#            answering from the inbox is two clicks and a page load.
+# closed:    the shared inbox had no compose box. Each row now carries an
+#            inline reply that POSTs to /valuations/:id/comments — the
+#            engagement's own write path, kept as the only one, so the kind
+#            rules, the mention parsing and the realtime broadcast stay in one
+#            place. Sending marks the thread read, because it now has been.

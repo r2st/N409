@@ -148,3 +148,43 @@ export function faqJsonLd(items: FaqItem[]): JsonLd {
     })),
   };
 }
+
+/** A blog post, as much of it as a search result needs (design §16.2). */
+export interface ArticleSeo {
+  slug: string;
+  title: string;
+  excerpt: string;
+  author: string;
+  published_at: string | null;
+  og_image?: string | null;
+}
+
+/**
+ * BlogPosting schema.
+ *
+ * `datePublished` is the post's own date rather than the row's `created_at`,
+ * for the reason 0122 gives: a post written on Tuesday and published on Friday
+ * is a Friday post, and a search result that dates it to the draft is wrong in
+ * the one field a reader uses to judge whether an article is current.
+ *
+ * The author falls back to the organisation rather than being omitted. An
+ * article with no author at all reads as unattributed, which is the opposite
+ * of what a valuation firm's writing should look like.
+ */
+export function articleJsonLd(post: ArticleSeo, origin: string = siteOrigin()): JsonLd {
+  const url = absoluteUrl(`/blog/${post.slug}`, origin);
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: post.title,
+    description: post.excerpt,
+    url,
+    mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+    ...(post.published_at ? { datePublished: post.published_at } : {}),
+    author: post.author
+      ? { '@type': 'Person', name: post.author }
+      : { '@type': 'Organization', name: SITE_NAME, url: `${origin}/` },
+    publisher: { '@type': 'Organization', name: SITE_NAME, url: `${origin}/` },
+    ...(post.og_image ? { image: absoluteUrl(post.og_image, origin) } : {}),
+  };
+}

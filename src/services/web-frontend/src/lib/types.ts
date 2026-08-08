@@ -252,6 +252,12 @@ export const PARTNER_EMAIL_TEMPLATE_KEYS = [
 
 export interface PartnerDetail extends Partner {
   valuations_by_group: Record<string, number>;
+  /**
+   * The nine named buckets scoped to this firm (design §4.4) — the counts the
+   * partner-scoped entry point carries. Optional so an older cached response
+   * renders the page rather than blanking it.
+   */
+  valuations_by_bucket?: Partial<Record<NamedBucketKey, number>>;
   last_activity_at: string | null;
   users: Array<{
     id: string;

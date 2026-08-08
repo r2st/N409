@@ -3,13 +3,23 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canManageTokens } from '../auth/operations.js';
-import { createApiToken, findApiTokenById, listApiTokens, revokeApiToken } from '../repos/apiTokens.js';
+import { canManageUsers } from '../auth/rbac.js';
+import {
+  createApiToken,
+  findApiTokenById,
+  listAllApiTokens,
+  listApiTokens,
+  revokeApiToken,
+} from '../repos/apiTokens.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
  * M3 feature 14 — partner API token management. Tokens are scoped to a
  * partner; the secret is returned exactly once, on creation.
  */
+/** A live token unused for this long is worth asking about. 90 days. */
+const DORMANT_AFTER_MS = 90 * 86_400_000;
+
 export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   app.get('/api/v1/partners/:partnerId/tokens', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
@@ -35,6 +45,47 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     });
     // `secret` is shown once and never retrievable again.
     return reply.status(201).send({ token, secret });
+  });
+
+  /**
+   * Cross-partner credential listing (design §14.1).
+   *
+   * Answering "who currently holds API credentials" used to mean opening every
+   * partner page in turn, which is the same as not being able to answer it.
+   *
+   * Gated on `canManageUsers` rather than `isOps`: this is the whole platform's
+   * credential inventory across every firm, and the reviewer and data roles that
+   * `isOps` admits have no business reading it. Firm-scoped token management
+   * stays where it is, on the partner's own page, under `canManageTokens`.
+   *
+   * Revoked rows are excluded by default and reachable with `?revoked=true`, so
+   * the list opens on the credentials that can currently be used.
+   */
+  app.get('/api/v1/admin/api-tokens', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!canManageUsers(principal)) {
+      throw problems.forbidden('The platform token listing is administrator-only');
+    }
+    const parsed = z.object({ revoked: z.enum(['true', 'false']).optional() }).safeParse(req.query ?? {});
+    if (!parsed.success) throw problems.unprocessable('Invalid query', { errors: parsed.error.issues });
+
+    const tokens = await listAllApiTokens(deps.pool, {
+      includeRevoked: parsed.data.revoked === 'true',
+    });
+    const now = Date.now();
+    return {
+      tokens,
+      total: tokens.length,
+      live: tokens.filter((t) => t.revoked_at === null).length,
+      // Dormant is the figure a credential list exists to surface: a live token
+      // nobody has used is the one to ask about. Never used counts as dormant
+      // once it is older than the window, not immediately — a key minted this
+      // morning has not had a chance yet.
+      dormant: tokens.filter(
+        (t) => t.revoked_at === null && now - (t.last_used_at ?? t.created_at).getTime() > DORMANT_AFTER_MS,
+      ).length,
+      dormant_after_days: DORMANT_AFTER_MS / 86_400_000,
+    };
   });
 
   app.delete('/api/v1/api-tokens/:id', { preHandler: app.authenticate }, async (req, reply) => {

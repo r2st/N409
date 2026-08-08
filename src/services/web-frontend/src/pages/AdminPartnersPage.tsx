@@ -91,6 +91,15 @@ export function AdminPartnersPage() {
             Organisations that channel valuations through the platform. Assign users to a partner from the
             users console.
           </p>
+          {/* Tokens are managed per firm below, but "who holds credentials"
+              is a platform question and answering it firm by firm is not an
+              answer — the cross-partner listing is one click from here. */}
+          <Link
+            to="/admin/api-tokens"
+            className="mt-2 inline-block text-sm font-semibold text-bond-600 hover:text-bond-700"
+          >
+            API tokens across all partners &rarr;
+          </Link>
         </div>
         <Button onClick={() => setCreating((v) => !v)}>{creating ? 'Cancel' : '+ New partner'}</Button>
       </div>

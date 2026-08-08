@@ -12,10 +12,14 @@ import { CalculationPanel } from '../../components/valuation/CalculationPanel';
 /** Thin adapters mounting the M1 pipeline panels as workspace tabs. */
 
 export function DocumentsTab() {
-  const { valuation } = useWorkspace();
+  const { valuation, reload } = useWorkspace();
+  const { user } = useAuth();
   return (
     <div>
-      <DocumentsPanel valuationId={valuation.id} />
+      {/* Clearing a file changes the header's pending-files chip, so the
+          workspace aggregate is reloaded with it — a chip that disagrees with
+          the list under it is worse than no chip. */}
+      <DocumentsPanel valuationId={valuation.id} canReview={isOps(user)} onReviewed={reload} />
       {/* §23 — accounting software connect + import */}
       <AccountingConnect valuationId={valuation.id} />
     </div>

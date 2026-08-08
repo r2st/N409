@@ -75,12 +75,19 @@ const VALUATIONS = [
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-function mockApi() {
+function mockApi(over: Partial<PartnerDetail> = {}, savedView?: { created: boolean }) {
+  const partner = { ...detail, ...over };
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
     const method = init?.method ?? 'GET';
     calls.push({ url: path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (path.includes('/saved-view')) {
+      return jsonResponse(
+        { view: { id: 'v1', name: partner.name }, created: savedView?.created ?? true },
+        savedView?.created === false ? 200 : 201,
+      );
+    }
     if (method === 'PATCH' && path.includes('/users/')) return jsonResponse({ user: {} });
     if (path.includes(`/partners/${PARTNER_ID}/tokens`)) {
       return method === 'POST'
@@ -89,7 +96,7 @@ function mockApi() {
     }
     if (path.includes(`/partners/${PARTNER_ID}/valuations`))
       return jsonResponse({ valuations: VALUATIONS, page: 1, per_page: 10, total: VALUATIONS.length });
-    if (path.includes(`/partners/${PARTNER_ID}`)) return jsonResponse({ partner: detail });
+    if (path.includes(`/partners/${PARTNER_ID}`)) return jsonResponse({ partner });
     throw new Error(`unexpected fetch ${path}`);
   });
   return calls;
@@ -115,9 +122,14 @@ describe('PartnerDetailPage', () => {
     renderPage();
 
     expect(await screen.findByRole('heading', { name: /Vestd/ })).toBeInTheDocument();
-    // Valuation rollups by state group
-    expect(screen.getByText('In review').parentElement?.textContent).toContain('2');
-    expect(screen.getByText('Published').parentElement?.textContent).toContain('6');
+    // Valuation rollups by state group. Matched on the stat-card label element
+    // specifically: "Published" is also a state badge on the engagement list
+    // further down, which arrives from a second request — a bare getByText
+    // races that request rather than testing anything.
+    const statLabel = (text: string) =>
+      screen.getAllByText(text).find((el) => el.className.includes('overline'))!;
+    expect(statLabel('In review').parentElement?.textContent).toContain('2');
+    expect(statLabel('Published').parentElement?.textContent).toContain('6');
     // Users of the organisation
     expect(screen.getByText('org-admin@vestd.example')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Manage in users console/ })).toHaveAttribute(
@@ -274,6 +286,81 @@ describe('PartnerDetailPage', () => {
       renderPage();
       expect(await screen.findByText('Portfolio One')).toBeInTheDocument();
       expect(screen.getByText('#1766')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * The saved entry point (design §4.4). The gap was not that a firm's
+   * engagements were unreachable — it was that reaching them meant picking the
+   * firm out of a dropdown on a listing of everything, with no counts of its
+   * own on the way in.
+   */
+  describe('partner-scoped entry point', () => {
+    const BUCKETS = {
+      all: 12,
+      incomplete: 4,
+      unverified: 0,
+      in_progress: 2,
+      waiting_on_client: 3,
+      drafted: 0,
+      published: 6,
+      unread: 1,
+      ignored: 0,
+    };
+
+    it('carries the firm’s own bucket counts, each a way into the scoped listing', async () => {
+      mockApi({ valuations_by_bucket: BUCKETS });
+      renderPage();
+      const chip = await screen.findByRole('link', { name: /In progress/ });
+      expect(chip).toHaveAttribute('href', `/valuations?partner_id=${PARTNER_ID}&bucket=in_progress`);
+      expect(chip).toHaveTextContent('2');
+      expect(screen.getByRole('link', { name: /Waiting on client/ })).toHaveTextContent('3');
+    });
+
+    it('drops the empty buckets — this is a summary, not the tab strip', async () => {
+      // Nine tiles of which four read zero buries the ones that do not. The
+      // listing itself still shows all nine, because there the tabs are
+      // controls rather than a summary.
+      mockApi({ valuations_by_bucket: BUCKETS });
+      renderPage();
+      await screen.findByRole('link', { name: /In progress/ });
+      expect(screen.queryByRole('link', { name: /Unverified/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /Drafted/ })).not.toBeInTheDocument();
+    });
+
+    it('links to the whole scoped listing with the firm’s total', async () => {
+      mockApi({ valuations_by_bucket: BUCKETS });
+      renderPage();
+      const link = await screen.findByRole('link', { name: /Open the full listing \(12\)/ });
+      expect(link).toHaveAttribute('href', `/valuations?partner_id=${PARTNER_ID}`);
+    });
+
+    it('renders without the counts rather than blanking the page', async () => {
+      mockApi({ valuations_by_bucket: undefined });
+      renderPage();
+      expect(await screen.findByText(/No engagements yet for this firm/)).toBeInTheDocument();
+    });
+
+    it('pins the firm’s listing as a shared saved view', async () => {
+      const calls = mockApi({ valuations_by_bucket: BUCKETS });
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Pin to saved views' }));
+
+      await waitFor(() =>
+        expect(
+          calls.some((c) => c.method === 'POST' && c.url.endsWith(`/partners/${PARTNER_ID}/saved-view`)),
+        ).toBe(true),
+      );
+      expect(await screen.findByText(/is now in the saved views/)).toBeInTheDocument();
+    });
+
+    it('says so plainly when the firm is already pinned', async () => {
+      mockApi({ valuations_by_bucket: BUCKETS }, { created: false });
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Pin to saved views' }));
+      expect(await screen.findByText(/Already pinned/)).toBeInTheDocument();
     });
   });
 });

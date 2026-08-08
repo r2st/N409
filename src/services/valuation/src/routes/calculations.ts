@@ -23,15 +23,14 @@ import {
 } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { RECALC_APPROACHES } from '../domain/approaches.js';
 
-/** UI approach names → engine approach keys (per-subsystem recalculate). */
-export const RECALC_APPROACHES = {
-  asset: { engineKey: 'asset', weightKey: 'weight_asset' },
-  opm: { engineKey: 'opm_backsolve', weightKey: 'weight_opm' },
-  income: { engineKey: 'income', weightKey: 'weight_income' },
-  market: { engineKey: 'market', weightKey: 'weight_market' },
-} as const;
-export type RecalcApproach = keyof typeof RECALC_APPROACHES;
+/**
+ * UI approach names → engine approach keys (per-subsystem recalculate).
+ * Defined in `domain/approaches.ts`; re-exported here because this route was
+ * where it lived and callers still import it from here.
+ */
+export { RECALC_APPROACHES, type RecalcApproach } from '../domain/approaches.js';
 
 const ComputeBody = z
   .object({

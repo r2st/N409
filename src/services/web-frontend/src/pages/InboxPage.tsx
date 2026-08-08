@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { formatDateTime } from '../lib/format';
+import { useAuth } from '../lib/auth';
+import { isOps } from '../lib/rbac';
+import { displayName, formatDateTime } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Pagination, Spinner, TextInput, pageCountOf } from '../components/ui';
 
 /**
@@ -11,10 +13,14 @@ import { Button, EmptyState, ErrorNote, Pagination, Spinner, TextInput, pageCoun
  * engagement". Nobody works that way: an analyst carrying nine files does not
  * open nine tabs to find out which of them a client replied to overnight.
  *
- * Read state is per reader and per thread. Clicking a row marks that thread
- * read and takes you to it — a row in the inbox is only ever a way into the
- * conversation, so replying stays where the thread is and this page has no
- * compose box.
+ * Read state is per reader and per thread.
+ *
+ * Replying happens inline (design §15.2) but the write does not: the box POSTs
+ * to `/valuations/:id/comments`, the engagement's own thread endpoint, which
+ * owns the kind rules, the mention parsing and the realtime broadcast. There
+ * is deliberately no inbox write endpoint — a second write path is how those
+ * three drift apart, and the drift shows up as a mention that never notified
+ * anyone rather than as an error.
  */
 
 interface InboxItem {
@@ -56,6 +62,142 @@ const KIND_LABELS: Record<InboxItem['kind'], string> = {
 
 const PER_PAGE = 25;
 
+/** What the reply posts as, per the kind of the message being answered. */
+type ReplyKind = 'chat' | 'note';
+
+/**
+ * An inbound email is threaded onto the engagement but cannot be replied to
+ * *as* email — `canPostComment` refuses kind `email` outright, because email
+ * arrives through the ingest endpoint and nothing on this platform sends it
+ * back out of a comment box. Answering one is a client chat message.
+ */
+function defaultReplyKind(kind: InboxItem['kind']): ReplyKind {
+  return kind === 'note' ? 'note' : 'chat';
+}
+
+function ReplyBox({
+  item,
+  canPostNote,
+  senderName,
+  onSent,
+}: {
+  item: InboxItem;
+  canPostNote: boolean;
+  senderName: string;
+  onSent: (comment: InboxItem) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<ReplyKind>(defaultReplyKind(item.kind));
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const text = body.trim();
+    if (text === '') return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api<{ comment: { id: string; created_at: string; author_name: string | null } }>(
+        `/valuations/${item.valuation_id}/comments`,
+        { method: 'POST', body: { kind, body: text } },
+      );
+      setBody('');
+      setOpen(false);
+      onSent({
+        ...item,
+        id: res.comment.id,
+        kind,
+        body: text,
+        // The insert returns the row it wrote, which carries an author id and
+        // not the joined display name. We are the author, so the fallback is
+        // exact rather than a guess.
+        author_name: res.comment.author_name ?? senderName,
+        author_email: null,
+        email_meta: null,
+        pinned: false,
+        created_at: res.comment.created_at,
+        unread: false,
+      });
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 403
+          ? 'You cannot post to this engagement’s thread.'
+          : 'Could not send — try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-2 cursor-pointer text-xs font-semibold text-bond-600 hover:text-bond-700"
+      >
+        Reply
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={(e) => void submit(e)} className="mt-3">
+      {canPostNote && (
+        <div className="mb-2 flex items-center gap-2">
+          {(['chat', 'note'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setKind(k)}
+              className={`cursor-pointer rounded-full px-2.5 py-1 text-[0.65rem] font-semibold transition-colors ${
+                kind === k
+                  ? 'bg-ink-900 text-paper-50'
+                  : 'border border-ink-200 bg-surface text-ink-600 hover:border-ink-400'
+              }`}
+            >
+              {k === 'chat' ? 'Reply to client' : 'Post as note'}
+            </button>
+          ))}
+        </div>
+      )}
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={3}
+        autoFocus
+        aria-label={`Reply to ${item.company_name}`}
+        placeholder={
+          kind === 'note'
+            ? 'Internal note — the client never sees this.'
+            : 'Reply to the client on this engagement’s thread.'
+        }
+        className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-800 focus:border-bond-500 focus:outline-none"
+      />
+      {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
+      <div className="mt-2 flex items-center gap-2">
+        <Button type="submit" disabled={busy || body.trim() === ''}>
+          {busy ? 'Sending…' : 'Send'}
+        </Button>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false);
+            setError(null);
+          }}
+          className="cursor-pointer text-xs font-semibold text-ink-500 hover:text-ink-700"
+        >
+          Cancel
+        </button>
+        <span className="text-xs text-ink-400">
+          Posts to the engagement thread — the same place the workspace posts.
+        </span>
+      </div>
+    </form>
+  );
+}
+
 function Sender({ item }: { item: InboxItem }) {
   // An inbound email has no author row — the address it came from is the only
   // thing we know about who sent it, and it is the useful thing.
@@ -64,6 +206,7 @@ function Sender({ item }: { item: InboxItem }) {
 }
 
 export function InboxPage() {
+  const { user } = useAuth();
   const [data, setData] = useState<InboxResponse | null>(null);
   const [kind, setKind] = useState<'all' | InboxItem['kind']>('all');
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -246,6 +389,34 @@ export function InboxPage() {
                   DOM for search-in-page, and the thread itself is one click
                   away for reading it properly. */}
               <p className="mt-1 line-clamp-2 text-sm text-ink-500">{item.body}</p>
+              <ReplyBox
+                item={item}
+                canPostNote={isOps(user)}
+                senderName={user ? displayName(user) : 'You'}
+                onSent={(sent) => {
+                  // Prepend rather than replace: the row that was answered is
+                  // still the message that arrived, and the reply is a new
+                  // message on the same thread. Marking the thread read at the
+                  // same time is the honest state — you have now read it.
+                  setData((d) =>
+                    d
+                      ? {
+                          ...d,
+                          items: [
+                            sent,
+                            ...d.items.map((i) =>
+                              i.valuation_id === sent.valuation_id ? { ...i, unread: false } : i,
+                            ),
+                          ],
+                          unread_total: d.items.filter(
+                            (i) => i.valuation_id !== sent.valuation_id && i.unread,
+                          ).length,
+                        }
+                      : d,
+                  );
+                  void markRead(sent.valuation_id);
+                }}
+              />
             </li>
           ))}
         </ul>

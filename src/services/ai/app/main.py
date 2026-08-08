@@ -21,13 +21,14 @@ from .errors import install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import internal_token_middleware, warn_if_unset
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
+from .llm_router import chat, configured_models
 from .openrouter import (
     OpenRouterError,
-    chat,
-    configured_models,
     tokens_used,
     verify_api_key,
 )
+from .bedrock import is_configured as bedrock_configured
+from .bedrock import verify_credentials as verify_bedrock_credentials
 from .output_schema import validate_result
 from .perplexity import (
     ConfidentialityError,
@@ -245,6 +246,16 @@ def ready() -> JSONResponse:
         pplx = verify_perplexity_key()
         checks["perplexity_key"] = pplx.state
         checks["perplexity_key_detail"] = pplx.detail
+    # Bedrock is reported on the same terms and for the same reason (§12.2): it
+    # is an alternative route to the same completions, chosen per prompt, so an
+    # installation that has not configured it is not degraded and one whose
+    # credentials have lapsed should not lose the OpenRouter path with them.
+    # Only the prompts bound to a `bedrock/` model are affected, and those fail
+    # loudly at the call.
+    if bedrock_configured():
+        aws = verify_bedrock_credentials()
+        checks["bedrock_credentials"] = aws.state
+        checks["bedrock_credentials_detail"] = aws.detail
     return JSONResponse(
         status_code=200 if key.ok else 503,
         content={"status": "ready" if key.ok else "unavailable", "checks": checks},

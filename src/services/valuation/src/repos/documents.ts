@@ -19,6 +19,9 @@ export interface DocumentRow {
   uploaded_by: string | null;
   created_at: Date;
   deleted_at: Date | null;
+  /** Cleared by an analyst (0121) — what the "pending files" counter counts. */
+  reviewed_at: Date | null;
+  reviewed_by: string | null;
 }
 
 export interface CreateDocumentInput {
@@ -111,6 +114,118 @@ export async function listDocuments(
     [valuationId, filter.category ?? null],
   );
   return rows;
+}
+
+export interface UnfiledDocumentRow extends DocumentRow {
+  valuation_number: number;
+  company_name: string;
+  state: string;
+  uploaded_by_email: string | null;
+}
+
+/**
+ * The legacy re-filing queue (design §9.2).
+ *
+ * `category = 'uploads' AND kind = 'other'` is deliberately both conditions
+ * and not just the first. A file in `uploads` whose kind is `cap_table` was
+ * filed there on purpose by somebody who saw the choices — the client who
+ * considered it incidental, or the API caller who stated a kind and no
+ * category. The rows that are genuinely uncategorised, and therefore the ones
+ * a human should look at, are the ones the platform knows nothing about on
+ * either axis.
+ *
+ * Oldest first: the backlog 0112 left is at the far end of the table, and a
+ * queue that opens on this morning's uploads is a queue nobody finishes.
+ */
+export async function listUnfiledDocuments(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<UnfiledDocumentRow[]> {
+  const { rows } = await pool.query<UnfiledDocumentRow>(
+    `SELECT d.*, v.number AS valuation_number, v.state, v.company_name,
+            u.email AS uploaded_by_email
+       FROM documents d
+       JOIN valuations v ON v.id = d.valuation_id
+       LEFT JOIN users u ON u.id = d.uploaded_by
+      WHERE d.deleted_at IS NULL
+        AND d.category = 'uploads'
+        AND d.kind = 'other'
+      ORDER BY d.created_at ASC
+      LIMIT $1`,
+    [opts.limit ?? 500],
+  );
+  return rows;
+}
+
+/** How many rows the queue holds in total, regardless of the page limit. */
+export async function countUnfiledDocuments(pool: pg.Pool): Promise<number> {
+  const { rows } = await pool.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM documents
+      WHERE deleted_at IS NULL AND category = 'uploads' AND kind = 'other'`,
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Re-file one document into a named bucket.
+ *
+ * Writes an event on the engagement rather than only an admin event: a
+ * document's filing is part of the evidence record, and "who decided this was
+ * the option plan, and when" is a question an auditor asks of the engagement,
+ * not of the platform. The previous bucket rides in the payload so the change
+ * is reversible from the trail alone.
+ */
+export async function refileDocument(
+  pool: pg.Pool,
+  doc: DocumentRow,
+  target: { category: DocumentCategory; kind: DocumentKind },
+  actor: EventActor,
+): Promise<DocumentRow> {
+  return withTransaction(pool, async (client) => {
+    const { rows } = await client.query<DocumentRow>(
+      'UPDATE documents SET category = $2, kind = $3 WHERE id = $1 RETURNING *',
+      [doc.id, target.category, target.kind],
+    );
+    await recordEvent(client, {
+      valuationId: doc.valuation_id,
+      type: PIPELINE_EVENT_TYPES.documentRefiled,
+      actor,
+      payload: {
+        document_id: doc.id,
+        filename: doc.filename,
+        from_category: doc.category,
+        to_category: target.category,
+        from_kind: doc.kind,
+        to_kind: target.kind,
+      },
+    });
+    return rows[0]!;
+  });
+}
+
+/**
+ * Mark a document reviewed, or put it back in the pending pile (0121).
+ *
+ * The un-review is not symmetry for its own sake: the counter's whole value is
+ * that it reaches zero, and an analyst who cleared a row by mistake with no way
+ * back would either leave the count wrong or re-upload the file. `reviewed_by`
+ * is cleared with the timestamp so a pending row never carries a stale name.
+ */
+export async function setDocumentReviewed(
+  pool: pg.Pool,
+  documentId: string,
+  reviewed: boolean,
+  reviewerId: string,
+): Promise<DocumentRow | null> {
+  const { rows } = await pool.query<DocumentRow>(
+    `UPDATE documents
+        SET reviewed_at = CASE WHEN $2 THEN now() ELSE NULL END,
+            reviewed_by = CASE WHEN $2 THEN $3::ulid ELSE NULL END
+      WHERE id = $1 AND deleted_at IS NULL
+      RETURNING *`,
+    [documentId, reviewed, reviewerId],
+  );
+  return rows[0] ?? null;
 }
 
 /** Soft delete — the file stays on disk for audit; the row is tombstoned. */

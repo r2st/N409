@@ -20,6 +20,10 @@ export function marketingRoutes(): SitemapRoute[] {
     { path: '/pricing', changefreq: 'weekly', priority: 0.9 },
     { path: '/which-valuation', changefreq: 'monthly', priority: 0.7 },
     { path: '/compare/409a-valuation-providers', changefreq: 'monthly', priority: 0.7 },
+    // The blog index only. Individual posts live in the database and are
+    // authored after this file is built, so listing them here would either be
+    // a stale list or a build that has to reach the database.
+    { path: '/blog', changefreq: 'weekly', priority: 0.6 },
     { path: '/about', changefreq: 'monthly', priority: 0.5 },
     { path: '/contact', changefreq: 'monthly', priority: 0.5 },
     { path: '/terms-of-service', changefreq: 'yearly', priority: 0.3 },

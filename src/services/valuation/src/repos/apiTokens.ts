@@ -53,6 +53,44 @@ export async function listApiTokens(pool: pg.Pool, partnerId: string): Promise<A
   return rows;
 }
 
+export interface AdminApiTokenRow extends ApiTokenRow {
+  partner_name: string | null;
+  partner_key: string | null;
+  created_by_email: string | null;
+  created_by_name: string | null;
+}
+
+/**
+ * Every token on the platform, joined to its partner and issuing user
+ * (design §14.1). `token_hash` is never selected — the plaintext secret is
+ * shown once at creation and only its digest is stored, and a listing that
+ * returns the digest hands an attacker an offline target for nothing.
+ *
+ * Live tokens sort first, then by recency, because the question this list is
+ * read to answer — "who currently holds API credentials, and which of those
+ * credentials is dormant" — is about the live ones. Revoked rows stay for the
+ * audit trail rather than to be scrolled past.
+ */
+export async function listAllApiTokens(
+  pool: pg.Pool,
+  opts: { includeRevoked?: boolean } = {},
+): Promise<AdminApiTokenRow[]> {
+  const { rows } = await pool.query<AdminApiTokenRow>(
+    `SELECT t.id, t.partner_id, t.created_by, t.name, t.token_prefix,
+            t.created_at, t.last_used_at, t.revoked_at,
+            p.name AS partner_name, p.key AS partner_key,
+            u.email AS created_by_email,
+            NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') AS created_by_name
+       FROM api_tokens t
+       LEFT JOIN partners p ON p.id = t.partner_id
+       LEFT JOIN users u ON u.id = t.created_by
+      WHERE ($1::boolean OR t.revoked_at IS NULL)
+      ORDER BY (t.revoked_at IS NULL) DESC, t.created_at DESC`,
+    [opts.includeRevoked === true],
+  );
+  return rows;
+}
+
 /** A user's personal tokens — partner tokens they minted for an org are excluded. */
 export async function listPersonalApiTokens(pool: pg.Pool, userId: string): Promise<ApiTokenRow[]> {
   const { rows } = await pool.query<ApiTokenRow>(

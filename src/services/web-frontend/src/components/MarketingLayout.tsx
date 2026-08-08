@@ -243,6 +243,9 @@ export function MarketingFooter() {
             <Link to="/pricing" className="hover:text-chrome-fg">
               Pricing
             </Link>
+            <Link to="/blog" className="hover:text-chrome-fg">
+              Blog
+            </Link>
             <Link to="/contact" className="hover:text-chrome-fg">
               Contact us
             </Link>

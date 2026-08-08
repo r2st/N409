@@ -210,7 +210,7 @@ Define these predicates **once**, in `domain/workflow.ts`, exported as `NAMED_BU
 
 Ship it as a **saved view**, not a new page. `SavedViews.tsx` and the `saved_views` table (migration `0088`) already do this: seed one system view per partner-scoped listing, or add a `/valuations?partner_id=…` link on `PartnerDetailPage`. Building a second listing page duplicates the filter, sort, export and scope logic that the sweep test in `f883d6a` covers on the first one.
 
-**Priority: P2 · Effort: S.**
+**Priority: P2 · Effort: S. Closed.** `POST /partners/:id/saved-view` pins the firm's listing as a *shared* saved view, idempotently — matched on the query rather than the name, so a firm renamed after pinning does not get a second one. `getPartnerDetail` gained `valuations_by_bucket`, the nine named buckets scoped to the firm, read from the same `namedBucketsFor` the listing tab strip and the sidebar badges use; each tile links into `/valuations?partner_id=…&bucket=…`. And the listing says when it is scoped: a partner-scoped page that looks identical to the unscoped one is how an operator concludes a firm has four engagements in total.
 
 ## 4.5 Network Items
 
@@ -275,7 +275,7 @@ CREATE UNIQUE INDEX comparable_items_ticker_uq
 
 **Spec.** Add a `counters` object to `GET /api/v1/valuations/:id` — `{ pending_files, my_tasks, all_tasks, unread_comments }` — and render it as a chip row in `ValuationWorkspace.tsx`. `pending_files` is documents in a category requiring review; define it as `documents WHERE reviewed_at IS NULL`.
 
-**Priority: P2 · Effort: S.**
+**Priority: P2 · Effort: S. Closed.** `repos/valuationCounters.ts` serves all five (the fifth is §7.3's badge) in one round trip on the detail read, since the header cannot render without them and a second request is a second chance to disagree with the page under it. `reviewed_at` did not exist — a document row recorded that a file arrived and nothing recorded that anyone had looked at it — so `0121` adds it plus the ops-only toggle that sets it. Nothing is backfilled: an open engagement's existing files show as pending because they are. Ops-only on the frontend; every count is outstanding work rather than a total, because a counter that never reaches zero is a badge people learn to stop seeing.
 
 ---
 
@@ -403,7 +403,7 @@ Show the tab only for kinds that have a specialty engine; a Run button on a 409A
 
 **Spec.** Derive `m` from the approaches enabled in `valuation_params` and `n` from those with a successful result in the latest calculation; expose as `counters.calculations` on `GET /valuations/:id` (same object as §4.6) and badge the nav item. The refresh button is a re-run of the existing POST.
 
-**Priority: P2 · Effort: S.**
+**Priority: P2 · Effort: S. Closed.** `domain/valuationCounters.ts` computes it, and `domain/approaches.ts` now owns the UI-name → engine-key → weight-column mapping that `routes/calculations.ts` used to, because a badge that read the UI name straight off the results would report 0/1 on a completed run. Three judgments worth naming: a zero weight is an approach the analyst considered and excluded, so it is out of the denominator rather than permanently missing from the numerator; unweighted params fall back to all four rather than reporting 0/0 on the engagement with the most to do; and an approach block present with a null equity value counts as missing, because the engine writes a key for what it attempted and 4/4 on a partly-failed run is worse than no badge.
 
 ## 7.4 Stale stored calculations
 
@@ -457,7 +457,7 @@ The seven categories `0112` added are reachable and nothing was moved into them.
 
 **Spec.** An ops triage queue rather than a migration: a filtered document list (`category = 'uploads' AND kind = 'other'`) with a category dropdown per row and a bulk-assign for a selected set, on `AdminRetentionPage` or a new `/admin/documents` page. Optionally seed the dropdown with the `SUMMARIZE_ATTACHMENT` pipeline's classification as a *suggestion* — never an auto-apply.
 
-**Priority: P2 · Effort: S.**
+**Priority: P2 · Effort: S. Closed.** `/admin/documents` over exactly that query — both conditions, because a file in `uploads` with a stated kind was filed there on purpose by somebody who saw the choices. The suggestion is a filename heuristic rather than the summariser, and it ships the *term it matched* rather than a confidence score: a score invites trusting it, a matched term invites reading the filename. It suggests only the seven corporate buckets and never a finance one, since "Financials 2023.xlsx" is a monthly, an annual or a balance sheet with equal likelihood — which is the ambiguity the category axis exists for. Nothing is pre-selected, and a re-file writes `document_refiled` on the engagement with the bucket it came from.
 
 ---
 
@@ -536,7 +536,9 @@ Eleven prompts missing, and they are one coherent family: **live market and indu
 
 **409.ai** — six provider/model bindings, most on `perplexity-PRO`, newest on Anthropic Sonnet 5 / Opus 4.8 / Haiku 4.5, one on Bedrock Sonnet 3.5.
 
-**N409 status: Partial.** `ai/app/openrouter.py` with a three-model fallback and a `model` column per prompt; `GET /admin/prompts/models` serves the configured set. No Bedrock adapter — that is a deployment-topology choice, not a capability gap, and no work is specified for it.
+**N409 status: Built.** `ai/app/openrouter.py` with a three-model fallback and a `model` column per prompt; `GET /admin/prompts/models` serves the configured set.
+
+`ai/app/bedrock.py` is the Bedrock adapter and `ai/app/llm_router.py` is the dispatch that makes the per-prompt `model` column mean what it looks like it means: a `bedrock/` prefix routes there, everything else to OpenRouter, which stays the default so an installation that has never heard of Bedrock behaves exactly as it did. It is still a deployment-topology choice rather than a capability one — the choice being data residency and procurement, for the firm whose counsel has approved their own AWS account and not a third-party aggregator. No boto3: Converse is one signed POST and SigV4 is forty lines of hmac, against a service whose entire dependency list is four packages. One model and no fallback chain, because every Bedrock invocation is billed to the operator's own account and falling through on a failure would spend more of their money to paper over a bad request. `/ready` reports the credentials and never gates on them.
 
 The real difference: 409.ai routes **per prompt to a provider chosen for the job** — research prompts to Perplexity, drafting prompts to Claude. N409 has both providers and routes only to one of them. §12.3.
 
@@ -694,7 +696,7 @@ Defaulting to `false` is the safe direction: mislabelling a marketing message as
 
 **Frontend.** `pages/AdminApiTokensPage.tsx` at `/admin/api-tokens`: table with partner, user, client id, masked secret, created, last used, and a revoke action per row. Link from `AdminPartnersPage`.
 
-**Priority: P2 · Effort: S.**
+**Priority: P2 · Effort: S. Closed.** Gated on `canManageUsers` rather than `isOps`: this is the whole platform's credential inventory across every firm, and the reviewer and data roles `isOps` admits have no business reading it. Revoked rows are excluded by default so the list opens on what can currently be used, and the summary reports how many live tokens are *dormant* — a live key nobody has used for a quarter is either an integration decommissioned without anyone revoking it or one that was never wired up, and both are credentials outstanding for no reason.
 
 ## 14.2 Partner API
 
@@ -722,7 +724,7 @@ There is no compose box. Replying goes through the engagement's own thread, whic
 
 **Spec.** An inline reply box on each inbox row that POSTs to `/api/v1/valuations/:id/comments`, the existing write path, and optimistically appends. Do **not** add an inbox-specific write endpoint; the second write path is how the mention parsing and the broadcast drift apart.
 
-**Priority: P2 · Effort: S.**
+**Priority: P2 · Effort: S. Closed** exactly as specified — `routes/inbox.ts` still has no POST but the two read marks. Ops get a kind toggle between a client reply and an internal note; a firm reader gets neither, because notes are ops tooling. An inbound email is answered as `chat`, since `canPostComment` refuses kind `email` outright and nothing on this platform sends mail out of a comment box. Sending marks the thread read, because it now has been.
 
 ## 15.3 Comment kinds and chat
 
@@ -759,7 +761,7 @@ No work.
 
 **Spec.** `help_articles` (`0048`) already models authored content with slugs and rendering; a `blog_posts` table of the same shape plus `published_at`, `author`, `excerpt` and `og_image`, with `/blog` and `/blog/:slug` routes and `Seo.tsx` for meta tags. Content authoring is the bulk of the cost, not the code.
 
-**Priority: P2 · Effort: M** (code S, content L).
+**Priority: P2 · Effort: M** (code S, content L). **Closed**, with one seeded article so `/blog` is a page rather than an empty state on the day it ships. The reading half is genuinely unauthenticated — not "authentication that usually fails" — because a public endpoint whose response depends on a session is one that can be cached wrong; drafts are served only from `/admin/blog`, and the article page falls back to that endpoint for an ops reader so a preview is the real page. `published_at` is separate from both `published` and `created_at`: a post written on Tuesday and published on Friday is a Friday post, and a typo fixed in March must not re-date a January article and reorder the index for every crawler that had indexed it. `author` is text rather than a user reference, because a byline is what the piece was published under and must not change when an account is renamed.
 
 ---
 
@@ -782,14 +784,14 @@ No work.
 | 11 | Dashboard is thin — no activity, SLA or throughput | 3.1 | **Closed** | Ops UX | P1 | M |
 | 12 | Network Items / persisted comparable set | 4.5 | **Closed** | Feature + defensibility | P1 | M |
 | 13 | Job monitor reports but nothing alerts | — | **Closed** | Ops | P1 | M |
-| 14 | Cross-partner API token listing | 14.1 | Partial | Ops UX | P2 | S |
-| 15 | Inbox compose box | 15.2 | Partial | Ops UX | P2 | S |
-| 16 | Legacy documents still in `uploads` | 9.2 | Data gap | Remediation | P2 | S |
-| 17 | Per-valuation header counters | 4.6 | Partial | Ops UX | P2 | S |
-| 18 | Calculations `n/m` nav badge | 7.3 | Partial | Ops UX | P2 | S |
-| 19 | Partner Valuation saved entry point | 4.4 | Partial | Ops UX | P2 | S |
-| 20 | Marketing blog | 16.2 | Missing | Marketing | P2 | M |
-| 21 | Bedrock adapter | 12.2 | Missing | Deployment choice | P2 | M |
+| 14 | Cross-partner API token listing | 14.1 | **Closed** | Ops UX | P2 | S |
+| 15 | Inbox compose box | 15.2 | **Closed** | Ops UX | P2 | S |
+| 16 | Legacy documents still in `uploads` | 9.2 | **Closed** | Remediation | P2 | S |
+| 17 | Per-valuation header counters | 4.6 | **Closed** | Ops UX | P2 | S |
+| 18 | Calculations `n/m` nav badge | 7.3 | **Closed** | Ops UX | P2 | S |
+| 19 | Partner Valuation saved entry point | 4.4 | **Closed** | Ops UX | P2 | S |
+| 20 | Marketing blog | 16.2 | **Closed** | Marketing | P2 | M |
+| 21 | Bedrock adapter | 12.2 | **Closed** | Deployment choice | P2 | M |
 
 ## 17.2 What the shape of this table says
 
@@ -799,7 +801,7 @@ That is an unusual and favourable position. The expensive work — the engines, 
 
 The three P1 items are where new surface actually has to be designed. Everything at P2 is parity or polish.
 
-**All three P1 items are now closed** (Sprint 4 below). What remains on this table is P2, plus the two P0 items that are provider configuration rather than code: Stripe keys and a Perplexity key.
+**Every P0, P1 and P2 item on this table is now closed.** What remains is the two P0 items that are provider configuration rather than code and cannot be closed by writing any: Stripe keys and a Perplexity key.
 
 ## 17.3 Sequencing
 
@@ -811,7 +813,9 @@ The three P1 items are where new surface actually has to be designed. Everything
 
 **Sprint 4 — the P1 surface.** Items 11, 12, 13. Two migrations (`0119_comparable_items`, `0120_job_alerts`), one new tab, three new bands on an existing page, and one background sweep. The peer set is the load-bearing one: it is the first thing an auditor asks a market approach about, and it also changes what the engine is fed — the included rows outrank the AI aggregate, with the aggregate kept as the fallback so an unscreened engagement computes exactly as it did before.
 
-**Backlog.** 14–21.
+**Sprint 5 — the P2 tail.** Items 14–21. Two migrations (`0121_document_review`, `0122_blog_posts`), four new pages, one inline control, one counters object serving two of the items, one public marketing surface and one provider adapter. Nothing here is load-bearing on a valuation; the through-line is that each item is a place where finished work was not reachable, or a number the platform could compute and did not show.
+
+**Backlog.** Empty. What remains of §17.1 is the two provider keys.
 
 ---
 
@@ -895,19 +899,19 @@ Section 13 of `N409-System-Design.docx` was verified at commit `8861b0c`. The fo
 | 13.6 | LTM vs NTM multiples | **Closed** — `market_horizon` enum (`0111`), `ebitda_ntm` in the extraction fields. |
 | 13.7 | 820 / gifts / ifrs2 engine dispatch | **Closed** — `fair_value_820.py`, `gift_estate.py`, `ifrs2.py`, each with an endpoint. |
 | 13.8 | Additional DLOM models | **Closed** — Ghaidarov, Longstaff and restricted-stock studies in `dlom.py`; enum extended in `0111`. |
-| 13.9 | Marketing blog | Open — P2-20. |
+| 13.9 | Marketing blog | **Closed** — `0122_blog_posts.sql`, `routes/blog.ts`, `/blog` and `/blog/:slug`, admin authoring at `/admin/blog`. |
 | 13.10 | Interactive package graph | **Closed** — `routes/packageView.ts`, `pages/valuation/PackageTab.tsx`. |
 | 13.11 | Phone country-code selector | **Closed** — `components/PhoneInput.tsx`, `domain/phone.ts`. |
 | 13.12 | Specialty pipeline has no workspace UI | Open — P0-3. |
 | 13.13 | Stale backsolved equity values | Open — P0-7. |
 | 13.14 | Stale QA reviews | Open — P0-8. |
 | 13.15 | Stripe unconfigured | Open — P0-1. |
-| — | Document categories 6 → 13 | **Closed** — `0112`. Legacy re-filing remains (P2-16). |
+| — | Document categories 6 → 13 | **Closed** — `0112`. Legacy re-filing **closed** too — `routes/adminDocuments.ts`, `domain/documentTriage.ts`, `/admin/documents`. |
 | — | Template categories and variable catalog | **Closed** — `0113`, 15 declared variables. |
 | — | Role catalog and capability matrix | **Closed** — `domain/permissions.ts`, asserted against `auth/rbac.ts`. |
 | — | Partner terms (prepaid, cc_emails, subdomain) | **Closed** — `0113`. |
 | — | Job monitor | **Closed as a report and as an alert** — `0120_job_alerts.sql`, `domain/jobAlerts.ts`, `hooks/jobAlerts.ts`, `POST /admin/jobs/alerts/scan`. |
-| — | Shared inbox | **Closed** — `0113`, per-reader read state. Compose box remains (P2-15). |
+| — | Shared inbox | **Closed** — `0113`, per-reader read state. Compose box **closed** too — an inline reply through the engagement's own write path. |
 | — | Cap-table structure graph | **Closed** — `domain/capTableGraph.ts`, `CapTableGraph.tsx`. |
 
 One correction to the record: §1.2 of the existing document states the AI layer has "8 seeded prompts" and that "Perplexity research is absent". As audited, `AI_PIPELINES` carries 12 entries with seeded prompts, `narrative_prompts` carries 34 more rows, and the Perplexity adapter exists with its own route and tests. The characterisation of the gap changes accordingly — it is a wiring and content gap, not an absence, and it is a smaller job than that document scoped.

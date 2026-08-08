@@ -81,6 +81,7 @@ import { registerSupportRoutes } from './routes/support.js';
 import { registerContactRoutes } from './routes/contact.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
 import { registerHelpRoutes } from './routes/help.js';
+import { registerBlogRoutes } from './routes/blog.js';
 import { registerCommunicationRoutes } from './routes/communications.js';
 import { registerAccountingRoutes } from './routes/accounting.js';
 import { registerCapTableSyncRoutes } from './routes/capTableSync.js';
@@ -104,6 +105,7 @@ import { setWebhookTargetPolicy } from './domain/partnerWebhooks.js';
 import { registerSpecialtyRoutes } from './routes/specialty.js';
 import { registerResearchRoutes } from './routes/research.js';
 import { registerDataRemediationRoutes } from './routes/dataRemediation.js';
+import { registerAdminDocumentRoutes } from './routes/adminDocuments.js';
 import { registerComparableRoutes } from './routes/comparables.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
@@ -346,6 +348,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSpecialtyRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // Design §7.4 — the stale-backsolve and stale-QA-review queues, one surface.
   registerDataRemediationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  // Design §9.2 — the legacy `uploads` re-filing queue 0112 deliberately left.
+  registerAdminDocumentRoutes(app, { pool });
   // Design §4.5 — Network Items: the persisted guideline-company peer set.
   registerComparableRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerBridgeRoutes(app, { pool });
@@ -428,6 +432,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAdminEventRoutes(app, { pool });
   // P2 #10 — help / knowledge base
   registerHelpRoutes(app, { pool });
+  // Design §16.2 — the public marketing blog, shaped on the help centre.
+  registerBlogRoutes(app, { pool });
   // §15.5/§15.6 — communication templates + auto email/SMS drip campaigns
   registerCommunicationRoutes(app, {
     pool,

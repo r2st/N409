@@ -94,6 +94,9 @@ export interface ValuationDocument {
   sha256: string;
   uploaded_by: string | null;
   created_at: string;
+  /** Cleared by an analyst (0121) — what the header's pending-files chip counts. */
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
 }
 
 /** Pipelines runnable from the AI tab. 'qa' runs from the QA tab instead, so

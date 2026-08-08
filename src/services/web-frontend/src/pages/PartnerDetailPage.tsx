@@ -3,8 +3,8 @@ import type { FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { displayName, formatDate, formatDateTime, GROUP_LABELS } from '../lib/format';
-import { PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
-import type { PartnerDetail, ValuationKind, ValuationState } from '../lib/types';
+import { NAMED_BUCKETS, PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
+import type { NamedBucketKey, PartnerDetail, ValuationKind, ValuationState } from '../lib/types';
 import {
   Button,
   ErrorNote,
@@ -19,6 +19,119 @@ import {
 } from '../components/ui';
 
 const GROUP_ORDER = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
+
+/**
+ * The firm's queue, in the nine named buckets (design §4.2 / §4.4).
+ *
+ * Every tile is a link into `/valuations?partner_id=…&bucket=…` rather than a
+ * number on a page: the whole gap this closes is that a partner-scoped listing
+ * was reachable only by picking the firm out of a filter dropdown. Buckets
+ * rather than state groups because that is what the listing's tab strip and
+ * the sidebar badges show — a firm page that counted in a different vocabulary
+ * would be a third answer to "how many are in progress".
+ *
+ * Empty buckets are dropped here, unlike on the listing itself. The listing
+ * always shows all nine because the tab strip is a fixed set of controls; this
+ * is a summary, and nine tiles of which six read zero buries the two that do
+ * not.
+ */
+function PartnerQueue({ partner }: { partner: PartnerDetail }) {
+  const counts = partner.valuations_by_bucket ?? {};
+  const tiles = NAMED_BUCKETS.filter(
+    (key): key is Exclude<NamedBucketKey, 'all'> => key !== 'all' && (counts[key] ?? 0) > 0,
+  );
+  const total = counts.all ?? 0;
+
+  return (
+    <section className="mt-10">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="overline text-ink-400">Engagement queue</h2>
+        <Link
+          to={`/valuations?partner_id=${partner.id}`}
+          className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+        >
+          Open the full listing ({total}) →
+        </Link>
+      </div>
+      {tiles.length === 0 ? (
+        <p className="mt-3 text-sm text-ink-400">No engagements yet for this firm.</p>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {tiles.map((key) => (
+            <Link
+              key={key}
+              to={`/valuations?partner_id=${partner.id}&bucket=${key}`}
+              className="rounded-full border border-paper-300 bg-surface px-3 py-1.5 text-xs font-semibold text-ink-700 transition-colors hover:border-bond-300 hover:text-bond-700"
+            >
+              {BUCKET_LABELS[key]} <span className="tnum text-ink-400">{counts[key] ?? 0}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Pin the firm's listing as a shared saved view.
+ *
+ * Shipped as a saved view and not a second listing page, per the spec: a new
+ * page would duplicate the filter, sort, export and scope logic the existing
+ * listing's sweep test already covers, and a second listing is a second place
+ * for the scope rules to be wrong.
+ */
+function PinPartnerView({ partnerId, partnerName }: { partnerId: string; partnerName: string }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'pinned' | 'already'>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  const pin = async () => {
+    setState('busy');
+    setError(null);
+    try {
+      const res = await api<{ created: boolean }>(`/partners/${partnerId}/saved-view`, {
+        method: 'POST',
+      });
+      setState(res.created ? 'pinned' : 'already');
+    } catch (err) {
+      setState('idle');
+      setError(err instanceof ApiError ? err.message : 'Could not pin the view.');
+    }
+  };
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-3">
+      <Button variant="secondary" disabled={state === 'busy'} onClick={() => void pin()}>
+        {state === 'busy' ? 'Pinning…' : 'Pin to saved views'}
+      </Button>
+      {state === 'pinned' && (
+        <span className="text-sm text-bond-700">
+          “{partnerName}” is now in the saved views on the valuations list, for the whole ops team.
+        </span>
+      )}
+      {state === 'already' && (
+        <span className="text-sm text-ink-500">Already pinned — it is in the saved views strip.</span>
+      )}
+      {error && <span className="text-sm text-red-700">{error}</span>}
+    </div>
+  );
+}
+
+/**
+ * Bucket labels for the firm summary. The listing itself reads its labels off
+ * the wire beside the counts; this page has counts without a catalog, so it
+ * restates them — and the keys are typed against `NAMED_BUCKETS`, so a bucket
+ * added server-side fails the build here rather than rendering blank.
+ */
+const BUCKET_LABELS: Record<Exclude<NamedBucketKey, 'all'>, string> = {
+  incomplete: 'Incomplete',
+  unverified: 'Unverified',
+  in_progress: 'In progress',
+  waiting_on_client: 'Waiting on client',
+  drafted: 'Drafted',
+  published: 'Published',
+  unread: 'Unread',
+  ignored: 'Ignored',
+};
 
 const TEMPLATE_LABELS: Record<string, string> = {
   valuation_started: 'Valuation started',
@@ -510,6 +623,13 @@ export function PartnerDetailPage() {
           />
         ))}
       </div>
+
+      <PartnerQueue partner={partner} />
+
+      {/* The saved entry point (design §4.4). A firm's queue reconstructed
+          from a dropdown every morning is not an entry point; pinned once, it
+          is in the saved-views strip for the whole ops team. */}
+      <PinPartnerView partnerId={partner.id} partnerName={partner.name} />
 
       {/* Users in this organisation */}
       <section className="mt-10">

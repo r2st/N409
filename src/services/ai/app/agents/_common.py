@@ -13,7 +13,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..anonymize import Redactor
-from ..openrouter import LlmResult, chat
+from ..llm_router import chat
+from ..openrouter import LlmResult
 from ..pipelines import (
     _calculation_summary as calculation_summary,
 )

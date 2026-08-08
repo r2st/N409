@@ -65,6 +65,30 @@ BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the dep
 # On the ai unit (set in the unit file, not .env): APP_ENV=production
 ```
 
+### Optional: Amazon Bedrock as a second completion provider (design §12.2)
+
+OpenRouter is the default and needs nothing here. Bedrock is for the
+installation whose counsel has approved AWS and not a third-party aggregator:
+the same prompts, run inside your own account, in a region you name, under an
+IAM role you control. Set all three and the provider turns on; leave any one
+unset and it stays off, and every prompt keeps routing to OpenRouter.
+
+```
+BEDROCK_REGION=us-east-1
+AWS_ACCESS_KEY_ID=<key with bedrock:InvokeModel and bedrock:ListFoundationModels>
+AWS_SECRET_ACCESS_KEY=<secret>
+AWS_SESSION_TOKEN=<only for temporary credentials>
+BEDROCK_MODEL=anthropic.claude-sonnet-4-20250514-v1:0   # optional; this is the default
+BEDROCK_MAX_TOKENS=2000                                  # optional
+BEDROCK_CALL_BUDGET_S=150                                # optional; 0 disables
+```
+
+Routing is per prompt, by model id: bind a prompt to `bedrock/<model-id>` in
+Bot Prompts and it runs there; anything else runs on OpenRouter. `/ready`
+reports `bedrock_credentials` when configured but never gates on it — a lapsed
+AWS key must not take the OpenRouter path down with it, and only the prompts
+explicitly bound to a `bedrock/` model are affected.
+
 ### Client addresses behind the proxy (`TRUSTED_PROXIES`)
 
 Nothing reaches the services from a browser directly: Caddy dials web, and web

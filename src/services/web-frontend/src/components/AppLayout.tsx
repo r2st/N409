@@ -191,13 +191,7 @@ function useBucketCounts(enabled: boolean): BucketCounts | null {
  * and cuts across every bucket, so repeating it beside each total would say the
  * same six things six times and mean something different each time.
  */
-function BucketNav({
-  counts,
-  onNavigate,
-}: {
-  counts: BucketCounts | null;
-  onNavigate: () => void;
-}) {
+function BucketNav({ counts, onNavigate }: { counts: BucketCounts | null; onNavigate: () => void }) {
   const rows: Array<{ key: keyof BucketCounts; label: string; to: string }> = [
     { key: 'incomplete', label: 'Incomplete', to: '/valuations?bucket=incomplete' },
     { key: 'unverified', label: 'Unverified', to: '/valuations?bucket=unverified' },
@@ -220,9 +214,7 @@ function BucketNav({
           }
         >
           {row.label}
-          {counts && (
-            <span className="tnum ml-auto text-[0.7rem] text-chrome-faint">{counts[row.key]}</span>
-          )}
+          {counts && <span className="tnum ml-auto text-[0.7rem] text-chrome-faint">{counts[row.key]}</span>}
         </NavLink>
       ))}
     </>
@@ -500,6 +492,7 @@ export function AppLayout() {
             icon={icons.activity}
             onNavigate={close}
           />
+          <NavItem to="/admin/documents" label="Document triage" icon={icons.templates} onNavigate={close} />
           <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
           <NavItem to="/admin/outbox" label="Email outbox" icon={icons.outbox} onNavigate={close} />
           <NavItem to="/admin/jobs" label="Background jobs" icon={icons.tasks} onNavigate={close} />
@@ -511,6 +504,7 @@ export function AppLayout() {
           />
           <NavItem to="/admin/activity" label="Activity log" icon={icons.activity} onNavigate={close} />
           <NavItem to="/admin/help" label="Help articles" icon={icons.help} onNavigate={close} />
+          <NavItem to="/admin/blog" label="Blog" icon={icons.templates} onNavigate={close} />
           {/* Read-only for ops; only admins can save. */}
           <NavItem to="/admin/settings" label="System settings" icon={icons.settings} onNavigate={close} />
           <NavItem to="/schema/overwrites" label="Overwrites schema" icon={icons.schema} onNavigate={close} />
@@ -522,6 +516,7 @@ export function AppLayout() {
           <NavItem to="/admin/sso" label="Enterprise SSO" icon={icons.settings} onNavigate={close} />
           <NavItem to="/admin/retention" label="Data retention" icon={icons.settings} onNavigate={close} />
           <NavItem to="/admin/partners" label="Partners" icon={icons.partner} onNavigate={close} />
+          <NavItem to="/admin/api-tokens" label="API tokens" icon={icons.settings} onNavigate={close} />
         </NavGroup>
       )}
       <div className="overline mt-6 mb-2 px-3 text-chrome-faint/80">Account</div>

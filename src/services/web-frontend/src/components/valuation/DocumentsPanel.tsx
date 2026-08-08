@@ -12,7 +12,17 @@ import {
 import { Button, EmptyState, ErrorNote, LoadingBlock, Select, Skeleton, SkeletonDividedList } from '../ui';
 
 /** Per-valuation document intake: drag-and-drop upload, list by kind, download, delete. */
-export function DocumentsPanel({ valuationId }: { valuationId: string }) {
+export function DocumentsPanel({
+  valuationId,
+  canReview = false,
+  onReviewed,
+}: {
+  valuationId: string;
+  /** Ops only — the review mark is an analyst's own working state (§4.6). */
+  canReview?: boolean;
+  /** Lets the workspace refresh the header chip the mark just changed. */
+  onReviewed?: () => void | Promise<void>;
+}) {
   const [documents, setDocuments] = useState<ValuationDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<DocumentKind>('other');
@@ -66,6 +76,29 @@ export function DocumentsPanel({ valuationId }: { valuationId: string }) {
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not delete the document.');
+    }
+  };
+
+  const setReviewed = async (doc: ValuationDocument, reviewed: boolean) => {
+    // Optimistic: the mark is a one-field toggle with no downstream effect, and
+    // waiting a round trip to grey out a row makes clearing a stack of files
+    // feel like it is failing.
+    setDocuments((docs) =>
+      docs
+        ? docs.map((d) =>
+            d.id === doc.id ? { ...d, reviewed_at: reviewed ? new Date().toISOString() : null } : d,
+          )
+        : docs,
+    );
+    try {
+      await api(`/valuations/${valuationId}/documents/${doc.id}/review`, {
+        method: 'POST',
+        body: { reviewed },
+      });
+      await onReviewed?.();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not update the review mark.');
+      await load();
     }
   };
 
@@ -157,12 +190,28 @@ export function DocumentsPanel({ valuationId }: { valuationId: string }) {
           {documents.map((doc) => (
             <li key={doc.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-ink-900">{doc.filename}</div>
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-semibold text-ink-900">{doc.filename}</span>
+                  {doc.reviewed_at && (
+                    <span className="rounded-full bg-paper-300 px-2 py-0.5 text-[0.65rem] font-semibold text-ink-500">
+                      reviewed
+                    </span>
+                  )}
+                </div>
                 <div className="mt-0.5 text-xs text-ink-400">
                   {DOCUMENT_KIND_LABELS[doc.kind] ?? doc.kind} · {formatBytes(doc.size_bytes)} ·{' '}
                   {formatDateTime(doc.created_at)}
                 </div>
               </div>
+              {canReview && (
+                <Button
+                  variant="ghost"
+                  aria-label={doc.reviewed_at ? `Reopen ${doc.filename}` : `Mark ${doc.filename} reviewed`}
+                  onClick={() => void setReviewed(doc, !doc.reviewed_at)}
+                >
+                  {doc.reviewed_at ? 'Reopen' : 'Mark reviewed'}
+                </Button>
+              )}
               <Button variant="ghost" onClick={() => void download(doc)}>
                 Download
               </Button>
