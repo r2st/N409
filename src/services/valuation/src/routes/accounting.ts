@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
+import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { signAccountingState, verifyAccountingState, type JwtConfig } from '../auth/jwt.js';
@@ -61,6 +62,21 @@ const providerUnavailable = (provider: AccountingProvider) =>
     detail: `${PROVIDER_LABELS[provider]} is not configured on this deployment`,
   });
 
+/**
+ * Query string of the OAuth callback. Unknown keys are stripped rather than
+ * rejected — providers append their own (`scope`, `session_state`, and
+ * QuickBooks' `realmId`), and a strict schema would fail real callbacks. What
+ * this does buy is a bound on every field we go on to use: `state` and `code`
+ * before they are verified and spent, and `realmId` before it is written to
+ * `accounting_connections.external_org_id`.
+ */
+const CallbackQuery = z.object({
+  state: z.string().max(4096).optional(),
+  code: z.string().max(4096).optional(),
+  error: z.string().max(256).optional(),
+  realmId: z.string().max(128).optional(), // QuickBooks appends the company (realm) id
+});
+
 export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingDeps): void {
   const fetchFn = deps.fetchFn ?? fetch;
   const redirectUri = `${deps.publicBaseUrl}/api/v1/accounting/callback`;
@@ -116,13 +132,16 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
   );
 
   // OAuth callback — browser redirect; the signed state is the authentication.
+  // Unauthenticated, so everything here is attacker-controlled until the state
+  // JWT verifies: bound before use, and `realmId` before it is persisted.
   app.get('/api/v1/accounting/callback', async (req, reply) => {
-    const q = req.query as {
-      state?: string;
-      code?: string;
-      error?: string;
-      realmId?: string; // QuickBooks appends the company (realm) id
-    };
+    const parsedQuery = CallbackQuery.safeParse(req.query);
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid callback parameters', {
+        errors: parsedQuery.error.issues,
+      });
+    }
+    const q = parsedQuery.data;
     if (!q.state) throw problems.unprocessable('Missing state');
 
     let state;
