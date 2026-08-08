@@ -8,6 +8,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findQuestionnaire } from '../repos/intake.js';
 import { createCalculation, latestSucceededCalculation } from '../repos/calculations.js';
+import { loadHmrcForm } from '../repos/hmrcForms.js';
 import type { EventActor } from '../events/record.js';
 import {
   isSpecialtyKind,
@@ -178,5 +179,28 @@ export function registerSpecialtyRoutes(
       calculation: specialty ? latest : null,
       result: specialty,
     };
+  });
+
+  /**
+   * The HMRC agreement request pack — VAL231 for EMI, VAL230 for CSOP.
+   *
+   * 404 on any other kind rather than an empty envelope: there is no VAL230
+   * for a 409A, and a client that renders whatever comes back should have
+   * nothing to render. `complete` and `missing_required` are the point of the
+   * endpoint — an analyst opens this to find out what is still outstanding
+   * before the form goes to Shares and Assets Valuation, and a pack that
+   * looked finished because the gaps were omitted would be worse than none.
+   */
+  app.get('/api/v1/valuations/:id/hmrc-form', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadValuation(id, principal);
+    const form = await loadHmrcForm(deps.pool, valuation);
+    if (!form) {
+      throw problems.notFound(
+        `No HMRC valuation form applies to a ${valuation.kind} engagement (VAL231 is EMI, VAL230 is CSOP)`,
+      );
+    }
+    return { form };
   });
 }

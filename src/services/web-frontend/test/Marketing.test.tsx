@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { MarketingLayout } from '../src/components/MarketingLayout';
@@ -15,6 +15,7 @@ import {
   PRICING_FAQ,
   PRODUCTS,
   PRODUCT_CONTENT,
+  RAISE_BANDS,
   formatUsd,
   quote,
 } from '../src/lib/marketing';
@@ -43,10 +44,43 @@ describe('marketing data (§22)', () => {
     expect(quote(p409a, { express: false, qsbsLetter: false })).toEqual({
       totalCents: 119_000,
       deliveryDays: 7,
+      bandUpliftCents: 0,
     });
     expect(quote(p409a, { express: true, qsbsLetter: true })).toEqual({
       totalCents: 219_000,
       deliveryDays: 1,
+      bandUpliftCents: 0,
+    });
+  });
+
+  it('walks the capital-raised ladder to the published $3,499 ceiling', () => {
+    const p409a = PRODUCTS.find((p) => p.kind === '409a')!;
+    const ladder = RAISE_BANDS.map(
+      (_, i) => quote(p409a, { express: false, qsbsLetter: false, raiseBand: i }).totalCents,
+    );
+    expect(ladder).toEqual([119_000, 169_000, 229_000, 289_000, 349_900]);
+  });
+
+  it('mirrors the server ladder exactly — a drift here overcharges at checkout', () => {
+    // These uplifts are duplicated from the valuation service's
+    // domain/pricing.ts RAISE_BANDS. The prospect configures a price here and
+    // the checkout recomputes it there; if the two disagree, the Stripe page
+    // quotes a different number than the one that convinced them to sign up.
+    expect(RAISE_BANDS.map((b) => b.upliftCents)).toEqual([0, 50_000, 110_000, 170_000, 230_900]);
+  });
+
+  it('clamps an out-of-range band instead of quoting NaN', () => {
+    const p409a = PRODUCTS.find((p) => p.kind === '409a')!;
+    expect(quote(p409a, { express: false, qsbsLetter: false, raiseBand: -3 }).totalCents).toBe(119_000);
+    expect(quote(p409a, { express: false, qsbsLetter: false, raiseBand: 99 }).totalCents).toBe(349_900);
+  });
+
+  it('stacks the band with the add-ons', () => {
+    const p409a = PRODUCTS.find((p) => p.kind === '409a')!;
+    expect(quote(p409a, { express: true, qsbsLetter: true, raiseBand: 3 })).toEqual({
+      totalCents: 119_000 + 170_000 + 50_000 + 50_000,
+      deliveryDays: 1,
+      bandUpliftCents: 170_000,
     });
   });
 
@@ -97,6 +131,25 @@ describe('pricing calculator', () => {
     renderAt('/pricing');
     await user.selectOptions(screen.getByRole('combobox'), 'asc-718-valuation');
     expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(149_000));
+  });
+
+  it('raises the price as the capital-raised slider moves', async () => {
+    renderAt('/pricing');
+    const slider = screen.getByRole('slider', { name: /capital raised/i });
+    expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(119_000));
+    expect(screen.getByTestId('raise-band')).toHaveTextContent('Under $1M');
+
+    // fireEvent rather than userEvent: a range input is dragged, and
+    // userEvent's keyboard path would step one band at a time.
+    fireEvent.change(slider, { target: { value: '4' } });
+    expect(screen.getByTestId('quote-total').textContent).toBe(formatUsd(349_900));
+    expect(screen.getByTestId('raise-band')).toHaveTextContent('$20M+');
+  });
+
+  it('names the band for a screen reader, not just the thumb position', () => {
+    renderAt('/pricing');
+    const slider = screen.getByRole('slider', { name: /capital raised/i });
+    expect(slider).toHaveAttribute('aria-valuetext', 'Under $1M');
   });
 });
 

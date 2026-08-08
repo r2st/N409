@@ -85,7 +85,15 @@ describe('kind-aware completion and narrowing', () => {
     const sections = intakeSectionsFor('csop');
     const empty = computeCompletion({}, sections);
     expect(empty.ready).toBe(false);
-    expect(empty.sections.map((s) => s.key)).toEqual(['company', 'share_value', 'csop_grant']);
+    expect(empty.sections.map((s) => s.key)).toEqual([
+      'company',
+      'share_value',
+      // The VAL230 particulars. A CSOP engagement is not complete without them:
+      // the deliverable includes the HMRC agreement request, and HMRC will not
+      // process one with the registered number or the share class blank.
+      'hmrc_request',
+      'csop_grant',
+    ]);
 
     const answers = {
       legal_name: 'Grantco Ltd',
@@ -97,6 +105,11 @@ describe('kind-aware completion and narrowing', () => {
       total_shares: 1_000_000,
       options_granted: 10_000,
       exercise_price: 5,
+      company_registration_number: '09876543',
+      registered_office_address: '2 Registered Row, London, EC2A 2BB',
+      share_class: 'Ordinary shares of £0.0001 each',
+      proposed_grant_date: '2026-11-01',
+      share_restrictions: 'Good/bad leaver provisions.',
     };
     expect(computeCompletion(answers, sections).ready).toBe(true);
     // The same answers judged against the 409A form are incomplete — it wants

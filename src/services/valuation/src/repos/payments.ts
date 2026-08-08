@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import type { ValuationScope } from '../auth/rbac.js';
 import type { DisputeStatus } from '../domain/payments.js';
+import type { QuoteLine } from '../domain/pricing.js';
 
 export type PaymentStatus = 'pending' | 'succeeded' | 'failed' | 'expired' | 'refunded';
 
@@ -21,6 +22,12 @@ export interface PaymentRow {
   refunded_at: Date | null;
   dispute_status: DisputeStatus | null;
   disputed_at: Date | null;
+  /** Bought next-business-day delivery. Moves the SLA, so it is a column. */
+  express: boolean;
+  /** Bought the standalone QSBS attestation letter. */
+  qsbs_letter: boolean;
+  /** The quote as sold — entry price, band uplift and each add-on (0108). */
+  price_breakdown: QuoteLine[] | null;
   created_by: string | null;
   created_at: Date;
   updated_at: Date;
@@ -35,11 +42,17 @@ export async function createPayment(
     currency: string;
     checkoutUrl?: string | null;
     createdBy?: string | null;
+    express?: boolean;
+    qsbsLetter?: boolean;
+    /** Persisted verbatim: a dispute is about the ladder in force on the day. */
+    priceBreakdown?: QuoteLine[] | null;
   },
 ): Promise<PaymentRow> {
   const { rows } = await pool.query<PaymentRow>(
-    `INSERT INTO payments (id, valuation_id, session_id, amount_cents, currency, checkout_url, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO payments
+       (id, valuation_id, session_id, amount_cents, currency, checkout_url, created_by,
+        express, qsbs_letter, price_breakdown)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
     [
       newUlid(),
@@ -49,6 +62,9 @@ export async function createPayment(
       input.currency.toUpperCase(),
       input.checkoutUrl ?? null,
       input.createdBy ?? null,
+      input.express ?? false,
+      input.qsbsLetter ?? false,
+      input.priceBreakdown ? JSON.stringify(input.priceBreakdown) : null,
     ],
   );
   return rows[0]!;
@@ -204,6 +220,8 @@ export interface UnpaidValuationRow {
   company_name: string;
   kind: string;
   currency: string;
+  /** Selected so the billing page can quote the band, not just the entry price. */
+  amount_raised_cents: string | null;
 }
 
 function scopeWhere(scope: ValuationScope, params: unknown[]): string {
@@ -248,7 +266,8 @@ export async function listUnpaidValuationsForScope(
   const params: unknown[] = [];
   const where = scopeWhere(scope, params);
   const { rows } = await pool.query<UnpaidValuationRow>(
-    `SELECT v.id, v.number::text AS number, v.company_name, v.kind::text AS kind, v.currency
+    `SELECT v.id, v.number::text AS number, v.company_name, v.kind::text AS kind, v.currency,
+            v.amount_raised_cents::text AS amount_raised_cents
      FROM valuations v
      WHERE ${where} AND v.paid_status = 'unpaid' AND v.state NOT IN ('cancelled', 'timeout')
      ORDER BY v.created_at DESC

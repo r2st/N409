@@ -205,11 +205,39 @@ export function registerAccountingRoutes(app: FastifyInstance, deps: AccountingD
       if (financials.prior_year_revenue_cents !== null) {
         paramsPatch.last_year_revenue_cents = financials.prior_year_revenue_cents;
       }
-      if (Object.keys(paramsPatch).length > 0) {
-        const current = await findParams(deps.pool, valuation.id);
-        if (current) await patchParams(deps.pool, current, paramsPatch, actor);
+      const current = await findParams(deps.pool, valuation.id);
+      if (Object.keys(paramsPatch).length > 0 && current) {
+        await patchParams(deps.pool, current, paramsPatch, actor);
       }
-      await applyEngineInputs(deps.pool, valuation.id, { accounting_import: financials }, actor);
+
+      /**
+       * The balance sheet is not just a record — it is the asset approach's
+       * two required inputs. `approaches.asset_value` refuses to run without
+       * `inputs.asset.total_assets` and `inputs.asset.total_liabilities`, and
+       * until now the only way to supply them was to type them in from a PDF
+       * the client had uploaded. Pulling them from the ledger is the whole
+       * point of connecting the software.
+       *
+       * Merged into the existing `asset` object rather than assigned over it:
+       * `applyEngineInputs` concatenates with jsonb `||`, which replaces a key
+       * wholesale, so writing `{ asset: {…} }` would silently drop whatever an
+       * analyst had already set beside these two.
+       *
+       * Cents to currency units, because the engine works in the latter — the
+       * `_cents` suffix stops at the boundary of this service.
+       */
+      const engineInputs: Record<string, unknown> = { accounting_import: financials };
+      const sheet = financials.balance_sheet;
+      if (sheet && sheet.total_assets_cents !== null && sheet.total_liabilities_cents !== null) {
+        const existing = ((current?.engine_inputs as Record<string, unknown> | undefined)?.asset ??
+          {}) as Record<string, unknown>;
+        engineInputs.asset = {
+          ...existing,
+          total_assets: sheet.total_assets_cents / 100,
+          total_liabilities: sheet.total_liabilities_cents / 100,
+        };
+      }
+      await applyEngineInputs(deps.pool, valuation.id, engineInputs, actor);
       await recordImport(deps.pool, connection.id, financials);
 
       return { imported: financials };

@@ -39,7 +39,41 @@ export interface TokenSet {
   externalOrgName?: string | null;
 }
 
-/** Normalized P&L snapshot every import parser produces. */
+/**
+ * Normalized balance-sheet snapshot.
+ *
+ * `total_assets_cents` and `total_liabilities_cents` are the two the 409A
+ * asset approach actually requires (engine `inputs.asset.*`), which is why
+ * they carry the parsers' effort; the rest are captured because an analyst
+ * reviewing an imported figure wants to see the statement it came from rather
+ * than two numbers with no context.
+ *
+ * Every field is independently nullable. A chart of accounts that names its
+ * subtotals unusually yields a partial parse, and a partial balance sheet is
+ * worth more than none — the missing lines simply stay manual.
+ */
+export interface ImportedBalanceSheet {
+  as_of: string | null;
+  total_assets_cents: number | null;
+  total_liabilities_cents: number | null;
+  total_equity_cents: number | null;
+  current_assets_cents: number | null;
+  current_liabilities_cents: number | null;
+  cash_cents: number | null;
+}
+
+/** What a profit-and-loss parser produces, before the balance sheet joins it. */
+export type ProfitAndLossSnapshot = Pick<
+  ImportedFinancials,
+  | 'currency'
+  | 'period_start'
+  | 'period_end'
+  | 'revenue_cents'
+  | 'prior_year_revenue_cents'
+  | 'net_income_cents'
+>;
+
+/** Normalized P&L + balance-sheet snapshot every import parser produces. */
 export interface ImportedFinancials {
   currency: string | null;
   period_start: string | null;
@@ -47,6 +81,14 @@ export interface ImportedFinancials {
   revenue_cents: number | null;
   prior_year_revenue_cents: number | null;
   net_income_cents: number | null;
+  /**
+   * Null when the balance sheet could not be pulled or parsed. The P&L is the
+   * primary import — it is what the revenue params depend on — so a balance
+   * sheet failure degrades to null rather than failing the whole import, and
+   * `balance_sheet_error` says why.
+   */
+  balance_sheet: ImportedBalanceSheet | null;
+  balance_sheet_error?: string | null;
   provider: AccountingProvider;
 }
 
@@ -187,7 +229,7 @@ const toCents = (v: unknown): number | null => {
  * Xero Reports/ProfitAndLoss: rows of sections; the "Total Income" /
  * "Net Profit" summary rows carry current + comparison-period cells.
  */
-export function parseXeroProfitAndLoss(report: unknown): Omit<ImportedFinancials, 'provider'> {
+export function parseXeroProfitAndLoss(report: unknown): ProfitAndLossSnapshot {
   const r = report as {
     Reports?: Array<{
       Fields?: Array<{ Id?: string; Value?: string }>;
@@ -229,7 +271,7 @@ export function parseXeroProfitAndLoss(report: unknown): Omit<ImportedFinancials
  * QuickBooks reports/ProfitAndLoss: nested Rows with group summaries; the
  * Income group's Summary row and the top-level NetIncome row carry totals.
  */
-export function parseQuickBooksProfitAndLoss(report: unknown): Omit<ImportedFinancials, 'provider'> {
+export function parseQuickBooksProfitAndLoss(report: unknown): ProfitAndLossSnapshot {
   const r = report as {
     Header?: { StartPeriod?: string; EndPeriod?: string; Currency?: string };
     Rows?: { Row?: QboRow[] };
@@ -262,11 +304,170 @@ export function parseQuickBooksProfitAndLoss(report: unknown): Omit<ImportedFina
   };
 }
 
-export async function fetchFinancials(
+// ── Balance sheets ───────────────────────────────────────────────────────────
+
+const EMPTY_BALANCE_SHEET: ImportedBalanceSheet = {
+  as_of: null,
+  total_assets_cents: null,
+  total_liabilities_cents: null,
+  total_equity_cents: null,
+  current_assets_cents: null,
+  current_liabilities_cents: null,
+  cash_cents: null,
+};
+
+/**
+ * Subtotal labels, matched against whatever the provider calls the row.
+ *
+ * Matching on the *label* rather than on a section position is what makes this
+ * survive a customised chart of accounts: both providers let a bookkeeper
+ * rename and renest account groups, but nobody renames "Total Assets" —
+ * accountants read these statements too. The patterns are anchored so a
+ * subtotal cannot claim a line meant for a total ("Total Current Assets" must
+ * not answer for "Total Assets", which is why the current-asset pattern is
+ * tested first and the plain one excludes the qualifier).
+ */
+const BALANCE_LINES: Array<{ field: keyof ImportedBalanceSheet; match: RegExp }> = [
+  { field: 'current_assets_cents', match: /^total\s+current\s+assets$/i },
+  { field: 'current_liabilities_cents', match: /^total\s+current\s+liabilities$/i },
+  { field: 'total_assets_cents', match: /^total\s+assets$/i },
+  {
+    field: 'total_liabilities_cents',
+    // Xero says "Total Liabilities"; QuickBooks often only reports
+    // "Total Liabilities and Equity" as a top-level row and puts the
+    // liabilities subtotal one level in — both spellings resolve here, and the
+    // combined row is excluded because it is assets by another name.
+    match: /^total\s+liabilities$/i,
+  },
+  { field: 'total_equity_cents', match: /^(total\s+equity|net\s+assets|total\s+shareholders'?\s+equity)$/i },
+  { field: 'cash_cents', match: /^(total\s+)?(cash(\s+and\s+cash\s+equivalents)?|bank\s+accounts)$/i },
+];
+
+function assignBalanceLine(out: ImportedBalanceSheet, label: string, amount: unknown): void {
+  const trimmed = label.trim();
+  for (const { field, match } of BALANCE_LINES) {
+    if (match.test(trimmed)) {
+      // First match wins: a statement repeating a subtotal (comparative
+      // columns, a consolidated block) should not have the later copy
+      // overwrite the first, which is the one belonging to the primary period.
+      if (out[field] === null) (out[field] as number | null) = toCents(amount);
+      return;
+    }
+  }
+}
+
+/**
+ * `report as {…}` is a lie about anything that is not an object, and `null`
+ * is the one value that makes the very next property read throw. These parsers
+ * are fed provider JSON, so a null body is not hypothetical — it is what a
+ * gateway returns when it has nothing to say.
+ */
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+/** Xero Reports/BalanceSheet — same row-of-sections shape as the P&L. */
+export function parseXeroBalanceSheet(report: unknown): ImportedBalanceSheet {
+  const r = asRecord(report) as {
+    Reports?: Array<{
+      Fields?: Array<{ Id?: string; Value?: string }>;
+      Rows?: Array<{ Rows?: Array<{ Cells?: Array<{ Value?: string }> }> }>;
+    }>;
+  };
+  const root = r.Reports?.[0];
+  const out: ImportedBalanceSheet = { ...EMPTY_BALANCE_SHEET };
+  for (const section of root?.Rows ?? []) {
+    for (const row of section.Rows ?? []) {
+      assignBalanceLine(out, row.Cells?.[0]?.Value ?? '', row.Cells?.[1]?.Value);
+    }
+  }
+  const fields = Object.fromEntries((root?.Fields ?? []).map((f) => [f.Id, f.Value]));
+  // A balance sheet is a point in time, so the report's ToDate is its date.
+  out.as_of = (fields.ToDate as string | undefined) ?? (fields.FromDate as string | undefined) ?? null;
+  return out;
+}
+
+/** QuickBooks reports/BalanceSheet — nested Rows whose Summary rows carry totals. */
+export function parseQuickBooksBalanceSheet(report: unknown): ImportedBalanceSheet {
+  interface QboRow {
+    group?: string;
+    Summary?: { ColData?: Array<{ value?: string }> };
+    Rows?: { Row?: QboRow[] };
+  }
+  const r = asRecord(report) as { Header?: { EndPeriod?: string }; Rows?: { Row?: QboRow[] } };
+  const out: ImportedBalanceSheet = { ...EMPTY_BALANCE_SHEET };
+
+  const walk = (rows: QboRow[] | undefined) => {
+    for (const row of rows ?? []) {
+      const cols = row.Summary?.ColData;
+      if (cols && cols.length > 0) {
+        assignBalanceLine(out, cols[0]?.value ?? '', cols.at(-1)?.value);
+      }
+      walk(row.Rows?.Row);
+    }
+  };
+  walk(r.Rows?.Row);
+  out.as_of = r.Header?.EndPeriod ?? null;
+  return out;
+}
+
+/** Did the parse find anything worth keeping? */
+function hasAnyBalance(sheet: ImportedBalanceSheet): boolean {
+  return (Object.keys(EMPTY_BALANCE_SHEET) as Array<keyof ImportedBalanceSheet>)
+    .filter((k) => k !== 'as_of')
+    .some((k) => sheet[k] !== null);
+}
+
+/**
+ * Pull and parse the balance sheet.
+ *
+ * Separate from `fetchFinancials` so it can be tested against a provider
+ * fixture on its own, and so the P&L path is unchanged when this throws.
+ */
+export async function fetchBalanceSheet(
   provider: AccountingProvider,
   tokens: { accessToken: string; externalOrgId: string | null },
   fetchFn: FetchFn = fetch,
-): Promise<ImportedFinancials> {
+): Promise<ImportedBalanceSheet> {
+  const label = PROVIDER_LABELS[provider];
+  if (provider === 'xero') {
+    const res = await withDeadline(label, IMPORT_TIMEOUT_MS, (signal) =>
+      fetchFn('https://api.xero.com/api.xro/2.0/Reports/BalanceSheet', {
+        headers: {
+          authorization: `Bearer ${tokens.accessToken}`,
+          accept: 'application/json',
+          ...(tokens.externalOrgId ? { 'xero-tenant-id': tokens.externalOrgId } : {}),
+        },
+        signal,
+      }),
+    );
+    if (!res.ok) throw new Error(`Xero balance sheet fetch failed (${res.status})`);
+    return parseXeroBalanceSheet(await readJson(res, label));
+  }
+  if (provider === 'quickbooks') {
+    const realmId = tokens.externalOrgId;
+    if (!realmId) throw new Error('QuickBooks connection is missing its realm id');
+    const res = await withDeadline(label, IMPORT_TIMEOUT_MS, (signal) =>
+      fetchFn(
+        `https://quickbooks.api.intuit.com/v3/company/${encodeURIComponent(realmId)}/reports/BalanceSheet`,
+        {
+          headers: { authorization: `Bearer ${tokens.accessToken}`, accept: 'application/json' },
+          signal,
+        },
+      ),
+    );
+    if (!res.ok) throw new Error(`QuickBooks balance sheet fetch failed (${res.status})`);
+    return parseQuickBooksBalanceSheet(await readJson(res, label));
+  }
+  throw new Error(`${label} balance sheet import is not supported yet`);
+}
+
+/** The P&L half of an import. Its failure fails the import. */
+async function fetchProfitAndLoss(
+  provider: AccountingProvider,
+  tokens: { accessToken: string; externalOrgId: string | null },
+  fetchFn: FetchFn = fetch,
+): Promise<ProfitAndLossSnapshot & { provider: AccountingProvider }> {
   if (provider === 'xero') {
     const res = await withDeadline(PROVIDER_LABELS[provider], IMPORT_TIMEOUT_MS, (signal) =>
       fetchFn('https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss', {
@@ -302,4 +503,47 @@ export async function fetchFinancials(
     };
   }
   throw new Error(`${PROVIDER_LABELS[provider]} import is not supported yet`);
+}
+
+/**
+ * Both statements, in one import.
+ *
+ * The P&L runs first and unguarded: it drives the revenue params and the
+ * revenue-stage flag, so an import that cannot read it has failed and the
+ * caller needs to know. The balance sheet is then attempted separately and its
+ * failure is *recorded, not raised* — an org that has never run a balance
+ * sheet, or names its subtotals unusually, should still get the revenue
+ * import it asked for rather than an error page. `balance_sheet_error`
+ * carries the reason so the reason is visible rather than inferred from a
+ * null.
+ *
+ * Sequential rather than parallel on purpose: two concurrent report calls
+ * against the same token are the shape that trips both providers' per-app
+ * rate limits, and the balance sheet is worthless if the P&L already failed.
+ */
+export async function fetchFinancials(
+  provider: AccountingProvider,
+  tokens: { accessToken: string; externalOrgId: string | null },
+  fetchFn: FetchFn = fetch,
+): Promise<ImportedFinancials> {
+  const pl = await fetchProfitAndLoss(provider, tokens, fetchFn);
+  try {
+    const sheet = await fetchBalanceSheet(provider, tokens, fetchFn);
+    return {
+      ...pl,
+      // An all-null parse is a shape we did not recognise, not a company with
+      // no assets. Reporting it as a balance sheet of nulls would put six
+      // blank rows in front of an analyst with no hint that a parse ran.
+      balance_sheet: hasAnyBalance(sheet) ? sheet : null,
+      balance_sheet_error: hasAnyBalance(sheet)
+        ? null
+        : 'The balance sheet was retrieved but no recognised subtotals were found.',
+    };
+  } catch (err) {
+    return {
+      ...pl,
+      balance_sheet: null,
+      balance_sheet_error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }

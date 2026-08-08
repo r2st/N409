@@ -3,7 +3,14 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
-import type { ValuationKind } from '../domain/valuation.js';
+import {
+  addonFlags,
+  EXPRESS_DELIVERY_DAYS,
+  priceForKind as priceForKindImpl,
+  quoteLines,
+  quotePrice as quotePriceImpl,
+  type AddonSelection,
+} from '../domain/pricing.js';
 import { findValuationById, patchValuation, type ValuationRow } from '../repos/valuations.js';
 import {
   createPayment,
@@ -41,18 +48,18 @@ import { BILLING_ALERT_ROLES } from '../domain/roles.js';
  * — the webhook is the source of truth, never the browser redirect.
  */
 
-/** List price per product kind, cents. Ops can override per checkout. */
-export const DEFAULT_PRICE_CENTS: Partial<Record<ValuationKind, number>> = {
-  '409a': 119_000,
-  fmv: 99_000,
-  '718': 149_000,
-  '820': 149_000,
-};
-export const FALLBACK_PRICE_CENTS = 99_000;
-
-export function priceForKind(kind: string): number {
-  return DEFAULT_PRICE_CENTS[kind as ValuationKind] ?? FALLBACK_PRICE_CENTS;
-}
+/**
+ * Prices live in domain/pricing.ts, which the public calculator reads too.
+ * Re-exported here because every caller and test in the service already knows
+ * this module as the place the number comes from.
+ */
+export {
+  DEFAULT_PRICE_CENTS,
+  FALLBACK_PRICE_CENTS,
+  priceForKind,
+  quotePrice,
+  RAISE_BANDS,
+} from '../domain/pricing.js';
 
 const paymentsUnavailable = (detail: string) =>
   new ApiProblem({
@@ -88,6 +95,11 @@ const CheckoutBody = z
   .object({
     // Ops-only override; clients always pay list price.
     amount_cents: z.number().int().positive().max(10_000_000).optional(),
+    // Add-ons the client picked. Priced by domain/pricing.ts, never by the
+    // browser — the amount is recomputed here from the flags, so a tampered
+    // total cannot buy express delivery for nothing.
+    express: z.boolean().optional(),
+    qsbs_letter: z.boolean().optional(),
   })
   .default({});
 
@@ -132,17 +144,27 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       if (!parsed.success) {
         throw problems.unprocessable('Invalid checkout', { errors: parsed.error.issues });
       }
-      const amountCents =
-        isOps(principal) && parsed.data.amount_cents
-          ? parsed.data.amount_cents
-          : priceForKind(valuation.kind);
+      // The quote is computed from the flags on every checkout, never taken
+      // from the client. `amount_cents` remains an ops-only override and now
+      // replaces the *total*: an ops-agreed price is a negotiated figure, and
+      // adding a band uplift on top of one would silently overcharge.
+      const quote = quotePriceImpl({
+        kind: valuation.kind,
+        amountRaisedCents: valuation.amount_raised_cents,
+        addons: parsed.data as AddonSelection,
+      });
+      const override = isOps(principal) ? parsed.data.amount_cents : undefined;
+      const amountCents = override ?? quote.amount_cents;
+      const flags = addonFlags(quote);
 
       const base = deps.publicBaseUrl.replace(/\/$/, '');
       let session;
       try {
         session = await createCheckoutSession(deps.stripeSecretKey, {
           valuationId: valuation.id,
-          productName: `${valuation.kind.toUpperCase()} valuation — ${valuation.company_name}`,
+          productName:
+            `${valuation.kind.toUpperCase()} valuation — ${valuation.company_name}` +
+            (quote.addons.length > 0 ? ` (${quote.addons.map((a) => a.label).join(', ')})` : ''),
           amountCents,
           currency: valuation.currency || 'USD',
           successUrl: `${base}/payment/success?valuation=${valuation.id}`,
@@ -163,8 +185,17 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         currency: valuation.currency || 'USD',
         checkoutUrl: session.url,
         createdBy: principal.id,
+        express: flags.express,
+        qsbsLetter: flags.qsbs_letter,
+        // An ops override replaces the total, so the itemisation it came from
+        // would not add up to what was charged. Recording the override as its
+        // own single line keeps the breakdown honest about that.
+        priceBreakdown:
+          override === undefined
+            ? quoteLines(quote)
+            : [{ key: 'agreed', label: 'Agreed price', amount_cents: override }],
       });
-      return reply.status(201).send({ payment, checkout_url: session.url });
+      return reply.status(201).send({ payment, checkout_url: session.url, quote });
     },
   );
 
@@ -175,16 +206,30 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     return { payments: await listPayments(deps.pool, id) };
   });
 
-  // Price transparency: what "Pay now" will charge, before opening Stripe.
+  /**
+   * Price transparency: what "Pay now" will charge, before opening Stripe.
+   *
+   * Add-ons come in as query flags so the pay screen can re-quote as the
+   * client ticks the boxes without creating anything. The same
+   * `quotePrice` call backs this and the checkout, so the figure shown is by
+   * construction the figure charged — the two cannot disagree.
+   */
   app.get('/api/v1/valuations/:id/payments/quote', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorized(deps.pool, principal, id);
+    const q = req.query as Record<string, unknown>;
+    const flag = (name: string) => q[name] === 'true' || q[name] === '1' || q[name] === true;
+    const quote = quotePriceImpl({
+      kind: valuation.kind,
+      amountRaisedCents: valuation.amount_raised_cents,
+      addons: { express: flag('express'), qsbs_letter: flag('qsbs_letter') },
+    });
     return {
       quote: {
-        amount_cents: priceForKind(valuation.kind),
+        ...quote,
+        lines: quoteLines(quote),
         currency: valuation.currency || 'USD',
-        kind: valuation.kind,
         // false → the UI shows the invoice-fallback messaging up front.
         configured: Boolean(deps.stripeSecretKey),
       },
@@ -204,9 +249,13 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     return {
       billing: {
         payments,
+        // Quoted at the band, so the pay-now call-to-action shows the price
+        // the checkout will actually open with rather than the entry price.
         unpaid_valuations: unpaid.map((v) => ({
           ...v,
-          amount_cents: priceForKind(v.kind),
+          amount_cents: quotePriceImpl({ kind: v.kind, amountRaisedCents: v.amount_raised_cents })
+            .amount_cents,
+          base_cents: priceForKindImpl(v.kind),
         })),
         // Net of refunds and lost chargebacks. Summing the 'succeeded' rows
         // gross, as this did, told a refunded client they had paid us money
@@ -470,6 +519,13 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
               amount_cents: amount,
               paid_at: new Date(),
               ...(advancing ? { state: 'paid' } : {}),
+              // Express is a promise that only starts costing us once the
+              // money is in, so the SLA moves here and not at checkout — an
+              // abandoned or bounced express order must not leave a
+              // one-business-day due date on an unpaid engagement. Written
+              // through patchValuation so the change lands in the audit trail
+              // attributed to Stripe, like the paid fields beside it.
+              ...(payment.express ? { delivery_days: EXPRESS_DELIVERY_DAYS } : {}),
             },
             { actorType: 'system', source: 'stripe' },
           );

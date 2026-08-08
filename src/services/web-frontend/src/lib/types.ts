@@ -490,11 +490,34 @@ export interface Payment {
   updated_at: string;
 }
 
+export interface QuoteLine {
+  key: string;
+  label: string;
+  amount_cents: number;
+}
+
+export interface RaiseBand {
+  key: string;
+  label: string;
+  max_cents: number | null;
+  uplift_cents: number;
+}
+
 export interface PaymentQuote {
   amount_cents: number;
   currency: string;
   kind: ValuationKind;
   configured: boolean;
+  /** Entry price for the kind, before the band and any add-on. */
+  base_cents: number;
+  band: RaiseBand;
+  band_uplift_cents: number;
+  addons: QuoteLine[];
+  /** Itemised: entry price, band uplift, each add-on. Sums to amount_cents. */
+  lines: QuoteLine[];
+  delivery_days: number;
+  /** Asked for and refused, with the reason — shown, not silently dropped. */
+  unavailable_addons: Array<{ key: string; reason: string }>;
 }
 
 // ── P1 #6 — Review workflow ──────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import type { ReportPdfSection } from '@n409/report/pdf';
 import type { CalculationRow } from '../repos/calculations.js';
 import { formatCurrency, formatPercent, num } from './reportSummary.js';
 import type { ExhibitContext } from './reportExhibits.js';
+import type { HmrcForm } from './hmrcForms.js';
 
 /**
  * Render-time schedules for the specialty report types — the same contract
@@ -301,6 +302,63 @@ function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext)
         )
       : null,
   ]);
+}
+
+/**
+ * The VAL231 / VAL230 data pack, as an appendix to the EMI or CSOP report.
+ *
+ * Three things this does that a plain table would not:
+ *
+ * It prints unanswered required fields as an explicit "Not supplied" in the
+ * value column instead of leaving the cell empty. A blank cell in a printed
+ * table reads as "nothing to declare"; HMRC reads it as an incomplete form and
+ * sends it back. The reader has to be able to tell the two apart at a glance.
+ *
+ * It leads with the outstanding list when anything is missing, because the
+ * appendix is worked through top to bottom and the reader needs to know before
+ * they start whether this pack is ready to go.
+ *
+ * It says on its face that this is not HMRC's form. The pack carries our
+ * layout and every figure the real form asks for, which is precisely why it
+ * has to disclaim being the thing it resembles — otherwise it is the artefact
+ * a client submits by mistake.
+ */
+export function hmrcFormExhibit(form: HmrcForm): ReportPdfSection {
+  const rows = (fields: HmrcForm['sections'][number]['fields']) =>
+    fields.map((f) => [
+      esc(f.label) + (f.required ? ' <strong>*</strong>' : ''),
+      f.value === null
+        ? `<em>Not supplied${f.required ? ' — required' : ''}</em>`
+        : esc(f.value).replace(/\n+/g, '<br />'),
+      f.note ? esc(f.note) : '',
+    ]);
+
+  const outstanding =
+    form.missing_required.length > 0
+      ? P(
+          `<strong>This pack is not yet complete.</strong> HMRC will not process the form ` +
+            `without: ${form.missing_required.map((m) => esc(m)).join('; ')}.`,
+        )
+      : P('Every field this form requires has been answered.');
+
+  return {
+    heading: `Appendix — ${form.code}: HMRC valuation agreement request`,
+    html:
+      P(esc(form.title)) +
+      P(
+        'The figures and particulars below are supplied to complete the HMRC Shares and Assets ' +
+          'Valuation request for this grant. <strong>This appendix is a data pack, not the form ' +
+          'itself</strong> — the form must be obtained from HMRC and submitted by the company or ' +
+          'its agent. Fields marked * are required.',
+      ) +
+      outstanding +
+      form.sections
+        .map(
+          (s) =>
+            `<h3>${esc(s.title)}</h3>` + table({ head: ['Field', 'Value', 'Note'], rows: rows(s.fields) }),
+        )
+        .join(''),
+  };
 }
 
 // ── IP (single intangible) ───────────────────────────────────────────────────

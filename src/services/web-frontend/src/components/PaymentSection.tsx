@@ -14,13 +14,23 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [quote, setQuote] = useState<PaymentQuote | null>(null);
+  const [express, setExpress] = useState(false);
+  const [qsbsLetter, setQsbsLetter] = useState(false);
 
   const unpaid = valuation.paid_status === 'unpaid';
 
+  // Re-quoted on every tick, from the same `quotePrice` the checkout uses, so
+  // the figure on the button is by construction the figure Stripe charges.
+  // Computing the add-on total in the browser would let the two disagree the
+  // first time a price moves.
   useEffect(() => {
     if (!unpaid) return;
     let cancelled = false;
-    void api<{ quote: PaymentQuote }>(`/valuations/${valuation.id}/payments/quote`)
+    const query = new URLSearchParams({
+      express: String(express),
+      qsbs_letter: String(qsbsLetter),
+    });
+    void api<{ quote: PaymentQuote }>(`/valuations/${valuation.id}/payments/quote?${query}`)
       .then((res) => {
         if (!cancelled) setQuote(res.quote);
       })
@@ -30,7 +40,7 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
     return () => {
       cancelled = true;
     };
-  }, [valuation.id, unpaid]);
+  }, [valuation.id, unpaid, express, qsbsLetter]);
 
   if (!unpaid) return null;
 
@@ -40,7 +50,9 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
     try {
       const { checkout_url } = await api<{ checkout_url: string }>(
         `/valuations/${valuation.id}/payments/checkout`,
-        { method: 'POST', body: {} },
+        // Flags, not the total: the server prices them. A tampered amount
+        // cannot buy express delivery for nothing.
+        { method: 'POST', body: { express, qsbs_letter: qsbsLetter } },
       );
       window.location.assign(checkout_url);
     } catch (err) {
@@ -55,6 +67,11 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
     }
   };
 
+  // The QSBS letter is already inside a QSBS engagement, so the server refuses
+  // to charge for it. Hiding the checkbox is better than offering one that
+  // silently does nothing.
+  const qsbsAddonApplies = valuation.kind !== 'qsbs';
+
   return (
     <section className="rounded-lg border border-amber-200 bg-amber-50 p-6 shadow-card">
       <h2 className="overline mb-2 text-amber-800">Payment</h2>
@@ -63,15 +80,71 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-4">
-        <p className="text-sm text-amber-900">
-          This valuation is unpaid. Work starts once payment is received.
-        </p>
-        {quote && (
-          <p className="tnum text-lg font-semibold text-amber-900" data-testid="payment-quote">
-            {formatMoney(quote.amount_cents, quote.currency)}
-          </p>
+      <p className="text-sm text-amber-900">
+        This valuation is unpaid. Work starts once payment is received.
+      </p>
+
+      <div className="mt-4 space-y-2">
+        <label className="flex cursor-pointer items-start gap-2 text-sm text-amber-900">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={express}
+            onChange={(e) => setExpress(e.target.checked)}
+            data-testid="addon-express"
+          />
+          <span>
+            <span className="font-semibold">Express delivery</span> — final report in 1 business day instead
+            of 7.
+          </span>
+        </label>
+        {qsbsAddonApplies && (
+          <label className="flex cursor-pointer items-start gap-2 text-sm text-amber-900">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={qsbsLetter}
+              onChange={(e) => setQsbsLetter(e.target.checked)}
+              data-testid="addon-qsbs"
+            />
+            <span>
+              <span className="font-semibold">QSBS attestation letter</span> — documentation supporting your
+              §1202 qualified-small-business stock position.
+            </span>
+          </label>
         )}
+      </div>
+
+      {/* Itemised, because a single total is the number a client disputes.
+          The band line only appears when the raise actually moved the price.
+
+          `lines` and `delivery_days` are read defensively: during a rolling
+          deploy this page can be served by a build newer than the API, and a
+          quote without the new fields must degrade to a bare total rather than
+          throw and blank the panel a client is trying to pay from. */}
+      {quote && (
+        <dl className="mt-4 border-t border-amber-200 pt-3 text-sm" data-testid="quote-lines">
+          {(quote.lines ?? []).map((line) => (
+            <div key={line.key} className="flex justify-between py-0.5 text-amber-900">
+              <dt>{line.label}</dt>
+              <dd className="tnum">{formatMoney(line.amount_cents, quote.currency)}</dd>
+            </div>
+          ))}
+          <div className="mt-2 flex justify-between border-t border-amber-200 pt-2 font-semibold text-amber-900">
+            <dt>Total</dt>
+            <dd className="tnum text-lg" data-testid="payment-quote">
+              {formatMoney(quote.amount_cents, quote.currency)}
+            </dd>
+          </div>
+          {typeof quote.delivery_days === 'number' && (
+            <p className="mt-2 text-xs text-amber-800">
+              Final report in {quote.delivery_days} business {quote.delivery_days === 1 ? 'day' : 'days'}.
+            </p>
+          )}
+        </dl>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-4">
         {quote && !quote.configured ? (
           <p className="ml-auto text-sm text-amber-800">
             Online payment is not available yet — we will invoice you instead.

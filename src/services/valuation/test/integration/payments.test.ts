@@ -2,6 +2,12 @@ import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPayment, findPaymentBySessionId } from '../../src/repos/payments.js';
 import { priceForKind } from '../../src/routes/payments.js';
+import {
+  EXPRESS_DELIVERY_CENTS,
+  EXPRESS_DELIVERY_DAYS,
+  QSBS_LETTER_CENTS,
+  STANDARD_DELIVERY_DAYS,
+} from '../../src/domain/pricing.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -54,12 +60,49 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
         headers: authHeader(ops.token),
       });
       expect(res.statusCode).toBe(200);
-      expect(res.json().quote).toEqual({
-        amount_cents: priceForKind('409a'),
-        currency: 'USD',
+      const quote = res.json().quote;
+      // A valuation with no raise recorded is quoted at the entry band, so the
+      // total is still the bare list price.
+      expect(quote).toMatchObject({
         kind: '409a',
+        base_cents: priceForKind('409a'),
+        amount_cents: priceForKind('409a'),
+        band_uplift_cents: 0,
+        addons: [],
+        unavailable_addons: [],
+        delivery_days: STANDARD_DELIVERY_DAYS,
+        currency: 'USD',
         configured: false, // STRIPE_SECRET_KEY unset in this app
       });
+      expect(quote.band.key).toBe('under_1m');
+      expect(quote.lines).toEqual([
+        { key: 'base', label: '409A valuation', amount_cents: priceForKind('409a') },
+      ]);
+    });
+
+    it('re-quotes add-ons from query flags, itemised, without creating anything', async () => {
+      const vid = await createValuation('Quote Addon Co');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/quote?express=true&qsbs_letter=1`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const quote = res.json().quote;
+      expect(quote.amount_cents).toBe(priceForKind('409a') + EXPRESS_DELIVERY_CENTS + QSBS_LETTER_CENTS);
+      expect(quote.delivery_days).toBe(EXPRESS_DELIVERY_DAYS);
+      expect(quote.addons.map((a: { key: string }) => a.key)).toEqual(['express', 'qsbs_letter']);
+      // The breakdown adds up to the total it is a breakdown of.
+      expect(quote.lines.reduce((s: number, l: { amount_cents: number }) => s + l.amount_cents, 0)).toBe(
+        quote.amount_cents,
+      );
+      // Quoting is read-only.
+      const list = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments`,
+        headers: authHeader(ops.token),
+      });
+      expect(list.json().payments).toEqual([]);
     });
 
     it('is valuation-scoped: out-of-scope client sees 404', async () => {

@@ -1204,19 +1204,40 @@ export const EXPRESS_DELIVERY_CENTS = 50_000;
 export const QSBS_ADDON_CENTS = 50_000;
 export const EXPRESS_DELIVERY_DAYS = 1;
 
+/**
+ * Capital-raised bands — the public mirror of the valuation service's
+ * `domain/pricing.ts` RAISE_BANDS. Keep the uplifts identical: this is the
+ * quote a prospect reads before signing up, and the checkout recomputes it
+ * server-side from the same ladder. A drift here is a customer configuring
+ * one price on /pricing and being charged another at the Stripe page.
+ */
+export const RAISE_BANDS: Array<{ label: string; upliftCents: number }> = [
+  { label: 'Under $1M', upliftCents: 0 },
+  { label: '$1M – $5M', upliftCents: 50_000 },
+  { label: '$5M – $10M', upliftCents: 110_000 },
+  { label: '$10M – $20M', upliftCents: 170_000 },
+  { label: '$20M+', upliftCents: 230_900 },
+];
+
 export function quote(
   product: Product,
-  opts: { express: boolean; qsbsLetter: boolean },
+  opts: { express: boolean; qsbsLetter: boolean; raiseBand?: number },
 ): {
   totalCents: number;
   deliveryDays: number;
+  bandUpliftCents: number;
 } {
-  let totalCents = product.priceCents;
+  // Clamped rather than trusted: the slider is the only caller today, but an
+  // out-of-range index would otherwise quote NaN on the page a prospect reads.
+  const index = Math.min(Math.max(Math.trunc(opts.raiseBand ?? 0), 0), RAISE_BANDS.length - 1);
+  const bandUpliftCents = RAISE_BANDS[index]!.upliftCents;
+  let totalCents = product.priceCents + bandUpliftCents;
   if (opts.express) totalCents += EXPRESS_DELIVERY_CENTS;
   if (opts.qsbsLetter && product.kind !== 'qsbs') totalCents += QSBS_ADDON_CENTS;
   return {
     totalCents,
     deliveryDays: opts.express ? EXPRESS_DELIVERY_DAYS : product.deliveryDays,
+    bandUpliftCents,
   };
 }
 

@@ -7,6 +7,7 @@ import {
   sanitizeHtml,
   templateForKind,
 } from '../../src/domain/report.js';
+import { VALUATION_KINDS } from '../../src/domain/valuation.js';
 
 describe('sanitizeHtml', () => {
   it('keeps whitelisted structure and drops all attributes', () => {
@@ -77,44 +78,44 @@ describe('sanitizeHtml', () => {
 describe('report templates', () => {
   it('registers the 409a.v55 and generic templates', () => {
     expect(REPORT_TEMPLATES.has('409a.v55')).toBe(true);
-    expect(REPORT_TEMPLATES.has('generic.v1')).toBe(true);
+    expect(REPORT_TEMPLATES.has('generic.v2')).toBe(true);
   });
 
   it('selects 409a.v55 for 409a and generic for the workbook-first kinds', () => {
     expect(templateForKind('409a').version).toBe('409a.v55');
-    expect(templateForKind('fund').version).toBe('generic.v1');
-    expect(templateForKind('debt').version).toBe('generic.v1');
+    expect(templateForKind('fund').version).toBe('generic.v2');
+    expect(templateForKind('debt').version).toBe('generic.v2');
   });
 
   it('selects a dedicated skeleton for each specialty report type', () => {
-    expect(templateForKind('qsbs').version).toBe('qsbs.v1');
-    expect(templateForKind('ppa').version).toBe('ppa.v1');
-    expect(templateForKind('goodwill').version).toBe('impairment.v1');
-    expect(templateForKind('esop').version).toBe('esop.v1');
-    expect(templateForKind('fmv').version).toBe('smb.v1');
-    expect(templateForKind('emi').version).toBe('emi.v1');
-    expect(templateForKind('csop').version).toBe('csop.v1');
-    expect(templateForKind('ip').version).toBe('ip.v1');
-    expect(templateForKind('718').version).toBe('718.v1');
-    expect(templateForKind('820').version).toBe('820.v1');
-    expect(templateForKind('gifts').version).toBe('gifts.v1');
-    expect(templateForKind('ifrs2').version).toBe('ifrs2.v1');
+    expect(templateForKind('qsbs').version).toBe('qsbs.v2');
+    expect(templateForKind('ppa').version).toBe('ppa.v2');
+    expect(templateForKind('goodwill').version).toBe('impairment.v2');
+    expect(templateForKind('esop').version).toBe('esop.v2');
+    expect(templateForKind('fmv').version).toBe('smb.v2');
+    expect(templateForKind('emi').version).toBe('emi.v2');
+    expect(templateForKind('csop').version).toBe('csop.v2');
+    expect(templateForKind('ip').version).toBe('ip.v2');
+    expect(templateForKind('718').version).toBe('718.v2');
+    expect(templateForKind('820').version).toBe('820.v2');
+    expect(templateForKind('gifts').version).toBe('gifts.v2');
+    expect(templateForKind('ifrs2').version).toBe('ifrs2.v2');
   });
 
   it('registers every specialty skeleton in the registry under its version', () => {
     for (const version of [
-      'qsbs.v1',
-      'ppa.v1',
-      'impairment.v1',
-      'esop.v1',
-      'smb.v1',
-      'emi.v1',
-      'csop.v1',
-      'ip.v1',
-      '718.v1',
-      '820.v1',
-      'gifts.v1',
-      'ifrs2.v1',
+      'qsbs.v2',
+      'ppa.v2',
+      'impairment.v2',
+      'esop.v2',
+      'smb.v2',
+      'emi.v2',
+      'csop.v2',
+      'ip.v2',
+      '718.v2',
+      '820.v2',
+      'gifts.v2',
+      'ifrs2.v2',
     ]) {
       expect(REPORT_TEMPLATES.has(version), version).toBe(true);
     }
@@ -190,6 +191,66 @@ describe('report templates', () => {
         expect(section.html.length, section.key).toBeGreaterThan(0);
       }
     }
+  });
+
+  /**
+   * Closing-block parity. Before withClosingSections, only 409A and gifts
+   * carried a certification: twelve report types went out as signed valuation
+   * opinions with nothing after the conclusion. This is the guarantee that
+   * cannot regress when a fourteenth report type is added.
+   */
+  it('closes every registered template with the same four sections', () => {
+    for (const template of REPORT_TEMPLATES.values()) {
+      const keys = new Set(template.sections.map((s) => s.key));
+      for (const required of ['limiting_conditions', 'certification', 'qualifications', 'exhibit_index']) {
+        expect(keys.has(required), `${template.version} is missing ${required}`).toBe(true);
+      }
+    }
+  });
+
+  it('closes every valuation kind, not just the ones in the registry', () => {
+    for (const kind of VALUATION_KINDS) {
+      const keys = new Set(templateForKind(kind).sections.map((s) => s.key));
+      expect(keys.has('certification'), `${kind} has no certification page`).toBe(true);
+      expect(keys.has('limiting_conditions'), `${kind} has no limiting conditions`).toBe(true);
+    }
+  });
+
+  it('leaves a template that authored its own closing section alone', () => {
+    // The shared block is a floor, not an override: 409A keeps its
+    // §409A-specific certification and its enumerated Exhibit A–H index.
+    const a409 = templateForKind('409a');
+    expect(a409.sections.find((s) => s.key === 'certification')!.html).toContain(
+      'No one provided significant professional assistance',
+    );
+    expect(a409.sections.find((s) => s.key === 'exhibit_index')!.html).toContain('Exhibit A');
+    // A template that got the shared index instead does not claim exhibits it
+    // may not have — the specialty schedules vary by engine and by run.
+    expect(templateForKind('qsbs').sections.find((s) => s.key === 'exhibit_index')!.html).not.toContain(
+      'Exhibit A',
+    );
+  });
+
+  it('puts the certification after the conclusion, never before it', () => {
+    for (const kind of VALUATION_KINDS) {
+      const keys = templateForKind(kind).sections.map((s) => s.key);
+      const conclusion = keys.indexOf('conclusion');
+      if (conclusion === -1) continue;
+      expect(keys.indexOf('certification'), kind).toBeGreaterThan(conclusion);
+    }
+  });
+
+  it('names the company in the certification once instantiated', () => {
+    const content = instantiateTemplate(templateForKind('esop'), {
+      company_name: 'Acme Holdings',
+      kind: 'esop',
+      valuation_ref: 'ref',
+      date: '2026-07-06',
+      currency: 'USD',
+    });
+    const cert = content.sections.find((s) => s.key === 'certification');
+    expect(cert?.html).toContain('Acme Holdings');
+    expect(cert?.html).not.toContain('{{');
   });
 
   it('carries the sections an auditor reviewing a 409A expects to find', () => {

@@ -16,6 +16,8 @@ only way N409 collects money.
 | Surface | Where | State |
 |---|---|---|
 | One-off per-valuation Checkout | `routes/payments.ts` | Built, tested |
+| Tiered pricing by capital raised | `domain/pricing.ts` | Built, tested |
+| Express delivery / QSBS letter add-ons | `domain/pricing.ts`, migration `0108` | Built, tested |
 | Recurring subscription Checkout | `routes/billing.ts` | Built, tested |
 | Webhook: payment lifecycle | `POST /api/v1/stripe/webhook` | Built, signature-verified |
 | Webhook: subscription + invoice lifecycle | `POST /api/v1/billing/webhook` | Built, signature-verified |
@@ -29,6 +31,57 @@ only way N409 collects money.
 
 Verified on the host: `plan_limits` holds `per_valuation`, `annual_retainer`
 and `enterprise`. No data work is outstanding.
+
+## How a one-off engagement is priced
+
+`domain/pricing.ts` is the only place a one-off price is computed. Both the
+public calculator and the checkout read it, so the figure a prospect configures
+on `/pricing` is by construction the figure Stripe is asked to charge.
+
+```
+price = entry price for the kind
+      + uplift for the capital-raised band
+      + £/$500 express delivery, if bought
+      + £/$500 QSBS attestation letter, if bought and not already a QSBS engagement
+```
+
+| Band (`valuations.amount_raised_cents`) | Uplift | 409A |
+|---|---|---|
+| Under $1M — *and any engagement whose raise we do not know* | — | $1,190 |
+| $1M – $5M | +$500 | $1,690 |
+| $5M – $10M | +$1,100 | $2,290 |
+| $10M – $20M | +$1,700 | $2,890 |
+| $20M+ | +$2,309 | **$3,499** |
+
+One uplift ladder applies to every product: the increment is a property of the
+company (more securities, more rounds, more diligence), not of the deliverable,
+so a new report type is priced correctly the day it is added with a single
+entry in `DEFAULT_PRICE_CENTS`.
+
+**An unknown raise is the entry band, not the top one.** Most engagements have
+no `amount_raised_cents` at the point of payment. Guessing high overcharges a
+seed company for a fact we failed to collect; guessing low undercharges a
+late-stage one who can be re-quoted once the cap table lands.
+
+**409.ai's published ladder starts at $899; ours starts at $1,190.** That is
+deliberate, not an oversight — $1,190 is what this deployment has always
+charged for a 409A, it is what `plan_limits` is seeded with, it is what the
+marketing copy quotes, and `test/integration/planPricing.test.ts` asserts the
+three agree. Dropping the flagship entry price 24% is a commercial decision.
+To make it, change `DEFAULT_PRICE_CENTS['409a']` to `89_900`, move the
+`plan_limits` seed and the marketing figures with it, and re-tune the top band
+uplift if $3,499 is still the intended ceiling.
+
+Ops can still override the total per checkout (`amount_cents` on the checkout
+body, ops-only). An override **replaces** the whole quote rather than adding to
+it — an agreed price is a negotiated figure, and stacking a band uplift on top
+of one would silently overcharge — and it is recorded as a single
+`Agreed price` line in `payments.price_breakdown` so the itemisation still adds
+up to what was charged.
+
+Express delivery moves `valuations.delivery_days` to 1, and it does so **on
+settlement, not at checkout**: an abandoned or bounced express order must not
+leave a one-business-day due date on an unpaid engagement.
 
 ## What production is missing
 

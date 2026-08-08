@@ -31,6 +31,8 @@ export interface ValuationRow {
   paid_status: PaidStatus;
   qsbs_attestation: boolean | null;
   delivery_days: number | null;
+  /** bigint — pg hands it back as a string. Drives the pricing band. */
+  amount_raised_cents: string | number | null;
   assigned_reviewer_id: string | null;
   /** Per-valuation auto-pipeline opt-out (migration 0049). */
   auto_pipeline: boolean;

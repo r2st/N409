@@ -95,6 +95,108 @@ describe('PaymentSection (price transparency before checkout)', () => {
   });
 });
 
+/**
+ * The tiered quote. The panel never adds up the price itself — it sends the
+ * flags and renders whatever the server quotes, because the server is what
+ * Stripe is asked to charge.
+ */
+describe('PaymentSection add-ons and the itemised quote', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  /** A server that prices the flags, the way domain/pricing.ts does. */
+  const pricingServer = () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/payments/quote')) {
+        calls.push(url);
+        const q = new URL(url, 'https://x').searchParams;
+        const express = q.get('express') === 'true';
+        const qsbs = q.get('qsbs_letter') === 'true';
+        const lines = [
+          { key: 'base', label: '409A valuation', amount_cents: 119_000 },
+          { key: 'band', label: '$5M – $10M raised', amount_cents: 110_000 },
+          ...(express
+            ? [{ key: 'express', label: 'Express delivery — 1 business day', amount_cents: 50_000 }]
+            : []),
+          ...(qsbs ? [{ key: 'qsbs_letter', label: 'QSBS attestation letter', amount_cents: 50_000 }] : []),
+        ];
+        return jsonResponse({
+          quote: {
+            ...QUOTE,
+            amount_cents: lines.reduce((s, l) => s + l.amount_cents, 0),
+            lines,
+            delivery_days: express ? 1 : 7,
+          },
+        });
+      }
+      if (url.includes('/payments/checkout')) {
+        calls.push(String(init?.body));
+        return jsonResponse({ checkout_url: 'https://checkout.stripe.test/s' });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    return calls;
+  };
+
+  it('itemises the entry price and the capital-raised band', async () => {
+    pricingServer();
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toHaveTextContent('$2,290.00'));
+    const lines = screen.getByTestId('quote-lines');
+    expect(lines).toHaveTextContent('409A valuation');
+    expect(lines).toHaveTextContent('$5M – $10M raised');
+  });
+
+  it('re-quotes from the server when express is ticked, and moves the SLA', async () => {
+    const user = userEvent.setup();
+    pricingServer();
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toHaveTextContent('$2,290.00'));
+    expect(screen.getByTestId('quote-lines')).toHaveTextContent('7 business days');
+
+    await user.click(screen.getByTestId('addon-express'));
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toHaveTextContent('$2,790.00'));
+    expect(screen.getByTestId('quote-lines')).toHaveTextContent('1 business day');
+  });
+
+  it('posts the flags, never a total — the browser must not be able to set the price', async () => {
+    const user = userEvent.setup();
+    const calls = pricingServer();
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toBeInTheDocument());
+
+    await user.click(screen.getByTestId('addon-express'));
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toHaveTextContent('$2,790.00'));
+    await user.click(screen.getByRole('button', { name: /pay/i }));
+
+    const body = calls.find((c) => c.startsWith('{'))!;
+    expect(JSON.parse(body)).toEqual({ express: true, qsbs_letter: false });
+    expect(body).not.toContain('amount_cents');
+  });
+
+  it('hides the QSBS add-on on a QSBS engagement', async () => {
+    // The attestation IS the deliverable; the server refuses to charge for it,
+    // so offering a checkbox that does nothing would be worse than hiding it.
+    pricingServer();
+    render(<PaymentSection valuation={{ ...VALUATION, kind: 'qsbs' } as Valuation} />);
+    await waitFor(() => expect(screen.getByTestId('addon-express')).toBeInTheDocument());
+    expect(screen.queryByTestId('addon-qsbs')).not.toBeInTheDocument();
+  });
+
+  it('still shows the total when an older API omits the itemisation', async () => {
+    // A rolling deploy can serve this page from a build newer than the API.
+    // Blanking the panel a client is trying to pay from is the wrong failure.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/payments/quote')) return jsonResponse({ quote: QUOTE });
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toHaveTextContent('$1,190.00'));
+    expect(screen.getByTestId('quote-lines')).not.toHaveTextContent('business day');
+  });
+});
+
 describe('PaymentHistory', () => {
   beforeEach(() => vi.restoreAllMocks());
 

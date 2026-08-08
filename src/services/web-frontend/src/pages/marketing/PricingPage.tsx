@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AUDIT_DEFENCE_RATE_USD, PRICING_FAQ, PRODUCTS, formatUsd, quote } from '../../lib/marketing';
+import {
+  AUDIT_DEFENCE_RATE_USD,
+  PRICING_FAQ,
+  PRODUCTS,
+  RAISE_BANDS,
+  formatUsd,
+  quote,
+} from '../../lib/marketing';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 import { FaqAccordion } from '../../components/FaqAccordion';
@@ -11,13 +18,17 @@ export function PricingPage() {
   const [slug, setSlug] = useState(PRODUCTS[0]!.slug);
   const [express, setExpress] = useState(false);
   const [qsbsLetter, setQsbsLetter] = useState(false);
+  // Index into RAISE_BANDS. A company that has raised more is a longer
+  // engagement — more securities, more rounds, more diligence — so the price
+  // moves with it, and the prospect should see that before they sign up.
+  const [raiseBand, setRaiseBand] = useState(0);
   // Firms/partners address for the enterprise tier (gap #32). Unset in this
   // environment → send the lead through the contact form rather than a mailto
   // that bounces.
   const { partnersEmail } = siteConfig();
 
   const product = PRODUCTS.find((p) => p.slug === slug) ?? PRODUCTS[0]!;
-  const { totalCents, deliveryDays } = quote(product, { express, qsbsLetter });
+  const { totalCents, deliveryDays } = quote(product, { express, qsbsLetter, raiseBand });
 
   return (
     <div>
@@ -48,6 +59,32 @@ export function PricingPage() {
                   </option>
                 ))}
               </select>
+            </label>
+
+            <label className="mt-5 block">
+              <span className="mb-1.5 flex items-baseline justify-between">
+                <span className="text-[0.8rem] font-semibold text-ink-700">Capital raised to date</span>
+                <span className="tnum text-[0.8rem] font-semibold text-ink-900" data-testid="raise-band">
+                  {RAISE_BANDS[raiseBand]!.label}
+                </span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={RAISE_BANDS.length - 1}
+                step={1}
+                value={raiseBand}
+                onChange={(e) => setRaiseBand(Number(e.target.value))}
+                className="w-full accent-bond-600"
+                aria-label="Capital raised to date"
+                // The thumb position alone does not say what band you are on;
+                // a screen reader needs the label, not "3 of 5".
+                aria-valuetext={RAISE_BANDS[raiseBand]!.label}
+              />
+              <span className="mt-1 flex justify-between text-[0.7rem] text-ink-400">
+                <span>{RAISE_BANDS[0]!.label}</span>
+                <span>{RAISE_BANDS.at(-1)!.label}</span>
+              </span>
             </label>
 
             <div className="mt-5 space-y-3">

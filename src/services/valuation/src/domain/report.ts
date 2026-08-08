@@ -556,7 +556,7 @@ const TEMPLATE_409A: ReportTemplate = {
 
 /** Fallback skeleton for the kinds without a dedicated skeleton below. */
 const TEMPLATE_GENERIC: ReportTemplate = {
-  version: 'generic.v1',
+  version: 'generic.v2',
   name: 'Valuation Report',
   sections: [
     {
@@ -598,7 +598,7 @@ const TEMPLATE_GENERIC: ReportTemplate = {
  * '718', '820', 'gifts' and 'ifrs2' have their own skeletons further down.
  */
 const TEMPLATE_QSBS: ReportTemplate = {
-  version: 'qsbs.v1',
+  version: 'qsbs.v2',
   name: 'QSBS Attestation Letter (IRC §1202)',
   sections: [
     {
@@ -655,7 +655,7 @@ const TEMPLATE_QSBS: ReportTemplate = {
 };
 
 const TEMPLATE_PPA: ReportTemplate = {
-  version: 'ppa.v1',
+  version: 'ppa.v2',
   name: 'Purchase Price Allocation (ASC 805)',
   sections: [
     {
@@ -703,7 +703,7 @@ const TEMPLATE_PPA: ReportTemplate = {
 };
 
 const TEMPLATE_IMPAIRMENT: ReportTemplate = {
-  version: 'impairment.v1',
+  version: 'impairment.v2',
   name: 'Goodwill & Intangible Impairment Testing (ASC 350/360)',
   sections: [
     {
@@ -746,7 +746,7 @@ const TEMPLATE_IMPAIRMENT: ReportTemplate = {
 };
 
 const TEMPLATE_ESOP: ReportTemplate = {
-  version: 'esop.v1',
+  version: 'esop.v2',
   name: 'ESOP Valuation Report',
   sections: [
     {
@@ -792,7 +792,7 @@ const TEMPLATE_ESOP: ReportTemplate = {
 };
 
 const TEMPLATE_SMB: ReportTemplate = {
-  version: 'smb.v1',
+  version: 'smb.v2',
   name: 'Business Valuation Report',
   sections: [
     {
@@ -833,7 +833,7 @@ const TEMPLATE_SMB: ReportTemplate = {
 };
 
 const TEMPLATE_EMI: ReportTemplate = {
-  version: 'emi.v1',
+  version: 'emi.v2',
   name: 'EMI Valuation Report (HMRC)',
   sections: [
     {
@@ -879,7 +879,7 @@ const TEMPLATE_EMI: ReportTemplate = {
 };
 
 const TEMPLATE_CSOP: ReportTemplate = {
-  version: 'csop.v1',
+  version: 'csop.v2',
   name: 'CSOP Valuation Report (HMRC)',
   sections: [
     {
@@ -918,7 +918,7 @@ const TEMPLATE_CSOP: ReportTemplate = {
 };
 
 const TEMPLATE_IP: ReportTemplate = {
-  version: 'ip.v1',
+  version: 'ip.v2',
   name: 'Intellectual Property Valuation Report',
   sections: [
     {
@@ -952,7 +952,7 @@ const TEMPLATE_IP: ReportTemplate = {
 };
 
 const TEMPLATE_718: ReportTemplate = {
-  version: '718.v1',
+  version: '718.v2',
   name: 'ASC 718 Stock-Based Compensation Report',
   sections: [
     {
@@ -1029,7 +1029,7 @@ const TEMPLATE_718: ReportTemplate = {
 };
 
 const TEMPLATE_820: ReportTemplate = {
-  version: '820.v1',
+  version: '820.v2',
   name: 'ASC 820 Fair Value Measurement Report',
   sections: [
     {
@@ -1106,7 +1106,7 @@ const TEMPLATE_820: ReportTemplate = {
 };
 
 const TEMPLATE_GIFTS: ReportTemplate = {
-  version: 'gifts.v1',
+  version: 'gifts.v2',
   name: 'Gift & Estate Tax Valuation Report',
   sections: [
     {
@@ -1206,7 +1206,7 @@ const TEMPLATE_GIFTS: ReportTemplate = {
 };
 
 const TEMPLATE_IFRS2: ReportTemplate = {
-  version: 'ifrs2.v1',
+  version: 'ifrs2.v2',
   name: 'IFRS 2 Share-Based Payment Report',
   sections: [
     {
@@ -1276,30 +1276,125 @@ const TEMPLATE_IFRS2: ReportTemplate = {
   ],
 };
 
-const TEMPLATE_BY_KIND: Partial<Record<ValuationKind, ReportTemplate>> = {
-  '409a': TEMPLATE_409A,
-  qsbs: TEMPLATE_QSBS,
-  ppa: TEMPLATE_PPA,
-  goodwill: TEMPLATE_IMPAIRMENT,
-  esop: TEMPLATE_ESOP,
-  fmv: TEMPLATE_SMB,
-  emi: TEMPLATE_EMI,
-  csop: TEMPLATE_CSOP,
-  ip: TEMPLATE_IP,
-  '718': TEMPLATE_718,
-  '820': TEMPLATE_820,
-  gifts: TEMPLATE_GIFTS,
-  ifrs2: TEMPLATE_IFRS2,
-};
+/**
+ * The sections every valuation report closes with, whatever it values.
+ *
+ * TEMPLATE_409A has carried assumptions, a certification, an analyst
+ * qualifications block and an exhibit index since v54. None of the other
+ * twelve skeletons did — a QSBS opinion, an ESOP report and both HMRC packs
+ * went out with a conclusion and nothing after it. That is not a stylistic
+ * gap. A signed valuation opinion with no certification is a document nobody
+ * has put their name to: SSVS-1 requires the appraiser to state the report's
+ * independence and the non-contingency of the fee, and an auditor or a
+ * revenue authority reading a report that omits it has to ask for it, which
+ * is the same delay as not having issued the report.
+ *
+ * Defined once and appended rather than pasted into each skeleton, so a new
+ * report type cannot be added without them. `withClosingSections` skips any
+ * key the template already declares, which is how 409A keeps its §409A-
+ * specific certification and GIFTS keeps its Chapter 14 wording — the shared
+ * block is a floor, not an override.
+ */
+const CLOSING_SECTIONS: TemplateSectionDef[] = [
+  {
+    key: 'limiting_conditions',
+    heading: 'Assumptions & Limiting Conditions',
+    html:
+      P(
+        'This report is valid only for the purpose and as of the date stated, and may not be used for any other purpose or by any party other than those named in the engagement.',
+      ) +
+      '<ul>' +
+      '<li>We have relied on financial and operating information supplied by management, which we have not audited, reviewed or compiled, and we express no opinion on it.</li>' +
+      '<li>We assume no responsibility for the legal description of, or title to, any asset, and have assumed valid title and no undisclosed encumbrance.</li>' +
+      '<li>Events occurring after the valuation date may materially affect the conclusion; we have no obligation to update this report for them.</li>' +
+      '<li>Neither this report nor any part of it may be published or referred to publicly without our prior written consent.</li>' +
+      '</ul>',
+  },
+  {
+    key: 'certification',
+    heading: 'Appraiser Certification',
+    html:
+      P('We certify that, to the best of our knowledge and belief:') +
+      '<ul>' +
+      '<li>The statements of fact in this report are true and correct.</li>' +
+      '<li>The analyses, opinions and conclusions are limited only by the assumptions and limiting conditions stated, and are our personal, impartial and unbiased professional analyses.</li>' +
+      '<li>We have no present or prospective interest in {{company_name}} and no personal interest with respect to the parties involved.</li>' +
+      '<li>Our compensation is not contingent on the reporting of a predetermined value, on the amount of the value opinion, or on the occurrence of any subsequent event.</li>' +
+      '<li>No one provided significant professional assistance to the persons signing this report except as disclosed herein.</li>' +
+      '</ul>',
+  },
+  {
+    key: 'qualifications',
+    heading: 'Qualifications of the Valuation Analyst',
+    html:
+      P(
+        'Set out the professional qualifications of the analyst or analysts responsible for this valuation, as required by SSVS-1:',
+      ) +
+      '<ul>' +
+      '<li>Name, role and firm</li>' +
+      '<li>Professional credentials held (ABV, ASA, CFA, CVA or equivalent)</li>' +
+      '<li>Relevant experience in valuations of this type</li>' +
+      '</ul>',
+  },
+  {
+    key: 'exhibit_index',
+    heading: 'Index of Exhibits',
+    html: P(
+      // Deliberately not enumerated: unlike the 409A skeleton, which knows it
+      // gets Exhibits A–H, the specialty exhibits vary by engine and by what
+      // the run produced (domain/specialtyExhibits.ts). A hardcoded list that
+      // named a schedule the report does not contain would be worse than none.
+      'The exhibits that follow are generated from the valuation model supporting this report. Each is produced from the same calculation as the conclusion above and cannot be edited apart from it.',
+    ),
+  },
+];
+
+/**
+ * A template plus whichever closing sections it does not already declare.
+ *
+ * Order is the block's own, appended after the authored body — a certification
+ * belongs at the end of a report by convention, and any template wanting a
+ * different position simply declares that section itself.
+ */
+function withClosingSections(template: ReportTemplate): ReportTemplate {
+  const declared = new Set(template.sections.map((s) => s.key));
+  const missing = CLOSING_SECTIONS.filter((s) => !declared.has(s.key));
+  if (missing.length === 0) return template;
+  return { ...template, sections: [...template.sections, ...missing] };
+}
+
+/**
+ * Every skeleton, closed. Nothing else in the module may reference the raw
+ * TEMPLATE_* constants — going through this map is what guarantees a report
+ * type cannot ship without a certification page.
+ */
+const TEMPLATE_BY_KIND: Partial<Record<ValuationKind, ReportTemplate>> = Object.fromEntries(
+  Object.entries({
+    '409a': TEMPLATE_409A,
+    qsbs: TEMPLATE_QSBS,
+    ppa: TEMPLATE_PPA,
+    goodwill: TEMPLATE_IMPAIRMENT,
+    esop: TEMPLATE_ESOP,
+    fmv: TEMPLATE_SMB,
+    emi: TEMPLATE_EMI,
+    csop: TEMPLATE_CSOP,
+    ip: TEMPLATE_IP,
+    '718': TEMPLATE_718,
+    '820': TEMPLATE_820,
+    gifts: TEMPLATE_GIFTS,
+    ifrs2: TEMPLATE_IFRS2,
+  }).map(([kind, template]) => [kind, withClosingSections(template)]),
+) as Partial<Record<ValuationKind, ReportTemplate>>;
+
+const CLOSED_GENERIC = withClosingSections(TEMPLATE_GENERIC);
 
 export const REPORT_TEMPLATES: ReadonlyMap<string, ReportTemplate> = new Map([
-  [TEMPLATE_409A.version, TEMPLATE_409A],
-  [TEMPLATE_GENERIC.version, TEMPLATE_GENERIC],
+  [CLOSED_GENERIC.version, CLOSED_GENERIC],
   ...Object.values(TEMPLATE_BY_KIND).map((t): [string, ReportTemplate] => [t.version, t]),
 ]);
 
 export function templateForKind(kind: ValuationKind): ReportTemplate {
-  return TEMPLATE_BY_KIND[kind] ?? TEMPLATE_GENERIC;
+  return TEMPLATE_BY_KIND[kind] ?? CLOSED_GENERIC;
 }
 
 /**

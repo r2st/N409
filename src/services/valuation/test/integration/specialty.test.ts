@@ -158,6 +158,12 @@ describe.skipIf(!dbUp)('specialty report-type pipeline', () => {
       total_shares: 1_000_000,
       options_granted: 10_000,
       exercise_price: 5,
+      // What VAL230 asks for on top of the valuation inputs.
+      company_registration_number: '09876543',
+      registered_office_address: '1 Example Street, London, EC1A 1BB',
+      share_class: 'Ordinary shares of £0.0001 each',
+      proposed_grant_date: '2026-10-01',
+      share_restrictions: 'Bad-leaver forfeiture; transfers require board consent.',
       // A 409A-only field must be dropped by the kind's key filter.
       total_shares_outstanding: 999,
     });

@@ -315,9 +315,99 @@ const SHARE_VALUE_SECTION: IntakeSection = {
   ],
 };
 
+/**
+ * What VAL231 (EMI) and VAL230 (CSOP) ask for and nothing else already
+ * collects — see domain/hmrcForms.ts, which is the only reader.
+ *
+ * These are facts about the *company and the grant* rather than inputs to the
+ * valuation, so none of them reach emi_csop.py: the engine concludes UMV and
+ * AMV without knowing the registered number or the share class, and adding
+ * them to its payload would only give it fields to ignore. They are collected
+ * here because HMRC will not process a form with them blank, and asking the
+ * client once at intake is cheaper than an analyst chasing them after the
+ * numbers are agreed.
+ *
+ * Shared verbatim by both questionnaires. The two forms differ in what they do
+ * with the answers, not in what they need.
+ */
+const HMRC_REQUEST_SECTION: IntakeSection = {
+  key: 'hmrc_request',
+  title: 'HMRC valuation request',
+  description: 'Details HMRC’s valuation-agreement form asks for — VAL231 for EMI, VAL230 for CSOP.',
+  fields: [
+    {
+      key: 'company_registration_number',
+      label: 'Company registration number',
+      type: 'text',
+      required: true,
+      hint: 'The Companies House number, e.g. 09876543.',
+      rules: text,
+    },
+    {
+      key: 'registered_office_address',
+      label: 'Registered office address',
+      type: 'textarea',
+      required: true,
+      rules: textarea,
+    },
+    {
+      key: 'share_class',
+      label: 'Class of shares under option',
+      type: 'text',
+      required: true,
+      hint: 'As it appears in the articles, e.g. “Ordinary shares of £0.0001 each”.',
+      rules: text,
+    },
+    {
+      key: 'shares_in_class',
+      label: 'Shares in issue of that class',
+      type: 'number',
+      required: false,
+      hint: 'Leave blank if the class is the whole issued share capital.',
+      rules: { min: 0, integer: true },
+    },
+    {
+      key: 'proposed_grant_date',
+      label: 'Date of the proposed grant',
+      type: 'date',
+      required: true,
+      // Deliberately NOT `date`: this one is in the future. A valuation is
+      // agreed with HMRC ahead of the grant it supports, and the shared rule's
+      // notFuture guard would reject every honest answer.
+      hint: 'The date options are expected to be granted — normally in the future.',
+      rules: { minDate: EARLIEST_PLAUSIBLE_DATE },
+    },
+    {
+      key: 'share_restrictions',
+      label: 'Restrictions attaching to the shares',
+      type: 'textarea',
+      required: true,
+      hint: 'Leaver provisions, transfer restrictions, drag/tag. This is what separates AMV from UMV.',
+      rules: textarea,
+    },
+    {
+      key: 'previous_hmrc_agreement',
+      label: 'Previous HMRC valuation agreement (reference and date)',
+      type: 'text',
+      required: false,
+      hint: 'If a valuation of the same class has been agreed before.',
+      rules: text,
+    },
+    {
+      key: 'recent_share_transactions',
+      label: 'Recent transactions in the company’s shares',
+      type: 'textarea',
+      required: false,
+      hint: 'Funding rounds, buybacks or secondary sales in the last three years.',
+      rules: textarea,
+    },
+  ],
+};
+
 const CSOP_SECTIONS: readonly IntakeSection[] = [
   COMPANY_SECTION,
   SHARE_VALUE_SECTION,
+  HMRC_REQUEST_SECTION,
   {
     key: 'csop_grant',
     title: 'Proposed grant',
@@ -351,6 +441,7 @@ const CSOP_SECTIONS: readonly IntakeSection[] = [
 const EMI_SECTIONS: readonly IntakeSection[] = [
   COMPANY_SECTION,
   SHARE_VALUE_SECTION,
+  HMRC_REQUEST_SECTION,
   {
     key: 'emi_grant',
     title: 'Proposed grant & qualification',
