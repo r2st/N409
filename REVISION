@@ -1,10 +1,43 @@
-aae4e25e2544123645a9ec8bc67ddde48d00615b
+d15d0c540dc39c993c158098692814a5447f908c
 # N409 deployed revision
-# commit:    aae4e25e2544123645a9ec8bc67ddde48d00615b
-# subject:   docs: the implementation design and its gap analysis
-# previous:  f883d6a (partner-scope route sweep) — the entry below it, from
-#            79f5ba5, is the last one separately recorded.
-# includes:  4 commits.
+# commit:    d15d0c540dc39c993c158098692814a5447f908c
+# subject:   feat: close the three P1 gaps — peer set, dashboard bands, job alerts
+# previous:  aae4e25 (the implementation design and its gap analysis).
+# includes:  1 commit.
+#
+#            d15d0c5 — §17.1's three P1 items, the ones the document called
+#              "where new surface actually has to be designed".
+#
+#              §4.5 Network Items. `comparable_items` (0119) is the peer set
+#              behind a market approach, kept row by row: what was screened,
+#              what was kept, and why anything was excluded. The engine stays
+#              the calculator — this is the record of what it was given and
+#              what the analyst overrode. Three consequences worth naming:
+#              the market approach is fed from the included rows when there
+#              are any and falls back to the AI aggregate when there are not,
+#              so an unscreened engagement computes exactly as before; an AI-
+#              or feed-sourced row is excluded with a reason and never
+#              deleted; and Exhibit D-1 names the set that Exhibit D had been
+#              printing as "Comparable 1 … Comparable n".
+#
+#              §3.1 the dashboard. GET /stats/dashboard also serves the
+#              bucket strip with per-reader unread tallies, the two SLA
+#              counts, twelve weeks of publish throughput and a scoped
+#              activity feed. The buckets come from the same query the
+#              listing tab strip and the sidebar badges read.
+#
+#              Job alerting. 0120 adds per-queue thresholds and an alert
+#              ledger; the sweep runs every five minutes and on demand. See
+#              the closed: line below.
+#
+# verified:  all five units active on d15d0c5 (ports 3000-3004 report it),
+#            migrations 0119 and 0120 applied, the five per-queue alert rules
+#            seeded (ai_job 60m/5, calculation 1440m/3, email 120m/10,
+#            pipeline_run 120m/5, webhook_delivery 120m/10), no alert open —
+#            every queue is healthy — and the three new routes answer 401
+#            unauthenticated.
+#
+# Previously (aae4e25 — the implementation design and its gap analysis):
 #
 #            dd178b7 — the eight P0 gaps from docs/N409-Implementation-Design.md.
 #              Six of them were finished work nobody could reach: the engines,
