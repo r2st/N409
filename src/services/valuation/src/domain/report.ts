@@ -593,9 +593,10 @@ const TEMPLATE_GENERIC: ReportTemplate = {
  * /smb, /emi-csop, /intangible) so prose and calculation stay one document,
  * the same contract TEMPLATE_409A has with its exhibits.
  *
- * Kinds deliberately left on the generic skeleton: 'fund' and 'debt', whose
- * deliverables are the workbook/instrument flows rather than authored reports.
- * '718', '820', 'gifts' and 'ifrs2' have their own skeletons further down.
+ * '718', '820', 'gifts' and 'ifrs2' have their own skeletons further down, as
+ * do 'fund' and 'debt' — the two measurement kinds, whose schedules come from
+ * their own tables rather than from a calculation (domain/navExhibits.ts).
+ * Every kind now has a skeleton; nothing falls through to TEMPLATE_GENERIC.
  */
 const TEMPLATE_QSBS: ReportTemplate = {
   version: 'qsbs.v2',
@@ -1277,6 +1278,163 @@ const TEMPLATE_IFRS2: ReportTemplate = {
 };
 
 /**
+ * The two measurement kinds. Both had a complete engine, CRUD and ops UI and
+ * no deliverable at all — `templateForKind` fell through to the generic
+ * skeleton, so a fund NAV engagement produced a report headed "Valuation
+ * Report" whose methodology section described nothing in particular and whose
+ * body could not name a single holding.
+ *
+ * Their schedules come from domain/navExhibits.ts rather than from a
+ * `calculations` row, so these skeletons refer the reader to the exhibits by
+ * what they contain rather than by letter, exactly as the specialty skeletons
+ * do.
+ */
+const TEMPLATE_FUND: ReportTemplate = {
+  version: 'fund.v1',
+  name: 'Fund Net Asset Value Report (ASC 820)',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our measurement of the fair value of the investment holdings of <strong>{{company_name}}</strong>, and the net asset value they support, as of {{date}}.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'standard_of_value',
+      heading: 'Standard of Value',
+      html: P(
+        'Fair value under ASC 820 is the price that would be received to sell an asset in an orderly transaction between market participants at the measurement date — an <strong>exit price</strong> in the principal or most advantageous market, and not an entry price, a cost basis, or the value of the holding to this fund in particular.',
+      ),
+    },
+    {
+      key: 'unit_of_account',
+      heading: 'Unit of Account',
+      html: P(
+        'State what is being measured: each holding is measured as the security actually owned — a specific class, with its own liquidation preference and conversion rights — rather than as a pro-rata share of the portfolio company’s equity. Where the fund holds more than one class in the same company, say whether they are measured together or separately, and why.',
+      ),
+    },
+    {
+      key: 'measurement_techniques',
+      heading: 'Valuation Techniques',
+      html:
+        P(
+          'Describe the technique applied to each holding and why it is appropriate to that position. The techniques recorded against this portfolio are:',
+        ) +
+        '<ul>' +
+        '<li><strong>Quoted market price</strong> — an unadjusted quoted price in an active market for the identical security.</li>' +
+        '<li><strong>Last round price</strong> — the price of the most recent orderly financing in the same security, considered for its recency, its size and whether the investors were market participants.</li>' +
+        '<li><strong>Calibrated OPM</strong> — an option-pricing allocation calibrated to a transaction price at the investment date and rolled forward, so that the model reproduces the observed price before it is used to measure a later one.</li>' +
+        '<li><strong>Cost</strong> — carried at cost where cost remains the best estimate of fair value, which requires that no calibrating event has occurred since acquisition.</li>' +
+        '</ul>' +
+        P(
+          'The Portfolio Schedule exhibit records which technique was applied to each holding at this measurement date.',
+        ),
+    },
+    {
+      key: 'hierarchy',
+      heading: 'Fair Value Hierarchy',
+      html: P(
+        'Explain the level assigned to each measurement and the inputs that drive it. Discuss any transfers between levels since the prior measurement date and what caused them — a holding moving from Level 3 to Level 1 on an IPO, or into Level 3 when the market for its class ceased to be active. The Fair Value Hierarchy exhibit summarizes the portfolio by level.',
+      ),
+    },
+    {
+      key: 'significant_inputs',
+      heading: 'Significant Unobservable Inputs',
+      html: P(
+        'For the Level 3 holdings, describe the significant unobservable inputs — volatility, time to exit, discount for lack of marketability, and the calibrated equity value — including the range applied across the portfolio and the sensitivity of the measurement to each. This is the disclosure a reader of the financial statements will look for first.',
+      ),
+    },
+    {
+      key: 'nav_conclusion',
+      heading: 'Net Asset Value',
+      html: P(
+        'State the concluded gross asset value, any fund-level liabilities, and the resulting net asset value, together with the unrealized gain or loss against cost. The Net Asset Value exhibit sets out the roll-up.',
+      ),
+    },
+    {
+      key: 'lp_economics',
+      heading: 'Partnership Economics',
+      html: P(
+        'Describe how the net asset value above would be distributed under the partnership agreement — return of capital, the preferred return, any general partner catch-up, and the carried interest split — and state whether a clawback would be owed on a hypothetical liquidation at this net asset value. The Limited Partnership Economics exhibit records the terms applied.',
+      ),
+    },
+  ],
+};
+
+const TEMPLATE_DEBT: ReportTemplate = {
+  version: 'debt.v1',
+  name: 'Debt Instrument Valuation Report',
+  sections: [
+    {
+      key: 'introduction',
+      heading: 'Introduction',
+      html:
+        P(
+          'This report presents our measurement of the fair value of the debt instrument issued by <strong>{{company_name}}</strong>, as of {{date}}.',
+        ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'instrument_terms',
+      heading: 'Instrument & Terms',
+      html: P(
+        'Describe the instrument: its form, principal, coupon and payment frequency, maturity, amortization, seniority and security, and any embedded conversion or prepayment rights. The Instrument Terms exhibit records the terms the instrument was priced on.',
+      ),
+    },
+    {
+      key: 'standard_of_value',
+      heading: 'Standard of Value',
+      html: P(
+        'Fair value under ASC 820 is an exit price between market participants at the measurement date. For a debt instrument this is the price a market participant would pay for the issuer’s contractual obligation given its credit quality and the yields available on comparable credits — not the carrying amount, and not the amount recoverable on enforcement.',
+      ),
+    },
+    {
+      key: 'credit_assessment',
+      heading: 'Credit Assessment',
+      html: P(
+        'Set out the assessment of the issuer’s credit: the rating or rating equivalent applied, the basis for it, the instrument’s position in the capital structure, and any security or covenants that alter expected recovery. Explain how this maps to the credit spread applied below.',
+      ),
+    },
+    {
+      key: 'discount_rate',
+      heading: 'Discount Rate',
+      html: P(
+        'Build up the yield at which the contractual cash flows are discounted: the benchmark yield at the matching tenor, the credit spread for the assessed rating and seniority, and any adjustment for illiquidity or instrument-specific features. The Credit Terms & Discount Rate exhibit records the components applied.',
+      ),
+    },
+    {
+      key: 'methodology',
+      heading: 'Valuation Methodology',
+      html:
+        P('Describe the measurement applied, which depends on what the instrument is:') +
+        '<ul>' +
+        '<li><strong>Straight debt</strong> — the contractual interest and principal payments discounted at the all-in yield, stated as a dirty price with accrued interest identified separately.</li>' +
+        '<li><strong>Convertible instruments</strong> — the straight-debt value together with the value of the conversion right, so that the measurement is never below conversion parity.</li>' +
+        '<li><strong>SAFEs and similar</strong> — measured on the conversion terms that would apply at the next priced round, stating whether the valuation cap or the discount governs.</li>' +
+        '</ul>' +
+        P(
+          'The Contractual Cash Flows exhibit sets out the payments discounted, and the Valuation Result exhibit the measures produced.',
+        ),
+    },
+    {
+      key: 'sensitivity',
+      heading: 'Interest-Rate Sensitivity',
+      html: P(
+        'For an instrument measured by discounting, state its duration and convexity and what they imply for the measurement under a parallel shift in yields. Where the instrument carries an embedded option, note that duration alone does not describe its behaviour.',
+      ),
+    },
+    {
+      key: 'conclusion',
+      heading: 'Conclusion of Value',
+      html: P(
+        'State the concluded fair value of the instrument at the measurement date, identifying accrued interest separately where the price is quoted clean, and note any premium or discount to par.',
+      ),
+    },
+  ],
+};
+
+/**
  * The sections every valuation report closes with, whatever it values.
  *
  * TEMPLATE_409A has carried assumptions, a certification, an analyst
@@ -1383,6 +1541,8 @@ const TEMPLATE_BY_KIND: Partial<Record<ValuationKind, ReportTemplate>> = Object.
     '820': TEMPLATE_820,
     gifts: TEMPLATE_GIFTS,
     ifrs2: TEMPLATE_IFRS2,
+    fund: TEMPLATE_FUND,
+    debt: TEMPLATE_DEBT,
   }).map(([kind, template]) => [kind, withClosingSections(template)]),
 ) as Partial<Record<ValuationKind, ReportTemplate>>;
 

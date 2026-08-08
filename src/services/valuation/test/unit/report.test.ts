@@ -81,10 +81,21 @@ describe('report templates', () => {
     expect(REPORT_TEMPLATES.has('generic.v2')).toBe(true);
   });
 
-  it('selects 409a.v55 for 409a and generic for the workbook-first kinds', () => {
+  it('selects 409a.v55 for 409a and a measurement skeleton for fund and debt', () => {
     expect(templateForKind('409a').version).toBe('409a.v55');
-    expect(templateForKind('fund').version).toBe('generic.v2');
-    expect(templateForKind('debt').version).toBe('generic.v2');
+    // Both were on generic.v2 until 0109 connected an engagement to the
+    // portfolio / instrument its figures live in — see domain/navExhibits.ts.
+    expect(templateForKind('fund').version).toBe('fund.v1');
+    expect(templateForKind('debt').version).toBe('debt.v1');
+  });
+
+  it('leaves no kind on the generic skeleton', () => {
+    // The generic template stays registered as the fallback for a template
+    // version stored on an older report, but nothing selects it any more: a
+    // kind reaching it would be a report type shipped without a skeleton.
+    for (const kind of VALUATION_KINDS) {
+      expect(templateForKind(kind).version).not.toBe('generic.v2');
+    }
   });
 
   it('selects a dedicated skeleton for each specialty report type', () => {

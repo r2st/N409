@@ -183,7 +183,6 @@ describe('intake validation warnings', () => {
 
   it('blocks submission on an impossible answer and allows it on an unusual one', async () => {
     mockPortal({ answers: { last_fy_revenue: -1, cash_on_hand: 10 }, ready: true });
-    const user = userEvent.setup();
     render(<ClientIntakePage />);
     await screen.findByText('Welcome, Northwind Robotics');
 
@@ -196,7 +195,6 @@ describe('intake validation warnings', () => {
 
   it('lets a merely-unusual form through to submit', async () => {
     mockPortal({ answers: { last_fy_revenue: 0, cash_on_hand: 50_000, monthly_burn: 90_000 }, ready: true });
-    const user = userEvent.setup();
     render(<ClientIntakePage />);
     await screen.findByText('Welcome, Northwind Robotics');
 

@@ -12,12 +12,15 @@ import {
   createValuation,
   findCreditTerms,
   findInstrument,
+  linkInstrumentToValuation,
   listInstruments,
   listValuations,
   updateInstrument,
   upsertCreditTerms,
   type InstrumentType,
 } from '../repos/debtInstruments.js';
+import { MeasurementLinkConflict } from '../domain/measurementLink.js';
+import { findValuationById } from '../repos/valuations.js';
 
 /**
  * Debt / credit instrument valuation (feature: Debt Valuation Engine). A new
@@ -52,6 +55,9 @@ const CreditTermsBody = z.object({
   seniority: z.enum(['senior_secured', 'senior', 'subordinated', 'mezzanine']).default('senior'),
   secured: z.boolean().default(false),
 });
+
+/** `null` detaches — the measurement tools are usable without an engagement. */
+const LinkBody = z.object({ valuation_id: z.string().trim().min(1).max(26).nullable() });
 
 const ValueBody = z.object({
   valuation_date: DateStr.optional(),
@@ -133,6 +139,36 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       params: parsed.data.params,
     });
     return { instrument };
+  });
+
+  /**
+   * Attach the instrument to the `debt` engagement it is priced for, so the
+   * report renderer can find it (0109). Detach with `valuation_id: null`.
+   */
+  app.put('/api/v1/debt/instruments/:id/valuation', { preHandler: app.authenticate }, async (req) => {
+    requireOps(requirePrincipal(req));
+    const { id } = req.params as { id: string };
+    await loadInstrument(id);
+    const parsed = LinkBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid link', { errors: parsed.error.issues });
+
+    const valuationId = parsed.data.valuation_id;
+    if (valuationId !== null) {
+      const valuation = isUlid(valuationId) ? await findValuationById(deps.pool, valuationId) : null;
+      if (!valuation) throw problems.notFound();
+      if (valuation.kind !== 'debt')
+        throw problems.unprocessable(
+          `A debt instrument can only be linked to a 'debt' engagement; ${valuationId} is a '${valuation.kind}'`,
+        );
+    }
+
+    try {
+      const instrument = await linkInstrumentToValuation(deps.pool, id, valuationId);
+      return { instrument };
+    } catch (err) {
+      if (err instanceof MeasurementLinkConflict) throw problems.conflict(err.message);
+      throw err;
+    }
   });
 
   app.put('/api/v1/debt/instruments/:id/credit-terms', { preHandler: app.authenticate }, async (req) => {

@@ -3,6 +3,7 @@ import type { CalculationRow } from '../repos/calculations.js';
 import { formatCurrency, formatPercent, num } from './reportSummary.js';
 import type { ExhibitContext } from './reportExhibits.js';
 import type { HmrcForm } from './hmrcForms.js';
+import { esc, P, section, table } from './exhibitHtml.js';
 
 /**
  * Render-time schedules for the specialty report types — the same contract
@@ -15,32 +16,7 @@ import type { HmrcForm } from './hmrcForms.js';
  * unfamiliar shape drops the exhibit rather than throwing inside a render.
  */
 
-function esc(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 const INT = new Intl.NumberFormat('en-US');
-
-interface Table {
-  head: string[];
-  rows: string[][];
-  foot?: string[];
-}
-
-function table({ head, rows, foot }: Table): string {
-  const cells = (row: string[], tag: 'th' | 'td', bold = false) =>
-    row.map((c) => `<${tag}>${bold ? `<strong>${c}</strong>` : c}</${tag}>`).join('');
-  const body = rows.map((r) => `<tr>${cells(r, 'td')}</tr>`).join('');
-  const footer = foot ? `<tr>${cells(foot, 'td', true)}</tr>` : '';
-  return `<table><thead><tr>${cells(head, 'th')}</tr></thead><tbody>${body}${footer}</tbody></table>`;
-}
-
-const P = (text: string) => `<p>${text}</p>`;
-
-function section(heading: string, parts: Array<string | null>): ReportPdfSection | null {
-  const html = parts.filter((p): p is string => p !== null && p !== '').join('');
-  return html ? { heading, html } : null;
-}
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

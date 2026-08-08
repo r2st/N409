@@ -15,12 +15,15 @@ import {
   findLpTerms,
   findPosition,
   latestMarks,
+  linkFundToValuation,
   listFunds,
   listMarks,
   listPositions,
   upsertLpTerms,
   type MarkMethod,
 } from '../repos/funds.js';
+import { MeasurementLinkConflict } from '../domain/measurementLink.js';
+import { findValuationById } from '../repos/valuations.js';
 
 /**
  * ASC 820 fund-holdings valuation (feature: ASC 820 Fund Holdings).
@@ -71,6 +74,9 @@ const LpTermsBody = z.object({
   management_fees_paid: z.number().min(0).max(1e15).default(0),
   gp_distributions_to_date: z.number().min(0).max(1e15).default(0),
 });
+
+/** `null` detaches — the measurement tools are usable without an engagement. */
+const LinkBody = z.object({ valuation_id: z.string().trim().min(1).max(26).nullable() });
 
 const WaterfallBody = z.object({
   distributable: z.number().min(0).max(1e15),
@@ -328,6 +334,41 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       liabilities: 0,
     });
     return { fund_id: fund.id, currency: fund.currency, nav };
+  });
+
+  // ── Engagement link ───────────────────────────────────────────────────────
+  /**
+   * Attach the portfolio to the `fund` engagement it is measured for, so the
+   * report renderer can find it (0109). Detach with `valuation_id: null`.
+   */
+  app.put('/api/v1/funds/:id/valuation', { preHandler: app.authenticate }, async (req) => {
+    requireOps(requirePrincipal(req));
+    const { id } = req.params as { id: string };
+    await loadFund(id);
+    const parsed = LinkBody.safeParse(req.body);
+    if (!parsed.success) throw problems.unprocessable('Invalid link', { errors: parsed.error.issues });
+
+    const valuationId = parsed.data.valuation_id;
+    if (valuationId !== null) {
+      const valuation = isUlid(valuationId) ? await findValuationById(deps.pool, valuationId) : null;
+      // 404 rather than 422 for an id the caller cannot see, matching the
+      // scope rule everywhere else: an out-of-scope id does not exist.
+      if (!valuation) throw problems.notFound();
+      // The kind is the check that matters. Linking a portfolio to a 409A
+      // engagement would put a NAV schedule into a common-stock opinion.
+      if (valuation.kind !== 'fund')
+        throw problems.unprocessable(
+          `A fund portfolio can only be linked to a 'fund' engagement; ${valuationId} is a '${valuation.kind}'`,
+        );
+    }
+
+    try {
+      const fund = await linkFundToValuation(deps.pool, id, valuationId);
+      return { fund };
+    } catch (err) {
+      if (err instanceof MeasurementLinkConflict) throw problems.conflict(err.message);
+      throw err;
+    }
   });
 
   // ── LP terms ──────────────────────────────────────────────────────────────

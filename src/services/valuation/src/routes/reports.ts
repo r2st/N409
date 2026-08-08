@@ -26,6 +26,8 @@ import { buildReportSummary } from '../domain/reportSummary.js';
 import { buildExhibits } from '../domain/reportExhibits.js';
 import { hmrcFormExhibit } from '../domain/specialtyExhibits.js';
 import { loadHmrcForm } from '../repos/hmrcForms.js';
+import { loadDebtReport, loadFundReport } from '../repos/measurementReport.js';
+import { buildDebtExhibits, buildFundExhibits } from '../domain/navExhibits.js';
 import { findParams } from '../repos/params.js';
 import { sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
@@ -233,12 +235,22 @@ async function summaryFor(
   // UK option-scheme deliverables carry the HMRC agreement request as a final
   // appendix. Null for every other kind, so nothing changes for a 409A.
   const hmrcForm = await loadHmrcForm(pool, valuation);
+  // The two measurement kinds keep their figures outside `calculations` — a
+  // fund in its marks, an instrument in its valuation history — so their
+  // schedules are loaded rather than derived from the run above. Both return
+  // null for every other kind.
+  const [fundReport, debtReport] = await Promise.all([
+    loadFundReport(pool, valuation),
+    loadDebtReport(pool, valuation),
+  ]);
   return {
     summary: buildReportSummary(calculation, { ...context, history }) ?? undefined,
     // Built from the same calculation the summary is, so a figure on the
     // summary page and the schedule behind it cannot come from different runs.
     exhibits: [
       ...buildExhibits(calculation, context),
+      ...buildFundExhibits(fundReport, context),
+      ...buildDebtExhibits(debtReport, context),
       // After the schedules, because the form restates figures the exhibits
       // derive and a reader should meet the derivation first.
       ...(hmrcForm ? [hmrcFormExhibit(hmrcForm)] : []),

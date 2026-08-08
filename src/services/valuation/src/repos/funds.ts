@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 
 export type FundType = 'vc' | 'pe' | 'credit' | 'growth' | 'other';
 export type SecurityType = 'common' | 'preferred' | 'safe' | 'note' | 'warrant' | 'other';
@@ -11,6 +12,8 @@ export interface FundRow {
   fund_type: FundType;
   currency: string;
   vintage_year: number | null;
+  /** The engagement this portfolio is measured for, or null when ops are marking it standalone (0109). */
+  valuation_id: string | null;
   created_by: string | null;
   created_at: Date;
 }
@@ -29,7 +32,13 @@ export interface FundPositionRow {
 export interface FundMarkRow {
   id: string;
   position_id: string;
-  measurement_date: string;
+  /**
+   * A `date` column. node-postgres parses OID 1082 into a JS Date and nothing
+   * here overrides that, so this is a Date at runtime however it was written —
+   * declared honestly because reading it as a string silently throws at the
+   * first `.slice()`, which is how it reached the PDF renderer.
+   */
+  measurement_date: string | Date;
   method: MarkMethod;
   fair_value: string;
   level: number;
@@ -61,6 +70,33 @@ export async function listFunds(pool: pg.Pool): Promise<FundRow[]> {
 export async function findFund(pool: pg.Pool, id: string): Promise<FundRow | null> {
   const { rows } = await pool.query<FundRow>('SELECT * FROM fund_portfolios WHERE id = $1', [id]);
   return rows[0] ?? null;
+}
+
+/** The portfolio an engagement measures, if one has been linked (0109). */
+export async function findFundByValuation(pool: pg.Pool, valuationId: string): Promise<FundRow | null> {
+  const { rows } = await pool.query<FundRow>('SELECT * FROM fund_portfolios WHERE valuation_id = $1', [
+    valuationId,
+  ]);
+  return rows[0] ?? null;
+}
+
+/** Point a portfolio at an engagement, or (null) detach it (0109). */
+export async function linkFundToValuation(
+  pool: pg.Pool,
+  fundId: string,
+  valuationId: string | null,
+): Promise<FundRow | null> {
+  try {
+    const { rows } = await pool.query<FundRow>(
+      'UPDATE fund_portfolios SET valuation_id = $2 WHERE id = $1 RETURNING *',
+      [fundId, valuationId],
+    );
+    return rows[0] ?? null;
+  } catch (err) {
+    if ((err as { code?: string }).code === '23505')
+      throw new MeasurementLinkConflict('That engagement is already linked to another fund portfolio');
+    throw err;
+  }
 }
 
 export async function createFund(
