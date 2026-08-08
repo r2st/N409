@@ -26,13 +26,34 @@ Being the fallback is the whole design, and it buys three things:
 A caveat that belongs at the top rather than in a footnote: the keyless
 default scrapes an endpoint DuckDuckGo defends with an anti-bot challenge, and
 that challenge trips after a modest number of queries from one address. It is
-detected and reported honestly (`is_challenge`), never worked around. Treat
-`duckduckgo` as the zero-setup default that keeps the feature alive without a
-Perplexity key, and set a Perplexity key or one of the free-tier keyed
-providers for an installation doing real volume.
+detected and reported honestly (`is_challenge`), never worked around.
+
+There is a packaged way around it — `ddgs`, the renamed `duckduckgo-search`,
+drives its HTTP through randomised browser TLS fingerprints
+(`impersonate="random"`) so the challenge never fires. This service will not
+take that route, for the reason stated at `USER_AGENT` below: a search provider
+is entitled to know what is calling it and to say no. Being told no is answered
+by asking someone else, which is what the chain below does.
+
+So the challenge is handled in the two honest ways available:
+
+  * **A chain, not a choice.** `RESEARCH_PROVIDER` names where to *start*, not
+    the only place to look. When a backend cannot answer, `search` moves to the
+    next configured one instead of failing the call. Every installation ends
+    the chain at a backend that needs no key, so "the fallback is also down"
+    now takes every provider being down rather than one.
+
+  * **A cooldown, not a retry.** A backend that answers with a bot challenge or
+    a 429 is saying stop, so it is skipped for `RESEARCH_PROVIDER_COOLDOWN_S`
+    rather than asked again on the next question. That is less load on the
+    endpoint that objected, not more — the opposite of what a workaround does.
 
 Configuration:
-    RESEARCH_PROVIDER        duckduckgo (default) | searxng | brave | serper | tavily
+    RESEARCH_PROVIDER        duckduckgo (default) | searxng | brave | serper |
+                             tavily | wikipedia — where the chain starts
+    RESEARCH_PROVIDER_CHAIN  0 to disable the fallback chain and use only the
+                             provider named above
+    RESEARCH_PROVIDER_COOLDOWN_S  how long a challenged backend is skipped
     RESEARCH_MAX_RESULTS     how many hits to retrieve per query
     RESEARCH_CALL_BUDGET_S   whole-search wall clock; 0 disables
     SEARXNG_URL              instance base URL; required when provider=searxng
@@ -60,6 +81,13 @@ from .research_types import RECENCY_FILTERS
 DEFAULT_PROVIDER = "duckduckgo"
 DEFAULT_MAX_RESULTS = 8
 DEFAULT_CALL_BUDGET_S = 60.0
+
+#: How long a backend that told us to go away is left alone. Fifteen minutes is
+#: chosen to be longer than a burst and shorter than an analyst's session: the
+#: address that tripped DuckDuckGo's challenge on one report should not still be
+#: hammering it while the next one is written, and should not be locked out of
+#: it for the afternoon either.
+DEFAULT_COOLDOWN_S = 900.0
 
 #: Providers cap their own allowlists, and a query with forty `site:` clauses
 #: is not a filter, it is a syntax error with a 200 on it.
@@ -105,6 +133,22 @@ BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 SERPER_URL = "https://google.serper.dev/search"
 TAVILY_URL = "https://api.tavily.com/search"
 
+#: MediaWiki's search API — the third keyless backend, and the only one that is
+#: keyless because the publisher *intends* it to be rather than because it has
+#: not noticed. It is a documented, versioned, public API with a published
+#: etiquette policy (identify yourself, do not parallelise heavily), which
+#: `USER_AGENT` satisfies. Nothing here is scraped and nothing can be
+#: challenged, so this is the one backend whose availability does not depend on
+#: how many questions the last analyst asked.
+#:
+#: The trade is coverage. Wikipedia knows about industries, business models and
+#: established companies — which is most of what the industry_overview and
+#: company_overview prompts ask — and knows nothing about last quarter's
+#: transaction comps. So it is the *end* of the chain, not the front of it: the
+#: backend that keeps a 409A memo cited when every general index has said no.
+WIKIPEDIA_URL = "https://en.wikipedia.org/w/api.php"
+WIKIPEDIA_ARTICLE_BASE = "https://en.wikipedia.org/wiki/"
+
 _log = logging.getLogger("websearch")
 
 
@@ -143,9 +187,25 @@ PROVIDER_KEYS: dict[str, str | None] = {
     "brave": "BRAVE_SEARCH_API_KEY",
     "serper": "SERPER_API_KEY",
     "tavily": "TAVILY_API_KEY",
+    "wikipedia": None,
 }
 
 PROVIDERS = tuple(PROVIDER_KEYS)
+
+#: Order the chain falls through in, best index first. The keyed providers buy
+#: a real commercial index, so they lead; SearXNG is keyless but only exists if
+#: an operator stood one up, which is itself a statement of preference;
+#: DuckDuckGo is the zero-setup general index; Wikipedia is last because it is
+#: the narrowest and, being the only one that cannot be turned off, has to be
+#: the terminator rather than compete for a place further up.
+CHAIN_ORDER = ("brave", "serper", "tavily", "searxng", "duckduckgo", "wikipedia")
+
+#: Providers that cannot honour a domain allowlist and so must not be asked to
+#: answer a query carrying one. Everything else either takes an allowlist
+#: parameter or understands `site:`; Wikipedia does neither, and a citation
+#: from outside the allowlist is worse than one fewer citation — the allowlist
+#: is usually there because a regulator or a client asked for it.
+NO_DOMAIN_FILTER = ("wikipedia",)
 
 
 def configured_provider() -> str:
@@ -177,6 +237,54 @@ def call_budget_s() -> float:
     return env_float("RESEARCH_CALL_BUDGET_S", DEFAULT_CALL_BUDGET_S)
 
 
+def cooldown_s() -> float:
+    return env_float("RESEARCH_PROVIDER_COOLDOWN_S", DEFAULT_COOLDOWN_S)
+
+
+def chain_enabled() -> bool:
+    """Whether a failed backend falls through to the next configured one.
+
+    On by default. The off switch exists for the installation that has to be
+    able to say which index a given citation came from — a compliance answer,
+    not a performance one — and would rather have the call fail than have it
+    quietly answered by a second engine.
+    """
+    raw = (os.environ.get("RESEARCH_PROVIDER_CHAIN") or "").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def available_providers() -> list[str]:
+    """Every backend this installation could actually call, in chain order."""
+    return [p for p in CHAIN_ORDER if PROVIDER_KEYS[p] is None or provider_key(p)]
+
+
+def search_chain(
+    provider: str | None = None,
+    *,
+    domains: list[str] | None = None,
+    chain: bool | None = None,
+) -> list[str]:
+    """The backends to try, in order, for one search.
+
+    The configured provider leads even when the preference order would put it
+    elsewhere: RESEARCH_PROVIDER is an operator's explicit choice and the rest
+    of the chain is only what happens when that choice cannot answer.
+
+    `chain=False` pins the result to that one provider regardless of the env
+    var — what /ready needs, since it is asking about a named backend rather
+    than about whether an answer is obtainable.
+    """
+    start = provider or configured_provider()
+    walk = chain_enabled() if chain is None else chain
+    if not walk:
+        found = [start]
+    else:
+        found = [start] + [p for p in available_providers() if p != start]
+    if domains:
+        found = [p for p in found if p not in NO_DOMAIN_FILTER]
+    return found
+
+
 def provider_key(provider: str | None = None) -> str:
     """The configured key for `provider`, or "" when it needs none."""
     var = PROVIDER_KEYS.get(provider or configured_provider())
@@ -188,14 +296,15 @@ def provider_key(provider: str | None = None) -> str:
 def is_configured() -> bool:
     """Whether search can run at all.
 
-    True for DuckDuckGo unconditionally — that is the reason it is the default.
-    For the keyed providers this only reports that a key is *present*; whether
-    it works is `verify_provider`.
+    True whenever any backend in the chain could be called, which with the
+    chain on is always: DuckDuckGo and Wikipedia need no key, and that is the
+    reason they are in it. A keyed provider named by RESEARCH_PROVIDER with no
+    key set is therefore a misconfiguration that degrades rather than one that
+    503s — `verify_provider` is what reports it.
     """
-    provider = configured_provider()
-    if PROVIDER_KEYS[provider] is None:
-        return True
-    return bool(provider_key(provider))
+    return any(
+        PROVIDER_KEYS[p] is None or provider_key(p) for p in search_chain()
+    )
 
 
 @dataclass(frozen=True)
@@ -233,6 +342,67 @@ def reset_check_cache() -> None:
         _check_cache = None
 
 
+# ── Cooldown: taking "no" for an answer ──────────────────────────────────────
+
+#: provider -> monotonic time it may be asked again.
+_cooldowns: dict[str, float] = {}
+_cooldown_lock = threading.Lock()
+
+
+def reset_cooldowns() -> None:
+    """Forget every cooldown (tests, and an operator forcing a recheck)."""
+    with _cooldown_lock:
+        _cooldowns.clear()
+
+
+def in_cooldown(provider: str) -> bool:
+    """Whether `provider` recently told us to stop and hasn't served its time."""
+    with _cooldown_lock:
+        until = _cooldowns.get(provider)
+        if until is None:
+            return False
+        if time.monotonic() >= until:
+            del _cooldowns[provider]
+            return False
+        return True
+
+
+def cooldown_remaining(provider: str) -> float:
+    """Seconds left on `provider`'s cooldown; 0 when it is callable."""
+    with _cooldown_lock:
+        until = _cooldowns.get(provider)
+    return max(0.0, until - time.monotonic()) if until is not None else 0.0
+
+
+def begin_cooldown(provider: str) -> None:
+    """Stop calling `provider` for a while.
+
+    Called when a backend has said, in the only vocabulary it has, that it does
+    not want to be called: an anti-bot challenge or a 429. Honouring that is
+    the entire policy — there is no path here that retries harder, changes how
+    the client identifies itself, or routes around it.
+    """
+    window = cooldown_s()
+    if window <= 0:
+        return
+    with _cooldown_lock:
+        _cooldowns[provider] = time.monotonic() + window
+    _log.warning(
+        "search provider asked us to stop; cooling down",
+        extra={"event": "search_cooldown", "path": provider, "status": int(window)},
+    )
+
+
+def _is_refusal(error: str) -> bool:
+    """Whether a `SearchError` means "stop asking" rather than "that failed".
+
+    A challenge and a 429 are refusals. A 500 is not — it is the provider
+    failing, which a retry may well fix, so it must not put a working backend
+    on the bench for fifteen minutes.
+    """
+    return f"HTTP {DUCKDUCKGO_CHALLENGE_STATUS}" in error or "HTTP 429" in error
+
+
 def verify_provider(
     *, client: httpx.Client | None = None, force: bool = False
 ) -> ProviderStatus:
@@ -260,7 +430,17 @@ def verify_provider(
             return cached[2]
 
     try:
-        hits = search("site availability check", limit=1, client=client)
+        # Pinned to the configured provider on purpose. /ready is answering
+        # "is RESEARCH_PROVIDER working", and letting the chain answer it would
+        # report `valid` for a backend that has not worked in a week because
+        # Wikipedia picked up its calls.
+        hits = search(
+            "site availability check",
+            limit=1,
+            provider=provider,
+            chain=False,
+            client=client,
+        )
     except SearchError as exc:
         text = str(exc)
         if "HTTP 401" in text or "HTTP 403" in text:
@@ -396,9 +576,11 @@ def _search_duckduckgo(
         follow_redirects=True,
     )
     if is_challenge(resp):
-        # Reported, not solved. Worth one backoff-spaced retry in case it was a
-        # burst, and then it is an operator's problem with a one-line fix — so
-        # the message says what the fix is rather than only what broke.
+        # Reported, not solved, and not retried either: `_is_refusal` classifies
+        # this, `search` moves to the next backend and puts DuckDuckGo on
+        # cooldown. The message still names the durable fix, because falling
+        # through to Wikipedia keeps the feature alive rather than making it
+        # good — an installation seeing this regularly wants a real index.
         raise SearchError(
             f"duckduckgo HTTP {resp.status_code}: blocked by DuckDuckGo's anti-bot "
             "challenge. The keyless backend is rate-limited per address; set "
@@ -574,6 +756,83 @@ def _search_tavily(
 # ── Shared response handling ─────────────────────────────────────────────────
 
 
+# ── Wikipedia (keyless, and keyless on purpose) ──────────────────────────────
+
+
+def _wikipedia_url(title: str) -> str:
+    """Article title to its canonical URL.
+
+    Built from the title rather than `?curid=` so the citation in a report
+    exhibit says what it points at. Spaces become underscores the way MediaWiki
+    writes them; everything else is percent-encoded, with `/` and `:` left
+    alone because subpages and namespaces use them literally.
+    """
+    return WIKIPEDIA_ARTICLE_BASE + urllib.parse.quote(title.replace(" ", "_"), safe="/:()")
+
+
+def _search_wikipedia(
+    query: str,
+    *,
+    limit: int,
+    recency: str | None,
+    domains: list[str] | None,
+    http: httpx.Client,
+    deadline: Deadline,
+) -> list[SearchHit]:
+    """Search MediaWiki.
+
+    `recency` and `domains` are accepted and ignored, for different reasons.
+    Recency has no equivalent — article text has no publication date to filter
+    on — and dropping the filter is the honest behaviour, since the alternative
+    is pretending a constraint was applied. Domains never arrive: `search_chain`
+    removes this backend from any chain carrying an allowlist, because unlike
+    recency an unhonoured allowlist would put a citation somewhere the caller
+    explicitly excluded.
+    """
+    resp = http.get(
+        WIKIPEDIA_URL,
+        params={
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "srlimit": max(1, min(limit, 50)),
+            "srprop": "snippet",
+            "format": "json",
+            "formatversion": "2",
+        },
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        timeout=deadline.attempt_timeout(),
+        follow_redirects=True,
+    )
+    if resp.status_code != 200:
+        raise SearchError(f"wikipedia HTTP {resp.status_code}")
+    rows = _json_object(resp, "wikipedia").get("query", {})
+    rows = rows.get("search") if isinstance(rows, dict) else None
+    if not isinstance(rows, list):
+        return []
+    hits: list[SearchHit] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        title = row.get("title")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        # The snippet is HTML — MediaWiki wraps the matched terms in
+        # <span class="searchmatch">. Stripped rather than kept, because it
+        # goes into a prompt, not a page.
+        raw_snippet = row.get("snippet")
+        hits.append(
+            SearchHit(
+                url=_wikipedia_url(title.strip()),
+                title=title.strip(),
+                snippet=_text(raw_snippet) if isinstance(raw_snippet, str) else "",
+            )
+        )
+        if len(hits) >= limit:
+            break
+    return hits
+
+
 def _json_object(resp: httpx.Response, provider: str) -> dict:
     try:
         data = resp.json()
@@ -626,19 +885,21 @@ _BACKENDS = {
     "brave": _search_brave,
     "serper": _search_serper,
     "tavily": _search_tavily,
+    "wikipedia": _search_wikipedia,
 }
 
 
-def search(
+def _search_one(
     query: str,
     *,
-    limit: int | None = None,
-    recency: str | None = None,
-    domains: list[str] | None = None,
-    provider: str | None = None,
-    client: httpx.Client | None = None,
+    chosen: str,
+    cap: int,
+    recency: str | None,
+    domains: list[str] | None,
+    http: httpx.Client,
+    deadline: Deadline,
 ) -> list[SearchHit]:
-    """Retrieve sources for `query` from the configured provider.
+    """One backend's attempt at `query`, with that backend's retries.
 
     Returns an empty list when the provider answered but found nothing — that
     is a real answer about the public record, not a failure, and `research.py`
@@ -650,9 +911,6 @@ def search(
     if there is time left to hear back from it. 4xx is not retried — a rejected
     key or a malformed query answers a second attempt the same way.
     """
-    if not query.strip():
-        raise SearchError("search query is empty")
-    chosen = provider or configured_provider()
     backend = _BACKENDS.get(chosen)
     if backend is None:
         raise SearchError(f"unknown search provider {chosen!r}")
@@ -660,56 +918,147 @@ def search(
     if var is not None and not provider_key(chosen):
         raise SearchError(f"{var} is not configured for RESEARCH_PROVIDER={chosen}")
 
+    last_error = ""
+    for attempt in range(MAX_RETRIES + 1):
+        if deadline.expired():
+            raise SearchError(
+                f"{chosen}: search budget exhausted"
+                f"{f' ({last_error})' if last_error else ''}"
+            )
+        try:
+            hits = backend(
+                query,
+                limit=cap,
+                recency=recency,
+                domains=domains,
+                http=http,
+                deadline=deadline,
+            )
+        except httpx.TransportError as exc:
+            last_error = str(exc)
+            if attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
+                _log.warning(
+                    "search connect error, retrying",
+                    extra={"event": "search_retry", "path": chosen, "status": attempt},
+                )
+                continue
+            raise SearchError(f"{chosen} unreachable: {exc}") from exc
+        except SearchError as exc:
+            text = str(exc)
+            last_error = text
+            # A refusal is not retried at all any more. It used to be worth one
+            # backoff-spaced attempt on the theory that the challenge was a
+            # burst; now there is a whole chain behind this backend, and asking
+            # someone else is both a better answer and less load on the one
+            # that objected. `search` puts it on cooldown on the way past.
+            if _is_refusal(text):
+                raise
+            retryable = any(f"HTTP {code}" in text for code in (500, 502, 503, 504))
+            if retryable and attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
+                _log.warning(
+                    "search transient error, retrying",
+                    extra={"event": "search_retry", "path": chosen, "status": attempt},
+                )
+                continue
+            raise
+        _log.info(
+            "web search",
+            extra={"event": "search_usage", "path": chosen, "status": len(hits)},
+        )
+        return hits
+    raise SearchError(f"{chosen}: retries exhausted ({last_error})")
+
+
+def search_with_provider(
+    query: str,
+    *,
+    limit: int | None = None,
+    recency: str | None = None,
+    domains: list[str] | None = None,
+    provider: str | None = None,
+    chain: bool | None = None,
+    client: httpx.Client | None = None,
+) -> tuple[str, list[SearchHit]]:
+    """Walk the chain until a backend answers; return which one did, and its hits.
+
+    The name comes back because the caller stores it: `research.py` records the
+    retrieving index alongside the writing model, and with a chain in play
+    "which index found these sources" stops being answerable from the
+    environment alone.
+
+    An empty result *ends* the walk rather than continuing it. A backend that
+    answered "nothing" has answered — moving on would turn one honest "the
+    public record is thin here" into an exhaustive hunt for any index willing
+    to say something, which is how an obscure question acquires a citation it
+    should not have.
+
+    Raises `SearchError` only when every backend in the chain failed, with all
+    of their errors, since by then the interesting question is which ones.
+    """
+    if not query.strip():
+        raise SearchError("search query is empty")
+
+    walk = search_chain(provider, domains=domains, chain=chain)
+    if not walk:
+        raise SearchError("no search provider is available for this query")
+
     cap = limit if limit is not None else max_results()
     owns_client = client is None
     http = client or httpx.Client(timeout=call_budget_s() or None)
     deadline = Deadline(call_budget_s())
-    last_error = ""
+    errors: list[str] = []
     try:
-        for attempt in range(MAX_RETRIES + 1):
-            if deadline.expired():
-                raise SearchError(
-                    f"{chosen}: search budget exhausted"
-                    f"{f' ({last_error})' if last_error else ''}"
+        for chosen in walk:
+            if in_cooldown(chosen):
+                errors.append(
+                    f"{chosen}: cooling down for another "
+                    f"{cooldown_remaining(chosen):.0f}s"
                 )
+                continue
             try:
-                hits = backend(
+                return chosen, _search_one(
                     query,
-                    limit=cap,
+                    chosen=chosen,
+                    cap=cap,
                     recency=recency,
                     domains=domains,
                     http=http,
                     deadline=deadline,
                 )
-            except httpx.TransportError as exc:
-                last_error = str(exc)
-                if attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
-                    _log.warning(
-                        "search connect error, retrying",
-                        extra={"event": "search_retry", "path": chosen, "status": attempt},
-                    )
-                    continue
-                raise SearchError(f"{chosen} unreachable: {exc}") from exc
             except SearchError as exc:
                 text = str(exc)
-                retryable = any(
-                    f"HTTP {code}" in text
-                    for code in (DUCKDUCKGO_CHALLENGE_STATUS, 429, 500, 502, 503, 504)
+                errors.append(text)
+                if _is_refusal(text):
+                    begin_cooldown(chosen)
+                if deadline.expired():
+                    break
+                _log.warning(
+                    "search provider failed, trying the next in the chain",
+                    extra={"event": "search_chain_fallback", "path": chosen},
                 )
-                last_error = text
-                if retryable and attempt < MAX_RETRIES and backoff_sleep(attempt, deadline):
-                    _log.warning(
-                        "search transient error, retrying",
-                        extra={"event": "search_retry", "path": chosen, "status": attempt},
-                    )
-                    continue
-                raise
-            _log.info(
-                "web search",
-                extra={"event": "search_usage", "path": chosen, "status": len(hits)},
-            )
-            return hits
-        raise SearchError(f"{chosen}: retries exhausted ({last_error})")
+        raise SearchError("; ".join(errors) or "no search provider answered")
     finally:
         if owns_client:
             http.close()
+
+
+def search(
+    query: str,
+    *,
+    limit: int | None = None,
+    recency: str | None = None,
+    domains: list[str] | None = None,
+    provider: str | None = None,
+    chain: bool | None = None,
+    client: httpx.Client | None = None,
+) -> list[SearchHit]:
+    """`search_with_provider` for callers that only want the sources."""
+    return search_with_provider(
+        query,
+        limit=limit,
+        recency=recency,
+        domains=domains,
+        provider=provider,
+        chain=chain,
+        client=client,
+    )[1]

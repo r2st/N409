@@ -204,9 +204,13 @@ def fallback_research(
     leg fails, which is what lets a caller distinguish "the fallback is also
     down" from "there was nothing to find".
     """
-    provider = websearch.configured_provider()
     try:
-        hits = websearch.search(
+        # The provider comes back from the call rather than from the
+        # environment: `websearch` walks a chain, so which index answered is
+        # only knowable after it has. Recording the configured one would label
+        # a Wikipedia-sourced answer `duckduckgo` in a stored row that a report
+        # exhibit is built from.
+        provider, hits = websearch.search_with_provider(
             query, limit=limit, recency=recency, domains=domains, client=search_client
         )
     except SearchError as exc:

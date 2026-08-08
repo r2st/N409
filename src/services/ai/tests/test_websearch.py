@@ -10,12 +10,17 @@ to yield fewer results rather than an exception, because an exception here
 becomes a 503 on somebody's valuation.
 """
 
+import importlib.util
+import time
+
 import httpx
 import pytest
 
 from app import websearch
 from app.websearch import (
+    CHAIN_ORDER,
     MAX_DOMAINS,
+    NO_DOMAIN_FILTER,
     PROVIDERS,
     SearchError,
     SearchHit,
@@ -24,6 +29,8 @@ from app.websearch import (
     is_configured,
     parse_duckduckgo,
     search,
+    search_chain,
+    search_with_provider,
     verify_provider,
 )
 
@@ -51,14 +58,37 @@ DDG_HTML = """
 def _clean_env(monkeypatch):
     for var in (
         "RESEARCH_PROVIDER",
+        "RESEARCH_PROVIDER_CHAIN",
+        "RESEARCH_PROVIDER_COOLDOWN_S",
         "RESEARCH_MAX_RESULTS",
         "RESEARCH_CALL_BUDGET_S",
+        "SEARXNG_URL",
         "BRAVE_SEARCH_API_KEY",
         "SERPER_API_KEY",
         "TAVILY_API_KEY",
     ):
         monkeypatch.delenv(var, raising=False)
+    # Both caches are module-level and deliberately outlive a call, so without
+    # this a challenge asserted in one test benches DuckDuckGo for every test
+    # that runs after it — the failure mode being tested for, arriving in the
+    # wrong place.
+    websearch.reset_cooldowns()
+    websearch.reset_check_cache()
     yield
+    websearch.reset_cooldowns()
+    websearch.reset_check_cache()
+
+
+@pytest.fixture
+def solo(monkeypatch):
+    """Pin searches to the configured provider alone.
+
+    Most of the tests below are about one backend's request or parser, and the
+    chain would have them answered by the next provider the moment the case
+    under test failed — which is the chain working, but it turns a precise
+    assertion into "something answered". The chain gets its own section.
+    """
+    monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")
 
 
 def stub(handler) -> httpx.Client:
@@ -119,13 +149,27 @@ class TestProviderSelection:
         monkeypatch.setenv("RESEARCH_PROVIDER", "gooogle")
         assert configured_provider() == "duckduckgo"
 
-    def test_a_keyed_provider_without_its_key_is_unconfigured(self, monkeypatch):
+    def test_a_keyed_provider_without_its_key_degrades_rather_than_unconfiguring(
+        self, monkeypatch
+    ):
+        """This used to report unconfigured, and a 503 followed. With the chain
+        it is a misconfiguration that costs index quality, not the feature:
+        `verify_provider` is what still calls it out."""
         monkeypatch.setenv("RESEARCH_PROVIDER", "brave")
-        assert is_configured() is False
+        assert is_configured() is True
+        assert verify_provider().state == "missing"
         monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "brv-123")
         assert is_configured() is True
 
-    def test_a_keyed_provider_refuses_before_making_a_request(self, monkeypatch):
+    def test_a_keyed_provider_without_its_key_is_unconfigured_when_pinned(
+        self, monkeypatch, solo
+    ):
+        """Pin the chain off and the old contract is back, because then there
+        really is nowhere else for the call to go."""
+        monkeypatch.setenv("RESEARCH_PROVIDER", "brave")
+        assert is_configured() is False
+
+    def test_a_keyed_provider_refuses_before_making_a_request(self, monkeypatch, solo):
         monkeypatch.setenv("RESEARCH_PROVIDER", "tavily")
 
         def explode(request: httpx.Request) -> httpx.Response:
@@ -133,6 +177,24 @@ class TestProviderSelection:
 
         with pytest.raises(SearchError, match="TAVILY_API_KEY"):
             search("public question", client=stub(explode))
+
+    def test_an_unkeyed_provider_is_skipped_without_a_request_when_chaining(
+        self, monkeypatch
+    ):
+        """The keyless backends answer instead, and the keyed one is never
+        called — a missing key must not become an outbound request that spends
+        a round trip to be told 401."""
+        monkeypatch.setenv("RESEARCH_PROVIDER", "tavily")
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.host)
+            return httpx.Response(200, text=DDG_HTML)
+
+        provider, hits = websearch.search_with_provider("q", client=stub(handler))
+        assert provider == "duckduckgo"
+        assert len(hits) == 2
+        assert "api.tavily.com" not in seen
 
 
 # ── the DuckDuckGo parser ────────────────────────────────────────────────────
@@ -342,7 +404,7 @@ class TestMalformedProviderBodies:
     """Every level of these bodies is provider-controlled, so none is assumed."""
 
     @pytest.fixture(autouse=True)
-    def _serper(self, monkeypatch):
+    def _serper(self, monkeypatch, solo):
         monkeypatch.setenv("RESEARCH_PROVIDER", "serper")
         monkeypatch.setenv("SERPER_API_KEY", "srp-123")
 
@@ -382,6 +444,14 @@ class TestMalformedProviderBodies:
 
 
 class TestRetries:
+    """One backend's retry policy, so the chain is pinned off throughout —
+    otherwise the next provider answers and the retry count under test never
+    gets the chance to be wrong."""
+
+    @pytest.fixture(autouse=True)
+    def _solo(self, solo):
+        pass
+
     def test_a_transport_error_is_retried_then_surfaced(self, monkeypatch):
         monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
         calls = {"n": 0}
@@ -406,19 +476,20 @@ class TestRetries:
             search("q", client=stub(flaky))
         assert calls["n"] == websearch.MAX_RETRIES + 1
 
-    def test_a_rate_limit_is_retried(self, monkeypatch):
-        """429 is the failure DuckDuckGo actually produces under load, and the
-        one worth a second attempt — unlike a 4xx about the request itself."""
+    def test_a_rate_limit_is_not_retried_because_it_is_a_refusal(self, monkeypatch):
+        """429 used to be worth a second attempt. It is not any more: with a
+        chain behind this backend, asking someone else is both a better answer
+        and less load on the one that just said stop."""
         monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
         calls = {"n": 0}
 
         def limited(request: httpx.Request) -> httpx.Response:
             calls["n"] += 1
-            if calls["n"] == 1:
-                return httpx.Response(429, text="slow down")
-            return httpx.Response(200, text=DDG_HTML)
+            return httpx.Response(429, text="slow down")
 
-        assert len(search("q", client=stub(limited))) == 2
+        with pytest.raises(SearchError, match="HTTP 429"):
+            search("q", client=stub(limited))
+        assert calls["n"] == 1
 
     def test_a_4xx_is_not_retried(self, monkeypatch):
         """A malformed query or a rejected key answers a second attempt the
@@ -457,6 +528,10 @@ class TestAntiBotChallenge:
     provider key". Those need different people to do different things.
     """
 
+    @pytest.fixture(autouse=True)
+    def _solo(self, solo):
+        pass
+
     def test_a_challenge_is_an_error_not_an_empty_result_set(self):
         challenged = stub(lambda r: httpx.Response(202, text=CHALLENGE_HTML))
         with pytest.raises(SearchError, match="anti-bot challenge"):
@@ -469,17 +544,20 @@ class TestAntiBotChallenge:
             search("q", client=challenged)
         assert "RESEARCH_PROVIDER" in str(caught.value)
 
-    def test_a_challenge_is_retried_in_case_it_was_a_burst(self, monkeypatch):
+    def test_a_challenge_is_not_retried(self, monkeypatch):
+        """It used to be retried once in case it was a burst. Asking again is
+        the one response a bot challenge is entitled not to get, and there is
+        now somewhere else to ask."""
         monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
         calls = {"n": 0}
 
-        def challenged_then_ok(request: httpx.Request) -> httpx.Response:
+        def challenged(request: httpx.Request) -> httpx.Response:
             calls["n"] += 1
-            if calls["n"] == 1:
-                return httpx.Response(202, text=CHALLENGE_HTML)
-            return httpx.Response(200, text=DDG_HTML)
+            return httpx.Response(202, text=CHALLENGE_HTML)
 
-        assert len(search("q", client=stub(challenged_then_ok))) == 2
+        with pytest.raises(SearchError, match="anti-bot challenge"):
+            search("q", client=stub(challenged))
+        assert calls["n"] == 1
 
     def test_a_plain_202_without_the_challenge_markers_is_not_treated_as_blocked(self):
         """Only the anomaly page means blocked. A bare 202 is just a status."""
@@ -517,7 +595,7 @@ class TestSearxng:
         search("q", client=stub(handler))
         assert seen["url"].startswith("https://searx.example/search?")
 
-    def test_without_an_instance_it_refuses_rather_than_guessing_one(self, monkeypatch):
+    def test_without_an_instance_it_refuses_rather_than_guessing_one(self, monkeypatch, solo):
         """Pointing an install at a stranger's server by default would be both
         rude and unreliable."""
         monkeypatch.delenv("SEARXNG_URL", raising=False)
@@ -614,3 +692,254 @@ class TestVerifyProvider:
         whether one probe query happened to match anything."""
         status = verify_provider(client=stub(lambda r: httpx.Response(200, text="<html></html>")))
         assert status.ok
+
+
+# ── Wikipedia ────────────────────────────────────────────────────────────────
+
+#: A trimmed formatversion=2 response from the MediaWiki search API.
+WIKI_JSON = {
+    "query": {
+        "search": [
+            {
+                "title": "Software as a service",
+                "snippet": 'SaaS is a <span class="searchmatch">software</span> licensing model.',
+            },
+            {"title": "Valuation (finance)", "snippet": "Valuation is the process..."},
+        ]
+    }
+}
+
+
+class TestWikipedia:
+    """The one backend that is keyless because the publisher intends it to be.
+
+    Which is why it is the chain's terminator: it cannot be rate-limited into
+    silence by the last analyst's session, so there is always somewhere for a
+    search to end up.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _wikipedia(self, monkeypatch, solo):
+        monkeypatch.setenv("RESEARCH_PROVIDER", "wikipedia")
+
+    def test_it_needs_no_key(self):
+        assert websearch.PROVIDER_KEYS["wikipedia"] is None
+        assert is_configured() is True
+
+    def test_titles_become_article_urls(self):
+        hits = search("q", client=stub(lambda r: httpx.Response(200, json=WIKI_JSON)))
+        assert [h.url for h in hits] == [
+            "https://en.wikipedia.org/wiki/Software_as_a_service",
+            "https://en.wikipedia.org/wiki/Valuation_(finance)",
+        ]
+
+    def test_the_snippet_markup_is_stripped(self):
+        """It goes into a prompt, not a page — `searchmatch` spans would just
+        be tokens the model has to ignore."""
+        hits = search("q", client=stub(lambda r: httpx.Response(200, json=WIKI_JSON)))
+        assert hits[0].snippet == "SaaS is a software licensing model."
+        assert "<span" not in hits[0].snippet
+
+    def test_the_query_reaches_the_search_api(self):
+        handler, seen = capturing(httpx.Response(200, json=WIKI_JSON))
+        search("saas multiples", client=stub(handler))
+        assert "action=query" in seen["url"] and "list=search" in seen["url"]
+        assert "srsearch=saas+multiples" in seen["url"]
+
+    def test_it_identifies_itself_as_mediawiki_etiquette_asks(self):
+        """MediaWiki's policy is an honest User-Agent with a contact URL. The
+        one this service already sends satisfies it, which is the reason this
+        backend needs no special-casing."""
+        handler, seen = capturing(httpx.Response(200, json=WIKI_JSON))
+        search("q", client=stub(handler))
+        agent = seen["headers"]["user-agent"]
+        assert "n409" in agent.lower() and "http" in agent.lower()
+
+    @pytest.mark.parametrize(
+        "body",
+        [{}, {"query": None}, {"query": {}}, {"query": {"search": None}},
+         {"query": {"search": [None, 7]}}, {"query": {"search": [{"title": ""}]}}],
+    )
+    def test_junk_yields_no_hits_rather_than_raising(self, body):
+        assert search("q", client=stub(lambda r: httpx.Response(200, json=body))) == []
+
+    def test_a_non_200_is_a_search_error(self):
+        with pytest.raises(SearchError, match="wikipedia HTTP 500"):
+            search("q", client=stub(lambda r: httpx.Response(500, text="boom")))
+
+    def test_max_results_caps_the_page(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_MAX_RESULTS", "1")
+        hits = search("q", client=stub(lambda r: httpx.Response(200, json=WIKI_JSON)))
+        assert len(hits) == 1
+
+
+# ── the chain ────────────────────────────────────────────────────────────────
+
+
+class TestSearchChain:
+    """RESEARCH_PROVIDER names where to start, not the only place to look."""
+
+    def test_the_configured_provider_leads(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER", "wikipedia")
+        assert search_chain()[0] == "wikipedia"
+
+    def test_the_chain_ends_somewhere_keyless(self):
+        """With no keys anywhere the chain still has to terminate at a backend
+        that can answer, or the fallback is not a fallback."""
+        chain = search_chain()
+        assert chain[-1] == "wikipedia"
+        assert all(websearch.PROVIDER_KEYS[p] is None for p in chain)
+
+    def test_unkeyed_providers_are_left_out(self, monkeypatch):
+        monkeypatch.setenv("SERPER_API_KEY", "srp-1")
+        chain = search_chain()
+        assert "serper" in chain
+        assert "brave" not in chain and "tavily" not in chain
+
+    def test_every_chain_member_is_a_known_provider(self):
+        assert set(CHAIN_ORDER) == set(PROVIDERS)
+
+    def test_pinning_the_chain_off_leaves_one_provider(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")
+        assert search_chain() == ["duckduckgo"]
+
+    def test_a_failing_provider_falls_through_to_the_next(self, monkeypatch):
+        """The whole point. DuckDuckGo's challenge used to end the call; now it
+        ends DuckDuckGo's turn."""
+        monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.host)
+            if "duckduckgo" in request.url.host:
+                return httpx.Response(202, text=CHALLENGE_HTML)
+            return httpx.Response(200, json=WIKI_JSON)
+
+        provider, hits = search_with_provider("q", client=stub(handler))
+        assert provider == "wikipedia"
+        assert len(hits) == 2
+        assert any("duckduckgo" in h for h in seen)
+
+    def test_every_provider_failing_reports_every_reason(self, monkeypatch):
+        """An operator debugging "research is down" needs to know it was down
+        everywhere, and why in each place."""
+        monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
+        with pytest.raises(SearchError) as caught:
+            search("q", client=stub(lambda r: httpx.Response(500, text="down")))
+        detail = str(caught.value)
+        assert "duckduckgo" in detail and "wikipedia" in detail
+
+    def test_an_empty_result_ends_the_walk_rather_than_continuing_it(self, monkeypatch):
+        """A backend that answered "nothing" has answered. Walking on would
+        turn one honest "the record is thin here" into a hunt for any index
+        willing to say something — which is how an obscure question acquires a
+        citation it should not have."""
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            return httpx.Response(200, text="<html>no results</html>")
+
+        provider, hits = search_with_provider("q", client=stub(handler))
+        assert (provider, hits) == ("duckduckgo", [])
+        assert calls["n"] == 1
+
+    def test_wikipedia_is_dropped_from_a_chain_carrying_an_allowlist(self):
+        """It cannot honour `site:`, and a citation from outside an allowlist is
+        worse than one fewer citation — the allowlist is usually there because a
+        client or a regulator asked for it."""
+        assert "wikipedia" in search_chain()
+        assert "wikipedia" not in search_chain(domains=["sec.gov"])
+        assert NO_DOMAIN_FILTER == ("wikipedia",)
+
+
+# ── cooldown ─────────────────────────────────────────────────────────────────
+
+
+class TestCooldown:
+    """A backend that says stop is not asked again for a while.
+
+    This is the honest half of the anti-bot answer: the alternative on offer is
+    `ddgs`, which defeats the challenge with randomised browser fingerprints.
+    Backing off is the opposite of that — less load on the endpoint that
+    objected, not a better disguise.
+    """
+
+    def test_a_challenge_benches_the_provider(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
+        search_with_provider(
+            "q",
+            client=stub(
+                lambda r: httpx.Response(202, text=CHALLENGE_HTML)
+                if "duckduckgo" in r.url.host
+                else httpx.Response(200, json=WIKI_JSON)
+            ),
+        )
+        assert websearch.in_cooldown("duckduckgo") is True
+        assert websearch.cooldown_remaining("duckduckgo") > 0
+
+    def test_a_benched_provider_is_skipped_without_a_request(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
+        websearch.begin_cooldown("duckduckgo")
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.host)
+            return httpx.Response(200, json=WIKI_JSON)
+
+        provider, _ = search_with_provider("q", client=stub(handler))
+        assert provider == "wikipedia"
+        assert not any("duckduckgo" in h for h in seen)
+
+    def test_a_server_error_does_not_bench_anyone(self, monkeypatch):
+        """A 500 is the provider failing, not refusing. Benching it for fifteen
+        minutes would turn one bad minute into a lost afternoon."""
+        monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
+        with pytest.raises(SearchError):
+            search("q", client=stub(lambda r: httpx.Response(500, text="down")))
+        assert websearch.in_cooldown("duckduckgo") is False
+
+    def test_a_rate_limit_benches_the_provider(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_CALL_BUDGET_S", "0")
+        search_with_provider(
+            "q",
+            client=stub(
+                lambda r: httpx.Response(429, text="slow down")
+                if "duckduckgo" in r.url.host
+                else httpx.Response(200, json=WIKI_JSON)
+            ),
+        )
+        assert websearch.in_cooldown("duckduckgo") is True
+
+    def test_the_cooldown_expires(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER_COOLDOWN_S", "0.05")
+        websearch.begin_cooldown("duckduckgo")
+        assert websearch.in_cooldown("duckduckgo") is True
+        time.sleep(0.08)
+        assert websearch.in_cooldown("duckduckgo") is False
+
+    def test_a_zero_window_disables_benching(self, monkeypatch):
+        """The off switch, for an operator who would rather see the error every
+        time than have calls silently routed elsewhere."""
+        monkeypatch.setenv("RESEARCH_PROVIDER_COOLDOWN_S", "0")
+        websearch.begin_cooldown("duckduckgo")
+        assert websearch.in_cooldown("duckduckgo") is False
+
+    def test_the_reason_a_provider_was_skipped_is_in_the_error(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")
+        websearch.begin_cooldown("duckduckgo")
+        with pytest.raises(SearchError, match="cooling down"):
+            search("q", client=stub(ddg_ok))
+
+
+def test_no_browser_impersonating_dependency_is_installed():
+    """`ddgs` (formerly `duckduckgo-search`) drives `primp` with
+    impersonate="random" to defeat bot detection. The decision not to take that
+    route is documented in `websearch.py` and asserted here, because it is the
+    kind of thing that gets added later by someone fixing a flaky search.
+    """
+    for banned in ("ddgs", "duckduckgo_search", "primp"):
+        assert importlib.util.find_spec(banned) is None, (
+            f"{banned} is installed — see the module docstring in websearch.py; "
+            "the answer to a bot challenge here is the chain, not a disguise"
+        )

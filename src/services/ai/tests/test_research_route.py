@@ -33,6 +33,8 @@ def _clean_env(monkeypatch):
     """
     for var in (
         "RESEARCH_PROVIDER",
+        "RESEARCH_PROVIDER_CHAIN",
+        "RESEARCH_PROVIDER_COOLDOWN_S",
         "BRAVE_SEARCH_API_KEY",
         "SERPER_API_KEY",
         "TAVILY_API_KEY",
@@ -79,6 +81,7 @@ def test_available_by_default_with_no_key_configured(answered):
 def test_503_only_when_no_provider_at_all_is_configured(monkeypatch):
     """Both paths have to be missing. A deployment with no Perplexity key but a
     working search provider is the documented default, not an outage."""
+    monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")  # else the keyless chain answers
     monkeypatch.setenv("RESEARCH_PROVIDER", "brave")  # keyed, and no key set
     monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
     res = client.post("/ai/v1/research", json={"query": "anything public"})
@@ -88,7 +91,8 @@ def test_503_only_when_no_provider_at_all_is_configured(monkeypatch):
 
 
 def test_available_when_only_perplexity_is_configured(answered, monkeypatch):
-    monkeypatch.setenv("RESEARCH_PROVIDER", "brave")  # fallback unavailable
+    monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")  # fallback unavailable
+    monkeypatch.setenv("RESEARCH_PROVIDER", "brave")
     monkeypatch.setenv("PERPLEXITY_API_KEY", "pplx-testkey")
     assert client.post("/ai/v1/research", json={"query": "anything"}).status_code == 200
 
@@ -222,6 +226,7 @@ class TestReadiness:
         assert checks["search"] == "valid"
 
     def test_an_unconfigured_keyed_provider_is_named_but_not_probed(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")
         monkeypatch.setenv("RESEARCH_PROVIDER", "serper")
         monkeypatch.setattr("app.main.verify_api_key", _ok_key)
 

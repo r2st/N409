@@ -46,6 +46,8 @@ HITS = [
 def _clean_env(monkeypatch):
     for var in (
         "RESEARCH_PROVIDER",
+        "RESEARCH_PROVIDER_CHAIN",
+        "RESEARCH_PROVIDER_COOLDOWN_S",
         "RESEARCH_MAX_RESULTS",
         "RESEARCH_CALL_BUDGET_S",
         "RESEARCH_SYNTHESIS_MODEL",
@@ -74,7 +76,7 @@ def answered(monkeypatch):
 
     def fake_search(query, **kwargs):
         calls["search"] = {"query": query, **kwargs}
-        return list(HITS)
+        return "duckduckgo", list(HITS)
 
     def fake_chat(system, user, *, model=None, client=None):
         calls["chat"] = {"system": system, "user": user, "model": model}
@@ -85,7 +87,7 @@ def answered(monkeypatch):
             completion_tokens=120,
         )
 
-    monkeypatch.setattr(research_mod.websearch, "search", fake_search)
+    monkeypatch.setattr(research_mod.websearch, "search_with_provider", fake_search)
     monkeypatch.setattr(research_mod, "chat", fake_chat)
     return calls
 
@@ -123,7 +125,7 @@ class TestAssertPublic:
         def explode(*args, **kwargs):
             raise AssertionError("searched despite the confidentiality gate")
 
-        monkeypatch.setattr(research_mod.websearch, "search", explode)
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", explode)
         monkeypatch.setattr(research_mod, "chat", explode)
         with pytest.raises(ConfidentialityError):
             research("How is [COMPANY] funded?")
@@ -136,7 +138,7 @@ class TestAssertPublic:
         def explode(*args, **kwargs):
             raise AssertionError("searched despite the confidentiality gate")
 
-        monkeypatch.setattr(research_mod.websearch, "search", explode)
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", explode)
         with pytest.raises(ConfidentialityError):
             research("[NAME] holds 2,000,000 shares")
 
@@ -164,7 +166,7 @@ class TestNothingUnsourced:
         """An LLM asked a valuation question with no sources in front of it
         produces a confident multiple from its weights. That number landing in
         an exhibit beside real citations is the failure this path prevents."""
-        monkeypatch.setattr(research_mod.websearch, "search", lambda q, **kw: [])
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", lambda q, **kw: ("duckduckgo", []))
 
         def explode(*args, **kwargs):
             raise AssertionError("synthesised an answer with no sources")
@@ -178,7 +180,7 @@ class TestNothingUnsourced:
         """A question the public record does not cover is a legitimate research
         outcome, not a provider outage — and `grounded: false` is what keeps it
         out of the report."""
-        monkeypatch.setattr(research_mod.websearch, "search", lambda q, **kw: [])
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", lambda q, **kw: ("duckduckgo", []))
         assert research("q").grounded is False
 
     def test_an_answer_from_sources_is_grounded(self, answered):
@@ -272,6 +274,10 @@ class TestConfiguration:
         assert is_configured() is True
 
     def test_a_keyed_provider_without_its_key_is_unavailable(self, monkeypatch):
+        """With the chain pinned off, since otherwise the keyless backends
+        behind it keep research available — which is the chain's whole job, and
+        is covered in `TestAvailability`."""
+        monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")
         monkeypatch.setenv("RESEARCH_PROVIDER", "brave")
         assert is_configured() is False
 
@@ -304,10 +310,26 @@ class TestResultContract:
         out = research("public question")
         assert out.model == "duckduckgo+openai/gpt-oss-20b:free"
 
-    def test_the_model_field_tracks_the_configured_provider(self, answered, monkeypatch):
+    def test_the_model_field_tracks_the_provider_that_answered(self, monkeypatch):
+        """Not the configured one. `websearch` walks a chain, so a search
+        started at Tavily can be answered by Wikipedia, and the stored row has
+        to say which — a report exhibit is built from it."""
         monkeypatch.setenv("RESEARCH_PROVIDER", "tavily")
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-1")
-        assert research("public question").model.startswith("tavily+")
+        monkeypatch.setattr(
+            research_mod.websearch,
+            "search_with_provider",
+            lambda q, **kw: ("wikipedia", list(HITS)),
+        )
+        monkeypatch.setattr(
+            research_mod,
+            "chat",
+            lambda system, user, **kw: LlmResult(
+                model="openai/gpt-oss-20b:free", content="Answer [1].",
+                prompt_tokens=1, completion_tokens=1,
+            ),
+        )
+        assert research("public question").model.startswith("wikipedia+")
 
     def test_tokens_are_the_synthesis_tokens(self, answered):
         assert research("public question").total_tokens == 160
@@ -322,12 +344,12 @@ class TestFailures:
         def boom(query, **kwargs):
             raise SearchError("duckduckgo unreachable: no route")
 
-        monkeypatch.setattr(research_mod.websearch, "search", boom)
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", boom)
         with pytest.raises(ResearchError, match="search failed"):
             research("public question")
 
     def test_a_synthesis_failure_is_a_research_error(self, monkeypatch):
-        monkeypatch.setattr(research_mod.websearch, "search", lambda q, **kw: list(HITS))
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", lambda q, **kw: ("duckduckgo", list(HITS)))
 
         def boom(*args, **kwargs):
             raise OpenRouterError("every candidate model failed")
@@ -344,7 +366,7 @@ class TestFailures:
         def boom(query, **kwargs):
             raise SearchError("down")
 
-        monkeypatch.setattr(research_mod.websearch, "search", boom)
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", boom)
         with pytest.raises(ResearchError) as caught:
             research("public question")
         assert not isinstance(caught.value, ConfidentialityError)
@@ -398,7 +420,7 @@ class TestPrimaryIsPerplexity:
         def explode(*args, **kwargs):
             raise AssertionError("fell back while Perplexity was working")
 
-        monkeypatch.setattr(research_mod.websearch, "search", explode)
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", explode)
         out = research("public question", perplexity_client=pplx_stub(pplx_ok))
         assert out.content == "Sonar says SaaS trades at 6-8x ARR."
         assert out.model == "sonar"
@@ -492,7 +514,7 @@ class TestFallsBackToSearch:
         def boom(query, **kwargs):
             raise SearchError("duckduckgo HTTP 202: blocked")
 
-        monkeypatch.setattr(research_mod.websearch, "search", boom)
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", boom)
         with pytest.raises(ResearchError) as caught:
             research("public question", perplexity_client=pplx_stub(lambda r: httpx.Response(500)))
         text = str(caught.value)
@@ -518,7 +540,7 @@ class TestTheGateSurvivesTheFallback:
         def explode(*args, **kwargs):
             raise AssertionError("client text was forwarded to the fallback")
 
-        monkeypatch.setattr(research_mod.websearch, "search", explode)
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", explode)
         monkeypatch.setattr(research_mod, "chat", explode)
         with pytest.raises(ConfidentialityError):
             research("[NAME] holds 2,000,000 shares", perplexity_client=pplx_stub(pplx_ok))
@@ -529,7 +551,17 @@ class TestTheGateSurvivesTheFallback:
 
 
 class TestAvailability:
+    """`is_configured` is what stands between a caller and a 503, so what
+    counts as "no provider" is the contract being pinned here.
+
+    The chain moved that line. A keyed provider with no key used to mean no
+    research at all; now it means the keyless backends answer instead, and it
+    takes pinning the chain off — an explicit operator choice — to get back to
+    a state where nothing can answer.
+    """
+
     def test_configured_when_only_perplexity_has_a_key(self, keyed, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")
         monkeypatch.setenv("RESEARCH_PROVIDER", "brave")  # keyed, no key set
         assert websearch.is_configured() is False
         assert is_configured() is True
@@ -538,11 +570,22 @@ class TestAvailability:
         assert research_mod.primary_available() is False
         assert is_configured() is True
 
+    def test_the_chain_keeps_search_available_despite_an_unkeyed_provider(
+        self, monkeypatch
+    ):
+        """The reason the two tests either side of this one have to pin the
+        chain off to observe an unconfigured state at all."""
+        monkeypatch.setenv("RESEARCH_PROVIDER", "brave")  # keyed, no key set
+        assert websearch.is_configured() is True
+        assert is_configured() is True
+
     def test_unconfigured_only_when_neither_path_exists(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")
         monkeypatch.setenv("RESEARCH_PROVIDER", "serper")
         assert is_configured() is False
 
     def test_with_no_path_at_all_it_raises_rather_than_pretending(self, monkeypatch):
+        monkeypatch.setenv("RESEARCH_PROVIDER_CHAIN", "0")
         monkeypatch.setenv("RESEARCH_PROVIDER", "serper")
         with pytest.raises(ResearchError, match="no research provider"):
             research("public question")
