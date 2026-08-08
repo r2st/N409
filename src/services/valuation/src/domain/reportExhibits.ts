@@ -3,6 +3,7 @@ import type { CalculationRow } from '../repos/calculations.js';
 import { APPROACH_LABELS, ALLOCATION_LABELS, formatCurrency, formatPercent, num } from './reportSummary.js';
 import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
+import { MULTIPLE_LABELS, type MultipleKey } from './comparables.js';
 
 /**
  * The supporting exhibits of the deliverable — the schedules a reviewer checks
@@ -38,6 +39,23 @@ export interface ExhibitContext {
   /** Valuation date as the report states it (YYYY-MM-DD), when known. */
   valuationDate?: string | null;
   companyName: string;
+  /**
+   * The persisted peer set (migration 0119), when the engagement has one.
+   * Absent for every engagement nobody has screened, and Exhibit D-1 is then
+   * simply not rendered — the report reads exactly as it did before.
+   */
+  peers?: readonly ExhibitPeer[];
+}
+
+/** One row of the peer set, as Exhibit D-1 prints it. */
+export interface ExhibitPeer {
+  ticker: string | null;
+  name: string;
+  included: boolean;
+  exclude_reason: string | null;
+  source: string;
+  score: number | null;
+  multiples: Partial<Record<MultipleKey, number | null>>;
 }
 
 /**
@@ -401,6 +419,78 @@ export function marketExhibit(
   ]);
 }
 
+// ── Exhibit D-1 — the guideline company set ──────────────────────────────────
+
+/**
+ * The peer set behind Exhibit D, named.
+ *
+ * Exhibit D prints the multiples as "Comparable 1 … Comparable n", which is
+ * every figure a reviewer needs to re-derive the value and none of what they
+ * need to challenge it. The question a market approach is challenged on is not
+ * "what was the median" — it is "which companies, and why not the ones you left
+ * out". Both halves are on this schedule, and the excluded half carries its
+ * reason, which is the whole point of storing the rows.
+ *
+ * Numbered D-1 rather than taking a letter of its own: the eight lettered
+ * exhibits are cited by letter in reports already issued, and renumbering them
+ * to insert a schedule would make every one of those citations point one
+ * exhibit to the left.
+ */
+export function peerSetExhibit(
+  peers: readonly ExhibitPeer[] | undefined,
+  results: Record<string, unknown>,
+): ReportPdfSection | null {
+  if (!peers || peers.length === 0) return null;
+  // No market approach in the run means no schedule: a peer set an analyst
+  // screened but did not weight into the conclusion is working material, and
+  // printing it as a supporting exhibit overstates its role in the opinion.
+  if (!record(record(results.approaches)?.market)) return null;
+
+  const included = peers.filter((p) => p.included);
+  const excluded = peers.filter((p) => !p.included);
+  // Which of the four quotients to print: whichever the included set actually
+  // has. A column of dashes tells a reader nothing about the comps.
+  const columns = (Object.keys(MULTIPLE_LABELS) as MultipleKey[]).filter((key) =>
+    included.some((p) => typeof p.multiples[key] === 'number'),
+  );
+
+  const label = (p: ExhibitPeer) => (p.ticker ? `${esc(p.name)} (${esc(p.ticker)})` : esc(p.name));
+  const cell = (value: number | null | undefined) => (typeof value === 'number' ? ratio(value, 2) : '—');
+
+  const selected =
+    included.length > 0
+      ? table({
+          head: ['Guideline company', ...columns.map((k) => MULTIPLE_LABELS[k]), 'Screen score'],
+          rows: included.map((p) => [
+            label(p),
+            ...columns.map((k) => cell(p.multiples[k])),
+            p.score === null ? '—' : p.score.toFixed(2),
+          ]),
+        })
+      : null;
+
+  const rejected =
+    excluded.length > 0
+      ? table({
+          head: ['Company considered', 'Basis for exclusion'],
+          rows: excluded.map((p) => [label(p), esc(p.exclude_reason ?? 'Not stated')]),
+        })
+      : null;
+
+  return section('Exhibit D-1 — Guideline Company Set', [
+    P(
+      'The guideline companies below were screened on industry classification, scale, growth and ' +
+        'margin profile. The multiples in Exhibit D are struck from the companies retained; the ' +
+        'companies considered and set aside are listed with the basis on which each was excluded.',
+    ),
+    selected,
+    excluded.length > 0
+      ? P('The following companies were considered and are not reflected in the concluded multiples.')
+      : null,
+    rejected,
+  ]);
+}
+
 // ── Exhibit E — asset approach ───────────────────────────────────────────────
 
 export function assetExhibit(results: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
@@ -700,6 +790,8 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     approachExhibit(results, ctx),
     incomeExhibit(inputs, results, ctx),
     marketExhibit(inputs, results, ctx),
+    // Immediately after D, because it is D's supporting detail.
+    peerSetExhibit(ctx.peers, results),
     assetExhibit(results, ctx),
     allocationExhibit(results, ctx),
     pwermExhibit(results, ctx),

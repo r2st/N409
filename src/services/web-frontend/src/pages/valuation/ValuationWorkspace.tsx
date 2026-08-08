@@ -54,6 +54,7 @@ export const TAB_HELP: Record<string, string> = {
   package: 'report-overview',
   specialty: 'methodology-overview',
   research: 'comparables-overview',
+  comparables: 'comparables-overview',
 };
 
 /**
@@ -282,6 +283,10 @@ export function ValuationWorkspace() {
             this multiple come from" is a fair question. Running it is ops-only,
             and the tab enforces that from the served `can_run`. */}
         {(ops || owner) && <Tab to={`${base}/research`} label="Market Research" />}
+        {/* Same reasoning as Research: the client whose report rests on the
+            median may read the set it was struck from. Editing it is ops-only,
+            and the tab enforces that from the served `can_edit`. */}
+        {(ops || owner) && <Tab to={`${base}/comparables`} label="Comparables" />}
         {ops && <Tab to={`${base}/qa`} label="QA" />}
         {ops && <Tab to={`${base}/health`} label="Health" />}
         <Tab to={`${base}/completeness`} label="Completeness" />

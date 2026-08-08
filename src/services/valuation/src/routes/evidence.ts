@@ -16,6 +16,8 @@ import { listAiJobs } from '../repos/aiJobs.js';
 import { listDecisions } from '../repos/methodologyDecisions.js';
 import { listQaReviews } from '../repos/qaReviews.js';
 import { listScenarios } from '../repos/scenarios.js';
+import { listComparableItems } from '../repos/comparableItems.js';
+import { impliedMultiples } from '../domain/comparables.js';
 import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
 import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -59,7 +61,7 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       ]);
     // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
     // methodology decision log, QA review history, and saved scenarios.
-    const [decisions, qaReviews, scenarios, research] = await Promise.all([
+    const [decisions, qaReviews, scenarios, research, comparables] = await Promise.all([
       listDecisions(deps.pool, id),
       listQaReviews(deps.pool, id),
       listScenarios(deps.pool, id),
@@ -68,6 +70,11 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       // is asking exactly what the supersede chain records; a bundle that
       // shipped only the live rows would answer half the question.
       listMarketResearch(deps.pool, id, { includeSuperseded: true }),
+      // The peer set behind the market approach (migration 0119), included and
+      // excluded rows alike. The excluded ones are the half an auditor asks
+      // about, so a bundle carrying only the retained comps would be answering
+      // the easy question.
+      listComparableItems(deps.pool, id),
     ]);
 
     // Review tasks carry the approve / request-changes workflow; decisions
@@ -135,6 +142,10 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       { name: 'scenarios.json', data: toJson(scenarios) },
       { name: 'market-research.json', data: toJson(research) },
       {
+        name: 'comparables.json',
+        data: toJson(comparables.map((row) => ({ ...row, multiples: impliedMultiples(row) }))),
+      },
+      {
         name: 'report-versions.json',
         data: toJson({ report: report ?? null, versions }),
       },
@@ -179,6 +190,8 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         qa_reviews: qaReviews.length,
         scenarios: scenarios.length,
         market_research: research.length,
+        comparables: comparables.length,
+        comparables_excluded: comparables.filter((c) => !c.included).length,
         report_versions: versions.length,
       },
       files: ['manifest.json', ...entries.map((e) => e.name)],

@@ -92,15 +92,13 @@ const ProgressTab = named(() => import('./pages/valuation/ProgressTab'), 'Progre
 const AuditTrailTab = named(() => import('./pages/valuation/AuditTrailTab'), 'AuditTrailTab');
 const QaTab = named(() => import('./pages/valuation/QaTab'), 'QaTab');
 const HealthTab = named(() => import('./pages/valuation/HealthTab'), 'HealthTab');
-const CompletenessTab = named(
-  () => import('./pages/valuation/CompletenessTab'),
-  'CompletenessTab',
-);
+const CompletenessTab = named(() => import('./pages/valuation/CompletenessTab'), 'CompletenessTab');
 const DecisionsTab = named(() => import('./pages/valuation/DecisionsTab'), 'DecisionsTab');
 const CompanyTab = named(() => import('./pages/valuation/CompanyTab'), 'CompanyTab');
 const PackageTab = named(() => import('./pages/valuation/PackageTab'), 'PackageTab');
 const SpecialtyTab = named(() => import('./pages/valuation/SpecialtyTab'), 'SpecialtyTab');
 const ResearchTab = named(() => import('./pages/valuation/ResearchTab'), 'ResearchTab');
+const ComparablesTab = named(() => import('./pages/valuation/ComparablesTab'), 'ComparablesTab');
 const OverwritesSchemaPage = named(() => import('./pages/OverwritesSchemaPage'), 'OverwritesSchemaPage');
 const SettingsPage = named(() => import('./pages/SettingsPage'), 'SettingsPage');
 const AdminSettingsPage = named(() => import('./pages/AdminSettingsPage'), 'AdminSettingsPage');
@@ -260,6 +258,7 @@ export default function App() {
             <Route path="package" element={<PackageTab />} />
             <Route path="specialty" element={<SpecialtyTab />} />
             <Route path="research" element={<ResearchTab />} />
+            <Route path="comparables" element={<ComparablesTab />} />
           </Route>
           {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
           <Route element={<RequireRole allow={isOps} />}>

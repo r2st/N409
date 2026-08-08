@@ -107,12 +107,41 @@ const STATS = {
   ],
 };
 
+const RULES = [
+  { source: 'email', enabled: true, stall_minutes: 120, failure_count: 10, failure_window_hours: 24 },
+  { source: 'ai_job', enabled: true, stall_minutes: 60, failure_count: 5, failure_window_hours: 24 },
+];
+
+const QUIET = { alerts: [], rules: RULES, open: 0 };
+
+const STALLED = {
+  alerts: [
+    {
+      id: '01N409ALERT0000000000000AA',
+      source: 'email',
+      kind: 'stalled',
+      detail: 'Outbound message: oldest outstanding job is 8h old (threshold 2h), 3 still owed',
+      observed: 480,
+      threshold: 120,
+      opened_at: '2026-08-08T04:00:00Z',
+      last_seen_at: '2026-08-08T12:00:00Z',
+      resolved_at: null,
+    },
+  ],
+  rules: RULES,
+  open: 1,
+};
+
+/** Swapped per test; the mock reads it at request time. */
+let alertsBody: unknown = QUIET;
+
 function mockApi() {
   const calls: string[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
     const path = String(url);
     calls.push(path);
     if (path.includes('/admin/jobs/stats')) return jsonResponse(STATS);
+    if (path.includes('/admin/jobs/alerts')) return jsonResponse(alertsBody);
     if (path.includes('/admin/jobs')) return jsonResponse({ jobs: JOBS, total: JOBS.length });
     return jsonResponse({}, 404);
   });
@@ -129,6 +158,7 @@ const renderPage = () =>
 describe('AdminJobsPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    alertsBody = QUIET;
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date('2026-08-08T10:00:00Z'));
   });
@@ -236,5 +266,32 @@ describe('AdminJobsPage', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Forbidden', status: 403 }, 403));
     renderPage();
     expect(await screen.findByText(/job monitor is operations-only/i)).toBeInTheDocument();
+  });
+  // ── Alerting (design §17.1 item 13) ────────────────────────────────────────
+
+  it('puts an open alert above every count on the page', async () => {
+    alertsBody = STALLED;
+    mockApi();
+    renderPage();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Outbound message — stalled');
+    expect(alert).toHaveTextContent('oldest outstanding job is 8h old');
+  });
+
+  it('states the thresholds when nothing is wrong, so silence is legible', async () => {
+    mockApi();
+    renderPage();
+    // "No alerts" and "alerting is broken" look identical without this.
+    expect(await screen.findByText(/No queue alerts open/)).toBeInTheDocument();
+    expect(screen.getByText(/Outbound message 120m \/ 10 failures/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('re-checks the queues on demand', async () => {
+    const calls = mockApi();
+    renderPage();
+    await screen.findByText(/No queue alerts open/);
+    await userEvent.click(screen.getByRole('button', { name: 'Check queues now' }));
+    await waitFor(() => expect(calls.some((c) => c.includes('/admin/jobs/alerts/scan'))).toBe(true));
   });
 });

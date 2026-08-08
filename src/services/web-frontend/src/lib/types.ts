@@ -398,11 +398,34 @@ export interface KindPivotRow {
   total: number;
 }
 
+/** A named bucket's tally: `unread` is a subset of `total`, not a separate cohort. */
+export interface BucketTally {
+  total: number;
+  unread: number;
+}
+
+export interface ActivityRow {
+  id: string;
+  scope: 'valuation' | 'admin';
+  type: string;
+  actor_type: string;
+  actor_email: string | null;
+  valuation_id: string;
+  company_name: string;
+  number: string;
+  occurred_at: string;
+}
+
 export interface DashboardAnalytics {
   total: number;
   by_kind: KindPivotRow[];
   by_state: Record<string, number>;
   by_source: Record<string, number>;
+  /** Design §3.1 — the bucket strip, keyed by the nine named buckets. */
+  buckets: Record<string, BucketTally>;
+  activity: ActivityRow[];
+  throughput: Array<{ week: string; count: number }>;
+  sla: { overdue: number; waiting_stale: number; waiting_days: number };
 }
 
 // ── M4 — Polish ───────────────────────────────────────────────────────────────

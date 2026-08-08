@@ -24,6 +24,8 @@ import {
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
 import { buildExhibits } from '../domain/reportExhibits.js';
+import { listComparableItems } from '../repos/comparableItems.js';
+import { impliedMultiples } from '../domain/comparables.js';
 import { researchSourcesExhibit } from '../domain/researchExhibit.js';
 import { listMarketResearch } from '../repos/marketResearch.js';
 import { hmrcFormExhibit } from '../domain/specialtyExhibits.js';
@@ -233,7 +235,24 @@ async function summaryFor(
   const rawDate = payload?.inputs?.valuation_date;
   const valuationDate = typeof rawDate === 'string' && rawDate ? rawDate.slice(0, 10) : null;
   const history = calculation ? await historyFor(pool, valuation, calculation.created_at) : [];
-  const context = { currency: valuation.currency, companyName: valuation.company_name, valuationDate };
+  // The peer set behind the market approach (design §4.5). Empty for every
+  // engagement nobody has screened, and Exhibit D-1 then does not render.
+  const peerRows = await listComparableItems(pool, valuation.id);
+  const peers = peerRows.map((row) => ({
+    ticker: row.ticker,
+    name: row.name,
+    included: row.included,
+    exclude_reason: row.exclude_reason,
+    source: row.source,
+    score: row.score,
+    multiples: impliedMultiples(row),
+  }));
+  const context = {
+    currency: valuation.currency,
+    companyName: valuation.company_name,
+    valuationDate,
+    peers,
+  };
   // UK option-scheme deliverables carry the HMRC agreement request as a final
   // appendix. Null for every other kind, so nothing changes for a 409A.
   const hmrcForm = await loadHmrcForm(pool, valuation);

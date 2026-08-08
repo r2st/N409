@@ -127,6 +127,9 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
         // Superseded rows included: "what did you read, and what before
         // that" is exactly what the supersede chain records.
         'market-research.json',
+        // The peer set, included and excluded rows alike (migration 0119) —
+        // the excluded half is the one an auditor asks about.
+        'comparables.json',
         'report-versions.json',
       ].sort(),
     );

@@ -18,6 +18,7 @@ const { buildApp, buildEmailTransports } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { retryFailedEmails } = await import('./hooks/emailRetry.js');
 const { retryDueDeliveries } = await import('./hooks/partnerWebhooks.js');
+const { runJobAlertScan } = await import('./hooks/jobAlerts.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
 const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
 const { runRetentionSweep } = await import('./routes/retention.js');
@@ -29,7 +30,7 @@ const pool = createPool(config.DATABASE_URL);
 const app = buildApp({ config, pool });
 
 // A stray rejection in any of the background timers below (auto-emails, the
-// pipeline reaper, the cap-table/HRIS scans, retention) would otherwise kill the
+// pipeline reaper, the cap-table/HRIS scans, retention, job alerts) would otherwise kill the
 // process with nothing but a bare stack on stderr. Log it through pino first,
 // then exit so systemd restarts us.
 installCrashHandlers(app.log, {
@@ -199,6 +200,25 @@ let hrisSyncTimer: NodeJS.Timeout | undefined;
   hrisSyncTimer = setInterval(() => tick.run(), 15 * 60_000);
 }
 
+// Job-queue alert sweep (design §17.1 item 13): evaluate every queue's oldest
+// outstanding job and failure count against its thresholds, and open/resolve
+// alerts. Runs at boot — a queue that stopped while the service was down is
+// exactly the case worth catching immediately — then every five minutes.
+let jobAlertTimer: NodeJS.Timeout | undefined;
+if (config.JOB_ALERT_SCAN_MINUTES > 0) {
+  const sweep = nonOverlapping(
+    async () => {
+      const r = await runJobAlertScan({ pool, log: app.log });
+      if (r.opened.length > 0 || r.resolved.length > 0) {
+        app.log.info({ opened: r.opened.length, resolved: r.resolved.length }, 'job alert sweep');
+      }
+    },
+    (err) => app.log.error({ err }, 'job alert sweep failed'),
+  );
+  sweep.run();
+  jobAlertTimer = setInterval(() => sweep.run(), config.JOB_ALERT_SCAN_MINUTES * 60_000);
+}
+
 // Retention archival sweep (feature 10): archive records past their policy age
 // unless a legal hold freezes them. Runs at boot, then every 6 hours.
 let retentionTimer: NodeJS.Timeout | undefined;
@@ -231,6 +251,7 @@ installShutdownHandlers(app.log, {
     if (capTableSyncTimer) clearInterval(capTableSyncTimer);
     if (hrisSyncTimer) clearInterval(hrisSyncTimer);
     if (retentionTimer) clearInterval(retentionTimer);
+    if (jobAlertTimer) clearInterval(jobAlertTimer);
     await app.close();
     await pool.end();
     await telemetry.shutdown();

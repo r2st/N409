@@ -3,9 +3,18 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
-import { JOB_SOURCES, JOB_SOURCE_LABELS, JOB_STATUSES, summarizeJobStats } from '../domain/jobQueue.js';
+import {
+  JOB_SOURCES,
+  JOB_SOURCE_LABELS,
+  JOB_STATUSES,
+  summarizeJobStats,
+  type JobSource,
+} from '../domain/jobQueue.js';
 import { pageParam } from '../domain/pagination.js';
 import { jobStats, listJobs, oldestActiveJobs } from '../repos/jobs.js';
+import { listJobAlertRules, listJobAlerts, updateJobAlertRule } from '../repos/jobAlerts.js';
+import { runJobAlertScan } from '../hooks/jobAlerts.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
 /**
@@ -79,6 +88,102 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
         ...summarizeJobStats(stats.filter((s) => s.source === source)),
         oldest_active_at: oldest.find((o) => o.source === source)?.oldest_created_at ?? null,
       })),
+    };
+  });
+
+  // ── Alerting (design §17.1 item 13) ────────────────────────────────────────
+  //
+  // The monitor reported and nothing alerted. These three endpoints are the
+  // ledger, the thresholds, and a manual scan for an operator who has just
+  // fixed something and does not want to wait out the interval.
+
+  app.get('/api/v1/admin/jobs/alerts', { preHandler: app.authenticate }, async (req) => {
+    requireOps(req);
+    const parsed = z
+      .object({
+        open: z.enum(['true', 'false']).default('false'),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+      })
+      .safeParse(req.query);
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+
+    const [alerts, rules] = await Promise.all([
+      listJobAlerts(deps.pool, { openOnly: parsed.data.open === 'true', limit: parsed.data.limit }),
+      listJobAlertRules(deps.pool),
+    ]);
+    return {
+      alerts,
+      rules,
+      open: alerts.filter((a) => a.resolved_at === null).length,
+    };
+  });
+
+  const RulePatch = z
+    .object({
+      enabled: z.boolean().optional(),
+      // Bounded so a typo cannot disable alerting by setting a threshold nothing
+      // can ever cross — a rule that never fires reads exactly like a healthy
+      // queue, which is the failure mode this whole feature exists to remove.
+      stall_minutes: z
+        .number()
+        .int()
+        .min(1)
+        .max(60 * 24 * 7)
+        .optional(),
+      failure_count: z.number().int().min(1).max(10_000).optional(),
+      failure_window_hours: z
+        .number()
+        .int()
+        .min(1)
+        .max(24 * 30)
+        .optional(),
+    })
+    .strict()
+    .refine((v) => Object.keys(v).length > 0, 'Nothing to change');
+
+  app.patch('/api/v1/admin/jobs/alert-rules/:source', { preHandler: app.authenticate }, async (req) => {
+    const principal = requireOps(req);
+    const { source } = req.params as { source: string };
+    if (!(JOB_SOURCES as readonly string[]).includes(source)) throw problems.notFound();
+
+    const parsed = RulePatch.safeParse(req.body ?? {});
+    if (!parsed.success) throw problems.unprocessable('Invalid rule', { errors: parsed.error.issues });
+
+    const rule = await updateJobAlertRule(deps.pool, source as JobSource, {
+      enabled: parsed.data.enabled,
+      stallMinutes: parsed.data.stall_minutes,
+      failureCount: parsed.data.failure_count,
+      failureWindowHours: parsed.data.failure_window_hours,
+      updatedBy: principal.id,
+    });
+    if (!rule) throw problems.notFound();
+
+    await recordAdminEvent(deps.pool, {
+      type: 'job_alert_rule_changed',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'job_queue',
+      subjectLabel: JOB_SOURCE_LABELS[source as JobSource],
+      payload: { source, ...parsed.data },
+    });
+    return { rule };
+  });
+
+  /**
+   * Run the sweep now.
+   *
+   * Same function the interval runs, so an operator who has just restarted a
+   * worker sees the alert close rather than waiting out the tick. Safe to press
+   * twice — the reconciler serializes on an advisory lock and a still-open
+   * alert is bumped rather than re-notified.
+   */
+  app.post('/api/v1/admin/jobs/alerts/scan', { preHandler: app.authenticate }, async (req) => {
+    requireOps(req);
+    const result = await runJobAlertScan({ pool: deps.pool, log: req.log });
+    return {
+      opened: result.opened,
+      resolved: result.resolved,
+      ongoing: result.ongoing.length,
+      evaluated: result.evaluated,
     };
   });
 }

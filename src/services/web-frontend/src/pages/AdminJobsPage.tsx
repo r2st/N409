@@ -52,6 +52,34 @@ interface JobStats {
   }>;
 }
 
+type AlertKind = 'stalled' | 'failing';
+
+interface JobAlert {
+  id: string;
+  source: JobSource;
+  kind: AlertKind;
+  detail: string;
+  observed: number;
+  threshold: number;
+  opened_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+}
+
+interface JobAlertRule {
+  source: JobSource;
+  enabled: boolean;
+  stall_minutes: number;
+  failure_count: number;
+  failure_window_hours: number;
+}
+
+interface JobAlertsResponse {
+  alerts: JobAlert[];
+  rules: JobAlertRule[];
+  open: number;
+}
+
 const SOURCE_LABELS: Record<JobSource, string> = {
   pipeline_run: 'Pipeline run',
   ai_job: 'AI job',
@@ -106,6 +134,8 @@ export function AdminJobsPage() {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<JobStats | null>(null);
+  const [alerts, setAlerts] = useState<JobAlertsResponse | null>(null);
+  const [scanning, setScanning] = useState(false);
   const [source, setSource] = useState<'all' | JobSource>('all');
   const [status, setStatus] = useState<'all' | JobStatus>('all');
   const [page, setPage] = useState(1);
@@ -116,13 +146,15 @@ export function AdminJobsPage() {
     if (source !== 'all') params.set('source', source);
     if (status !== 'all') params.set('status', status);
     try {
-      const [list, summary] = await Promise.all([
+      const [list, summary, alerting] = await Promise.all([
         api<{ jobs: Job[]; total: number }>(`/admin/jobs?${params}`),
         api<JobStats>('/admin/jobs/stats'),
+        api<JobAlertsResponse>('/admin/jobs/alerts?limit=20'),
       ]);
       setJobs(list.jobs);
       setTotal(list.total);
       setStats(summary);
+      setAlerts(alerting);
       setError(null);
     } catch (err) {
       setError(
@@ -162,10 +194,69 @@ export function AdminJobsPage() {
             Refreshes every 15 seconds.
           </p>
         </div>
-        <Button variant="secondary" onClick={() => void load()}>
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => void load()}>
+            Refresh
+          </Button>
+          {/* Re-evaluate now, for an operator who has just restarted something
+              and does not want to wait out the five-minute sweep. */}
+          <Button
+            variant="secondary"
+            disabled={scanning}
+            onClick={async () => {
+              setScanning(true);
+              try {
+                await api('/admin/jobs/alerts/scan', { method: 'POST' });
+                await load();
+              } catch {
+                setError('Could not re-check the queues.');
+              } finally {
+                setScanning(false);
+              }
+            }}
+          >
+            {scanning ? 'Checking…' : 'Check queues now'}
+          </Button>
+        </div>
       </div>
+
+      {/* ── Alerts (design §17.1 item 13) ────────────────────────────────────
+          The monitor reported and nothing alerted. An open alert goes above
+          every count on the page: the counts are what an operator reads when
+          they have come looking, and this is what should have found them. */}
+      {alerts && alerts.open > 0 && (
+        <div className="mt-6 space-y-3">
+          {alerts.alerts
+            .filter((a) => a.resolved_at === null)
+            .map((alert) => (
+              <div
+                key={alert.id}
+                className={`rounded-lg border px-5 py-4 ${
+                  alert.kind === 'stalled' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'
+                }`}
+                role="alert"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-3">
+                  <span className="font-semibold text-ink-900">
+                    {SOURCE_LABELS[alert.source]} — {alert.kind === 'stalled' ? 'stalled' : 'failing'}
+                  </span>
+                  <span className="text-xs text-ink-500">Since {formatDateTime(alert.opened_at)}</span>
+                </div>
+                <p className="mt-1 text-sm text-ink-700">{alert.detail}</p>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {alerts && alerts.open === 0 && (
+        <p className="mt-6 rounded-lg border border-paper-300 bg-surface px-5 py-3 text-sm text-ink-500">
+          No queue alerts open. Thresholds:{' '}
+          {alerts.rules
+            .filter((r) => r.enabled)
+            .map((r) => `${SOURCE_LABELS[r.source]} ${r.stall_minutes}m / ${r.failure_count} failures`)
+            .join(' · ')}
+        </p>
+      )}
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Outstanding" value={String(stats.totals.active)} />

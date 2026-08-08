@@ -237,10 +237,30 @@ aae4e25e2544123645a9ec8bc67ddde48d00615b
 #            silent reclassification 0105 exists to prevent. Somebody has to
 #            re-file them by hand, or they stay where they are — the query is
 #            `documents WHERE category = 'uploads' AND kind = 'other'`.
-# gap:       the job monitor reports, and nothing alerts. `oldest_active_at`
+# closed:    the job monitor reports, and nothing alerts — built on exactly the
+#            figure this line named. 0120 adds a per-queue threshold table and
+#            an alert ledger; `domain/jobAlerts.ts` evaluates the age of the
+#            oldest outstanding job against it (stalled) and the failure count
+#            inside the window (failing); `hooks/jobAlerts.ts` runs every five
+#            minutes and on demand from POST /admin/jobs/alerts/scan. An alert
+#            opens once per (queue, kind), is bumped while it stays true, and
+#            resolves itself with a second notification when the queue drains.
+#            Description of the original gap follows.
+#            the job monitor reports, and nothing alerts. `oldest_active_at`
 #            per queue is the figure an alert should eventually be built on —
 #            a count cannot tell a busy queue from a stopped one — but today it
 #            is a column somebody has to look at.
+# closed:    the peer set behind a market approach was never stored — only the
+#            median it produced. 0119 adds `comparable_items`; the market
+#            approach is fed from the included rows when there are any and
+#            falls back to the AI aggregate when there are not; an AI- or
+#            feed-sourced row is excluded with a reason rather than deleted;
+#            Exhibit D-1 and the evidence bundle carry both halves of the set.
+# closed:    the landing dashboard was a welcome block and five counts. GET
+#            /stats/dashboard now also serves the seven-bucket strip with
+#            per-reader unread tallies (the same figures the sidebar badges
+#            read, from one query), the two SLA counts, twelve weeks of
+#            publish throughput, and a scope-filtered activity feed.
 # gap:       the shared inbox has no compose box. Replying goes through the
 #            engagement's own thread, which is correct (one write path owns the
 #            kind rules, mention parsing and the realtime broadcast) but means

@@ -48,6 +48,36 @@ const analytics: DashboardAnalytics = {
   ],
   by_state: { started: 3, review: 1, published: 1 },
   by_source: { direct: 5 },
+  buckets: {
+    all: { total: 5, unread: 2 },
+    incomplete: { total: 3, unread: 2 },
+    unverified: { total: 0, unread: 0 },
+    in_progress: { total: 1, unread: 0 },
+    waiting_on_client: { total: 1, unread: 0 },
+    drafted: { total: 0, unread: 0 },
+    published: { total: 1, unread: 0 },
+    unread: { total: 2, unread: 2 },
+    ignored: { total: 0, unread: 0 },
+  },
+  activity: [
+    {
+      id: '01N409EVT000000000000000AA',
+      scope: 'valuation',
+      type: 'valuation_state_changed',
+      actor_type: 'human',
+      actor_email: 'ops@example.com',
+      valuation_id: '01N409VAL000000000000000AA',
+      company_name: 'Acme',
+      number: '1042',
+      occurred_at: '2026-07-02T09:00:00Z',
+    },
+  ],
+  throughput: [
+    { week: '2026-04-06', count: 0 },
+    { week: '2026-04-13', count: 2 },
+    { week: '2026-04-20', count: 1 },
+  ],
+  sla: { overdue: 2, waiting_stale: 1, waiting_days: 7 },
 };
 
 function mockApi() {
@@ -136,5 +166,60 @@ describe('DashboardPage', () => {
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Product pivot' })).not.toBeInTheDocument();
     expect(fetchSpy.mock.calls.every(([url]) => !String(url).includes('/stats/dashboard'))).toBe(true);
+  });
+
+  // ── Design §3.1 — the three bands the landing dashboard was missing ────────
+
+  it('renders the bucket strip with unread badges, linked to the pre-filtered listing', async () => {
+    mockApi();
+    renderPage();
+
+    await screen.findByText('Incomplete');
+    const links = screen.getAllByRole('link');
+    const incomplete = links.find((l) => l.getAttribute('href') === '/valuations?bucket=incomplete');
+    expect(incomplete).toBeTruthy();
+    expect(incomplete!.textContent).toContain('3');
+    expect(incomplete!.textContent).toContain('2 unread');
+    // A bucket with nothing unread carries no badge — a zero repeated seven
+    // times says the same thing seven ways.
+    const published = links.find((l) => l.getAttribute('href') === '/valuations?bucket=published');
+    expect(published!.textContent).not.toContain('unread');
+  });
+
+  it('states both SLA figures, and what the waiting one means', async () => {
+    mockApi();
+    renderPage();
+    expect(await screen.findByText('Past due')).toBeInTheDocument();
+    expect(screen.getByText('Stalled with the client')).toBeInTheDocument();
+    expect(screen.getByText(/no contact for 7 days/)).toBeInTheDocument();
+  });
+
+  it('draws the throughput series', async () => {
+    mockApi();
+    renderPage();
+    expect(await screen.findByRole('img', { name: /Published per week/ })).toBeInTheDocument();
+  });
+
+  it('lists recent activity against the engagement it happened on', async () => {
+    mockApi();
+    renderPage();
+    expect(await screen.findByText('Recent activity')).toBeInTheDocument();
+    expect(screen.getByText('Valuation state changed')).toBeInTheDocument();
+    const row = screen
+      .getAllByRole('link')
+      .find((l) => l.getAttribute('href') === '/valuations/01N409VAL000000000000000AA');
+    expect(row!.textContent).toContain('Acme');
+    expect(row!.textContent).toContain('#1042');
+  });
+
+  it('shows a client none of the four bands', async () => {
+    mockUser = clientUser;
+    mockApi();
+    renderPage();
+    await screen.findByText('Recent valuations');
+    // Every band is served by /stats/dashboard, which a client never fetches.
+    expect(screen.queryByText('Past due')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recent activity')).not.toBeInTheDocument();
+    expect(screen.queryByText('Incomplete')).not.toBeInTheDocument();
   });
 });

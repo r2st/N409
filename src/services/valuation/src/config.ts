@@ -59,6 +59,12 @@ const Env = z.object({
   // — it cannot lose it. 0 disables the sweep; POST /admin/webhooks/retry
   // still works.
   WEBHOOK_RETRY_SCAN_MINUTES: z.coerce.number().int().min(0).default(1),
+  // Job-queue alert sweep (design §17.1 item 13). Five minutes is short enough
+  // that a stopped queue is noticed within one, and long enough that the
+  // cheapest threshold here (60 minutes) is not re-evaluated pointlessly. 0
+  // disables the interval; POST /admin/jobs/alerts/scan still works, which is
+  // how a deployment that runs the sweep from cron instead turns this off.
+  JOB_ALERT_SCAN_MINUTES: z.coerce.number().int().min(0).default(5),
   // A partner chooses the webhook URL and this service fetches it, so a target
   // inside the network is an SSRF primitive (see domain/partnerWebhooks.ts).
   // Registration refuses one and delivery re-checks the resolved address. Set

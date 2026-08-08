@@ -6,6 +6,8 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findParams, type ValuationParamsRow } from '../repos/params.js';
 import { latestSucceededJob } from '../repos/aiJobs.js';
+import { listComparableItems } from '../repos/comparableItems.js';
+import { marketMultiples } from '../domain/comparables.js';
 import {
   createCalculation,
   latestSucceededCalculation,
@@ -134,14 +136,26 @@ export async function buildCalculationInputs(
   if (applied && typeof applied === 'object' && !Array.isArray(applied)) {
     inputs = deepMerge(inputs, applied as Record<string, unknown>);
   }
-  const compsJob = await latestSucceededJob(pool, valuationId, 'comparables');
-  const comps = compsJob?.result?.comparables;
-  if (Array.isArray(comps)) {
-    const key = paramsRow.market_method === 'ebitda' ? 'ebitda_multiple' : 'revenue_multiple';
-    const multiples = comps
-      .map((c) => (c && typeof c === 'object' ? Number((c as Record<string, unknown>)[key]) : NaN))
-      .filter((m) => Number.isFinite(m) && m > 0);
-    if (multiples.length > 0) inputs = deepMerge(inputs, { market: { multiples } });
+  // The persisted peer set (design §4.5) outranks the AI aggregate when it has
+  // rows: it is the set an analyst screened and signed off on, row by row, with
+  // the exclusions recorded. The AI job's summarised multiples stay the fallback
+  // for every engagement nobody has screened, which is the behaviour that
+  // existed before `comparable_items` did — a new empty table must not change
+  // what an untouched valuation computes.
+  const peers = await listComparableItems(pool, valuationId);
+  const peerMultiples = marketMultiples(peers, paramsRow.market_method, paramsRow.market_horizon);
+  if (peerMultiples.length > 0) {
+    inputs = deepMerge(inputs, { market: { multiples: peerMultiples } });
+  } else {
+    const compsJob = await latestSucceededJob(pool, valuationId, 'comparables');
+    const comps = compsJob?.result?.comparables;
+    if (Array.isArray(comps)) {
+      const key = paramsRow.market_method === 'ebitda' ? 'ebitda_multiple' : 'revenue_multiple';
+      const multiples = comps
+        .map((c) => (c && typeof c === 'object' ? Number((c as Record<string, unknown>)[key]) : NaN))
+        .filter((m) => Number.isFinite(m) && m > 0);
+      if (multiples.length > 0) inputs = deepMerge(inputs, { market: { multiples } });
+    }
   }
   return deepMerge(inputs, explicit);
 }

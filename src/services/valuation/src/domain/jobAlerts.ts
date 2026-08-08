@@ -1,0 +1,140 @@
+import { ACTIVE_JOB_STATUSES, JOB_SOURCE_LABELS, type JobSource, type JobStats } from './jobQueue.js';
+
+/**
+ * When a background queue is in trouble (design §17.1 item 13).
+ *
+ * The monitor has always been able to say how many jobs are in each state. What
+ * it could not say is whether that number is a problem, and the reason is in
+ * `oldestActiveJobs`' own docstring: a count cannot distinguish a busy queue
+ * from a stopped one. Five hundred queued emails on a Monday morning is the
+ * platform working. One email queued since Thursday is a dead SMTP host, and
+ * the second is invisible in every count on the page.
+ *
+ * So there are two conditions and they measure different things:
+ *
+ *   * **stalled** — the oldest still-owed job is older than the queue's window.
+ *     This is the one that catches a stopped worker, and it is the reason the
+ *     age is measured rather than the depth.
+ *   * **failing** — more than N jobs failed inside the window. This catches a
+ *     queue that is moving fine and getting every answer wrong, which the age
+ *     check cannot see at all because a failed job is not outstanding.
+ *
+ * Pure, and deliberately so: the evaluator takes a clock and returns findings.
+ * Everything about persistence, de-duplication and who gets told lives in the
+ * repo and the hook, so the rules themselves can be tested against a table of
+ * inputs rather than against a database at a particular moment.
+ */
+
+export const JOB_ALERT_KINDS = ['stalled', 'failing'] as const;
+export type JobAlertKind = (typeof JOB_ALERT_KINDS)[number];
+
+export interface JobAlertRule {
+  source: JobSource;
+  enabled: boolean;
+  stall_minutes: number;
+  failure_count: number;
+  failure_window_hours: number;
+}
+
+/** One queue's current state, as `jobStats` + `oldestActiveJobs` report it. */
+export interface QueueObservation {
+  source: JobSource;
+  /** Oldest still-owed job, or null when the queue is empty. */
+  oldestActiveAt: Date | null;
+  active: number;
+  failed: number;
+}
+
+export interface JobAlertFinding {
+  source: JobSource;
+  kind: JobAlertKind;
+  detail: string;
+  /** The measured figure: minutes for `stalled`, a count for `failing`. */
+  observed: number;
+  threshold: number;
+}
+
+/** `4h 12m`, `18m` — how an operator reads a queue age. */
+export function humanMinutes(minutes: number): string {
+  const whole = Math.floor(minutes);
+  if (whole < 60) return `${whole}m`;
+  const hours = Math.floor(whole / 60);
+  const rest = whole % 60;
+  if (hours < 24) return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return restHours === 0 ? `${days}d` : `${days}d ${restHours}h`;
+}
+
+/**
+ * Fold the per-(source, status) stats and the oldest-active rows into one
+ * observation per queue.
+ *
+ * Sources with no rows at all still appear, with a null age and zero counts —
+ * an empty queue is a fact the evaluator needs, and dropping it would make
+ * "nothing has run all day" indistinguishable from "this queue is healthy".
+ */
+export function observeQueues(
+  sources: readonly JobSource[],
+  stats: readonly JobStats[],
+  oldest: readonly { source: JobSource; oldest_created_at: Date; active: number }[],
+): QueueObservation[] {
+  return sources.map((source) => {
+    const mine = stats.filter((s) => s.source === source);
+    const head = oldest.find((o) => o.source === source);
+    return {
+      source,
+      oldestActiveAt: head ? new Date(head.oldest_created_at) : null,
+      active: mine.reduce((n, s) => (ACTIVE_JOB_STATUSES.includes(s.status) ? n + s.count : n), 0),
+      failed: mine.reduce((n, s) => (s.status === 'failed' ? n + s.count : n), 0),
+    };
+  });
+}
+
+/**
+ * The findings for one scan.
+ *
+ * A disabled rule produces nothing — not a suppressed finding. The difference
+ * matters downstream: the reconciler resolves any open alert it does not see,
+ * so disabling a rule closes its alert rather than freezing it open forever.
+ */
+export function evaluateJobAlerts(
+  observations: readonly QueueObservation[],
+  rules: readonly JobAlertRule[],
+  now: Date,
+): JobAlertFinding[] {
+  const findings: JobAlertFinding[] = [];
+  for (const observation of observations) {
+    const rule = rules.find((r) => r.source === observation.source);
+    if (!rule || !rule.enabled) continue;
+
+    if (observation.oldestActiveAt) {
+      const minutes = (now.getTime() - observation.oldestActiveAt.getTime()) / 60_000;
+      if (minutes > rule.stall_minutes) {
+        findings.push({
+          source: observation.source,
+          kind: 'stalled',
+          observed: Math.round(minutes * 100) / 100,
+          threshold: rule.stall_minutes,
+          detail:
+            `${JOB_SOURCE_LABELS[observation.source]}: oldest outstanding job is ` +
+            `${humanMinutes(minutes)} old (threshold ${humanMinutes(rule.stall_minutes)}), ` +
+            `${observation.active} still owed`,
+        });
+      }
+    }
+
+    if (observation.failed >= rule.failure_count) {
+      findings.push({
+        source: observation.source,
+        kind: 'failing',
+        observed: observation.failed,
+        threshold: rule.failure_count,
+        detail:
+          `${JOB_SOURCE_LABELS[observation.source]}: ${observation.failed} failures in the last ` +
+          `${rule.failure_window_hours}h (threshold ${rule.failure_count})`,
+      });
+    }
+  }
+  return findings;
+}

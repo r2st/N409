@@ -29,12 +29,36 @@ import {
   StateBadge,
   TextInput,
 } from '../components/ui';
-import { DonutChart } from '../components/charts';
+import { DonutChart, LineChart } from '../components/charts';
 import { HelpIcon } from '../components/HelpIcon';
 import { GettingStarted } from '../components/GettingStarted';
 import { AttentionBand } from '../components/AttentionBand';
 
 const PIVOT_GROUPS = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
+
+/**
+ * The bucket strip (design §3.1/§3.2), in the order the sidebar lists them.
+ *
+ * `all` and `unread` are left out on purpose: the total is already the first
+ * stat card above, and unread cuts across every bucket rather than sitting
+ * beside them — it is shown as a badge on the ones that have some. Same
+ * reasoning the sidebar's `BucketNav` documents.
+ */
+const STRIP_BUCKETS = [
+  { key: 'incomplete', label: 'Incomplete' },
+  { key: 'unverified', label: 'Unverified' },
+  { key: 'in_progress', label: 'In Progress' },
+  { key: 'waiting_on_client', label: 'Waiting On Client' },
+  { key: 'drafted', label: 'Drafted' },
+  { key: 'published', label: 'Published' },
+  { key: 'ignored', label: 'Ignored' },
+] as const;
+
+/** `valuation_state_changed` → `Valuation state changed`. */
+function eventLabel(type: string): string {
+  const words = type.replace(/[._]/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -153,6 +177,72 @@ export function DashboardPage() {
             <StatCard label="Published" value={stats.published} accent to="/valuations?group=published" />
           </div>
 
+          {/* ── Bucket strip (design §3.1/§3.2): the same tallies the sidebar
+              badges read, so the two can never disagree. Each cell navigates to
+              the listing pre-filtered on that bucket. */}
+          {showAnalytics && analytics?.buckets && (
+            <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+              {STRIP_BUCKETS.map(({ key, label }) => {
+                const tally = analytics.buckets[key];
+                return (
+                  <Link
+                    key={key}
+                    to={`/valuations?bucket=${key}`}
+                    className="rounded-lg border border-paper-300 bg-surface px-4 py-3 shadow-card transition-shadow hover:shadow-lift"
+                  >
+                    <div className="overline truncate text-ink-400">{label}</div>
+                    <div className="mt-1 flex items-baseline gap-2">
+                      <span className="tnum font-display text-xl font-semibold text-ink-900">
+                        {tally?.total ?? 0}
+                      </span>
+                      {(tally?.unread ?? 0) > 0 && (
+                        <span className="tnum text-xs font-semibold text-bond-600">
+                          {tally!.unread} unread
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── SLA band: the two figures that mean somebody has to do something
+              today. Zero is stated rather than hidden — "nothing is overdue" is
+              the answer an operator opens this page for. */}
+          {showAnalytics && analytics?.sla && (
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <Link
+                to="/valuations?bucket=in_progress"
+                className={`rounded-lg border px-5 py-4 shadow-card transition-shadow hover:shadow-lift ${
+                  analytics.sla.overdue > 0 ? 'border-red-200 bg-red-50' : 'border-paper-300 bg-surface'
+                }`}
+              >
+                <div className="overline text-ink-400">Past due</div>
+                <div className="tnum mt-1 font-display text-2xl font-semibold text-ink-900">
+                  {analytics.sla.overdue}
+                </div>
+                <div className="mt-1 text-xs text-ink-400">Unpublished engagements past their due date</div>
+              </Link>
+              <Link
+                to="/valuations?bucket=waiting_on_client"
+                className={`rounded-lg border px-5 py-4 shadow-card transition-shadow hover:shadow-lift ${
+                  analytics.sla.waiting_stale > 0
+                    ? 'border-amber-200 bg-amber-50'
+                    : 'border-paper-300 bg-surface'
+                }`}
+              >
+                <div className="overline text-ink-400">Stalled with the client</div>
+                <div className="tnum mt-1 font-display text-2xl font-semibold text-ink-900">
+                  {analytics.sla.waiting_stale}
+                </div>
+                <div className="mt-1 text-xs text-ink-400">
+                  Waiting, no contact for {analytics.sla.waiting_days} days
+                </div>
+              </Link>
+            </div>
+          )}
+
           <AttentionBand items={attention} isOps={isOps(user)} />
 
           {/* ── Analytics: date range + product pivot + pies (M3) — ops/partner only */}
@@ -219,6 +309,19 @@ export function DashboardPage() {
 
               {analytics && (
                 <>
+                  {analytics.throughput?.length > 0 && (
+                    <div className="mt-4">
+                      <LineChart
+                        title="Published per week — trailing 12 weeks"
+                        points={analytics.throughput.map((w) => ({
+                          label: formatDate(w.week),
+                          value: w.count,
+                        }))}
+                        format={(v) => String(Math.round(v))}
+                      />
+                    </div>
+                  )}
+
                   <div className="mt-4 grid gap-4 lg:grid-cols-2">
                     <DonutChart
                       title="By product"
@@ -338,6 +441,41 @@ export function DashboardPage() {
                   )}
                 </>
               )}
+            </>
+          )}
+
+          {/* ── Activity feed: who did what, on which engagement. Scoped
+              server-side — every row names a company, so this is the sharpest
+              of the four bands and the one a cross-firm leak would show in. */}
+          {showAnalytics && analytics?.activity && analytics.activity.length > 0 && (
+            <>
+              <div className="mt-10 flex items-center justify-between">
+                <h2 className="overline text-ink-400">Recent activity</h2>
+                {isOps(user) && (
+                  <Link to="/activity" className="text-sm font-semibold text-bond-600 hover:text-bond-700">
+                    View all →
+                  </Link>
+                )}
+              </div>
+              <ul className="mt-4 divide-y divide-paper-200 rounded-lg border border-paper-300 bg-surface shadow-card">
+                {analytics.activity.map((row) => (
+                  <li key={row.id}>
+                    <Link
+                      to={`/valuations/${row.valuation_id}`}
+                      className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-5 py-3 hover:bg-paper-50"
+                    >
+                      <span className="text-sm font-medium text-ink-900">{eventLabel(row.type)}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-ink-500">
+                        {row.company_name} · #{row.number}
+                      </span>
+                      <span className="text-xs text-ink-400">
+                        {row.actor_type === 'human' ? (row.actor_email ?? 'unknown') : row.actor_type}
+                      </span>
+                      <span className="tnum text-xs text-ink-400">{formatDate(row.occurred_at)}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             </>
           )}
 

@@ -104,6 +104,7 @@ import { setWebhookTargetPolicy } from './domain/partnerWebhooks.js';
 import { registerSpecialtyRoutes } from './routes/specialty.js';
 import { registerResearchRoutes } from './routes/research.js';
 import { registerDataRemediationRoutes } from './routes/dataRemediation.js';
+import { registerComparableRoutes } from './routes/comparables.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
 import { probeReady } from './clients/internal.js';
@@ -345,6 +346,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerSpecialtyRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // Design §7.4 — the stale-backsolve and stale-QA-review queues, one surface.
   registerDataRemediationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  // Design §4.5 — Network Items: the persisted guideline-company peer set.
+  registerComparableRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerBridgeRoutes(app, { pool });
   registerAnalyticsRoutes(app, { pool });
   registerCompareRoutes(app, { pool });

@@ -8,8 +8,12 @@ import {
   cloneValuation,
   countValuationsByGroup,
   countValuationsByNamedBucket,
+  dashboardActivity,
   dashboardStats,
   findValuationById,
+  namedBucketBreakdown,
+  publishThroughput,
+  slaBreaches,
 } from '../repos/valuations.js';
 import { NAMED_BUCKETS, type NamedBucketKey } from '../domain/workflow.js';
 import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
@@ -45,6 +49,29 @@ function readerSideFor(principal: Parameters<typeof valuationScope>[0]): 'admin'
   return isOps(principal) ? 'admin' : 'user';
 }
 
+/** How many trailing weeks the throughput sparkline covers (design §3.1). */
+const THROUGHPUT_WEEKS = 12;
+
+/** How many activity rows the feed carries (design §3.1). */
+const ACTIVITY_LIMIT = 20;
+
+/**
+ * The three added dashboard bands, in one round of queries.
+ *
+ * Split out of the route so the cache has something to call and so the shape is
+ * named once: the frontend and the sidebar both read `buckets`, and there is
+ * exactly one place that decides what a bucket tally is.
+ */
+async function loadBands(pool: pg.Pool, scope: ReturnType<typeof valuationScope>, side: 'admin' | 'user') {
+  const [buckets, activity, throughput, sla] = await Promise.all([
+    namedBucketBreakdown(pool, scope, {}, side),
+    dashboardActivity(pool, scope, ACTIVITY_LIMIT),
+    publishThroughput(pool, scope, THROUGHPUT_WEEKS),
+    slaBreaches(pool, scope),
+  ]);
+  return { buckets, activity, throughput, sla };
+}
+
 /**
  * M3 operations surface: tab counts (feature 15), CSV export (16), dashboard
  * analytics (17), clone / roll-forward (18).
@@ -53,6 +80,9 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
   const countsCache = new TtlCache<Record<StateGroup | 'all', number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const namedCountsCache = new TtlCache<Record<NamedBucketKey, number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const dashboardCache = new TtlCache<Awaited<ReturnType<typeof dashboardStats>>>({
+    ttlMs: DASHBOARD_CACHE_TTL_MS,
+  });
+  const bandsCache = new TtlCache<Awaited<ReturnType<typeof loadBands>>>({
     ttlMs: DASHBOARD_CACHE_TTL_MS,
   });
 
@@ -125,12 +155,22 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
       total += row.count;
     }
 
+    // Design §3.1 — the three bands the landing dashboard was missing: the
+    // bucket strip, the SLA figures, the throughput series, and the activity
+    // feed behind them. Cached on the same key as the pivot: they are read
+    // together on one page load, and a reader comparing a bucket count against
+    // the pivot beneath it should not see two different instants.
+    const bands = await bandsCache.getOrLoad(JSON.stringify({ scope, side: readerSideFor(principal) }), () =>
+      loadBands(deps.pool, scope, readerSideFor(principal)),
+    );
+
     return {
       total,
       // stable kind order (matches the product catalogue)
       by_kind: VALUATION_KINDS.filter((k) => byKind.has(k)).map((k) => ({ kind: k, ...byKind.get(k)! })),
       by_state: byState,
       by_source: bySource,
+      ...bands,
     };
   });
 

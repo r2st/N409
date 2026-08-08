@@ -779,9 +779,9 @@ No work.
 | 8 | Stale QA reviews unlisted | 7.4 | Data gap | Remediation | **P0** | S |
 | 9 | Nine named listing tabs | 4.2 | Partial | Ops UX | **P0** | S |
 | 10 | Sidebar bucket counts + unread badges | 3.2 | Missing | Ops UX | **P0** | S |
-| 11 | Dashboard is thin — no activity, SLA or throughput | 3.1 | Partial | Ops UX | P1 | M |
-| 12 | Network Items / persisted comparable set | 4.5 | Missing | Feature + defensibility | P1 | M |
-| 13 | Job monitor reports but nothing alerts | — | Partial | Ops | P1 | M |
+| 11 | Dashboard is thin — no activity, SLA or throughput | 3.1 | **Closed** | Ops UX | P1 | M |
+| 12 | Network Items / persisted comparable set | 4.5 | **Closed** | Feature + defensibility | P1 | M |
+| 13 | Job monitor reports but nothing alerts | — | **Closed** | Ops | P1 | M |
 | 14 | Cross-partner API token listing | 14.1 | Partial | Ops UX | P2 | S |
 | 15 | Inbox compose box | 15.2 | Partial | Ops UX | P2 | S |
 | 16 | Legacy documents still in `uploads` | 9.2 | Data gap | Remediation | P2 | S |
@@ -799,6 +799,8 @@ That is an unusual and favourable position. The expensive work — the engines, 
 
 The three P1 items are where new surface actually has to be designed. Everything at P2 is parity or polish.
 
+**All three P1 items are now closed** (Sprint 4 below). What remains on this table is P2, plus the two P0 items that are provider configuration rather than code: Stripe keys and a Perplexity key.
+
 ## 17.3 Sequencing
 
 **Sprint 1 — collect the sunk value.** Items 1, 3, 4, 9, 10. All S or M, no new schema, no new engine. At the end of it Stripe settles, eight specialty engines are in the product, reviewers can edit narrative guidance, and the listing reads like the competitor's.
@@ -807,7 +809,7 @@ The three P1 items are where new surface actually has to be designed. Everything
 
 **Sprint 3 — compliance and remediation.** Items 6, 7, 8 — one migration, one predicate, one remediation-list page hosting both queries.
 
-**Sprint 4 — new surface.** Items 11, 12, 13.
+**Sprint 4 — the P1 surface.** Items 11, 12, 13. Two migrations (`0119_comparable_items`, `0120_job_alerts`), one new tab, three new bands on an existing page, and one background sweep. The peer set is the load-bearing one: it is the first thing an auditor asks a market approach about, and it also changes what the engine is fed — the included rows outrank the AI aggregate, with the aggregate kept as the fallback so an unscreened engagement computes exactly as it did before.
 
 **Backlog.** 14–21.
 
@@ -888,7 +890,7 @@ Section 13 of `N409-System-Design.docx` was verified at commit `8861b0c`. The fo
 | 13.1 | Perplexity market research — "grep -ril perplexity returns nothing" | **Adapter built** (`ai/app/perplexity.py`, `POST /ai/v1/research`, two test files). Still unwired — re-scoped as P0-2, a smaller job than it was. |
 | 13.2 | ~19 narrative prompts missing | Partly closed: `0114` seeded 34 narrative-section rows. The 11 market-research prompts remain — P0-4. |
 | 13.3 | Missing-data completeness scoring | **Closed** — `domain/dataCompleteness.ts`, `routes/dataCompleteness.ts`, `CompletenessTab.tsx`. |
-| 13.4 | Comparables depth | **Closed in the engine** — `comparables.py` has SIC similarity, log/linear proximity, screening reasons, quartiles, primary-multiple selection; `test_comp_multisource.py`. Persistence of the peer set is a separate item (P1-12). |
+| 13.4 | Comparables depth | **Closed in the engine** — `comparables.py` has SIC similarity, log/linear proximity, screening reasons, quartiles, primary-multiple selection; `test_comp_multisource.py`. Persistence of the peer set is **closed** too — `0119_comparable_items.sql`, `routes/comparables.ts`, `ComparablesTab.tsx`, Exhibit D-1. |
 | 13.5 | Financial anomaly detection | **Closed** — `engine/anomalies.py`. |
 | 13.6 | LTM vs NTM multiples | **Closed** — `market_horizon` enum (`0111`), `ebitda_ntm` in the extraction fields. |
 | 13.7 | 820 / gifts / ifrs2 engine dispatch | **Closed** — `fair_value_820.py`, `gift_estate.py`, `ifrs2.py`, each with an endpoint. |
@@ -904,7 +906,7 @@ Section 13 of `N409-System-Design.docx` was verified at commit `8861b0c`. The fo
 | — | Template categories and variable catalog | **Closed** — `0113`, 15 declared variables. |
 | — | Role catalog and capability matrix | **Closed** — `domain/permissions.ts`, asserted against `auth/rbac.ts`. |
 | — | Partner terms (prepaid, cc_emails, subdomain) | **Closed** — `0113`. |
-| — | Job monitor | **Closed as a report**; alerting remains (P1-13). |
+| — | Job monitor | **Closed as a report and as an alert** — `0120_job_alerts.sql`, `domain/jobAlerts.ts`, `hooks/jobAlerts.ts`, `POST /admin/jobs/alerts/scan`. |
 | — | Shared inbox | **Closed** — `0113`, per-reader read state. Compose box remains (P2-15). |
 | — | Cap-table structure graph | **Closed** — `domain/capTableGraph.ts`, `CapTableGraph.tsx`. |
 

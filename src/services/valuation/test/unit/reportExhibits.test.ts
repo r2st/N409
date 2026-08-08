@@ -8,6 +8,7 @@ import {
   discountExhibit,
   incomeExhibit,
   marketExhibit,
+  peerSetExhibit,
   pwermExhibit,
 } from '../../src/domain/reportExhibits.js';
 import { ALLOWED_TAGS, sanitizeHtml } from '../../src/domain/report.js';
@@ -477,5 +478,89 @@ describe('discount exhibit', () => {
 
   it('is absent without a concluded value', () => {
     expect(discountExhibit({ discounts: { dloc: 0.1 } }, CONTEXT)).toBeNull();
+  });
+});
+
+// ── Exhibit D-1 ──────────────────────────────────────────────────────────────
+
+describe('peer set exhibit', () => {
+  const peers = [
+    {
+      ticker: 'AAA',
+      name: 'Alpha Analytics',
+      included: true,
+      exclude_reason: null,
+      source: 'market_feed',
+      score: 0.82,
+      multiples: { ev_revenue_ltm: 5.0, ev_ebitda_ltm: null },
+    },
+    {
+      ticker: 'BBB',
+      name: 'Beta & Sons <Holdings>',
+      included: true,
+      exclude_reason: null,
+      source: 'analyst',
+      score: null,
+      multiples: { ev_revenue_ltm: 6.5, ev_ebitda_ltm: null },
+    },
+    {
+      ticker: 'ZZZ',
+      name: 'Zeta Mining',
+      included: false,
+      exclude_reason: 'different industry',
+      source: 'market_feed',
+      score: 0.05,
+      multiples: { ev_revenue_ltm: 1.1, ev_ebitda_ltm: null },
+    },
+  ];
+
+  it('names the retained companies and the ones set aside, with the basis', () => {
+    const seen = plain(peerSetExhibit(peers, RESULTS)!.html);
+    expect(seen).toContain('Alpha Analytics (AAA)');
+    expect(seen).toContain('Zeta Mining (ZZZ)');
+    expect(seen).toContain('different industry');
+  });
+
+  it('prints only the multiples the retained set actually has', () => {
+    // Every retained comp is loss-making here, so an EV/EBITDA column would be
+    // a column of dashes — which tells a reader nothing about the comps.
+    const html = peerSetExhibit(peers, RESULTS)!.html;
+    expect(html).toContain('EV/LTM Revenue');
+    expect(html).not.toContain('EV/LTM EBITDA');
+  });
+
+  it('escapes company names, which come from the engagement', () => {
+    expect(peerSetExhibit(peers, RESULTS)!.html).toContain('Beta &amp; Sons &lt;Holdings&gt;');
+  });
+
+  it('is absent without a peer set', () => {
+    expect(peerSetExhibit(undefined, RESULTS)).toBeNull();
+    expect(peerSetExhibit([], RESULTS)).toBeNull();
+  });
+
+  it('is absent when the run applied no market approach', () => {
+    // A set an analyst screened but never weighted into the conclusion is
+    // working material; printing it as a supporting schedule overstates it.
+    const noMarket = { ...RESULTS, approaches: { income: { weight: 1 } } };
+    expect(peerSetExhibit(peers, noMarket)).toBeNull();
+  });
+
+  it('follows Exhibit D and leaves the lettering alone', () => {
+    const headings = buildExhibits(calculation(), { ...CONTEXT, peers }).map((s) => s.heading);
+    expect(headings).toEqual([
+      'Exhibit A — Capitalization Table',
+      'Exhibit B — Reconciliation of Valuation Approaches',
+      'Exhibit C — Income Approach (Discounted Cash Flow)',
+      'Exhibit D — Market Approach (Guideline Multiples)',
+      'Exhibit D-1 — Guideline Company Set',
+      'Exhibit F — Allocation of Equity Value',
+      'Exhibit H — Discounts and Concluded Value',
+    ]);
+  });
+
+  it('renders through the report sanitizer without losing its table', () => {
+    const clean = sanitizeHtml(peerSetExhibit(peers, RESULTS)!.html, ALLOWED_TAGS);
+    expect(clean).toContain('<table>');
+    expect(clean).toContain('Alpha Analytics (AAA)');
   });
 });

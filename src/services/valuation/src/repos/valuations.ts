@@ -11,12 +11,7 @@ import {
   type ValuationState,
 } from '../domain/valuation.js';
 import { OPERATIONS_EVENT_TYPES, STATE_GROUPS, stateGroupOf, type StateGroup } from '../domain/operations.js';
-import {
-  namedBucket,
-  namedBucketsFor,
-  NAMED_BUCKET_KEYS,
-  type NamedBucketKey,
-} from '../domain/workflow.js';
+import { namedBucket, namedBucketsFor, NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import type { ValuationScope } from '../auth/rbac.js';
 
@@ -508,45 +503,77 @@ export async function countValuationsByGroup(
  * The state/bucket filter itself is dropped, exactly as `countValuationsByGroup`
  * drops the group: each tab shows its own total, not its total within itself.
  */
+export interface BucketTally {
+  total: number;
+  /** Unread by the asking reader — a subset of `total`, not a separate cohort. */
+  unread: number;
+}
+
+export async function namedBucketBreakdown(
+  pool: pg.Pool,
+  scope: ValuationScope,
+  filters: ValuationFilters,
+  readerSide: 'admin' | 'user',
+): Promise<Record<NamedBucketKey, BucketTally>> {
+  const counts = Object.fromEntries(NAMED_BUCKET_KEYS.map((k) => [k, { total: 0, unread: 0 }])) as Record<
+    NamedBucketKey,
+    BucketTally
+  >;
+  if (scope.kind === 'none') return counts;
+
+  const base = { ...filters, state: undefined, group: undefined, bucket: undefined, unreadFor: undefined };
+  const { whereSql, params } = buildValuationWhere(scope, base);
+  const readCol = readerSide === 'admin' ? 'admin_read_at' : 'user_read_at';
+
+  // One scan for all nine buckets and both tallies. The alternative — a count
+  // per bucket per tally — is eighteen aggregates over the same table on a page
+  // that renders on every navigation, and the sidebar reads this same payload.
+  const { rows } = await pool.query<{
+    state: ValuationState;
+    waiting_on_client: boolean;
+    unread: boolean;
+    count: string;
+  }>(
+    `SELECT state, waiting_on_client,
+            (last_comment_at IS NOT NULL AND (${readCol} IS NULL OR last_comment_at > ${readCol})) AS unread,
+            count(*)::text AS count
+       FROM valuations ${whereSql}
+      GROUP BY state, waiting_on_client, unread`,
+    params,
+  );
+
+  const add = (key: NamedBucketKey, n: number, unread: boolean) => {
+    counts[key].total += n;
+    if (unread) counts[key].unread += n;
+  };
+  for (const row of rows) {
+    const n = Number(row.count);
+    // `namedBucketsFor` already includes `all`, and deliberately has no
+    // fallback bucket: a state belonging to none of them shows up as counts
+    // that do not add up rather than being filed silently under Ignored.
+    for (const key of namedBucketsFor(row.state)) add(key, n, row.unread);
+    if (row.waiting_on_client) add('waiting_on_client', n, row.unread);
+    // The unread bucket is the unread rows themselves, so its own `unread`
+    // tally equals its total by construction. Kept rather than special-cased:
+    // a reader comparing "12 (12 unread)" against the other rows learns what
+    // the bucket means.
+    if (row.unread) add('unread', n, true);
+  }
+  return counts;
+}
+
+/** The flat totals the listing tab strip and the sidebar badges read. */
 export async function countValuationsByNamedBucket(
   pool: pg.Pool,
   scope: ValuationScope,
   filters: ValuationFilters,
   readerSide: 'admin' | 'user',
 ): Promise<Record<NamedBucketKey, number>> {
-  const counts = Object.fromEntries(NAMED_BUCKET_KEYS.map((k) => [k, 0])) as Record<
+  const breakdown = await namedBucketBreakdown(pool, scope, filters, readerSide);
+  return Object.fromEntries(NAMED_BUCKET_KEYS.map((key) => [key, breakdown[key].total])) as Record<
     NamedBucketKey,
     number
   >;
-  if (scope.kind === 'none') return counts;
-
-  const base = { ...filters, state: undefined, group: undefined, bucket: undefined, unreadFor: undefined };
-  const byState = buildValuationWhere(scope, base);
-  const waiting = buildValuationWhere(scope, { ...base, waitingOnClient: true });
-  const unread = buildValuationWhere(scope, { ...base, unreadFor: readerSide });
-
-  const [stateRows, waitingRows, unreadRows] = await Promise.all([
-    pool.query<{ state: ValuationState; count: string }>(
-      `SELECT state, count(*)::text AS count FROM valuations ${byState.whereSql} GROUP BY state`,
-      byState.params,
-    ),
-    pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM valuations ${waiting.whereSql}`,
-      waiting.params,
-    ),
-    pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM valuations ${unread.whereSql}`,
-      unread.params,
-    ),
-  ]);
-
-  for (const row of stateRows.rows) {
-    const n = Number(row.count);
-    for (const key of namedBucketsFor(row.state)) counts[key] += n;
-  }
-  counts.waiting_on_client = Number(waitingRows.rows[0]!.count);
-  counts.unread = Number(unreadRows.rows[0]!.count);
-  return counts;
 }
 
 export interface DashboardStatsRow {
@@ -576,6 +603,146 @@ export async function dashboardStats(
     params,
   );
   return rows.map((r) => ({ ...r, count: Number(r.count) }));
+}
+
+/**
+ * Valuations published per week, most recent week last (design §3.1).
+ *
+ * Weeks are Postgres `date_trunc('week', …)` — ISO weeks starting Monday — and
+ * every week in the window is returned, including the empty ones. A sparkline
+ * drawn from only the non-empty weeks compresses a two-week outage into a
+ * continuous line, which is the opposite of what the reader is looking for.
+ */
+export async function publishThroughput(
+  pool: pg.Pool,
+  scope: ValuationScope,
+  weeks: number,
+): Promise<Array<{ week: string; count: number }>> {
+  if (scope.kind === 'none') return [];
+  const { whereSql, params } = buildValuationWhere(scope, {});
+  const scopeClause = whereSql ? `${whereSql} AND` : 'WHERE';
+  const { rows } = await pool.query<{ week: string; count: string }>(
+    `WITH weeks AS (
+       SELECT generate_series(
+         date_trunc('week', now()) - make_interval(weeks => $${params.length + 1}::int - 1),
+         date_trunc('week', now()),
+         interval '1 week'
+       ) AS week
+     ),
+     published AS (
+       SELECT date_trunc('week', published_at) AS week, count(*)::text AS count
+         FROM valuations ${scopeClause} published_at IS NOT NULL
+        GROUP BY 1
+     )
+     SELECT to_char(w.week, 'YYYY-MM-DD') AS week, coalesce(p.count, '0') AS count
+       FROM weeks w LEFT JOIN published p ON p.week = w.week
+      ORDER BY w.week ASC`,
+    [...params, weeks],
+  );
+  return rows.map((r) => ({ week: r.week, count: Number(r.count) }));
+}
+
+/**
+ * How long an engagement may sit waiting on the client before the dashboard
+ * calls it out.
+ *
+ * Seven days, deliberately shorter than `firmDashboard.STALE_WAITING_DAYS`
+ * (14). They answer different questions: this is the SLA warning band — "these
+ * need a nudge" — and the firm attention band is the escalation. One threshold
+ * serving both would either nag at a week or stay silent for a fortnight.
+ */
+export const SLA_WAITING_DAYS = 7;
+
+/**
+ * The two SLA figures the dashboard shows.
+ *
+ * `idle` matches the firm dashboard's definition — last comment, or creation if
+ * there has never been one — so "waiting, no contact" means the same thing on
+ * both surfaces.
+ */
+export async function slaBreaches(
+  pool: pg.Pool,
+  scope: ValuationScope,
+): Promise<{ overdue: number; waiting_stale: number; waiting_days: number }> {
+  const empty = { overdue: 0, waiting_stale: 0, waiting_days: SLA_WAITING_DAYS };
+  if (scope.kind === 'none') return empty;
+  const { whereSql, params } = buildValuationWhere(scope, {});
+  const scopeClause = whereSql ? `${whereSql} AND` : 'WHERE';
+  const { rows } = await pool.query<{ overdue: string; waiting_stale: string }>(
+    `SELECT
+       count(*) FILTER (
+         WHERE due_date IS NOT NULL AND due_date < now() AND published_at IS NULL
+       )::text AS overdue,
+       count(*) FILTER (
+         WHERE waiting_on_client
+           AND coalesce(last_comment_at, created_at) < now() - make_interval(days => $${params.length + 1}::int)
+       )::text AS waiting_stale
+     FROM valuations ${scopeClause} state <> ALL($${params.length + 2}::valuation_state[])`,
+    // A published or abandoned engagement cannot breach an SLA: it is finished.
+    [...params, SLA_WAITING_DAYS, ['published', 'cancelled', 'ignored', 'timeout']],
+  );
+  return {
+    overdue: Number(rows[0]!.overdue),
+    waiting_stale: Number(rows[0]!.waiting_stale),
+    waiting_days: SLA_WAITING_DAYS,
+  };
+}
+
+/**
+ * The recent-activity feed, inside the caller's scope (design §3.1).
+ *
+ * The spec named `admin_events`; this reads both event tables, because
+ * `admin_events` whose subject is a valuation are rare — the workflow writes to
+ * `valuation_events` — and a "recent activity" list that is empty on a busy
+ * platform is worse than no list. Both branches are constrained to valuations
+ * the caller may read, in SQL: a dashboard that counts or names rows a partner
+ * may not open is the same cross-firm leak in a smaller font, which is what the
+ * scope sweep exists to catch.
+ */
+export async function dashboardActivity(
+  pool: pg.Pool,
+  scope: ValuationScope,
+  limit: number,
+): Promise<
+  Array<{
+    id: string;
+    scope: 'valuation' | 'admin';
+    type: string;
+    actor_type: string;
+    actor_email: string | null;
+    valuation_id: string;
+    company_name: string;
+    number: string;
+    occurred_at: Date;
+  }>
+> {
+  if (scope.kind === 'none') return [];
+  const { whereSql, params } = buildValuationWhere(scope, {}, 'v.');
+  const { rows } = await pool.query(
+    `SELECT s.*, u.email AS actor_email
+       FROM (
+         SELECT e.id, 'valuation' AS scope, e.type, e.actor_type::text AS actor_type, e.actor_id,
+                v.id AS valuation_id, v.company_name, v.number, e.occurred_at
+           FROM valuation_events e
+           JOIN valuations v ON v.id = e.valuation_id
+           ${whereSql}
+         UNION ALL
+         SELECT a.id, 'admin' AS scope, a.type, a.actor_type::text AS actor_type, a.actor_id,
+                v.id AS valuation_id, v.company_name, v.number, a.occurred_at
+           FROM admin_events a
+           JOIN valuations v ON v.id = a.subject_id
+           ${whereSql}${whereSql ? ' AND' : 'WHERE'} a.subject_type = 'valuation'
+       ) s
+       LEFT JOIN users u ON u.id = s.actor_id
+      ORDER BY s.occurred_at DESC, s.id DESC
+      LIMIT $${params.length + 1}`,
+    // Both UNION branches reference the same scope placeholders, so the params
+    // are passed once. Appending a second copy would leave the second branch
+    // still pointing at the first — correct by accident, and one edit away from
+    // a partner-scoped feed that silently stops being scoped.
+    [...params, limit],
+  );
+  return rows as never;
 }
 
 /** Rows for CSV export — same scope/filters as the list, joined for display, capped. */

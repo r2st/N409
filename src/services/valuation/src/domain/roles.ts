@@ -59,3 +59,14 @@ export const USER_ADMIN_ROLES: ReadonlySet<RoleKey> = new Set(['admin', 'god', '
  * whole ops group instead, these would be ignorable within a week.
  */
 export const BILLING_ALERT_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervisor'];
+
+/**
+ * Who hears that a background queue has stopped or is failing.
+ *
+ * The same three as billing, and for the same reason: a stalled outbox needs
+ * somebody who can restart a service or open a provider ticket, and a reviewer
+ * cannot do either. `data` and `data_supervisor` are the near miss — they read
+ * the job monitor daily — but the alert is about infrastructure, not about the
+ * work in the queue, and widening it is how the notification list becomes noise.
+ */
+export const JOB_ALERT_ROLES: readonly RoleKey[] = ['admin', 'god', 'supervisor'];
