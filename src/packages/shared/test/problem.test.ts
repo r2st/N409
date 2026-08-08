@@ -103,4 +103,115 @@ describe('registerProblemHandler', () => {
     expect(res.statusCode).toBe(418);
     expect(res.headers['content-type']).toContain('application/problem+json');
   });
+
+  /**
+   * The branch every route reaches by accident rather than on purpose: a raw
+   * throw that is not an ApiProblem. What the caller must NOT get back is the
+   * message, because an exception string in this codebase quotes connection
+   * strings, a client's cap table, or whatever was interpolated into it.
+   */
+  it('answers an unexpected throw with a generic 500 that quotes nothing', async () => {
+    const app = Fastify({ logger: false });
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw new Error('connect postgres://n409:s3cr3t@db.internal:5432/n409 failed');
+    });
+    const res = await app.inject({ method: 'GET', url: '/boom' });
+    expect(res.statusCode).toBe(500);
+    expect(res.headers['content-type']).toContain('application/problem+json');
+    expect(res.json()).toEqual({
+      type: 'about:blank',
+      title: 'Internal Server Error',
+      status: 500,
+      instance: '/boom',
+    });
+    expect(res.body).not.toContain('s3cr3t');
+    expect(res.body).not.toContain('db.internal');
+    await app.close();
+  });
+
+  it("keeps a 4xx thrown by fastify itself, message and all", async () => {
+    // A malformed JSON body never reaches a handler — fastify throws with a
+    // statusCode of its own, and that status is the useful answer. Its message
+    // describes the request, not the server, so it is safe to echo.
+    const app = Fastify({ logger: false });
+    registerProblemHandler(app);
+    app.post('/echo', async () => ({ ok: true }));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/echo',
+      headers: { 'content-type': 'application/json' },
+      payload: '{not json',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().status).toBe(400);
+    expect(res.json().title).not.toBe('Internal Server Error');
+    expect(res.json().instance).toBe('/echo');
+    await app.close();
+  });
+
+  it('renders an unrouted path as problem+json rather than fastify default', async () => {
+    const app = Fastify({ logger: false });
+    registerProblemHandler(app);
+    const res = await app.inject({ method: 'GET', url: '/nothing/here' });
+    expect(res.statusCode).toBe(404);
+    expect(res.headers['content-type']).toContain('application/problem+json');
+    expect(res.json()).toEqual({
+      type: 'urn:n409:problem:not-found',
+      title: 'Not Found',
+      status: 404,
+      instance: '/nothing/here',
+    });
+    await app.close();
+  });
+});
+
+/**
+ * Every route on the platform throws through one of these, and the front end
+ * switches on `status` and `type`. A factory that quietly changed either would
+ * be a client-visible break with nothing else asserting the shape.
+ */
+describe('problem factories', () => {
+  const cases: Array<[string, ApiProblem, number, string]> = [
+    ['badRequest', problems.badRequest(), 400, 'urn:n409:problem:bad-request'],
+    ['unauthorized', problems.unauthorized(), 401, 'urn:n409:problem:unauthorized'],
+    ['forbidden', problems.forbidden(), 403, 'urn:n409:problem:forbidden'],
+    ['notFound', problems.notFound(), 404, 'urn:n409:problem:not-found'],
+    ['conflict', problems.conflict(), 409, 'urn:n409:problem:conflict'],
+    ['unprocessable', problems.unprocessable(), 422, 'urn:n409:problem:validation'],
+    ['tooManyRequests', problems.tooManyRequests(), 429, 'urn:n409:problem:rate-limited'],
+    ['serviceUnavailable', problems.serviceUnavailable(), 503, 'urn:n409:problem:unavailable'],
+  ];
+
+  it.each(cases)('%s carries its status and stable type URN', (_name, problem, status, type) => {
+    expect(problem.status).toBe(status);
+    expect(problem.toBody()).toMatchObject({ status, type });
+  });
+
+  it('gives the four unauthenticated shapes a default detail', () => {
+    // These are thrown with no argument from the auth plugin and the RBAC
+    // guards, so the default is what a client actually reads.
+    expect(problems.unauthorized().detail).toBe('Authentication required');
+    expect(problems.forbidden().detail).toBe('Not allowed');
+    expect(problems.notFound().detail).toBe('Resource not found');
+    expect(problems.serviceUnavailable().detail).toBe('Service temporarily unavailable');
+  });
+
+  it('omits detail from the body when a factory was given none', () => {
+    // `conflict()` and `badRequest()` take an optional detail; an empty
+    // `detail: undefined` key in the JSON is noise a client has to handle.
+    expect(problems.conflict().toBody()).not.toHaveProperty('detail');
+    expect(problems.badRequest('nope').toBody()).toMatchObject({ detail: 'nope' });
+  });
+
+  it('merges validation extensions into the body without shadowing the envelope', () => {
+    // Every zod failure on the platform rides in `extensions.errors`.
+    const body = problems.unprocessable('Invalid valuation', { errors: [{ path: ['kind'] }] }).toBody('/v');
+    expect(body).toMatchObject({
+      status: 422,
+      title: 'Unprocessable Entity',
+      instance: '/v',
+      errors: [{ path: ['kind'] }],
+    });
+  });
 });
