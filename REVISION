@@ -1,106 +1,121 @@
-2bd920a12924a2a78d59c56873fcd281c833482b
+4a8d306c7318050f6696b219d5b206a3c7ea3c6b
 # N409 deployed revision
-# commit:    2bd920a12924a2a78d59c56873fcd281c833482b
-# subject:   feat(valuation): specialty orchestration — per-kind intake,
-#            pipeline routes, exhibits, partner webhooks, selector
-# previous:  fed0db4 (specialty report-type engines) — b16c662 recorded that
-#            deploy and nothing shipped between.
-# includes:  1 feature commit. fed0db4 built the engines; this connects them.
-#            The "compute-only" gap that deploy recorded is closed end to end:
-#            intake collects the kind's facts, a route runs its engine, the
-#            result persists as a calculation, and the deliverable renders a
-#            schedule of it.
+# commit:    4a8d306c7318050f6696b219d5b206a3c7ea3c6b
+# subject:   feat(workflow): the paid state — the fifteenth, and the gate into
+#            review
+# previous:  2bd920a (specialty orchestration) — 101e309 recorded that deploy.
+# includes:  2 feature commits. a177c8c had been sitting UNCOMMITTED in the
+#            working tree since the previous session: complete, typechecking,
+#            and never pushed. It was verified green (2560 valuation tests) and
+#            committed before anything new was built on top of it. Six of its
+#            files also failed prettier; 4a8d306 reformats them.
 #
-#            intakeKinds.ts — a questionnaire per report type (14 kinds; debt
-#              stays on the instrument workflow). Every form opens with the
-#              shared company section; the kind-specific sections use the
-#              ENGINE'S kwarg names as field keys so a submitted questionnaire
-#              assembles into an engine payload without a translation table.
-#              GET /intake/schema?kind=…; the valuation-scoped questionnaire
-#              routes judge completion, validation and answer-narrowing
-#              against the valuation's kind. One collision found the rule:
-#              EMI's FTE headcount is fte_employee_count because the company
-#              section already owns employee_count and they are genuinely
-#              different figures.
+#            a177c8c — five operational gaps from the 409.ai parity list:
 #
-#            specialty.ts + routes/specialty.ts — POST /valuations/:id/
-#              specialty assembles answers → engine request for qsbs/ppa/ip/
-#              goodwill/esop/fmv/emi/csop, merges the analyst's run inputs
-#              over the assembly, and stores the result as a calculation row
-#              ({kind, specialty} in results, headline figures in the typed
-#              columns where the kind concludes one: ESOP fmv_per_share,
-#              SMB equity, EMI/CSOP grant at AMV). Deliberately lenient on
-#              values — the engine 422s with field-named messages and
-#              re-stating its rules is how two rule sets drift — but strict on
-#              shape: which impairment test, which IP method, whether a PPA
-#              has an intangible schedule are refused here with an
-#              actionable message.
+#            webhook retries (0103) — a failed delivery was simply lost.
+#              Deliveries now carry attempts/max_attempts/next_attempt_at and
+#              climb a 1/5/30-minute ladder (initial attempt + three retries),
+#              swept by a claim-based worker in the email-outbox shape so two
+#              instances cannot send one event twice. `pending` means attempts
+#              are still owed, `failed` means the ladder is exhausted — the
+#              distinction a partner needs to tell "not yet" from "never".
+#              POST /webhooks/:id/deliveries/:id/retry replays an exhausted
+#              one; a delivered event cannot be replayed. This closes the
+#              "specialty webhooks retry never" gap 101e309 recorded.
 #
-#            specialtyExhibits.ts — the render-time schedules for the new
-#              result shapes, dispatched from buildExhibits on
-#              results.specialty. §1202 per-test table + holding period + cap
-#              components; PPA allocation with goodwill residual or bargain
-#              purchase; the three impairment standards (including the
-#              360-10 "not recoverable ≠ impaired" line an audit committee
-#              asks about); ESOP level-of-value chain + repurchase schedule;
-#              SMB SDE normalization + weighted methods; EMI/CSOP UMV/AMV +
-#              Schedule 5/4 checks. Same contract as the 409A exhibits:
-#              unfamiliar shapes drop the exhibit, never throw in a render.
-#              buildReportSummary intentionally returns null for specialty
-#              calculations — its statement is 409A wording.
+#            white-label subdomains (0106) — partners get a DNS label with a
+#              reserved deny list, because a tenant holding `secure` or `login`
+#              under our domain is a phishing page carrying our certificate.
+#              GET /api/v1/public/branding resolves the brand from the Host
+#              header, so a firm's own address renders its first frame signed
+#              out without the SPA learning a slug first. It never 404s — an
+#              unclaimed host is the platform and the login page has to render
+#              on all of them — and host resolution is off entirely without a
+#              configured base domain.
 #
-#            report.ts — dedicated skeletons for the last four authored kinds:
-#              718.v1, 820.v1, gifts.v1 (Rev. Rul. 59-60 factors, interest-
-#              level discounts, Chapter 14, adequate-disclosure statement),
-#              ifrs2.v1 (the ASC 718 differences a reviewer checks: market
-#              conditions in fair value never trued up, graded vesting as
-#              separate awards). Only fund/debt remain generic — their
-#              deliverables are the workbook/instrument flows.
+#            notification sequences (0104) — 0051 seeded the five campaigns
+#              with an obvious trigger, leaving a lifecycle where a client
+#              hears from us at signup, at the draft and at publication and
+#              nothing through the four states in between where the work waits
+#              on them. Seeds the remaining twenty-two for twenty-seven: an
+#              ack on entering each client-visible state, escalating nudges per
+#              thing we are blocked on, reviewer reminders, and the post-
+#              publication feedback / six-month / annual-renewal sequence. Six
+#              new conditions name the blockage in terms the schema evaluates.
+#              SMS stays opt-in — no deployment starts texting because a
+#              migration ran.
 #
-#            partner API — migration 0102. Webhooks: CRUD + test ping +
-#              delivery log under /api/partner/v1/webhooks; per-endpoint
-#              n409_whsec_ secret returned once; deliveries HMAC-signed
-#              (x-n409-signature: sha256=<hex> over the raw body) with event
-#              and delivery-id headers. Firing rides onStateChanged — the one
-#              choke point every path into a state already crosses — so every
-#              report type gets valuation.state_changed, and drafted/
-#              published also fire valuation.report_ready. Delivery rows are
-#              written BEFORE the attempt (the email-outbox rule). One
-#              attempt per event; the log is the partner's audit trail.
-#              Idempotency-Key on POST /valuations stores the first response
-#              against (partner, key) + body hash: replays return it with
-#              x-idempotent-replay, a reused key with a different body 409s.
+#            document categories (0105) — uploads land in the six documented
+#              buckets instead of one pile, so "we are missing your balance
+#              sheets" is a query rather than a human reading filenames.
 #
-#            valuationSelector.ts — public POST /api/v1/valuation-selector:
-#              additive rule scoring over a situation questionnaire into
-#              ranked kinds with stated reasons; EMI/CSOP split on the
-#              Schedule 5 250-FTE limit, reporting routed by accounting
-#              standard, response carries the input vocabulary so the quiz
-#              renders from what the server scores.
+#            workbookTabs.ts — the four-tab model (Company Overview, Captable,
+#              Financials, Valuation Params) as a declarative field registry
+#              reading from the existing aggregates rather than copying them,
+#              so a tab cannot drift from the valuation it describes.
 #
-# tests:      2478 valuation (+56 across 9 files), 787 frontend, 205 shared,
-#             189 report, 42 web; 1319 engine + 341 ai pytest. Lint and
+#            4a8d306 — the `paid` state (0107). features.md draws the lifecycle
+#              as `completed → (paid) → review`; 0001 shipped the fourteen
+#              states either side and left the gate out, so payment lived only
+#              in paid_status/paid_at and a valuation waiting on money was
+#              indistinguishable, in the state column, from one waiting on an
+#              analyst. The migration adds the enum value BEFORE 'review' and
+#              nothing else on purpose: Postgres permits ALTER TYPE ... ADD
+#              VALUE inside a transaction (the runner wraps every migration in
+#              one) but forbids USING it there, so anything referencing 'paid'
+#              waits for a later migration.
+#
+#              The parentheses are load-bearing. Both `completed → paid` and
+#              `completed → review` are legal, and nextState() diverts through
+#              the gate only when payment actually settled (paid_by_partner
+#              counts — settled money the client never saw an invoice for).
+#              Stripe is still unconfigured here, so every live valuation is
+#              `unpaid`; a gate that defaulted to closed would have stranded
+#              all of them at `completed`. That fallback is why nextState takes
+#              context instead of AUTO_ADVANCE simply pointing at 'paid'.
+#
+#              Settlement moves the workflow: the Stripe fulfil path advances a
+#              `completed` valuation to `paid` in the same patch that records
+#              the money, then fires onStateChanged, so partner webhooks and
+#              the notification matrix see it. Only from `completed` — money on
+#              a file still in intake, or already in review, says nothing about
+#              where the work got to. Deliberately NOT added to
+#              TIMESTAMP_ON_STATE: paid_at belongs to the payment layer, and
+#              stamping it on entry would overwrite the true settlement time
+#              and double-assign the column in one UPDATE.
+#
+# tests:      2580 valuation (197 files, +20: paidState.test.ts covers the enum
+#             shape, both edges out of completed, four settlement cases and the
+#             dashboard placement), 787 frontend, 205 shared, 189 report, 42
+#             web; 1319 engine-wrapper + 341 ai pytest (npm test does not run
+#             these — each service has its own .venv). Typecheck, lint and
 #             prettier clean.
-# deploy:     HOST=root@204.168.241.124 infra/deploy.sh --apply. Eighteen
-#             files added, eleven changed. All units restarted; BUILD_SHA and
-#             /health report 2bd920a, the selector answered a US options quiz
-#             with 409a on the host, and the partner docs endpoint lists the
-#             five webhook routes.
+# erratum:    4a8d306's own message says "valuation 2583 (+23)". The measured
+#             figure is 2580 (+20). The commit was already pushed; the number
+#             above is the correct one.
+# deploy:     HOST=root@204.168.241.124 infra/deploy.sh --apply. All five units
+#             restarted and active; BUILD_SHA and /health report 4a8d306.
+#             Verified on the host: schema_migrations carries 0103–0107,
+#             valuation_state reads
+#             pending,started,onboarding_completed,user_finished,completed,
+#             paid,review,reviewed,drafted,draft_accepted,draft_changes,
+#             published,timeout,cancelled,ignored (fifteen, paid in position),
+#             and auto_emails holds 27 campaigns.
 # note:      This file is tracked, so it always names the *previous* deploy at
 #            the moment the archive is built — the commit recording a deploy
 #            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
 #            authoritative record of what is running; it is written by the
 #            deploy script from the local HEAD after a successful build, and is
 #            what /health reports.
-# gap:       specialty webhooks retry never: one delivery attempt per event,
-#            outcome on the row. A partner whose receiver was down during a
-#            publish sees it only in the delivery log. A retry scan (the
-#            auto-email loop's shape: claim pending/failed rows, backoff,
-#            max_attempts) is the natural next step.
 # gap:       the specialty pipeline has no workspace UI. Ops run it over the
 #            API; the Calculations tab still shows only the 409A engines. A
 #            "Run <kind> engine" button + result panel on the workspace, fed
 #            by GET /valuations/:id/specialty, is frontend-only work.
+# gap:       nothing enters `paid` on its own except a Stripe settlement, and
+#            Stripe is unconfigured (see below), so on this deployment the
+#            state is reachable only by an ops advance on a valuation someone
+#            marked paid by hand. The wiring is real and tested; it is the
+#            payment provider that is missing, not the path.
 # gap:       stored calculations keep the old backsolved equity value. 99383b2
 #            changed what the engine computes from then on; every calculation
 #            already in the table that took the single-breakpoint backsolve path
