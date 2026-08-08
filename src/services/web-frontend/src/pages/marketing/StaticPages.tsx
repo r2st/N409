@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
 import { Button, ErrorNote, Field, TextInput } from '../../components/ui';
+import { PhoneInput, phoneFieldError } from '../../components/PhoneInput';
 import { Seo } from '../../components/Seo';
 import { siteConfig } from '../../lib/siteConfig';
 
@@ -72,12 +73,21 @@ function ContactForm() {
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [phoneTouched, setPhoneTouched] = useState(false);
 
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
+  // Phone is optional here, so this is null for an empty field and only fires
+  // on a number that is present but not dialable.
+  const phoneError = phoneFieldError(form.phone);
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (phoneError) {
+      setPhoneTouched(true);
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
@@ -150,13 +160,11 @@ function ContactForm() {
             placeholder="Acme, Inc."
           />
         </Field>
-        <Field label="Phone">
-          <TextInput
-            type="tel"
-            autoComplete="tel"
+        <Field label="Phone" error={phoneTouched ? phoneError : null}>
+          <PhoneInput
             value={form.phone}
-            onChange={set('phone')}
-            placeholder="(555) 123-4567"
+            onChange={(phone) => setForm((f) => ({ ...f, phone }))}
+            onBlur={() => setPhoneTouched(true)}
           />
         </Field>
       </div>

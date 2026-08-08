@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
+import { OptionalPhone } from '../domain/phone.js';
 import {
   createContactSubmission,
   listContactSubmissions,
@@ -21,7 +22,7 @@ const CreateBody = z.object({
   name: z.string().trim().min(1).max(200),
   email: z.string().trim().email().max(320),
   company: z.string().trim().max(200).optional(),
-  phone: z.string().trim().max(50).optional(),
+  phone: OptionalPhone,
   message: z.string().trim().min(1).max(10_000),
 });
 
@@ -59,7 +60,8 @@ export function registerContactRoutes(
       name: parsed.data.name,
       email: parsed.data.email,
       company: blankToUndefined(parsed.data.company),
-      phone: blankToUndefined(parsed.data.phone),
+      // Already blank-folded and normalized to E.164 by OptionalPhone.
+      phone: parsed.data.phone,
       message: parsed.data.message,
     });
     return reply.status(201).send({ submission: { id: submission.id, created_at: submission.created_at } });

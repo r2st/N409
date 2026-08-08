@@ -6,6 +6,7 @@ import { canManageUsers, isOps } from '../auth/rbac.js';
 import { PARTNER_ROLES, ROLE_KEYS, USER_ADMIN_ROLES, type RoleKey } from '../domain/roles.js';
 import { CAPABILITIES, ROLE_DEFS, capabilitiesFor } from '../domain/permissions.js';
 import { normalizeSubdomain } from '../domain/partnerSubdomain.js';
+import { NullablePhone } from '../domain/phone.js';
 import { listValuations } from '../repos/valuations.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
 import { toCsv } from '../domain/csv.js';
@@ -70,7 +71,7 @@ const PatchBody = z
     email: z.string().email(),
     first_name: z.string().max(100).nullable(),
     last_name: z.string().max(100).nullable(),
-    phone: z.string().max(50).nullable(),
+    phone: NullablePhone,
     job_title: z.string().max(150).nullable(),
     company_name: z.string().max(200).nullable(),
     verified: z.boolean(),

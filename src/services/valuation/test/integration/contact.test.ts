@@ -40,9 +40,47 @@ describe.skipIf(!dbUp)('contact form', () => {
       name: VALID.name,
       email: VALID.email,
       company: VALID.company,
-      phone: VALID.phone,
+      // Stored canonically, not as the submitter spaced it.
+      phone: '+15551234567',
       status: 'new',
     });
+  });
+
+  // Each submission below comes from its own address: the limiter is 5 per IP
+  // per 10 minutes and has its own test at the bottom of this file.
+  let nextIp = 0;
+  const postFrom = (payload: Record<string, unknown>) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/contact',
+      payload,
+      remoteAddress: `203.0.113.${++nextIp}`,
+    });
+
+  it('normalizes a phone number and refuses one that cannot be dialled', async () => {
+    expect((await postFrom({ ...VALID, phone: '+44 (0)20 7946 0000' })).statusCode).toBe(201);
+    // No country code — the shape this field took before it was validated, and
+    // the shape an SMS to that contact would have silently failed on.
+    expect((await postFrom({ ...VALID, phone: '(555) 123-4567' })).statusCode).toBe(422);
+    expect((await postFrom({ ...VALID, phone: '+1234' })).statusCode).toBe(422);
+
+    const { rows } = await ctx.pool.query(
+      `SELECT phone FROM contact_submissions ORDER BY created_at DESC, id DESC LIMIT 1`,
+    );
+    expect(rows[0].phone).toBe('+442079460000');
+  });
+
+  it('treats a blank or missing phone as no phone at all', async () => {
+    for (const phone of ['', '   ', null]) {
+      expect((await postFrom({ ...VALID, phone })).statusCode).toBe(201);
+    }
+    const { phone: _omitted, ...withoutPhone } = VALID;
+    expect((await postFrom(withoutPhone)).statusCode).toBe(201);
+
+    const { rows } = await ctx.pool.query(
+      `SELECT phone FROM contact_submissions ORDER BY created_at DESC, id DESC LIMIT 4`,
+    );
+    expect(rows.map((r) => r.phone)).toEqual([null, null, null, null]);
   });
 
   it('rejects missing required fields with 422', async () => {

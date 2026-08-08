@@ -56,7 +56,8 @@ describe.skipIf(!dbUp)('account settings', () => {
       expect(res.json().user).toMatchObject({
         first_name: 'Ada',
         last_name: 'Lovelace',
-        phone: '+1 555 0100',
+        // Stored canonically, whatever spacing it arrived with.
+        phone: '+15550100',
         company_name: 'Analytical Engines Inc',
         job_title: 'Founder',
         timezone: 'Europe/London',
@@ -68,6 +69,37 @@ describe.skipIf(!dbUp)('account settings', () => {
       await patchMe(user.token, { job_title: 'Founder' });
       const res = await patchMe(user.token, { job_title: '' });
       expect(res.json().user.job_title).toBeNull();
+    });
+
+    it('normalizes however a phone number was typed to one stored shape', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      for (const typed of ['+1 (555) 123-4567', '+1 555.123.4567', '001 555 123 4567']) {
+        const res = await patchMe(user.token, { phone: typed });
+        expect(res.statusCode).toBe(200);
+        expect(res.json().user.phone).toBe('+15551234567');
+      }
+      // A bracketed trunk prefix is how most of Europe writes a number; the
+      // zero is dialled domestically and must not survive into storage.
+      const uk = await patchMe(user.token, { phone: '+44 (0)20 7946 0000' });
+      expect(uk.json().user.phone).toBe('+442079460000');
+    });
+
+    it('rejects a phone number no gateway could dial', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      // No country code at all — the shape the field accepted before it was
+      // validated, and the shape an SMS campaign silently failed to deliver to.
+      expect((await patchMe(user.token, { phone: '(555) 123-4567' })).statusCode).toBe(422);
+      expect((await patchMe(user.token, { phone: '+1234' })).statusCode).toBe(422);
+      expect((await patchMe(user.token, { phone: '+4912345678901234' })).statusCode).toBe(422);
+      expect((await patchMe(user.token, { phone: '+1 555 CALL' })).statusCode).toBe(422);
+    });
+
+    it('clears the phone when it is sent as an empty string', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await patchMe(user.token, { phone: '+15551234567' });
+      expect((await patchMe(user.token, { phone: '' })).json().user.phone).toBeNull();
+      await patchMe(user.token, { phone: '+15551234567' });
+      expect((await patchMe(user.token, { phone: null })).json().user.phone).toBeNull();
     });
 
     it('rejects an unknown timezone', async () => {

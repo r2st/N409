@@ -1,21 +1,38 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type FocusEventHandler } from 'react';
 import { COUNTRIES, DEFAULT_COUNTRY_ISO, countryByIso, flagEmoji, primaryIsoForDial } from '../lib/countries';
+import { e164Error } from '../lib/phone';
 import { inputClass } from './ui';
 
 /**
  * International phone input (409.ai gap #27): a country dial-code dropdown
  * (240+ countries, US default) beside a national-number field. The value is a
- * single E.164-ish string ("+1 5551234567") so callers store one column; an
- * empty national number yields an empty string (i.e. "no phone").
+ * single canonical E.164 string ("+15551234567") so callers store one column
+ * and an SMS gateway can dial it unchanged; an empty national number yields an
+ * empty string (i.e. "no phone").
  */
+
+function onlyDigits(value: string): string {
+  return value.replace(/\D/g, '');
+}
 
 /** Split a stored value into a country ISO + national digits, best-effort. */
 function parseValue(value: string): { iso: string; national: string } {
   const trimmed = value.trim();
-  if (!trimmed.startsWith('+')) {
-    return { iso: DEFAULT_COUNTRY_ISO, national: trimmed };
+  // `00` is the international access prefix and means what `+` means, so a
+  // number pasted as "0044 20 7946 0000" resolves to the UK rather than being
+  // read as a national number.
+  const international = trimmed.startsWith('+')
+    ? trimmed.slice(1)
+    : trimmed.startsWith('00')
+      ? trimmed.slice(2)
+      : null;
+  if (international === null) {
+    // No calling code on the value at all — a legacy row, or a number typed
+    // before this component existed. The default country is the only one it
+    // can be attributed to.
+    return { iso: DEFAULT_COUNTRY_ISO, national: onlyDigits(trimmed) };
   }
-  const digits = trimmed.slice(1).replace(/[^\d]/g, '');
+  const digits = onlyDigits(international);
   // Prefer the longest matching dial code so e.g. "+1868" resolves to Trinidad
   // rather than the bare US "+1".
   let best: { iso: string; dial: string } | null = null;
@@ -31,10 +48,23 @@ function parseValue(value: string): { iso: string; national: string } {
 }
 
 function compose(iso: string, national: string): string {
-  const digits = national.replace(/[^\d]/g, '');
+  const digits = onlyDigits(national);
   if (!digits) return '';
   const country = countryByIso(iso);
-  return country ? `+${country.dial} ${digits}` : digits;
+  return country ? `+${country.dial}${digits}` : digits;
+}
+
+/**
+ * The error a form should show for a phone field, or null when there is none.
+ *
+ * An empty value means "no phone", which every phone field on this platform
+ * allows — pass `required` for one that does not. Deliberately *not* rendered
+ * by the component: `Field` already owns the error slot and its aria wiring, so
+ * a call site holds the touched/blurred flag and hands the message to `Field`.
+ */
+export function phoneFieldError(value: string, opts: { required?: boolean } = {}): string | null {
+  if (!value.trim()) return opts.required ? 'Enter a phone number' : null;
+  return e164Error(value);
 }
 
 export function PhoneInput({
@@ -43,62 +73,95 @@ export function PhoneInput({
   id,
   name = 'phone',
   autoComplete = 'tel',
+  onBlur,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedBy,
 }: {
   value: string;
   onChange: (value: string) => void;
   id?: string;
   name?: string;
   autoComplete?: string;
+  /** Fires when focus leaves either control — call sites use it to gate errors. */
+  onBlur?: FocusEventHandler<HTMLElement>;
+  /** Injected by `Field` when it is showing an error for this control. */
+  'aria-invalid'?: boolean;
+  'aria-describedby'?: string;
 }) {
   const parsed = useMemo(() => parseValue(value), [value]);
-  // The dial-code choice is sticky: selecting a country with an empty number
-  // must persist even though compose() emits '' (which parseValue can't round-
-  // trip back to that country). Seed from the incoming value once.
-  const [iso, setIso] = useState(parsed.iso);
-  const national = parsed.national;
 
-  const selectCountry = (nextIso: string) => {
-    setIso(nextIso);
-    onChange(compose(nextIso, national));
-  };
+  // The country lives in state rather than being read straight off `value`,
+  // because one string cannot say which country was picked: "+15551234567"
+  // parses back as US whether the user chose US, Canada or Puerto Rico, and an
+  // empty number carries no country at all.
+  const [own, setOwn] = useState(() => ({ iso: parsed.iso, emitted: value }));
 
-  const setNational = (next: string) => {
-    onChange(compose(iso, next));
+  // …but it is re-seeded whenever `value` changes to something this component
+  // did not emit. That is the stale-select bug: seeding once with useState
+  // meant a value arriving after mount — a profile fetched from the API, a
+  // reset form, a parent switching records — updated the national digits while
+  // the dropdown kept whatever country it first rendered. A UK number then sat
+  // behind a US flag, and the next keystroke re-composed it as +1.
+  let iso = own.iso;
+  if (value !== own.emitted) {
+    // An empty value names no country, so a cleared field keeps the choice.
+    iso = value.trim() ? parsed.iso : own.iso;
+    setOwn({ iso, emitted: value });
+  }
+
+  /** Emit, and record what we emitted so the sync above ignores our own echo. */
+  const emit = (nextIso: string, national: string) => {
+    const next = compose(nextIso, national);
+    setOwn({ iso: nextIso, emitted: next });
+    onChange(next);
   };
 
   const active = countryByIso(iso);
+  const fieldId = id ?? name;
+  const codeId = `${fieldId}-code`;
+  const describedBy = [ariaDescribedBy, codeId].filter(Boolean).join(' ');
 
   return (
     <div className="flex gap-2">
-      <label className="sr-only" htmlFor={`${id ?? name}-country`}>
-        Country calling code
-      </label>
       <select
-        id={`${id ?? name}-country`}
+        id={`${fieldId}-country`}
         aria-label="Country calling code"
         value={iso}
-        onChange={(e) => selectCountry(e.target.value)}
-        className={`${inputClass} w-auto shrink-0 pr-8`}
+        onChange={(e) => emit(e.target.value, parsed.national)}
+        onBlur={onBlur}
+        // Fixed basis rather than `w-auto`: sized to its content the select is
+        // as wide as "Bosnia and Herzegovina", which left the number field a
+        // 40px stub beside it. Basis wins over the `w-full` in inputClass
+        // (flex-basis beats width for a flex item) without depending on which
+        // order Tailwind happens to emit two width utilities in.
+        className={`${inputClass} shrink-0 grow-0 basis-36 pr-8`}
       >
         {COUNTRIES.map((c) => (
           <option key={c.iso} value={c.iso}>
-            {flagEmoji(c.iso)} {c.name} (+{c.dial})
+            {/* Code before name: the closed select truncates at that basis, and
+                the calling code is the half that has to survive. */}
+            {flagEmoji(c.iso)} +{c.dial} {c.name}
           </option>
         ))}
       </select>
       <input
-        id={id ?? name}
+        id={fieldId}
         name={name}
         type="tel"
         inputMode="tel"
         autoComplete={autoComplete}
+        // The wrapping `Field` label resolves to the <select> (it is the first
+        // labelable descendant), so the number itself needs its own name.
+        aria-label="Phone number"
         placeholder="(555) 123-4567"
-        value={national}
-        onChange={(e) => setNational(e.target.value)}
-        aria-describedby={`${id ?? name}-code`}
-        className={inputClass}
+        value={parsed.national}
+        onChange={(e) => emit(iso, e.target.value)}
+        onBlur={onBlur}
+        aria-invalid={ariaInvalid}
+        aria-describedby={describedBy}
+        className={`${inputClass} min-w-0 flex-1`}
       />
-      <span id={`${id ?? name}-code`} className="sr-only">
+      <span id={codeId} className="sr-only">
         Selected calling code +{active?.dial ?? '1'}
       </span>
     </div>

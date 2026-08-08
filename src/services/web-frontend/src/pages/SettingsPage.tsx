@@ -8,7 +8,7 @@ import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
 import type { ApiToken, User } from '../lib/types';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
-import { PhoneInput } from '../components/PhoneInput';
+import { PhoneInput, phoneFieldError } from '../components/PhoneInput';
 import { MfaCard } from '../components/MfaCard';
 import { ThemeToggle } from '../components/ThemeToggle';
 
@@ -61,6 +61,9 @@ function ProfileCard() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The phone error only appears once the field has been left, so a half-typed
+  // number is not scolded on its first digit.
+  const [phoneTouched, setPhoneTouched] = useState(false);
 
   if (!user) return null;
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) => {
@@ -68,8 +71,16 @@ function ProfileCard() {
     setSaved(false);
   };
 
+  const phoneError = phoneFieldError(form.phone);
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    // The API rejects a non-E.164 number with a 422; say so here instead, next
+    // to the field, rather than as a banner at the top of the form.
+    if (phoneError) {
+      setPhoneTouched(true);
+      return;
+    }
     setError(null);
     setSaved(false);
     setBusy(true);
@@ -102,13 +113,14 @@ function ProfileCard() {
           <Field label="Job title">
             <TextInput value={form.job_title} onChange={set('job_title')} maxLength={150} />
           </Field>
-          <Field label="Phone">
+          <Field label="Phone" error={phoneTouched ? phoneError : null} hint="Used for SMS notifications.">
             <PhoneInput
               value={form.phone}
               onChange={(phone) => {
                 setForm((f) => ({ ...f, phone }));
                 setSaved(false);
               }}
+              onBlur={() => setPhoneTouched(true)}
             />
           </Field>
           <Field label="Time zone" hint="Used for dates and deadlines.">

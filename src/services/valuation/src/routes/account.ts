@@ -25,6 +25,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { createEmailVerificationToken } from '../repos/emailVerifications.js';
 import { emailVerificationEmail } from '../domain/emailWorkflows.js';
+import { NullablePhone } from '../domain/phone.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 
@@ -51,7 +52,7 @@ const ProfileBody = z
   .object({
     first_name: OptionalText(100),
     last_name: OptionalText(100),
-    phone: OptionalText(50),
+    phone: NullablePhone,
     job_title: OptionalText(150),
     company_name: OptionalText(200),
     // Validated against the runtime's own tz database rather than a hardcoded
