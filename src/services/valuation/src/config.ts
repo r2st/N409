@@ -59,6 +59,16 @@ const Env = z.object({
   // — it cannot lose it. 0 disables the sweep; POST /admin/webhooks/retry
   // still works.
   WEBHOOK_RETRY_SCAN_MINUTES: z.coerce.number().int().min(0).default(1),
+  // A partner chooses the webhook URL and this service fetches it, so a target
+  // inside the network is an SSRF primitive (see domain/partnerWebhooks.ts).
+  // Registration refuses one and delivery re-checks the resolved address. Set
+  // this only for local development, where the receiver really is on
+  // 127.0.0.1; it defaults off so an unset production environment is the safe
+  // one.
+  WEBHOOK_ALLOW_PRIVATE_TARGETS: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   // Stripe payment processing (remaining-gaps §3 #1). Routes 503 when unset.
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),

@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import {
@@ -5,9 +6,12 @@ import {
   DELIVERY_HEADER,
   EVENT_HEADER,
   isPermanentDeliveryFailure,
+  isPrivateAddress,
+  isPublicWebhookHost,
   nextAttemptAt,
   SIGNATURE_HEADER,
   signWebhookBody,
+  webhookTargetPolicyAllowsPrivate,
   webhookWantsEvent,
   type WebhookEventType,
   type WebhookValuationView,
@@ -36,9 +40,65 @@ import {
 export interface WebhookDeps {
   pool: pg.Pool;
   log?: FastifyBaseLogger;
+  /**
+   * Per-call override of the process-wide target policy
+   * (`setWebhookTargetPolicy`). Left unset outside tests.
+   */
+  allowPrivateTargets?: boolean;
+  /**
+   * Name resolution, injectable so the SSRF tests can pin a public name to a
+   * private address without depending on a public resolver answering.
+   */
+  lookupFn?: LookupFn;
 }
 
+/** `dns.lookup(host, { all: true })`, narrowed to what the guard reads. */
+export type LookupFn = (hostname: string) => Promise<{ address: string }[]>;
+
+const defaultLookup: LookupFn = (hostname) => lookup(hostname, { all: true });
+
 const DELIVERY_TIMEOUT_MS = 10_000;
+
+/**
+ * Resolves the target's host and refuses anything inside the network.
+ *
+ * The registration check in `isValidWebhookUrl` sees the literal host, which
+ * catches `http://127.0.0.1/` and stops there. It cannot catch a name: DNS is
+ * answered at delivery time, so a host that was public when the partner
+ * registered it can point at loopback by the time the first event fires (and a
+ * host registered specifically to do that resolves publicly for exactly as
+ * long as it needs to). Resolving here and checking every address the name
+ * carries is what closes that, and it is why this runs on every attempt rather
+ * than being cached.
+ *
+ * Returns the reason it was refused, or null when the target is fine.
+ */
+async function blockedTargetReason(url: string, lookupFn: LookupFn): Promise<string | null> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'target is not a valid URL';
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return `refusing to deliver to a ${parsed.protocol} target`;
+  }
+  if (!isPublicWebhookHost(parsed.hostname)) {
+    return 'refusing to deliver to a non-public host';
+  }
+  let addresses: { address: string }[];
+  try {
+    addresses = await lookupFn(parsed.hostname);
+  } catch (err) {
+    return `could not resolve ${parsed.hostname}: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  // `all: true` and not just the first: a name with one public and one private
+  // A record would otherwise pass or fail on resolver ordering.
+  if (addresses.length === 0) return `${parsed.hostname} resolved to no addresses`;
+  const priv = addresses.find((a) => isPrivateAddress(a.address));
+  if (priv) return `${parsed.hostname} resolves to the non-public address ${priv.address}`;
+  return null;
+}
 
 /** The outcome of one POST, before it is written back to the row. */
 type AttemptResult = { ok: true } | { ok: false; error: string; permanent: boolean };
@@ -49,7 +109,16 @@ async function postDelivery(
   event: string,
   deliveryId: string,
   payload: Record<string, unknown>,
+  allowPrivateTargets?: boolean,
+  lookupFn: LookupFn = defaultLookup,
 ): Promise<AttemptResult> {
+  if (!(allowPrivateTargets ?? webhookTargetPolicyAllowsPrivate())) {
+    const blocked = await blockedTargetReason(target.url, lookupFn);
+    // Permanent: the next four attempts would resolve the same way, and the
+    // partner needs to see the reason in their delivery log rather than four
+    // identical timeouts.
+    if (blocked) return { ok: false, error: blocked, permanent: true };
+  }
   const body = JSON.stringify(payload);
   try {
     const res = await fetch(target.url, {
@@ -61,8 +130,19 @@ async function postDelivery(
         [DELIVERY_HEADER]: deliveryId,
       },
       body,
+      // Never follow a redirect: fetch would re-resolve the new location
+      // without any of the checks above, which hands back the whole SSRF
+      // primitive through a 302 on a public host.
+      redirect: 'manual',
       signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
     });
+    if (res.status >= 300 && res.status < 400) {
+      return {
+        ok: false,
+        error: `receiver redirected (${res.status}) — webhook targets must be a final URL`,
+        permanent: true,
+      };
+    }
     if (res.ok) return { ok: true };
     return {
       ok: false,
@@ -109,7 +189,14 @@ export async function deliverToWebhook(
     valuationId,
     payload,
   });
-  const result = await postDelivery(webhook, event, delivery.id, payload);
+  const result = await postDelivery(
+    webhook,
+    event,
+    delivery.id,
+    payload,
+    deps.allowPrivateTargets,
+    deps.lookupFn,
+  );
   const outcome = await settle(deps, delivery, result);
   if (!result.ok) {
     deps.log?.warn(
@@ -149,6 +236,8 @@ export async function retryDueDeliveries(
       row.event_type,
       row.id,
       row.payload,
+      deps.allowPrivateTargets,
+      deps.lookupFn,
     );
     const outcome = await settle(deps, row, result);
     if (outcome === 'delivered') delivered += 1;

@@ -546,7 +546,9 @@ export function registerPartnerApiRoutes(
       const parsed = WebhookBody.safeParse(req.body);
       if (!parsed.success) throw problems.unprocessable('Invalid webhook', { errors: parsed.error.issues });
       if (!isValidWebhookUrl(parsed.data.url)) {
-        throw problems.unprocessable('Webhook URL must be http(s)');
+        throw problems.unprocessable(
+          'Webhook URL must be a public http(s) endpoint — loopback, private and link-local addresses are not delivered to',
+        );
       }
       const existing = await listWebhooks(deps.pool, token.partnerId);
       if (existing.length >= 10) {

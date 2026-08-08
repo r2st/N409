@@ -100,6 +100,7 @@ import { registerAuditTrailRoutes } from './routes/auditTrail.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
+import { setWebhookTargetPolicy } from './domain/partnerWebhooks.js';
 import { registerSpecialtyRoutes } from './routes/specialty.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
@@ -174,6 +175,10 @@ export function buildEmailTransports(
 
 export function buildApp(deps: AppDeps): FastifyInstance {
   const { config, pool } = deps;
+  // Where partner webhooks are allowed to point. Process-wide, set before any
+  // route can register one — see domain/partnerWebhooks.ts for why an SSRF
+  // guard is needed on a URL the partner chooses and this service fetches.
+  setWebhookTargetPolicy(config.WEBHOOK_ALLOW_PRIVATE_TARGETS);
   const app = Fastify({
     loggerInstance: createLogger({ service: 'valuation', level: config.LOG_LEVEL }),
     requestIdHeader: 'x-request-id',

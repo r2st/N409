@@ -132,16 +132,140 @@ export function isPermanentDeliveryFailure(status: number): boolean {
   return status >= 400 && status < 500;
 }
 
+// ── Where a webhook is allowed to point (SSRF) ───────────────────────────────
+
+/**
+ * A webhook target is a URL a *partner* chooses and this service then fetches,
+ * which is the definition of a server-side request forgery primitive: the POST
+ * leaves from inside the network, so `http://127.0.0.1:3001`, a sibling
+ * service's port, or the cloud metadata endpoint at 169.254.169.254 are all
+ * reachable from a form field. The body is signed, not secret, so the payload
+ * itself gives an attacker little — but the *response status* comes back in the
+ * partner's own delivery log (`receiver responded 403`), which turns the
+ * delivery log into an internal port scanner, and a POST to an internal
+ * endpoint that acts on its path needs no response to have done its damage.
+ *
+ * So the target is checked twice, and both are needed:
+ *
+ *  - here at registration, against the literal host, so the obvious cases are
+ *    refused with a message instead of failing silently at delivery time;
+ *  - again in the delivery hook against the *resolved* address, because
+ *    `evil.example.com` is a perfectly public name until its A record says
+ *    127.0.0.1. A name resolves at delivery, not at registration, so a
+ *    registration-time check alone is only a typo filter.
+ */
+
+/** Host names that mean "this machine" without needing to resolve anything. */
+const BLOCKED_HOSTNAMES: ReadonlySet<string> = new Set(['localhost', 'localhost.localdomain']);
+
+/** `.local` (mDNS) and `.internal` (cloud-private zones) are never public. */
+const BLOCKED_TLDS: readonly string[] = ['.local', '.internal', '.localhost'];
+
+/**
+ * True for an address that is not routable on the public internet: loopback,
+ * RFC1918 private space, link-local (which is where every cloud metadata
+ * service lives), shared/CGNAT space, multicast, and the reserved blocks.
+ * Accepts a bare IPv4 or IPv6 literal; anything unparseable is treated as
+ * blocked, because an address this cannot classify is not one to fetch.
+ */
+export function isPrivateAddress(address: string): boolean {
+  const ip = address.trim().replace(/^\[|\]$/g, '');
+  if (ip === '') return true;
+
+  // IPv4-mapped and -compatible IPv6 (::ffff:127.0.0.1) are IPv4 targets
+  // wearing a v6 hat; classify them as the v4 address they carry.
+  const mapped = /^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped?.[1]) return isPrivateAddress(mapped[1]);
+
+  if (ip.includes(':')) return isPrivateIpv6(ip);
+  return isPrivateIpv4(ip);
+}
+
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return true;
+  const octets = parts.map((p) => (/^\d{1,3}$/.test(p) ? Number(p) : Number.NaN));
+  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = octets as [number, number, number, number];
+
+  if (a === 0) return true; // "this network"
+  if (a === 10) return true; // RFC1918
+  if (a === 127) return true; // loopback
+  if (a === 169 && b === 254) return true; // link-local — cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
+  if (a === 192 && b === 168) return true; // RFC1918
+  if (a === 192 && b === 0) return true; // IETF protocol assignments
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
+  if (a >= 224) return true; // multicast + reserved + broadcast
+  return false;
+}
+
+function isPrivateIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (lower === '::' || lower === '::1') return true; // unspecified, loopback
+  if (lower.startsWith('fe80')) return true; // link-local
+  if (/^f[cd]/.test(lower)) return true; // unique-local (fc00::/7)
+  if (lower.startsWith('ff')) return true; // multicast
+  return false;
+}
+
+/**
+ * Registration-time check of the literal host. A hostname that is not an IP
+ * literal passes here and is re-checked against its resolved addresses at
+ * delivery — see `assertPublicWebhookTarget` in hooks/partnerWebhooks.ts.
+ */
+export function isPublicWebhookHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/\.$/, '');
+  if (host === '') return false;
+  if (BLOCKED_HOSTNAMES.has(host)) return false;
+  if (BLOCKED_TLDS.some((tld) => host.endsWith(tld))) return false;
+  // An IP literal is decided here and now; a name is decided at delivery.
+  if (/^\[?[0-9a-f:.]+\]?$/i.test(host) && (/\d+\.\d+\.\d+\.\d+/.test(host) || host.includes(':'))) {
+    return !isPrivateAddress(host);
+  }
+  return true;
+}
+
+/**
+ * Whether this deployment delivers to private addresses at all.
+ *
+ * Process-wide rather than a parameter threaded through every caller, because
+ * that is what it is: a property of where the service is running, not of the
+ * request that happened to fire the event. `onStateChanged` reaches the
+ * delivery hook from four unrelated route modules, and giving each of them a
+ * webhook field to forward would put the same deployment fact in four places
+ * for any of them to get wrong.
+ *
+ * Defaults to false, so a deployment that sets nothing is the safe one;
+ * `buildApp` sets it from WEBHOOK_ALLOW_PRIVATE_TARGETS at boot.
+ */
+let allowPrivateWebhookTargets = false;
+
+export function setWebhookTargetPolicy(allowPrivate: boolean): void {
+  allowPrivateWebhookTargets = allowPrivate;
+}
+
+export function webhookTargetPolicyAllowsPrivate(): boolean {
+  return allowPrivateWebhookTargets;
+}
+
 /**
  * A webhook URL must be plain http(s) — anything else (file:, gopher:, a
- * partner typo) is refused at registration rather than fetched at delivery.
+ * partner typo) is refused at registration rather than fetched at delivery —
+ * and must not name a host inside the network.
+ *
+ * `allowPrivateTargets` overrides the process policy for a single call; it is
+ * the seam the unit tests use to assert both behaviours in one file.
  */
-export function isValidWebhookUrl(value: string): boolean {
+export function isValidWebhookUrl(value: string, allowPrivateTargets?: boolean): boolean {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     return false;
   }
-  return url.protocol === 'https:' || url.protocol === 'http:';
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+  if (allowPrivateTargets ?? allowPrivateWebhookTargets) return true;
+  return isPublicWebhookHost(url.hostname);
 }

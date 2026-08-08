@@ -23,7 +23,13 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
   const keyHeader = (key: string) => ({ authorization: `Bearer ${key}` });
 
   beforeAll(async () => {
-    ctx = await setupTestApp({}, { partnerApiLimiter: new FixedWindowRateLimiter(1000, 60_000) });
+    // The receiver below is a real server on 127.0.0.1, which the SSRF guard
+    // refuses by default. This is the flag a local development environment
+    // sets for the same reason; production leaves it off.
+    ctx = await setupTestApp(
+      { WEBHOOK_ALLOW_PRIVATE_TARGETS: 'true' },
+      { partnerApiLimiter: new FixedWindowRateLimiter(1000, 60_000) },
+    );
     app = ctx.app;
     partnerId = await seedPartner(ctx, 'Hook Partners');
     const otherPartnerId = await seedPartner(ctx, 'Other Partners');

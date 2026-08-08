@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildWebhookPayload,
   isPermanentDeliveryFailure,
+  isPrivateAddress,
+  isPublicWebhookHost,
   isValidWebhookUrl,
   newWebhookSecret,
   nextAttemptAt,
@@ -40,10 +42,65 @@ describe('partner webhook domain', () => {
 
   it('accepts only http(s) webhook URLs', () => {
     expect(isValidWebhookUrl('https://example.com/hook')).toBe(true);
-    expect(isValidWebhookUrl('http://127.0.0.1:8080/hook')).toBe(true);
     expect(isValidWebhookUrl('ftp://example.com/hook')).toBe(false);
     expect(isValidWebhookUrl('file:///etc/passwd')).toBe(false);
     expect(isValidWebhookUrl('not a url')).toBe(false);
+  });
+
+  it('refuses a webhook URL pointing back inside the network', () => {
+    // The partner picks this URL and this service fetches it. Loopback is the
+    // sibling services on 3000–3004; 169.254.169.254 is the cloud metadata
+    // endpoint. Both were accepted before the guard.
+    expect(isValidWebhookUrl('http://127.0.0.1:8080/hook')).toBe(false);
+    expect(isValidWebhookUrl('http://localhost:3001/api/v1/admin')).toBe(false);
+    expect(isValidWebhookUrl('http://169.254.169.254/latest/meta-data/')).toBe(false);
+    expect(isValidWebhookUrl('http://10.0.0.5/hook')).toBe(false);
+    expect(isValidWebhookUrl('http://192.168.1.1/hook')).toBe(false);
+    expect(isValidWebhookUrl('http://172.16.0.1/hook')).toBe(false);
+    expect(isValidWebhookUrl('http://[::1]:3001/hook')).toBe(false);
+    expect(isValidWebhookUrl('http://engine.internal/hook')).toBe(false);
+    expect(isValidWebhookUrl('http://receiver.local/hook')).toBe(false);
+    // …and the same URL passes where a local development environment has
+    // deliberately opted in.
+    expect(isValidWebhookUrl('http://127.0.0.1:8080/hook', true)).toBe(true);
+  });
+
+  it('classifies non-routable addresses, including the v6 spellings of v4', () => {
+    for (const blocked of [
+      '0.0.0.0',
+      '127.0.0.1',
+      '10.255.255.255',
+      '172.31.255.255',
+      '192.168.0.1',
+      '169.254.169.254',
+      '100.64.0.1', // CGNAT
+      '198.18.0.1', // benchmarking
+      '224.0.0.1', // multicast
+      '255.255.255.255',
+      '::1',
+      '::',
+      'fe80::1',
+      'fc00::1',
+      'fd12:3456::1',
+      'ff02::1',
+      '::ffff:127.0.0.1', // v4-mapped loopback
+      '::ffff:10.0.0.1',
+      'not-an-address',
+    ]) {
+      expect(isPrivateAddress(blocked), blocked).toBe(true);
+    }
+    for (const allowed of ['8.8.8.8', '1.1.1.1', '172.32.0.1', '192.169.0.1', '2606:4700::1111']) {
+      expect(isPrivateAddress(allowed), allowed).toBe(false);
+    }
+  });
+
+  it('leaves a hostname to be decided at delivery, when it resolves', () => {
+    // A name is public until DNS says otherwise, and DNS is answered at
+    // delivery — so registration passes it and the hook re-checks.
+    expect(isPublicWebhookHost('hooks.example.com')).toBe(true);
+    expect(isPublicWebhookHost('example.com.')).toBe(true); // trailing root dot
+    expect(isPublicWebhookHost('LOCALHOST')).toBe(false);
+    expect(isPublicWebhookHost('')).toBe(false);
   });
 
   it('stamps payloads with the event and send time', () => {
