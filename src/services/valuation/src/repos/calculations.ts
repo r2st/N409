@@ -94,6 +94,27 @@ export async function latestSucceededCalculation(
   return rows[0] ?? null;
 }
 
+/**
+ * Batch form of {@link latestSucceededCalculation}: the newest succeeded
+ * calculation for each of `valuationIds`, keyed by valuation id. `DISTINCT ON`
+ * collapses to one row per valuation, so this stays a single round trip no
+ * matter how many valuations are asked for.
+ */
+export async function latestSucceededCalculationsByValuationIds(
+  pool: pg.Pool,
+  valuationIds: string[],
+): Promise<Map<string, CalculationRow>> {
+  if (valuationIds.length === 0) return new Map();
+  const { rows } = await pool.query<CalculationRow>(
+    `SELECT DISTINCT ON (valuation_id) *
+       FROM calculations
+      WHERE valuation_id = ANY($1) AND status = 'succeeded'
+      ORDER BY valuation_id, created_at DESC`,
+    [[...new Set(valuationIds)]],
+  );
+  return new Map(rows.map((row) => [row.valuation_id, row]));
+}
+
 export async function listCalculations(pool: pg.Pool, valuationId: string): Promise<CalculationRow[]> {
   const { rows } = await pool.query<CalculationRow>(
     'SELECT * FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT 20',

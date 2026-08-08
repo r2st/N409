@@ -94,6 +94,22 @@ export async function findParams(pool: pg.Pool, valuationId: string): Promise<Va
 }
 
 /**
+ * Batch form of {@link findParams}, keyed by valuation id — one round trip for
+ * a whole list of valuations rather than one per valuation.
+ */
+export async function findParamsByValuationIds(
+  pool: pg.Pool,
+  valuationIds: string[],
+): Promise<Map<string, ValuationParamsRow>> {
+  if (valuationIds.length === 0) return new Map();
+  const { rows } = await pool.query<ValuationParamsRow>(
+    'SELECT * FROM valuation_params WHERE valuation_id = ANY($1)',
+    [[...new Set(valuationIds)]],
+  );
+  return new Map(rows.map((row) => [row.valuation_id, row]));
+}
+
+/**
  * Extraction auto-apply (remaining-gaps §2 "Set Valuation Parameters"):
  * merge AI-extracted engine inputs into valuation_params.engine_inputs, with
  * the params_updated audit event. Existing keys are overwritten — the newest

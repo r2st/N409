@@ -28,6 +28,23 @@ export async function findCapTable(pool: pg.Pool, valuationId: string): Promise<
   return rows[0] ?? null;
 }
 
+/**
+ * Batch form of {@link findCapTable}, keyed by valuation id. Exists so callers
+ * that already hold a list of valuations (the monitoring dashboard and scan)
+ * can fetch every cap table in one round trip instead of one per valuation.
+ */
+export async function findCapTablesByValuationIds(
+  pool: pg.Pool,
+  valuationIds: string[],
+): Promise<Map<string, CapTableRow>> {
+  if (valuationIds.length === 0) return new Map();
+  const { rows } = await pool.query<CapTableRow>(
+    'SELECT * FROM cap_tables WHERE valuation_id = ANY($1)',
+    [[...new Set(valuationIds)]],
+  );
+  return new Map(rows.map((row) => [row.valuation_id, row]));
+}
+
 /** Insert-or-replace the valuation's cap table with a fresh import. */
 export async function saveCapTable(
   pool: pg.Pool,

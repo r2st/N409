@@ -122,6 +122,22 @@ export async function findResolutionByValuation(
   return rows[0] ?? null;
 }
 
+/**
+ * Batch form of {@link findResolutionByValuation}, keyed by valuation id — one
+ * round trip for a list of valuations rather than one per valuation.
+ */
+export async function findResolutionsByValuationIds(
+  pool: pg.Pool,
+  valuationIds: string[],
+): Promise<Map<string, BoardResolutionRow>> {
+  if (valuationIds.length === 0) return new Map();
+  const { rows } = await pool.query<BoardResolutionRow>(
+    'SELECT * FROM board_resolutions WHERE valuation_id = ANY($1)',
+    [[...new Set(valuationIds)]],
+  );
+  return new Map(rows.map((row) => [row.valuation_id, row]));
+}
+
 export async function findResolutionById(pool: pg.Pool, id: string): Promise<BoardResolutionRow | null> {
   const { rows } = await pool.query<BoardResolutionRow>('SELECT * FROM board_resolutions WHERE id = $1', [
     id,

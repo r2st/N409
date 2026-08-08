@@ -8,11 +8,19 @@ import {
   findValuationsByIds,
   type ValuationRow,
 } from '../repos/valuations.js';
-import { latestSucceededCalculation } from '../repos/calculations.js';
-import { findParams } from '../repos/params.js';
-import { findCapTable } from '../repos/capTables.js';
+import {
+  latestSucceededCalculation,
+  latestSucceededCalculationsByValuationIds,
+  type CalculationRow,
+} from '../repos/calculations.js';
+import { findParams, findParamsByValuationIds, type ValuationParamsRow } from '../repos/params.js';
+import { findCapTable, findCapTablesByValuationIds, type CapTableRow } from '../repos/capTables.js';
 import { findUserById } from '../repos/users.js';
-import { findResolutionByValuation } from '../repos/boardApprovals.js';
+import {
+  findResolutionByValuation,
+  findResolutionsByValuationIds,
+  type BoardResolutionRow,
+} from '../repos/boardApprovals.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
@@ -64,12 +72,21 @@ async function loadValuation(pool: pg.Pool, id: string): Promise<ValuationRow> {
   return valuation;
 }
 
-/** Build a monitoring snapshot from live data (calc FMV, revenue, cap table, rounds). */
-async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<MonitorSnapshot> {
-  const calc = await latestSucceededCalculation(pool, valuation.id);
-  const params = await findParams(pool, valuation.id);
-  const capTable = await findCapTable(pool, valuation.id);
-  const resolution = await findResolutionByValuation(pool, valuation.id);
+/** The four rows a snapshot reads, however they were fetched. */
+interface SnapshotSources {
+  calc: CalculationRow | null;
+  params: ValuationParamsRow | null;
+  capTable: CapTableRow | null;
+  resolution: BoardResolutionRow | null;
+}
+
+/**
+ * Assemble a snapshot from rows already in hand. Pure — the fetching lives in
+ * {@link buildSnapshot} (one valuation) and {@link buildSnapshots} (a list), so
+ * the two paths cannot drift in what a snapshot means.
+ */
+function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): MonitorSnapshot {
+  const { calc, params, capTable, resolution } = sources;
 
   const revenueCents = params?.last_year_revenue_cents ?? params?.ytd_revenue_cents ?? null;
   const annualRevenue = revenueCents !== null ? Number(revenueCents) / 100 : null;
@@ -97,6 +114,47 @@ async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<Mo
   };
 }
 
+/** Build a monitoring snapshot from live data (calc FMV, revenue, cap table, rounds). */
+async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<MonitorSnapshot> {
+  const [calc, params, capTable, resolution] = await Promise.all([
+    latestSucceededCalculation(pool, valuation.id),
+    findParams(pool, valuation.id),
+    findCapTable(pool, valuation.id),
+    findResolutionByValuation(pool, valuation.id),
+  ]);
+  return assembleSnapshot(valuation, { calc, params, capTable, resolution });
+}
+
+/**
+ * Snapshots for a whole list of valuations in four queries rather than four
+ * per valuation. The dashboard and the scan both walk every enabled monitor,
+ * so the per-valuation form made those handlers cost 4N round trips; batching
+ * makes them constant.
+ */
+async function buildSnapshots(
+  pool: pg.Pool,
+  valuations: ValuationRow[],
+): Promise<Map<string, MonitorSnapshot>> {
+  const ids = valuations.map((v) => v.id);
+  const [calcs, params, capTables, resolutions] = await Promise.all([
+    latestSucceededCalculationsByValuationIds(pool, ids),
+    findParamsByValuationIds(pool, ids),
+    findCapTablesByValuationIds(pool, ids),
+    findResolutionsByValuationIds(pool, ids),
+  ]);
+  return new Map(
+    valuations.map((valuation) => [
+      valuation.id,
+      assembleSnapshot(valuation, {
+        calc: calcs.get(valuation.id) ?? null,
+        params: params.get(valuation.id) ?? null,
+        capTable: capTables.get(valuation.id) ?? null,
+        resolution: resolutions.get(valuation.id) ?? null,
+      }),
+    ]),
+  );
+}
+
 export function registerMonitoringRoutes(
   app: FastifyInstance,
   deps: { pool: pg.Pool; transport?: EmailTransport },
@@ -112,11 +170,14 @@ export function registerMonitoringRoutes(
       deps.pool,
       monitors.map((m) => m.valuation_id),
     );
+    // ...and one batch of snapshot reads for the whole page, rather than four
+    // queries per monitor.
+    const snapshots = await buildSnapshots(deps.pool, [...valuations.values()]);
     const out = [];
     for (const m of monitors) {
       const valuation = valuations.get(m.valuation_id);
       if (!valuation) continue;
-      const current = await buildSnapshot(deps.pool, valuation);
+      const current = snapshots.get(valuation.id)!;
       const triggers = evaluateTriggers(m.baseline, current, now);
       out.push({
         valuation_id: m.valuation_id,
@@ -191,11 +252,12 @@ export function registerMonitoringRoutes(
       deps.pool,
       monitors.map((m) => m.valuation_id),
     );
+    const snapshots = await buildSnapshots(deps.pool, [...valuations.values()]);
     let alertsSent = 0;
     for (const m of monitors) {
       const valuation = valuations.get(m.valuation_id);
       if (!valuation) continue;
-      const current = await buildSnapshot(deps.pool, valuation);
+      const current = snapshots.get(valuation.id)!;
       const triggers = evaluateTriggers(m.baseline, current, now);
       await markChecked(deps.pool, m.id);
       if (triggers.length === 0) continue;
