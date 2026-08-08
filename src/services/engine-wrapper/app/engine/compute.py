@@ -14,10 +14,25 @@ from __future__ import annotations
 import math
 from datetime import date
 
-from .approaches import EngineInputError, asset_value, income_dcf, market_multiples, opm_backsolve
+from .approaches import (
+    MARKET_HORIZONS,
+    EngineInputError,
+    asset_value,
+    income_dcf,
+    market_multiples,
+    opm_backsolve,
+)
 from .bs import bs_call
 from .current_value import allocate_cvm
-from .dlom import chaffee_dlom, finnerty_dlom
+from .dlom import (
+    MODEL_DLOM_METHODS,
+    chaffee_dlom,
+    finnerty_dlom,
+    ghaidarov_dlom,
+    longstaff_bound,
+    longstaff_dlom,
+    restricted_stock_dlom,
+)
 from .hybrid import blend_hybrid, resolve_hybrid_weights
 from .pwerm import allocate_pwerm
 from .volatility import estimate_volatility
@@ -268,16 +283,106 @@ def _apply_autopilot(
     return inputs, (meta or None)
 
 
+#: params.market_method → the metric's name and the inputs key holding it per
+#: horizon. `market_method` names *what* is multiplied, `market_horizon` names
+#: *when* — the pair picks one figure.
+_MARKET_METRIC_KEYS: dict[str, dict[str, str]] = {
+    "revenue": {"ltm": "revenue_ltm", "ntm": "revenue_ntm"},
+    "ebitda": {"ltm": "ebitda_ltm", "ntm": "ebitda_ntm"},
+}
+
+
+def _market_metric(params: dict, inputs: dict, market_in: dict) -> tuple[str, str | None, float]:
+    """The (horizon, basis, metric) the market approach multiplies.
+
+    An explicit ``inputs.market.metric`` wins — an analyst who typed a figure
+    means that figure. Absent one, it is resolved from the extracted financials
+    by the two params that until now only travelled with the payload:
+    ``market_method`` (revenue / ebitda) and ``market_horizon`` (ltm / ntm).
+
+    That resolution is the whole point. Extraction has always pulled
+    ``revenue_ntm`` off the projections and nothing read it, so a valuation
+    configured for forward multiples was silently struck on trailing revenue —
+    the same 8.0× against a smaller number, understating a growing company by
+    its growth rate with nothing on the result saying so. The horizon now picks
+    the metric, and `market_multiples` records which one it picked.
+    """
+    horizon = str(params.get("market_horizon") or "ltm").lower()
+    if horizon not in MARKET_HORIZONS:
+        raise EngineInputError(
+            f"market_horizon must be one of {list(MARKET_HORIZONS)} (got {horizon!r})"
+        )
+    method = params.get("market_method")
+    basis = str(method).lower() if method else None
+
+    explicit = _num(market_in.get("metric"), "market.metric")
+    if explicit is not None:
+        if explicit <= 0:
+            raise EngineInputError("market.metric must be positive")
+        return horizon, basis, explicit
+
+    if basis not in _MARKET_METRIC_KEYS:
+        raise EngineInputError(
+            "market.metric is required (or set params.market_method to 'revenue' or "
+            "'ebitda' so it can be read from the extracted financials)"
+        )
+    key = _MARKET_METRIC_KEYS[basis][horizon]
+    resolved = _num(inputs.get(key), key)
+    if resolved is None:
+        other = _MARKET_METRIC_KEYS[basis]["ltm" if horizon == "ntm" else "ntm"]
+        raise EngineInputError(
+            f"market.metric is required: params select the {horizon.upper()} {basis} multiple, "
+            f"so inputs.{key} must be set (inputs.{other} is the other horizon and is not "
+            "interchangeable with it)"
+        )
+    if resolved <= 0:
+        # EBITDA is routinely negative for a venture-backed company, and a
+        # negative denominator makes a multiple meaningless rather than small.
+        raise EngineInputError(
+            f"inputs.{key} must be positive to strike a multiple against it (got {resolved:g}) — "
+            "weight the market approach to zero, or value on revenue instead"
+        )
+    return horizon, basis, resolved
+
+
 def _resolve_discounts(
     params: dict, volatility: float | None, t: float, r: float
-) -> tuple[float, float, str | None]:
-    """DLOC + DLOM (model or qualitative), validated to fractions in [0, 1)."""
+) -> tuple[float, float, str | None, dict | None]:
+    """DLOC + DLOM (model, study or qualitative), as fractions in [0, 1).
+
+    The fourth return is the model's own working, or None for the methods that
+    have none. Only `restricted_stock` produces any: its answer is a blend of a
+    named set of studies, and the set is the reviewable part — see
+    `dlom.restricted_stock_dlom`.
+    """
     dloc = _num(params.get("dloc"), "dloc") or 0.0
     method = params.get("dlom_method")
+    detail: dict | None = None
     if method == "chaffee":
         dlom = chaffee_dlom(volatility or 0.0, t, r)
     elif method == "finnerty":
         dlom = finnerty_dlom(volatility or 0.0, t)
+    elif method == "ghaidarov":
+        dlom = ghaidarov_dlom(volatility or 0.0, t)
+    elif method == "longstaff":
+        dlom = longstaff_dlom(volatility or 0.0, t)
+        # The bound itself, not just the discount derived from it — a report
+        # concluding on Longstaff has to disclose that it is an upper bound.
+        detail = {
+            "method": "longstaff",
+            "bound_multiple": round(longstaff_bound(volatility or 0.0, t), 6),
+            "is_upper_bound": True,
+        }
+    elif method == "restricted_stock":
+        study_in = params.get("dlom_studies")
+        table_in = params.get("dlom_study_table")
+        blend = restricted_stock_dlom(
+            selected=study_in if isinstance(study_in, list) else None,
+            studies=table_in if isinstance(table_in, list) else None,
+            statistic=str(params.get("dlom_statistic") or "median"),
+        )
+        dlom = float(blend["dlom"])
+        detail = blend
     elif method == "qualitative":
         dlom_q = _num(params.get("dlom_qualitative"), "dlom_qualitative")
         dlom = dlom_q if dlom_q is not None else _req(params.get("dlom"), "dlom")
@@ -285,7 +390,20 @@ def _resolve_discounts(
         dlom = _num(params.get("dlom"), "dlom") or 0.0
     if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
         raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
-    return dloc, round(dlom, 4), method
+    return dloc, round(dlom, 4), method, detail
+
+
+def _discounts_block(dloc: float, dlom: float, method: str | None, detail: dict | None) -> dict:
+    """The `results.discounts` object every allocation path reports.
+
+    One builder rather than four literals: the model detail was added in one
+    place and silently missing from the other three when this was inlined, and
+    the report exhibit reads whichever path the valuation happened to take.
+    """
+    block: dict = {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method}
+    if detail is not None:
+        block["dlom_detail"] = detail
+    return block
 
 
 def _pwerm_allocation(inputs: dict) -> dict:
@@ -343,10 +461,10 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
     r = _num(inputs.get("risk_free_rate"), "risk_free_rate") or DEFAULT_RISK_FREE_RATE
     method = params.get("dlom_method")
     volatility = _num(inputs.get("volatility"), "volatility", positive=True)
-    if method in ("chaffee", "finnerty") and volatility is None:
+    if method in MODEL_DLOM_METHODS and volatility is None:
         raise EngineInputError("volatility is required for the selected model DLOM")
 
-    dloc, dlom, dlom_method = _resolve_discounts(params, volatility, t, r)
+    dloc, dlom, dlom_method, dlom_detail = _resolve_discounts(params, volatility, t, r)
 
     # The waterfall already spread value across the cap table's common shares.
     common_per_share = allocation["common_per_share"]
@@ -362,7 +480,7 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
             "risk_free_rate": r,
             "volatility": volatility,
         },
-        "discounts": {"dloc": dloc, "dlom": dlom, "dlom_method": dlom_method},
+        "discounts": _discounts_block(dloc, dlom, dlom_method, dlom_detail),
         "fully_diluted_common": fully_diluted_common,
         "fully_diluted_basis": "cap_table_common",
         "fmv_per_share": round(fmv_per_share, 4),
@@ -467,7 +585,7 @@ def _weighted_equity(
                 multiples = [market_in["multiple"]]
             if not isinstance(multiples, list):
                 raise EngineInputError("market.multiples (from comparables) is required")
-            metric = _req(market_in.get("metric"), "market.metric", positive=True)
+            horizon, basis, metric = _market_metric(params, inputs, market_in)
             # `float(m)` raised ValueError on "12.5x" and TypeError on a null,
             # neither of which is an EngineInputError — so a single unusable
             # entry in an otherwise fine list of comparables left the endpoint
@@ -481,6 +599,8 @@ def _weighted_equity(
                 [_req(m, "market.multiples[]") for m in multiples],
                 cash=cash,
                 debt=debt,
+                horizon=horizon,
+                basis=basis,
             )
         else:
             approaches["market"] = _reused_prior(prior, "market")
@@ -575,7 +695,7 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
     needs_vol = (
         liquidation_preference > 0
         or has_waterfall
-        or (params.get("dlom_method") in ("chaffee", "finnerty"))
+        or (params.get("dlom_method") in MODEL_DLOM_METHODS)
     )
     if needs_vol and volatility is None:
         raise EngineInputError("volatility is required (OPM allocation / model DLOM)")
@@ -647,7 +767,7 @@ def _compute_opm(params: dict, inputs: dict, recompute: list[str] | None, prior:
     equity_value, t, r = we["equity_value"], we["t"], we["r"]
     alloc = _opm_allocate(equity_value, params, inputs, t, r)
 
-    dloc, dlom, method = _resolve_discounts(params, alloc["volatility"], t, r)
+    dloc, dlom, method, dlom_detail = _resolve_discounts(params, alloc["volatility"], t, r)
     fmv_per_share = alloc["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
 
     results: dict = {
@@ -670,7 +790,7 @@ def _compute_opm(params: dict, inputs: dict, recompute: list[str] | None, prior:
             "risk_free_rate": r,
             "volatility": alloc["volatility"],
         },
-        "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
+        "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
         "fully_diluted_common": alloc["fully_diluted_common"],
         "fully_diluted_basis": alloc["fully_diluted_basis"],
         "fmv_per_share": round(fmv_per_share, 4),
@@ -688,10 +808,10 @@ def _compute_cvm(params: dict, inputs: dict, recompute: list[str] | None, prior:
     allocation = allocate_cvm(equity_value, inputs)
 
     volatility = _num(inputs.get("volatility"), "volatility", positive=True)
-    if params.get("dlom_method") in ("chaffee", "finnerty") and volatility is None:
+    if params.get("dlom_method") in MODEL_DLOM_METHODS and volatility is None:
         raise EngineInputError("volatility is required for the selected model DLOM")
 
-    dloc, dlom, method = _resolve_discounts(params, volatility, t, r)
+    dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t, r)
     fmv_per_share = allocation["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
 
     results: dict = {
@@ -708,7 +828,7 @@ def _compute_cvm(params: dict, inputs: dict, recompute: list[str] | None, prior:
             "risk_free_rate": r,
             "volatility": volatility,
         },
-        "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
+        "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
         "fully_diluted_common": allocation["fully_diluted_common"],
         # `allocate_cvm` already reports the count its own per-share figure is
         # over — the cap table's common on the waterfall path, common + options
@@ -749,7 +869,7 @@ def _compute_hybrid(params: dict, inputs: dict, recompute: list[str] | None, pri
 
     t_blend = blend["blended_time_to_exit_years"]
     volatility = opm_alloc["volatility"]
-    dloc, dlom, method = _resolve_discounts(params, volatility, t_blend, r)
+    dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t_blend, r)
     common_per_share = blend["common_per_share"]
     fully_diluted_common = opm_alloc["fully_diluted_common"]
     fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
@@ -769,7 +889,7 @@ def _compute_hybrid(params: dict, inputs: dict, recompute: list[str] | None, pri
             "risk_free_rate": r,
             "volatility": volatility,
         },
-        "discounts": {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method},
+        "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
         "fully_diluted_common": fully_diluted_common,
         "fully_diluted_basis": opm_alloc["fully_diluted_basis"],
         "fmv_per_share": round(fmv_per_share, 4),

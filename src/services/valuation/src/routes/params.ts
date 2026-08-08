@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
-import { findParams, patchParams } from '../repos/params.js';
+import { DLOM_METHODS, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -46,8 +46,28 @@ export const ParamsPatchBody = z
     weight_market: Weight.nullable(),
     dloc: Fraction.nullable(),
     dlom: Fraction.nullable(),
-    dlom_method: z.enum(['chaffee', 'finnerty', 'qualitative']).nullable(),
+    dlom_method: z.enum(DLOM_METHODS).nullable(),
     dlom_qualitative: Fraction.nullable(),
+    // Restricted-stock study configuration. Validated for shape here and for
+    // *membership* by the engine's pre-flight, which owns the study table and
+    // is the only thing that can say which names exist.
+    dlom_studies: z.array(z.string().min(1).max(200)).min(1).max(40).nullable(),
+    dlom_statistic: z.enum(['median', 'mean']).nullable(),
+    dlom_study_table: z
+      .array(
+        z
+          .object({
+            study: z.string().min(1).max(200),
+            discount: z.number().min(0).max(0.99),
+            period_start: z.number().int().min(1900).max(2200).optional(),
+            period_end: z.number().int().min(1900).max(2200).optional(),
+            statistic: z.enum(['median', 'mean']).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(60)
+      .nullable(),
     market_method: z.enum(['revenue', 'ebitda']).nullable(),
     market_horizon: z.enum(['ltm', 'ntm']).nullable(),
     market_custom_ranges: z.record(z.unknown()).nullable(),

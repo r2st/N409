@@ -99,13 +99,40 @@ def income_dcf(
     }
 
 
+#: The horizons a guideline-public-company multiple can be struck over.
+#: LTM is the last twelve months actually reported; NTM the next twelve
+#: forecast. They are different multiples over different metrics and are not
+#: interchangeable — see `market_multiples`.
+MARKET_HORIZONS = ("ltm", "ntm")
+
+
 def market_multiples(
     metric: float,
     multiples: list[float],
     cash: float = 0.0,
     debt: float = 0.0,
+    horizon: str = "ltm",
+    basis: str | None = None,
 ) -> dict:
-    clean = [m for m in multiples if isinstance(m, (int, float)) and m > 0]
+    """Guideline-public-company value: median multiple × the subject's metric.
+
+    ``horizon`` names which twelve months both sides of that product are struck
+    over — ``ltm`` (last, reported) or ``ntm`` (next, forecast). It does not
+    change the arithmetic, and that is exactly why it has to be recorded:
+    nothing in a bare number says whether an 8.0× came off trailing or forward
+    revenue, and pairing a forward multiple with a trailing metric understates
+    a growing company by its whole growth rate. The caller supplies a matched
+    pair; this records which pair it was, so the calculation, the report
+    exhibit and the reviewer all read the same basis.
+
+    ``basis`` is the metric's name (``revenue`` / ``ebitda``) for the same
+    reason. Together they label the multiple: "EV/NTM Revenue".
+    """
+    if horizon not in MARKET_HORIZONS:
+        raise EngineInputError(
+            f"market.horizon must be one of {list(MARKET_HORIZONS)} (got {horizon!r})"
+        )
+    clean = [m for m in multiples if isinstance(m, (int, float)) and not isinstance(m, bool) and m > 0]
     if not clean:
         raise EngineInputError("market.multiples must contain at least one positive multiple")
     if metric <= 0:
@@ -113,10 +140,14 @@ def market_multiples(
     selected = statistics.median(clean)
     enterprise = selected * metric
     hint = "check the metric and multiple magnitudes"
+    label = f"EV/{horizon.upper()} {basis.title()}" if basis else f"EV/{horizon.upper()}"
     return {
         "metric": metric,
         "multiples": clean,
         "selected_multiple": selected,
+        "horizon": horizon,
+        "basis": basis,
+        "multiple_label": label,
         "enterprise_value": _finite_result(enterprise, "market.enterprise_value", hint),
         "equity_value": _finite_result(enterprise + cash - debt, "market.equity_value", hint),
     }

@@ -29,8 +29,13 @@ import math
 from dataclasses import dataclass, field as dc_field
 from datetime import date
 
+from .dlom import (
+    MODEL_DLOM_METHODS,
+    RESTRICTED_STOCK_STUDIES,
+    is_post_amendment,
+)
 from .projection import MAX_FORECAST_YEARS
-# The two modules that own a shape this validator mirrors. Imported rather than
+# The modules that own a shape this validator mirrors. Imported rather than
 # restated so a bound or a vocabulary changing in one place cannot leave the
 # pre-flight quietly disagreeing with the engine about what is legal.
 from .pwerm import SCENARIO_TYPES
@@ -682,7 +687,7 @@ def _check_cap_table(
         )
 
     volatility = _finite(inputs.get("volatility"))
-    model_dlom = params.get("dlom_method") in ("chaffee", "finnerty")
+    model_dlom = params.get("dlom_method") in MODEL_DLOM_METHODS
     # Only the OPM-style allocations price a Black-Scholes call; PWERM and CVM
     # walk the deterministic waterfall and need volatility solely for a model
     # DLOM. With auto_volatility the estimator supplies it during compute.
@@ -743,8 +748,15 @@ def _check_discounts(c: _Collector, params: dict) -> None:
                 "the qualitative DLOM method needs dlom_qualitative (or dlom)",
             )
         dlom = _finite(qualitative if qualitative is not None else params.get("dlom"))
-    elif method in ("chaffee", "finnerty"):
+    elif method in MODEL_DLOM_METHODS:
         dlom = None  # derived from volatility and time to exit at compute time
+    elif method == "restricted_stock":
+        # Blended from the study set at compute time. What can be checked here
+        # is the *set*: an unknown study name is a 422 from the engine rather
+        # than a number, and a set straddling the 1997 Rule 144 amendment is a
+        # reviewable choice rather than an error.
+        dlom = None
+        _check_restricted_stock(c, params)
     else:
         dlom = _finite(params.get("dlom"))
         if params.get("dlom") is not None and dlom is None:
@@ -759,8 +771,79 @@ def _check_discounts(c: _Collector, params: dict) -> None:
                 "params.dlom",
                 f"a {dlom:.1%} discount for lack of marketability is above the range "
                 "normally supportable",
-                "Reviewers will expect a model DLOM (Chaffee / Finnerty) or a cited study.",
+                "Reviewers will expect a model DLOM (Chaffee / Finnerty / Ghaidarov / "
+                "Longstaff) or a cited restricted-stock study.",
             )
+
+
+def _check_restricted_stock(c: _Collector, params: dict) -> None:
+    """Pre-flight for the `restricted_stock` DLOM: the study set.
+
+    The engine raises on an unknown study name, which is a 422 the analyst can
+    act on but only *after* the calculation is dispatched. Naming them here
+    means the params editor can refuse the set at save time, and it is the one
+    place that can say which names are actually available.
+    """
+    known = {row["study"] for row in RESTRICTED_STOCK_STUDIES}
+    table = params.get("dlom_study_table")
+    if isinstance(table, list) and table:
+        # A caller-supplied table replaces the built-ins entirely, so the
+        # selection is checked against theirs, not ours.
+        known = {
+            str(row["study"]).strip()
+            for row in table
+            if isinstance(row, dict) and isinstance(row.get("study"), str) and row["study"].strip()
+        }
+
+    statistic = params.get("dlom_statistic")
+    if statistic is not None and statistic not in ("median", "mean"):
+        c.error(
+            "out_of_range",
+            "params.dlom_statistic",
+            f"dlom_statistic must be 'median' or 'mean' (got {statistic!r})",
+        )
+
+    selected = params.get("dlom_studies")
+    if selected is None:
+        return
+    if not isinstance(selected, list) or not selected:
+        c.error(
+            "invalid_shape",
+            "params.dlom_studies",
+            "dlom_studies must be a non-empty list of study names",
+            "Leave it unset to use the post-1997 default set.",
+        )
+        return
+
+    unknown = sorted({str(n) for n in selected} - known)
+    if unknown:
+        c.error(
+            "unknown_study",
+            "params.dlom_studies",
+            f"unknown restricted-stock studies: {unknown}",
+            f"Available studies: {sorted(known)}.",
+        )
+        return
+
+    # Classified by `is_post_amendment` rather than by a period comparison
+    # restated here: this check had its own copy of the rule keyed on
+    # period_end, which called a set holding both Columbia studies — the
+    # textbook straddle, one either side of the amendment — single-regime,
+    # because the earlier study's window closes *in* 1997.
+    by_name = {row["study"]: row for row in RESTRICTED_STOCK_STUDIES}
+    dated = [by_name[n] for n in selected if n in by_name]
+    if any(is_post_amendment(r) for r in dated) and any(
+        not is_post_amendment(r) for r in dated
+    ):
+        c.warn(
+            "mixed_regime",
+            "params.dlom_studies",
+            "the selected studies straddle the 1997 Rule 144 amendment, which cut the "
+            "holding period from two years to one",
+            "Discounts before and after the amendment describe different securities. "
+            "Blending them produces a figure for a regime that never existed — select "
+            "one side or explain the blend in the report.",
+        )
 
 
 def _check_dates(c: _Collector, params: dict, inputs: dict) -> None:

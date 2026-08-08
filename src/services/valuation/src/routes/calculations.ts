@@ -72,6 +72,12 @@ export function engineParams(p: ValuationParamsRow): Record<string, unknown> {
     dlom: num(p.dlom),
     dlom_method: p.dlom_method,
     dlom_qualitative: num(p.dlom_qualitative),
+    // Only meaningful for dlom_method = 'restricted_stock'; the engine ignores
+    // them otherwise. Passed unconditionally so switching the method does not
+    // also need a params round-trip to carry its configuration across.
+    dlom_studies: p.dlom_studies,
+    dlom_statistic: p.dlom_statistic,
+    dlom_study_table: p.dlom_study_table,
     market_method: p.market_method,
     market_horizon: p.market_horizon,
     revenue_status: p.revenue_status,

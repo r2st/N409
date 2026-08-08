@@ -4,6 +4,21 @@ import { diffRecords } from '../domain/auditTrail.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
+/**
+ * Every DLOM method the engine dispatches on (engine dlom.py DLOM_METHODS).
+ * The first four are model-derived and need a volatility; 'restricted_stock'
+ * blends published study discounts; 'qualitative' is the analyst's own figure.
+ */
+export const DLOM_METHODS = [
+  'chaffee',
+  'finnerty',
+  'ghaidarov',
+  'longstaff',
+  'restricted_stock',
+  'qualitative',
+] as const;
+export type DlomMethod = (typeof DLOM_METHODS)[number];
+
 /** Mirrors the valuation_params table (1:1 with valuations, created at birth). */
 export interface ValuationParamsRow {
   valuation_id: string;
@@ -23,8 +38,13 @@ export interface ValuationParamsRow {
   weight_market: string | null;
   dloc: string | null;
   dlom: string | null;
-  dlom_method: 'chaffee' | 'finnerty' | 'qualitative' | null;
+  dlom_method: DlomMethod | null;
   dlom_qualitative: string | null;
+  /** Restricted-stock study configuration; only read when dlom_method is
+   * 'restricted_stock'. NULL studies means the engine's default set. */
+  dlom_studies: string[] | null;
+  dlom_statistic: 'median' | 'mean' | null;
+  dlom_study_table: unknown;
   market_method: 'revenue' | 'ebitda' | null;
   market_horizon: 'ltm' | 'ntm' | null;
   market_custom_ranges: unknown;
@@ -55,6 +75,9 @@ export const PARAM_COLUMNS = [
   'dlom',
   'dlom_method',
   'dlom_qualitative',
+  'dlom_studies',
+  'dlom_statistic',
+  'dlom_study_table',
   'market_method',
   'market_horizon',
   'market_custom_ranges',

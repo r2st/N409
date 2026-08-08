@@ -233,9 +233,13 @@ export type EngineInputsPatch = z.infer<typeof EngineInputsBody>;
  * applying, and the rejects are returned so the caller can say what was
  * ignored instead of silently losing it.
  *
- * `revenue_*` and `ebitda_ltm` are not in the analyst schema (nothing consumes
- * them yet — they are recorded for the report), so they are only required to
- * be real numbers; EBITDA is routinely negative for a pre-revenue company.
+ * `revenue_*` and `ebitda_*` are not in the analyst schema — they are not
+ * engine inputs an analyst edits but the financials the market approach is
+ * struck against, selected by `params.market_method` × `params.market_horizon`
+ * (compute._market_metric). They are only required to be real numbers, not
+ * positive ones: EBITDA is routinely negative for a venture-backed company,
+ * and the engine is the right place to refuse a multiple against a negative
+ * denominator, since which horizon is even in play is a params question.
  */
 const EXTRACTED_FIELD_SCHEMAS: Readonly<Record<string, z.ZodType<number>>> = {
   shares_outstanding_common: pos,
@@ -249,6 +253,7 @@ const EXTRACTED_FIELD_SCHEMAS: Readonly<Record<string, z.ZodType<number>>> = {
   revenue_ltm: z.number().finite(),
   revenue_ntm: z.number().finite(),
   ebitda_ltm: z.number().finite(),
+  ebitda_ntm: z.number().finite(),
   volatility: z.number().positive().max(5),
   risk_free_rate: z.number().min(0).max(1),
 };

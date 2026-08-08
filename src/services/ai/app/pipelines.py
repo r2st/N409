@@ -30,6 +30,7 @@ ENGINE_INPUT_FIELDS = {
     "revenue_ltm",
     "revenue_ntm",
     "ebitda_ltm",
+    "ebitda_ntm",
     "volatility",
     "risk_free_rate",
 }
@@ -361,7 +362,8 @@ Extract what is present. Return JSON:
     "debt": <number|null>,
     "revenue_ltm": <number|null>,
     "revenue_ntm": <number|null>,
-    "ebitda_ltm": <number|null>
+    "ebitda_ltm": <number|null>,
+    "ebitda_ntm": <number|null>
   }},
   "extractions": [{{"field": "<engine_inputs key>", "value": <number>, "source_document": "<filename>", "quote": "<short supporting quote>", "confidence": <0-1>}}]
 }}
