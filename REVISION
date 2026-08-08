@@ -1,106 +1,102 @@
-4a8d306c7318050f6696b219d5b206a3c7ea3c6b
+79f5ba59a035bb278b445bfab113fa90d1175628
 # N409 deployed revision
-# commit:    4a8d306c7318050f6696b219d5b206a3c7ea3c6b
-# subject:   feat(workflow): the paid state — the fifteenth, and the gate into
-#            review
-# previous:  2bd920a (specialty orchestration) — 101e309 recorded that deploy.
-# includes:  2 feature commits. a177c8c had been sitting UNCOMMITTED in the
-#            working tree since the previous session: complete, typechecking,
-#            and never pushed. It was verified green (2560 valuation tests) and
-#            committed before anything new was built on top of it. Six of its
-#            files also failed prettier; 4a8d306 reformats them.
+# commit:    79f5ba59a035bb278b445bfab113fa90d1175628
+# subject:   fix(web): the template category counts state is never undefined
+# previous:  8861b0c (fund/debt measurement portfolios) — never separately
+#            recorded here; 4a8d306's entry below is the one this replaces.
+# includes:  2 commits.
 #
-#            a177c8c — five operational gaps from the 409.ai parity list:
+#            cb869ba — the seven platform surfaces from the 409.ai admin
+#              console (docs/screenshot-catalog.md). Six were half-built; the
+#              seventh had no server side at all.
 #
-#            webhook retries (0103) — a failed delivery was simply lost.
-#              Deliveries now carry attempts/max_attempts/next_attempt_at and
-#              climb a 1/5/30-minute ladder (initial attempt + three retries),
-#              swept by a claim-based worker in the email-outbox shape so two
-#              instances cannot send one event twice. `pending` means attempts
-#              are still owed, `failed` means the ladder is exhausted — the
-#              distinction a partner needs to tell "not yet" from "never".
-#              POST /webhooks/:id/deliveries/:id/retry replays an exhausted
-#              one; a delivered event cannot be replayed. This closes the
-#              "specialty webhooks retry never" gap 101e309 recorded.
+#              template categories + variable catalog (0113) — templates had
+#                CRUD and a preview and no way to answer "what do we send a
+#                client stalled at payment". `category` groups them by the
+#                lifecycle stage that sends them, plus `account` for the three
+#                that are not about an engagement and always deliver. The
+#                fifteen declared variables are new: `renderTemplate` leaves an
+#                unknown placeholder verbatim at send time, so the first report
+#                of a typo was the client who read it. Now flagged at the row
+#                and in the editor, and previewable against a real engagement.
 #
-#            white-label subdomains (0106) — partners get a DNS label with a
-#              reserved deny list, because a tenant holding `secure` or `login`
-#              under our domain is a phishing page carrying our certificate.
-#              GET /api/v1/public/branding resolves the brand from the Host
-#              header, so a firm's own address renders its first frame signed
-#              out without the SPA learning a slug first. It never 404s — an
-#              unclaimed host is the platform and the login page has to render
-#              on all of them — and host resolution is off entirely without a
-#              configured base domain.
+#              role catalog + capability matrix — the eighteen roles were
+#                already right and already enforced; nothing said so anywhere a
+#                person could look. permissions.ts describes auth/rbac.ts and
+#                is asserted against it role by role, so the two cannot drift.
+#                The frontend's own copy of the role list already had — it was
+#                missing `auditor` — and now reads the served catalog.
 #
-#            notification sequences (0104) — 0051 seeded the five campaigns
-#              with an obvious trigger, leaving a lifecycle where a client
-#              hears from us at signup, at the draft and at publication and
-#              nothing through the four states in between where the work waits
-#              on them. Seeds the remaining twenty-two for twenty-seven: an
-#              ack on entering each client-visible state, escalating nudges per
-#              thing we are blocked on, reviewer reminders, and the post-
-#              publication feedback / six-month / annual-renewal sequence. Six
-#              new conditions name the blockage in terms the schema evaluates.
-#              SMS stays opt-in — no deployment starts texting because a
-#              migration ran.
+#              partner terms (0113) — `prepaid` and `cc_emails`, plus the
+#                subdomain field 0106 added that only the branding route could
+#                set. Firm-scoped engagement list and token management on the
+#                detail page.
 #
-#            document categories (0105) — uploads land in the six documented
-#              buckets instead of one pile, so "we are missing your balance
-#              sheets" is a query rather than a human reading filenames.
+#              job monitor — five queues with five status vocabularies and no
+#                way to ask "is anything stuck" across them. A UNION ALL, not a
+#                shared queue table: the alternative was every writer writing
+#                twice forever to populate a read-only page. Read-only by
+#                design — each queue has its own retry path, and guessing wrong
+#                on an outbox row sends a client a second copy of an email.
 #
-#            workbookTabs.ts — the four-tab model (Company Overview, Captable,
-#              Financials, Valuation Params) as a declarative field registry
-#              reading from the existing aggregates rather than copying them,
-#              so a tab cannot drift from the valuation it describes.
+#              shared inbox (0113) — every query on valuation_comments was
+#                keyed by valuation_id. Read state is per (reader, engagement):
+#                `last_comment_at` is a property of the thread, unread is a
+#                property of the reader, and conflating them gave everyone one
+#                badge that went stale at once. Scope is `valuationScope`
+#                reproduced in SQL, because filtering after LIMIT hands a
+#                partner four rows and calls it page one.
 #
-#            4a8d306 — the `paid` state (0107). features.md draws the lifecycle
-#              as `completed → (paid) → review`; 0001 shipped the fourteen
-#              states either side and left the gate out, so payment lived only
-#              in paid_status/paid_at and a valuation waiting on money was
-#              indistinguishable, in the state column, from one waiting on an
-#              analyst. The migration adds the enum value BEFORE 'review' and
-#              nothing else on purpose: Postgres permits ALTER TYPE ... ADD
-#              VALUE inside a transaction (the runner wraps every migration in
-#              one) but forbids USING it there, so anything referencing 'paid'
-#              waits for a later migration.
+#              document categories 6 → 13 (0112) — 0105's six were the finance
+#                half, so the charter, bylaws, option plan, board consents, IP
+#                schedule and prior 409A all shared `uploads`. Nothing is
+#                backfilled out of it: a file filed there was filed by somebody
+#                who saw the choices available at the time.
 #
-#              The parentheses are load-bearing. Both `completed → paid` and
-#              `completed → review` are legal, and nextState() diverts through
-#              the gate only when payment actually settled (paid_by_partner
-#              counts — settled money the client never saw an invoice for).
-#              Stripe is still unconfigured here, so every live valuation is
-#              `unpaid`; a gate that defaulted to closed would have stranded
-#              all of them at `completed`. That fallback is why nextState takes
-#              context instead of AUTO_ADVANCE simply pointing at 'paid'.
+#              cap-table structure graph — new. A table cannot show what
+#                converts into what or what is paid first; sorted by name it
+#                reads "Series A, Series B, Series Seed" while the money goes
+#                B, A, Seed. Ranks become columns. It also catches what per-row
+#                validation cannot: a stack where half the classes state a
+#                seniority is not an invalid row anywhere, and is the usual
+#                reason a waterfall pays out in an order nobody intended. Where
+#                the conversion target is ambiguous no arrow is drawn — an
+#                arrow to a guess reads as a fact. Hand-rolled SVG, because the
+#                server already decided the ranks and a force-directed layout
+#                would shuffle that ordering into whatever looked balanced.
 #
-#              Settlement moves the workflow: the Stripe fulfil path advances a
-#              `completed` valuation to `paid` in the same patch that records
-#              the money, then fires onStateChanged, so partner webhooks and
-#              the notification matrix see it. Only from `completed` — money on
-#              a file still in intake, or already in review, says nothing about
-#              where the work got to. Deliberately NOT added to
-#              TIMESTAMP_ON_STATE: paid_at belongs to the payment layer, and
-#              stamping it on entry would overwrite the true settlement time
-#              and double-assign the column in one UPDATE.
+#            79f5ba5 — `categories` became optional on the wire, and the state
+#              initialised from that type then admitted `undefined`. Caught by
+#              the host build, where no cached tsbuildinfo read past it; the
+#              local incremental build had. Worth noting as a habit: run the
+#              frontend `tsc --noEmit` cold before deploying.
 #
-# tests:      2580 valuation (197 files, +20: paidState.test.ts covers the enum
-#             shape, both edges out of completed, four settlement cases and the
-#             dashboard placement), 787 frontend, 205 shared, 189 report, 42
-#             web; 1319 engine-wrapper + 341 ai pytest (npm test does not run
-#             these — each service has its own .venv). Typecheck, lint and
-#             prettier clean.
-# erratum:    4a8d306's own message says "valuation 2583 (+23)". The measured
-#             figure is 2580 (+20). The commit was already pushed; the number
-#             above is the correct one.
-# deploy:     HOST=root@204.168.241.124 infra/deploy.sh --apply. All five units
-#             restarted and active; BUILD_SHA and /health report 4a8d306.
-#             Verified on the host: schema_migrations carries 0103–0107,
-#             valuation_state reads
-#             pending,started,onboarding_completed,user_finished,completed,
-#             paid,review,reviewed,drafted,draft_accepted,draft_changes,
-#             published,timeout,cancelled,ignored (fifteen, paid in position),
-#             and auto_emails holds 27 campaigns.
+# tests:      2838 valuation (212 files, +59: capTableGraph 16 unit + 6
+#             integration, permissions 27, templateVariables 13, jobQueue 9,
+#             inbox 16, jobMonitor 13, templateEditor 17, partnerAdmin 19,
+#             documentCategoryFilter 8, documentCategories +3), 845 frontend
+#             (121 files, +58: InboxPage 10, AdminJobsPage 12, CapTableGraph
+#             10, PartnerDetailPage +8, others), 205 shared, 189 report, 42
+#             web; engine-wrapper + ai pytest not run (npm test does not reach
+#             them — each has its own .venv). Typecheck, lint and prettier
+#             clean.
+# caveat:     one pre-existing valuation unit test fails —
+#             extractedInputs.test.ts expects the ENGINE_INPUT_FIELDS set
+#             without `ebitda_ntm`. That field was added to
+#             src/services/ai/app/pipelines.py by a concurrent session and is
+#             UNCOMMITTED in the working tree; it is not in this deploy and not
+#             this commit's to fix. Counted as failing above.
+# deploy:     HOST=root@204.168.241.124 infra/deploy.sh --apply --allow-dirty.
+#             `--allow-dirty` was required and is safe here: the archive is
+#             `git archive` from HEAD, so the concurrent session's uncommitted
+#             Python never entered the release, and BUILD_SHA names exactly
+#             what shipped. All five units active; /health on 3000–3004 reports
+#             79f5ba5. Verified on the host: schema_migrations carries 0112 and
+#             0113, document_category has 13 values, communication_templates
+#             backfilled to account 26 / open 1 / in_review 1 / drafted 1 /
+#             published 1 / closed 1, partners has subdomain+prepaid+cc_emails,
+#             and valuation_comment_reads exists. All nine new routes answer
+#             401 unauthenticated against a 404 control.
 # note:      This file is tracked, so it always names the *previous* deploy at
 #            the moment the archive is built — the commit recording a deploy
 #            cannot be the commit being deployed. /opt/N409/BUILD_SHA is the
@@ -141,3 +137,17 @@
 #            sees "Online payment is not available yet — we will invoice you
 #            instead" and none of the payment handlers can fire. See
 #            docs/billing-setup.md.
+# gap:       the seven new document categories are reachable and nothing was
+#            moved into them. Every corporate file already on the platform is
+#            still in `uploads`, because re-filing one from its filename is the
+#            silent reclassification 0105 exists to prevent. Somebody has to
+#            re-file them by hand, or they stay where they are — the query is
+#            `documents WHERE category = 'uploads' AND kind = 'other'`.
+# gap:       the job monitor reports, and nothing alerts. `oldest_active_at`
+#            per queue is the figure an alert should eventually be built on —
+#            a count cannot tell a busy queue from a stopped one — but today it
+#            is a column somebody has to look at.
+# gap:       the shared inbox has no compose box. Replying goes through the
+#            engagement's own thread, which is correct (one write path owns the
+#            kind rules, mention parsing and the realtime broadcast) but means
+#            answering from the inbox is two clicks and a page load.
