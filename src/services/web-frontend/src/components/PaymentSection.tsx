@@ -278,19 +278,32 @@ export function PaymentHistory({ valuation }: { valuation: Valuation }) {
                     </div>
                   )}
                 </td>
+                {/* Two different documents, so both are offered rather than one
+                    standing in for the other: Stripe's receipt proves the card
+                    was charged, ours is the only one that says what the charge
+                    was made of. A client querying an add-on needs the second. */}
                 <td className="py-2.5 text-right">
-                  {p.receipt_url ? (
-                    <a
-                      href={p.receipt_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-semibold text-bond-700 hover:underline"
-                    >
-                      View receipt ↗
-                    </a>
-                  ) : (
-                    <span className="text-ink-400">—</span>
-                  )}
+                  <div className="flex flex-col items-end gap-0.5">
+                    {p.status === 'succeeded' && (
+                      <a
+                        href={`/api/v1/valuations/${p.valuation_id}/payments/${p.id}/receipt.pdf`}
+                        className="font-semibold text-bond-700 hover:underline"
+                      >
+                        Itemised PDF
+                      </a>
+                    )}
+                    {p.receipt_url && (
+                      <a
+                        href={p.receipt_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-ink-500 hover:underline"
+                      >
+                        Stripe receipt ↗
+                      </a>
+                    )}
+                    {p.status !== 'succeeded' && !p.receipt_url && <span className="text-ink-400">—</span>}
+                  </div>
                 </td>
               </tr>
             ))}

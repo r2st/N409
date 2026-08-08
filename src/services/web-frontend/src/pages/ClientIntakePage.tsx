@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { FieldWarnings, ValidationSummary } from '../components/ValidationNotes';
 import { PLATFORM_BRANDING, type Branding } from '../lib/branding';
-import { answerFromControl, controlValue } from '../lib/intakeAnswers';
+import { answerFromControl, controlValue, resumeStep } from '../lib/intakeAnswers';
 import {
   hasBlockingIssues,
   issuesByField,
@@ -133,6 +133,9 @@ export function ClientIntakePage() {
         setAnswers(portal.answers ?? {});
         setCompletion(portal.completion);
         setSubmittedAt(portal.submitted_at);
+        // Reopen where the client stopped. A submitted form has nothing left to
+        // answer, so it opens on the review — which is what it renders anyway.
+        setStep(portal.submitted_at ? portal.sections.length : resumeStep(portal.completion.sections));
       })
       .catch((err: unknown) =>
         setFatal(err instanceof Error ? err.message : 'This link is invalid, expired, or withdrawn.'),

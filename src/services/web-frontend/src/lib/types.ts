@@ -485,6 +485,12 @@ export interface Payment {
   refunded_at: string | null;
   dispute_status: DisputeStatus | null;
   disputed_at: string | null;
+  /** Bought next-business-day delivery. */
+  express: boolean;
+  /** Bought the standalone QSBS attestation letter. */
+  qsbs_letter: boolean;
+  /** The quote as sold. Null on rows predating the itemised breakdown (0108). */
+  price_breakdown: QuoteLine[] | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

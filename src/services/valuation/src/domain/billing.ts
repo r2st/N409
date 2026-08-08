@@ -143,3 +143,89 @@ export function invoiceSections(inv: InvoiceForRender): Array<{ heading: string;
     { heading: 'Line items', html: table },
   ];
 }
+
+// ── One-off engagement receipts ──────────────────────────────────────────────
+
+/** A payment, reduced to what a receipt has to state. */
+export interface ReceiptForRender {
+  /** Receipt number — the valuation's number, which the client already quotes. */
+  reference: string;
+  company_name: string;
+  amount_cents: number;
+  currency: string;
+  paid_at: string | null;
+  /** The quote as sold. Empty for a row predating the itemised breakdown. */
+  lines: InvoiceLineItem[];
+  refunded_cents: number;
+  dispute_status: string | null;
+  express: boolean;
+}
+
+/**
+ * Receipt → report-service section list, through the same PDF pipeline as an
+ * invoice.
+ *
+ * A one-off engagement is paid at a Stripe Checkout page, and the only record
+ * the client kept of it was Stripe's own receipt — which states a single total
+ * and knows nothing about what that total was made of. Migration 0108 started
+ * storing the quote as sold precisely so the charge could be itemised after the
+ * fact; this is the reader it was stored for. Without it the breakdown is
+ * written and never shown, and a client asking "what was the extra $500 for?"
+ * gets an answer reconstructed by hand from today's price list.
+ *
+ * Two things this refuses to do quietly:
+ *
+ * A refunded or charged-back payment states the refund on its face and shows
+ * what is actually left. A receipt for the gross is a document the client can
+ * hold up to say they paid us money they did not, and the billing rollup
+ * already learned this lesson by summing succeeded rows gross.
+ *
+ * A row with no stored breakdown gets one line for the whole amount rather than
+ * a breakdown synthesised from current prices. Prices move; a refund argued
+ * eighteen months from now is about the ladder in force on the day, and an
+ * invented itemisation would be indistinguishable from a real one.
+ */
+export function receiptSections(r: ReceiptForRender): Array<{ heading: string; html: string }> {
+  const net = r.amount_cents - r.refunded_cents;
+  const lines =
+    r.lines.length > 0 ? r.lines : [{ description: 'Valuation engagement', amount_cents: r.amount_cents }];
+
+  const summary =
+    `<p>Receipt <strong>${esc(r.reference)}</strong> for ${esc(r.company_name)}</p>` +
+    `<p>Paid ${day(r.paid_at)}` +
+    (r.express ? ' · Express delivery — 1 business day' : '') +
+    `</p>`;
+
+  const rows = lines
+    .map(
+      (li) =>
+        `<tr><td>${esc(li.description)}</td>` +
+        `<td>${formatMoneyCents(li.amount_cents, r.currency)}</td></tr>`,
+    )
+    .join('');
+
+  const table =
+    `<table><thead><tr><th>Description</th><th>Amount</th></tr></thead><tbody>${rows}` +
+    `<tr><th>Total charged</th><th>${formatMoneyCents(r.amount_cents, r.currency)}</th></tr>` +
+    (r.refunded_cents > 0
+      ? `<tr><td>Refunded</td><td>−${formatMoneyCents(r.refunded_cents, r.currency)}</td></tr>` +
+        `<tr><th>Net paid</th><th>${formatMoneyCents(net, r.currency)}</th></tr>`
+      : '') +
+    `</tbody></table>`;
+
+  const sections = [
+    { heading: 'Receipt', html: summary },
+    { heading: 'Line items', html: table },
+  ];
+
+  // A chargeback is not a refund and must not read as one: the money is held
+  // pending the dispute, and a client owed an explanation gets the status
+  // rather than a document that quietly still says "paid".
+  if (r.dispute_status) {
+    sections.push({
+      heading: 'Dispute',
+      html: `<p>This payment is subject to a dispute — status: <strong>${esc(r.dispute_status)}</strong>.</p>`,
+    });
+  }
+  return sections;
+}

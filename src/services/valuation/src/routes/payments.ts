@@ -2,7 +2,9 @@ import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { ApiProblem, isUlid, problems } from '@n409/shared';
+import { renderReportPdf } from '@n409/report/pdf';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
+import { receiptSections } from '../domain/billing.js';
 import {
   addonFlags,
   EXPRESS_DELIVERY_DAYS,
@@ -16,6 +18,7 @@ import {
   createPayment,
   findPaymentByChargeOrIntent,
   findPaymentBySessionId,
+  findPaymentForValuation,
   listPayments,
   listPaymentsForScope,
   listUnpaidValuationsForScope,
@@ -205,6 +208,57 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     await loadAuthorized(deps.pool, principal, id);
     return { payments: await listPayments(deps.pool, id) };
   });
+
+  /**
+   * The receipt for a settled engagement payment, itemised.
+   *
+   * Only a succeeded payment has one. A pending checkout is an intention and a
+   * failed one is nothing at all, and issuing a document headed "Receipt" for
+   * either is how a client comes to believe they have paid.
+   */
+  app.get(
+    '/api/v1/valuations/:id/payments/:paymentId/receipt.pdf',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id, paymentId } = req.params as { id: string; paymentId: string };
+      const valuation = await loadAuthorized(deps.pool, principal, id);
+      if (!isUlid(paymentId)) throw problems.notFound();
+      const payment = await findPaymentForValuation(deps.pool, id, paymentId);
+      if (!payment) throw problems.notFound();
+      if (payment.status !== 'succeeded') {
+        throw problems.conflict('No receipt: this payment has not settled.');
+      }
+
+      const pdf = await renderReportPdf({
+        title: `Receipt ${valuation.number}`,
+        company_name: valuation.company_name,
+        meta: [
+          { label: 'Receipt', value: valuation.number },
+          { label: 'Status', value: payment.dispute_status ? 'disputed' : 'paid' },
+          { label: 'Paid', value: new Date(payment.updated_at).toISOString().slice(0, 10) },
+        ],
+        sections: receiptSections({
+          reference: valuation.number,
+          company_name: valuation.company_name,
+          amount_cents: Number(payment.amount_cents),
+          currency: payment.currency,
+          paid_at: new Date(payment.updated_at).toISOString(),
+          lines: (payment.price_breakdown ?? []).map((l) => ({
+            description: l.label,
+            amount_cents: l.amount_cents,
+          })),
+          refunded_cents: Number(payment.refunded_cents ?? 0),
+          dispute_status: payment.dispute_status,
+          express: payment.express,
+        }),
+      });
+      return reply
+        .header('content-type', 'application/pdf')
+        .header('content-disposition', `attachment; filename="receipt-${valuation.number}.pdf"`)
+        .send(pdf);
+    },
+  );
 
   /**
    * Price transparency: what "Pay now" will charge, before opening Stripe.

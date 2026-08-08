@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerFromControl, controlValue } from '../src/lib/intakeAnswers';
+import { answerFromControl, controlValue, resumeStep } from '../src/lib/intakeAnswers';
 import type { IntakeField } from '../src/lib/intakeValidation';
 
 /**
@@ -73,5 +73,33 @@ describe('answerFromControl', () => {
     // could. `validateIntake` then says "must be a number" — a NaN would have
     // been serialised to null and silently read as unanswered.
     expect(answerFromControl(field('number'), 'twelve')).toBe('twelve');
+  });
+});
+
+describe('resumeStep', () => {
+  const sections = (...complete: boolean[]) => complete.map((c) => ({ complete: c }));
+
+  it('opens a fresh form at the first section', () => {
+    expect(resumeStep(sections(false, false, false))).toBe(0);
+  });
+
+  it('reopens on the first section still owing an answer, not the furthest reached', () => {
+    // The client finished 1 and 3 and left 2 half-done. Section 2 is the one
+    // worth opening on, even though 3 is further along.
+    expect(resumeStep(sections(true, false, true))).toBe(1);
+  });
+
+  it('skips the run of finished sections at the front', () => {
+    expect(resumeStep(sections(true, true, true, false, false))).toBe(3);
+  });
+
+  it('lands on the review step when nothing is outstanding', () => {
+    // Length, not length - 1: the remaining action is Submit, and opening on
+    // the last question of a finished form hides the button that ends it.
+    expect(resumeStep(sections(true, true, true))).toBe(3);
+  });
+
+  it('resolves a form with no sections to 0, which is its review step', () => {
+    expect(resumeStep([])).toBe(0);
   });
 });

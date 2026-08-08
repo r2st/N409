@@ -156,6 +156,27 @@ describe('ClientIntakePage', () => {
     expect(screen.queryByText('N409')).not.toBeInTheDocument();
   });
 
+  it('reopens on the section the client still owes an answer for', async () => {
+    // Company answered, Legal not. Before this the form always reopened on
+    // step 1 — the section already showing a tick — and getting back to the
+    // unanswered one was a manual walk the client often did not make.
+    mockPortal({ portal: { answered: 2, answers: { legal_name: 'Northwind Robotics, Inc.' } } });
+    render(<ClientIntakePage />);
+
+    expect(await screen.findByRole('heading', { name: 'Legal & governance' })).toBeInTheDocument();
+    expect(screen.getByText('Step 2 of 3')).toBeInTheDocument();
+    // The finished section's questions are behind us, not on screen.
+    expect(screen.queryByLabelText(/Legal company name/)).not.toBeInTheDocument();
+  });
+
+  it('opens a form nobody has touched at the first section', async () => {
+    mockPortal();
+    render(<ClientIntakePage />);
+
+    expect(await screen.findByRole('heading', { name: 'Company information' })).toBeInTheDocument();
+    expect(screen.getByText('Step 1 of 3')).toBeInTheDocument();
+  });
+
   it('sends the token in the body, never in the URL', async () => {
     const calls = mockPortal();
     render(<ClientIntakePage />);
@@ -413,7 +434,10 @@ describe('ClientIntakePage', () => {
       // instantly — it found the pending set empty because the open write had
       // taken it — so /submit reached the server first and was judged against
       // answers that had not arrived.
-      const { settled } = mockSlowPortal(400, { answered: 2, ready: true });
+      // answered: 0 keeps the form on its first section, where the field typed
+      // below lives — `answered` now also decides which step a returning client
+      // reopens on, and this test is about write ordering, not resumption.
+      const { settled } = mockSlowPortal(400, { answered: 0, ready: true });
       const user = userEvent.setup();
       render(<ClientIntakePage />);
       await screen.findByText('Welcome, Northwind Robotics');
@@ -432,7 +456,8 @@ describe('ClientIntakePage', () => {
       let submits = 0;
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
         const path = String(url);
-        if (path.endsWith('/intake/portal')) return jsonResponse(portalBody({ answered: 2, ready: true }));
+        // answered: 0 so the form opens on the section holding the field below.
+        if (path.endsWith('/intake/portal')) return jsonResponse(portalBody({ answered: 0, ready: true }));
         if (path.endsWith('/portal/answers')) return jsonResponse({ detail: 'Network hiccup' }, 503);
         if (path.endsWith('/portal/submit')) {
           submits += 1;

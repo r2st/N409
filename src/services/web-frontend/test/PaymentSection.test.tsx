@@ -217,8 +217,19 @@ describe('PaymentHistory', () => {
     expect(screen.getAllByText('$1,190.00')).toHaveLength(2);
     expect(screen.getByText('succeeded')).toBeInTheDocument();
     expect(screen.getByText('expired')).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: /view receipt/i });
-    expect(link).toHaveAttribute('href', PAYMENT.receipt_url);
+    // Two documents, not one: Stripe's proves the card was charged, ours is
+    // the only one that says what the charge was made of.
+    expect(screen.getByRole('link', { name: /stripe receipt/i })).toHaveAttribute(
+      'href',
+      PAYMENT.receipt_url,
+    );
+    const itemised = screen.getByRole('link', { name: /itemised pdf/i });
+    expect(itemised).toHaveAttribute(
+      'href',
+      `/api/v1/valuations/${PAYMENT.valuation_id}/payments/${PAYMENT.id}/receipt.pdf`,
+    );
+    // The expired row settled nothing, so it offers no receipt of either kind.
+    expect(screen.getAllByRole('link', { name: /itemised pdf/i })).toHaveLength(1);
   });
 
   it('hides entirely when there are no payments', async () => {

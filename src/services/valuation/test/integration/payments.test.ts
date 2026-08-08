@@ -1,6 +1,12 @@
 import crypto from 'node:crypto';
+import { inflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPayment, findPaymentBySessionId } from '../../src/repos/payments.js';
+import {
+  createPayment,
+  findPaymentBySessionId,
+  markPayment,
+  recordRefund,
+} from '../../src/repos/payments.js';
 import { priceForKind } from '../../src/routes/payments.js';
 import {
   EXPRESS_DELIVERY_CENTS,
@@ -110,6 +116,120 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
       const res = await ctx.app.inject({
         method: 'GET',
         url: `/api/v1/valuations/${vid}/payments/quote`,
+        headers: authHeader(client.token),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
+  describe('receipt pdf', () => {
+    /** Readable text of a rendered PDF — inflate the streams, decode the hex runs. */
+    function readable(pdf: Buffer): string {
+      const raw = pdf.toString('latin1');
+      let all = raw;
+      for (const m of raw.matchAll(/stream\r?\n/g)) {
+        const start = m.index + m[0].length;
+        const end = pdf.indexOf(Buffer.from('endstream'), start);
+        if (end < 0) continue;
+        try {
+          all += inflateSync(pdf.subarray(start, end)).toString('latin1');
+        } catch {
+          // Not a deflate stream — nothing to read.
+        }
+      }
+      return Array.from(all.matchAll(/<([0-9a-fA-F]+)>/g))
+        .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
+        .join('');
+    }
+
+    const settledPayment = async (company: string, sessionId: string) => {
+      const vid = await createValuation(company);
+      const payment = await createPayment(ctx.pool, {
+        valuationId: vid,
+        sessionId,
+        amountCents: 219_000,
+        currency: 'USD',
+        createdBy: ops.id,
+        express: true,
+        priceBreakdown: [
+          { key: 'base', label: '409A valuation', amount_cents: 119_000 },
+          { key: 'band', label: '$1M – $5M raised', amount_cents: 50_000 },
+          { key: 'express', label: 'Express delivery — 1 business day', amount_cents: 50_000 },
+        ],
+      });
+      await markPayment(ctx.pool, payment.id, 'succeeded');
+      return { vid, payment };
+    };
+
+    it('itemises what was sold, not just the total', async () => {
+      const { vid, payment } = await settledPayment('Receipt Co', 'cs_test_receipt_1');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe('application/pdf');
+      expect(res.rawPayload.subarray(0, 5).toString()).toBe('%PDF-');
+
+      // The breakdown stored at checkout is what the client reads back — the
+      // reason migration 0108 persisted it rather than recomputing.
+      const text = readable(res.rawPayload);
+      expect(text).toContain('409A valuation');
+      expect(text).toContain('Express delivery');
+      expect(text).toContain('$1,190.00');
+      expect(text).toContain('$2,190.00');
+    });
+
+    it('states a refund on the receipt rather than the gross', async () => {
+      const { vid, payment } = await settledPayment('Receipt Refund Co', 'cs_test_receipt_2');
+      await recordRefund(ctx.pool, payment.id, { refundedCents: 50_000, fullyRefunded: false });
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const text = readable(res.rawPayload);
+      expect(text).toContain('Refunded');
+      expect(text).toContain('$1,690.00');
+    });
+
+    it('refuses a receipt for a payment that has not settled', async () => {
+      const vid = await createValuation('Receipt Pending Co');
+      const payment = await createPayment(ctx.pool, {
+        valuationId: vid,
+        sessionId: 'cs_test_receipt_3',
+        amountCents: 119_000,
+        currency: 'USD',
+        createdBy: ops.id,
+      });
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      // A document headed "Receipt" for an unpaid checkout is how a client
+      // comes to believe they have paid.
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('404s a payment belonging to another valuation', async () => {
+      const { payment } = await settledPayment('Receipt Scope A', 'cs_test_receipt_4');
+      const other = await createValuation('Receipt Scope B');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${other}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('is valuation-scoped: out-of-scope client sees 404', async () => {
+      const { vid, payment } = await settledPayment('Receipt Scope Co', 'cs_test_receipt_5');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
         headers: authHeader(client.token),
       });
       expect(res.statusCode).toBe(404);

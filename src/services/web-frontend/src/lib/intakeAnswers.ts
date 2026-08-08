@@ -43,3 +43,31 @@ export function answerFromControl(field: IntakeField, raw: string): unknown {
   }
   return raw;
 }
+
+/** Just enough of a section's completion state to decide where to resume. */
+export interface ResumeSection {
+  complete: boolean;
+}
+
+/**
+ * The step a returning client should land on.
+ *
+ * Intake autosaves, so a client who closes the tab halfway keeps every answer —
+ * but the wizard always opened at step 0, which meant the longest forms
+ * reopened on the section the client finished first. Getting back to where they
+ * stopped was a manual walk through sections that already showed a tick, and it
+ * is the point in the funnel where a half-finished intake is abandoned for good.
+ *
+ * The first incomplete section is the resume point, not the furthest one
+ * reached: sections can be revisited and answers cleared, and the section a
+ * client still owes us an answer for is the one worth opening on. When nothing
+ * is outstanding the review step is the answer — the remaining action is to
+ * submit, and opening on the last question of a finished form hides the button
+ * that ends the process.
+ *
+ * A form with no sections resolves to 0, which is its review step too.
+ */
+export function resumeStep(sections: readonly ResumeSection[]): number {
+  const firstIncomplete = sections.findIndex((s) => !s.complete);
+  return firstIncomplete === -1 ? sections.length : firstIncomplete;
+}

@@ -76,6 +76,27 @@ export async function findPaymentBySessionId(pool: pg.Pool, sessionId: string): 
 }
 
 /**
+ * One payment, keyed on its own id *and* the valuation it belongs to.
+ *
+ * The valuation is part of the key rather than checked afterwards because the
+ * caller has already established the principal may read that valuation. A
+ * lookup by payment id alone would hand back a row from someone else's
+ * engagement for the route to notice, and "notice" is the step that gets
+ * forgotten. A mismatched pair is simply not found.
+ */
+export async function findPaymentForValuation(
+  pool: pg.Pool,
+  valuationId: string,
+  paymentId: string,
+): Promise<PaymentRow | null> {
+  const { rows } = await pool.query<PaymentRow>(
+    'SELECT * FROM payments WHERE id = $1 AND valuation_id = $2',
+    [paymentId, valuationId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * The payment a refund or dispute event names.
  *
  * Those events carry a charge and a payment intent, never the Checkout Session

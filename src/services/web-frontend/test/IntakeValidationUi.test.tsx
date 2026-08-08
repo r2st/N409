@@ -187,7 +187,8 @@ describe('intake validation warnings', () => {
     render(<ClientIntakePage />);
     await screen.findByText('Welcome, Northwind Robotics');
 
-    await user.click(screen.getByRole('button', { name: 'Review answers' }));
+    // Every section is answered, so the form reopens on the review step rather
+    // than walking the client back through questions they have already done.
     const submit = await screen.findByRole('button', { name: /Submit to Meridian Valuation/ });
     expect(submit).toBeDisabled();
     expect(await screen.findByText('1 answer needs fixing before you can submit.')).toBeInTheDocument();
@@ -199,7 +200,6 @@ describe('intake validation warnings', () => {
     render(<ClientIntakePage />);
     await screen.findByText('Welcome, Northwind Robotics');
 
-    await user.click(screen.getByRole('button', { name: 'Review answers' }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Submit to Meridian Valuation/ })).toBeEnabled(),
     );
