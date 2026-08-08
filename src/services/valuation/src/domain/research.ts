@@ -20,7 +20,7 @@
  * company's own name into a question this module builds, because the builders
  * below interpolate only `PublicResearchFacts`, and `PublicResearchFacts` has
  * no field that can hold any of those. The placeholder tripwire inside
- * `ai/app/perplexity.py` stays as a second line of defence rather than the
+ * `ai/app/research.py` stays as a second line of defence rather than the
  * only one.
  *
  * `assertPublic` is the third: it re-reads the assembled question against the
@@ -67,7 +67,7 @@ export interface ResearchTopicDef {
   label: string;
   /** Shown on the tab; also the answer to "why would I run this one?". */
   description: string;
-  /** The `ai_prompts` row whose system prompt and Sonar tier this topic uses. */
+  /** The `ai_prompts` row whose system prompt and synthesis model this topic uses. */
   promptPipeline: AiPipeline;
   /** Whether `region` is meaningful — only `market_conditions` is. */
   regionScoped: boolean;
@@ -207,7 +207,7 @@ function industryPhrase(facts: PublicResearchFacts): string | null {
  *
  * Refusing rather than asking a vaguer question is deliberate. "Summarise the
  * industry" with no industry named returns a paragraph about industries in
- * general, which reads like research, costs a Sonar call, and would land in a
+ * general, which reads like research, spends a search call, and would land in a
  * report exhibit next to real citations with nothing distinguishing it.
  */
 export function researchQuestion(topic: ResearchTopic, facts: PublicResearchFacts): string {
@@ -301,7 +301,7 @@ export function researchQuestion(topic: ResearchTopic, facts: PublicResearchFact
  * The structural containment above is what actually keeps client text out of a
  * web search. This is the assertion that says so out loud, so that a template
  * edit which reaches for a field it should not have is caught here — where the
- * message names the problem — rather than at the Sonar client's placeholder
+ * message names the problem — rather than at the research client's placeholder
  * tripwire, which only fires when the text happened to go through the redactor
  * first, or not at all.
  *
@@ -356,11 +356,11 @@ export function isResearchStale(createdAt: Date | string, asOf: Date = new Date(
 /**
  * The research block the `report_narrative` agent receives.
  *
- * Only grounded rows travel: an answer Sonar returned with no citations is an
- * expensive completion, and the whole reason to ask this provider is the
- * citation list. Threading an ungrounded answer into a drafted report would put
- * an unsourced claim next to sourced ones with nothing to tell them apart —
- * which is the failure mode `perplexity.research`'s system prompt exists to
+ * Only grounded rows travel: an answer with no citations was written without
+ * retrieved sources, and the whole reason to take this path is the citation
+ * list. Threading an ungrounded answer into a drafted report would put an
+ * unsourced claim next to sourced ones with nothing to tell them apart — which
+ * is the failure mode `research.research` declines to call the model at all to
  * prevent, undone one layer up.
  */
 export function narrativeResearchPayload(

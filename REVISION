@@ -169,14 +169,15 @@ e1fbe8ff31974558c1cefdacf63e222559f262ae
 #            migrations 0116/0117/0118 applied, six research prompts seeded on
 #            their Sonar tiers, 6 of 27 auto_emails promotional, and the five
 #            new routes answer 401 unauthenticated.
-# gap:       PERPLEXITY_API_KEY is not set in /opt/N409/.env, so every research
-#            topic answers 503 ("web-grounded research unavailable") and the
-#            ResearchTab has nothing to show. The whole chain — schema, route,
-#            containment, tab, narrative thread, sources exhibit — is live and
-#            tested; it is one environment variable away from producing cited
-#            market research. Same shape as the Stripe gap below: the code is
-#            complete, the provider is unconfigured. /ready reports the key's
-#            state once it is set.
+# closed:    PERPLEXITY_API_KEY was never set, so every research topic answered
+#            503 and the ResearchTab had nothing to show — and it was never
+#            going to be set, because Perplexity sells no free tier. The
+#            provider is gone rather than configured: `ai/app/websearch.py`
+#            retrieves sources and `ai/app/research.py` writes the answer up
+#            from them with the OpenRouter models the platform already uses.
+#            The default backend needs no key at all, so research works on a
+#            fresh checkout — which is the part the old design got wrong, not
+#            the price. Details under 2026-08-08 below.
 #
 # Previously (79f5ba5):
 #
@@ -313,10 +314,14 @@ e1fbe8ff31974558c1cefdacf63e222559f262ae
 #            calculation's `results.discounts.dlom_method` is chaffee or
 #            finnerty and whose `checks` carry no `dlom_range`, or one that
 #            disagrees with `results.discounts.dlom`.
-# gap:       Stripe is still unconfigured in production — /opt/N409/.env has no
-#            STRIPE_SECRET_KEY and no webhook secrets, so every client still
-#            sees "Online payment is not available yet — we will invoice you
-#            instead" and none of the payment handlers can fire. See
+# closed:    Stripe was unconfigured in production. STRIPE_SECRET_KEY (test
+#            mode) is now in /opt/N409/.env and the five units have been
+#            restarted onto it, so checkout, the quote's `configured` flag and
+#            the receipt lookup are live. Still outstanding: the webhook
+#            secrets (STRIPE_WEBHOOK_SECRET / STRIPE_BILLING_WEBHOOK_SECRET),
+#            which cannot be generated until the endpoints are registered in
+#            the Stripe dashboard — until then POST /api/v1/stripe/webhook
+#            answers 503 and no settlement moves a valuation to `paid`. See
 #            docs/billing-setup.md.
 # closed:    the seven new document categories were reachable and nothing had
 #            been moved into them — built on exactly the query this line named.

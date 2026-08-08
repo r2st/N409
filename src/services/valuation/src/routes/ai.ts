@@ -174,7 +174,7 @@ export async function runAiPipeline(
   let narrativeSections: Array<{ key: string; label: string; guidance: string }> | null = null;
   // The market research this deliverable was drafted from (migration 0116).
   // Only the narrative agent receives it, and only grounded rows travel — see
-  // `narrativeResearchPayload`. This is where the Perplexity adapter's value is
+  // `narrativeResearchPayload`. This is where the research adapter's value is
   // actually collected: everything upstream of it is plumbing.
   let researchPayload: ReturnType<typeof narrativeResearchPayload> = null;
   if (pipeline === 'report_narrative') {

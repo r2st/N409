@@ -39,10 +39,17 @@ KEY_CHECK_TIMEOUT_S = 10.0
 # /ready is polled by systemd/uptime checks; re-probing OpenRouter on every hit
 # would be both slow and rude. A minute of staleness is fine for readiness.
 KEY_CHECK_TTL_S = 60.0
+# Checked against OpenRouter's live model list on 2026-08-08. The two entries
+# that used to sit below gpt-oss (llama-3.3-70b-instruct, mistral-small-3.2-24b)
+# had stopped being offered on the free tier and answered every request 404, so
+# the "fallback chain" was one working model wearing two dead round trips —
+# a failure that costs latency on every call and only shows up as a slow day.
+# Re-check this list when a free tier changes; `/ai/v1/models` serves it to the
+# prompt picker, so a dead id here becomes a dead option in the UI too.
 DEFAULT_MODELS = [
     "openai/gpt-oss-20b:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "mistralai/mistral-small-3.2-24b-instruct:free",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
 ]
 # TIMEOUT_S, MAX_RETRIES, RETRY_BACKOFF_BASE_S, MIN_ATTEMPT_S and the whole-call
 # deadline live in `llm_http` — the retry-and-wall-clock discipline is the same

@@ -1,6 +1,6 @@
 """Amazon Bedrock Runtime client — the second general-purpose completion provider.
 
-Unlike `perplexity.py`, which does a different *job*, this does the same job as
+Unlike `websearch.py`, which does a different *job*, this does the same job as
 `openrouter.py` through a different door. That is the whole point of it: it is a
 deployment-topology choice, not a capability one (design §12.2, P2-21).
 

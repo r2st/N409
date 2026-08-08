@@ -417,8 +417,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Migration 0114 — the per-section guidance behind report_narrative, edited
   // per report type rather than per pipeline.
   registerNarrativePromptRoutes(app, { pool });
-  // Design §12.3 — web-grounded market research (Perplexity Sonar). The caller
-  // the adapter never had.
+  // Design §12.3 — web-grounded market research (search provider + synthesis).
+  // The caller the adapter never had.
   registerResearchRoutes(app, { pool, aiUrl: config.AI_URL });
   registerCompanyProfileRoutes(app, { pool });
   registerPackageRoutes(app, { pool });

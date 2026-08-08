@@ -30,14 +30,15 @@ from .openrouter import (
 from .bedrock import is_configured as bedrock_configured
 from .bedrock import verify_credentials as verify_bedrock_credentials
 from .output_schema import validate_result
-from .perplexity import (
+from .research import (
     ConfidentialityError,
-    PerplexityError,
     RECENCY_FILTERS,
+    ResearchError,
 )
-from .perplexity import is_configured as perplexity_configured
-from .perplexity import research as perplexity_research
-from .perplexity import verify_api_key as verify_perplexity_key
+from .research import is_configured as research_configured
+from .research import research as run_research
+from .websearch import configured_provider as search_provider
+from .websearch import verify_provider as verify_search_provider
 from .pipelines import PIPELINES
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
 
@@ -158,7 +159,7 @@ class TestRequest(BaseModel):
 
 
 class ResearchRequest(BaseModel):
-    """A question about the *public* record — see `perplexity`'s docstring.
+    """A question about the *public* record — see `research`'s docstring.
 
     There is deliberately no `documents`, no `valuation` and no `options`
     block: this route does not take client context, because everything it is
@@ -168,6 +169,10 @@ class ResearchRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=4000)
     system: str | None = Field(default=None, max_length=4000)
+    # The OpenRouter model that writes the answer up from the retrieved
+    # sources. The search engine is not selectable per call: which index this
+    # installation searches is an account-level fact (RESEARCH_PROVIDER), not a
+    # per-question one.
     model: str | None = None
     # Bound the search to recent sources — a multiple from 2019 is worse than
     # no multiple when the question is what a sector trades at today.
@@ -180,8 +185,8 @@ class ResearchResponse(BaseModel):
     model: str
     content: str
     citations: list[dict]
-    # False when Sonar answered without retrieving anything. The caller must
-    # not quote an ungrounded answer in a report — see `ResearchResult.grounded`.
+    # False when the search retrieved nothing. The caller must not quote an
+    # ungrounded answer in a report — see `ResearchResult.grounded`.
     grounded: bool
     tokens: int
 
@@ -236,16 +241,18 @@ def ready() -> JSONResponse:
         "models": configured_models(),
         "tokens_used": tokens_used(),
     }
-    # Perplexity is reported but does not gate readiness. It powers optional
+    # Search is reported but does not gate readiness. It powers optional
     # web-grounded research; every pipeline this service exposes works without
-    # it, so a lapsed research key must not take the valuation path down with
-    # it. Unconfigured is therefore silent, and configured-but-broken is loud
-    # in the body without being fatal — the state is here precisely so an
-    # operator can see it before someone reports missing citations.
-    if perplexity_configured():
-        pplx = verify_perplexity_key()
-        checks["perplexity_key"] = pplx.state
-        checks["perplexity_key_detail"] = pplx.detail
+    # it, so a search provider having a bad day must not take the valuation
+    # path down with it. Reported always rather than only-when-configured,
+    # because the default provider needs no key and so is always configured —
+    # the state is here precisely so an operator can see it before someone
+    # reports missing citations.
+    checks["search_provider"] = search_provider()
+    if research_configured():
+        found = verify_search_provider()
+        checks["search"] = found.state
+        checks["search_detail"] = found.detail
     # Bedrock is reported on the same terms and for the same reason (§12.2): it
     # is an alternative route to the same completions, chosen per prompt, so an
     # installation that has not configured it is not degraded and one whose
@@ -270,7 +277,7 @@ def models() -> dict:
 
 @app.post("/ai/v1/research", response_model=ResearchResponse)
 def research(request: ResearchRequest) -> ResearchResponse:
-    """Web-grounded research with citations (Perplexity Sonar).
+    """Web-grounded research with citations (search provider + synthesis).
 
     Separate from the pipelines because it is the one route whose whole purpose
     is to send its input *outward* to a search engine. The pipelines redact so
@@ -284,10 +291,13 @@ def research(request: ResearchRequest) -> ResearchResponse:
     confidentiality refusal, because that is a caller bug with a fixable
     request, not a provider outage to retry.
     """
-    if not perplexity_configured():
+    if not research_configured():
         raise HTTPException(
             status_code=503,
-            detail="PERPLEXITY_API_KEY is not configured — web-grounded research unavailable",
+            detail=(
+                f"search provider {search_provider()!r} is not configured — "
+                "web-grounded research unavailable"
+            ),
         )
     if request.recency is not None and request.recency not in RECENCY_FILTERS:
         raise HTTPException(
@@ -302,10 +312,10 @@ def research(request: ResearchRequest) -> ResearchResponse:
     if request.system:
         kwargs["system"] = request.system
     try:
-        result = perplexity_research(request.query, **kwargs)
+        result = run_research(request.query, **kwargs)
     except ConfidentialityError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except PerplexityError as exc:
+    except ResearchError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ResearchResponse(**result.as_dict())
 

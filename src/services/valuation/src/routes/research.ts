@@ -33,7 +33,7 @@ import {
 /**
  * Web-grounded market research (design §12.3).
  *
- * `ai/app/perplexity.py` and `POST /ai/v1/research` were complete, fenced and
+ * `ai/app/research.py` and `POST /ai/v1/research` were complete, fenced and
  * tested for months, and nothing called them — so industry-conditions and
  * market-outlook paragraphs were still written from the uploaded corpus and
  * analyst knowledge alone, which is the weakest and least defensible part of a
@@ -46,13 +46,14 @@ import {
  *     body reaches the search provider except a `subject` that is checked
  *     against the engagement's own company name first.
  *   * Provenance. The answer is stored with the question that produced it and
- *     the sources Sonar read, append-only, so a report can cite research that
- *     still says what it said when the report was drafted.
- *   * Cost. Sonar calls are billed per request, so the refresh-all sweep is
+ *     the sources retrieved for it, append-only, so a report can cite research
+ *     that still says what it said when the report was drafted.
+ *   * Restraint. The search provider is free but not unlimited — the keyless
+ *     default is rate-limited per address — so the refresh-all sweep stays
  *     ops-only and runs each topic once.
  */
 
-/** Wall clock for one Sonar call — above the AI service's own 120s budget. */
+/** Wall clock for one research call — above the AI service's own budget. */
 const RESEARCH_TIMEOUT_MS = 150_000;
 
 const RunBody = z
@@ -267,7 +268,7 @@ export function registerResearchRoutes(
    * run for the region asked for, or `un` — the global question — when none is.
    *
    * Each topic's failure is reported rather than thrown, because the alternative
-   * is that one Sonar 503 discards the four answers already paid for.
+   * is that one provider 503 discards the four answers already retrieved.
    */
   app.post(
     '/api/v1/valuations/:id/research/refresh-all',

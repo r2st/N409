@@ -11,11 +11,13 @@ model dropdown chooses. A `bedrock/` prefix routes to Bedrock; everything else
 goes to OpenRouter, which stays the default so an installation that has never
 heard of Bedrock behaves exactly as it did.
 
-`perplexity.py` is deliberately *not* in this table. It answers a different
+`research.py` is deliberately *not* in this table. It answers a different
 question — one about the public record, with citations — and is reached through
 its own route with its own confidentiality gate. Folding it in here would make
 it reachable from `pipelines._ask`, which is the one thing its module docstring
-exists to prevent.
+exists to prevent. That it now synthesises through `openrouter.chat` does not
+change this: the outbound leg is the *search*, and the search provider is only
+ever reached from behind that gate.
 """
 
 from __future__ import annotations

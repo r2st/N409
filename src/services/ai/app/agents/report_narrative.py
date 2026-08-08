@@ -96,9 +96,9 @@ def research_block(payload: dict) -> str:
 
     The valuation service ships the live `market_research` rows (migration
     0116) as `market_research`, already filtered to the grounded ones — an
-    answer Sonar returned without citations is an expensive completion, and
-    quoting one in a report next to sourced claims is precisely the failure the
-    Sonar system prompt exists to prevent.
+    answer produced without retrieved citations was written from the model's
+    weights, and quoting one in a report next to sourced claims is precisely the
+    failure `research.py` declines to call the model at all to prevent.
 
     The URLs travel with the text on purpose. The drafted narrative's value over
     the model's own recollection is that a reviewer can follow the source, so a

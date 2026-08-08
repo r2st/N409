@@ -1,7 +1,7 @@
 """Provider-agnostic HTTP discipline shared by the LLM clients.
 
 These started inside `openrouter.py` and moved here when a second provider
-(`perplexity.py`) needed the same guarantees. Nothing here knows about a
+needed the same guarantees; `websearch.py` is the third. Nothing here knows about a
 particular provider — it is the wall clock, the backoff and the soft integer
 coercion that any of them would otherwise reinvent slightly differently.
 

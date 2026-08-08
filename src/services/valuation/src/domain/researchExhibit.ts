@@ -15,7 +15,7 @@ import type { MarketResearchRow } from '../repos/marketResearch.js';
  * a market multiple with no as-of date is not evidence of anything.
  *
  * Ungrounded rows are omitted entirely rather than listed with an empty source
- * column. An answer Sonar returned without citations did not travel into the
+ * column. An answer produced without retrieved citations did not travel into the
  * narrative either (`narrativeResearchPayload` filters it out), so printing it
  * here would advertise a source the report did not use.
  */

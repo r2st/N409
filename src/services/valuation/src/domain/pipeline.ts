@@ -59,7 +59,7 @@ export const AI_PIPELINES = [
   'roll_forward',
   // Web-grounded research (migrations 0116/0117). These are prompt-registry
   // entries rather than runnable pipelines: they carry the system prompt and
-  // the Sonar tier for a research topic, and routes/research.ts reads them.
+  // the synthesis model for a research topic, and routes/research.ts reads them.
   // POST /valuations/:id/ai/:pipeline refuses them for the same reason it
   // refuses 'qa' — the research route owns the containment rules, the storage
   // and the supersede, and a second entry point would own none of them.

@@ -21,7 +21,7 @@ interface StubState {
   citations: Array<{ url: string; title?: string }>;
 }
 
-/** Stands in for POST /ai/v1/research so no test reaches Perplexity. */
+/** Stands in for POST /ai/v1/research so no test reaches a search provider. */
 async function startAiStub(state: StubState) {
   const stub = Fastify({ logger: false });
   stub.post('/ai/v1/research', async (req, reply) => {
@@ -30,7 +30,7 @@ async function startAiStub(state: StubState) {
       return reply.status(state.failWith).send({ detail: 'stubbed research outage' });
     }
     return reply.status(200).send({
-      model: 'sonar',
+      model: 'duckduckgo+openai/gpt-oss-20b:free',
       content: 'The sector traded at 4.2x forward revenue in Q2 2026.',
       citations: state.citations,
       grounded: state.citations.length > 0,
@@ -48,7 +48,7 @@ async function startAiStub(state: StubState) {
 }
 
 /**
- * Design §12.3 — the Perplexity adapter's caller.
+ * Design §12.3 — the research adapter's caller.
  *
  * The cases that matter are the ones about what leaves the building: that the
  * question is built from public fields, that the company's own name never
@@ -152,9 +152,14 @@ describe.skipIf(!dbUp)('market research', () => {
       const row = prompts.find((p) => p.pipeline === pipeline);
       expect(row, `${pipeline} seeded`).toBeDefined();
       expect(row!.enabled).toBe(true);
-      // Bound to a Sonar tier, not an OpenRouter model — these questions go to
-      // a search provider, and 409.ai splits the same way.
-      expect(row!.model, pipeline).toMatch(/^sonar/);
+      // Migration 0123 re-pointed these from Perplexity Sonar tiers to
+      // OpenRouter ids: the column now names only the model that writes the
+      // answer up, because the search engine is an account-level setting
+      // (RESEARCH_PROVIDER) rather than a per-prompt one. A row still holding
+      // a `sonar` tier would be sent to OpenRouter, rejected, and fall through
+      // — a wasted round trip on every research call.
+      expect(row!.model, pipeline).not.toMatch(/^sonar/);
+      expect(row!.model, pipeline).toMatch(/\//);
     }
   });
 
@@ -190,11 +195,11 @@ describe.skipIf(!dbUp)('market research', () => {
     expect(stored.question).toBe(query);
   });
 
-  it('ships the registry’s system prompt and Sonar tier with the call', async () => {
+  it('ships the registry’s system prompt and synthesis model with the call', async () => {
     await run({ topic: 'industry_outlook' });
     const call = state.requests.filter((r) => typeof r.query === 'string').at(-1)!;
     expect(String(call.system)).toContain('valuation firm');
-    expect(call.model).toBe('sonar-pro');
+    expect(call.model).toBe('google/gemma-4-31b-it:free');
     // Outlook is time-sensitive; the registry pins how far back the search reaches.
     expect(call.recency).toBe('month');
   });

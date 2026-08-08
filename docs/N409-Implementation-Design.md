@@ -801,7 +801,7 @@ That is an unusual and favourable position. The expensive work — the engines, 
 
 The three P1 items are where new surface actually has to be designed. Everything at P2 is parity or polish.
 
-**Every P0, P1 and P2 item on this table is now closed.** What remains is the two P0 items that are provider configuration rather than code and cannot be closed by writing any: Stripe keys and a Perplexity key.
+**Every P0, P1 and P2 item on this table is now closed**, and so are the two provider-configuration items that trailed them. Stripe now has a (test-mode) `STRIPE_SECRET_KEY` in `/opt/N409/.env`; its webhook secrets still wait on the endpoints being registered in the Stripe dashboard, which is a console step and not a key to paste. The Perplexity key was never obtainable — Perplexity has no free tier — so the dependency was removed instead of satisfied: `ai/app/websearch.py` retrieves sources from a pluggable provider whose default (DuckDuckGo) needs no key, and `ai/app/research.py` synthesises the answer with the OpenRouter models already in use. Research therefore works on a fresh checkout rather than waiting on procurement, which was the more serious defect in the original design. §12.3.
 
 ## 17.3 Sequencing
 
