@@ -32,6 +32,7 @@ from .engine.fund_valuation import (
     roll_forward_mark,
 )
 from .engine.debt_valuation import rating_implied_spread, value_instrument
+from .engine.comparables import comparable_analysis
 from .engine.emi_csop import emi_csop_valuation
 from .engine.esop import esop_share_value, repurchase_obligation
 from .engine.fair_value_820 import fair_value_measurement
@@ -230,6 +231,11 @@ class EmiCsopRequest(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class ComparablesRequest(BaseModel):
+    # Passed through to comparable_analysis(**inputs); see comparables.
+    inputs: dict = Field(default_factory=dict)
+
+
 class FairValue820Request(BaseModel):
     # Passed through to fair_value_measurement(**inputs); see fair_value_820.
     inputs: dict = Field(default_factory=dict)
@@ -295,6 +301,7 @@ def root() -> dict:
             "/engine/v1/esop",
             "/engine/v1/smb",
             "/engine/v1/emi-csop",
+            "/engine/v1/comparables",
             "/engine/v1/fair-value-820",
             "/engine/v1/gift-estate",
             "/engine/v1/ifrs2",
@@ -645,6 +652,12 @@ def engine_emi_csop(request: EmiCsopRequest) -> dict:
         return emi_csop_valuation(request.scheme, request.params)
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/comparables")
+def engine_comparables(request: ComparablesRequest) -> dict:
+    """Screen and score guideline public companies, with multiple statistics."""
+    return _engine_input_kwargs(comparable_analysis, request.inputs, "comparables")
 
 
 @app.post("/engine/v1/fair-value-820")
