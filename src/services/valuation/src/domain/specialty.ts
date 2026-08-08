@@ -15,7 +15,24 @@
 import type { ValuationKind } from './valuation.js';
 
 /** Kinds whose calculation runs through a dedicated specialty engine endpoint. */
-export const SPECIALTY_KINDS = ['qsbs', 'ppa', 'goodwill', 'esop', 'fmv', 'emi', 'csop', 'ip'] as const;
+export const SPECIALTY_KINDS = [
+  'qsbs',
+  'ppa',
+  'goodwill',
+  'esop',
+  'fmv',
+  'emi',
+  'csop',
+  'ip',
+  // These three had questionnaires but no dispatch, so an ASC 820 measurement,
+  // a gift & estate appraisal and an IFRS 2 award all ran the 409A allocation
+  // and produced a per-share FMV nobody asked for. Each now has an endpoint
+  // that computes the thing its deliverable is actually about — the fair-value
+  // hierarchy, the discount chain, the expense attribution.
+  '820',
+  'gifts',
+  'ifrs2',
+] as const;
 export type SpecialtyKind = (typeof SPECIALTY_KINDS)[number];
 
 export function isSpecialtyKind(kind: ValuationKind): kind is SpecialtyKind {
@@ -252,6 +269,81 @@ function emiCsopRequest(scheme: 'emi' | 'csop', answers: Answers, overrides: Ans
 }
 
 /**
+ * ASC 820. The questionnaire collects the fund and the predominant level; the
+ * position schedule that the hierarchy is actually built from is analyst work
+ * and arrives through the run inputs, the same way a PPA's intangible schedule
+ * does. Without it there is no measurement to categorise, so this refuses
+ * rather than returning a one-line table built from the answer to
+ * "predominant level".
+ */
+function fairValue820Request(answers: Answers, overrides: Answers): SpecialtyRequest {
+  const positions = overrides.positions;
+  if (!Array.isArray(positions) || positions.length === 0) {
+    throw new SpecialtyInputError(
+      'An ASC 820 measurement needs the position schedule — pass `positions` in the run inputs ' +
+        'as a list of { name, fair_value, level, inputs, measured_at_nav } rows. The ' +
+        'questionnaire collects only the fund and its predominant level.',
+    );
+  }
+  const inputs: Record<string, unknown> = { positions };
+  put(inputs, 'measurement_date', str(answers, 'measurement_date'));
+  const { positions: _positions, ...rest } = overrides;
+  return { path: '/engine/v1/fair-value-820', body: { inputs: { ...inputs, ...rest } } };
+}
+
+/**
+ * Gift & estate. `percent_interest` is a percentage here and in the engine —
+ * the questionnaire says "25 for a quarter interest" and converting it to a
+ * fraction on the way through would value the interest at a quarter of a
+ * percent of the entity.
+ */
+function giftEstateRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
+  const inputs: Record<string, unknown> = {
+    entity_value: require(
+      num(answers, 'entity_value') ?? (num(overrides, 'entity_value') as number | null),
+      'A gift & estate valuation needs the entity value — answer it in the questionnaire or ' +
+        'pass `entity_value` in the run inputs.',
+    ),
+    percent_interest: require(
+      num(answers, 'percent_interest'),
+      'Answer the percentage-interest question first.',
+    ),
+    transfer_type: str(answers, 'transfer_type') ?? 'gift',
+  };
+  put(inputs, 'transfer_date', str(answers, 'transfer_date'));
+  put(inputs, 'dloc', num(answers, 'dloc'));
+  put(inputs, 'dlom', num(answers, 'dlom'));
+  put(inputs, 'prior_taxable_gifts', num(answers, 'prior_gifts_value'));
+  return { path: '/engine/v1/gift-estate', body: { inputs: { ...inputs, ...overrides } } };
+}
+
+/**
+ * IFRS 2. The vesting condition drives which paragraph governs, so it is
+ * passed through rather than collapsed into a forfeiture estimate — a market
+ * condition lives in the grant-date fair value and a service condition does
+ * not, and the engine refuses the combination that confuses the two.
+ */
+function ifrs2Request(answers: Answers, overrides: Answers): SpecialtyRequest {
+  const inputs: Record<string, unknown> = {
+    settlement: str(answers, 'settlement') ?? 'equity_settled',
+    vesting_condition: str(answers, 'vesting_condition') ?? 'service',
+    exercise_price: require(
+      num(answers, 'exercise_price'),
+      'Answer the exercise-price question first.',
+    ),
+  };
+  put(inputs, 'grant_date', str(answers, 'grant_date'));
+  put(inputs, 'vesting_years', num(answers, 'vesting_years'));
+  put(inputs, 'options_granted', num(answers, 'options_granted'));
+  put(inputs, 'share_price', num(answers, 'share_price'));
+  put(inputs, 'expected_term_years', num(answers, 'expected_term_years'));
+  put(inputs, 'expected_volatility', num(answers, 'expected_volatility'));
+  put(inputs, 'risk_free_rate', num(answers, 'risk_free_rate'));
+  put(inputs, 'dividend_yield', num(answers, 'dividend_yield'));
+  return { path: '/engine/v1/ifrs2', body: { inputs: { ...inputs, ...overrides } } };
+}
+
+/**
  * The engine request for a kind: the questionnaire's answers assembled into
  * the endpoint's shape, with the analyst's run `overrides` merged over the
  * assembled inputs/params (shallow — an override replaces the assembled key).
@@ -281,6 +373,12 @@ export function specialtyEngineRequest(
       return emiCsopRequest('emi', answers, overrides);
     case 'csop':
       return emiCsopRequest('csop', answers, overrides);
+    case '820':
+      return fairValue820Request(answers, overrides);
+    case 'gifts':
+      return giftEstateRequest(answers, overrides);
+    case 'ifrs2':
+      return ifrs2Request(answers, overrides);
   }
 }
 
@@ -322,6 +420,19 @@ export function specialtyHeadline(
         equityValue: bodyNum(request.body, 'params', 'equity_value'),
         fmvPerShare: resultNum(result, 'amv_per_share'),
       };
+    case '820':
+      // The measurement total is the deliverable's headline. There is no
+      // per-share figure: an ASC 820 measurement values positions, not shares.
+      return { equityValue: resultNum(result, 'total_fair_value'), fmvPerShare: null };
+    case 'gifts':
+      // The concluded value of the *transferred interest* — deliberately not
+      // the entity value it was derived from, which is the number a reader
+      // would otherwise mistake for the appraisal.
+      return { equityValue: resultNum(result, 'concluded_value'), fmvPerShare: null };
+    case 'ifrs2':
+      // The total charge is the deliverable; fair value per *award* is not a
+      // per-share figure and would be misread as one in that column.
+      return { equityValue: resultNum(result, 'total_expense'), fmvPerShare: null };
     default:
       return { equityValue: null, fmvPerShare: null };
   }

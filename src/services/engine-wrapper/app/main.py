@@ -34,6 +34,9 @@ from .engine.fund_valuation import (
 from .engine.debt_valuation import rating_implied_spread, value_instrument
 from .engine.emi_csop import emi_csop_valuation
 from .engine.esop import esop_share_value, repurchase_obligation
+from .engine.fair_value_820 import fair_value_measurement
+from .engine.gift_estate import gift_estate_valuation
+from .engine.ifrs2 import ifrs2_valuation
 from .engine.impairment import run_impairment_test
 from .engine.intangibles import purchase_price_allocation, value_intangible
 from .engine.qsbs import qsbs_eligibility
@@ -227,6 +230,21 @@ class EmiCsopRequest(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class FairValue820Request(BaseModel):
+    # Passed through to fair_value_measurement(**inputs); see fair_value_820.
+    inputs: dict = Field(default_factory=dict)
+
+
+class GiftEstateRequest(BaseModel):
+    # Passed through to gift_estate_valuation(**inputs); see gift_estate.
+    inputs: dict = Field(default_factory=dict)
+
+
+class Ifrs2Request(BaseModel):
+    # Passed through to ifrs2_valuation(**inputs); see ifrs2.
+    inputs: dict = Field(default_factory=dict)
+
+
 class MarketFeedRequest(BaseModel):
     """Live market-data request.
 
@@ -277,6 +295,9 @@ def root() -> dict:
             "/engine/v1/esop",
             "/engine/v1/smb",
             "/engine/v1/emi-csop",
+            "/engine/v1/fair-value-820",
+            "/engine/v1/gift-estate",
+            "/engine/v1/ifrs2",
         ],
     }
 
@@ -624,6 +645,24 @@ def engine_emi_csop(request: EmiCsopRequest) -> dict:
         return emi_csop_valuation(request.scheme, request.params)
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/engine/v1/fair-value-820")
+def engine_fair_value_820(request: FairValue820Request) -> dict:
+    """ASC 820 measurement: hierarchy levelling, NAV expedient, Level 3 rollforward."""
+    return _engine_input_kwargs(fair_value_measurement, request.inputs, "fair-value-820")
+
+
+@app.post("/engine/v1/gift-estate")
+def engine_gift_estate(request: GiftEstateRequest) -> dict:
+    """Gift & estate: pro rata → DLOC → DLOM → taxable gift, with Rev. Rul. 59-60 coverage."""
+    return _engine_input_kwargs(gift_estate_valuation, request.inputs, "gift-estate")
+
+
+@app.post("/engine/v1/ifrs2")
+def engine_ifrs2(request: Ifrs2Request) -> dict:
+    """IFRS 2 share-based payment: grant-date fair value, attribution, remeasurement."""
+    return _engine_input_kwargs(ifrs2_valuation, request.inputs, "ifrs2")
 
 
 @app.post("/engine/v1/market-feed")

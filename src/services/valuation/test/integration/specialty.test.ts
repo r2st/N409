@@ -79,6 +79,43 @@ describe.skipIf(!dbUp)('specialty report-type pipeline', () => {
       const b = req.body as Record<string, any>;
       return { standard: 'ASC 350-20', test: b.test, impaired: true, impairment_loss: 20 };
     });
+    engineStub.post('/engine/v1/fair-value-820', async (req) => {
+      const inputs = (req.body as Record<string, any>).inputs;
+      const total = (inputs.positions as Array<{ fair_value: number }>).reduce(
+        (sum, p) => sum + p.fair_value,
+        0,
+      );
+      return {
+        by_level: { level_1: total, level_2: 0, level_3: 0 },
+        total_fair_value: total,
+        predominant_level: 'level_1',
+        unobservable_inputs: [],
+      };
+    });
+    engineStub.post('/engine/v1/gift-estate', async (req) => {
+      const inputs = (req.body as Record<string, any>).inputs;
+      const proRata = inputs.entity_value * (inputs.percent_interest / 100);
+      const concluded = proRata * (1 - (inputs.dloc ?? 0)) * (1 - (inputs.dlom ?? 0));
+      return {
+        entity_value: inputs.entity_value,
+        pro_rata_value: proRata,
+        concluded_value: concluded,
+        taxable_gift: concluded,
+        rev_rul_59_60: { addressed_count: 0, total_count: 8, unaddressed: [] },
+      };
+    });
+    engineStub.post('/engine/v1/ifrs2', async (req) => {
+      const inputs = (req.body as Record<string, any>).inputs;
+      const perAward = 4.0;
+      return {
+        settlement: inputs.settlement,
+        vesting_condition: inputs.vesting_condition,
+        fair_value_per_award: perAward,
+        total_expense: perAward * (inputs.options_granted ?? 0),
+        expense_schedule: [],
+        remeasurement: { required: inputs.settlement === 'cash_settled' },
+      };
+    });
     await engineStub.listen({ port: 0, host: '127.0.0.1' });
     const address = engineStub.server.address();
     const enginePort = typeof address === 'object' && address ? address.port : 0;
@@ -270,6 +307,121 @@ describe.skipIf(!dbUp)('specialty report-type pipeline', () => {
     });
     expect(missing.statusCode).toBe(422);
     expect(missing.json().detail).toMatch(/impairment-test/);
+  });
+
+  /**
+   * ASC 820, gift & estate and IFRS 2 had questionnaires but no dispatch, so
+   * each fell through to the 409A allocation. These check that each now
+   * reaches its own endpoint and stores the figure its deliverable concludes.
+   */
+  it('runs an ASC 820 measurement against the fair-value endpoint', async () => {
+    const id = await createValuation('820');
+    await saveAnswers(id, {
+      fund_name: 'Example Growth Fund II',
+      measurement_date: '2026-06-30',
+      fair_value_level: 'level_3',
+    });
+    engineRequests.length = 0;
+    const run = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/specialty`,
+      headers: authHeader(ops.token),
+      payload: {
+        inputs: {
+          positions: [
+            { name: 'Listed', fair_value: 1_000_000, level: 'level_1' },
+            { name: 'Private', fair_value: 4_000_000, level: 'level_3' },
+          ],
+        },
+      },
+    });
+    expect(run.statusCode).toBe(201);
+    const sent = engineRequests.find((r) => r.url === '/engine/v1/fair-value-820')!;
+    expect(sent).toBeTruthy();
+    expect((sent.body as Record<string, any>).inputs.measurement_date).toBe('2026-06-30');
+
+    const { calculation, result } = run.json();
+    expect(result.total_fair_value).toBe(5_000_000);
+    // The measurement total, and no per-share figure — an ASC 820 engagement
+    // values positions, not shares.
+    expect(Number(calculation.equity_value)).toBe(5_000_000);
+    expect(calculation.fmv_per_share).toBeNull();
+  });
+
+  it('422s an ASC 820 run with no position schedule', async () => {
+    const id = await createValuation('820');
+    await saveAnswers(id, { measurement_date: '2026-06-30', fair_value_level: 'level_3' });
+    const run = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/specialty`,
+      headers: authHeader(ops.token),
+      payload: {},
+    });
+    expect(run.statusCode).toBe(422);
+    expect(run.json().detail).toMatch(/position schedule/);
+  });
+
+  it('runs a gift & estate valuation and stores the transferred interest', async () => {
+    const id = await createValuation('gifts');
+    await saveAnswers(id, {
+      transfer_date: '2026-04-15',
+      transfer_type: 'gift',
+      interest_transferred: 'A 25% non-voting membership interest.',
+      percent_interest: 25,
+      dloc: 0.2,
+      dlom: 0.3,
+    });
+    engineRequests.length = 0;
+    const run = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/specialty`,
+      headers: authHeader(ops.token),
+      payload: { inputs: { entity_value: 10_000_000 } },
+    });
+    expect(run.statusCode).toBe(201);
+    const sent = engineRequests.find((r) => r.url === '/engine/v1/gift-estate')!;
+    expect((sent.body as Record<string, any>).inputs.percent_interest).toBe(25);
+
+    const { calculation, result } = run.json();
+    // 2,500,000 × 0.80 × 0.70 — multiplicative, not a 50% haircut.
+    expect(result.concluded_value).toBeCloseTo(1_400_000);
+    // The interest, not the 10m entity value it was derived from.
+    expect(Number(calculation.equity_value)).toBeCloseTo(1_400_000);
+    expect(calculation.fmv_per_share).toBeNull();
+  });
+
+  it('runs an IFRS 2 award and carries the settlement through', async () => {
+    const id = await createValuation('ifrs2');
+    await saveAnswers(id, {
+      grant_date: '2026-01-01',
+      settlement: 'cash_settled',
+      vesting_condition: 'market',
+      vesting_years: 4,
+      exercise_price: 10,
+      share_price: 12,
+      options_granted: 100_000,
+      expected_term_years: 4,
+      expected_volatility: 0.6,
+      risk_free_rate: 0.04,
+    });
+    engineRequests.length = 0;
+    const run = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/specialty`,
+      headers: authHeader(ops.token),
+      payload: {},
+    });
+    expect(run.statusCode).toBe(201);
+    const sent = engineRequests.find((r) => r.url === '/engine/v1/ifrs2')!;
+    const inputs = (sent.body as Record<string, any>).inputs;
+    expect(inputs.settlement).toBe('cash_settled');
+    expect(inputs.vesting_condition).toBe('market');
+
+    const { calculation, result } = run.json();
+    expect(result.remeasurement.required).toBe(true);
+    // The total charge; fair value per award is not a per-share figure.
+    expect(Number(calculation.equity_value)).toBeCloseTo(400_000);
+    expect(calculation.fmv_per_share).toBeNull();
   });
 
   it('keeps specialty runs operations-only', async () => {
