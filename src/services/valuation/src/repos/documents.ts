@@ -89,12 +89,26 @@ export async function findDocumentById(pool: pg.Pool, id: string): Promise<Docum
   return rows[0] ?? null;
 }
 
-export async function listDocuments(pool: pg.Pool, valuationId: string): Promise<DocumentRow[]> {
+/**
+ * The engagement's live files, grouped by bucket.
+ *
+ * `ORDER BY category` is the enum's order and therefore roughly the checklist's
+ * — close enough for a list, and `documents_category_idx` (0105) serves the
+ * filtered form directly. Thirteen buckets (0112) is the reason the filter
+ * exists at all: six was a list you could read, thirteen is one an analyst
+ * looking for the option plan has to search.
+ */
+export async function listDocuments(
+  pool: pg.Pool,
+  valuationId: string,
+  filter: { category?: DocumentCategory } = {},
+): Promise<DocumentRow[]> {
   const { rows } = await pool.query<DocumentRow>(
     `SELECT * FROM documents
      WHERE valuation_id = $1 AND deleted_at IS NULL
+       AND ($2::document_category IS NULL OR category = $2)
      ORDER BY category, kind, created_at DESC`,
-    [valuationId],
+    [valuationId, filter.category ?? null],
   );
   return rows;
 }

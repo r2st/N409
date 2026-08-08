@@ -12,8 +12,10 @@ import {
   Select,
   Skeleton,
   SkeletonTable,
+  Spinner,
 } from '../../components/ui';
 import { CapTableSyncPanel } from '../../components/valuation/CapTableSyncPanel';
+import { CapTableGraph, type CapTableGraphData } from '../../components/CapTableGraph';
 
 /**
  * Cap-table integration (feature 9). Import a spreadsheet (Carta / Pulley /
@@ -517,6 +519,51 @@ export function CapTableTab() {
           </section>
         )
       )}
+
+      {stored && <StructureExplorer valuationId={valuation.id} />}
     </div>
+  );
+}
+
+/**
+ * The structure explorer — the same cap table drawn as conversion and
+ * seniority edges.
+ *
+ * Collapsed by default and fetched only when opened: the table above is what
+ * most visits want, and the graph is the second question ("what actually pays
+ * first, and what converts into what"), not the first.
+ */
+function StructureExplorer({ valuationId }: { valuationId: string }) {
+  const [open, setOpen] = useState(false);
+  const [graph, setGraph] = useState<CapTableGraphData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || graph) return;
+    api<{ graph: CapTableGraphData }>(`/valuations/${valuationId}/cap-table/graph`)
+      .then((d) => setGraph(d.graph))
+      .catch(() => setError('Could not build the structure graph.'));
+  }, [open, graph, valuationId]);
+
+  return (
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="overline text-ink-400">Structure explorer</h3>
+          <p className="mt-1 text-sm text-ink-500">
+            The preference stack in payment order, with what converts into what. Select a class to isolate its
+            relationships.
+          </p>
+        </div>
+        <Button variant="secondary" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? 'Hide' : 'Show'}
+        </Button>
+      </div>
+      {open && (
+        <div className="mt-5">
+          {error ? <ErrorNote>{error}</ErrorNote> : graph ? <CapTableGraph graph={graph} /> : <Spinner />}
+        </div>
+      )}
+    </section>
   );
 }

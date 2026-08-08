@@ -9,6 +9,7 @@ import {
   type InputHTMLAttributes,
   type ReactElement,
   type ReactNode,
+  type Ref,
   type SelectHTMLAttributes,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -148,8 +149,17 @@ export function Field({
 export const inputClass =
   'w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none';
 
-export function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={`${inputClass} ${props.className ?? ''}`} />;
+/**
+ * `ref` is declared explicitly rather than inherited: React 19 passes it
+ * through as an ordinary prop, but `InputHTMLAttributes` does not include it,
+ * so a caller that needs the DOM node (to place a caret, to focus on error)
+ * could not ask for one without a type error.
+ */
+export function TextInput({
+  ref,
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
+  return <input ref={ref} {...props} className={`${inputClass} ${props.className ?? ''}`} />;
 }
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {

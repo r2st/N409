@@ -1,7 +1,8 @@
 import { DOCUMENT_KINDS, type DocumentKind } from './pipeline.js';
 
 /**
- * The six document categories a client is asked to fill (migration 0105).
+ * The thirteen document categories a client is asked to fill (migrations 0105
+ * and 0112).
  *
  * Two axes, deliberately:
  *
@@ -16,14 +17,33 @@ import { DOCUMENT_KINDS, type DocumentKind } from './pipeline.js';
  * because someone uploaded a January P&L. That single ambiguity is why the two
  * axes exist at all — which is also why the period cannot be inferred from the
  * kind and has to be stated at upload.
+ *
+ * 0112's seven corporate buckets widen the gap between the axes rather than
+ * closing it: the bylaws, the option plan, the board consents and the IP
+ * schedule are all `other` to the extractor and four different answers to
+ * "which thing we asked for is this". A category whose `kinds` is `['other']`
+ * is not a modelling gap — it is the axis doing exactly what it is for.
  */
 
 export const DOCUMENT_CATEGORIES = [
+  // The finance buckets (0105) — what the intake checklist counts, and what a
+  // model is blocked on.
   'captable_documents',
   'monthly_income_statements',
   'annual_income_statements',
   'balance_sheets',
   'projections',
+  // The corporate record (0112). None of these block a model; they exist so a
+  // file has somewhere to be filed that an analyst can find it in, and so the
+  // deliverable's evidence list reads as something other than a filename dump.
+  'corporate_documents',
+  'shareholder_agreements',
+  'stock_option_plan',
+  'board_resolutions',
+  'pitch_deck',
+  'intellectual_property',
+  'prior_valuations',
+  // Still last, still the default, still means "genuinely uncategorised".
   'uploads',
 ] as const;
 export type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number];
@@ -97,13 +117,87 @@ export const DOCUMENT_CATEGORY_DEFS: readonly DocumentCategoryDef[] = [
     defaultKind: 'projections',
   },
   {
+    key: 'corporate_documents',
+    label: 'Corporate documents',
+    description:
+      'The charter and the governing documents: certificate of incorporation and its amendments, ' +
+      'bylaws, operating agreement, certificate of good standing.',
+    required: false,
+    // The charter is where the share classes and their preferences are legally
+    // defined, so it belongs here as well as in the cap-table evidence set —
+    // this is the same file answering two different questions.
+    kinds: ['articles_of_incorporation', 'other'],
+    defaultKind: 'articles_of_incorporation',
+  },
+  {
+    key: 'shareholder_agreements',
+    label: 'Shareholder agreements',
+    description:
+      'Shareholder, voting and investor-rights agreements, and any side letters. These carry the ' +
+      'transfer restrictions and drag/tag terms a marketability discount is argued from.',
+    required: false,
+    kinds: ['term_sheet', 'other'],
+    defaultKind: 'other',
+  },
+  {
+    key: 'stock_option_plan',
+    label: 'Stock option plan',
+    description:
+      'The equity incentive plan document, its amendments, and the grant agreements issued under ' +
+      'it. The plan states the authorised pool; the grants state what is actually outstanding.',
+    required: false,
+    kinds: ['option_grants', 'other'],
+    defaultKind: 'option_grants',
+  },
+  {
+    key: 'board_resolutions',
+    label: 'Board resolutions',
+    description:
+      'Board consents and minutes — in particular the resolutions approving option grants and ' +
+      'adopting a prior fair market value.',
+    required: false,
+    kinds: ['other'],
+    defaultKind: 'other',
+  },
+  {
+    key: 'pitch_deck',
+    label: 'Pitch deck',
+    description:
+      'The current investor deck. Read for the business description, the market framing and the ' +
+      'stage narrative, never for figures — those come from the statements.',
+    required: false,
+    kinds: ['pitch_deck'],
+    defaultKind: 'pitch_deck',
+  },
+  {
+    key: 'intellectual_property',
+    label: 'Intellectual property',
+    description:
+      'Patents, applications, trademarks, and IP assignment or licence agreements. The asset ' +
+      'approach and any IP-specific engagement are built from these.',
+    required: false,
+    kinds: ['other'],
+    defaultKind: 'other',
+  },
+  {
+    key: 'prior_valuations',
+    label: 'Prior valuations',
+    description:
+      'Earlier 409A or fair-value reports for this company. The roll-forward compares against the ' +
+      'most recent one, and a material change from it has to be explained.',
+    required: false,
+    kinds: ['prior_valuation', 'other'],
+    defaultKind: 'prior_valuation',
+  },
+  {
     key: 'uploads',
     label: 'Other documents',
-    description:
-      'Anything else that bears on value: pitch deck, prior valuations, board materials, ' +
-      'customer contracts.',
+    description: 'Anything that bears on value and does not belong in one of the buckets above.',
     required: false,
-    kinds: ['pitch_deck', 'prior_valuation', 'articles_of_incorporation', 'term_sheet', 'other'],
+    // Every kind, deliberately: this is where a file goes when the uploader
+    // does not want to choose, and refusing a kind here would leave them with
+    // nowhere to put it.
+    kinds: DOCUMENT_KINDS,
     defaultKind: 'other',
   },
 ];
@@ -142,6 +236,16 @@ export function categoryForKind(kind: DocumentKind): DocumentCategory {
     case 'projections':
     case 'cash_flow':
       return 'projections';
+    // 0112's two kinds that name their own bucket. Before it they defaulted to
+    // 'uploads', which is where they still land if the uploader says so.
+    case 'pitch_deck':
+      return 'pitch_deck';
+    case 'prior_valuation':
+      return 'prior_valuations';
+    // 'other' stays uncategorised. The five remaining 0112 buckets are all
+    // reachable only from a kind of 'other', so inferring any one of them from
+    // it would be a coin flip between five — this is the case where the
+    // uploader has to choose.
     default:
       return 'uploads';
   }
@@ -199,9 +303,14 @@ export interface CategorySummary extends DocumentCategoryDef {
 }
 
 /**
- * The intake checklist: all six buckets, always, in a fixed order, with what
- * has arrived in each. Every bucket is returned even when empty — an empty
+ * The intake checklist: all thirteen buckets, always, in a fixed order, with
+ * what has arrived in each. Every bucket is returned even when empty — an empty
  * bucket is the thing the client needs to see.
+ *
+ * The order is DOCUMENT_CATEGORY_DEFS and not the enum's: the five buckets a
+ * model is blocked on come first, then the corporate record, then the
+ * catch-all. A checklist that opened on "board resolutions" would bury the one
+ * required bucket in it.
  */
 export function summarizeCategories(
   documents: ReadonlyArray<{ category: DocumentCategory }>,

@@ -6,10 +6,15 @@ import { isOps } from '../auth/rbac.js';
 import { VALUATION_STATES } from '../domain/valuation.js';
 import {
   AUTO_EMAIL_CONDITIONS,
-  renderTemplate,
+  TEMPLATE_CATEGORIES,
+  TEMPLATE_CATEGORY_LABELS,
   type AutoEmailRow,
   type CommunicationTemplateRow,
+  type TemplateVars,
 } from '../domain/communications.js';
+import { TEMPLATE_VARIABLES, previewTemplate, unknownPlaceholders } from '../domain/templateVariables.js';
+import { valuationTemplateVars } from '../domain/communications.js';
+import { findValuationById } from '../repos/valuations.js';
 import {
   createAutoEmail,
   createCommunicationTemplate,
@@ -43,6 +48,7 @@ const TemplateBody = z.object({
     .max(100)
     .regex(/^[a-z0-9_]+$/, 'lowercase letters, digits and _ only'),
   channel: z.enum(['email', 'sms']).default('email'),
+  category: z.enum(TEMPLATE_CATEGORIES).default('account'),
   description: z.string().max(500).default(''),
   subject: z.string().max(500).default(''),
   body: z.string().min(1).max(20_000),
@@ -101,7 +107,7 @@ export function registerCommunicationRoutes(
       subjectType: 'communication_template',
       subjectId: t.id,
       subjectLabel: t.key,
-      payload: { channel: t.channel, enabled: t.enabled },
+      payload: { channel: t.channel, category: t.category, enabled: t.enabled },
     });
 
   const auditAutoEmail = async (actorId: string, type: string, a: AutoEmailRow) =>
@@ -123,8 +129,43 @@ export function registerCommunicationRoutes(
 
   app.get('/api/v1/admin/communication-templates', { preHandler: app.authenticate }, async (req) => {
     requireOps(req);
-    return { templates: await listCommunicationTemplates(deps.pool) };
+    const parsed = z
+      .object({
+        category: z.enum(TEMPLATE_CATEGORIES).optional(),
+        channel: z.enum(['email', 'sms']).optional(),
+      })
+      .safeParse(req.query);
+    if (!parsed.success) throw problems.badRequest('Invalid filter', { errors: parsed.error.issues });
+    const templates = await listCommunicationTemplates(deps.pool, parsed.data);
+    return {
+      templates: templates.map((t) => ({
+        ...t,
+        // Computed, not stored: the catalog moves under a saved template, and
+        // a warning that was true at save time is not the one an operator
+        // needs to see now.
+        unknown_variables: unknownPlaceholders(t.subject, t.body),
+      })),
+      categories: TEMPLATE_CATEGORIES.map((key) => ({
+        key,
+        label: TEMPLATE_CATEGORY_LABELS[key],
+        count: templates.filter((t) => t.category === key).length,
+      })),
+    };
   });
+
+  /**
+   * The editor's variable palette. Served rather than duplicated in the
+   * frontend so a variable added here appears in the editor without a second
+   * deployment — the catalog is the promise, and one copy of it is the point.
+   */
+  app.get(
+    '/api/v1/admin/communication-templates/variables',
+    { preHandler: app.authenticate },
+    async (req) => {
+      requireOps(req);
+      return { variables: TEMPLATE_VARIABLES };
+    },
+  );
 
   app.post('/api/v1/admin/communication-templates', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requireOps(req);
@@ -174,7 +215,19 @@ export function registerCommunicationRoutes(
     },
   );
 
-  // Renders a template against sample vars — the admin UI preview.
+  /**
+   * Renders a template — the admin UI preview.
+   *
+   * Three layers, weakest first: the catalog's sample values, then a real
+   * engagement's figures when `valuation_id` names one, then whatever the
+   * caller passed in `vars`. The middle layer is the one that matters: a
+   * template reads fine against "Acme Corp" and falls apart against a company
+   * whose legal name runs to sixty characters, and the only way to find that
+   * out before the client does is to preview it against a real row.
+   *
+   * The unrendered body is previewed too, not just the saved one: the editor
+   * previews what is on screen, which is usually not what is in the table yet.
+   */
   app.post(
     '/api/v1/admin/communication-templates/:id/preview',
     { preHandler: app.authenticate },
@@ -185,20 +238,65 @@ export function registerCommunicationRoutes(
       const template = await findTemplateById(deps.pool, id);
       if (!template) throw problems.notFound();
 
-      const vars = z.record(z.union([z.string(), z.number()])).parse(
-        (req.body as { vars?: unknown } | null)?.vars ?? {
-          company_name: 'Acme Corp',
-          kind: '409a',
-          kind_label: '409A',
-          valuation_number: '1766',
-          link: 'https://example.com/reset-password#token=…',
-          invited_by: 'ops@n409.local',
+      const parsed = z
+        .object({
+          valuation_id: z.string().optional(),
+          vars: z.record(z.union([z.string(), z.number()])).default({}),
+          // Unsaved editor content. Falls back to the stored row per field, so
+          // previewing a body edit does not blank the subject.
+          subject: z.string().max(500).optional(),
+          body: z.string().max(20_000).optional(),
+        })
+        .safeParse(req.body ?? {});
+      if (!parsed.success) throw problems.unprocessable('Invalid preview', { errors: parsed.error.issues });
+
+      let vars: TemplateVars = { ...parsed.data.vars };
+      if (parsed.data.valuation_id) {
+        if (!isUlid(parsed.data.valuation_id)) throw problems.notFound();
+        const valuation = await findValuationById(deps.pool, parsed.data.valuation_id);
+        if (!valuation) throw problems.notFound();
+        // Ops-only route, so no scope check beyond requireOps: the preview
+        // shows nothing the caller could not read on the valuation itself.
+        const [{ rows: partnerRows }, { rows: dateRows }] = await Promise.all([
+          valuation.partner_id
+            ? deps.pool.query<{ name: string }>('SELECT name FROM partners WHERE id = $1', [
+                valuation.partner_id,
+              ])
+            : Promise.resolve({ rows: [] as Array<{ name: string }> }),
+          // The measurement date lives in valuation_params.engine_inputs
+          // (0041) and nowhere on the valuation row — it is an engine input,
+          // set when an analyst fixes the as-of date, and absent for most of
+          // an engagement's life.
+          deps.pool.query<{ valuation_date: string | null }>(
+            `SELECT engine_inputs->>'valuation_date' AS valuation_date
+             FROM valuation_params WHERE valuation_id = $1`,
+            [valuation.id],
+          ),
+        ]);
+        vars = {
+          // Field by field rather than spreading the row: ValuationRow carries
+          // an index signature, so a typo here would type-check as `unknown`
+          // and render blank.
+          ...valuationTemplateVars({
+            company_name: valuation.company_name,
+            kind: valuation.kind,
+            number: valuation.number,
+            valuation_date: dateRows[0]?.valuation_date ?? null,
+            due_date: valuation.due_date,
+            state: valuation.state,
+            partner_name: partnerRows[0]?.name ?? null,
+          }),
+          ...vars,
+        };
+      }
+
+      return previewTemplate(
+        {
+          subject: parsed.data.subject ?? template.subject,
+          body: parsed.data.body ?? template.body,
         },
+        vars,
       );
-      return {
-        subject: renderTemplate(template.subject, vars),
-        body: renderTemplate(template.body, vars),
-      };
     },
   );
 

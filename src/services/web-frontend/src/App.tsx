@@ -106,6 +106,8 @@ const AdminUsersPage = named(() => import('./pages/AdminUsersPage'), 'AdminUsers
 const AdminPartnersPage = named(() => import('./pages/AdminPartnersPage'), 'AdminPartnersPage');
 const PartnerDetailPage = named(() => import('./pages/PartnerDetailPage'), 'PartnerDetailPage');
 const EmailOutboxPage = named(() => import('./pages/EmailOutboxPage'), 'EmailOutboxPage');
+const AdminJobsPage = named(() => import('./pages/AdminJobsPage'), 'AdminJobsPage');
+const InboxPage = named(() => import('./pages/InboxPage'), 'InboxPage');
 const PartnerPortalPage = named(() => import('./pages/PartnerPortalPage'), 'PartnerPortalPage');
 const ApiDocsPage = named(() => import('./pages/ApiDocsPage'), 'ApiDocsPage');
 const SearchPage = named(() => import('./pages/SearchPage'), 'SearchPage');
@@ -255,6 +257,7 @@ export default function App() {
             <Route path="/admin/prompts" element={<BotPromptsPage />} />
             <Route path="/admin/support" element={<SupportInboxPage />} />
             <Route path="/admin/outbox" element={<EmailOutboxPage />} />
+            <Route path="/admin/jobs" element={<AdminJobsPage />} />
             <Route path="/admin/communications" element={<CommunicationsPage />} />
             <Route path="/admin/activity" element={<ActivityLogPage />} />
             <Route path="/admin/help" element={<AdminHelpPage />} />
@@ -284,6 +287,9 @@ export default function App() {
           <Route path="/partner/api-docs" element={<ApiDocsPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
+          {/* Not inside the ops guard: a partner firm's staff have an inbox too,
+              scoped to their own engagements by the API. */}
+          <Route path="/inbox" element={<InboxPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/help/:slug" element={<HelpPage />} />
           <Route path="/features" element={<FeaturesPage />} />

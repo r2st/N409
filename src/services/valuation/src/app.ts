@@ -74,6 +74,8 @@ import { registerReportRoutes } from './routes/reports.js';
 import { registerPromptRoutes } from './routes/prompts.js';
 import { registerCompanyProfileRoutes } from './routes/companyProfile.js';
 import { registerPackageRoutes } from './routes/packageView.js';
+import { registerInboxRoutes } from './routes/inbox.js';
+import { registerJobRoutes } from './routes/jobs.js';
 import { registerSupportRoutes } from './routes/support.js';
 import { registerContactRoutes } from './routes/contact.js';
 import { registerAdminEventRoutes } from './routes/adminEvents.js';
@@ -372,6 +374,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerStreamRoutes(app, { pool, hub });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });
+  registerInboxRoutes(app, { pool });
   registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerApiTokenRoutes(app, { pool });
   registerOperationsRoutes(app, { pool });
@@ -394,6 +397,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerPromptRoutes(app, { pool, aiUrl: config.AI_URL });
   registerCompanyProfileRoutes(app, { pool });
   registerPackageRoutes(app, { pool });
+  registerJobRoutes(app, { pool });
   registerSupportRoutes(app, { pool });
   // P3 gap #28 — public marketing contact form + ops triage queue
   registerContactRoutes(app, { pool });

@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
+import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { DOCUMENT_KINDS, type DocumentKind } from '../domain/pipeline.js';
@@ -224,13 +225,15 @@ export function registerDocumentRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
-    return { documents: await listDocuments(deps.pool, valuation.id) };
+    const parsed = z.object({ category: z.enum(DOCUMENT_CATEGORIES).optional() }).safeParse(req.query);
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    return { documents: await listDocuments(deps.pool, valuation.id, parsed.data) };
   });
 
   /**
-   * The intake checklist. All six buckets, always, in a fixed order — an empty
-   * bucket is the thing the client needs to see, so filtering to the ones with
-   * uploads in them would hide exactly the useful half.
+   * The intake checklist. All thirteen buckets, always, in a fixed order — an
+   * empty bucket is the thing the client needs to see, so filtering to the
+   * ones with uploads in them would hide exactly the useful half.
    */
   app.get('/api/v1/valuations/:id/documents/categories', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

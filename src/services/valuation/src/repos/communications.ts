@@ -1,12 +1,31 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import type { AutoEmailRow, CommChannel, CommunicationTemplateRow } from '../domain/communications.js';
+import {
+  TEMPLATE_CATEGORIES,
+  type AutoEmailRow,
+  type CommChannel,
+  type CommunicationTemplateRow,
+  type TemplateCategory,
+} from '../domain/communications.js';
 
 // ── Communication templates (409.ai §15.5) ───────────────────────────────────
 
-export async function listCommunicationTemplates(pool: pg.Pool): Promise<CommunicationTemplateRow[]> {
+/**
+ * Ordered by category and then key. The category order is the lifecycle order
+ * from TEMPLATE_CATEGORIES rather than alphabetical, so the list reads in the
+ * order an engagement passes through it — `array_position` over the constant
+ * keeps that ordering in one place instead of duplicating it as a CASE here.
+ */
+export async function listCommunicationTemplates(
+  pool: pg.Pool,
+  filter: { category?: TemplateCategory; channel?: CommChannel } = {},
+): Promise<CommunicationTemplateRow[]> {
   const { rows } = await pool.query<CommunicationTemplateRow>(
-    'SELECT * FROM communication_templates ORDER BY key',
+    `SELECT * FROM communication_templates
+     WHERE ($1::text IS NULL OR category = $1)
+       AND ($2::text IS NULL OR channel::text = $2)
+     ORDER BY array_position($3::text[], category), key`,
+    [filter.category ?? null, filter.channel ?? null, [...TEMPLATE_CATEGORIES]],
   );
   return rows;
 }
@@ -48,6 +67,7 @@ export async function createCommunicationTemplate(
   input: {
     key: string;
     channel: CommChannel;
+    category: TemplateCategory;
     description: string;
     subject: string;
     body: string;
@@ -56,13 +76,15 @@ export async function createCommunicationTemplate(
   updatedBy: string,
 ): Promise<CommunicationTemplateRow> {
   const { rows } = await pool.query<CommunicationTemplateRow>(
-    `INSERT INTO communication_templates (id, key, channel, description, subject, body, enabled, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO communication_templates
+       (id, key, channel, category, description, subject, body, enabled, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
     [
       newUlid(),
       input.key,
       input.channel,
+      input.category,
       input.description,
       input.subject,
       input.body,
@@ -76,7 +98,7 @@ export async function createCommunicationTemplate(
 export async function updateCommunicationTemplate(
   pool: pg.Pool,
   id: string,
-  patch: Partial<Pick<CommunicationTemplateRow, 'description' | 'subject' | 'body' | 'enabled'>>,
+  patch: Partial<Pick<CommunicationTemplateRow, 'category' | 'description' | 'subject' | 'body' | 'enabled'>>,
   updatedBy: string,
 ): Promise<CommunicationTemplateRow | null> {
   const sets: string[] = ['updated_at = now()'];

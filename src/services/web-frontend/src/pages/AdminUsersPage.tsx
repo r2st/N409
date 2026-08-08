@@ -10,26 +10,110 @@ import { Button, EmptyState, ErrorNote, Field, Select, TableSkeleton, TextInput 
 
 const PER_PAGE = 25;
 
-/** Role keys mirrored from the valuation service (domain/roles.ts). */
-const ROLE_KEYS = [
-  'valuation_user',
-  'admin',
-  'god',
-  'supervisor',
-  'support',
-  'support_supervisor',
-  'reviewer',
-  'main_reviewer',
-  'contributing_reviewer',
-  'data',
-  'data_supervisor',
-  'partner',
-  'member',
-  'investor',
-  'auto',
-  'spa',
-  'ignored',
-] as const;
+/**
+ * Roles come from the server (`GET /roles`), not a list in this file.
+ *
+ * A copy lived here and had already drifted: it was missing `auditor`, so an
+ * admin could not filter by it and the checkbox set could not grant it. More
+ * to the point, a bare key is not a choice anybody can make well —
+ * `data_supervisor` and `support_supervisor` differ by a word — so the catalog
+ * carries a label, a description and the capabilities each role actually
+ * confers, and this page renders what it is told.
+ */
+interface RoleDef {
+  key: string;
+  label: string;
+  description: string;
+  scope: 'ops' | 'partner' | 'client' | 'none';
+  capabilities: string[];
+}
+
+interface CapabilityDef {
+  key: string;
+  label: string;
+  description: string;
+  roles: string[];
+}
+
+const SCOPE_LABELS: Record<RoleDef['scope'], string> = {
+  ops: 'Every engagement',
+  partner: 'Their firm',
+  client: 'Their own',
+  none: 'No engagement scope',
+};
+
+/**
+ * The capability matrix, as a reference table. Collapsed by default: it is the
+ * answer to "what does this actually grant", which an admin asks once and then
+ * not again for a month.
+ */
+function RoleMatrix({ roles, capabilities }: { roles: RoleDef[]; capabilities: CapabilityDef[] }) {
+  const [open, setOpen] = useState(false);
+  if (roles.length === 0) return null;
+  return (
+    <section className="mt-8 rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="overline text-ink-400">Roles &amp; capabilities</h2>
+          <p className="mt-1 text-sm text-ink-400">
+            What each of the {roles.length} roles grants. `ignored` is the one that subtracts — it overrides
+            every other role a user holds.
+          </p>
+        </div>
+        <Button variant="secondary" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? 'Hide' : 'Show'}
+        </Button>
+      </div>
+      {open && (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-sm" aria-label="Role capability matrix">
+            <thead>
+              <tr className="border-b border-paper-300 text-left">
+                <th className="overline py-2 pr-4 font-semibold text-ink-400">Capability</th>
+                {roles.map((r) => (
+                  <th
+                    key={r.key}
+                    className="px-1 py-2 text-center align-bottom text-[0.65rem] font-semibold text-ink-500"
+                    title={r.description}
+                  >
+                    {/* Vertical: eighteen horizontal role names is a table
+                        nobody can fit on a screen. */}
+                    <span className="inline-block [writing-mode:vertical-rl] rotate-180 whitespace-nowrap">
+                      {r.label}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {capabilities.map((c) => (
+                <tr key={c.key} className="border-b border-paper-200 last:border-0">
+                  <td className="py-2 pr-4">
+                    <div className="font-semibold text-ink-800">{c.label}</div>
+                    <div className="max-w-md text-xs text-ink-400">{c.description}</div>
+                  </td>
+                  {roles.map((r) => (
+                    <td key={r.key} className="px-1 py-2 text-center">
+                      {r.capabilities.includes(c.key) ? (
+                        <span className="text-bond-600" aria-label="granted">
+                          ●
+                        </span>
+                      ) : (
+                        <span className="text-paper-300" aria-label="not granted">
+                          ·
+                        </span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
 
 interface UserList {
   users: AdminUser[];
@@ -82,6 +166,8 @@ export function AdminUsersPage() {
   const [editorError, setEditorError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [qDraft, setQDraft] = useState(params.get('q') ?? '');
+  const [roleDefs, setRoleDefs] = useState<RoleDef[]>([]);
+  const [capabilities, setCapabilities] = useState<CapabilityDef[]>([]);
 
   const q = params.get('q') ?? '';
   const role = params.get('role') ?? '';
@@ -108,6 +194,18 @@ export function AdminUsersPage() {
   useEffect(() => {
     api<{ partners: Partner[] }>('/partners')
       .then((res) => setPartners(res.partners))
+      .catch(() => {});
+  }, []);
+
+  // The role catalog. Fetched rather than hard-coded so a role added on the
+  // server appears in the filter and the grant list without a second
+  // deployment — the copy that lived here had already gone stale.
+  useEffect(() => {
+    api<{ roles: RoleDef[]; capabilities: CapabilityDef[] }>('/roles')
+      .then((res) => {
+        setRoleDefs(res.roles);
+        setCapabilities(res.capabilities);
+      })
       .catch(() => {});
   }, []);
 
@@ -397,9 +495,9 @@ export function AdminUsersPage() {
           className="!w-auto min-w-36"
         >
           <option value="">All roles</option>
-          {ROLE_KEYS.map((r) => (
-            <option key={r} value={r}>
-              {r}
+          {roleDefs.map((r) => (
+            <option key={r.key} value={r.key}>
+              {r.label}
             </option>
           ))}
         </Select>
@@ -498,15 +596,22 @@ export function AdminUsersPage() {
             <fieldset>
               <legend className="mb-2 block text-[0.8rem] font-semibold text-ink-700">Roles</legend>
               <div className="flex flex-wrap gap-x-5 gap-y-2">
-                {ROLE_KEYS.map((r) => (
-                  <label key={r} className="flex cursor-pointer items-center gap-1.5 text-sm text-ink-700">
+                {roleDefs.map((r) => (
+                  <label
+                    key={r.key}
+                    // The description is the whole point of serving the
+                    // catalog: `data_supervisor` and `support_supervisor`
+                    // differ by a word, and a bare key is not a choice.
+                    title={`${r.description} (${SCOPE_LABELS[r.scope]})`}
+                    className="flex cursor-pointer items-center gap-1.5 text-sm text-ink-700"
+                  >
                     <input
                       type="checkbox"
-                      checked={editor.roles.has(r)}
-                      onChange={() => toggleRole(r)}
+                      checked={editor.roles.has(r.key)}
+                      onChange={() => toggleRole(r.key)}
                       className="accent-bond-600"
                     />
-                    {r}
+                    {r.label}
                   </label>
                 ))}
               </div>
@@ -760,6 +865,8 @@ export function AdminUsersPage() {
           </div>
         </div>
       )}
+
+      <RoleMatrix roles={roleDefs} capabilities={capabilities} />
     </div>
   );
 }

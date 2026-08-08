@@ -203,6 +203,12 @@ export interface Partner {
   logo_url: string | null;
   /** White-label workflow email overrides (improvement 8). */
   email_templates?: Record<string, { subject: string; body: string }>;
+  /** The firm's public address (0106), or null while it is still on ours. */
+  subdomain: string | null;
+  /** Bulk-paid firm: its engagements never see a payment link (0113). */
+  prepaid: boolean;
+  /** The firm's shared mailbox, copied on client correspondence (0113). */
+  cc_emails: string[];
   user_count: number;
   valuation_count: number;
 }
@@ -273,10 +279,36 @@ export interface OutboxEmail {
 
 // §15.5/§15.6 — communication templates + auto email campaigns
 
+/**
+ * How the template list is grouped (migration 0113). Five lifecycle groups
+ * plus `account` for the templates that are not about an engagement at all —
+ * password reset, verification, seat invitations — which deliver
+ * unconditionally and so cannot be filed under a state that gates them.
+ */
+export const TEMPLATE_CATEGORIES = [
+  'account',
+  'open',
+  'in_review',
+  'drafted',
+  'published',
+  'closed',
+] as const;
+export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number];
+
+export const TEMPLATE_CATEGORY_LABELS: Record<TemplateCategory, string> = {
+  account: 'Account',
+  open: 'Open',
+  in_review: 'In review',
+  drafted: 'Drafted',
+  published: 'Published',
+  closed: 'Closed',
+};
+
 export interface CommunicationTemplate {
   id: string;
   key: string;
   channel: CommChannel;
+  category: TemplateCategory;
   description: string;
   subject: string;
   body: string;
@@ -284,6 +316,20 @@ export interface CommunicationTemplate {
   updated_by: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Placeholders the template uses that nothing will ever supply. Computed by
+   * the server on every read, not stored: the catalog moves under a saved
+   * template, and a warning that was true at save time is not the one an
+   * operator needs now.
+   */
+  unknown_variables?: string[];
+}
+
+export interface TemplateVariable {
+  name: string;
+  scope: 'always' | 'valuation' | 'link';
+  description: string;
+  sample: string;
 }
 
 export type AutoEmailCondition = 'always' | 'unpaid' | 'no_documents' | 'waiting_on_client';

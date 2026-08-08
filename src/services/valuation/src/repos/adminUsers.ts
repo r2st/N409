@@ -157,6 +157,12 @@ export interface PartnerRow {
   logo_url: string | null;
   /** White-label workflow email overrides: template key → { subject, body }. */
   email_templates: Record<string, { subject: string; body: string }>;
+  /** The firm's public address (0106), or null while it is still on ours. */
+  subdomain: string | null;
+  /** Bulk-paid firm: its engagements never see a payment link (0113). */
+  prepaid: boolean;
+  /** The firm's shared mailbox, copied on client correspondence (0113). */
+  cc_emails: string[];
   user_count: number;
   valuation_count: number;
 }
@@ -166,7 +172,8 @@ const PARTNER_COUNTS_SQL = `
   (SELECT count(*)::int FROM users u WHERE u.partner_id = p.id AND u.deleted_at IS NULL) AS user_count,
   (SELECT count(*)::int FROM valuations v WHERE v.partner_id = p.id) AS valuation_count`;
 
-const PARTNER_COLUMNS_SQL = `p.id, p.name, p.key, p.created_at, p.archived_at, p.brand_color, p.logo_url, p.email_templates`;
+const PARTNER_COLUMNS_SQL = `p.id, p.name, p.key, p.created_at, p.archived_at, p.brand_color, p.logo_url,
+  p.email_templates, p.subdomain, p.prepaid, p.cc_emails`;
 
 /** Archived partners are hidden by default so pickers only offer live channels. */
 export async function listPartners(
@@ -194,7 +201,7 @@ export async function createPartner(pool: pg.Pool, args: { name: string; key: st
   const { rows } = await pool.query<PartnerRow>(
     `INSERT INTO partners (id, name, key) VALUES ($1, $2, $3)
      RETURNING id, name, key, created_at, archived_at, brand_color, logo_url, email_templates,
-               0 AS user_count, 0 AS valuation_count`,
+               subdomain, prepaid, cc_emails, 0 AS user_count, 0 AS valuation_count`,
     [newUlid(), args.name, args.key],
   );
   return rows[0]!;
@@ -223,6 +230,15 @@ export interface PartnerPatch {
   brand_color?: string | null;
   logo_url?: string | null;
   email_templates?: Record<string, { subject: string; body: string }>;
+  /**
+   * Normalised and reserved-word-checked by the route (domain/partnerSubdomain.ts);
+   * null releases the address. The unique index is the real arbiter — two
+   * admins can claim the same label in the same second, and only one insert
+   * wins.
+   */
+  subdomain?: string | null;
+  prepaid?: boolean;
+  cc_emails?: string[];
   /** true → stamp archived_at (idempotent); false → clear it. */
   archived?: boolean;
 }
@@ -246,6 +262,9 @@ export async function updatePartner(
   if (patch.brand_color !== undefined) add('brand_color = ?', patch.brand_color);
   if (patch.logo_url !== undefined) add('logo_url = ?', patch.logo_url);
   if (patch.email_templates !== undefined) add('email_templates = ?', JSON.stringify(patch.email_templates));
+  if (patch.subdomain !== undefined) add('subdomain = ?', patch.subdomain);
+  if (patch.prepaid !== undefined) add('prepaid = ?', patch.prepaid);
+  if (patch.cc_emails !== undefined) add('cc_emails = ?', patch.cc_emails);
   if (patch.archived === true) add('archived_at = coalesce(archived_at, now())');
   if (patch.archived === false) add('archived_at = NULL');
   if (sets.length === 0) return findPartnerById(pool, id);

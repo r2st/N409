@@ -13,6 +13,7 @@ const templates: CommunicationTemplate[] = [
     id: '01N409CT000000000000000001',
     key: 'draft_ready',
     channel: 'email',
+    category: 'open',
     description: 'Sent when a draft is ready.',
     subject: 'Your draft {{kind_label}} valuation is ready',
     body: 'A draft for {{company_name}} is ready.',
@@ -25,6 +26,7 @@ const templates: CommunicationTemplate[] = [
     id: '01N409CT000000000000000008',
     key: 'sms_payment_reminder',
     channel: 'sms',
+    category: 'drafted',
     description: 'Payment reminder text.',
     subject: '',
     body: '{{company_name}}: payment pending.',
@@ -109,7 +111,9 @@ describe('CommunicationsPage', () => {
     // Email is the default channel — no preview warning yet.
     expect(screen.queryByText(/SMS is in preview/i)).not.toBeInTheDocument();
 
-    await user.selectOptions(screen.getByRole('combobox'), 'sms');
+    // Named, not positional: the editor grew a Category select alongside the
+    // Channel one, and `getByRole('combobox')` now finds both.
+    await user.selectOptions(screen.getByRole('combobox', { name: /channel/i }), 'sms');
     expect(await screen.findByText(/SMS is in preview/i)).toBeInTheDocument();
   });
 

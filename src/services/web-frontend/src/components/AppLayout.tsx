@@ -90,6 +90,41 @@ function NavGroup({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/**
+ * Polls the unread *thread* count for the shared inbox — engagements whose
+ * conversation has moved since this reader last opened them.
+ *
+ * Threads and not messages: "3" should mean three files want attention, which
+ * is actionable. A message count means "somebody wrote nine paragraphs", which
+ * is not, and it is the number that made the old global badge ignorable.
+ *
+ * Silent on failure. A client user has no inbox and the endpoint answers 0 for
+ * them, but a partner whose session has gone stale would otherwise get an
+ * error banner from a badge.
+ */
+function useInboxUnread(enabled: boolean): number {
+  const [count, setCount] = useState(0);
+  const location = useLocation();
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const poll = () => {
+      api<{ unread_threads: number }>('/inbox/unread-count')
+        .then((d) => {
+          if (!cancelled) setCount(d.unread_threads);
+        })
+        .catch(() => {});
+    };
+    poll();
+    const timer = setInterval(poll, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [location.pathname, enabled]);
+  return count;
+}
+
 /** Polls the unread notification count (M4) — on route change and every 60s. */
 function useUnreadCount(): number {
   const [count, setCount] = useState(0);
@@ -274,6 +309,9 @@ export function AppLayout() {
   // Nav gating follows the effective user so "User view" hides the Operations
   // and Administration sections; the ViewModeToggle keeps using the real user.
   const eff = effectiveUser(user, viewMode);
+  // Polled only for readers who have an inbox at all — a client user's badge
+  // would be a request per minute for a nav item they never see.
+  const inboxUnread = useInboxUnread(isOps(eff) || isPartner(eff));
   const roleTag = isOps(eff) ? 'Operations' : isPartner(eff) ? 'Partner' : 'Client';
 
   /*
@@ -313,6 +351,17 @@ export function AppLayout() {
         onNavigate={close}
         badge={unread}
       />
+      {/* Ops and partner staff both have a cross-engagement inbox; a client's
+          conversation lives on their own engagement, so they do not. */}
+      {(isOps(eff) || isPartner(eff)) && (
+        <NavItem
+          to="/inbox"
+          label="Inbox"
+          icon={icons.communications}
+          onNavigate={close}
+          badge={inboxUnread}
+        />
+      )}
       {/* Firm users only: the console scopes itself from the session. Ops belong
           to no firm and reach a named one from the partner console instead. */}
       {isPartner(eff) && <NavItem to="/firm" label="Firm console" icon={icons.partner} onNavigate={close} />}
@@ -331,6 +380,7 @@ export function AppLayout() {
           <NavItem to="/admin/prompts" label="Bot prompts" icon={icons.prompts} onNavigate={close} />
           <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
           <NavItem to="/admin/outbox" label="Email outbox" icon={icons.outbox} onNavigate={close} />
+          <NavItem to="/admin/jobs" label="Background jobs" icon={icons.tasks} onNavigate={close} />
           <NavItem
             to="/admin/communications"
             label="Communications"

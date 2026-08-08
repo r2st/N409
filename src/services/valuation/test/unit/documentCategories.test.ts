@@ -11,16 +11,59 @@ import {
 import { DOCUMENT_KINDS } from '../../src/domain/pipeline.js';
 
 describe('document categories', () => {
-  it('defines exactly the six intake buckets, in checklist order', () => {
+  it('defines exactly the thirteen intake buckets, in checklist order', () => {
+    // The five a model is blocked on first, then the corporate record (0112),
+    // then the catch-all. Order is asserted and not just membership: it is
+    // what the checklist renders, and opening on "board resolutions" would
+    // bury the one required bucket.
     expect(DOCUMENT_CATEGORIES).toEqual([
       'captable_documents',
       'monthly_income_statements',
       'annual_income_statements',
       'balance_sheets',
       'projections',
+      'corporate_documents',
+      'shareholder_agreements',
+      'stock_option_plan',
+      'board_resolutions',
+      'pitch_deck',
+      'intellectual_property',
+      'prior_valuations',
       'uploads',
     ]);
     expect(DOCUMENT_CATEGORY_DEFS.map((d) => d.key)).toEqual([...DOCUMENT_CATEGORIES]);
+  });
+
+  it('keeps the catch-all last and open to every kind', () => {
+    // A file whose uploader will not choose has to land somewhere, so the
+    // bucket that exists for exactly that must not refuse a kind.
+    const uploads = DOCUMENT_CATEGORY_DEFS.at(-1)!;
+    expect(uploads.key).toBe('uploads');
+    for (const kind of DOCUMENT_KINDS) expect(kindFitsCategory(kind, 'uploads')).toBe(true);
+  });
+
+  it('routes the two kinds that name their own bucket', () => {
+    // Before 0112 both landed in the catch-all. Everything else that reaches
+    // a corporate bucket is `other`, which names five of them equally, so it
+    // stays uncategorised rather than being guessed at.
+    expect(categoryForKind('pitch_deck')).toBe('pitch_deck');
+    expect(categoryForKind('prior_valuation')).toBe('prior_valuations');
+    expect(categoryForKind('other')).toBe('uploads');
+  });
+
+  it('lets an "other" file be filed in any corporate bucket', () => {
+    // The whole point of the second axis: the bylaws, the option plan and the
+    // board consents are one kind to the extractor and three answers to
+    // "which thing we asked for is this".
+    for (const category of [
+      'corporate_documents',
+      'shareholder_agreements',
+      'stock_option_plan',
+      'board_resolutions',
+      'intellectual_property',
+    ] as const) {
+      expect(resolveDocumentFiling({ kind: 'other', category })).toEqual({ kind: 'other', category });
+    }
   });
 
   it('gives every kind a home', () => {
@@ -94,7 +137,7 @@ describe('document categories', () => {
     // An empty bucket is the thing the client needs to see, so filtering to
     // the ones with uploads would hide exactly the useful half.
     const summary = summarizeCategories([]);
-    expect(summary).toHaveLength(6);
+    expect(summary).toHaveLength(13);
     expect(summary.every((s) => s.count === 0)).toBe(true);
     expect(summary.filter((s) => !s.satisfied).map((s) => s.key)).toEqual(['captable_documents']);
   });

@@ -17,6 +17,9 @@ const detail: PartnerDetail = {
   archived_at: null,
   brand_color: null,
   logo_url: null,
+  subdomain: null,
+  prepaid: false,
+  cc_emails: [],
   user_count: 2,
   valuation_count: 12,
   valuations_by_group: { open: 4, in_review: 2, published: 6 },
@@ -39,6 +42,36 @@ const detail: PartnerDetail = {
   ],
 };
 
+const TOKENS = [
+  {
+    id: '01N409TOKEN0000000000000AA',
+    name: 'Portfolio sync',
+    token_prefix: 'n409_live_ab',
+    created_at: '2026-02-01T00:00:00Z',
+    last_used_at: null,
+    revoked_at: null,
+  },
+  {
+    id: '01N409TOKEN0000000000000BB',
+    name: 'Retired integration',
+    token_prefix: 'n409_live_cd',
+    created_at: '2026-01-01T00:00:00Z',
+    last_used_at: '2026-03-01T00:00:00Z',
+    revoked_at: '2026-04-01T00:00:00Z',
+  },
+];
+
+const VALUATIONS = [
+  {
+    id: '01N409VALUATION000000000AA',
+    number: '1766',
+    company_name: 'Portfolio One',
+    kind: '409a',
+    state: 'published',
+    created_at: '2026-05-01T00:00:00Z',
+  },
+];
+
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -49,6 +82,13 @@ function mockApi() {
     const method = init?.method ?? 'GET';
     calls.push({ url: path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     if (method === 'PATCH' && path.includes('/users/')) return jsonResponse({ user: {} });
+    if (path.includes(`/partners/${PARTNER_ID}/tokens`)) {
+      return method === 'POST'
+        ? jsonResponse({ token: {}, secret: 'n409_live_supersecret' }, 201)
+        : jsonResponse({ tokens: TOKENS });
+    }
+    if (path.includes(`/partners/${PARTNER_ID}/valuations`))
+      return jsonResponse({ valuations: VALUATIONS, page: 1, per_page: 10, total: VALUATIONS.length });
     if (path.includes(`/partners/${PARTNER_ID}`)) return jsonResponse({ partner: detail });
     throw new Error(`unexpected fetch ${path}`);
   });
@@ -133,6 +173,107 @@ describe('PartnerDetailPage', () => {
     await waitFor(() => {
       const patch = calls.find((c) => c.method === 'PATCH' && c.url.includes('/partners/'));
       expect(patch!.body).toEqual({ archived: true });
+    });
+  });
+
+  describe('address & commercial terms', () => {
+    it('saves the subdomain and the shared mailbox together', async () => {
+      const calls = mockApi();
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.type(await screen.findByLabelText('Subdomain'), 'vestd');
+      await user.type(screen.getByLabelText('CC addresses'), '409a@vestd.com\nfilings@vestd.com');
+      await user.click(screen.getByRole('button', { name: 'Save terms' }));
+
+      await waitFor(() => {
+        const patch = calls.find(
+          (c) => c.method === 'PATCH' && (c.body as Record<string, unknown>)?.subdomain !== undefined,
+        );
+        expect(patch!.body).toEqual({
+          subdomain: 'vestd',
+          cc_emails: ['409a@vestd.com', 'filings@vestd.com'],
+        });
+      });
+    });
+
+    it('drops the empty entry a trailing newline leaves behind', async () => {
+      const calls = mockApi();
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.type(await screen.findByLabelText('CC addresses'), '409a@vestd.com\n');
+      await user.click(screen.getByRole('button', { name: 'Save terms' }));
+
+      await waitFor(() => {
+        const patch = calls.find(
+          (c) => c.method === 'PATCH' && (c.body as Record<string, unknown>)?.cc_emails !== undefined,
+        );
+        expect((patch!.body as { cc_emails: string[] }).cc_emails).toEqual(['409a@vestd.com']);
+      });
+    });
+
+    it('saves prepaid on the toggle rather than waiting for a Save press', async () => {
+      // Prepaid changes what a client is shown at checkout; a toggle that only
+      // takes effect when you remember to press Save is how that goes wrong.
+      const calls = mockApi();
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click(await screen.findByRole('checkbox'));
+      await waitFor(() => {
+        const patch = calls.find(
+          (c) => c.method === 'PATCH' && (c.body as Record<string, unknown>)?.prepaid !== undefined,
+        );
+        expect(patch!.body).toEqual({ prepaid: true });
+      });
+    });
+  });
+
+  describe('API tokens', () => {
+    it('lists live tokens and hides revoked ones', async () => {
+      mockApi();
+      renderPage();
+      expect(await screen.findByText('Portfolio sync')).toBeInTheDocument();
+      expect(screen.queryByText('Retired integration')).toBeNull();
+    });
+
+    it('calls out a token that has never been used', async () => {
+      // Usually it means the integration was never wired up, not that it is idle.
+      mockApi();
+      renderPage();
+      expect(await screen.findByText('Never')).toBeInTheDocument();
+    });
+
+    it('shows the secret once, on issue, and keeps it until dismissed', async () => {
+      mockApi();
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.type(await screen.findByLabelText('New token name'), 'Portfolio sync');
+      await user.click(screen.getByRole('button', { name: 'Issue token' }));
+
+      expect(await screen.findByText('n409_live_supersecret')).toBeInTheDocument();
+      expect(screen.getByText(/only time it can be read/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /I have copied it/i }));
+      expect(screen.queryByText('n409_live_supersecret')).toBeNull();
+    });
+
+    it('refuses to issue an unnamed token', async () => {
+      mockApi();
+      renderPage();
+      await screen.findByText('Portfolio sync');
+      expect(screen.getByRole('button', { name: 'Issue token' })).toBeDisabled();
+    });
+  });
+
+  describe('engagements', () => {
+    it("lists the firm's engagements", async () => {
+      mockApi();
+      renderPage();
+      expect(await screen.findByText('Portfolio One')).toBeInTheDocument();
+      expect(screen.getByText('#1766')).toBeInTheDocument();
     });
   });
 });

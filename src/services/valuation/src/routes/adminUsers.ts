@@ -4,6 +4,10 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
 import { PARTNER_ROLES, ROLE_KEYS, USER_ADMIN_ROLES, type RoleKey } from '../domain/roles.js';
+import { CAPABILITIES, ROLE_DEFS, capabilitiesFor } from '../domain/permissions.js';
+import { normalizeSubdomain } from '../domain/partnerSubdomain.js';
+import { listValuations } from '../repos/valuations.js';
+import { VALUATION_STATES } from '../domain/valuation.js';
 import { toCsv } from '../domain/csv.js';
 import { hashPassword } from '../auth/password.js';
 import { bumpSessionEpoch, createUser, findUserByEmail, findUserById } from '../repos/users.js';
@@ -595,16 +599,106 @@ export function registerAdminUserRoutes(
           z.enum(PARTNER_EMAIL_TEMPLATE_KEYS),
           z.object({ subject: z.string().min(1).max(300), body: z.string().min(1).max(5000) }),
         ),
+        // The firm's public address (0106). Normalised below rather than by a
+        // regex here, so a rejection can say *why* — "reserved" and "too
+        // short" are different problems with different fixes.
+        subdomain: z.string().max(63).nullable(),
+        prepaid: z.boolean(),
+        // Ten is generous for a shared mailbox and low enough that a paste
+        // accident cannot turn one state change into a hundred sends.
+        cc_emails: z.array(z.string().email()).max(10),
       })
       .partial()
       .strict()
       .safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid partner', { errors: parsed.error.issues });
-    const partner = await updatePartner(deps.pool, id, parsed.data);
+
+    const patch = { ...parsed.data };
+    if (patch.subdomain != null) {
+      const normalized = normalizeSubdomain(patch.subdomain);
+      if ('problem' in normalized)
+        throw problems.unprocessable(
+          normalized.problem === 'reserved'
+            ? `"${patch.subdomain}" is reserved and cannot be used as a subdomain`
+            : 'A subdomain must be 3–63 characters of a–z, 0–9 and hyphens, not starting or ending with one',
+        );
+      patch.subdomain = normalized.subdomain;
+    }
+    if (patch.cc_emails) {
+      // Case-insensitive dedupe: the same mailbox twice is two copies of every
+      // email, and "Ops@firm.com" vs "ops@firm.com" is the way it happens.
+      const seen = new Set<string>();
+      patch.cc_emails = patch.cc_emails.filter((e) => {
+        const key = e.toLowerCase();
+        return seen.has(key) ? false : (seen.add(key), true);
+      });
+    }
+
+    let partner;
+    try {
+      partner = await updatePartner(deps.pool, id, patch);
+    } catch (err) {
+      // partners_subdomain_key — two firms cannot share an address, and the
+      // unique index is the arbiter because two admins can claim the same
+      // label in the same second.
+      if ((err as { code?: string }).code === '23505')
+        throw problems.conflict(`The subdomain "${patch.subdomain}" is already taken`);
+      throw err;
+    }
     if (!partner) throw problems.notFound();
     await audit(principal.id, 'partner_updated', 'partner', partner.id, partner.name, {
       fields: Object.keys(parsed.data),
     });
     return { partner };
+  });
+
+  /**
+   * A partner's engagements. Reuses `listValuations` with an explicit partner
+   * scope rather than the caller's own, so an ops admin sees the firm's list
+   * exactly as the firm sees it — which is the point of opening the page.
+   */
+  app.get('/api/v1/partners/:id/valuations', { preHandler: app.authenticate }, async (req) => {
+    requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    if (!(await findPartnerById(deps.pool, id))) throw problems.notFound();
+
+    const parsed = z
+      .object({
+        state: z.enum(VALUATION_STATES).optional(),
+        q: z.string().max(200).optional(),
+        page: pageParam(),
+        per_page: z.coerce.number().int().min(1).max(100).default(25),
+      })
+      .safeParse(req.query);
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    const q = parsed.data;
+
+    const { items, total } = await listValuations(
+      deps.pool,
+      { kind: 'partner', partnerId: id },
+      { state: q.state, q: q.q, page: q.page, perPage: q.per_page },
+    );
+    return { valuations: items, page: q.page, per_page: q.per_page, total };
+  });
+
+  // ── Roles & capabilities ───────────────────────────────────────────────────
+
+  /**
+   * The role catalog with its capability matrix. Served rather than hard-coded
+   * in the frontend because it is the answer to "what am I granting", and an
+   * admin assigning one of eighteen roles from a dropdown of bare keys is
+   * choosing without being told.
+   */
+  app.get('/api/v1/roles', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    return { roles: ROLE_DEFS, capabilities: CAPABILITIES };
+  });
+
+  /** What the signed-in user may do — what the frontend hides its nav on. */
+  app.get('/api/v1/me/capabilities', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    return { roles: principal.roles, capabilities: capabilitiesFor(principal) };
   });
 }

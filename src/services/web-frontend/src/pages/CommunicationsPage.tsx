@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
-import { VALUATION_STATES, type AutoEmail, type CommunicationTemplate } from '../lib/types';
+import {
+  TEMPLATE_CATEGORIES,
+  TEMPLATE_CATEGORY_LABELS,
+  VALUATION_STATES,
+  type AutoEmail,
+  type CommunicationTemplate,
+  type TemplateCategory,
+  type TemplateVariable,
+} from '../lib/types';
 import { STATE_LABELS } from '../lib/format';
 import {
   Button,
@@ -73,27 +81,136 @@ function EnabledBadge({ enabled }: { enabled: boolean }) {
   );
 }
 
+function CategoryBadge({ category }: { category: TemplateCategory }) {
+  return (
+    <span className="inline-block rounded-full border border-paper-300 bg-paper-100 px-2.5 py-0.5 text-xs font-semibold text-ink-600">
+      {TEMPLATE_CATEGORY_LABELS[category]}
+    </span>
+  );
+}
+
+/**
+ * The variable palette, served from the same catalog the renderer validates
+ * against (`/admin/communication-templates/variables`). Hard-coding the list
+ * here is how the hint text on the subject field came to name four variables
+ * out of fifteen and go stale — the promise and the picker have to be one
+ * thing.
+ *
+ * Clicking a name inserts it at the cursor of whichever field was last
+ * focused, because the alternative is an operator typing `{{valuation_date}}`
+ * by hand, and a typo there is an email a client reads with braces in it.
+ */
+function VariablePalette({
+  variables,
+  onInsert,
+}: {
+  variables: TemplateVariable[];
+  onInsert: (token: string) => void;
+}) {
+  const scopes: Array<{ key: TemplateVariable['scope']; label: string }> = [
+    { key: 'always', label: 'Always available' },
+    { key: 'valuation', label: 'Engagement' },
+    { key: 'link', label: 'Links' },
+  ];
+  return (
+    <div className="rounded-md border border-paper-300 bg-paper-50 p-4">
+      <div className="overline text-ink-400">Variables</div>
+      <div className="mt-2 space-y-3">
+        {scopes.map((scope) => {
+          const inScope = variables.filter((v) => v.scope === scope.key);
+          if (inScope.length === 0) return null;
+          return (
+            <div key={scope.key}>
+              <div className="text-xs font-semibold text-ink-500">{scope.label}</div>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {inScope.map((v) => (
+                  <button
+                    key={v.name}
+                    type="button"
+                    title={`${v.description} (e.g. ${v.sample})`}
+                    onClick={() => onInsert(`{{${v.name}}}`)}
+                    className="cursor-pointer rounded border border-paper-300 bg-surface px-2 py-1 font-mono text-[0.7rem] text-ink-700 hover:border-bond-400 hover:text-bond-700"
+                  >
+                    {v.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Templates tab ─────────────────────────────────────────────────────────────
 
 function TemplateEditor({
+  // Defaulted: the palette is fetched separately and may not have arrived (or
+  // may have failed) when the editor opens. Without it the editor degrades to
+  // typing variables by hand, which is what this page did before — it must not
+  // fail to render.
+  variables = [],
   template,
   onSaved,
   onCancel,
 }: {
   template: CommunicationTemplate | null;
+  variables?: TemplateVariable[];
   onSaved: () => void;
   onCancel: () => void;
 }) {
   const isNew = template === null;
   const [key, setKey] = useState(template?.key ?? '');
   const [channel, setChannel] = useState<'email' | 'sms'>(template?.channel ?? 'email');
+  const [category, setCategory] = useState<TemplateCategory>(template?.category ?? 'account');
   const [description, setDescription] = useState(template?.description ?? '');
   const [subject, setSubject] = useState(template?.subject ?? '');
   const [body, setBody] = useState(template?.body ?? '');
   const [enabled, setEnabled] = useState(template?.enabled ?? true);
-  const [preview, setPreview] = useState<{ subject: string; body: string } | null>(null);
+  const [preview, setPreview] = useState<{
+    subject: string;
+    body: string;
+    unknown_variables: string[];
+  } | null>(null);
+  const [previewValuation, setPreviewValuation] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  // Which field the palette inserts into. Tracked on focus rather than
+  // guessed, so clicking a variable after editing the subject does not drop
+  // it at the end of the body.
+  const [focused, setFocused] = useState<'subject' | 'body'>('body');
+
+  const insert = (token: string) => {
+    const el = focused === 'subject' ? subjectRef.current : bodyRef.current;
+    const setter = focused === 'subject' ? setSubject : setBody;
+    const current = focused === 'subject' ? subject : body;
+    if (!el) {
+      setter(current + token);
+      return;
+    }
+    const start = el.selectionStart ?? current.length;
+    const end = el.selectionEnd ?? current.length;
+    setter(current.slice(0, start) + token + current.slice(end));
+    // Restore the caret after React re-renders, so a second click inserts
+    // after the first rather than back at the original offset.
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(start + token.length, start + token.length);
+    });
+  };
+
+  // What the *editor* shows, not what the server last saw: the operator is
+  // looking at unsaved text, and warning them about the saved version would
+  // be answering a question they did not ask.
+  const declared = new Set(variables.map((v) => v.name));
+
+  const unknownNow = [
+    ...new Set([...subject.matchAll(/\{\{(\w+)\}\}/g), ...body.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]!)),
+  ].filter((name) => !declared.has(name));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -103,12 +220,12 @@ function TemplateEditor({
       if (isNew) {
         await api('/admin/communication-templates', {
           method: 'POST',
-          body: { key, channel, description, subject, body, enabled },
+          body: { key, channel, category, description, subject, body, enabled },
         });
       } else {
         await api(`/admin/communication-templates/${template.id}`, {
           method: 'PATCH',
-          body: { description, subject, body, enabled },
+          body: { category, description, subject, body, enabled },
         });
       }
       onSaved();
@@ -119,14 +236,31 @@ function TemplateEditor({
     }
   };
 
+  /**
+   * Previews what is on screen, not what is stored — the editor's content is
+   * usually not the table's yet. Against a real engagement when one is named:
+   * a template reads fine against "Acme Corp" and falls apart against a
+   * company whose legal name runs to sixty characters, and the only way to
+   * find that out before the client does is to try it.
+   */
   const runPreview = async () => {
     if (isNew) return;
     try {
       setPreview(
-        await api(`/admin/communication-templates/${template.id}/preview`, { method: 'POST', body: {} }),
+        await api(`/admin/communication-templates/${template.id}/preview`, {
+          method: 'POST',
+          body: {
+            subject,
+            body,
+            ...(previewValuation.trim() ? { valuation_id: previewValuation.trim() } : {}),
+          },
+        }),
       );
-    } catch {
-      setError('Preview failed.');
+      setError(null);
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 404 ? 'No engagement with that id.' : 'Preview failed.',
+      );
     }
   };
 
@@ -158,29 +292,59 @@ function TemplateEditor({
         </Field>
       </div>
       {channel === 'sms' && <SmsPreviewNote />}
-      <Field label="Description">
-        <TextInput
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What this template is for"
-        />
-      </Field>
-      {channel === 'email' && (
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field
-          label="Subject"
-          hint="Supports {{company_name}}, {{kind_label}}, {{valuation_number}}, {{link}}"
+          label="Category"
+          hint="Which stage of an engagement sends this — 'Account' for the ones that are not about an engagement at all"
         >
-          <TextInput value={subject} onChange={(e) => setSubject(e.target.value)} required />
+          <Select value={category} onChange={(e) => setCategory(e.target.value as TemplateCategory)}>
+            {TEMPLATE_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {TEMPLATE_CATEGORY_LABELS[c]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Description">
+          <TextInput
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What this template is for"
+          />
+        </Field>
+      </div>
+      {channel === 'email' && (
+        <Field label="Subject" hint="Click a variable below to insert it at the cursor">
+          <TextInput
+            ref={subjectRef}
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            onFocus={() => setFocused('subject')}
+            required
+          />
         </Field>
       )}
-      <Field label="Body" hint="Supports {{var}} placeholders; unknown placeholders are left as-is">
+      <Field label="Body" hint="Unknown placeholders are left verbatim at send time — see the warning below">
         <textarea
+          ref={bodyRef}
           className={`${inputClass} min-h-28 font-mono text-xs`}
           value={body}
           onChange={(e) => setBody(e.target.value)}
+          onFocus={() => setFocused('body')}
           required
         />
       </Field>
+
+      <VariablePalette variables={variables} onInsert={insert} />
+
+      {unknownNow.length > 0 && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <strong>Nothing supplies {unknownNow.map((n) => `{{${n}}}`).join(', ')}.</strong> These render
+          verbatim in the delivered message. Saving is still allowed — the catalog grows, and a variable you
+          are expecting may simply not exist yet.
+        </p>
+      )}
+
       <label className="flex items-center gap-2 text-sm text-ink-700">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         Enabled — workflow keys fall back to built-in content when disabled
@@ -188,19 +352,32 @@ function TemplateEditor({
       {error && <ErrorNote>{error}</ErrorNote>}
       {preview && (
         <div className="rounded-md border border-paper-300 bg-paper-50 p-4 text-sm">
-          <div className="overline text-ink-400">Preview (sample data)</div>
+          <div className="overline text-ink-400">
+            Preview {previewValuation.trim() ? '(this engagement)' : '(sample data)'}
+          </div>
           {preview.subject && <div className="mt-1 font-semibold text-ink-900">{preview.subject}</div>}
           <p className="mt-1 whitespace-pre-wrap text-ink-600">{preview.body}</p>
         </div>
       )}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-end gap-2">
         <Button type="submit" disabled={busy}>
           {isNew ? 'Create template' : 'Save template'}
         </Button>
         {!isNew && (
-          <Button type="button" variant="secondary" onClick={() => void runPreview()}>
-            Preview
-          </Button>
+          <>
+            <div className="w-72">
+              <Field label="Preview against" hint="An engagement id, or blank for sample data">
+                <TextInput
+                  value={previewValuation}
+                  onChange={(e) => setPreviewValuation(e.target.value)}
+                  placeholder="01JQ… (optional)"
+                />
+              </Field>
+            </div>
+            <Button type="button" variant="secondary" onClick={() => void runPreview()}>
+              Preview
+            </Button>
+          </>
         )}
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
@@ -210,17 +387,30 @@ function TemplateEditor({
   );
 }
 
+interface TemplateListResponse {
+  templates: CommunicationTemplate[];
+  categories?: Array<{ key: TemplateCategory; label: string; count: number }>;
+}
+
 function TemplatesTab() {
   const [templates, setTemplates] = useState<CommunicationTemplate[] | null>(null);
+  const [counts, setCounts] = useState<TemplateListResponse['categories']>([]);
+  const [variables, setVariables] = useState<TemplateVariable[]>([]);
+  const [category, setCategory] = useState<'all' | TemplateCategory>('all');
   const [editing, setEditing] = useState<CommunicationTemplate | null | 'new'>();
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const { templates: items } = await api<{ templates: CommunicationTemplate[] }>(
-        '/admin/communication-templates',
-      );
-      setTemplates(items);
+      const qs = category === 'all' ? '' : `?category=${category}`;
+      const res = await api<TemplateListResponse>(`/admin/communication-templates${qs}`);
+      setTemplates(res.templates);
+      // Counts always come back over the whole table, so the tab strip does
+      // not collapse to "the one I am looking at" once a filter is applied.
+      // Defaulted rather than asserted: a filtered response carries them too,
+      // and an older server that does not send them should cost the tab strip
+      // its numbers, not the page its render.
+      if (category === 'all') setCounts(res.categories ?? []);
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 403
@@ -228,11 +418,22 @@ function TemplatesTab() {
           : 'Could not load templates.',
       );
     }
-  }, []);
+  }, [category]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Fetched once, not per render of the editor: the catalog is the same for
+  // every template on the page.
+  useEffect(() => {
+    api<{ variables: TemplateVariable[] }>('/admin/communication-templates/variables')
+      .then((d) => setVariables(d.variables))
+      .catch(() => {
+        // A missing palette degrades to typing variables by hand, which is
+        // what this page did before. Not worth an error banner.
+      });
+  }, []);
 
   const remove = async (t: CommunicationTemplate) => {
     if (!window.confirm(`Delete template "${t.key}"?`)) return;
@@ -261,9 +462,30 @@ function TemplatesTab() {
           <ErrorNote>{error}</ErrorNote>
         </div>
       )}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {(['all', ...TEMPLATE_CATEGORIES] as const).map((c) => {
+          const count = c === 'all' ? undefined : counts.find((x) => x.key === c)?.count;
+          return (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                category === c
+                  ? 'bg-ink-900 text-paper-50'
+                  : 'border border-ink-200 bg-surface text-ink-600 hover:border-ink-400'
+              }`}
+            >
+              {c === 'all' ? 'All' : TEMPLATE_CATEGORY_LABELS[c]}
+              {count !== undefined && <span className="tnum ml-1.5 opacity-70">{count}</span>}
+            </button>
+          );
+        })}
+      </div>
+
       {editing !== undefined && (
         <TemplateEditor
           template={editing === 'new' ? null : editing}
+          variables={variables}
           onSaved={() => {
             setEditing(undefined);
             void load();
@@ -281,6 +503,7 @@ function TemplatesTab() {
             <thead>
               <tr className="border-b border-paper-300 text-left">
                 <th className="overline px-5 py-3 font-semibold text-ink-400">Key</th>
+                <th className="overline px-4 py-3 font-semibold text-ink-400">Category</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Channel</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Subject / body</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Status</th>
@@ -297,6 +520,9 @@ function TemplatesTab() {
                     )}
                   </td>
                   <td className="px-4 py-3.5">
+                    <CategoryBadge category={t.category} />
+                  </td>
+                  <td className="px-4 py-3.5">
                     <ChannelBadge channel={t.channel} />
                   </td>
                   <td className="max-w-72 px-4 py-3.5 text-ink-600">
@@ -308,6 +534,11 @@ function TemplatesTab() {
                     <div className="truncate text-xs" title={t.body}>
                       {t.body}
                     </div>
+                    {t.unknown_variables && t.unknown_variables.length > 0 && (
+                      <div className="mt-1 text-xs font-semibold text-amber-700">
+                        Unsupplied: {t.unknown_variables.map((n) => `{{${n}}}`).join(', ')}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3.5">
                     <EnabledBadge enabled={t.enabled} />

@@ -4,8 +4,19 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { displayName, formatDate, formatDateTime, GROUP_LABELS } from '../lib/format';
 import { PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
-import type { PartnerDetail } from '../lib/types';
-import { Button, ErrorNote, Field, Spinner, StatCard, TextInput } from '../components/ui';
+import type { PartnerDetail, ValuationKind, ValuationState } from '../lib/types';
+import {
+  Button,
+  ErrorNote,
+  Field,
+  KindBadge,
+  Pagination,
+  Spinner,
+  StateBadge,
+  StatCard,
+  TextInput,
+  pageCountOf,
+} from '../components/ui';
 
 const GROUP_ORDER = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
 
@@ -62,6 +73,258 @@ function BrandingPreview({
   );
 }
 
+interface ApiToken {
+  id: string;
+  name: string;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/**
+ * Partner API credentials. The secret is returned exactly once, at creation —
+ * it is stored as a hash and nothing can retrieve it afterwards, so it is
+ * held in component state and shown until the admin dismisses it rather than
+ * flashed in a toast that a mistimed blink loses.
+ */
+function ApiTokenPanel({ partnerId }: { partnerId: string }) {
+  const [tokens, setTokens] = useState<ApiToken[] | null>(null);
+  const [name, setName] = useState('');
+  const [issued, setIssued] = useState<{ name: string; secret: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const { tokens: rows } = await api<{ tokens: ApiToken[] }>(`/partners/${partnerId}/tokens`);
+      setTokens(rows);
+    } catch {
+      setError('Could not load API tokens.');
+    }
+  }, [partnerId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api<{ secret: string }>(`/partners/${partnerId}/tokens`, {
+        method: 'POST',
+        body: { name: name.trim() },
+      });
+      setIssued({ name: name.trim(), secret: res.secret });
+      setName('');
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not create the token.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (token: ApiToken) => {
+    if (!window.confirm(`Revoke "${token.name}"? Any integration using it stops working immediately.`))
+      return;
+    setBusy(true);
+    try {
+      await api(`/api-tokens/${token.id}`, { method: 'DELETE' });
+      await load();
+    } catch {
+      setError('Could not revoke the token.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const live = (tokens ?? []).filter((t) => !t.revoked_at);
+
+  return (
+    <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+      <h2 className="overline mb-1 text-ink-400">API tokens</h2>
+      <p className="text-sm text-ink-400">
+        Credentials for this partner&rsquo;s server-to-server integration. A token acts for the whole firm, so
+        revoking one is the only way to cut off an integration that has gone wrong.
+      </p>
+
+      {issued && (
+        <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="text-sm font-semibold text-amber-900">
+            Copy the secret for &ldquo;{issued.name}&rdquo; now
+          </div>
+          <p className="mt-0.5 text-xs text-amber-800">
+            It is stored as a hash. This is the only time it can be read.
+          </p>
+          <code className="mt-2 block overflow-x-auto rounded border border-amber-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900">
+            {issued.secret}
+          </code>
+          <button
+            onClick={() => setIssued(null)}
+            className="mt-2 cursor-pointer text-xs font-semibold text-amber-900 underline"
+          >
+            I have copied it
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-4">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+
+      <form onSubmit={(e) => void create(e)} className="mt-4 flex flex-wrap items-end gap-3">
+        <Field label="New token name" hint="Names the integration, not the person.">
+          <TextInput
+            aria-label="New token name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Portfolio sync"
+            required
+            className="!w-72"
+          />
+        </Field>
+        <Button type="submit" disabled={busy || name.trim() === ''}>
+          Issue token
+        </Button>
+      </form>
+
+      {live.length === 0 ? (
+        <p className="mt-4 text-sm text-ink-400">No active tokens.</p>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm" aria-label="API tokens">
+            <thead>
+              <tr className="border-b border-paper-300 text-left text-xs text-ink-400 uppercase">
+                <th className="py-1.5 pr-3">Name</th>
+                <th className="py-1.5 pr-3">Prefix</th>
+                <th className="py-1.5 pr-3">Created</th>
+                <th className="py-1.5 pr-3">Last used</th>
+                <th className="py-1.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {live.map((t) => (
+                <tr key={t.id} className="border-b border-paper-200 last:border-0">
+                  <td className="py-2 pr-3 font-semibold text-ink-800">{t.name}</td>
+                  <td className="py-2 pr-3 font-mono text-xs text-ink-500">{t.token_prefix}…</td>
+                  <td className="py-2 pr-3 text-ink-500">{formatDate(t.created_at)}</td>
+                  {/* Never used is worth showing as such: it usually means the
+                    integration was never wired up, not that it is idle. */}
+                  <td className="py-2 pr-3 text-ink-500">
+                    {t.last_used_at ? formatDateTime(t.last_used_at) : 'Never'}
+                  </td>
+                  <td className="py-2 text-right">
+                    <button
+                      onClick={() => void revoke(t)}
+                      disabled={busy}
+                      className="cursor-pointer text-xs font-semibold text-red-600 hover:text-red-700"
+                    >
+                      Revoke
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+interface PartnerValuation {
+  id: string;
+  number: string;
+  company_name: string;
+  kind: ValuationKind;
+  state: ValuationState;
+  created_at: string;
+}
+
+/**
+ * The firm's engagements, as the firm sees them. Ops belong to no firm, so
+ * this is scoped by the partner named in the URL rather than by the caller's
+ * own scope — which is the point of opening the page.
+ */
+function PartnerValuations({ partnerId }: { partnerId: string }) {
+  const [rows, setRows] = useState<PartnerValuation[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ valuations: PartnerValuation[]; total: number }>(
+      `/partners/${partnerId}/valuations?page=${page}&per_page=10`,
+    )
+      .then((d) => {
+        setRows(d.valuations);
+        setTotal(d.total);
+      })
+      .catch(() => setError('Could not load this partner’s engagements.'));
+  }, [partnerId, page]);
+
+  return (
+    <section className="mt-10">
+      <div className="flex items-center justify-between">
+        <h2 className="overline text-ink-400">Engagements</h2>
+        <Link
+          to={`/valuations?partner_id=${partnerId}`}
+          className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+        >
+          Open in the valuations list →
+        </Link>
+      </div>
+      {error && (
+        <div className="mt-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+      {!rows ? (
+        <div className="mt-3">
+          <Spinner />
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="mt-3 text-sm text-ink-400">No engagements yet.</p>
+      ) : (
+        <>
+          <div className="mt-3 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+            <table className="w-full min-w-[620px] text-sm" aria-label="Partner engagements">
+              <tbody>
+                {rows.map((v) => (
+                  <tr key={v.id} className="border-b border-paper-200 last:border-0">
+                    <td className="px-5 py-3">
+                      <Link
+                        to={`/valuations/${v.id}`}
+                        className="font-semibold text-ink-900 hover:text-bond-700"
+                      >
+                        {v.company_name}
+                      </Link>
+                      <div className="tnum text-xs text-ink-400">#{v.number}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <KindBadge kind={v.kind} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <StateBadge state={v.state} />
+                    </td>
+                    <td className="px-4 py-3 text-right text-xs text-ink-400">{formatDate(v.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={page} pageCount={pageCountOf(total, 10)} onPage={setPage} className="mt-4" />
+        </>
+      )}
+    </section>
+  );
+}
+
 /** P1 #7 — one partner organisation: rollups, users, branding, archive. */
 export function PartnerDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -73,6 +336,8 @@ export function PartnerDetailPage() {
   const [brandColor, setBrandColor] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [templates, setTemplates] = useState<Record<string, { subject: string; body: string }>>({});
+  const [subdomain, setSubdomain] = useState('');
+  const [ccEmails, setCcEmails] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -81,6 +346,10 @@ export function PartnerDetailPage() {
       setBrandColor(p.brand_color ?? '');
       setLogoUrl(p.logo_url ?? '');
       setTemplates(p.email_templates ?? {});
+      setSubdomain(p.subdomain ?? '');
+      // One address per line: a comma-separated field invites a trailing
+      // comma, and a trailing comma is an empty address the API rejects.
+      setCcEmails((p.cc_emails ?? []).join('\n'));
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 404
@@ -115,6 +384,20 @@ export function PartnerDetailPage() {
     void patch(
       { brand_color: brandColor.trim() || null, logo_url: logoUrl.trim() || null },
       'Could not save the branding.',
+    );
+  };
+
+  const saveTerms = (e: FormEvent) => {
+    e.preventDefault();
+    void patch(
+      {
+        subdomain: subdomain.trim() || null,
+        cc_emails: ccEmails
+          .split(/[\n,]/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+      },
+      'Could not save the commercial terms.',
     );
   };
 
@@ -281,6 +564,76 @@ export function PartnerDetailPage() {
           </div>
         )}
       </section>
+
+      {/* Address + commercial terms (0106, 0113) */}
+      <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+        <h2 className="overline mb-1 text-ink-400">Address &amp; commercial terms</h2>
+        <p className="text-sm text-ink-400">
+          The address this firm gives its clients, and the two facts about the relationship the platform needs
+          to behave correctly.
+        </p>
+        <form onSubmit={saveTerms} className="mt-4 space-y-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <Field
+              label="Subdomain"
+              hint="3–63 characters of a–z, 0–9 and hyphens. Blank keeps them on the platform's own address."
+            >
+              <TextInput
+                aria-label="Subdomain"
+                value={subdomain}
+                onChange={(e) => setSubdomain(e.target.value)}
+                placeholder="acme"
+                className="!w-56"
+              />
+            </Field>
+            {partner.subdomain && (
+              <p className="pb-2 font-mono text-xs text-ink-500">
+                {partner.subdomain}
+                <span className="text-ink-400">.app.n409.local</span>
+              </p>
+            )}
+          </div>
+
+          <Field
+            label="CC addresses"
+            hint="One per line. Copied on this firm's client correspondence — usually a shared mailbox."
+          >
+            <textarea
+              aria-label="CC addresses"
+              value={ccEmails}
+              onChange={(e) => setCcEmails(e.target.value)}
+              rows={3}
+              placeholder="filings@yourfirm.com"
+              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
+            />
+          </Field>
+
+          <Button type="submit" disabled={busy}>
+            Save terms
+          </Button>
+        </form>
+
+        {/* Saved on its own rather than with the form: prepaid changes what a
+            client is shown at checkout, and a toggle that only takes effect
+            when you remember to press Save is how that goes wrong. */}
+        <label className="mt-5 flex items-start gap-3 border-t border-paper-200 pt-5 text-sm text-ink-700">
+          <input
+            type="checkbox"
+            checked={partner.prepaid}
+            disabled={busy}
+            onChange={(e) => void patch({ prepaid: e.target.checked }, 'Could not change the terms.')}
+            className="mt-0.5 cursor-pointer"
+          />
+          <span>
+            <strong>Prepaid</strong> — this firm has already paid for its engagements in bulk. Their clients
+            are never shown a payment link.
+          </span>
+        </label>
+      </section>
+
+      <ApiTokenPanel partnerId={partner.id} />
+
+      <PartnerValuations partnerId={partner.id} />
 
       {/* White-label branding: portal, login page, and report PDFs (improvement 8) */}
       <section className="mt-10 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">

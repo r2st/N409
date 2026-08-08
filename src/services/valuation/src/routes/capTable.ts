@@ -15,7 +15,9 @@ import {
   validateCapTable,
   type ColumnMapping,
 } from '../domain/capTable.js';
+import { buildCapTableGraph } from '../domain/capTableGraph.js';
 import { findCapTable, saveCapTable } from '../repos/capTables.js';
+import { listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 
 /**
@@ -208,4 +210,26 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
       return { inputs: toWaterfallInputs(table.entries) };
     },
   );
+
+  /**
+   * The cap table as a dependency graph — conversion and seniority drawn
+   * rather than tabulated. Same readership as the table itself (owner + ops):
+   * it is a rearrangement of data the caller can already see, not a new
+   * disclosure.
+   */
+  app.get('/api/v1/valuations/:id/cap-table/graph', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadReadable(deps.pool, id, principal);
+    const table = await findCapTable(deps.pool, id);
+    if (!table) throw problems.notFound('No cap table imported yet');
+    const rounds = await listRounds(deps.pool, id);
+    return {
+      graph: buildCapTableGraph({
+        companyName: valuation.company_name,
+        entries: table.entries,
+        rounds,
+      }),
+    };
+  });
 }

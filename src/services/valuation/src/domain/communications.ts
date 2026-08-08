@@ -33,10 +33,38 @@ export const AUTO_EMAIL_CONDITIONS = [
 ] as const;
 export type AutoEmailCondition = (typeof AUTO_EMAIL_CONDITIONS)[number];
 
+/**
+ * How the template list is grouped (migration 0113). Five of the six are the
+ * lifecycle groups from `domain/operations.ts` — a template is filed under the
+ * stage of the engagement that sends it. `account` is for the templates that
+ * are not about an engagement at all: password reset, email verification, the
+ * seat invitation. Those three deliver unconditionally, so filing one under a
+ * lifecycle state would imply a gate that is not there.
+ */
+export const TEMPLATE_CATEGORIES = [
+  'account',
+  'open',
+  'in_review',
+  'drafted',
+  'published',
+  'closed',
+] as const;
+export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number];
+
+export const TEMPLATE_CATEGORY_LABELS: Record<TemplateCategory, string> = {
+  account: 'Account',
+  open: 'Open',
+  in_review: 'In review',
+  drafted: 'Drafted',
+  published: 'Published',
+  closed: 'Closed',
+};
+
 export interface CommunicationTemplateRow {
   id: string;
   key: string;
   channel: CommChannel;
+  category: TemplateCategory;
   description: string;
   subject: string;
   body: string;
@@ -84,17 +112,39 @@ export function renderTemplate(text: string, vars: TemplateVars): string {
   });
 }
 
-/** The variable set every valuation-scoped template can interpolate. */
+/**
+ * The variable set every valuation-scoped template can interpolate — the
+ * `valuation` scope of TEMPLATE_VARIABLES, and the whole of what this layer
+ * can answer from a valuation row alone.
+ *
+ * A field the row has not reached yet renders as the empty string rather than
+ * surviving as `{{due_date}}`: an engagement with no promised date is the
+ * normal case for most of its life, and a client reading literal braces in the
+ * middle of a sentence is worse than reading a sentence with a gap in it. That
+ * is the opposite of `renderTemplate`'s treatment of an *unknown* name, and
+ * deliberately so — unknown means nobody will ever supply it, which is a
+ * mistake worth showing; empty means we do not know it yet.
+ */
 export function valuationTemplateVars(v: {
   company_name: string;
   kind: string;
   number?: number | string | null;
+  valuation_date?: Date | string | null;
+  due_date?: Date | string | null;
+  state?: string | null;
+  partner_name?: string | null;
 }): TemplateVars {
+  const day = (d: Date | string | null | undefined): string =>
+    d instanceof Date ? d.toISOString().slice(0, 10) : (d ?? '').toString().slice(0, 10);
   return {
     company_name: v.company_name,
     kind: v.kind,
     kind_label: v.kind.toUpperCase(),
     valuation_number: v.number ?? '',
+    valuation_date: day(v.valuation_date),
+    due_date: day(v.due_date),
+    state_label: v.state ? v.state.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : '',
+    partner_name: v.partner_name ?? '',
   };
 }
 
