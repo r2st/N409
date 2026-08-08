@@ -1,10 +1,97 @@
-79f5ba59a035bb278b445bfab113fa90d1175628
+aae4e25e2544123645a9ec8bc67ddde48d00615b
 # N409 deployed revision
-# commit:    79f5ba59a035bb278b445bfab113fa90d1175628
-# subject:   fix(web): the template category counts state is never undefined
-# previous:  8861b0c (fund/debt measurement portfolios) — never separately
-#            recorded here; 4a8d306's entry below is the one this replaces.
-# includes:  2 commits.
+# commit:    aae4e25e2544123645a9ec8bc67ddde48d00615b
+# subject:   docs: the implementation design and its gap analysis
+# previous:  f883d6a (partner-scope route sweep) — the entry below it, from
+#            79f5ba5, is the last one separately recorded.
+# includes:  4 commits.
+#
+#            dd178b7 — the eight P0 gaps from docs/N409-Implementation-Design.md.
+#              Six of them were finished work nobody could reach: the engines,
+#              the adapter, the schema and the endpoints were done and tested,
+#              and what was missing was the caller, the page, the column, the
+#              list.
+#
+#              Perplexity market research, wired (§12.3) — `ai/app/perplexity.py`
+#                and POST /ai/v1/research had been complete and fenced for
+#                months with nothing calling them, so the industry-conditions
+#                and market-outlook paragraphs were still written from the
+#                uploaded corpus alone. `market_research` (0116) is append-only
+#                and a re-run supersedes rather than overwrites, because a
+#                report cites the research it was drafted from and rewriting
+#                the answer under the citation makes the citation a lie.
+#                routes/research.ts, a ResearchTab, the thread into
+#                report_narrative, a sources exhibit and the evidence bundle.
+#                Grounded rows only travel: an answer Sonar returned with no
+#                citations is an expensive completion.
+#
+#                The containment is structural, not documented. Every question
+#                is built from a fixed template plus `PublicResearchFacts`,
+#                which has nowhere to put a company name, a cap table or a
+#                financial statement — so there is no path from client text
+#                into a web search, and perplexity.py's placeholder tripwire is
+#                a second line of defence rather than the only one.
+#
+#              eleven market-research prompts (§12.1) — seeded as six pipelines
+#                (0116/0117). 409.ai's six regional market_* variants are one
+#                region-parameterised topic; six rows is six places to fix a
+#                wording change. Bound to Sonar tiers, not OpenRouter models.
+#
+#              specialty engine UI (§7.2) — eight engines and eleven product
+#                kinds were operable only with a bearer token and curl. The tab
+#                reads the kind→engine map from the server rather than
+#                restating it, and names the run inputs the questionnaire
+#                cannot supply (a PPA's intangible schedule, an ASC 820
+#                position schedule) before the run rather than as a 422 after.
+#
+#              narrative prompt library editor (§6.3) — 0114 existed so a
+#                reviewer could change DLOM framing without a deploy; without a
+#                page they still needed an engineer with a token. The preview
+#                panel is the part that earns its place.
+#
+#              promotional flag on auto emails (§13.2) — the CAN-SPAM/GDPR/PECR
+#                line, and a compliance control rather than a feature. One
+#                asymmetric predicate tested both ways: a marketing opt-out
+#                suppresses promotional campaigns only, and a transactional
+#                send ignores marketing consent entirely. Six of the twenty-
+#                seven campaigns are marketing; the default is transactional.
+#
+#              nine named listing tabs (§4.2) + sidebar counts (§3.2) —
+#                NAMED_BUCKETS in domain/workflow.ts, read by both the count
+#                query and the row filter. Two copies would be two answers to
+#                "how many are in progress". `group` stays a URL alias.
+#
+#              data remediation (§7.4) — one surface hosting both stale-data
+#                queries. The bulk re-run refuses published engagements by
+#                construction rather than by a checkbox: a published 409A is a
+#                signed document a client has acted on.
+#
+#            cadcaa2 — the accounting OAuth callback is unauthenticated, and
+#              until the state JWT verifies every parameter is attacker-
+#              controlled. They were read off req.query as an untyped cast and
+#              used unbounded, `realmId` straight into external_org_id. Bounded
+#              with a lenient schema — providers append their own keys and a
+#              strict one would fail real callbacks.
+#
+#            bbefd3d — the monitoring dashboard fetched each engagement's cap
+#              table, params, latest calculation and board approval a row at a
+#              time. Batch forms keyed by valuation id; one round trip per
+#              table instead of one per valuation.
+#
+# verified:  all five units active on aae4e25 (ports 3000-3004 report it),
+#            migrations 0116/0117/0118 applied, six research prompts seeded on
+#            their Sonar tiers, 6 of 27 auto_emails promotional, and the five
+#            new routes answer 401 unauthenticated.
+# gap:       PERPLEXITY_API_KEY is not set in /opt/N409/.env, so every research
+#            topic answers 503 ("web-grounded research unavailable") and the
+#            ResearchTab has nothing to show. The whole chain — schema, route,
+#            containment, tab, narrative thread, sources exhibit — is live and
+#            tested; it is one environment variable away from producing cited
+#            market research. Same shape as the Stripe gap below: the code is
+#            complete, the provider is unconfigured. /ready reports the key's
+#            state once it is set.
+#
+# Previously (79f5ba5):
 #
 #            cb869ba — the seven platform surfaces from the 409.ai admin
 #              console (docs/screenshot-catalog.md). Six were half-built; the
@@ -103,16 +190,20 @@
 #            authoritative record of what is running; it is written by the
 #            deploy script from the local HEAD after a successful build, and is
 #            what /health reports.
-# gap:       the specialty pipeline has no workspace UI. Ops run it over the
-#            API; the Calculations tab still shows only the 409A engines. A
-#            "Run <kind> engine" button + result panel on the workspace, fed
-#            by GET /valuations/:id/specialty, is frontend-only work.
+# closed:    the specialty pipeline has no workspace UI — dd178b7 shipped
+#            SpecialtyTab at /valuations/:id/specialty, fed by GET
+#            /valuations/:id/specialty and GET /specialty/schema.
 # gap:       nothing enters `paid` on its own except a Stripe settlement, and
 #            Stripe is unconfigured (see below), so on this deployment the
 #            state is reachable only by an ops advance on a valuation someone
 #            marked paid by hand. The wiring is real and tested; it is the
 #            payment provider that is missing, not the path.
-# gap:       stored calculations keep the old backsolved equity value. 99383b2
+# closed:    stored calculations keep the old backsolved equity value — the
+#            list dd178b7 said this needed exists at /admin/data-remediation,
+#            with a bulk re-run confined to unpublished engagements. The rows
+#            themselves are still to be worked through; what follows is the
+#            description of what the queue lists.
+#            stored calculations keep the old backsolved equity value. 99383b2
 #            changed what the engine computes from then on; every calculation
 #            already in the table that took the single-breakpoint backsolve path
 #            with a non-zero option pool holds a figure that is low by roughly
@@ -122,7 +213,10 @@
 #            'backsolve_single'` against a calculation whose inputs carry
 #            `options_outstanding > 0`. Published opinions cannot be silently
 #            rewritten, so this needs a list before it needs a migration.
-# gap:       QA reviews recorded before 9ed0aa6 graded the param, so a stored
+# closed:    QA reviews recorded before 9ed0aa6 graded the param — listed on
+#            the same /admin/data-remediation surface (dd178b7). Description
+#            of the query follows.
+#            QA reviews recorded before 9ed0aa6 graded the param, so a stored
 #            `dlom_range` check on a chaffee/finnerty run is either absent or
 #            about the wrong figure. Reviews are keyed to the calculation they
 #            examined and are append-only, so this corrects itself for anything
