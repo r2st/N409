@@ -394,7 +394,10 @@ interface TemplateListResponse {
 
 function TemplatesTab() {
   const [templates, setTemplates] = useState<CommunicationTemplate[] | null>(null);
-  const [counts, setCounts] = useState<TemplateListResponse['categories']>([]);
+  // Explicitly non-optional: `TemplateListResponse['categories']` admits
+  // `undefined` now that the field is optional on the wire, and the state
+  // itself never is.
+  const [counts, setCounts] = useState<NonNullable<TemplateListResponse['categories']>>([]);
   const [variables, setVariables] = useState<TemplateVariable[]>([]);
   const [category, setCategory] = useState<'all' | TemplateCategory>('all');
   const [editing, setEditing] = useState<CommunicationTemplate | null | 'new'>();
