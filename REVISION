@@ -1,9 +1,76 @@
-e1fbe8ff31974558c1cefdacf63e222559f262ae
+f2f3c61b9f7f0e709cf5e96ac895ec0a0253b8e5
 # N409 deployed revision
-# commit:    e1fbe8ff31974558c1cefdacf63e222559f262ae
-# subject:   feat: close the eight P2 gaps — the parity and polish tail
-# previous:  d15d0c5 (the three P1 gaps — peer set, dashboard bands, job alerts).
+# commit:    f2f3c61b9f7f0e709cf5e96ac895ec0a0253b8e5
+# subject:   feat: replace Perplexity Sonar with a keyless search provider
+# previous:  e1fbe8f (the eight P2 gaps — the parity and polish tail).
 # includes:  1 commit.
+#
+#            f2f3c61 — the research provider, swapped. PERPLEXITY_API_KEY was
+#              recorded as a one-variable gap for three deploys running. It was
+#              not one: Perplexity sells no free tier, so the variable was never
+#              going to be set, and the whole chain below it — schema, route,
+#              containment, tab, narrative thread, sources exhibit — had never
+#              produced a citation.
+#
+#              Sonar billed retrieval and synthesis as one call. They are now
+#              two modules. `ai/app/websearch.py` retrieves, across duckduckgo
+#              (default, no key), searxng, brave, serper and tavily; `SearchHit`
+#              is the seam, so nothing downstream learns which one answered.
+#              `ai/app/research.py` writes the answer up with the OpenRouter
+#              models already in use. The default needs no account, which is the
+#              actual correction — the old design's error was making citations
+#              wait on procurement, not what they cost.
+#
+#              Both invariants survive the swap, and one is new. The
+#              confidentiality gate is carried over intact: a query bearing the
+#              redactor's placeholders is refused before the socket opens, and
+#              a test still asserts structurally that pipelines.py imports none
+#              of this. The new one is that with no search results the model is
+#              never called at all — an LLM asked a valuation question with no
+#              sources in front of it returns a confident multiple from its
+#              weights, and that is precisely what must not land in an exhibit
+#              beside real citations. Citations are now the retrieval result
+#              itself: the exact pages put in front of the model, ordered so the
+#              ones the answer cites come first.
+#
+#              DuckDuckGo answers a blocked request HTTP 202 with an anomaly
+#              form — a success code on a failure, which would otherwise parse
+#              as "the public record has nothing on this". It is detected and
+#              reported, never worked around, and the message names the fix. The
+#              User-Agent identifies the service rather than impersonating a
+#              browser. /ready caches its probe for five minutes because the
+#              probe is a real search and the scarce resource is the
+#              per-address allowance, not money.
+#
+#              openrouter.DEFAULT_MODELS, fixed in passing because research
+#                could not work without it: two of its three models had stopped
+#                being offered free and answered every request 404, so the
+#                fallback chain was one working model wearing two dead round
+#                trips. Now gpt-oss-20b, gemma-4-31b, nemotron-3-nano-30b.
+#
+#              0123 — the six seeded research prompts off their Sonar tiers onto
+#                live OpenRouter ids, keeping 0117's split between the two
+#                questions that carry a figure into a report and the other four.
+#
+#            Also in this deploy, outside the commit: STRIPE_SECRET_KEY (test
+#              mode) written to /opt/N409/.env and the five units restarted onto
+#              it. See the closed line below for what Stripe still lacks.
+# verified:  all five units active on f2f3c61, migration 0123 applied (no
+#            ai_prompts row holds a sonar tier; market_research and
+#            industry_outlook on gemma-4-31b, the other four on gpt-oss-20b),
+#            and the ai service's /ready reports search_provider=duckduckgo,
+#            search=valid — a live DuckDuckGo query answered from the box.
+# gap:       the OpenRouter account is on the keyless free tier, which allows
+#            50 model requests a day, and it is exhausted — so every model in
+#            the chain answers 429 and /ai/v1/research returns 503 "synthesis
+#            failed" with the retrieval already done. This is not specific to
+#            research: every AI pipeline on this deployment is down for the same
+#            reason and has been since before this commit. Ten dollars of
+#            credit on the OpenRouter account raises it to 1000/day. The search
+#            half is verified working; the synthesis half is verified only
+#            against stubs until that quota exists.
+#
+# Previously (e1fbe8f — the eight P2 gaps: the parity and polish tail):
 #
 #            e1fbe8f — §17.1's eight P2 items. Six are the same shape as the
 #              P0 tail: finished work that was not reachable, or a number the
