@@ -21,6 +21,15 @@ export interface MarketResearchRow {
   question: string;
   answer: string;
   citations: Array<{ url: string; title?: string; date?: string }>;
+  /**
+   * False when the sources are real and `answer` is a placeholder note —
+   * retrieval succeeded, the synthesis model did not (migration 0125).
+   *
+   * Report gates must check this as well as `citations.length`: such a row has
+   * citations and no answer, which is the shape the old implicit rule read as
+   * quotable.
+   */
+  synthesized: boolean;
   model: string;
   requested_by: string | null;
   created_at: Date;
@@ -50,6 +59,8 @@ export interface MarketResearchInput {
   question: string;
   answer: string;
   citations: unknown;
+  /** Defaults to true — see `MarketResearchRow.synthesized`. */
+  synthesized?: boolean;
   model: string;
   requestedBy: string | null;
 }
@@ -81,8 +92,8 @@ export async function recordMarketResearch(
     );
     const { rows } = await tx.query<MarketResearchRow>(
       `INSERT INTO market_research
-         (id, valuation_id, topic, region, question, answer, citations, model, requested_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+         (id, valuation_id, topic, region, question, answer, citations, synthesized, model, requested_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
        RETURNING *`,
       [
         newUlid(),
@@ -92,6 +103,10 @@ export async function recordMarketResearch(
         input.question,
         input.answer,
         JSON.stringify(Array.isArray(input.citations) ? input.citations : []),
+        // `!== false` rather than `?? true`: an undefined from a caller that
+        // predates the field means a synthesised answer, and so does an
+        // explicit true. Only an explicit false is the degraded row.
+        input.synthesized !== false,
         input.model,
         input.requestedBy,
       ],

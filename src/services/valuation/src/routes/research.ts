@@ -79,6 +79,11 @@ export interface ResearchAnswer {
   content: string;
   citations: Array<{ url: string; title?: string; date?: string }>;
   grounded: boolean;
+  /**
+   * Absent from responses produced before the AI service grew the field, which
+   * is why every read of it is `!== false` rather than a truth test.
+   */
+  synthesized?: boolean;
   tokens: number;
 }
 
@@ -173,6 +178,7 @@ export function registerResearchRoutes(
       question,
       answer: answer.content,
       citations: answer.citations,
+      synthesized: answer.synthesized !== false,
       model: answer.model,
       requestedBy: principal.id,
     });
@@ -258,7 +264,11 @@ export function registerResearchRoutes(
       research: rows.map((row) => ({
         ...row,
         stale: isResearchStale(row.created_at),
-        grounded: row.citations.length > 0,
+        // Same rule the report gates apply, computed in one place the tab can
+        // read: sources are necessary and not sufficient. `row.synthesized`
+        // travels alongside via the spread, so the tab can say *which* of the
+        // two reasons a row is not grounded.
+        grounded: row.citations.length > 0 && row.synthesized !== false,
       })),
       stale_days: RESEARCH_STALE_DAYS,
       can_run: isOps(principal),

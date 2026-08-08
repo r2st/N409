@@ -176,4 +176,37 @@ describe('narrative payload', () => {
   it('returns null rather than an empty block when there is nothing to send', () => {
     expect(narrativeResearchPayload([])).toBeNull();
   });
+
+  it('drops rows whose sources were never summarised', () => {
+    // The subtle one: real citations, non-empty answer, and the answer is a
+    // placeholder saying the synthesis model was unavailable. Handing that to
+    // the drafting agent gives it a paragraph about a service outage attached
+    // to a topic, with citations beside it.
+    const unsynthesized = row({
+      answer: 'Sources were retrieved for this question but could not be summarised.',
+      synthesized: false,
+    });
+    expect(narrativeResearchPayload([unsynthesized])).toBeNull();
+  });
+
+  it('keeps a synthesised row alongside one that was not', () => {
+    // The filter has to be per-row: one topic failing synthesis must not cost
+    // the report the topics that succeeded.
+    const payload = narrativeResearchPayload([
+      row({ synthesized: false, topic: 'industry_outlook' }),
+      row({ synthesized: true }),
+    ]);
+    expect(payload).toHaveLength(1);
+    expect(payload![0]!.topic).toBe('industry_overview');
+  });
+
+  it('treats a row with no synthesized field as an answer', () => {
+    // Every row written before migration 0125 predates the flag, and each one
+    // is an answer some model actually wrote. Reading `undefined` as "not
+    // synthesised" would empty the market discussion of every report drafted
+    // from research retrieved before the upgrade.
+    const legacy = row();
+    expect('synthesized' in legacy).toBe(false);
+    expect(narrativeResearchPayload([legacy])).toHaveLength(1);
+  });
 });

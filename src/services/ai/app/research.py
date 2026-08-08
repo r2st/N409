@@ -40,6 +40,14 @@ from `pipelines.py` rather than another pipeline in it:
     citations, with nothing to distinguish it, is the exact failure this whole
     path exists to prevent.
 
+    The mirror case is sources with no model: retrieval succeeds and synthesis
+    does not, which on a free-tier OpenRouter account is a daily event rather
+    than an outage. Those sources are returned rather than discarded, marked
+    `synthesized=False`, and `ResearchResult.grounded` is false for them — so
+    they can be read by an analyst and cannot be quoted by a report. Both
+    halves of the same rule: what reaches a 409A must be something somebody
+    wrote from sources that exist.
+
 Configuration:
     PERPLEXITY_API_KEY etc.     see `perplexity.py`; unset disables the primary
     RESEARCH_PROVIDER etc.      see `websearch.py`; the fallback's backend
@@ -94,6 +102,18 @@ FALLBACK_SYSTEM = (
 NO_RESULTS_ANSWER = (
     "The public record returned no sources for this question, so it cannot be "
     "answered from retrieved material."
+)
+
+#: What a sources-only result says where the answer would be. Deliberately not
+#: written as a partial answer: it makes no claim about the subject at all, so
+#: there is nothing in it for a drafting step to mistake for a finding. The
+#: sources are real and are returned alongside it; `synthesized=False` is what
+#: keeps the pair out of a report, and this text is what an analyst reads.
+UNSYNTHESIZED_ANSWER = (
+    "Sources were retrieved for this question but could not be summarised — the "
+    "synthesis model was unavailable. The sources below are listed unread: "
+    "nobody, and no model, has drawn a conclusion from them. Re-run the "
+    "question to get a written answer."
 )
 
 _log = logging.getLogger("research")
@@ -200,9 +220,14 @@ def fallback_research(
     """Retrieve sources for `query`, then write an answer from only those.
 
     Assumes the confidentiality gate has already run — `research` is the only
-    caller and runs it once for both paths. Raises `ProviderError` if either
-    leg fails, which is what lets a caller distinguish "the fallback is also
-    down" from "there was nothing to find".
+    caller and runs it once for both paths.
+
+    The two legs fail differently, because they have different amounts to lose.
+    Retrieval failing raises `ProviderError`: there is nothing to return, and
+    the raise is what lets a caller distinguish "the fallback is also down"
+    from "there was nothing to find". Synthesis failing does not raise — the
+    sources are already retrieved, so they come back with `synthesized=False`
+    instead of being discarded along with the error.
     """
     try:
         # The provider comes back from the call rather than from the
@@ -236,7 +261,30 @@ def fallback_research(
     try:
         answer = chat(system, prompt, model=synthesis_model(model), client=client)
     except OpenRouterError as exc:
-        raise ProviderError(f"synthesis failed: {exc}") from exc
+        # Retrieval already succeeded, so the expensive, rate-limited half of
+        # this call is done and its result is sitting in `hits`. Raising here
+        # would throw it away and return a 503, which is what happened every
+        # time the OpenRouter free tier's daily allowance ran out: the search
+        # ran, the pages were found, and the caller was told the whole thing
+        # failed. The sources are worth having on their own — an analyst can
+        # read them — so they are returned with `synthesized=False`, which
+        # keeps them off every path that would quote them as an answer.
+        _log.warning(
+            "research synthesis failed, returning sources unread",
+            extra={
+                "event": "research_unsynthesized",
+                "path": provider,
+                "status": len(hits),
+            },
+        )
+        return ResearchResult(
+            model=f"{provider}+unsynthesized",
+            content=UNSYNTHESIZED_ANSWER,
+            # Ordered as retrieved: `order_by_citation` promotes the sources an
+            # answer cited, and there is no answer to have cited any of them.
+            citations=[Citation(url=h.url, title=h.title) for h in hits],
+            synthesized=False,
+        )
 
     citations = order_by_citation(hits, answer.content)
     _log.info(
@@ -350,6 +398,7 @@ __all__ = [
     "REDACTION_MARKERS",
     "ResearchError",
     "ResearchResult",
+    "UNSYNTHESIZED_ANSWER",
     "assert_public",
     "fallback_research",
     "is_configured",

@@ -190,9 +190,15 @@ class ResearchResponse(BaseModel):
     model: str
     content: str
     citations: list[dict]
-    # False when the search retrieved nothing. The caller must not quote an
-    # ungrounded answer in a report — see `ResearchResult.grounded`.
+    # False when the search retrieved nothing, and false when it retrieved
+    # sources nothing then summarised. The caller must not quote an ungrounded
+    # answer in a report — see `ResearchResult.grounded`.
     grounded: bool
+    # Whether `content` is an answer or a note standing in for one. Distinguishes
+    # the two ways `grounded` goes false, which look identical to a caller
+    # holding only the flag above but read very differently to an analyst: one
+    # says the public record has nothing, the other says we could not write it up.
+    synthesized: bool = True
     tokens: int
 
 

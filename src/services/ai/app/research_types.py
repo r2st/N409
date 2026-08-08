@@ -116,6 +116,14 @@ class ResearchResult:
     citations: list[Citation] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: Whether `content` is an answer to the question, or merely a note standing
+    #: in for one. False on the sources-only degradation in
+    #: `research.fallback_research`: retrieval succeeded, the synthesis model
+    #: refused (typically an exhausted quota), and the sources are returned
+    #: unread rather than thrown away with the error. Defaulted True so every
+    #: existing construction — both providers' success paths — keeps its
+    #: meaning without being touched.
+    synthesized: bool = True
 
     @property
     def total_tokens(self) -> int:
@@ -123,13 +131,19 @@ class ResearchResult:
 
     @property
     def grounded(self) -> bool:
-        """Whether the answer came with sources.
+        """Whether this may be quoted in a report.
 
-        An ungrounded answer is just an expensive completion — the whole reason
-        to take this path is the citation list. Callers use this to decide
-        whether an answer may be quoted in a report.
+        Two conditions, and the second is not redundant. Sources are necessary:
+        an answer without them is just an expensive completion, and the whole
+        reason to take this path is the citation list. But they are not
+        sufficient — a sources-only result *has* citations and has no answer,
+        and the note where the answer would be ("the sources below were
+        retrieved but not summarised") is prose sitting in the field a report
+        quotes from. Grounded means "somebody wrote this from those sources",
+        so a result nobody wrote is excluded here rather than at each of the
+        call sites that would otherwise have to remember to.
         """
-        return bool(self.citations)
+        return bool(self.citations) and self.synthesized
 
     def as_dict(self) -> dict:
         return {
@@ -137,5 +151,10 @@ class ResearchResult:
             "content": self.content,
             "citations": [c.as_dict() for c in self.citations],
             "grounded": self.grounded,
+            # Sent separately from `grounded` because the two answer different
+            # questions and the store keeps both: `grounded` is "may a report
+            # quote this", `synthesized` is "why not". Without it a sources-only
+            # row is indistinguishable from one whose search came back empty.
+            "synthesized": self.synthesized,
             "tokens": self.total_tokens,
         }

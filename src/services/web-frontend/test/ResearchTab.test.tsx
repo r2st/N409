@@ -182,4 +182,59 @@ describe('ResearchTab', () => {
     await userEvent.click(within(card).getByRole('button', { name: /refresh/i }));
     expect(await screen.findByText(/Set the industry on the Company tab first/)).toBeInTheDocument();
   });
+
+  /**
+   * A topic whose search worked and whose write-up did not. The sources are
+   * on the card and there is no answer above them, which without a label reads
+   * as a bug in the tab rather than as a topic waiting to be re-run.
+   */
+  describe('a topic retrieved but never summarised', () => {
+    const unsynthesized = {
+      ...RESEARCH,
+      research: [
+        {
+          ...RESEARCH.research[0],
+          answer: 'Sources were retrieved for this question but could not be summarised.',
+          model: 'duckduckgo+unsynthesized',
+          grounded: false,
+          synthesized: false,
+        },
+      ],
+    };
+
+    const mockUnsynthesized = () =>
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const path = String(url);
+        if (path.includes('/research/topics')) return jsonResponse(TOPICS);
+        if (path.includes('/research')) return jsonResponse(unsynthesized);
+        throw new Error(`unexpected fetch ${path}`);
+      });
+
+    it('labels the card so the empty write-up reads as a retry, not a bug', async () => {
+      mockUnsynthesized();
+      renderTab();
+      expect(await screen.findByText('not summarised')).toBeInTheDocument();
+    });
+
+    it('says the sources were kept and the topic should be re-run', async () => {
+      mockUnsynthesized();
+      renderTab();
+      expect(await screen.findByText(/re-run them to get a written answer/i)).toBeInTheDocument();
+    });
+
+    it('still shows the retrieved sources, because they are the point', async () => {
+      // The whole reason the AI service stopped discarding them.
+      mockUnsynthesized();
+      renderTab();
+      const link = await screen.findByRole('link', { name: 'Robotics review 2026' });
+      expect(link).toHaveAttribute('href', 'https://example.com/report');
+    });
+
+    it('does not label an ordinary answer', async () => {
+      mockApi();
+      renderTab();
+      await screen.findByText('The sector consolidated through 2025.');
+      expect(screen.queryByText('not summarised')).not.toBeInTheDocument();
+    });
+  });
 });

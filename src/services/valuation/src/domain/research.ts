@@ -363,6 +363,15 @@ export function isResearchStale(createdAt: Date | string, asOf: Date = new Date(
  * unsourced claim next to sourced ones with nothing to tell them apart — which
  * is the failure mode `research.research` declines to call the model at all to
  * prevent, undone one layer up.
+ *
+ * `synthesized === false` is filtered for the same reason and is the easier one
+ * to miss, because the row looks well-formed: real citations, non-empty answer.
+ * The answer is a placeholder saying the sources could not be summarised
+ * (migration 0125). Handing that to the narrative agent gives a drafting model
+ * a paragraph of prose about an unavailable service, attached to a topic, with
+ * citations beside it — the likeliest outcome being a drafted market section
+ * written around a service outage, and the worse one being the model filling
+ * the apparent gap from its weights.
  */
 export function narrativeResearchPayload(
   rows: ReadonlyArray<{
@@ -370,10 +379,13 @@ export function narrativeResearchPayload(
     region: string | null;
     answer: string;
     citations: unknown;
+    synthesized?: boolean;
     created_at: Date | string;
   }>,
 ): Array<{ topic: string; region: string | null; answer: string; citations: unknown; retrieved_at: string }> | null {
-  const grounded = rows.filter((r) => Array.isArray(r.citations) && r.citations.length > 0);
+  const grounded = rows.filter(
+    (r) => Array.isArray(r.citations) && r.citations.length > 0 && r.synthesized !== false,
+  );
   if (grounded.length === 0) return null;
   return grounded.map((r) => ({
     topic: r.topic,

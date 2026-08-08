@@ -51,6 +51,14 @@ interface ResearchRow {
   created_at: string;
   stale: boolean;
   grounded: boolean;
+  /**
+   * False when the sources are real but nothing wrote them up — the search ran
+   * and the synthesis model was unavailable. Such a row is never grounded, and
+   * the two reasons a row can be ungrounded read very differently to an
+   * analyst: "the public record has nothing on this" is an answer, "we could
+   * not summarise what it had" is a retry.
+   */
+  synthesized?: boolean;
 }
 
 interface TopicsResponse {
@@ -138,6 +146,14 @@ function TopicCard({
             title={`Retrieved more than ${staleDays} days ago`}
           >
             stale
+          </span>
+        )}
+        {row?.synthesized === false && (
+          <span
+            className="rounded-full bg-rose-50 px-2 py-0.5 text-[0.65rem] font-semibold text-rose-800 ring-1 ring-rose-200 ring-inset"
+            title="The search returned these sources but the synthesis model was unavailable. Nothing has been written from them, so this topic is excluded from report drafting and from the sources exhibit. Run it again."
+          >
+            not summarised
           </span>
         )}
         {row && (
@@ -339,6 +355,14 @@ export function ResearchTab() {
       {byTopic.size > 0 && data.research.some((r) => !r.grounded) && (
         <p className="text-xs text-ink-400">
           Ungrounded answers are excluded from report drafting and from the sources exhibit.
+          {/*
+           * Named separately because it is the one ungrounded case that is
+           * worth acting on: the sources are there and a re-run will usually
+           * write them up, whereas a topic the public record does not cover
+           * will come back empty however many times it is asked.
+           */}
+          {data.research.some((r) => r.synthesized === false) &&
+            ' Topics marked “not summarised” kept their sources — re-run them to get a written answer.'}
         </p>
       )}
     </div>

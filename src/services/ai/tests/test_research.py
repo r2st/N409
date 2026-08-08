@@ -25,6 +25,7 @@ from app.research import (
     REDACTION_MARKERS,
     ResearchError,
     ResearchResult,
+    UNSYNTHESIZED_ANSWER,
     assert_public,
     build_source_block,
     is_configured,
@@ -263,6 +264,104 @@ class TestGrounded:
     def test_an_answer_without_sources_is_not(self):
         assert not ResearchResult("x", "text").grounded
 
+    def test_sources_nobody_summarised_are_not_grounded(self):
+        """The case the second condition exists for. Citations alone used to
+        mean "quotable", and a sources-only result has citations and no
+        answer."""
+        result = ResearchResult(
+            "x", "text", [Citation("https://a.example")], synthesized=False
+        )
+        assert not result.grounded
+
+    def test_results_are_synthesised_unless_said_otherwise(self):
+        """Every existing construction predates the flag and means an answer."""
+        assert ResearchResult("x", "text").synthesized is True
+
+
+class TestUnsynthesizedResults:
+    """The sources-only degradation: retrieval worked, synthesis did not.
+
+    On a free-tier OpenRouter account this is a daily event rather than an
+    outage, so what it returns matters as much as the happy path.
+    """
+
+    @pytest.fixture
+    def unsynthesized(self, monkeypatch):
+        monkeypatch.setattr(
+            research_mod.websearch, "search_with_provider", lambda q, **kw: ("duckduckgo", list(HITS))
+        )
+
+        def boom(*args, **kwargs):
+            raise OpenRouterError("rate limited: free-tier daily allowance exhausted")
+
+        monkeypatch.setattr(research_mod, "chat", boom)
+        return research("public question")
+
+    def test_it_is_not_grounded_so_no_report_can_quote_it(self, unsynthesized):
+        """The invariant this whole change turns on. `grounded` is what the
+        report exhibit and the narrative thread gate on, and the standing text
+        where an answer should be must never reach either."""
+        assert unsynthesized.grounded is False
+
+    def test_it_says_it_was_not_synthesised(self, unsynthesized):
+        assert unsynthesized.synthesized is False
+
+    def test_the_sources_survive(self, unsynthesized):
+        """The entire point: the completed search is not thrown away."""
+        assert [c.url for c in unsynthesized.citations] == [h.url for h in HITS]
+
+    def test_titles_travel_with_them(self, unsynthesized):
+        assert [c.title for c in unsynthesized.citations] == [h.title for h in HITS]
+
+    def test_the_standin_text_asserts_nothing_about_the_subject(self, unsynthesized):
+        """It is prose sitting in the field a drafting step reads. It has to be
+        inert: no figure, no finding, nothing a model could lift as a claim."""
+        content = unsynthesized.content
+        assert content == UNSYNTHESIZED_ANSWER
+        assert "could not be summarised" in content
+        # No digits at all — a multiple or a percentage in this string is
+        # exactly the unsourced figure the module refuses to produce.
+        assert not any(ch.isdigit() for ch in content)
+
+    def test_the_model_field_records_what_happened(self, unsynthesized):
+        """A stored row has one column to say how it was produced, and
+        "duckduckgo+unsynthesized" is the operator's answer to why a topic on
+        the tab has sources and no write-up."""
+        assert unsynthesized.model == "duckduckgo+unsynthesized"
+
+    def test_no_tokens_are_claimed(self, unsynthesized):
+        """Nothing was generated, so nothing is billed to the report's total."""
+        assert unsynthesized.total_tokens == 0
+
+    def test_the_route_contract_carries_both_flags(self, unsynthesized):
+        payload = unsynthesized.as_dict()
+        assert payload["grounded"] is False
+        assert payload["synthesized"] is False
+        assert len(payload["citations"]) == len(HITS)
+
+    def test_it_is_distinguishable_from_an_empty_search(self, monkeypatch, unsynthesized):
+        """Both are ungrounded and they mean opposite things: one says the
+        public record has nothing, the other says we could not write up what it
+        had. A caller holding only `grounded` cannot tell them apart."""
+        monkeypatch.setattr(
+            research_mod.websearch, "search_with_provider", lambda q, **kw: ("duckduckgo", [])
+        )
+        empty = research("a question the record does not cover")
+        assert empty.grounded is False and unsynthesized.grounded is False
+        assert empty.synthesized is True
+        assert unsynthesized.synthesized is False
+
+    def test_a_retrieval_failure_still_raises(self, monkeypatch):
+        """Only the synthesis leg degrades. With no sources there is nothing to
+        return, so the error has to reach the caller."""
+
+        def boom(query, **kwargs):
+            raise SearchError("duckduckgo unreachable")
+
+        monkeypatch.setattr(research_mod.websearch, "search_with_provider", boom)
+        with pytest.raises(ResearchError):
+            research("public question")
+
 
 # ── configuration and the result contract ────────────────────────────────────
 
@@ -300,7 +399,7 @@ class TestConfiguration:
 class TestResultContract:
     def test_as_dict_is_the_route_contract(self, answered):
         out = research("public question").as_dict()
-        assert set(out) == {"model", "content", "citations", "grounded", "tokens"}
+        assert set(out) == {"model", "content", "citations", "grounded", "synthesized", "tokens"}
         assert out["citations"][0]["url"] == "https://a.example/saas"
 
     def test_the_model_field_names_both_halves(self, answered):
@@ -348,15 +447,22 @@ class TestFailures:
         with pytest.raises(ResearchError, match="search failed"):
             research("public question")
 
-    def test_a_synthesis_failure_is_a_research_error(self, monkeypatch):
-        monkeypatch.setattr(research_mod.websearch, "search_with_provider", lambda q, **kw: ("duckduckgo", list(HITS)))
+    def test_a_synthesis_failure_keeps_the_sources_instead_of_raising(self, monkeypatch):
+        """Retrieval is the expensive, rate-limited half and it already
+        succeeded. Raising here discarded a completed search and returned a 503
+        — which is what an exhausted OpenRouter daily allowance produced every
+        time, on a question whose sources had been found."""
+        monkeypatch.setattr(
+            research_mod.websearch, "search_with_provider", lambda q, **kw: ("duckduckgo", list(HITS))
+        )
 
         def boom(*args, **kwargs):
             raise OpenRouterError("every candidate model failed")
 
         monkeypatch.setattr(research_mod, "chat", boom)
-        with pytest.raises(ResearchError, match="synthesis failed"):
-            research("public question")
+        out = research("public question")
+        assert out.content == UNSYNTHESIZED_ANSWER
+        assert [c.url for c in out.citations] == [h.url for h in HITS]
 
     def test_neither_failure_is_mistaken_for_a_confidentiality_refusal(self, monkeypatch):
         """The route maps ConfidentialityError to 422 and everything else to
@@ -484,7 +590,7 @@ class TestFallsBackToSearch:
         """Same shape either way; only `model` says which path answered. A
         caller that had to branch on which provider ran would defeat the point."""
         out = research("public question", perplexity_client=pplx_stub(lambda r: httpx.Response(500)))
-        assert set(out.as_dict()) == {"model", "content", "citations", "grounded", "tokens"}
+        assert set(out.as_dict()) == {"model", "content", "citations", "grounded", "synthesized", "tokens"}
 
     def test_a_sonar_tier_is_not_forwarded_to_openrouter_on_the_fallback(
         self, keyed, answered

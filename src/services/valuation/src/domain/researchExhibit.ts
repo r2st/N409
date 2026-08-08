@@ -18,6 +18,14 @@ import type { MarketResearchRow } from '../repos/marketResearch.js';
  * column. An answer produced without retrieved citations did not travel into the
  * narrative either (`narrativeResearchPayload` filters it out), so printing it
  * here would advertise a source the report did not use.
+ *
+ * Unsynthesised rows are omitted for the mirror-image reason, and they are the
+ * subtler case because they *do* have sources. Retrieval succeeded and the
+ * synthesis model did not, so the row holds real citations and a placeholder
+ * note where the answer belongs (migration 0125). Listing those URLs here would
+ * be the same lie in the other direction: an exhibit stating these pages were
+ * "read at the time of retrieval" and that the market discussion "draws on"
+ * them, when nothing was read and no discussion was drafted from them.
  */
 
 function topicLabel(topic: string, region: string | null): string {
@@ -35,7 +43,9 @@ function day(value: Date | string): string {
 export function researchSourcesExhibit(
   rows: readonly MarketResearchRow[],
 ): ReportPdfSection | null {
-  const grounded = rows.filter((r) => Array.isArray(r.citations) && r.citations.length > 0);
+  const grounded = rows.filter(
+    (r) => Array.isArray(r.citations) && r.citations.length > 0 && r.synthesized !== false,
+  );
   if (grounded.length === 0) return null;
 
   const sourceRows: string[][] = [];

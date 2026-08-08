@@ -291,7 +291,7 @@ class TestResearch:
 
     def test_as_dict_is_the_route_contract(self):
         out = research("public question", client=stub(ok_handler)).as_dict()
-        assert set(out) == {"model", "content", "citations", "grounded", "tokens"}
+        assert set(out) == {"model", "content", "citations", "grounded", "synthesized", "tokens"}
         assert out["citations"][0]["url"] == "https://example.com/saas"
 
     def test_empty_query_is_refused(self):
