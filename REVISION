@@ -1,9 +1,53 @@
-f2f3c61b9f7f0e709cf5e96ac895ec0a0253b8e5
+08c106481761db35a0e6b63f532e0275012e5b83
 # N409 deployed revision
-# commit:    f2f3c61b9f7f0e709cf5e96ac895ec0a0253b8e5
-# subject:   feat: replace Perplexity Sonar with a keyless search provider
-# previous:  e1fbe8f (the eight P2 gaps — the parity and polish tail).
-# includes:  1 commit.
+# commit:    08c106481761db35a0e6b63f532e0275012e5b83
+# subject:   feat: chain the search fallback and honour a bot challenge instead
+#            of evading it
+# previous:  f2f3c61 (the research provider, swapped for a keyless one).
+# includes:  2 commits.
+#
+#            08c1064 — the chain, and a decision not to cheat. f2f3c61 left the
+#              keyless default one anti-bot challenge away from useless: trip
+#              DuckDuckGo's 202 and research stopped, because RESEARCH_PROVIDER
+#              named the only place the code would look.
+#
+#              There is a packaged way out of this and it was declined. `ddgs`
+#              (the renamed `duckduckgo-search`) drives its requests through
+#              randomised browser TLS fingerprints so the challenge never fires.
+#              That is bot-detection evasion — the endpoint is saying no, and
+#              impersonating a browser is arranging not to hear it. It is also a
+#              bet that the disguise outlives the next change to the check. The
+#              User-Agent still identifies this service by name.
+#
+#              So the challenge is answered the two honest ways. A chain, not a
+#              choice: RESEARCH_PROVIDER now names where to *start*, and a
+#              backend that cannot answer hands off to the next configured one,
+#              ending at a keyless backend in every installation. And a
+#              cooldown, not a retry: a backend returning a challenge or a 429
+#              is skipped for RESEARCH_PROVIDER_COOLDOWN_S rather than asked
+#              again — less load on the endpoint that objected, which is the
+#              opposite of what a workaround does. Wikipedia's MediaWiki API
+#              ends the chain: keyless because the publisher intends it to be,
+#              documented and unchallengeable, narrow on comps but enough to
+#              keep a memo cited when every general index has said no.
+#
+#            bbe822c — Perplexity restored to primary, search demoted to
+#              fallback. f2f3c61 removed Sonar outright, which overcorrected: an
+#              installation that *has* bought a key should use it, because the
+#              retrieval is a real index rather than a scrape and the synthesis
+#              sees the pages rather than the snippets. `research.research` now
+#              tries Sonar whenever PERPLEXITY_API_KEY is set and degrades to
+#              the keyless chain on a missing key, a rejected key, an exhausted
+#              quota, a 5xx or an unparseable body. The caller cannot tell:
+#              `ResearchResult.model` names the path that answered, so a stored
+#              row still says how it was produced.
+#
+#              The confidentiality gate stays *above* the choice, and that
+#              placement is load-bearing. `assert_public` runs once, before a
+#              provider is picked, and `ConfidentialityError` is deliberately
+#              not a `ProviderError` — a refusal that fell through to the
+#              fallback would forward the same client text to a second search
+#              engine, turning the guarantee inside out.
 #
 #            f2f3c61 — the research provider, swapped. PERPLEXITY_API_KEY was
 #              recorded as a one-variable gap for three deploys running. It was
