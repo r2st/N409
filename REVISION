@@ -1,9 +1,62 @@
-d15d0c540dc39c993c158098692814a5447f908c
+e1fbe8ff31974558c1cefdacf63e222559f262ae
 # N409 deployed revision
-# commit:    d15d0c540dc39c993c158098692814a5447f908c
-# subject:   feat: close the three P1 gaps — peer set, dashboard bands, job alerts
-# previous:  aae4e25 (the implementation design and its gap analysis).
+# commit:    e1fbe8ff31974558c1cefdacf63e222559f262ae
+# subject:   feat: close the eight P2 gaps — the parity and polish tail
+# previous:  d15d0c5 (the three P1 gaps — peer set, dashboard bands, job alerts).
 # includes:  1 commit.
+#
+#            e1fbe8f — §17.1's eight P2 items. Six are the same shape as the
+#              P0 tail: finished work that was not reachable, or a number the
+#              platform could compute and did not show. Two are new surface.
+#
+#              §14.1 the cross-partner token listing. "Who holds API
+#              credentials against this platform" meant opening twenty-four
+#              partner pages. GET /admin/api-tokens is one answer, gated on
+#              canManageUsers rather than isOps — this is every firm's
+#              credentials, and the reviewer and data roles have no business
+#              reading it. token_hash is never selected. The column that
+#              earns the page is last-used: the summary counts dormant keys.
+#
+#              §15.2 the inbox compose box, shipped as the spec insisted —
+#              routes/inbox.ts still has no POST. The inline reply writes
+#              through the engagement's own comment endpoint, so the kind
+#              rules, the mention parsing and the broadcast stay in one place.
+#
+#              §9.2 the legacy `uploads` queue, over exactly the query the
+#              gap line named. The suggestion is a filename heuristic that
+#              ships the term it matched rather than a score, and never
+#              suggests a finance bucket. Nothing is pre-selected; a re-file
+#              writes document_refiled with the bucket it came from.
+#
+#              §4.6 and §7.3 the header counters and the n/m badge, one
+#              object on the detail read. Four were queries over data that
+#              existed. "Pending files" was not — nothing recorded that an
+#              analyst had looked at a file — so 0121 adds reviewed_at and
+#              backfills nothing: an open engagement's files show as pending
+#              because they are. domain/approaches.ts now owns the approach
+#              vocabulary the badge and the recalculate route both need.
+#
+#              §4.4 the partner entry point, as a shared saved view rather
+#              than a second listing page, plus the firm's own bucket counts
+#              and a banner saying when the listing is scoped.
+#
+#              §16.2 the marketing blog. 0122 plus one seeded article, so
+#              /blog is a page and not an empty state. Reading is genuinely
+#              unauthenticated; drafts come only from /admin/blog.
+#              published_at is separate from published and from created_at.
+#
+#              §12.2 the Bedrock adapter and the router that makes the
+#              per-prompt model column mean what it looks like. No boto3 —
+#              Converse is one signed POST. OpenRouter stays the default.
+#
+# verified:  all five units active on e1fbe8f (ports 3000-3004 report it),
+#            migrations 0121 and 0122 applied, /blog and its seeded article
+#            serve 200 to an anonymous caller, /admin/api-tokens answers 401
+#            unauthenticated, and the AI service reports openrouter_key valid
+#            with no bedrock_credentials line — unconfigured is silent, which
+#            is the designed behaviour for an optional second provider.
+#
+# Previously (d15d0c5 — the three P1 gaps: peer set, dashboard bands, job alerts):
 #
 #            d15d0c5 — §17.1's three P1 items, the ones the document called
 #              "where new surface actually has to be designed".
@@ -36,6 +89,7 @@ d15d0c540dc39c993c158098692814a5447f908c
 #            pipeline_run 120m/5, webhook_delivery 120m/10), no alert open —
 #            every queue is healthy — and the three new routes answer 401
 #            unauthenticated.
+#
 #
 # Previously (aae4e25 — the implementation design and its gap analysis):
 #
