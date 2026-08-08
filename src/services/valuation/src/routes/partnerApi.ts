@@ -17,6 +17,7 @@ import {
   findWebhook,
   listDeliveries,
   listWebhooks,
+  requeueDelivery,
   storeIdempotentResponse,
   type PartnerWebhookRow,
 } from '../repos/partnerWebhooks.js';
@@ -600,7 +601,9 @@ export function registerPartnerApiRoutes(
       path: '/webhooks/{id}/deliveries',
       summary: 'Recent delivery attempts for a webhook — your audit trail for missed events.',
       auth: 'api_key',
-      response: '{ deliveries[] } — event_type, status, attempts, last_error, created_at',
+      response:
+        '{ deliveries[] } — event_type, status (pending = another retry is owed, failed = out of ' +
+        'attempts), attempts, max_attempts, next_attempt_at, last_error, created_at',
     },
     async (req) => {
       const { token } = requireToken(req);
@@ -616,10 +619,47 @@ export function registerPartnerApiRoutes(
           valuation_id: d.valuation_id,
           status: d.status,
           attempts: d.attempts,
+          max_attempts: d.max_attempts,
+          // Only meaningful while more attempts are owed; on a settled row it
+          // is the time of the attempt that settled it, which reads as a lie.
+          next_attempt_at: d.status === 'pending' ? d.next_attempt_at : null,
           last_error: d.last_error,
           created_at: d.created_at,
           delivered_at: d.delivered_at,
         })),
+      };
+    },
+  );
+
+  define(
+    {
+      method: 'POST',
+      path: '/webhooks/{id}/deliveries/{deliveryId}/retry',
+      summary:
+        'Replay a delivery that ran out of attempts, once your receiver is back. Resets the ' +
+        'backoff ladder; an already-delivered event cannot be replayed from here.',
+      auth: 'api_key',
+      response: '{ delivery } — status is pending; the sweep picks it up within the minute',
+    },
+    async (req) => {
+      const { token } = requireToken(req);
+      const { id, deliveryId } = req.params as { id: string; deliveryId: string };
+      if (!isUlid(id) || !isUlid(deliveryId)) throw problems.notFound();
+      const webhook = await findWebhook(deps.pool, token.partnerId, id);
+      if (!webhook) throw problems.notFound();
+      const delivery = await requeueDelivery(deps.pool, token.partnerId, deliveryId);
+      if (!delivery || delivery.webhook_id !== webhook.id) {
+        throw problems.notFound('No replayable delivery with that id');
+      }
+      return {
+        delivery: {
+          id: delivery.id,
+          event_type: delivery.event_type,
+          status: delivery.status,
+          attempts: delivery.attempts,
+          max_attempts: delivery.max_attempts,
+          next_attempt_at: delivery.next_attempt_at,
+        },
       };
     },
   );

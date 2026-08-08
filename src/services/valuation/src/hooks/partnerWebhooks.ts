@@ -4,6 +4,8 @@ import {
   buildWebhookPayload,
   DELIVERY_HEADER,
   EVENT_HEADER,
+  isPermanentDeliveryFailure,
+  nextAttemptAt,
   SIGNATURE_HEADER,
   signWebhookBody,
   webhookWantsEvent,
@@ -11,17 +13,24 @@ import {
   type WebhookValuationView,
 } from '../domain/partnerWebhooks.js';
 import {
+  claimRetryableDeliveries,
   enabledWebhooks,
-  markDelivery,
   recordDelivery,
+  settleDelivery,
   type PartnerWebhookRow,
+  type WebhookDeliveryRow,
 } from '../repos/partnerWebhooks.js';
 
 /**
  * Partner webhook delivery. Same durability rule as the email outbox: the
  * delivery row is written BEFORE the attempt, so a crash or receiver outage
- * leaves a 'pending'/'failed' record the partner can see in their delivery
- * log, never a silent gap. One attempt per event; the row carries the outcome.
+ * leaves a record the partner can see in their delivery log, never a silent
+ * gap.
+ *
+ * A failed attempt is not the end of the event (migration 0103). The row keeps
+ * 'pending' with a backoff stamped on it and `retryDueDeliveries` — the sweep
+ * on the service interval — picks it up when its time comes, until it is
+ * delivered or out of attempts. Only then does it read 'failed'.
  */
 
 export interface WebhookDeps {
@@ -31,45 +40,128 @@ export interface WebhookDeps {
 
 const DELIVERY_TIMEOUT_MS = 10_000;
 
-/** Deliver one event to one webhook: record, sign, POST, mark. */
+/** The outcome of one POST, before it is written back to the row. */
+type AttemptResult = { ok: true } | { ok: false; error: string; permanent: boolean };
+
+/** POST one signed payload. Never throws: a transport error is an outcome. */
+async function postDelivery(
+  target: { url: string; secret: string },
+  event: string,
+  deliveryId: string,
+  payload: Record<string, unknown>,
+): Promise<AttemptResult> {
+  const body = JSON.stringify(payload);
+  try {
+    const res = await fetch(target.url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [SIGNATURE_HEADER]: signWebhookBody(target.secret, body),
+        [EVENT_HEADER]: event,
+        [DELIVERY_HEADER]: deliveryId,
+      },
+      body,
+      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+    });
+    if (res.ok) return { ok: true };
+    return {
+      ok: false,
+      error: `receiver responded ${res.status}`,
+      permanent: isPermanentDeliveryFailure(res.status),
+    };
+  } catch (err) {
+    // A timeout, a refused connection, DNS — the transient class this whole
+    // mechanism exists for.
+    return { ok: false, error: err instanceof Error ? err.message : String(err), permanent: false };
+  }
+}
+
+/** Writes an attempt's outcome back to the row, scheduling the next try. */
+async function settle(
+  deps: WebhookDeps,
+  delivery: Pick<WebhookDeliveryRow, 'id' | 'attempts' | 'max_attempts'>,
+  result: AttemptResult,
+): Promise<'delivered' | 'failed' | 'retrying'> {
+  if (result.ok) {
+    await settleDelivery(deps.pool, delivery.id, { status: 'delivered' });
+    return 'delivered';
+  }
+  const next = result.permanent ? null : nextAttemptAt(delivery.attempts, delivery.max_attempts);
+  await settleDelivery(deps.pool, delivery.id, {
+    status: 'failed',
+    error: result.error,
+    nextAttemptAt: next,
+  });
+  return next === null ? 'failed' : 'retrying';
+}
+
+/** Deliver one event to one webhook: record, sign, POST, settle. */
 export async function deliverToWebhook(
   deps: WebhookDeps,
   webhook: PartnerWebhookRow,
   event: WebhookEventType,
   payload: Record<string, unknown>,
   valuationId?: string | null,
-): Promise<'delivered' | 'failed'> {
+): Promise<'delivered' | 'failed' | 'retrying'> {
   const delivery = await recordDelivery(deps.pool, {
     webhookId: webhook.id,
     eventType: event,
     valuationId,
     payload,
   });
-  const body = JSON.stringify(payload);
-  try {
-    const res = await fetch(webhook.url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        [SIGNATURE_HEADER]: signWebhookBody(webhook.secret, body),
-        [EVENT_HEADER]: event,
-        [DELIVERY_HEADER]: delivery.id,
-      },
-      body,
-      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
-    });
-    if (res.ok) {
-      await markDelivery(deps.pool, delivery.id, 'delivered');
-      return 'delivered';
-    }
-    await markDelivery(deps.pool, delivery.id, 'failed', `receiver responded ${res.status}`);
-    return 'failed';
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await markDelivery(deps.pool, delivery.id, 'failed', message);
-    deps.log?.warn({ err, webhookId: webhook.id, event }, 'partner webhook delivery failed');
-    return 'failed';
+  const result = await postDelivery(webhook, event, delivery.id, payload);
+  const outcome = await settle(deps, delivery, result);
+  if (!result.ok) {
+    deps.log?.warn(
+      { webhookId: webhook.id, event, outcome, error: result.error },
+      'partner webhook delivery failed',
+    );
   }
+  return outcome;
+}
+
+/**
+ * Retry sweep: re-POSTs every delivery whose backoff has elapsed.
+ *
+ * Called on an interval from the service entrypoint and on demand from
+ * POST /admin/webhooks/retry. The batch is claimed before anything is sent
+ * (see claimRetryableDeliveries), so two sweepers split the backlog rather than
+ * both delivering all of it.
+ *
+ * A row that runs out of attempts, or whose receiver answered with something
+ * permanent, settles to 'failed' and is never seen again — retrying forever
+ * would mask a genuinely broken endpoint behind an ever-growing counter.
+ */
+export async function retryDueDeliveries(
+  deps: WebhookDeps & { limit?: number; leaseMs?: number },
+): Promise<{ attempted: number; delivered: number; retrying: number; failed: number }> {
+  const claimed = await claimRetryableDeliveries(deps.pool, {
+    limit: deps.limit,
+    leaseMs: deps.leaseMs,
+  });
+
+  let delivered = 0;
+  let retrying = 0;
+  let failed = 0;
+  for (const row of claimed) {
+    const result = await postDelivery(
+      { url: row.url, secret: row.secret },
+      row.event_type,
+      row.id,
+      row.payload,
+    );
+    const outcome = await settle(deps, row, result);
+    if (outcome === 'delivered') delivered += 1;
+    else if (outcome === 'retrying') retrying += 1;
+    else {
+      failed += 1;
+      deps.log?.warn(
+        { deliveryId: row.id, webhookId: row.webhook_id, event: row.event_type, attempts: row.attempts },
+        'partner webhook delivery exhausted its retries',
+      );
+    }
+  }
+  return { attempted: claimed.length, delivered, retrying, failed };
 }
 
 /** Fan one event out to every enabled, subscribed webhook of a partner. */

@@ -220,9 +220,28 @@ export async function dueCandidates(
   const conditionSql: Record<string, string> = {
     always: 'true',
     unpaid: "v.paid_status = 'unpaid'",
+    // 'paid_by_partner' is paid as far as the client is concerned — a campaign
+    // that talks about the work rather than the invoice must not skip a
+    // partner-billed engagement.
+    paid: "v.paid_status <> 'unpaid'",
     no_documents:
       'NOT EXISTS (SELECT 1 FROM documents d WHERE d.valuation_id = v.id AND d.deleted_at IS NULL)',
     waiting_on_client: 'v.waiting_on_client',
+    // No questionnaire row at all counts as incomplete: a client who never
+    // opened the form is the one most in need of the nudge.
+    intake_incomplete: `NOT EXISTS (
+      SELECT 1 FROM intake_questionnaires q
+       WHERE q.valuation_id = v.id AND q.submitted_at IS NOT NULL)`,
+    no_captable: `NOT EXISTS (
+      SELECT 1 FROM documents d
+       WHERE d.valuation_id = v.id AND d.deleted_at IS NULL AND d.kind = 'cap_table')`,
+    no_financials: `NOT EXISTS (
+      SELECT 1 FROM documents d
+       WHERE d.valuation_id = v.id AND d.deleted_at IS NULL
+         AND d.kind IN ('income_statement', 'balance_sheet', 'cash_flow', 'projections'))`,
+    unassigned_reviewer: 'v.assigned_reviewer_id IS NULL',
+    unsigned: `NOT EXISTS (
+      SELECT 1 FROM valuation_signatures s WHERE s.valuation_id = v.id)`,
   };
   const { rows } = await db.query<DueCandidate>(
     `SELECT v.id AS valuation_id, v.company_name, v.kind, v.number::text AS number,

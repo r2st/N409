@@ -73,6 +73,65 @@ export function buildWebhookPayload(
   return { event, created_at: now.toISOString(), valuation, ...extra };
 }
 
+// ── Delivery retries (migration 0103) ────────────────────────────────────────
+
+/**
+ * Backoff between retries, in minutes, indexed by the number of attempts
+ * already made. Three steps, so a delivery is tried at most four times: the
+ * immediate attempt, then +1 min, +5 min, +30 min.
+ *
+ * The spread is chosen against what actually takes a receiver down. A minute
+ * covers a rolling restart or a momentary connection reset; five covers a
+ * deploy; thirty covers an incident someone has to be paged for. Doubling from
+ * a one-minute base would spend all four attempts inside the first quarter of
+ * an hour and land the whole set inside a single outage.
+ */
+export const WEBHOOK_RETRY_BACKOFF_MINUTES: readonly number[] = [1, 5, 30];
+
+/** The initial attempt plus one per backoff step. */
+export const WEBHOOK_MAX_ATTEMPTS = WEBHOOK_RETRY_BACKOFF_MINUTES.length + 1;
+
+/**
+ * How long to wait before attempt number `attemptsMade + 1`, or null when the
+ * row is out of attempts and the failure is terminal.
+ *
+ * `attemptsMade` is the count *including* the one that just failed, which is
+ * how the row reads after a claim (the claim increments). So a first failure
+ * asks for BACKOFF[0].
+ */
+export function retryDelayMinutes(attemptsMade: number, maxAttempts = WEBHOOK_MAX_ATTEMPTS): number | null {
+  if (attemptsMade >= maxAttempts) return null;
+  const step = WEBHOOK_RETRY_BACKOFF_MINUTES[attemptsMade - 1];
+  // More attempts allowed than we have backoff steps for: hold at the longest
+  // step rather than falling through to "terminal", which would silently make
+  // a raised max_attempts do nothing.
+  return step ?? (WEBHOOK_RETRY_BACKOFF_MINUTES.at(-1) ?? 30);
+}
+
+/** The absolute time of the next attempt, or null when the row is exhausted. */
+export function nextAttemptAt(
+  attemptsMade: number,
+  maxAttempts = WEBHOOK_MAX_ATTEMPTS,
+  now: Date = new Date(),
+): Date | null {
+  const minutes = retryDelayMinutes(attemptsMade, maxAttempts);
+  return minutes === null ? null : new Date(now.getTime() + minutes * 60_000);
+}
+
+/**
+ * A response the receiver is telling us not to repeat.
+ *
+ * 4xx other than 408/425/429 means the request itself is the problem — a
+ * revoked path, a receiver that rejects our signature, a URL that now 404s.
+ * Retrying those three more times changes nothing and delays the delivery log
+ * telling the partner something is actually wrong. 5xx, timeouts and connection
+ * errors are the transient class this whole mechanism exists for.
+ */
+export function isPermanentDeliveryFailure(status: number): boolean {
+  if (status === 408 || status === 425 || status === 429) return false;
+  return status >= 400 && status < 500;
+}
+
 /**
  * A webhook URL must be plain http(s) — anything else (file:, gopher:, a
  * partner typo) is refused at registration rather than fetched at delivery.

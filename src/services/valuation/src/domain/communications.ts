@@ -10,7 +10,27 @@ import type { EmailSpec } from './emailWorkflows.js';
 
 export type CommChannel = 'email' | 'sms';
 
-export const AUTO_EMAIL_CONDITIONS = ['always', 'unpaid', 'no_documents', 'waiting_on_client'] as const;
+/**
+ * What a campaign is allowed to gate on. Each names something we are actually
+ * blocked on and can see in the schema; the SQL for each is in
+ * `repos/communications.ts` and the DB constraint is migration 0104.
+ *
+ * `no_documents` is kept but is the coarsest of them: a client who uploaded a
+ * pitch deck and nothing else stops matching it while still being someone to
+ * chase, which is why `no_captable` and `no_financials` exist alongside it.
+ */
+export const AUTO_EMAIL_CONDITIONS = [
+  'always',
+  'unpaid',
+  'no_documents',
+  'waiting_on_client',
+  'paid',
+  'intake_incomplete',
+  'no_captable',
+  'no_financials',
+  'unassigned_reviewer',
+  'unsigned',
+] as const;
 export type AutoEmailCondition = (typeof AUTO_EMAIL_CONDITIONS)[number];
 
 export interface CommunicationTemplateRow {

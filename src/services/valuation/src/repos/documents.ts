@@ -2,12 +2,15 @@ import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { PIPELINE_EVENT_TYPES, type DocumentKind } from '../domain/pipeline.js';
+import { categoryForKind, type DocumentCategory } from '../domain/documentCategories.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
 export interface DocumentRow {
   id: string;
   valuation_id: string;
   kind: DocumentKind;
+  /** The intake bucket this upload answers (0105); see domain/documentCategories.ts. */
+  category: DocumentCategory;
   filename: string;
   content_type: string;
   size_bytes: string | number;
@@ -21,6 +24,14 @@ export interface DocumentRow {
 export interface CreateDocumentInput {
   valuationId: string;
   kind: DocumentKind;
+  /**
+   * Intake bucket (0105). Optional: the kind implies one for every caller that
+   * has no client in front of it to ask — the AI pipeline, the partner API, a
+   * sync job — and leaving it to each of them to remember is how a row ends up
+   * uncategorized. Only the upload form, where a client can state the period of
+   * an income statement, has anything the kind does not already say.
+   */
+  category?: DocumentCategory;
   filename: string;
   contentType: string;
   sizeBytes: number;
@@ -38,13 +49,14 @@ export async function createDocument(
     const id = newUlid();
     const { rows } = await client.query<DocumentRow>(
       `INSERT INTO documents
-         (id, valuation_id, kind, filename, content_type, size_bytes, sha256, storage_path, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (id, valuation_id, kind, category, filename, content_type, size_bytes, sha256, storage_path, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         id,
         input.valuationId,
         input.kind,
+        input.category ?? categoryForKind(input.kind),
         input.filename,
         input.contentType,
         input.sizeBytes,
@@ -57,7 +69,13 @@ export async function createDocument(
       valuationId: input.valuationId,
       type: PIPELINE_EVENT_TYPES.documentUploaded,
       actor,
-      payload: { document_id: id, kind: input.kind, filename: input.filename, size_bytes: input.sizeBytes },
+      payload: {
+        document_id: id,
+        kind: input.kind,
+        category: input.category ?? categoryForKind(input.kind),
+        filename: input.filename,
+        size_bytes: input.sizeBytes,
+      },
     });
     return rows[0]!;
   });
@@ -75,7 +93,7 @@ export async function listDocuments(pool: pg.Pool, valuationId: string): Promise
   const { rows } = await pool.query<DocumentRow>(
     `SELECT * FROM documents
      WHERE valuation_id = $1 AND deleted_at IS NULL
-     ORDER BY kind, created_at DESC`,
+     ORDER BY category, kind, created_at DESC`,
     [valuationId],
   );
   return rows;

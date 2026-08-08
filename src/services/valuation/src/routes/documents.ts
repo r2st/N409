@@ -4,10 +4,15 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
-import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { DOCUMENT_KINDS, type DocumentKind } from '../domain/pipeline.js';
+import {
+  DOCUMENT_CATEGORIES,
+  resolveDocumentFiling,
+  summarizeCategories,
+  type DocumentCategory,
+} from '../domain/documentCategories.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import {
   createDocument,
@@ -23,8 +28,6 @@ import { checkUploadType } from '../documents/fileType.js';
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
-
-const KindField = z.enum(DOCUMENT_KINDS);
 
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
@@ -109,7 +112,14 @@ export async function storeDocument(
   pool: pg.Pool,
   documentsDir: string,
   valuation: ValuationRow,
-  input: { kind: DocumentKind; filename: string; contentType: string; buffer: Buffer },
+  input: {
+    kind: DocumentKind;
+    /** Intake bucket (0105); derived from the kind when the caller omits it. */
+    category?: DocumentCategory;
+    filename: string;
+    contentType: string;
+    buffer: Buffer;
+  },
   actor: EventActor,
   uploadedBy: string,
 ): Promise<DocumentRow> {
@@ -130,6 +140,7 @@ export async function storeDocument(
     {
       valuationId: valuation.id,
       kind: input.kind,
+      category: input.category,
       filename,
       contentType: input.contentType || 'application/octet-stream',
       sizeBytes: input.buffer.length,
@@ -153,14 +164,21 @@ export function registerDocumentRoutes(
     const file = await req.file({ limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
     if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
 
-    const kindRaw = (file.fields.kind as { value?: string } | undefined)?.value ?? 'other';
-    const kindParsed = KindField.safeParse(kindRaw);
-    if (!kindParsed.success) {
-      throw problems.unprocessable(`Unknown document kind "${kindRaw}"`, {
-        allowed: DOCUMENT_KINDS,
+    // Either axis, or both: an API caller thinks in kinds, the person clicking
+    // "Monthly income statements" in the intake UI has never heard of one.
+    // A contradictory pair is refused rather than silently corrected — see
+    // resolveDocumentFiling.
+    const filing = resolveDocumentFiling({
+      kind: (file.fields.kind as { value?: string } | undefined)?.value ?? null,
+      category: (file.fields.category as { value?: string } | undefined)?.value ?? null,
+    });
+    if ('error' in filing) {
+      throw problems.unprocessable(filing.error, {
+        allowed_kinds: DOCUMENT_KINDS,
+        allowed_categories: DOCUMENT_CATEGORIES,
       });
     }
-    const kind: DocumentKind = kindParsed.data;
+    const { kind, category } = filing;
 
     let buffer: Buffer;
     try {
@@ -184,7 +202,7 @@ export function registerDocumentRoutes(
       deps.pool,
       deps.documentsDir,
       valuation,
-      { kind, filename: file.filename, contentType: file.mimetype, buffer },
+      { kind, category, filename: file.filename, contentType: file.mimetype, buffer },
       actorFor(principal),
       principal.id,
     );
@@ -207,6 +225,25 @@ export function registerDocumentRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
     return { documents: await listDocuments(deps.pool, valuation.id) };
+  });
+
+  /**
+   * The intake checklist. All six buckets, always, in a fixed order — an empty
+   * bucket is the thing the client needs to see, so filtering to the ones with
+   * uploads in them would hide exactly the useful half.
+   */
+  app.get('/api/v1/valuations/:id/documents/categories', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
+    const documents = await listDocuments(deps.pool, valuation.id);
+    const categories = summarizeCategories(documents);
+    return {
+      categories,
+      // What still blocks the engagement, so a client does not have to scan
+      // six rows for the one that matters.
+      missing_required: categories.filter((c) => !c.satisfied).map((c) => c.key),
+    };
   });
 
   app.get(

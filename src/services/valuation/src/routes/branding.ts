@@ -10,7 +10,13 @@ import {
   resolveBranding,
   type Branding,
 } from '../domain/branding.js';
-import { findBrandingByKey, findBrandingByPartnerId, updateBranding } from '../repos/branding.js';
+import { normalizeSubdomain, subdomainFromHost } from '../domain/partnerSubdomain.js';
+import {
+  findBrandingByKey,
+  findBrandingByPartnerId,
+  findBrandingBySubdomain,
+  updateBranding,
+} from '../repos/branding.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -26,7 +32,10 @@ import { requirePrincipal } from '../plugins/auth.js';
  * must not be reimplementing the fallback chain, because three clients
  * reimplementing it is three subtly different brands.
  */
-export function registerBrandingRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+export function registerBrandingRoutes(
+  app: FastifyInstance,
+  deps: { pool: pg.Pool; baseDomain?: string },
+): void {
   /**
    * The resolved brand plus the CSS ramp for both theme modes. The client
    * applies `css` verbatim — no colour maths in the browser, so a tenant's
@@ -51,6 +60,22 @@ export function registerBrandingRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const source = await findBrandingByKey(deps.pool, key);
     if (!source) throw problems.notFound();
     return respond(resolveBranding(source));
+  });
+
+  /**
+   * Branding for whichever host the client actually arrived on (migration
+   * 0106). This is what a white-label firm's own address serves, and it is the
+   * only branding endpoint the signed-out SPA needs to know about — it does not
+   * have to learn a slug from somewhere before it can render its first frame.
+   *
+   * Never 404s. A host with no tenant behind it — the platform's own address, a
+   * reserved label, an unclaimed subdomain, a Host header someone made up — is
+   * the platform, and the login page has to render on all of them.
+   */
+  app.get('/api/v1/public/branding', async (req) => {
+    const label = deps.baseDomain ? subdomainFromHost(req.headers.host, deps.baseDomain) : null;
+    if (!label) return respond(PLATFORM_BRANDING);
+    return respond(resolveBranding(await findBrandingBySubdomain(deps.pool, label)));
   });
 
   /**
@@ -104,7 +129,35 @@ export function registerBrandingRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!parsed.success) throw problems.unprocessable('Invalid branding', { errors: parsed.error.issues });
     if (Object.keys(parsed.data).length === 0) throw problems.unprocessable('No branding to update');
 
-    const source = await updateBranding(deps.pool, partnerId, parsed.data);
+    // The schema checks the shape; this checks that the name is one we are
+    // willing to hand out. Reserved labels are the load-bearing half — a tenant
+    // holding `secure` or `login` under our domain is a phishing page with our
+    // certificate on it, and self-service registration is how it would happen.
+    const patch = { ...parsed.data };
+    if (patch.subdomain != null) {
+      const normalized = normalizeSubdomain(patch.subdomain);
+      if ('problem' in normalized) {
+        throw problems.unprocessable(
+          normalized.problem === 'reserved'
+            ? `"${patch.subdomain}" is reserved and cannot be used as a subdomain`
+            : 'A subdomain must be 3–63 characters of a–z, 0–9 and hyphens, not starting or ending with one',
+        );
+      }
+      patch.subdomain = normalized.subdomain;
+    }
+
+    let source: Awaited<ReturnType<typeof updateBranding>>;
+    try {
+      source = await updateBranding(deps.pool, partnerId, patch);
+    } catch (err) {
+      // partners_subdomain_key. Two firms cannot share an address, and the
+      // race between "is it free?" and "take it" is real enough that the
+      // unique index has to be what answers, not a prior SELECT.
+      if ((err as { code?: string }).code === '23505') {
+        throw problems.conflict(`The subdomain "${patch.subdomain}" is already taken`);
+      }
+      throw err;
+    }
     if (!source) throw problems.notFound();
 
     await recordAdminEvent(deps.pool, {

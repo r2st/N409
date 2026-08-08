@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
 import { verifyWebhookSignature } from '../../src/domain/partnerWebhooks.js';
+import { retryDueDeliveries } from '../../src/hooks/partnerWebhooks.js';
 import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -75,6 +76,7 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
 
   let webhookId: string;
   let webhookSecret: string;
+  let pendingDeliveryId: string;
 
   it('registers a webhook, returning the signing secret exactly once', async () => {
     const res = await app.inject({
@@ -169,7 +171,7 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
     ]);
   });
 
-  it('records failed deliveries with the receiver status in the delivery log', async () => {
+  it('keeps a 5xx delivery pending with a backoff instead of dropping it', async () => {
     receiverStatus = 500;
     const res = await app.inject({
       method: 'POST',
@@ -185,10 +187,128 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
       headers: keyHeader(apiKey),
     });
     expect(log.statusCode).toBe(200);
-    const failed = log.json().deliveries.find((d: any) => d.status === 'failed');
-    expect(failed).toBeTruthy();
-    expect(failed.last_error).toContain('500');
+    // A receiver that answered 500 gets tried again — the event is owed, not
+    // lost, which is the whole point of 0103.
+    const pending = log.json().deliveries.find((d: any) => d.status === 'pending');
+    expect(pending).toBeTruthy();
+    expect(pending.last_error).toContain('500');
+    expect(pending.attempts).toBe(1);
+    expect(pending.max_attempts).toBe(4);
+    // One minute out — invisible to the sweep until then.
+    const delayMs = new Date(pending.next_attempt_at).getTime() - Date.parse(pending.created_at);
+    expect(delayMs).toBeGreaterThanOrEqual(55_000);
+    expect(delayMs).toBeLessThanOrEqual(70_000);
     expect(log.json().deliveries.some((d: any) => d.status === 'delivered')).toBe(true);
+    pendingDeliveryId = pending.id;
+  });
+
+  it('re-delivers a pending row once its backoff elapses', async () => {
+    // Bring the backoff forward rather than waiting a minute; the sweep's
+    // predicate is next_attempt_at <= now(), so this is exactly the state the
+    // row reaches on its own.
+    await ctx.pool.query(
+      "UPDATE partner_webhook_deliveries SET next_attempt_at = now() - interval '1 second' WHERE id = $1",
+      [pendingDeliveryId],
+    );
+    const before = received.length;
+    const swept = await retryDueDeliveries({ pool: ctx.pool });
+    expect(swept.delivered).toBe(1);
+    expect(received.length).toBe(before + 1);
+
+    const log = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/webhooks/${webhookId}/deliveries`,
+      headers: keyHeader(apiKey),
+    });
+    const row = log.json().deliveries.find((d: any) => d.id === pendingDeliveryId);
+    expect(row.status).toBe('delivered');
+    expect(row.attempts).toBe(2);
+    // Settled rows report no next attempt — the stored timestamp is the one
+    // that let this attempt happen, and echoing it reads as a promise.
+    expect(row.next_attempt_at).toBeNull();
+  });
+
+  it('gives up after the last backoff step and lets the partner replay', async () => {
+    receiverStatus = 503;
+    await app.inject({
+      method: 'POST',
+      url: `/api/partner/v1/webhooks/${webhookId}/test`,
+      headers: keyHeader(apiKey),
+    });
+
+    // Three sweeps = the three backoff steps. Each one is due immediately.
+    for (let i = 0; i < 3; i += 1) {
+      await ctx.pool.query(
+        "UPDATE partner_webhook_deliveries SET next_attempt_at = now() - interval '1 second' WHERE status = 'pending'",
+      );
+      await retryDueDeliveries({ pool: ctx.pool });
+    }
+    receiverStatus = 200;
+
+    const log = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/webhooks/${webhookId}/deliveries`,
+      headers: keyHeader(apiKey),
+    });
+    const dead = log.json().deliveries.find((d: any) => d.status === 'failed');
+    expect(dead).toBeTruthy();
+    expect(dead.attempts).toBe(4);
+    expect(dead.last_error).toContain('503');
+
+    // A fourth sweep must not touch it: terminal means terminal.
+    await ctx.pool.query(
+      "UPDATE partner_webhook_deliveries SET next_attempt_at = now() - interval '1 second' WHERE status = 'failed'",
+    );
+    expect((await retryDueDeliveries({ pool: ctx.pool })).attempted).toBe(0);
+
+    // ...until the partner replays it, which resets the ladder.
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/partner/v1/webhooks/${webhookId}/deliveries/${dead.id}/retry`,
+      headers: keyHeader(apiKey),
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().delivery.status).toBe('pending');
+    expect(replay.json().delivery.attempts).toBe(0);
+
+    const swept = await retryDueDeliveries({ pool: ctx.pool });
+    expect(swept.delivered).toBe(1);
+  });
+
+  it('does not retry a 4xx the receiver told us not to repeat', async () => {
+    receiverStatus = 404;
+    await app.inject({
+      method: 'POST',
+      url: `/api/partner/v1/webhooks/${webhookId}/test`,
+      headers: keyHeader(apiKey),
+    });
+    receiverStatus = 200;
+
+    const log = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/webhooks/${webhookId}/deliveries`,
+      headers: keyHeader(apiKey),
+    });
+    const gone = log.json().deliveries.find((d: any) => d.last_error?.includes('404'));
+    expect(gone.status).toBe('failed');
+    // One attempt, not four: three more identical POSTs to a 404 change
+    // nothing and only delay the partner learning the URL is wrong.
+    expect(gone.attempts).toBe(1);
+  });
+
+  it("refuses to replay another partner's delivery", async () => {
+    const log = await app.inject({
+      method: 'GET',
+      url: `/api/partner/v1/webhooks/${webhookId}/deliveries`,
+      headers: keyHeader(apiKey),
+    });
+    const any = log.json().deliveries[0];
+    const foreign = await app.inject({
+      method: 'POST',
+      url: `/api/partner/v1/webhooks/${webhookId}/deliveries/${any.id}/retry`,
+      headers: keyHeader(otherApiKey),
+    });
+    expect(foreign.statusCode).toBe(404);
   });
 
   it("scopes webhooks to the key's partner", async () => {

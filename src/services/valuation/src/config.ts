@@ -54,6 +54,11 @@ const Env = z.object({
   // times are left alone (treated as a real, non-transient failure).
   EMAIL_RETRY_SCAN_MINUTES: z.coerce.number().int().min(0).default(30),
   EMAIL_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(5),
+  // Partner webhook delivery retries (migration 0103). The shortest backoff
+  // step is one minute, so a slower scan than that just delays the first retry
+  // — it cannot lose it. 0 disables the sweep; POST /admin/webhooks/retry
+  // still works.
+  WEBHOOK_RETRY_SCAN_MINUTES: z.coerce.number().int().min(0).default(1),
   // Stripe payment processing (remaining-gaps §3 #1). Routes 503 when unset.
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
@@ -73,6 +78,12 @@ const Env = z.object({
   STRIPE_BILLING_WEBHOOK_SECRET: z.string().optional(),
   // Base URL the browser lands on after Stripe checkout (the web frontend).
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
+  // The domain white-label tenants live under, e.g. 'app.409.ai' — a request
+  // for acme.app.409.ai then resolves the partner with subdomain 'acme'
+  // (migration 0106). Unset means no host-based tenant resolution at all, which
+  // is the right default: without it, any Host header a client sends would be
+  // read as a tenant claim.
+  APP_BASE_DOMAIN: z.string().optional(),
   // Accounting integrations (§23) — each provider activates when its OAuth
   // client id + secret are both set; unset providers show as "not configured".
   XERO_CLIENT_ID: z.string().optional(),

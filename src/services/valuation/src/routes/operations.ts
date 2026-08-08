@@ -13,6 +13,8 @@ import {
 import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { VALUATION_KINDS } from '../domain/valuation.js';
+import { deliveryBacklogStats } from '../repos/partnerWebhooks.js';
+import { retryDueDeliveries } from '../hooks/partnerWebhooks.js';
 
 const DateOnly = z
   .string()
@@ -126,5 +128,24 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
       { actorType: 'human', actorId: principal.id, source: 'api' },
     );
     return reply.status(201).send({ valuation });
+  });
+
+  /**
+   * Partner webhook delivery backlog (migration 0103). Ops need one number to
+   * answer "is anything not getting through?" without reading fourteen
+   * partners' delivery logs; `failed` is the one that matters, because a failed
+   * row is terminal and nothing else will ever come back for it.
+   */
+  app.get('/api/v1/admin/webhooks/deliveries/stats', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    return deliveryBacklogStats(deps.pool);
+  });
+
+  /** On-demand sweep — the same code path the interval runs (index.ts). */
+  app.post('/api/v1/admin/webhooks/retry', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    return retryDueDeliveries({ pool: deps.pool, log: req.log });
   });
 }

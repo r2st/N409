@@ -125,6 +125,13 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
   { method: 'GET', url: '/api/v1/public/branding/:key', reason: 'white-label chrome on the pre-login pages' },
   {
     method: 'GET',
+    url: '/api/v1/public/branding',
+    reason:
+      'same chrome, resolved from the tenant subdomain the client arrived on (0106) — the ' +
+      'signed-out SPA has no slug to pass until it has rendered',
+  },
+  {
+    method: 'GET',
     url: '/api/v1/public/partners/:key/branding',
     reason: 'white-label chrome on the pre-login pages',
   },

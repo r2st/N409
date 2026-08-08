@@ -10,7 +10,7 @@ import type { BrandingPatch, BrandingSource } from '../domain/branding.js';
  * written by the firm itself.
  */
 
-const BRANDING_COLUMNS = `id, name, brand_name, brand_tagline, brand_color, accent_color_dark,
+const BRANDING_COLUMNS = `id, name, subdomain, brand_name, brand_tagline, brand_color, accent_color_dark,
                           logo_url, logo_dark_url, favicon_url, support_email, white_label_enabled`;
 
 export async function findBrandingByPartnerId(
@@ -37,11 +37,34 @@ export async function findBrandingByKey(pool: pg.Pool, key: string): Promise<Bra
 }
 
 /**
+ * Host lookup for a white-label tenant address (migration 0106).
+ *
+ * Only a tenant that has actually turned white label on resolves here. A firm
+ * that reserved a subdomain but has not gone live would otherwise serve
+ * platform branding on its own address, which reads as a misconfiguration
+ * rather than as "not launched yet" — and the caller falls back to platform
+ * branding on null anyway, so the outcome is identical without the confusion of
+ * a half-claimed host.
+ */
+export async function findBrandingBySubdomain(
+  pool: pg.Pool,
+  subdomain: string,
+): Promise<BrandingSource | null> {
+  const { rows } = await pool.query<BrandingSource>(
+    `SELECT ${BRANDING_COLUMNS} FROM partners
+      WHERE subdomain = $1 AND archived_at IS NULL AND white_label_enabled`,
+    [subdomain],
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * Applies a validated patch. The column allow-list is repeated here rather than
  * spread from the input: this layer builds SQL identifiers, so it cannot trust
  * that every future caller validated its object first.
  */
 const WRITABLE_COLUMNS = [
+  'subdomain',
   'brand_name',
   'brand_tagline',
   'brand_color',

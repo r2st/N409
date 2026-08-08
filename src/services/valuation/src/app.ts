@@ -335,7 +335,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerAnalyticsRoutes(app, { pool });
   registerCompareRoutes(app, { pool });
   registerOrganizationRoutes(app, { pool });
-  registerBrandingRoutes(app, { pool });
+  registerBrandingRoutes(app, { pool, baseDomain: config.APP_BASE_DOMAIN });
   registerFirmRoutes(app, { pool });
   registerClientIntakeRoutes(app, {
     pool,

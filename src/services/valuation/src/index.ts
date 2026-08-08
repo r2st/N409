@@ -17,6 +17,7 @@ const { migrate } = await import('./db/migrate.js');
 const { buildApp, buildEmailTransports } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { retryFailedEmails } = await import('./hooks/emailRetry.js');
+const { retryDueDeliveries } = await import('./hooks/partnerWebhooks.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
 const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
 const { runRetentionSweep } = await import('./routes/retention.js');
@@ -127,6 +128,20 @@ if (config.EMAIL_RETRY_SCAN_MINUTES > 0) {
   emailRetryTimer = setInterval(() => sweep.run(), config.EMAIL_RETRY_SCAN_MINUTES * 60_000);
 }
 
+// Partner webhook retry sweep (0103): a delivery whose receiver was down keeps
+// 'pending' with a backoff stamped on it; this is what comes back for it.
+let webhookRetryTimer: NodeJS.Timeout | undefined;
+if (config.WEBHOOK_RETRY_SCAN_MINUTES > 0) {
+  const sweep = nonOverlapping(
+    async () => {
+      const r = await retryDueDeliveries({ pool, log: app.log });
+      if (r.attempted > 0) app.log.info(r, 'webhook retry sweep');
+    },
+    (err) => app.log.error({ err }, 'webhook retry sweep failed'),
+  );
+  webhookRetryTimer = setInterval(() => sweep.run(), config.WEBHOOK_RETRY_SCAN_MINUTES * 60_000);
+}
+
 // Auto-pipeline reaper (B-3 §auto-pipeline): sweep runs orphaned by a restart or
 // wedged on a stuck upstream call. Run once at boot, then on an interval.
 let reaperTimer: NodeJS.Timeout | undefined;
@@ -195,7 +210,7 @@ let retentionTimer: NodeJS.Timeout | undefined;
 }
 
 // This is the service `deploy.sh` restarts and then waits for, and the one with
-// the most that can stall: six background timers, a Fastify server draining
+// the most that can stall: seven background timers, a Fastify server draining
 // in-flight requests, and a pg pool that will not end until every checked-out
 // connection comes back. Unbounded, one stuck query held the whole deploy until
 // systemd's 90s timeout and a SIGKILL — which is what the graceful path was
@@ -206,6 +221,7 @@ installShutdownHandlers(app.log, {
     // Timers first: stop starting new work before waiting for existing work.
     if (autoEmailTimer) clearInterval(autoEmailTimer);
     if (emailRetryTimer) clearInterval(emailRetryTimer);
+    if (webhookRetryTimer) clearInterval(webhookRetryTimer);
     if (reaperTimer) clearInterval(reaperTimer);
     if (capTableSyncTimer) clearInterval(capTableSyncTimer);
     if (hrisSyncTimer) clearInterval(hrisSyncTimer);

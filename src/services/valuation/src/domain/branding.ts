@@ -21,6 +21,8 @@ import { z } from 'zod';
 export interface Branding {
   /** Partner id, or null when this is the platform's own branding. */
   tenant_id: string | null;
+  /** The tenant's own address label, when they have one (migration 0106). */
+  subdomain: string | null;
   /** Public-facing firm name — window title, sidebar wordmark, report cover. */
   name: string;
   tagline: string | null;
@@ -44,6 +46,7 @@ export interface Branding {
 /** The product's own identity — the fallback for every unbranded tenant. */
 export const PLATFORM_BRANDING: Branding = {
   tenant_id: null,
+  subdomain: null,
   name: 'N409',
   tagline: 'Valuations',
   // bond-500 / bond-400: the accent ramp from the SPA theme. The dark variant
@@ -74,6 +77,8 @@ const MIN_ACCENT_CONTRAST = 3;
 export interface BrandingSource {
   id: string;
   name: string;
+  /** The firm's own address label (migration 0106); null until they claim one. */
+  subdomain: string | null;
   brand_name: string | null;
   brand_tagline: string | null;
   brand_color: string | null;
@@ -184,6 +189,7 @@ export function resolveBranding(source: BrandingSource | null | undefined): Bran
 
   return {
     tenant_id: source.id,
+    subdomain: source.subdomain,
     name: source.brand_name?.trim() || source.name,
     tagline: source.brand_tagline?.trim() || null,
     accent: ensureContrast(accent, LIGHT_SURFACE),
@@ -229,6 +235,20 @@ export function brandingCssVariables(
   };
 }
 
+/**
+ * A firm's public address. Validated again in `normalizeSubdomain` (which also
+ * folds case and rejects reserved names); this is the shape check that keeps a
+ * malformed value from reaching it.
+ */
+const SUBDOMAIN = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3)
+  .max(63)
+  .regex(/^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])$/, 'expected a DNS label (a-z, 0-9, hyphen)')
+  .nullable();
+
 const HEX_COLOR = z
   .string()
   .regex(/^#[0-9a-fA-F]{6}$/, 'expected a #rrggbb colour')
@@ -241,6 +261,7 @@ const HEX_COLOR = z
  */
 export const BRANDING_PATCH_SCHEMA = z
   .object({
+    subdomain: SUBDOMAIN,
     brand_name: z.string().min(1).max(200).nullable(),
     brand_tagline: z.string().max(200).nullable(),
     brand_color: HEX_COLOR,
