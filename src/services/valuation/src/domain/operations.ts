@@ -19,7 +19,7 @@ export const OPERATIONS_EVENT_TYPES = {
  * (features.md §3.1), materialised server-side so tabs can show live counts.
  */
 export const STATE_GROUPS = {
-  open: ['pending', 'started', 'onboarding_completed', 'user_finished', 'completed'],
+  open: ['pending', 'started', 'onboarding_completed', 'user_finished', 'completed', 'paid'],
   in_review: ['review', 'reviewed'],
   drafted: ['drafted', 'draft_accepted', 'draft_changes'],
   published: ['published'],

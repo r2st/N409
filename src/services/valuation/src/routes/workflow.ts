@@ -99,7 +99,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, id);
 
-    const next = nextState(valuation.state);
+    const next = nextState(valuation.state, { paidStatus: valuation.paid_status });
     if (!next) {
       throw problems.conflict(`Cannot auto-advance from '${valuation.state}'`);
     }
@@ -168,7 +168,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
             break;
           }
           case 'advance': {
-            const next = nextState(valuation.state);
+            const next = nextState(valuation.state, { paidStatus: valuation.paid_status });
             if (!next) throw problems.conflict(`Cannot auto-advance from '${valuation.state}'`);
             const updated = await applyState(valuation, next, principal, 'bulk');
             results.push({ id, ok: true, state: updated.state });

@@ -15,6 +15,7 @@ const AUTO_ADVANCE: Partial<Record<ValuationState, ValuationState>> = {
   onboarding_completed: 'user_finished',
   user_finished: 'completed',
   completed: 'review',
+  paid: 'review',
   review: 'reviewed',
   reviewed: 'drafted',
   drafted: 'draft_accepted',
@@ -39,7 +40,14 @@ export function WorkflowActions({
       .catch(() => {});
   }, []);
 
-  const next = AUTO_ADVANCE[valuation.state];
+  // Mirrors nextState() server-side, payment divert included — the button
+  // names the state the server will actually move to, not the one this table
+  // defaults to. Promising "review" and landing on "paid" is how ops stop
+  // trusting the control.
+  const next =
+    valuation.state === 'completed' && valuation.paid_status !== 'unpaid'
+      ? ('paid' as ValuationState)
+      : AUTO_ADVANCE[valuation.state];
   const canRestart = valuation.state !== 'published' && valuation.state !== 'started';
 
   const run = async (path: string, body?: unknown) => {

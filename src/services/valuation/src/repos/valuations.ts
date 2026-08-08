@@ -5,6 +5,7 @@ import { likeContains } from '../db/like.js';
 import { diffRecords } from '../domain/auditTrail.js';
 import {
   EVENT_TYPES,
+  type PaidStatus,
   type ValuationKind,
   type ValuationSource,
   type ValuationState,
@@ -27,7 +28,7 @@ export interface ValuationRow {
   source: ValuationSource | null;
   currency: string;
   service_countries: string[];
-  paid_status: 'unpaid' | 'paid' | 'paid_by_partner';
+  paid_status: PaidStatus;
   qsbs_attestation: boolean | null;
   delivery_days: number | null;
   assigned_reviewer_id: string | null;

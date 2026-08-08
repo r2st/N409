@@ -105,7 +105,7 @@ export function retryDelayMinutes(attemptsMade: number, maxAttempts = WEBHOOK_MA
   // More attempts allowed than we have backoff steps for: hold at the longest
   // step rather than falling through to "terminal", which would silently make
   // a raised max_attempts do nothing.
-  return step ?? (WEBHOOK_RETRY_BACKOFF_MINUTES.at(-1) ?? 30);
+  return step ?? WEBHOOK_RETRY_BACKOFF_MINUTES.at(-1) ?? 30;
 }
 
 /** The absolute time of the next attempt, or null when the row is exhausted. */

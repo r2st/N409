@@ -107,7 +107,10 @@ export function subdomainFromHost(host: string | undefined | null, baseDomain: s
   if (host.startsWith('[')) return null;
 
   const hostname = host.split(':')[0]!.trim().toLowerCase().replace(/\.$/, '');
-  const base = baseDomain.trim().toLowerCase().replace(/^\.+|\.+$/g, '');
+  const base = baseDomain
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+|\.+$/g, '');
   if (!hostname || !base) return null;
 
   if (!hostname.endsWith(`.${base}`)) return null;

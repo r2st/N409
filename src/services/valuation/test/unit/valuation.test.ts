@@ -3,6 +3,8 @@ import {
   VALUATION_KINDS,
   VALUATION_STATES,
   VALUATION_SOURCES,
+  PAID_STATUSES,
+  isSettled,
   EVENT_TYPES,
 } from '../../src/domain/valuation.js';
 
@@ -51,6 +53,31 @@ describe('VALUATION_STATES', () => {
     expect(VALUATION_STATES).toContain('drafted');
     expect(VALUATION_STATES).toContain('draft_changes');
     expect(VALUATION_STATES).toContain('draft_accepted');
+  });
+
+  it('is the documented set of fifteen', () => {
+    // features.md §2 — eleven lifecycle states, the paid gate, three side
+    // states. `waiting_on_client` is deliberately absent: it is a flag that
+    // overlays any state, not a state of its own.
+    expect(VALUATION_STATES).toHaveLength(15);
+    expect(VALUATION_STATES).toContain('paid');
+  });
+
+  it('orders paid between completed and review, as the lifecycle reads', () => {
+    expect(VALUATION_STATES.indexOf('paid')).toBe(VALUATION_STATES.indexOf('completed') + 1);
+    expect(VALUATION_STATES.indexOf('review')).toBe(VALUATION_STATES.indexOf('paid') + 1);
+  });
+});
+
+describe('PAID_STATUSES', () => {
+  it('treats partner-settled money as settled', () => {
+    expect(isSettled('paid')).toBe(true);
+    expect(isSettled('paid_by_partner')).toBe(true);
+    expect(isSettled('unpaid')).toBe(false);
+  });
+
+  it('covers the migration 0001 enum', () => {
+    expect([...PAID_STATUSES]).toEqual(['unpaid', 'paid', 'paid_by_partner']);
   });
 });
 

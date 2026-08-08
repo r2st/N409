@@ -1,0 +1,31 @@
+-- The `paid` lifecycle state — the fifteenth, and the one the state machine
+-- has been quietly missing.
+--
+-- features.md and 409AI_FEATURES.md both draw the lifecycle as
+-- `completed → (paid) → review`: payment is the gate a file passes through on
+-- its way from "the client has given us everything" to "an analyst has picked
+-- it up". 0001 shipped the fourteen states either side of that gate and left
+-- the gate itself out, so payment lived only in `paid_status`/`paid_at` and a
+-- valuation waiting on money was indistinguishable, in the state column, from
+-- one waiting on an analyst. Every "why has this not been reviewed yet?" is
+-- one of those two, and the dashboard could not tell them apart.
+--
+-- The parentheses in the diagram are load-bearing: `paid` is a state a file
+-- passes through, not one it must. Partner-paid and invoiced engagements go
+-- `completed → review` directly, and that transition stays legal — see
+-- domain/workflow.ts, which routes an auto-advance through `paid` only when
+-- payment has actually settled. Production has no Stripe keys configured yet
+-- (docs/billing-setup.md), so today that is every valuation; a gate that
+-- defaulted to closed would strand all of them.
+--
+-- `BEFORE 'review'` places the label in its lifecycle position rather than at
+-- the end of the enum, so ORDER BY state and any pg_enum-ordered comparison
+-- read in workflow order.
+--
+-- This migration adds the value and nothing else, deliberately. Postgres
+-- permits ALTER TYPE ... ADD VALUE inside a transaction block (the runner
+-- wraps every migration in one) but forbids *using* the new value in that same
+-- transaction, so anything that references 'paid' — seed rows, backfills —
+-- has to wait for a later migration.
+
+ALTER TYPE valuation_state ADD VALUE IF NOT EXISTS 'paid' BEFORE 'review';

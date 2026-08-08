@@ -24,6 +24,7 @@ export const STATE_LABELS: Record<ValuationState, string> = {
   onboarding_completed: 'Onboarding done',
   user_finished: 'Client finished',
   completed: 'Completed',
+  paid: 'Paid',
   review: 'In review',
   reviewed: 'Reviewed',
   drafted: 'Drafted',
@@ -43,6 +44,7 @@ export const STATE_TONES: Record<ValuationState, StateTone> = {
   onboarding_completed: 'progress',
   user_finished: 'progress',
   completed: 'progress',
+  paid: 'progress',
   review: 'attention',
   reviewed: 'attention',
   drafted: 'attention',
@@ -56,7 +58,7 @@ export const STATE_TONES: Record<ValuationState, StateTone> = {
 
 /** Dashboard groupings, per features.md §3.1. */
 export function stateGroup(state: ValuationState): 'open' | 'in_review' | 'drafted' | 'published' | 'closed' {
-  if (['pending', 'started', 'onboarding_completed', 'user_finished', 'completed'].includes(state))
+  if (['pending', 'started', 'onboarding_completed', 'user_finished', 'completed', 'paid'].includes(state))
     return 'open';
   if (['review', 'reviewed'].includes(state)) return 'in_review';
   if (['drafted', 'draft_accepted', 'draft_changes'].includes(state)) return 'drafted';

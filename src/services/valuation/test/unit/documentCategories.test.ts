@@ -55,9 +55,9 @@ describe('document categories', () => {
   });
 
   it('lets the client state the period the kind cannot carry', () => {
-    expect(resolveDocumentFiling({ kind: 'income_statement', category: 'monthly_income_statements' })).toEqual(
-      { kind: 'income_statement', category: 'monthly_income_statements' },
-    );
+    expect(
+      resolveDocumentFiling({ kind: 'income_statement', category: 'monthly_income_statements' }),
+    ).toEqual({ kind: 'income_statement', category: 'monthly_income_statements' });
   });
 
   it('derives a kind from a category alone', () => {

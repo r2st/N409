@@ -24,12 +24,7 @@ import { OVERWRITE_FIELDS_BY_KEY } from './overwrites.js';
  * mutate a valuation.
  */
 
-export const WORKBOOK_TAB_KEYS = [
-  'company_overview',
-  'captable',
-  'financials',
-  'valuation_params',
-] as const;
+export const WORKBOOK_TAB_KEYS = ['company_overview', 'captable', 'financials', 'valuation_params'] as const;
 export type WorkbookTabKey = (typeof WORKBOOK_TAB_KEYS)[number];
 
 /** Which table a value is authoritative in — and therefore what edits it. */
@@ -167,7 +162,12 @@ function isoDate(value: Date | string | null | undefined): string | null {
 }
 
 /** Reads one cell out of the computed workbook grid. */
-function cell(sheets: readonly ComputedSheet[], sheet: string, rowKey: string, columnKey: string): number | null {
+function cell(
+  sheets: readonly ComputedSheet[],
+  sheet: string,
+  rowKey: string,
+  columnKey: string,
+): number | null {
   const row = sheets.find((s) => s.key === sheet)?.rows.find((r) => r.key === rowKey);
   return row?.cells.find((c) => c.column_key === columnKey)?.value ?? null;
 }
@@ -280,8 +280,8 @@ export const WORKBOOK_TABS: readonly WorkbookTabDef[] = [
             (c) => c.profile?.employee_count ?? null,
           ),
           f('headquarters', 'Headquarters', 'text', 'derived', (c) => {
-            const parts = [c.profile?.city, c.profile?.region, c.profile?.country].filter(
-              (p): p is string => Boolean(p && p.trim()),
+            const parts = [c.profile?.city, c.profile?.region, c.profile?.country].filter((p): p is string =>
+              Boolean(p && p.trim()),
             );
             return parts.length > 0 ? parts.join(', ') : null;
           }),
@@ -374,13 +374,7 @@ export const WORKBOOK_TABS: readonly WorkbookTabDef[] = [
             'derived',
             (c) => capTableTotals(c.capTable).preferred_shares,
           ),
-          f(
-            'option_shares',
-            'Options',
-            'number',
-            'derived',
-            (c) => capTableTotals(c.capTable).option_shares,
-          ),
+          f('option_shares', 'Options', 'number', 'derived', (c) => capTableTotals(c.capTable).option_shares),
           f(
             'warrant_shares',
             'Warrants',
@@ -601,7 +595,13 @@ export const WORKBOOK_TABS: readonly WorkbookTabDef[] = [
             'valuation_params',
             (c) => c.params?.market_horizon ?? null,
           ),
-          f('asset_method', 'Asset method', 'text', 'valuation_params', (c) => c.params?.asset_method ?? null),
+          f(
+            'asset_method',
+            'Asset method',
+            'text',
+            'valuation_params',
+            (c) => c.params?.asset_method ?? null,
+          ),
           f(
             'exit_timeline',
             'Exit timeline',

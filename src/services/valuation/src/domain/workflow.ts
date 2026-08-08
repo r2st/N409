@@ -1,4 +1,4 @@
-import type { ValuationState } from './valuation.js';
+import { isSettled, type PaidStatus, type ValuationState } from './valuation.js';
 
 /**
  * Workflow engine (M4, feature-gap-analysis P1 #22). Pure state-machine layer:
@@ -13,7 +13,10 @@ export const WORKFLOW_TRANSITIONS: Record<ValuationState, readonly ValuationStat
   started: ['onboarding_completed', 'cancelled', 'ignored', 'timeout'],
   onboarding_completed: ['user_finished', 'cancelled', 'timeout'],
   user_finished: ['completed', 'cancelled', 'timeout'],
-  completed: ['review', 'cancelled'],
+  // `paid` is a gate a file may pass through, not one it must: partner-paid
+  // and invoiced engagements go straight to review, so both edges are legal.
+  completed: ['paid', 'review', 'cancelled'],
+  paid: ['review', 'cancelled'],
   review: ['reviewed', 'draft_changes', 'cancelled'],
   reviewed: ['drafted', 'review', 'cancelled'],
   drafted: ['draft_accepted', 'draft_changes', 'cancelled'],
@@ -31,7 +34,10 @@ export const AUTO_ADVANCE: Partial<Record<ValuationState, ValuationState>> = {
   started: 'onboarding_completed',
   onboarding_completed: 'user_finished',
   user_finished: 'completed',
+  // Default only. `nextState` diverts to 'paid' when payment has settled —
+  // this is the fallback for the engagements where it never will.
   completed: 'review',
+  paid: 'review',
   review: 'reviewed',
   reviewed: 'drafted',
   drafted: 'draft_accepted',
@@ -48,7 +54,19 @@ export function canTransition(from: ValuationState, to: ValuationState): boolean
   return WORKFLOW_TRANSITIONS[from].includes(to);
 }
 
-export function nextState(from: ValuationState): ValuationState | null {
+/**
+ * The happy-path successor, or null where the state needs a human fork.
+ *
+ * `ctx.paidStatus` is what makes the `paid` gate real rather than decorative:
+ * a settled file leaving `completed` records that it settled before it queues
+ * for review. Without the context — or with money that never arrived — the
+ * answer is the AUTO_ADVANCE default, which routes around the gate. That
+ * fallback is not a nicety: production has no Stripe keys configured, so every
+ * live valuation is `unpaid`, and a gate that defaulted to closed would strand
+ * all of them at `completed`.
+ */
+export function nextState(from: ValuationState, ctx?: { paidStatus?: PaidStatus }): ValuationState | null {
+  if (from === 'completed' && ctx?.paidStatus && isSettled(ctx.paidStatus)) return 'paid';
   return AUTO_ADVANCE[from] ?? null;
 }
 

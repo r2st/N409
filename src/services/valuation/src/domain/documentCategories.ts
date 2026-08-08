@@ -71,8 +71,7 @@ export const DOCUMENT_CATEGORY_DEFS: readonly DocumentCategoryDef[] = [
   {
     key: 'annual_income_statements',
     label: 'Annual income statements',
-    description:
-      'Full-year P&L for each completed fiscal year, audited or reviewed where available.',
+    description: 'Full-year P&L for each completed fiscal year, audited or reviewed where available.',
     required: false,
     kinds: ['income_statement'],
     defaultKind: 'income_statement',

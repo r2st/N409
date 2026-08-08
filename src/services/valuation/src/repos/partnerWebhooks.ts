@@ -133,9 +133,7 @@ export async function recordDelivery(
 export async function settleDelivery(
   pool: pg.Pool,
   id: string,
-  outcome:
-    | { status: 'delivered' }
-    | { status: 'failed'; error: string; nextAttemptAt: Date | null },
+  outcome: { status: 'delivered' } | { status: 'failed'; error: string; nextAttemptAt: Date | null },
 ): Promise<void> {
   if (outcome.status === 'delivered') {
     await pool.query(

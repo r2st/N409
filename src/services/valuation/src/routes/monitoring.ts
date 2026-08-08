@@ -44,6 +44,7 @@ import { withTransaction } from '../db/pool.js';
 
 const MONITORABLE_STATES = new Set([
   'completed',
+  'paid',
   'review',
   'reviewed',
   'drafted',

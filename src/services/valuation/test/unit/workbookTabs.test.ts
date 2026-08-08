@@ -229,7 +229,9 @@ describe('cap table roll-up', () => {
   it('treats a zero conversion ratio as a broken row, not as "converts to nothing"', () => {
     // Dropping the class from the denominator would inflate every per-share
     // price computed against it.
-    const totals = capTableTotals([entry({ class_type: 'preferred', shares: 1_000_000, conversion_ratio: 0 })]);
+    const totals = capTableTotals([
+      entry({ class_type: 'preferred', shares: 1_000_000, conversion_ratio: 0 }),
+    ]);
     expect(totals.fully_diluted_shares).toBe(1_000_000);
   });
 

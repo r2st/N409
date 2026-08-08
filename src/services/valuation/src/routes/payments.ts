@@ -28,6 +28,7 @@ import {
 import { requirePrincipal } from '../plugins/auth.js';
 import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } from '../domain/payments.js';
 import { createNotification } from '../repos/notifications.js';
+import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 
@@ -95,6 +96,8 @@ export interface PaymentDeps {
   stripeSecretKey?: string;
   stripeWebhookSecret?: string;
   publicBaseUrl: string;
+  /** Settlement can move the workflow, and a state change sends mail. */
+  transport?: EmailTransport;
 }
 
 async function loadAuthorized(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
@@ -452,12 +455,33 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         if (valuation && valuation.paid_status === 'unpaid') {
           const amount =
             typeof session.amount_total === 'number' ? session.amount_total : Number(payment.amount_cents);
-          await patchValuation(
+          // Payment is the gate between "the client has given us everything"
+          // and "an analyst has picked it up", and crossing it is exactly what
+          // the `paid` state records. Only from `completed`: money landing on a
+          // file already in review, or on one that never reached the gate,
+          // says nothing about where the work has got to, and rewinding it to
+          // `paid` would be a lie the dashboard then has to be read around.
+          const advancing = valuation.state === 'completed';
+          const updated = await patchValuation(
             deps.pool,
             valuation,
-            { paid_status: 'paid', amount_cents: amount, paid_at: new Date() },
+            {
+              paid_status: 'paid',
+              amount_cents: amount,
+              paid_at: new Date(),
+              ...(advancing ? { state: 'paid' } : {}),
+            },
             { actorType: 'system', source: 'stripe' },
           );
+          // Same hook every other path into a state runs through, so partner
+          // webhooks and the notification matrix see this transition too.
+          if (advancing) {
+            await onStateChanged(
+              { pool: deps.pool, transport: deps.transport, log: req.log },
+              updated,
+              'paid',
+            );
+          }
         }
       };
 

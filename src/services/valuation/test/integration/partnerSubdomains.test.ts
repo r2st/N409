@@ -134,9 +134,10 @@ describe.skipIf(!dbUp)('partner subdomains', () => {
     const plain = await setupTestApp();
     try {
       const partner = await seedPartner(plain, 'Unbased Advisors');
-      await plain.pool.query("UPDATE partners SET subdomain = 'unbased', white_label_enabled = true WHERE id = $1", [
-        partner,
-      ]);
+      await plain.pool.query(
+        "UPDATE partners SET subdomain = 'unbased', white_label_enabled = true WHERE id = $1",
+        [partner],
+      );
       const res = await plain.app.inject({
         method: 'GET',
         url: '/api/v1/public/branding',

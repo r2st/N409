@@ -419,6 +419,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     stripeSecretKey: config.STRIPE_SECRET_KEY,
     stripeWebhookSecret: config.STRIPE_WEBHOOK_SECRET,
     publicBaseUrl: config.PUBLIC_BASE_URL,
+    transport,
   });
   // Feature 7 — subscription / retainer billing + invoicing
   registerBillingRoutes(app, {

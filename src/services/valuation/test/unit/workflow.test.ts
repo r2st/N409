@@ -58,6 +58,58 @@ describe('workflow engine (M4 #22)', () => {
     expect(canTransition('review', 'published')).toBe(false);
   });
 
+  describe('the paid gate', () => {
+    it('diverts a settled file through paid on its way out of completed', () => {
+      expect(nextState('completed', { paidStatus: 'paid' })).toBe('paid');
+      expect(nextState('completed', { paidStatus: 'paid_by_partner' })).toBe('paid');
+      expect(nextState('paid')).toBe('review');
+    });
+
+    it('routes around the gate when the money has not arrived', () => {
+      // Production has no Stripe keys, so this is every live valuation today.
+      // A gate that defaulted to closed would strand all of them at completed.
+      expect(nextState('completed', { paidStatus: 'unpaid' })).toBe('review');
+      expect(nextState('completed')).toBe('review');
+    });
+
+    it('makes both edges out of completed legal, so an invoiced file is not stuck', () => {
+      expect(canTransition('completed', 'paid')).toBe(true);
+      expect(canTransition('completed', 'review')).toBe(true);
+    });
+
+    it('does not let payment skip review', () => {
+      expect(canTransition('paid', 'drafted')).toBe(false);
+      expect(canTransition('paid', 'published')).toBe(false);
+    });
+
+    it('only gates the entry to review — payment landing later moves nothing', () => {
+      // The divert is keyed to `completed` alone. A settled file already in
+      // review has passed the gate; re-answering it would rewind the work.
+      expect(nextState('review', { paidStatus: 'paid' })).toBe('reviewed');
+      expect(nextState('drafted', { paidStatus: 'paid' })).toBe('draft_accepted');
+    });
+
+    it('walks the settled happy path through paid to published', () => {
+      const path: ValuationState[] = ['completed'];
+      let current: ValuationState = 'completed';
+      for (let i = 0; i < 20; i++) {
+        const next = nextState(current, { paidStatus: 'paid' });
+        if (!next) break;
+        path.push(next);
+        current = next;
+      }
+      expect(path).toEqual([
+        'completed',
+        'paid',
+        'review',
+        'reviewed',
+        'drafted',
+        'draft_accepted',
+        'published',
+      ]);
+    });
+  });
+
   it('terminal-ish states can be restarted, mid-flight restart is allowed', () => {
     expect(canRestart('cancelled')).toBe(true);
     expect(canRestart('timeout')).toBe(true);

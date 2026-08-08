@@ -31,7 +31,7 @@ export const PROGRESS_STAGES: readonly ProgressStage[] = [
     key: 'analysis',
     label: 'Analysis & review',
     description: 'Our analysts run the valuation and review the results.',
-    states: ['completed', 'review', 'reviewed'],
+    states: ['completed', 'paid', 'review', 'reviewed'],
   },
   {
     key: 'draft',

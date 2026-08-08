@@ -77,6 +77,7 @@ export const VALUATION_STATES = [
   'onboarding_completed',
   'user_finished',
   'completed',
+  'paid',
   'review',
   'reviewed',
   'drafted',
