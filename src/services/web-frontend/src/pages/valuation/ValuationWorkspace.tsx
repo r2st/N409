@@ -42,6 +42,7 @@ export const TAB_HELP: Record<string, string> = {
   calculations: 'methodology-overview',
   qa: 'health-checks-overview',
   health: 'health-checks-overview',
+  completeness: 'health-checks-overview',
   decisions: 'board-approval-overview',
   scenarios: 'pwerm-overview',
   bridge: 'value-bridge-overview',
@@ -249,6 +250,7 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/calculations`} label="Calculations" />}
         {ops && <Tab to={`${base}/qa`} label="QA" />}
         {ops && <Tab to={`${base}/health`} label="Health" />}
+        <Tab to={`${base}/completeness`} label="Completeness" />
         {ops && <Tab to={`${base}/decisions`} label="Decisions" />}
         <Tab to={`${base}/scenarios`} label="What-If Scenarios" />
         {ops && <Tab to={`${base}/sensitivity`} label="Sensitivity" />}

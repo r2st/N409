@@ -47,6 +47,7 @@ const VALUATION_TABS: { path: string; label: string; access: 'all' | 'ops' | 'op
   { path: 'calculations', label: 'Calculations', access: 'ops' },
   { path: 'qa', label: 'QA', access: 'ops' },
   { path: 'health', label: 'Health', access: 'ops' },
+  { path: 'completeness', label: 'Completeness', access: 'all' },
   { path: 'decisions', label: 'Decisions', access: 'ops' },
   { path: 'scenarios', label: 'What-If Scenarios', access: 'all' },
   { path: 'sensitivity', label: 'Sensitivity', access: 'ops' },

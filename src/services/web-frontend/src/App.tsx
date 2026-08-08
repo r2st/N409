@@ -92,6 +92,10 @@ const ProgressTab = named(() => import('./pages/valuation/ProgressTab'), 'Progre
 const AuditTrailTab = named(() => import('./pages/valuation/AuditTrailTab'), 'AuditTrailTab');
 const QaTab = named(() => import('./pages/valuation/QaTab'), 'QaTab');
 const HealthTab = named(() => import('./pages/valuation/HealthTab'), 'HealthTab');
+const CompletenessTab = named(
+  () => import('./pages/valuation/CompletenessTab'),
+  'CompletenessTab',
+);
 const DecisionsTab = named(() => import('./pages/valuation/DecisionsTab'), 'DecisionsTab');
 const CompanyTab = named(() => import('./pages/valuation/CompanyTab'), 'CompanyTab');
 const PackageTab = named(() => import('./pages/valuation/PackageTab'), 'PackageTab');
@@ -231,6 +235,7 @@ export default function App() {
             <Route path="audit-trail" element={<AuditTrailTab />} />
             <Route path="qa" element={<QaTab />} />
             <Route path="health" element={<HealthTab />} />
+            <Route path="completeness" element={<CompletenessTab />} />
             <Route path="decisions" element={<DecisionsTab />} />
             <Route path="scenarios" element={<ScenariosTab />} />
             <Route path="bridge" element={<BridgeTab />} />

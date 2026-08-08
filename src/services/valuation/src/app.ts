@@ -87,6 +87,7 @@ import type { CapTableProvider } from './clients/capTableSync.js';
 import type { AccountingProvider, FetchFn, ProviderCredentials } from './clients/accounting.js';
 import { registerEvidenceRoutes } from './routes/evidence.js';
 import { registerQaRoutes } from './routes/qa.js';
+import { registerDataCompletenessRoutes } from './routes/dataCompleteness.js';
 import { registerHealthCheckRoutes } from './routes/healthChecks.js';
 import { registerAsc718Routes } from './routes/asc718.js';
 import { registerFundRoutes } from './routes/funds.js';
@@ -326,6 +327,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // decision log, client-portal progress tracker
   registerQaRoutes(app, { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR });
   registerHealthCheckRoutes(app, { pool });
+  registerDataCompletenessRoutes(app, { pool });
   registerDecisionRoutes(app, { pool });
   registerProgressRoutes(app, { pool });
   registerOnboardingRoutes(app, { pool });
