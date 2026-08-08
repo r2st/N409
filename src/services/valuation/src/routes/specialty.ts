@@ -7,15 +7,18 @@ import { internalAuthHeaders, InternalServiceError, postJson, toProblem } from '
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findQuestionnaire } from '../repos/intake.js';
-import { createCalculation, latestSucceededCalculation } from '../repos/calculations.js';
+import { createCalculation, latestSucceededCalculation, listCalculations } from '../repos/calculations.js';
 import { loadHmrcForm } from '../repos/hmrcForms.js';
 import type { EventActor } from '../events/record.js';
 import {
   isSpecialtyKind,
+  SPECIALTY_ENGINE_LIST,
+  SPECIALTY_ENGINES,
   SPECIALTY_KINDS,
   SpecialtyInputError,
   specialtyEngineRequest,
   specialtyHeadline,
+  type SpecialtyKind,
 } from '../domain/specialty.js';
 import type { ValuationKind } from '../domain/valuation.js';
 
@@ -162,22 +165,57 @@ export function registerSpecialtyRoutes(
     }
   });
 
-  // Latest specialty result — what the workspace tab renders.
+  /**
+   * The kind → engine registry, served rather than duplicated on the client.
+   *
+   * The map exists once, in `domain/specialty.ts`. A frontend copy would be a
+   * second answer to "which engine runs an ASC 820 measurement", and the two
+   * would disagree the first time an endpoint moved.
+   */
+  app.get('/api/v1/specialty/schema', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('Specialty calculations are operations-only');
+    return { engines: SPECIALTY_ENGINE_LIST, kinds: SPECIALTY_KINDS };
+  });
+
+  // Latest specialty result plus the run history — what the workspace tab renders.
   app.get('/api/v1/valuations/:id/specialty', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(id, principal);
     const kind = valuation.kind as ValuationKind;
+    const supported = isSpecialtyKind(kind);
     const latest = await latestSucceededCalculation(deps.pool, id);
     const specialty =
       latest?.results && typeof latest.results.specialty === 'object'
         ? (latest.results.specialty as Record<string, unknown>)
         : null;
+
+    // Failed runs belong in the history as much as successful ones: an analyst
+    // reading "why did nothing happen" is looking for the 422 the engine gave
+    // back, and a list of only the successes cannot show it.
+    const history = (await listCalculations(deps.pool, id))
+      .filter((c) => {
+        const endpoint = (c.inputs as { endpoint?: unknown } | null)?.endpoint;
+        return typeof endpoint === 'string' && endpoint.startsWith('/engine/v1/');
+      })
+      .map((c) => ({
+        id: c.id,
+        status: c.status,
+        engine_version: c.engine_version,
+        equity_value: c.equity_value,
+        fmv_per_share: c.fmv_per_share,
+        error: c.error,
+        created_at: c.created_at,
+      }));
+
     return {
       kind,
-      supported: isSpecialtyKind(kind),
+      supported,
+      engine: supported ? SPECIALTY_ENGINES[kind as SpecialtyKind] : null,
       calculation: specialty ? latest : null,
       result: specialty,
+      history,
     };
   });
 

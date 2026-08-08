@@ -124,6 +124,9 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
         'decisions.json',
         'qa-reviews.json',
         'scenarios.json',
+        // Superseded rows included: "what did you read, and what before
+        // that" is exactly what the supersede chain records.
+        'market-research.json',
         'report-versions.json',
       ].sort(),
     );

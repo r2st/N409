@@ -101,7 +101,12 @@ let autoEmailTimer: NodeJS.Timeout | undefined;
 if (config.AUTO_EMAIL_SCAN_MINUTES > 0) {
   const scan = nonOverlapping(
     async () => {
-      const r = await runDueAutoEmails({ pool, ...emailTransports, log: app.log });
+      const r = await runDueAutoEmails({
+        pool,
+        ...emailTransports,
+        publicBaseUrl: config.PUBLIC_BASE_URL,
+        log: app.log,
+      });
       if (r.queued > 0 || r.skipped > 0) app.log.info(r, 'auto email scan');
     },
     (err) => app.log.error({ err }, 'auto email scan failed'),

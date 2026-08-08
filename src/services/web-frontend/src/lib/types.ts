@@ -148,6 +148,32 @@ export type StateGroupKey = (typeof STATE_GROUPS)[number];
 
 export type ValuationCounts = Record<StateGroupKey | 'all', number>;
 
+/**
+ * The nine named listing tabs (design §4.2). Defined server-side in
+ * `domain/workflow.NAMED_BUCKETS` and served alongside the counts, so this is
+ * the key type only — the labels come off the wire rather than being restated,
+ * which is what keeps the tab and the rows behind it from disagreeing.
+ */
+export const NAMED_BUCKETS = [
+  'all',
+  'incomplete',
+  'unverified',
+  'in_progress',
+  'waiting_on_client',
+  'drafted',
+  'published',
+  'unread',
+  'ignored',
+] as const;
+export type NamedBucketKey = (typeof NAMED_BUCKETS)[number];
+
+export type NamedBucketCounts = Record<NamedBucketKey, number>;
+
+export interface NamedBucketDef {
+  key: NamedBucketKey;
+  label: string;
+}
+
 export const COMMENT_KINDS = ['chat', 'note', 'email'] as const;
 export type CommentKind = (typeof COMMENT_KINDS)[number];
 
@@ -345,6 +371,12 @@ export interface AutoEmail {
   max_sends: number;
   template_key: string;
   enabled: boolean;
+  /**
+   * Marketing rather than transactional (migration 0118). Gated on marketing
+   * consent and sent with an unsubscribe footer; a transactional campaign is
+   * neither, which is the CAN-SPAM/GDPR/PECR distinction.
+   */
+  promotional: boolean;
   created_at: string;
   updated_at: string;
 }

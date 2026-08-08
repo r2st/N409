@@ -82,6 +82,68 @@ def _methodology_summary(payload: dict) -> str:
     return "(infer the methodology from the calculation results)"
 
 
+#: How many research answers ride along, and how much of each. A narrative call
+#: already carries the calculation, the params and the section library; an
+#: unbounded research block would crowd them out of the context window, and the
+#: sections that read research are the ones that would lose.
+MAX_RESEARCH_ITEMS = 8
+MAX_RESEARCH_CHARS = 2500
+MAX_CITATIONS_PER_ITEM = 8
+
+
+def research_block(payload: dict) -> str:
+    """Web-grounded market research for this engagement, as prompt text.
+
+    The valuation service ships the live `market_research` rows (migration
+    0116) as `market_research`, already filtered to the grounded ones — an
+    answer Sonar returned without citations is an expensive completion, and
+    quoting one in a report next to sourced claims is precisely the failure the
+    Sonar system prompt exists to prevent.
+
+    The URLs travel with the text on purpose. The drafted narrative's value over
+    the model's own recollection is that a reviewer can follow the source, so a
+    research paragraph arriving without its citations would be worth less than
+    no research at all: it would read as authoritative and be uncheckable.
+    """
+    raw = payload.get("market_research")
+    if not isinstance(raw, list) or not raw:
+        return ""
+
+    lines: list[str] = []
+    for item in raw[:MAX_RESEARCH_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        answer = c.clean_str(item.get("answer"), limit=MAX_RESEARCH_CHARS)
+        if not answer:
+            continue
+        topic = c.clean_str(item.get("topic"), limit=100) or "research"
+        region = c.clean_str(item.get("region"), limit=20)
+        retrieved = c.clean_str(item.get("retrieved_at"), limit=40)
+        header = f"[{topic} · {region}]" if region else f"[{topic}]"
+        if retrieved:
+            header = f"{header} retrieved {retrieved[:10]}"
+        lines.append(f"{header}\n{answer}")
+
+        cites = item.get("citations")
+        if isinstance(cites, list):
+            urls: list[str] = []
+            for cite in cites[:MAX_CITATIONS_PER_ITEM]:
+                url = cite.get("url") if isinstance(cite, dict) else cite
+                url = c.clean_str(url, limit=400)
+                if url:
+                    urls.append(url)
+            if urls:
+                lines.append("Sources: " + "; ".join(urls))
+
+    if not lines:
+        return ""
+    return (
+        "\n\nMarket research retrieved from public sources (cite these URLs where you "
+        "use them; do not assert a figure that is not in this block or the calculation):\n"
+        + "\n\n".join(lines)
+    )
+
+
 def _sections(doc: Any, spec: tuple[tuple[str, str, str], ...]) -> list[dict]:
     """Every requested key, in order, filled from the model or blanked."""
     raw = doc.get("sections") if isinstance(doc, dict) else None
@@ -109,7 +171,7 @@ def run_report_narrative(payload: dict) -> tuple[str, dict]:
     user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Params: {c.params_summary(params)}
 Methodology choices: {_methodology_summary(payload)}
-Calculation results: {c.calculation_summary(payload)}
+Calculation results: {c.calculation_summary(payload)}{research_block(payload)}
 
 Draft the report narrative. Return JSON:
 {{
@@ -125,6 +187,26 @@ If a section's approach did not carry weight, say so briefly rather than padding
     result = {
         "sections": _sections(parsed, spec),
         "section_keys": [k for k, _t, _g in spec],
+        # What the draft was written against, recorded on the job. Without it,
+        # "which research was in front of the model" is answerable only by
+        # comparing timestamps against an append-only table that has since moved
+        # on — and that is the first question asked of a cited paragraph.
+        "research_topics": _research_topics(payload),
         "anonymization": red.report(),
     }
     return llm.model, result
+
+
+def _research_topics(payload: dict) -> list[str]:
+    raw = payload.get("market_research")
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw[:MAX_RESEARCH_ITEMS]:
+        if not isinstance(item, dict):
+            continue
+        topic = c.clean_str(item.get("topic"), limit=100)
+        region = c.clean_str(item.get("region"), limit=20)
+        if topic:
+            out.append(f"{topic}:{region}" if region else topic)
+    return out

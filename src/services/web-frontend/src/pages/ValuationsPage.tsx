@@ -6,15 +6,21 @@ import { isOps } from '../lib/rbac';
 import {
   displayName,
   formatDate,
-  GROUP_LABELS,
   KIND_LABELS,
   SOURCE_LABELS,
   STATE_LABELS,
 } from '../lib/format';
 import { parseSortParam, serializeSort, sortIndicator, toggleSort } from '../lib/sort';
 import type { SortableColumn } from '../lib/sort';
-import { STATE_GROUPS, VALUATION_KINDS, VALUATION_STATES } from '../lib/types';
-import type { BulkResult, Partner, UserOption, ValuationCounts, ValuationList } from '../lib/types';
+import { VALUATION_KINDS, VALUATION_STATES } from '../lib/types';
+import type {
+  BulkResult,
+  NamedBucketCounts,
+  NamedBucketDef,
+  Partner,
+  UserOption,
+  ValuationList,
+} from '../lib/types';
 import {
   Button,
   EmptyState,
@@ -89,7 +95,8 @@ export function ValuationsPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<ValuationList | null>(null);
-  const [counts, setCounts] = useState<ValuationCounts | null>(null);
+  const [counts, setCounts] = useState<NamedBucketCounts | null>(null);
+  const [bucketDefs, setBucketDefs] = useState<NamedBucketDef[] | null>(null);
   const [reviewers, setReviewers] = useState<UserOption[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +111,12 @@ export function ValuationsPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkNote, setBulkNote] = useState<string | null>(null);
 
+  /*
+   * `bucket` is the nine named tabs (design §4.2); `group` is the old five-group
+   * key, still read so saved views and links written against it keep working.
+   * The tab strip drives `bucket`; a URL carrying only `group` still filters.
+   */
+  const bucket = params.get('bucket') ?? '';
   const group = params.get('group') ?? '';
   const sortParam = params.get('sort') ?? '';
   const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
@@ -122,6 +135,7 @@ export function ValuationsPage() {
     setData(null);
     setError(null);
     const q = new URLSearchParams(filterQuery);
+    if (bucket) q.set('bucket', bucket);
     if (group) q.set('group', group);
     if (sortParam) q.set('sort', sortParam);
     q.set('page', String(page));
@@ -129,14 +143,19 @@ export function ValuationsPage() {
     api<ValuationList>(`/valuations?${q}`)
       .then(setData)
       .catch(() => setError('Could not load valuations.'));
-  }, [filterQuery, group, sortParam, page]);
+  }, [filterQuery, bucket, group, sortParam, page]);
 
   useEffect(reload, [reload]);
 
   // Live tab counts (M3) — refetched when any non-tab filter changes.
   const loadCounts = useCallback(() => {
-    api<{ counts: ValuationCounts }>(`/valuations/counts?${filterQuery}`)
-      .then((res) => setCounts(res.counts))
+    api<{ counts: NamedBucketCounts; buckets: NamedBucketDef[] }>(
+      `/valuations/counts?buckets=named&${filterQuery}`,
+    )
+      .then((res) => {
+        setCounts(res.counts);
+        setBucketDefs(res.buckets);
+      })
       .catch(() => setCounts(null));
   }, [filterQuery]);
 
@@ -162,6 +181,7 @@ export function ValuationsPage() {
 
   const clearFilters = () => {
     const next = new URLSearchParams();
+    if (bucket) next.set('bucket', bucket);
     if (group) next.set('group', group);
     if (sortParam) next.set('sort', sortParam);
     setQDraft('');
@@ -216,6 +236,7 @@ export function ValuationsPage() {
     setExportError(null);
     try {
       const q = new URLSearchParams(filterQuery);
+      if (bucket) q.set('bucket', bucket);
       if (group) q.set('group', group);
       if (sortParam) q.set('sort', sortParam);
       q.set('format', format);
@@ -240,10 +261,17 @@ export function ValuationsPage() {
   const allOnPageSelected =
     Boolean(data?.valuations.length) && data!.valuations.every((v) => selected.has(v.id));
 
-  const tabs: Array<{ key: string; label: string }> = [
-    { key: '', label: GROUP_LABELS.all! },
-    ...STATE_GROUPS.map((g) => ({ key: g, label: GROUP_LABELS[g] ?? g })),
-  ];
+  /*
+   * Served, not restated: the labels and the order come from
+   * `domain/workflow.NAMED_BUCKETS`, which is the same definition the counts and
+   * the row filter read. Two copies of this mapping would be two answers to
+   * "how many are in progress", and the count on the tab and the rows behind it
+   * would disagree — which is worse than not having the tab.
+   */
+  const tabs: Array<{ key: string; label: string }> = (bucketDefs ?? []).map((b) => ({
+    key: b.key === 'all' ? '' : b.key,
+    label: b.label,
+  }));
 
   return (
     <div>
@@ -277,14 +305,23 @@ export function ValuationsPage() {
       {/* Tabbed scopes with live counts (M3 feature 15) */}
       <div className="mt-6 flex flex-wrap gap-1 border-b border-paper-300" role="tablist">
         {tabs.map((tab) => {
-          const active = group === tab.key;
-          const count = counts ? counts[(tab.key || 'all') as keyof ValuationCounts] : null;
+          const active = bucket === tab.key;
+          const count = counts ? counts[(tab.key || 'all') as keyof NamedBucketCounts] : null;
           return (
             <button
               key={tab.key || 'all'}
               role="tab"
               aria-selected={active}
-              onClick={() => setFilter('group', tab.key)}
+              onClick={() => {
+                // Switching tabs drops the legacy alias so the two cannot both
+                // be in the URL saying different things.
+                const next = new URLSearchParams(params);
+                next.delete('group');
+                if (tab.key) next.set('bucket', tab.key);
+                else next.delete('bucket');
+                next.delete('page');
+                setParams(next, { replace: true });
+              }}
               className={`cursor-pointer border-b-2 px-3.5 py-2 text-sm font-semibold transition-colors ${
                 active
                   ? 'border-bond-600 text-bond-700'
@@ -554,8 +591,8 @@ export function ValuationsPage() {
 
       {data && data.valuations.length === 0 && (
         <div className="mt-6">
-          <EmptyState title={hasFilters || group ? 'Nothing matches these filters' : 'No valuations yet'}>
-            {hasFilters || group ? (
+          <EmptyState title={hasFilters || bucket || group ? 'Nothing matches these filters' : 'No valuations yet'}>
+            {hasFilters || bucket || group ? (
               'Try clearing a filter.'
             ) : (
               <Link to="/onboarding" className="font-semibold text-bond-600 hover:text-bond-700">

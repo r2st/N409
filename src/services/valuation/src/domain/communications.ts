@@ -85,8 +85,71 @@ export interface AutoEmailRow {
   max_sends: number;
   template_key: string;
   enabled: boolean;
+  /** Marketing rather than transactional (migration 0118). See `isSuppressed`. */
+  promotional: boolean;
   created_at: Date;
   updated_at: Date;
+}
+
+// ── Promotional vs transactional (migration 0118) ────────────────────────────
+
+/**
+ * The `notification_preferences` key that holds marketing consent.
+ *
+ * The existing matrix is sparse and default-on — a missing row means both
+ * channels are enabled — and marketing rides on the same table rather than a
+ * new column so there is one place a client's communication preferences live
+ * and one settings screen that edits them. Default-on matches how these
+ * campaigns have been sending since 0104; the opt-out is what was missing, not
+ * the consent.
+ */
+export const MARKETING_PREFERENCE_KEY = 'marketing';
+
+/**
+ * Whether a campaign must not send to this recipient.
+ *
+ * Asymmetric on purpose, and this asymmetry is the whole control:
+ *
+ *   * A marketing opt-out suppresses `promotional = true` campaigns only.
+ *   * A transactional campaign ignores marketing consent entirely — a client
+ *     who unsubscribed from renewal offers still has to be told their draft is
+ *     ready, and suppressing that is a service failure, not compliance.
+ *
+ * One predicate, both directions, so neither branch can be got right in one
+ * call site and wrong in another.
+ */
+export function isSuppressed(
+  campaign: Pick<AutoEmailRow, 'promotional'>,
+  consent: { marketingEmail: boolean },
+): boolean {
+  return campaign.promotional && !consent.marketingEmail;
+}
+
+/**
+ * The unsubscribe footer a promotional message carries, and a transactional
+ * one does not.
+ *
+ * Appended at send time rather than stored in the template: whether a campaign
+ * is promotional is a property of the campaign, and a template shared by a
+ * transactional and a promotional campaign would otherwise need two copies —
+ * which is how one of them ends up without the footer.
+ */
+export function unsubscribeFooter(settingsUrl: string): string {
+  return (
+    `\n\n—\nYou are receiving this because you have an account with us. ` +
+    `To stop receiving messages like this one, update your preferences at ${settingsUrl}. ` +
+    `Notifications about your own valuations are not affected.`
+  );
+}
+
+/** `body` with the footer, for promotional sends only. */
+export function applyPromotionalFooter(
+  body: string,
+  campaign: Pick<AutoEmailRow, 'promotional'>,
+  settingsUrl: string | null,
+): string {
+  if (!campaign.promotional || !settingsUrl) return body;
+  return body + unsubscribeFooter(settingsUrl);
 }
 
 export type TemplateVars = Record<string, string | number | null | undefined>;

@@ -99,6 +99,8 @@ const CompletenessTab = named(
 const DecisionsTab = named(() => import('./pages/valuation/DecisionsTab'), 'DecisionsTab');
 const CompanyTab = named(() => import('./pages/valuation/CompanyTab'), 'CompanyTab');
 const PackageTab = named(() => import('./pages/valuation/PackageTab'), 'PackageTab');
+const SpecialtyTab = named(() => import('./pages/valuation/SpecialtyTab'), 'SpecialtyTab');
+const ResearchTab = named(() => import('./pages/valuation/ResearchTab'), 'ResearchTab');
 const OverwritesSchemaPage = named(() => import('./pages/OverwritesSchemaPage'), 'OverwritesSchemaPage');
 const SettingsPage = named(() => import('./pages/SettingsPage'), 'SettingsPage');
 const AdminSettingsPage = named(() => import('./pages/AdminSettingsPage'), 'AdminSettingsPage');
@@ -120,6 +122,14 @@ const TemplatesPage = named(() => import('./pages/TemplatesPage'), 'TemplatesPag
 const SensitivityPage = named(() => import('./pages/SensitivityPage'), 'SensitivityPage');
 const TasksPage = named(() => import('./pages/TasksPage'), 'TasksPage');
 const BotPromptsPage = named(() => import('./pages/BotPromptsPage'), 'BotPromptsPage');
+const AdminNarrativePromptsPage = named(
+  () => import('./pages/AdminNarrativePromptsPage'),
+  'AdminNarrativePromptsPage',
+);
+const AdminDataRemediationPage = named(
+  () => import('./pages/AdminDataRemediationPage'),
+  'AdminDataRemediationPage',
+);
 const ActivityLogPage = named(() => import('./pages/ActivityLogPage'), 'ActivityLogPage');
 const HelpPage = named(() => import('./pages/HelpPage'), 'HelpPage');
 const FeaturesPage = named(() => import('./pages/FeaturesPage'), 'FeaturesPage');
@@ -248,6 +258,8 @@ export default function App() {
             <Route path="monitoring" element={<MonitoringTab />} />
             <Route path="engagement" element={<EngagementTab />} />
             <Route path="package" element={<PackageTab />} />
+            <Route path="specialty" element={<SpecialtyTab />} />
+            <Route path="research" element={<ResearchTab />} />
           </Route>
           {/* Operations-only surfaces (P1 #5 — route-level role guarding) */}
           <Route element={<RequireRole allow={isOps} />}>
@@ -260,6 +272,8 @@ export default function App() {
             <Route path="/templates" element={<TemplatesPage />} />
             <Route path="/schema/overwrites" element={<OverwritesSchemaPage />} />
             <Route path="/admin/prompts" element={<BotPromptsPage />} />
+            <Route path="/admin/narrative-prompts" element={<AdminNarrativePromptsPage />} />
+            <Route path="/admin/data-remediation" element={<AdminDataRemediationPage />} />
             <Route path="/admin/support" element={<SupportInboxPage />} />
             <Route path="/admin/outbox" element={<EmailOutboxPage />} />
             <Route path="/admin/jobs" element={<AdminJobsPage />} />

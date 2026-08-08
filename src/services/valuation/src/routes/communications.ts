@@ -84,6 +84,14 @@ const AutoEmailBody = z.object({
   max_sends: z.number().int().min(1).max(10).default(1),
   template_key: z.string().min(1).max(100),
   enabled: z.boolean().default(true),
+  /**
+   * Marketing rather than transactional (migration 0118). Defaults to false
+   * because the two mistakes are not symmetric: a marketing message wrongly
+   * marked transactional is a compliance exposure, and a transactional one
+   * wrongly marked marketing silences a client's status updates. The safe
+   * direction is the one an operator must consciously change.
+   */
+  promotional: z.boolean().default(false),
 });
 
 const AutoEmailPatch = AutoEmailBody.omit({ name: true })
@@ -92,7 +100,13 @@ const AutoEmailPatch = AutoEmailBody.omit({ name: true })
 
 export function registerCommunicationRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; transport?: EmailTransport; smsTransport?: EmailTransport },
+  deps: {
+    pool: pg.Pool;
+    transport?: EmailTransport;
+    smsTransport?: EmailTransport;
+    /** Where a promotional message's unsubscribe footer points. */
+    publicBaseUrl?: string;
+  },
 ): void {
   const requireOps = (req: Parameters<typeof requirePrincipal>[0]) => {
     const principal = requirePrincipal(req);
@@ -122,6 +136,10 @@ export function registerCommunicationRoutes(
         trigger_state: a.trigger_state,
         template_key: a.template_key,
         enabled: a.enabled,
+        // Audited explicitly: flipping a campaign to promotional (or away from
+        // it) changes who may lawfully receive it, and "who changed this and
+        // when" is the first question after a complaint.
+        promotional: a.promotional,
       },
     });
 
@@ -374,6 +392,7 @@ export function registerCommunicationRoutes(
       pool: deps.pool,
       transport: deps.transport,
       smsTransport: deps.smsTransport,
+      publicBaseUrl: deps.publicBaseUrl,
       log: req.log,
     });
     return result;

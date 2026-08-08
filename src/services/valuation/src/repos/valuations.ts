@@ -11,6 +11,12 @@ import {
   type ValuationState,
 } from '../domain/valuation.js';
 import { OPERATIONS_EVENT_TYPES, STATE_GROUPS, stateGroupOf, type StateGroup } from '../domain/operations.js';
+import {
+  namedBucket,
+  namedBucketsFor,
+  NAMED_BUCKET_KEYS,
+  type NamedBucketKey,
+} from '../domain/workflow.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import type { ValuationScope } from '../auth/rbac.js';
 
@@ -244,6 +250,12 @@ export interface ValuationFilters {
   kind?: ValuationKind;
   /** Tabbed scope: a state group (M3 feature 15). Ignored when `state` is set. */
   group?: StateGroup;
+  /**
+   * Tabbed scope: one of the nine named buckets (design §4.2), defined once in
+   * `domain/workflow.NAMED_BUCKETS`. Takes precedence over `group`, which stays
+   * a URL alias so saved views and shared links keep working.
+   */
+  bucket?: NamedBucketKey;
   /** Free search: exact ULID / engagement number / workflow id, else company-name substring. */
   q?: string;
   /** Explicit id list — powers bulk export of a checkbox selection. */
@@ -352,7 +364,15 @@ export function buildValuationWhere(
   if (scope.kind === 'own') add('user_id = ?', scope.userId);
   if (filters.ids?.length) add('id = ANY(?)', filters.ids);
   if (filters.state) add('state = ?', filters.state);
-  else if (filters.group) add('state = ANY(?::valuation_state[])', [...STATE_GROUPS[filters.group]]);
+  else if (filters.bucket) {
+    // The two non-state buckets are not state predicates: `waiting_on_client`
+    // is a boolean that cuts across the lifecycle, and `unread` is per-reader.
+    // Both fall through to the clauses already below, which is why neither adds
+    // a state filter here rather than getting a special case of its own.
+    const bucket = namedBucket(filters.bucket);
+    if (bucket?.states.length) add('state = ANY(?::valuation_state[])', [...bucket.states]);
+    if (bucket?.waitingOnClient) where.push(`${alias}waiting_on_client`);
+  } else if (filters.group) add('state = ANY(?::valuation_state[])', [...STATE_GROUPS[filters.group]]);
   if (filters.kind) add('kind = ?', filters.kind);
   if (filters.reviewerId) add('assigned_reviewer_id = ?', filters.reviewerId);
   if (filters.partnerId) add('partner_id = ?', filters.partnerId);
@@ -473,6 +493,59 @@ export async function countValuationsByGroup(
     counts[stateGroupOf(row.state)] += n;
     counts.all += n;
   }
+  return counts;
+}
+
+/**
+ * Counts for the nine named buckets (design §4.2), inside the caller's scope.
+ *
+ * One scan for the seven state buckets plus `all`, and two cheap COUNTs for the
+ * buckets that are not state predicates. Not nine queries: the tab strip is
+ * rendered on every listing page load, and the point of the whole change is
+ * that an operator stops writing filters — which they will not do if the page
+ * got slower for it.
+ *
+ * The state/bucket filter itself is dropped, exactly as `countValuationsByGroup`
+ * drops the group: each tab shows its own total, not its total within itself.
+ */
+export async function countValuationsByNamedBucket(
+  pool: pg.Pool,
+  scope: ValuationScope,
+  filters: ValuationFilters,
+  readerSide: 'admin' | 'user',
+): Promise<Record<NamedBucketKey, number>> {
+  const counts = Object.fromEntries(NAMED_BUCKET_KEYS.map((k) => [k, 0])) as Record<
+    NamedBucketKey,
+    number
+  >;
+  if (scope.kind === 'none') return counts;
+
+  const base = { ...filters, state: undefined, group: undefined, bucket: undefined, unreadFor: undefined };
+  const byState = buildValuationWhere(scope, base);
+  const waiting = buildValuationWhere(scope, { ...base, waitingOnClient: true });
+  const unread = buildValuationWhere(scope, { ...base, unreadFor: readerSide });
+
+  const [stateRows, waitingRows, unreadRows] = await Promise.all([
+    pool.query<{ state: ValuationState; count: string }>(
+      `SELECT state, count(*)::text AS count FROM valuations ${byState.whereSql} GROUP BY state`,
+      byState.params,
+    ),
+    pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM valuations ${waiting.whereSql}`,
+      waiting.params,
+    ),
+    pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM valuations ${unread.whereSql}`,
+      unread.params,
+    ),
+  ]);
+
+  for (const row of stateRows.rows) {
+    const n = Number(row.count);
+    for (const key of namedBucketsFor(row.state)) counts[key] += n;
+  }
+  counts.waiting_on_client = Number(waitingRows.rows[0]!.count);
+  counts.unread = Number(unreadRows.rows[0]!.count);
   return counts;
 }
 

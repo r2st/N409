@@ -1,6 +1,12 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
-import { isCampaignDue, renderTemplate, valuationTemplateVars } from '../domain/communications.js';
+import {
+  applyPromotionalFooter,
+  isCampaignDue,
+  isSuppressed,
+  renderTemplate,
+  valuationTemplateVars,
+} from '../domain/communications.js';
 import {
   dueCandidates,
   findTemplateByKey,
@@ -46,7 +52,13 @@ export async function runDueAutoEmails(deps: {
   smsTransport?: EmailTransport;
   log?: FastifyBaseLogger;
   now?: Date;
-}): Promise<{ queued: number; skipped: number }> {
+  /**
+   * Where the unsubscribe footer points. Optional so the many test call sites
+   * need not supply one; a promotional send with no URL to offer goes without
+   * a footer rather than with a broken link.
+   */
+  publicBaseUrl?: string;
+}): Promise<{ queued: number; skipped: number; suppressed: number }> {
   const client = await deps.pool.connect();
   try {
     const { rows } = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [
@@ -54,7 +66,7 @@ export async function runDueAutoEmails(deps: {
     ]);
     if (!rows[0]!.locked) {
       deps.log?.info('auto email scan already in progress; skipping this pass');
-      return { queued: 0, skipped: 0 };
+      return { queued: 0, skipped: 0, suppressed: 0 };
     }
     try {
       // The whole scan runs on this client: the lock is session-scoped, so work
@@ -94,13 +106,19 @@ async function scan(
     smsTransport?: EmailTransport;
     log?: FastifyBaseLogger;
     now?: Date;
+    publicBaseUrl?: string;
   },
-): Promise<{ queued: number; skipped: number }> {
+): Promise<{ queued: number; skipped: number; suppressed: number }> {
   // Read once, before the candidate query, so the whole pass judges every
   // campaign against one instant.
   const now = deps.now ?? (await dbNow(db));
   let queued = 0;
   let skipped = 0;
+  // Promotional messages withheld for want of marketing consent. Counted
+  // separately from `skipped` (no phone on file) because they are not the same
+  // event: one is a missing detail to chase, the other is a decision to honour.
+  let suppressed = 0;
+  const settingsUrl = deps.publicBaseUrl ? `${deps.publicBaseUrl.replace(/\/$/, '')}/settings` : null;
 
   const campaigns = (await listAutoEmails(db)).filter((c) => c.enabled);
   for (const campaign of campaigns) {
@@ -115,6 +133,17 @@ async function scan(
 
     for (const candidate of await dueCandidates(db, campaign)) {
       if (!isCampaignDue(campaign, candidate.state_entered_at, candidate.prior_sends_at, now)) {
+        continue;
+      }
+      // Marketing consent, and only for marketing (migration 0118). Checked
+      // before the outbox row exists rather than after: a suppressed
+      // promotional message was never queued, so there is nothing for the
+      // retry sweep to find and nothing counting against max_sends. A
+      // transactional campaign never reaches this branch — a client who
+      // unsubscribed from renewal offers still has to be told their draft is
+      // ready.
+      if (isSuppressed(campaign, { marketingEmail: candidate.marketing_email })) {
+        suppressed += 1;
         continue;
       }
       const destination = campaign.channel === 'sms' ? candidate.to_phone : candidate.to_email;
@@ -136,7 +165,8 @@ async function scan(
           channel: campaign.channel,
           templateKey: campaign.template_key,
           subject: renderTemplate(template.subject, vars),
-          body: renderTemplate(template.body, vars),
+          // Footer on promotional sends only — see applyPromotionalFooter.
+          body: applyPromotionalFooter(renderTemplate(template.body, vars), campaign, settingsUrl),
         });
         await recordAutoEmailSend(tx, {
           autoEmailId: campaign.id,
@@ -165,5 +195,5 @@ async function scan(
     }
   }
 
-  return { queued, skipped };
+  return { queued, skipped, suppressed };
 }

@@ -509,6 +509,7 @@ function TemplatesTab() {
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Category</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Channel</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Subject / body</th>
+                <th className="overline px-4 py-3 font-semibold text-ink-400">Type</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Status</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Actions</th>
               </tr>
@@ -595,6 +596,7 @@ function AutoEmailEditor({
   const [maxSends, setMaxSends] = useState(campaign?.max_sends ?? 1);
   const [templateKey, setTemplateKey] = useState(campaign?.template_key ?? '');
   const [enabled, setEnabled] = useState(campaign?.enabled ?? true);
+  const [promotional, setPromotional] = useState(campaign?.promotional ?? false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -613,6 +615,7 @@ function AutoEmailEditor({
       max_sends: maxSends,
       template_key: templateKey,
       enabled,
+      promotional,
     };
     try {
       if (isNew) {
@@ -717,6 +720,22 @@ function AutoEmailEditor({
       <label className="flex items-center gap-2 text-sm text-ink-700">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         Enabled
+      </label>
+      <label className="flex items-start gap-2 text-sm text-ink-700">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={promotional}
+          onChange={(e) => setPromotional(e.target.checked)}
+        />
+        <span>
+          Promotional
+          <span className="block text-xs text-ink-400">
+            Marketing rather than transactional. Sent only to recipients who have not opted out of
+            marketing, and with an unsubscribe footer. Leave off for anything about the client&rsquo;s
+            own engagement — an opt-out must never silence a status update.
+          </span>
+        </span>
       </label>
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="flex gap-2">
@@ -838,6 +857,7 @@ function AutoEmailsTab() {
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Trigger</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Schedule</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Template</th>
+                <th className="overline px-4 py-3 font-semibold text-ink-400">Type</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Status</th>
                 <th className="overline px-4 py-3 font-semibold text-ink-400">Actions</th>
               </tr>
@@ -862,6 +882,22 @@ function AutoEmailsTab() {
                     {c.max_sends > 1 ? `, max ${c.max_sends}` : ''}
                   </td>
                   <td className="px-4 py-3.5 font-mono text-xs text-ink-500">{c.template_key}</td>
+                  <td className="px-4 py-3.5">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[0.65rem] font-semibold ring-1 ring-inset ${
+                        c.promotional
+                          ? 'bg-amber-50 text-amber-800 ring-amber-200'
+                          : 'bg-paper-100 text-ink-500 ring-paper-300'
+                      }`}
+                      title={
+                        c.promotional
+                          ? 'Marketing — gated on consent, sent with an unsubscribe footer'
+                          : 'Transactional — always delivered, no unsubscribe'
+                      }
+                    >
+                      {c.promotional ? 'promotional' : 'transactional'}
+                    </span>
+                  </td>
                   <td className="px-4 py-3.5">
                     <EnabledBadge enabled={c.enabled} />
                   </td>

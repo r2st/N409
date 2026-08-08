@@ -102,6 +102,8 @@ import { ValuationHub } from './realtime/hub.js';
 import { registerPartnerApiRoutes } from './routes/partnerApi.js';
 import { setWebhookTargetPolicy } from './domain/partnerWebhooks.js';
 import { registerSpecialtyRoutes } from './routes/specialty.js';
+import { registerResearchRoutes } from './routes/research.js';
+import { registerDataRemediationRoutes } from './routes/dataRemediation.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
 import { probeReady } from './clients/internal.js';
@@ -341,6 +343,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerCalculationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   // Specialty report-type pipeline — kind-specific engine orchestration
   registerSpecialtyRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  // Design §7.4 — the stale-backsolve and stale-QA-review queues, one surface.
+  registerDataRemediationRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerBridgeRoutes(app, { pool });
   registerAnalyticsRoutes(app, { pool });
   registerCompareRoutes(app, { pool });
@@ -406,6 +410,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Migration 0114 — the per-section guidance behind report_narrative, edited
   // per report type rather than per pipeline.
   registerNarrativePromptRoutes(app, { pool });
+  // Design §12.3 — web-grounded market research (Perplexity Sonar). The caller
+  // the adapter never had.
+  registerResearchRoutes(app, { pool, aiUrl: config.AI_URL });
   registerCompanyProfileRoutes(app, { pool });
   registerPackageRoutes(app, { pool });
   registerJobRoutes(app, { pool });
@@ -419,7 +426,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // P2 #10 — help / knowledge base
   registerHelpRoutes(app, { pool });
   // §15.5/§15.6 — communication templates + auto email/SMS drip campaigns
-  registerCommunicationRoutes(app, { pool, transport, smsTransport });
+  registerCommunicationRoutes(app, {
+    pool,
+    transport,
+    smsTransport,
+    publicBaseUrl: config.PUBLIC_BASE_URL,
+  });
   // Beyond-parity #1 — audit-defense evidence bundle (final-status §4.4)
   registerEvidenceRoutes(app, { pool });
   // Improvement 6 — programmatic partner API (API-key auth + per-key rate limit)

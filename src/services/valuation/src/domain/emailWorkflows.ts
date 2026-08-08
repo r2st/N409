@@ -24,6 +24,18 @@ export const NOTIFICATION_EVENT_TYPES = [
   'changes_requested',
   'valuation_completed',
   'valuation_cancelled',
+  /**
+   * Marketing consent (migration 0118). Not a workflow transition — no rule in
+   * this module ever emits it — but it belongs in this taxonomy because it is
+   * the same sparse default-on matrix and the same settings screen, and a
+   * client should find "stop sending me renewal offers" beside the rest of
+   * their notification switches rather than somewhere else.
+   *
+   * Only `promotional = true` auto-email campaigns consult it; every
+   * transactional send ignores it, which is the point. See
+   * `domain/communications.isSuppressed`.
+   */
+  'marketing',
 ] as const;
 
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];

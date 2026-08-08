@@ -57,8 +57,36 @@ export const AI_PIPELINES = [
   'assumptions',
   'audit_defense',
   'roll_forward',
+  // Web-grounded research (migrations 0116/0117). These are prompt-registry
+  // entries rather than runnable pipelines: they carry the system prompt and
+  // the Sonar tier for a research topic, and routes/research.ts reads them.
+  // POST /valuations/:id/ai/:pipeline refuses them for the same reason it
+  // refuses 'qa' — the research route owns the containment rules, the storage
+  // and the supersede, and a second entry point would own none of them.
+  'market_research',
+  'industry_overview',
+  'industry_outlook',
+  'competitor_analysis',
+  'company_overview',
+  'industry_finder',
 ] as const;
 export type AiPipeline = (typeof AI_PIPELINES)[number];
+
+/**
+ * Prompt-registry rows that are not runnable through the generic AI route.
+ * Each has a dedicated route that adds something the generic one cannot: the
+ * QA gate's deterministic checks and review row, and research's public-field
+ * containment plus its append-only storage.
+ */
+export const NON_RUNNABLE_PIPELINES: ReadonlySet<AiPipeline> = new Set([
+  'qa',
+  'market_research',
+  'industry_overview',
+  'industry_outlook',
+  'competitor_analysis',
+  'company_overview',
+  'industry_finder',
+]);
 
 /**
  * Agents that narrate or defend a finished result — the route auto-attaches the

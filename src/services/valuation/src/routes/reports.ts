@@ -24,6 +24,8 @@ import {
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
 import { buildExhibits } from '../domain/reportExhibits.js';
+import { researchSourcesExhibit } from '../domain/researchExhibit.js';
+import { listMarketResearch } from '../repos/marketResearch.js';
 import { hmrcFormExhibit } from '../domain/specialtyExhibits.js';
 import { loadHmrcForm } from '../repos/hmrcForms.js';
 import { loadDebtReport, loadFundReport } from '../repos/measurementReport.js';
@@ -239,9 +241,12 @@ async function summaryFor(
   // fund in its marks, an instrument in its valuation history — so their
   // schedules are loaded rather than derived from the run above. Both return
   // null for every other kind.
-  const [fundReport, debtReport] = await Promise.all([
+  const [fundReport, debtReport, research] = await Promise.all([
     loadFundReport(pool, valuation),
     loadDebtReport(pool, valuation),
+    // The public sources behind the market discussion (migration 0116). Live
+    // rows only: a superseded answer is not what this report was drafted from.
+    listMarketResearch(pool, valuation.id),
   ]);
   return {
     summary: buildReportSummary(calculation, { ...context, history }) ?? undefined,
@@ -254,6 +259,8 @@ async function summaryFor(
       // After the schedules, because the form restates figures the exhibits
       // derive and a reader should meet the derivation first.
       ...(hmrcForm ? [hmrcFormExhibit(hmrcForm)] : []),
+      // Last: it is the bibliography, and a reader looks for one at the end.
+      ...[researchSourcesExhibit(research)].filter((s): s is ReportPdfSection => s !== null),
     ],
     valuationDate,
   };

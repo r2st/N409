@@ -74,6 +74,98 @@ export function canRestart(from: ValuationState): boolean {
   return !RESTART_FORBIDDEN.has(from) && from !== RESTART_STATE;
 }
 
+// ── Named listing buckets (design §4.2) ──────────────────────────────────────
+
+/**
+ * The nine tabs the listing names, defined once.
+ *
+ * `STATE_GROUPS` in `domain/operations.ts` collapses fifteen states into five
+ * lifecycle groups, which is the right shape for a dashboard pivot and the
+ * wrong one for a worklist: an operator asking "what is stuck unverified" got
+ * `user_finished` folded into `open` alongside six other states and had to
+ * hand-write a filter on the most-used screen in the product.
+ *
+ * Both the count query and the list filter read this. Two copies of the mapping
+ * would be two different answers to "how many are in progress", and the count
+ * on the tab and the rows behind it would disagree — which is worse than not
+ * having the tab.
+ *
+ * Two buckets are not state predicates at all and are marked so: `waiting_on_client`
+ * is a boolean on the row that cuts across the lifecycle (a file can be drafted
+ * *and* waiting on the client), and `unread` is per-reader. Both already exist
+ * as filter keys; naming them as tabs is the whole change.
+ */
+export type NamedBucketKey =
+  | 'all'
+  | 'incomplete'
+  | 'unverified'
+  | 'in_progress'
+  | 'waiting_on_client'
+  | 'drafted'
+  | 'published'
+  | 'unread'
+  | 'ignored';
+
+export interface NamedBucketDef {
+  key: NamedBucketKey;
+  label: string;
+  /** States the bucket contains; empty for the two non-state buckets. */
+  states: readonly ValuationState[];
+  /** True when the bucket is `waiting_on_client = true` rather than a state set. */
+  waitingOnClient?: boolean;
+  /** True when the bucket is "unread by this reader" rather than a state set. */
+  unread?: boolean;
+}
+
+export const NAMED_BUCKETS: readonly NamedBucketDef[] = [
+  { key: 'all', label: 'All', states: [] },
+  {
+    key: 'incomplete',
+    label: 'Incomplete',
+    states: ['pending', 'started', 'onboarding_completed'],
+  },
+  { key: 'unverified', label: 'Unverified', states: ['user_finished'] },
+  {
+    key: 'in_progress',
+    label: 'In Progress',
+    states: ['completed', 'paid', 'review', 'reviewed'],
+  },
+  { key: 'waiting_on_client', label: 'Waiting On Client', states: [], waitingOnClient: true },
+  { key: 'drafted', label: 'Drafted', states: ['drafted', 'draft_changes', 'draft_accepted'] },
+  { key: 'published', label: 'Published', states: ['published'] },
+  { key: 'unread', label: 'Unread', states: [], unread: true },
+  { key: 'ignored', label: 'Ignored', states: ['ignored', 'cancelled', 'timeout'] },
+];
+
+export const NAMED_BUCKET_KEYS = NAMED_BUCKETS.map((b) => b.key);
+
+const BUCKETS_BY_KEY = new Map(NAMED_BUCKETS.map((b) => [b.key, b]));
+
+export function namedBucket(key: string): NamedBucketDef | null {
+  return BUCKETS_BY_KEY.get(key as NamedBucketKey) ?? null;
+}
+
+export function isNamedBucket(key: string): key is NamedBucketKey {
+  return BUCKETS_BY_KEY.has(key as NamedBucketKey);
+}
+
+/**
+ * Which state buckets a state falls into.
+ *
+ * A list, not a single answer: `all` always matches, and unlike `stateGroupOf`
+ * there is no fallback bucket. A state that belongs to no named bucket is a
+ * gap in the table above and shows up as a count that does not add up, which
+ * is exactly what should happen — the `stateGroupOf` habit of defaulting an
+ * unknown state to `closed` would file it silently under Ignored.
+ */
+export function namedBucketsFor(state: ValuationState): NamedBucketKey[] {
+  const keys: NamedBucketKey[] = ['all'];
+  for (const bucket of NAMED_BUCKETS) {
+    if (bucket.states.includes(state)) keys.push(bucket.key);
+  }
+  return keys;
+}
+
 /** Bulk actions (P1 #23) accepted by POST /valuations/bulk. */
 export const BULK_ACTIONS = ['set_state', 'assign_reviewer', 'advance', 'restart'] as const;
 export type BulkAction = (typeof BULK_ACTIONS)[number];

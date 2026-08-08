@@ -13,6 +13,7 @@ import {
 import { VALUATION_KINDS, VALUATION_SOURCES, VALUATION_STATES } from '../domain/valuation.js';
 import { CurrencyCode } from '../domain/currency.js';
 import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
+import { NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { listEvents } from '../events/record.js';
 import {
   createValuation,
@@ -75,6 +76,9 @@ export const ValuationFilterQuery = z.object({
   state: z.enum(VALUATION_STATES).optional(),
   kind: z.enum(VALUATION_KINDS).optional(),
   group: z.enum(STATE_GROUP_KEYS as [StateGroup, ...StateGroup[]]).optional(),
+  // The nine named tabs (design §4.2). `group` stays accepted as a URL alias so
+  // saved views and shared links written against the five buckets keep working.
+  bucket: z.enum(NAMED_BUCKET_KEYS as [NamedBucketKey, ...NamedBucketKey[]]).optional(),
   q: z.string().max(300).optional(),
   // Comma-separated id list — lets the UI export exactly the checked rows.
   // Non-ULID entries are dropped; scope still applies on top.
@@ -114,10 +118,13 @@ export function toRepoFilters(
   readerSide?: 'admin' | 'user',
 ): ValuationFilters {
   return {
-    unreadFor: f.unread && readerSide ? readerSide : undefined,
+    // The Unread tab and the `unread=true` filter key are the same predicate;
+    // the tab is the filter with a name on it, not a second implementation.
+    unreadFor: (f.unread || f.bucket === 'unread') && readerSide ? readerSide : undefined,
     state: f.state,
     kind: f.kind,
     group: f.group,
+    bucket: f.bucket,
     q: f.q || undefined,
     ids: f.ids?.length ? f.ids : undefined,
     reviewerId: f.reviewer_id,

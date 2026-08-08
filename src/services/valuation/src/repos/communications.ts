@@ -157,12 +157,17 @@ export async function createAutoEmail(
     | 'max_sends'
     | 'template_key'
     | 'enabled'
-  >,
+  > &
+    // Optional, and defaulted to transactional rather than required: the safe
+    // direction is the one an operator must consciously change, and a caller
+    // that has not thought about it has not decided a campaign is marketing.
+    Partial<Pick<AutoEmailRow, 'promotional'>>,
 ): Promise<AutoEmailRow> {
   const { rows } = await pool.query<AutoEmailRow>(
     `INSERT INTO auto_emails
-       (id, name, channel, trigger_state, condition, delay_hours, repeat_hours, max_sends, template_key, enabled)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (id, name, channel, trigger_state, condition, delay_hours, repeat_hours, max_sends,
+        template_key, enabled, promotional)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING *`,
     [
       newUlid(),
@@ -175,6 +180,7 @@ export async function createAutoEmail(
       input.max_sends,
       input.template_key,
       input.enabled,
+      input.promotional ?? false,
     ],
   );
   return rows[0]!;
@@ -194,6 +200,7 @@ export async function updateAutoEmail(
       | 'max_sends'
       | 'template_key'
       | 'enabled'
+      | 'promotional'
     >
   >,
 ): Promise<AutoEmailRow | null> {
@@ -228,6 +235,13 @@ export interface DueCandidate {
   to_phone: string | null;
   state_entered_at: Date;
   prior_sends_at: Date[];
+  /**
+   * Whether this recipient still consents to marketing email (migration 0118).
+   * Read here rather than in a second query per candidate: the scan already
+   * touches one row per valuation, and a promotional campaign that had to
+   * round-trip for consent would do so once per hit.
+   */
+  marketing_email: boolean;
 }
 
 /**
@@ -277,7 +291,15 @@ export async function dueCandidates(
               (SELECT array_agg(s.sent_at ORDER BY s.sent_at DESC) FROM auto_email_sends s
                WHERE s.auto_email_id = $1 AND s.valuation_id = v.id),
               '{}'
-            ) AS prior_sends_at
+            ) AS prior_sends_at,
+            -- Sparse and default-on, like the rest of the matrix: no row means
+            -- consent. COALESCE, not a join filter, so a user with no
+            -- preferences row is still a candidate.
+            COALESCE(
+              (SELECT np.email FROM notification_preferences np
+                WHERE np.user_id = v.user_id AND np.event_type = 'marketing'),
+              true
+            ) AS marketing_email
      FROM valuations v
      JOIN users u ON u.id = v.user_id
      WHERE v.state = $2 AND ${conditionSql[campaign.condition] ?? 'false'}`,

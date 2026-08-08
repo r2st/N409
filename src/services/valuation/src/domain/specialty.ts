@@ -42,6 +42,151 @@ export function isSpecialtyKind(kind: ValuationKind): kind is SpecialtyKind {
 /** An input problem the analyst has to fix — the route maps it to a 422. */
 export class SpecialtyInputError extends Error {}
 
+/**
+ * What the workspace tab needs to know about each kind, served rather than
+ * duplicated in TypeScript on the client.
+ *
+ * The kind → endpoint map already exists exactly once, in
+ * `specialtyEngineRequest` below. A second copy in the frontend would be a
+ * second answer to "which engine runs an ASC 820 measurement", and the two
+ * would disagree the first time an endpoint moved. So the tab renders from
+ * this, and this is derived from the same switch.
+ *
+ * `runInputs` is the part a form cannot get from the questionnaire: a PPA's
+ * intangible schedule and an ASC 820 position schedule are analyst work
+ * product, not answers to a client form, and both assemblers refuse without
+ * them. Naming them here is what lets the tab say so before the run rather
+ * than surface a 422 afterwards.
+ */
+export interface SpecialtyEngineDef {
+  kind: SpecialtyKind;
+  label: string;
+  /** The engine endpoint the run posts to. */
+  path: string;
+  /** What the deliverable concludes, in the words the tab shows. */
+  produces: string;
+  /**
+   * Run-input keys the assembler requires and the questionnaire cannot supply.
+   * Empty for every kind whose questionnaire is sufficient on its own.
+   */
+  runInputs: ReadonlyArray<{ key: string; label: string; hint: string }>;
+  /** Whether an HMRC agreement pack applies (VAL231 EMI, VAL230 CSOP). */
+  hmrcForm: 'VAL231' | 'VAL230' | null;
+}
+
+export const SPECIALTY_ENGINES: Record<SpecialtyKind, SpecialtyEngineDef> = {
+  qsbs: {
+    kind: 'qsbs',
+    label: 'QSBS qualification (IRC §1202)',
+    path: '/engine/v1/qsbs',
+    produces: 'The four statutory tests and the gain exclusion available.',
+    runInputs: [],
+    hmrcForm: null,
+  },
+  ppa: {
+    kind: 'ppa',
+    label: 'Purchase price allocation',
+    path: '/engine/v1/ppa',
+    produces: 'The allocation of consideration across tangible and intangible assets, and goodwill.',
+    runInputs: [
+      {
+        key: 'intangibles',
+        label: 'Intangible asset schedule',
+        hint: 'A list of { name, method, params } rows. The questionnaire collects only the consideration and the tangible positions.',
+      },
+    ],
+    hmrcForm: null,
+  },
+  goodwill: {
+    kind: 'goodwill',
+    label: 'Impairment test',
+    path: '/engine/v1/impairment',
+    produces: 'Whether the asset or reporting unit is impaired, and by how much.',
+    runInputs: [],
+    hmrcForm: null,
+  },
+  esop: {
+    kind: 'esop',
+    label: 'ESOP valuation',
+    path: '/engine/v1/esop',
+    produces: 'Fair market value per share on the plan’s basis, with the repurchase projection where the plan facts allow one.',
+    runInputs: [],
+    hmrcForm: null,
+  },
+  fmv: {
+    kind: 'fmv',
+    label: 'SMB fair market value',
+    path: '/engine/v1/smb',
+    produces: 'Seller’s discretionary earnings, the multiples applied, and the concluded equity value.',
+    runInputs: [],
+    hmrcForm: null,
+  },
+  emi: {
+    kind: 'emi',
+    label: 'EMI option valuation',
+    path: '/engine/v1/emi-csop',
+    produces: 'Actual and unrestricted market value per share, and the scheme’s qualifying conditions.',
+    runInputs: [],
+    hmrcForm: 'VAL231',
+  },
+  csop: {
+    kind: 'csop',
+    label: 'CSOP option valuation',
+    path: '/engine/v1/emi-csop',
+    produces: 'Market value per share for the option grant and the scheme limits.',
+    runInputs: [],
+    hmrcForm: 'VAL230',
+  },
+  ip: {
+    kind: 'ip',
+    label: 'Intangible asset valuation',
+    path: '/engine/v1/intangible',
+    produces: 'The asset’s value on the selected method, with its inputs.',
+    runInputs: [
+      {
+        key: 'revenues',
+        label: 'Revenue forecast',
+        hint: 'Optional. A per-year list replacing the flat forecast the questionnaire implies, for relief-from-royalty.',
+      },
+    ],
+    hmrcForm: null,
+  },
+  '820': {
+    kind: '820',
+    label: 'ASC 820 fair value measurement',
+    path: '/engine/v1/fair-value-820',
+    produces: 'The fair value hierarchy by level, and the measurement total.',
+    runInputs: [
+      {
+        key: 'positions',
+        label: 'Position schedule',
+        hint: 'A list of { name, fair_value, level, inputs, measured_at_nav } rows. The questionnaire collects only the fund and its predominant level.',
+      },
+    ],
+    hmrcForm: null,
+  },
+  gifts: {
+    kind: 'gifts',
+    label: 'Gift & estate appraisal',
+    path: '/engine/v1/gift-estate',
+    produces: 'The concluded value of the transferred interest after the discount chain.',
+    runInputs: [],
+    hmrcForm: null,
+  },
+  ifrs2: {
+    kind: 'ifrs2',
+    label: 'IFRS 2 share-based payment',
+    path: '/engine/v1/ifrs2',
+    produces: 'Grant-date fair value and the expense attribution over the vesting period.',
+    runInputs: [],
+    hmrcForm: null,
+  },
+};
+
+export const SPECIALTY_ENGINE_LIST: readonly SpecialtyEngineDef[] = SPECIALTY_KINDS.map(
+  (k) => SPECIALTY_ENGINES[k],
+);
+
 export interface SpecialtyRequest {
   /** Engine endpoint path, e.g. `/engine/v1/qsbs`. */
   path: string;

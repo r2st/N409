@@ -20,12 +20,16 @@ function NavItem({
   icon,
   onNavigate,
   badge,
+  count,
 }: {
   to: string;
   label: string;
   icon: ReactNode;
   onNavigate: () => void;
+  /** Needs attention — rendered in the accent colour. */
   badge?: number;
+  /** How many there are — muted, and never competing with the badge. */
+  count?: number;
 }) {
   return (
     <NavLink
@@ -42,8 +46,15 @@ function NavItem({
     >
       <span className="text-chrome-faint group-hover:text-brass-300">{icon}</span>
       {label}
+      {count !== undefined && (
+        <span className={`tnum text-[0.7rem] text-chrome-faint ${badge ? '' : 'ml-auto'}`}>{count}</span>
+      )}
       {badge !== undefined && badge > 0 && (
-        <span className="tnum ml-auto rounded-full bg-brass-400 px-1.5 py-0.5 text-[0.65rem] font-bold text-chrome-900">
+        <span
+          className={`tnum rounded-full bg-brass-400 px-1.5 py-0.5 text-[0.65rem] font-bold text-chrome-900 ${
+            count === undefined ? 'ml-auto' : 'ml-1.5'
+          }`}
+        >
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -123,6 +134,99 @@ function useInboxUnread(enabled: boolean): number {
     };
   }, [location.pathname, enabled]);
   return count;
+}
+
+/**
+ * Live counts for the nine named listing buckets (design §3.2/§4.2).
+ *
+ * The nav has carried static labels while the counts existed server-side the
+ * whole time. Polled on the same 60s cadence as the other two badges and
+ * re-read on navigation, so a state change made on the workspace shows up in
+ * the sidebar without a reload.
+ *
+ * Silent on failure, like the other badges: a client user's scope answers zero
+ * rather than erroring, and a stale session should not put an error banner in
+ * the navigation.
+ */
+export interface BucketCounts {
+  all: number;
+  incomplete: number;
+  unverified: number;
+  in_progress: number;
+  waiting_on_client: number;
+  drafted: number;
+  published: number;
+  unread: number;
+  ignored: number;
+}
+
+function useBucketCounts(enabled: boolean): BucketCounts | null {
+  const [counts, setCounts] = useState<BucketCounts | null>(null);
+  const location = useLocation();
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const poll = () => {
+      api<{ counts: BucketCounts }>('/valuations/counts?buckets=named')
+        .then((d) => {
+          if (!cancelled) setCounts(d.counts);
+        })
+        .catch(() => {});
+    };
+    poll();
+    const timer = setInterval(poll, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [location.pathname, enabled]);
+  return counts;
+}
+
+/**
+ * A bucket's row in the sidebar: total in muted type, unread in the accent,
+ * matching the inbox's existing treatment.
+ *
+ * Only the All row carries an unread badge. Unread is a property of the reader
+ * and cuts across every bucket, so repeating it beside each total would say the
+ * same six things six times and mean something different each time.
+ */
+function BucketNav({
+  counts,
+  onNavigate,
+}: {
+  counts: BucketCounts | null;
+  onNavigate: () => void;
+}) {
+  const rows: Array<{ key: keyof BucketCounts; label: string; to: string }> = [
+    { key: 'incomplete', label: 'Incomplete', to: '/valuations?bucket=incomplete' },
+    { key: 'unverified', label: 'Unverified', to: '/valuations?bucket=unverified' },
+    { key: 'in_progress', label: 'In Progress', to: '/valuations?bucket=in_progress' },
+    { key: 'waiting_on_client', label: 'Waiting On Client', to: '/valuations?bucket=waiting_on_client' },
+    { key: 'drafted', label: 'Drafted', to: '/valuations?bucket=drafted' },
+    { key: 'published', label: 'Published', to: '/valuations?bucket=published' },
+  ];
+  return (
+    <>
+      {rows.map((row) => (
+        <NavLink
+          key={row.key}
+          to={row.to}
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            `group flex items-center gap-3 rounded-md py-1.5 pr-3 pl-10 text-sm transition-colors ${
+              isActive ? 'text-chrome-fg' : 'text-chrome-dim hover:text-chrome-fg'
+            }`
+          }
+        >
+          {row.label}
+          {counts && (
+            <span className="tnum ml-auto text-[0.7rem] text-chrome-faint">{counts[row.key]}</span>
+          )}
+        </NavLink>
+      ))}
+    </>
+  );
 }
 
 /** Polls the unread notification count (M4) — on route change and every 60s. */
@@ -312,6 +416,9 @@ export function AppLayout() {
   // Polled only for readers who have an inbox at all — a client user's badge
   // would be a request per minute for a nav item they never see.
   const inboxUnread = useInboxUnread(isOps(eff) || isPartner(eff));
+  // The bucket strip is a worklist, which is an ops idea; a client with three
+  // engagements does not need six sub-counts under their own listing.
+  const buckets = useBucketCounts(isOps(eff));
   const roleTag = isOps(eff) ? 'Operations' : isPartner(eff) ? 'Partner' : 'Client';
 
   /*
@@ -334,7 +441,10 @@ export function AppLayout() {
         label={isOps(eff) ? 'All valuations' : 'Valuations'}
         icon={icons.valuations}
         onNavigate={close}
+        badge={buckets?.unread}
+        count={buckets?.all}
       />
+      {isOps(eff) && <BucketNav counts={buckets} onNavigate={close} />}
       <NavItem to="/valuations/new" label="New valuation" icon={icons.newValuation} onNavigate={close} />
       <NavItem to="/portfolio" label="Portfolio" icon={icons.dashboard} onNavigate={close} />
       {isOps(eff) && (
@@ -378,6 +488,18 @@ export function AppLayout() {
           <NavItem to="/monitors" label="Monitored valuations" icon={icons.tasks} onNavigate={close} />
           <NavItem to="/templates" label="Report templates" icon={icons.templates} onNavigate={close} />
           <NavItem to="/admin/prompts" label="Bot prompts" icon={icons.prompts} onNavigate={close} />
+          <NavItem
+            to="/admin/narrative-prompts"
+            label="Narrative library"
+            icon={icons.prompts}
+            onNavigate={close}
+          />
+          <NavItem
+            to="/admin/data-remediation"
+            label="Data remediation"
+            icon={icons.activity}
+            onNavigate={close}
+          />
           <NavItem to="/admin/support" label="Support inbox" icon={icons.support} onNavigate={close} />
           <NavItem to="/admin/outbox" label="Email outbox" icon={icons.outbox} onNavigate={close} />
           <NavItem to="/admin/jobs" label="Background jobs" icon={icons.tasks} onNavigate={close} />

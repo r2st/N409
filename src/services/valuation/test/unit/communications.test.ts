@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyPromotionalFooter,
   applyTemplateOverrides,
   isCampaignDue,
+  isSuppressed,
+  MARKETING_PREFERENCE_KEY,
   renderTemplate,
+  unsubscribeFooter,
   valuationTemplateVars,
 } from '../../src/domain/communications.js';
-import type { EmailSpec } from '../../src/domain/emailWorkflows.js';
+import { NOTIFICATION_EVENT_TYPES, type EmailSpec } from '../../src/domain/emailWorkflows.js';
 
 describe('renderTemplate (§15.5)', () => {
   it('substitutes {{vars}} and stringifies numbers', () => {
@@ -120,5 +124,55 @@ describe('isCampaignDue (§15.6)', () => {
   it('measures repeat from the most recent send', () => {
     const drip = { delay_hours: 0, repeat_hours: 96, max_sends: 5 };
     expect(isCampaignDue(drip, hoursAgo(900), [hoursAgo(300), hoursAgo(10)], now)).toBe(false);
+  });
+});
+
+// ── Promotional vs transactional (migration 0118) ────────────────────────────
+
+describe('promotional suppression', () => {
+  const promo = { promotional: true };
+  const transactional = { promotional: false };
+
+  it('suppresses a marketing campaign for a recipient who opted out', () => {
+    expect(isSuppressed(promo, { marketingEmail: false })).toBe(true);
+  });
+
+  it('sends a marketing campaign to a recipient who has not opted out', () => {
+    // Sparse and default-on, like the rest of the preference matrix.
+    expect(isSuppressed(promo, { marketingEmail: true })).toBe(false);
+  });
+
+  /**
+   * The asymmetry is the control. Marketing consent must not be able to
+   * silence "your draft is ready" — that is a service failure wearing
+   * compliance clothing, and it is the failure mode that exists today if the
+   * campaigns are read as one undifferentiated set.
+   */
+  it('never suppresses a transactional campaign, opted out or not', () => {
+    expect(isSuppressed(transactional, { marketingEmail: false })).toBe(false);
+    expect(isSuppressed(transactional, { marketingEmail: true })).toBe(false);
+  });
+
+  it('appends an unsubscribe footer to promotional bodies only', () => {
+    const body = 'Time to renew your 409A.';
+    const withFooter = applyPromotionalFooter(body, promo, 'https://app.example.com');
+    expect(withFooter).toContain(body);
+    expect(withFooter).toContain('https://app.example.com');
+    expect(applyPromotionalFooter(body, transactional, 'https://app.example.com')).toBe(body);
+  });
+
+  it('goes without a footer rather than with a broken link', () => {
+    expect(applyPromotionalFooter('x', promo, null)).toBe('x');
+  });
+
+  it('says plainly that status notifications are unaffected', () => {
+    // The line that stops an opt-out being an accidental service opt-out.
+    expect(unsubscribeFooter('https://app.example.com')).toMatch(/valuations are not affected/i);
+  });
+
+  it('marketing is a preference a client can actually reach', () => {
+    // The key has to be in the served matrix or the settings screen has no
+    // switch for it, which would leave the opt-out theoretical.
+    expect(NOTIFICATION_EVENT_TYPES as readonly string[]).toContain(MARKETING_PREFERENCE_KEY);
   });
 });

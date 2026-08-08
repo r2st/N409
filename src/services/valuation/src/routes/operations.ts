@@ -7,9 +7,11 @@ import { stateGroupOf, STATE_GROUP_KEYS, type StateGroup } from '../domain/opera
 import {
   cloneValuation,
   countValuationsByGroup,
+  countValuationsByNamedBucket,
   dashboardStats,
   findValuationById,
 } from '../repos/valuations.js';
+import { NAMED_BUCKETS, type NamedBucketKey } from '../domain/workflow.js';
 import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { VALUATION_KINDS } from '../domain/valuation.js';
@@ -36,11 +38,20 @@ const COUNTS_CACHE_TTL_MS = 15_000;
 const DASHBOARD_CACHE_TTL_MS = 20_000;
 
 /**
+ * Which read marker a caller's unread count compares against. Ops read the
+ * admin side of every conversation; everyone else reads their own.
+ */
+function readerSideFor(principal: Parameters<typeof valuationScope>[0]): 'admin' | 'user' {
+  return isOps(principal) ? 'admin' : 'user';
+}
+
+/**
  * M3 operations surface: tab counts (feature 15), CSV export (16), dashboard
  * analytics (17), clone / roll-forward (18).
  */
 export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   const countsCache = new TtlCache<Record<StateGroup | 'all', number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
+  const namedCountsCache = new TtlCache<Record<NamedBucketKey, number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const dashboardCache = new TtlCache<Awaited<ReturnType<typeof dashboardStats>>>({
     ttlMs: DASHBOARD_CACHE_TTL_MS,
   });
@@ -49,8 +60,24 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
     const principal = requirePrincipal(req);
     const parsed = ValuationFilterQuery.safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    const mode = z.object({ buckets: z.enum(['groups', 'named']).default('groups') }).safeParse(req.query);
+    if (!mode.success) throw problems.badRequest('Invalid buckets mode');
+
     const scope = valuationScope(principal);
     const filters = toRepoFilters(parsed.data);
+
+    if (mode.data.buckets === 'named') {
+      // Unread is per-reader, so the cache key has to carry which side is
+      // asking — otherwise two operators share one badge and it goes stale for
+      // both at once, which is the bug migration 0113 was written to fix.
+      const side = readerSideFor(principal);
+      const key = JSON.stringify({ scope, filters, named: true, side });
+      const named = await namedCountsCache.getOrLoad(key, () =>
+        countValuationsByNamedBucket(deps.pool, scope, filters, side),
+      );
+      return { counts: named, buckets: NAMED_BUCKETS };
+    }
+
     const key = JSON.stringify({ scope, filters });
     const counts = await countsCache.getOrLoad(key, () => countValuationsByGroup(deps.pool, scope, filters));
     return { counts };

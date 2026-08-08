@@ -9,6 +9,7 @@ import {
   AI_PIPELINES,
   CALCULATION_DEPENDENT_PIPELINES,
   DOCUMENT_DEPENDENT_PIPELINES,
+  NON_RUNNABLE_PIPELINES,
   type AiPipeline,
 } from '../domain/pipeline.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
@@ -26,6 +27,8 @@ import {
 import { findPromptByPipeline, latestPromptVersion } from '../repos/aiPrompts.js';
 import { listNarrativePromptsForKind } from '../repos/narrativePrompts.js';
 import { narrativeSectionsPayload } from '../domain/narrativePrompts.js';
+import { narrativeResearchPayload } from '../domain/research.js';
+import { listMarketResearch } from '../repos/marketResearch.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { decodeFromStorage } from '../storage/documentEncryption.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -169,9 +172,18 @@ export async function runAiPipeline(
   // query. Null on an un-migrated database, where the agent's built-in eight
   // are the correct fallback.
   let narrativeSections: Array<{ key: string; label: string; guidance: string }> | null = null;
+  // The market research this deliverable was drafted from (migration 0116).
+  // Only the narrative agent receives it, and only grounded rows travel — see
+  // `narrativeResearchPayload`. This is where the Perplexity adapter's value is
+  // actually collected: everything upstream of it is plumbing.
+  let researchPayload: ReturnType<typeof narrativeResearchPayload> = null;
   if (pipeline === 'report_narrative') {
-    const rows = await listNarrativePromptsForKind(deps.pool, valuation.kind);
+    const [rows, research] = await Promise.all([
+      listNarrativePromptsForKind(deps.pool, valuation.kind),
+      listMarketResearch(deps.pool, valuation.id),
+    ]);
     narrativeSections = narrativeSectionsPayload(rows, valuation.kind);
+    researchPayload = narrativeResearchPayload(research);
   }
 
   const payload = {
@@ -186,6 +198,7 @@ export async function runAiPipeline(
     documents: args.includeDocuments === false ? [] : await encodeDocuments(deps.documentsDir, documents),
     prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
     ...(narrativeSections ? { narrative_sections: narrativeSections } : {}),
+    ...(researchPayload ? { market_research: researchPayload } : {}),
     options: { anonymize: args.anonymize },
     ...(args.extraPayload ?? {}),
   };
@@ -289,6 +302,14 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       // QA runs through its own route so the deterministic checks and the
       // gate-visible review row always accompany the AI reviewer.
       throw problems.unprocessable('Run the QA reviewer via POST /valuations/:id/qa');
+    }
+    if (NON_RUNNABLE_PIPELINES.has(pipeline as AiPipeline)) {
+      // The research prompts are registry rows, not pipelines this route can
+      // run. Their route builds the question from public fields only and
+      // persists the answer with its citations; this one would do neither.
+      throw problems.unprocessable(
+        `"${pipeline}" is a research prompt — run it via POST /valuations/:id/research`,
+      );
     }
     const typedPipeline = pipeline as AiPipeline;
     const valuation = await loadValuation(id);

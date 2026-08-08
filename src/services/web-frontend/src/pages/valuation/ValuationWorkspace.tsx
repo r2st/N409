@@ -52,7 +52,33 @@ export const TAB_HELP: Record<string, string> = {
   asc718: 'asc718-public-overview',
   monitoring: 'monitoring-overview',
   package: 'report-overview',
+  specialty: 'methodology-overview',
+  research: 'comparables-overview',
 };
+
+/**
+ * Report types with a dedicated specialty engine (domain/specialty.ts
+ * SPECIALTY_KINDS). Mirrored here only to decide whether to *show* the tab —
+ * the tab itself reads the engine definition from the server, so this list can
+ * never disagree with the engine that runs.
+ *
+ * Shown conditionally because a Run button on a 409A that 422s is worse than
+ * no button: it teaches an operator that the tab is unreliable rather than that
+ * the report type is wrong.
+ */
+export const SPECIALTY_TAB_KINDS: ReadonlySet<string> = new Set([
+  'qsbs',
+  'ppa',
+  'goodwill',
+  'esop',
+  'fmv',
+  'emi',
+  'csop',
+  'ip',
+  '820',
+  'gifts',
+  'ifrs2',
+]);
 
 export interface WorkspaceContext {
   valuation: Valuation;
@@ -248,6 +274,14 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/engagement`} label="Engagement" />}
         {ops && <Tab to={`${base}/tasks`} label="Tasks" />}
         {ops && <Tab to={`${base}/calculations`} label="Calculations" />}
+        {ops && SPECIALTY_TAB_KINDS.has(valuation.kind) && (
+          <Tab to={`${base}/specialty`} label="Specialty Engine" />
+        )}
+        {/* Research is readable by the owner too: the citations are the
+            provenance behind the report's market discussion, and "where did
+            this multiple come from" is a fair question. Running it is ops-only,
+            and the tab enforces that from the served `can_run`. */}
+        {(ops || owner) && <Tab to={`${base}/research`} label="Market Research" />}
         {ops && <Tab to={`${base}/qa`} label="QA" />}
         {ops && <Tab to={`${base}/health`} label="Health" />}
         <Tab to={`${base}/completeness`} label="Completeness" />

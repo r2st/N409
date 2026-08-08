@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { buildZip, type ZipEntry } from '../export/zip.js';
+import { listMarketResearch } from '../repos/marketResearch.js';
 import { changeLogCsv, describeEvent, summarizeAuditTrail } from '../domain/auditTrail.js';
 import { listEvents, recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
@@ -58,10 +59,15 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       ]);
     // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
     // methodology decision log, QA review history, and saved scenarios.
-    const [decisions, qaReviews, scenarios] = await Promise.all([
+    const [decisions, qaReviews, scenarios, research] = await Promise.all([
       listDecisions(deps.pool, id),
       listQaReviews(deps.pool, id),
       listScenarios(deps.pool, id),
+      // Every research row including superseded ones (migration 0116). An
+      // auditor asking "what did you read, and what did you read before that"
+      // is asking exactly what the supersede chain records; a bundle that
+      // shipped only the live rows would answer half the question.
+      listMarketResearch(deps.pool, id, { includeSuperseded: true }),
     ]);
 
     // Review tasks carry the approve / request-changes workflow; decisions
@@ -127,6 +133,7 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       { name: 'decisions.json', data: toJson(decisions) },
       { name: 'qa-reviews.json', data: toJson(qaReviews) },
       { name: 'scenarios.json', data: toJson(scenarios) },
+      { name: 'market-research.json', data: toJson(research) },
       {
         name: 'report-versions.json',
         data: toJson({ report: report ?? null, versions }),
@@ -171,6 +178,7 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         decisions: decisions.length,
         qa_reviews: qaReviews.length,
         scenarios: scenarios.length,
+        market_research: research.length,
         report_versions: versions.length,
       },
       files: ['manifest.json', ...entries.map((e) => e.name)],
