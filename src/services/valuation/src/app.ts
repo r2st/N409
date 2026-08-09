@@ -420,7 +420,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // M2 — output & delivery
   registerOverwriteRoutes(app, { pool });
   registerWorkbookRoutes(app, { pool });
-  registerReportRoutes(app, { pool });
+  registerReportRoutes(app, {
+    pool,
+    // The narrative route drafts through the AI service before writing the
+    // report body; the same deps registerAiRoutes runs on.
+    ai: { pool, aiUrl: config.AI_URL, documentsDir: config.DOCUMENTS_DIR, log: app.log },
+  });
   // Improvement 4 — realtime collaboration: presence + live comment pushes
   const hub = deps.hub ?? new ValuationHub();
   registerStreamRoutes(app, { pool, hub });

@@ -25,6 +25,10 @@ import {
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
 import { fillFigures, reportFigures, type ReportFigures } from '../domain/reportFigures.js';
+import { applyNarrative, draftedSectionsFrom } from '../domain/narrativeApply.js';
+import { latestSucceededJob } from '../repos/aiJobs.js';
+import { runAiPipeline, type AiPipelineDeps } from './ai.js';
+import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { buildExhibits } from '../domain/reportExhibits.js';
 import { listComparableItems } from '../repos/comparableItems.js';
 import { impliedMultiples } from '../domain/comparables.js';
@@ -340,7 +344,24 @@ async function renderVersionPdf(
   return pdf;
 }
 
-export function registerReportRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+const NarrativeBody = z
+  .object({
+    /** Replace chapters an analyst has already written. Deliberate, never default. */
+    overwrite: z.boolean().default(false),
+    /** Reuse the last successful draft instead of paying for a new one. */
+    reuse: z.boolean().default(true),
+  })
+  .default({ overwrite: false, reuse: true });
+
+export function registerReportRoutes(
+  app: FastifyInstance,
+  /**
+   * The AI half is optional so the many tests that mount reports alone keep
+   * working; without it the narrative route reports itself unavailable rather
+   * than failing at the first fetch.
+   */
+  deps: { pool: pg.Pool; ai?: AiPipelineDeps },
+): void {
   app.get('/api/v1/valuations/:id/report', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
@@ -484,6 +505,102 @@ export function registerReportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       report: saved.report,
       version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
       template_version: templateVersion,
+    };
+  });
+
+  /**
+   * Draft the report's prose from the finished calculation, and put it in.
+   *
+   * Every piece of this existed and none of it reached the deliverable. The
+   * `report_narrative` agent drafts the chapters from the run and from whatever
+   * grounded research the engagement has retrieved; its output landed in
+   * `ai_jobs.result`, and the only writes to the report body were the editor
+   * and a revert. An analyst read the draft in one tab and retyped it into
+   * another — and when nobody did, the 409A shipped with the skeleton's
+   * instructional text where its Company Overview belonged.
+   *
+   * The safety property is that written prose is never overwritten: a chapter
+   * is replaced only where it still holds the skeleton's fill-me marker.
+   * `overwrite` is available and is a deliberate act, because a re-run silently
+   * discarding an afternoon's editing is the failure that would stop anyone
+   * using this.
+   */
+  app.post('/api/v1/valuations/:id/report/narrative', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadForEdit(deps.pool, principal, id);
+    if (!deps.ai) throw problems.unprocessable('The narrative agent is not configured');
+
+    const parsed = NarrativeBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw problems.unprocessable('Invalid options', { errors: parsed.error.issues });
+
+    const report = await loadOrCreateReport(deps.pool, principal, valuation);
+    const version = await getVersion(deps.pool, report.id, report.current_version);
+    if (!version) throw problems.notFound('No report content to draft into');
+    if (DELIVERED_REPORT_STATES.has(valuation.state)) {
+      throw problems.conflict(
+        'This engagement is published — save a new version before drafting into it',
+      );
+    }
+
+    /*
+     * Reuse a recent draft rather than paying for a new one.
+     *
+     * The agent is expensive and the answer only moves when the calculation
+     * does. `reuse: false` forces a fresh run, which is what an analyst who has
+     * just changed the research or the params wants.
+     */
+    let job = parsed.data.reuse ? await latestSucceededJob(deps.pool, id, 'report_narrative') : null;
+    if (!job) {
+      try {
+        ({ job } = await runAiPipeline(deps.ai, {
+          valuation,
+          pipeline: 'report_narrative',
+          anonymize: false,
+          autoApply: false,
+          createdBy: principal.id,
+          actor: { actorType: 'ai', actorId: principal.id, source: 'ai-service' },
+          includeDocuments: false,
+        }));
+      } catch (err) {
+        if (err instanceof InternalServiceError) throw toProblem(err);
+        throw err;
+      }
+    }
+
+    const drafted = draftedSectionsFrom(job.result);
+    /*
+     * Version 1 is the template as instantiated for this engagement, and
+     * `saveVersion` appends rather than rewrites — so it is still the pristine
+     * skeleton however many edits followed, and a chapter identical to its v1
+     * text is one nobody has written. That is the whole overwrite rule.
+     */
+    const baseline = version.version === 1 ? version : await getVersion(deps.pool, report.id, 1);
+    const calculation = await latestSucceededCalculation(deps.pool, valuation.id);
+    const outcome = applyNarrative(version.content, drafted, {
+      overwrite: parsed.data.overwrite,
+      baseline: baseline?.content ?? null,
+      // Only consulted when there is no baseline to compare against.
+      figures: reportFigures(calculation, valuation.currency),
+    });
+
+    // No new version when nothing moved: a run that wrote nothing should not
+    // leave a version in the history claiming it did.
+    if (!outcome.changed) {
+      return { version: version.version, job_id: job.id, applied: outcome.applied, changed: false };
+    }
+
+    const saved = await saveVersion(deps.pool, {
+      report,
+      content: sanitizeContent(outcome.content),
+      actor: actorFor(principal),
+      origin: { redraftedFrom: `ai:report_narrative:${job.id}` },
+    });
+    return {
+      version: saved.version.version,
+      job_id: job.id,
+      applied: outcome.applied,
+      changed: true,
     };
   });
 

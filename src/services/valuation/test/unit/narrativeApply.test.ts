@@ -1,0 +1,239 @@
+import { describe, expect, it } from 'vitest';
+import {
+  applyNarrative,
+  draftedSectionsFrom,
+  MIN_DRAFT_LENGTH,
+  NARRATIVE_SECTION_MAP,
+  paragraphsToHtml,
+} from '../../src/domain/narrativeApply.js';
+import { instantiateTemplate, templateForKind } from '../../src/domain/report.js';
+import type { ReportContent } from '../../src/domain/report.js';
+
+/**
+ * Putting the drafted narrative into the report.
+ *
+ * The generation was never the missing piece — `report_narrative` has drafted
+ * these chapters from the finished calculation for as long as the agent has
+ * existed, and the research topics behind them retrieve and synthesise the
+ * public record. What was missing is any path from `ai_jobs.result` into
+ * `report_versions.content`, so an analyst read the draft in one tab and
+ * retyped it into another. When nobody did, the 409A shipped with the
+ * skeleton's instructional text where its Company Overview belonged.
+ *
+ * Two properties make writing it automatically defensible, and they are what
+ * these tests are about: it never overwrites prose somebody wrote, and what it
+ * writes goes through the same sanitizer as anything else that reaches stored
+ * report HTML.
+ */
+
+const PROSE = 'A'.repeat(MIN_DRAFT_LENGTH + 20);
+
+const doc = (sections: Array<{ key: string; heading: string; html: string }>): ReportContent => ({
+  title: 'IRC 409A Valuation Report — Northwind Robotics, Inc.',
+  sections,
+});
+
+const UNWRITTEN = {
+  key: 'company_overview',
+  heading: 'Company Overview',
+  html: '<p>Describe the business of Northwind Robotics, Inc.: products, customers, stage …</p>',
+};
+
+const WRITTEN = {
+  key: 'company_overview',
+  heading: 'Company Overview',
+  html: '<p>Northwind builds warehouse robots and sells them to third-party logistics operators.</p>',
+};
+
+describe('mapping the agent’s keys onto the report’s', () => {
+  it('routes each drafted chapter to the section it belongs in', () => {
+    // The two vocabularies were designed independently. Where they disagree the
+    // pairing is a judgement, written out so a wrong one is arguable.
+    expect(NARRATIVE_SECTION_MAP.valuation_methodology).toBe('methodology');
+    expect(NARRATIVE_SECTION_MAP.allocation_methodology).toBe('allocation');
+    expect(NARRATIVE_SECTION_MAP.dlom_analysis).toBe('dlom');
+    expect(NARRATIVE_SECTION_MAP.industry_overview).toBe('industry_market');
+  });
+
+  it('leaves the executive summary out on purpose', () => {
+    // The PDF builds its own summary page from the calculation — headline FMV,
+    // the figures grid, the charts. A drafted prose summary would sit beside it
+    // saying the same things in a voice nothing verified.
+    expect(NARRATIVE_SECTION_MAP.executive_summary).toBeUndefined();
+  });
+
+  it('falls through to the key itself when the two already agree', () => {
+    const out = applyNarrative(doc([{ key: 'conclusion', heading: 'C', html: '<p>… </p>' }]), [
+      { key: 'conclusion', body: PROSE },
+    ]);
+    expect(out.applied[0]!.section_key).toBe('conclusion');
+    expect(out.applied[0]!.outcome).toBe('written');
+  });
+
+  it('reports a chapter this report has no home for', () => {
+    const out = applyNarrative(doc([UNWRITTEN]), [{ key: 'repurchase_obligation', body: PROSE }]);
+    expect(out.applied[0]).toMatchObject({ section_key: null, outcome: 'unmatched' });
+    expect(out.changed).toBe(false);
+  });
+});
+
+describe('what it will and will not overwrite', () => {
+  it('writes into a chapter nobody has written', () => {
+    const out = applyNarrative(doc([UNWRITTEN]), [{ key: 'company_overview', body: PROSE }]);
+    expect(out.applied[0]!.outcome).toBe('written');
+    expect(out.content.sections[0]!.html).toContain(PROSE);
+    expect(out.changed).toBe(true);
+  });
+
+  it('keeps prose an analyst wrote', () => {
+    // The property the whole feature rests on. A re-run silently discarding an
+    // afternoon's editing is what would stop anybody using this, in a document
+    // whose value is that a named appraiser stands behind it.
+    const out = applyNarrative(doc([WRITTEN]), [{ key: 'company_overview', body: PROSE }]);
+    expect(out.applied[0]!.outcome).toBe('kept');
+    expect(out.content.sections[0]!.html).toBe(WRITTEN.html);
+    expect(out.changed).toBe(false);
+  });
+
+  it('replaces written prose only when explicitly told to', () => {
+    const out = applyNarrative(doc([WRITTEN]), [{ key: 'company_overview', body: PROSE }], {
+      overwrite: true,
+    });
+    expect(out.applied[0]!.outcome).toBe('written');
+    expect(out.content.sections[0]!.html).toContain(PROSE);
+  });
+
+  it('does not treat a resolvable computed marker as an unwritten chapter', () => {
+    // `{{fmv_per_share}}` in the conclusion is *supposed* to be in the stored
+    // body — it is what lets a re-render restate the sentence after a
+    // recalculation. Reading it as a hole would have the narrative overwrite
+    // the conclusion the report assembles from the run.
+    const conclusion = {
+      key: 'conclusion',
+      heading: 'Conclusion of Value',
+      html: '<p>The fair market value is {{fmv_per_share}} per share.</p>',
+    };
+    const out = applyNarrative(doc([conclusion]), [{ key: 'conclusion', body: PROSE }], {
+      figures: { fmv_per_share: '$1.4947' },
+    });
+    expect(out.applied[0]!.outcome).toBe('kept');
+  });
+
+  it('does treat an unresolvable one as unwritten', () => {
+    // With no calculation behind it the marker reaches the page as literal
+    // braces, which is a hole by any reading.
+    const conclusion = {
+      key: 'conclusion',
+      heading: 'Conclusion of Value',
+      html: '<p>The fair market value is {{fmv_per_share}} per share.</p>',
+    };
+    const out = applyNarrative(doc([conclusion]), [{ key: 'conclusion', body: PROSE }]);
+    expect(out.applied[0]!.outcome).toBe('written');
+  });
+
+  it('leaves every other chapter untouched', () => {
+    const content = doc([UNWRITTEN, { key: 'dlom', heading: 'DLOM', html: '<p>Describe the DLOM …</p>' }]);
+    const out = applyNarrative(content, [{ key: 'company_overview', body: PROSE }]);
+    expect(out.content.sections[1]!.html).toBe(content.sections[1]!.html);
+  });
+});
+
+describe('what counts as a draft worth writing', () => {
+  it('refuses a fragment', () => {
+    // A model with nothing to say about an unused approach returns "N/A".
+    // Writing that into a chapter is worse than the instruction it replaces:
+    // the instruction is visibly unfinished, "N/A." reads as a position.
+    const out = applyNarrative(doc([UNWRITTEN]), [{ key: 'company_overview', body: 'N/A.' }]);
+    expect(out.applied[0]!.outcome).toBe('empty');
+    expect(out.content.sections[0]!.html).toBe(UNWRITTEN.html);
+  });
+
+  it('refuses an empty body', () => {
+    const out = applyNarrative(doc([UNWRITTEN]), [{ key: 'company_overview', body: '   ' }]);
+    expect(out.applied[0]!.outcome).toBe('empty');
+  });
+});
+
+describe('what reaches stored report HTML', () => {
+  it('turns blank-line-separated paragraphs into markup', () => {
+    const html = paragraphsToHtml(`First paragraph.\n\nSecond paragraph.`);
+    expect(html).toBe('<p>First paragraph.</p><p>Second paragraph.</p>');
+  });
+
+  it('escapes the model’s output rather than trusting it', () => {
+    // These bodies land in stored report HTML and the auditor portal renders
+    // stored section HTML directly — the same path that made a company named
+    // `<img onerror=…>` script execution in an external reviewer's browser.
+    const body = `${PROSE}\n\n<script>alert(1)</script> and 5 < 6 & rising.`;
+    const out = applyNarrative(doc([UNWRITTEN]), [{ key: 'company_overview', body }]);
+    const html = out.content.sections[0]!.html;
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('5 &lt; 6 &amp; rising');
+  });
+
+  it('folds a single newline into the paragraph rather than breaking it', () => {
+    expect(paragraphsToHtml('One line\nsame paragraph.')).toBe('<p>One line same paragraph.</p>');
+  });
+});
+
+describe('reading the agent’s result', () => {
+  it('takes the sections it returned', () => {
+    const out = draftedSectionsFrom({
+      sections: [{ key: 'company_overview', title: 'Company Overview', body: 'text' }],
+    });
+    expect(out).toEqual([{ key: 'company_overview', title: 'Company Overview', body: 'text' }]);
+  });
+
+  it('survives a shape it did not expect', () => {
+    // The result is whatever a language model produced through a parser; the
+    // route must not 500 on a malformed one.
+    expect(draftedSectionsFrom(null)).toEqual([]);
+    expect(draftedSectionsFrom({ sections: 'nope' })).toEqual([]);
+    expect(draftedSectionsFrom({ sections: [null, 42, { body: 'no key' }] })).toEqual([]);
+  });
+
+  it('defaults a missing body to empty rather than dropping the key', () => {
+    // Which then reports as `empty`, so the caller is told the agent said
+    // nothing about that chapter rather than the chapter silently vanishing.
+    expect(draftedSectionsFrom({ sections: [{ key: 'dlom_analysis' }] })).toEqual([
+      { key: 'dlom_analysis', title: undefined, body: '' },
+    ]);
+  });
+});
+
+describe('against the real 409A skeleton', () => {
+  const drafted = instantiateTemplate(templateForKind('409a'), {
+    company_name: 'Northwind Robotics, Inc.',
+    kind: '409a',
+    valuation_ref: '01J8Z9WQ5T7K2M4N6P8R0S1V3X',
+    date: '2026-06-30',
+    currency: 'USD',
+  });
+
+  it('fills the chapters the agent drafts, on a freshly drafted report', () => {
+    // A freshly drafted report *is* its own baseline, so every chapter is
+    // unwritten — which is exactly the state this feature exists for.
+    const out = applyNarrative(
+      drafted,
+      Object.keys(NARRATIVE_SECTION_MAP).map((key) => ({ key, body: PROSE })),
+      { baseline: drafted },
+    );
+    const written = out.applied.filter((a) => a.outcome === 'written').map((a) => a.section_key);
+    // The chapters a 409A is actually argued in.
+    for (const key of ['company_overview', 'methodology', 'income_approach', 'market_approach', 'dlom']) {
+      expect(written, `${key} was not drafted into`).toContain(key);
+    }
+  });
+
+  it('does not invent a chapter the skeleton does not have', () => {
+    const keys = new Set(drafted.sections.map((s) => s.key));
+    const out = applyNarrative(
+      drafted,
+      Object.keys(NARRATIVE_SECTION_MAP).map((key) => ({ key, body: PROSE })),
+      { baseline: drafted },
+    );
+    expect(out.content.sections).toHaveLength(drafted.sections.length);
+    for (const section of out.content.sections) expect(keys.has(section.key)).toBe(true);
+  });
+});

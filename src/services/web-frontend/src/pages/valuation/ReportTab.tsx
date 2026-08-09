@@ -119,6 +119,32 @@ export function ReportTab() {
       await load();
     });
 
+  /**
+   * Draft the prose from the finished calculation, and put it in.
+   *
+   * The chapters it fills are the ones nobody has written — measured against
+   * the report's own v1 skeleton — so clicking this on a report an analyst has
+   * been editing fills the gaps and leaves their work alone. That is why it can
+   * be a plain button rather than a confirmation dialog.
+   */
+  const drafting = () =>
+    run('draft', async () => {
+      const res = await api<{
+        changed: boolean;
+        version: number;
+        applied: Array<{ section_key: string | null; outcome: string }>;
+      }>(`/valuations/${valuation.id}/report/narrative`, { method: 'POST', body: {} });
+      const written = res.applied.filter((a) => a.outcome === 'written').length;
+      const kept = res.applied.filter((a) => a.outcome === 'kept').length;
+      setNotice(
+        res.changed
+          ? `Drafted ${written} section${written === 1 ? '' : 's'} as version ${res.version}` +
+              (kept > 0 ? ` · ${kept} you had already written were left alone.` : '.')
+          : 'Nothing to draft — every section the agent covers has already been written.',
+      );
+      await load();
+    });
+
   const download = () =>
     run('download', () =>
       downloadPdf(
@@ -161,6 +187,14 @@ export function ReportTab() {
             </Button>
             {ops && (
               <>
+                <Button
+                  variant="secondary"
+                  onClick={() => void drafting()}
+                  disabled={busy !== null || dirty}
+                  title="Draft the unwritten sections from the latest calculation and the research on file. Sections you have written are left alone."
+                >
+                  {busy === 'draft' ? 'Drafting…' : 'Draft with AI'}
+                </Button>
                 <Button variant="secondary" onClick={() => void render()} disabled={busy !== null || dirty}>
                   {busy === 'render' ? 'Rendering…' : 'Render PDF'}
                 </Button>
