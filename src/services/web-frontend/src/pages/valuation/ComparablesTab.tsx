@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../../components/ui';
+import { VolatilityPanel } from '../../components/valuation/VolatilityPanel';
 
 /**
  * Network Items — the guideline-company peer set (design §4.5).
@@ -478,6 +479,11 @@ export function ComparablesTab() {
           </div>
         </form>
       )}
+
+      {/* On this tab rather than on Params, because the estimate is struck on
+          the set above: an analyst changing which peers are included is one
+          scroll away from seeing what it did to sigma. */}
+      <VolatilityPanel valuationId={valuation.id} />
     </div>
   );
 }

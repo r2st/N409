@@ -6,6 +6,8 @@ import { esc, P, section, table } from './exhibitHtml.js';
 import { MULTIPLE_LABELS, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
 import { requiredReturnRows } from './requiredReturns.js';
+import { VOLATILITY_CONFIDENCE_NOTES, VOLATILITY_METHOD_LABELS } from './volatility.js';
+import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
 
 /**
  * The supporting exhibits of the deliverable — the schedules a reviewer checks
@@ -64,6 +66,13 @@ export interface ExhibitContext {
    * `valuation_params.required_return_table` stores it.
    */
   requiredReturnTable?: unknown;
+  /**
+   * The volatility derivation that counts (migration 0134), when one has been
+   * run. Absent for every engagement whose sigma was selected by judgement, and
+   * Exhibit F-1 is then not rendered — the report reads exactly as it did
+   * before the derivation existed.
+   */
+  volatility?: VolatilityEstimateRow | null;
 }
 
 /** One row of the peer set, as Exhibit D-1 prints it. */
@@ -876,6 +885,135 @@ export function allocationExhibit(
     simulation.length > 0 ? table({ head: ['Simulation parameter', 'Value'], rows: simulation }) : null,
     schedule,
     byClass,
+  ]);
+}
+
+// ── Exhibit F-1 — selected volatility ────────────────────────────────────────
+
+/**
+ * Where the expected volatility came from.
+ *
+ * Exhibit F states the sigma the allocation ran on. Until this exhibit existed
+ * that was the whole disclosure: a number in an inputs table, described in the
+ * body as coming "from guideline companies" without naming one. Sigma drives
+ * the allocation, every option-based DLOM and the ASC 718 assumptions table,
+ * and it is the second thing a reviewing appraiser asks about.
+ *
+ * Printed only when a derivation was actually run (`domain/volatility.ts`).
+ * An engagement whose analyst selected sigma by judgement gets no exhibit
+ * rather than a schedule with one row in it — the judgement belongs in the
+ * body, where it can be argued, and a table dressing it as a measurement would
+ * be the opposite of what this is for.
+ *
+ * Three things the table has to carry that a median alone does not:
+ *
+ *   * every peer considered, with its own measurement, so the median is
+ *     checkable rather than asserted;
+ *   * the peers that were considered and not counted, with the reason — a
+ *     dead price series and a ticker the feed could not serve are both "in the
+ *     set, out of the measurement", and an exhibit that quietly omitted them
+ *     would overstate the breadth of the estimate;
+ *   * whether the derived figure is the one the calculation ran on. An
+ *     estimate nobody adopted sitting under a heading in a signed report,
+ *     beside an allocation struck on a different number, is a contradiction —
+ *     so the exhibit says so in terms.
+ */
+export function volatilityExhibit(
+  ctx: ExhibitContext,
+  results: Record<string, unknown>,
+): ReportPdfSection | null {
+  const row = ctx.volatility;
+  if (!row) return null;
+
+  const applied = num(record(record(results.allocation)?.assumptions)?.volatility);
+  const measured = row.companies.filter((c) => c.used);
+  const windowStart = row.window_start.toISOString().slice(0, 10);
+  const windowEnd = row.window_end.toISOString().slice(0, 10);
+
+  const basis: string[][] = [
+    ['Estimator', VOLATILITY_METHOD_LABELS[row.method]],
+    ['Observation window', `${windowStart} to ${windowEnd}`],
+    ['Annualization factor', `${row.periods_per_year} periods per year`],
+    ['Guideline companies measured', String(measured.length)],
+  ];
+  if (row.time_to_exit_years !== null) {
+    basis.push(['Expected time to liquidity', `${row.time_to_exit_years.toFixed(2)} years`]);
+  }
+  basis.push([
+    'Confidence in the estimate',
+    `${row.confidence.charAt(0).toUpperCase()}${row.confidence.slice(1)} — ${VOLATILITY_CONFIDENCE_NOTES[row.confidence]}`,
+  ]);
+
+  const distribution: string[][] = [];
+  const push = (label: string, value: number | null) => {
+    if (value !== null) distribution.push([label, formatPercent(value, 1)]);
+  };
+  push('Minimum', row.min_vol);
+  push('Median', row.median_vol);
+  push('Mean', row.mean_vol);
+  push('Maximum', row.max_vol);
+  if (row.coefficient_of_variation !== null) {
+    distribution.push(['Coefficient of variation', ratio(row.coefficient_of_variation, 2)]);
+  }
+
+  // Descending, so the reader sees the spread the median sits inside rather
+  // than the order the tickers happened to be screened in.
+  const peerRows = [...row.companies]
+    .sort((a, b) => b.volatility - a.volatility)
+    .map((c) => [
+      esc(c.ticker),
+      formatPercent(c.volatility, 1),
+      c.observations === undefined ? '—' : INT.format(c.observations),
+      c.used ? 'Included' : 'Excluded',
+    ]);
+
+  const excludedRows = row.excluded.map((e) => [esc(e.ticker), esc(e.reason)]);
+
+  // The one sentence the exhibit exists to be able to make — and the one place
+  // it must not be softened. `applied` is read off the calculation's own
+  // assumptions, so a mismatch is a fact about the run, not about the panel.
+  const adoption =
+    row.applied_at === null
+      ? P(
+          'This derivation has <strong>not been adopted</strong> as the valuation assumption. The ' +
+            'allocation was run on the volatility selected by the analyst, and the figures above are ' +
+            'presented as corroboration rather than as the source of the input.',
+        )
+      : applied !== null && Math.abs(applied - row.recommended) > 0.0001
+        ? P(
+            `The valuation applies <strong>${formatPercent(applied, 1)}</strong>, which departs from the ` +
+              `derived ${formatPercent(row.recommended, 1)}. The basis for the departure is stated in the ` +
+              'body of this report.',
+          )
+        : null;
+
+  return section('Exhibit F-1 — Selected Volatility', [
+    P(
+      'The expected volatility applied in the allocation is not an assumption of the subject company ' +
+        'directly — a private company has no traded price series to measure. It is estimated from the ' +
+        'observed return volatility of the guideline public companies, measured over the window below ' +
+        'and taken at the median, which is robust to a single outlier peer.',
+    ),
+    table({ head: ['Basis of estimate', 'Value'], rows: basis }),
+    peerRows.length > 0
+      ? table({
+          head: ['Guideline company', 'Annualized volatility', 'Observations', 'Treatment'],
+          rows: peerRows,
+          foot: [
+            row.method === 'manual' ? 'Analyst selection' : 'Median of included peers — selected',
+            formatPercent(row.recommended, 1),
+            '',
+            '',
+          ],
+        })
+      : null,
+    distribution.length > 0
+      ? table({ head: ['Cross-sectional distribution', 'Value'], rows: distribution })
+      : null,
+    excludedRows.length > 0
+      ? table({ head: ['Considered and not measured', 'Reason'], rows: excludedRows })
+      : null,
+    adoption,
   ]);
 }
 
@@ -1953,6 +2091,9 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     peerSetExhibit(ctx.peers, results),
     assetExhibit(results, ctx),
     allocationExhibit(results, ctx),
+    // Immediately after F, because it is F's supporting detail — the same
+    // relationship D-1 has with D and H-1 with H.
+    volatilityExhibit(ctx, results),
     pwermExhibit(results, ctx),
     discountExhibit(results, ctx),
     // Immediately after H, because it is H's supporting detail — the same

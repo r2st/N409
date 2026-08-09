@@ -1,6 +1,8 @@
 import type { ReportPdfSummary, ChartSpec } from '@n409/report/pdf';
 import type { CalculationRow } from '../repos/calculations.js';
 import { stageLabel } from './developmentStage.js';
+import { volatilityNarrative } from './volatility.js';
+import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
 
 /**
  * Executive summary + charts for the report PDF, derived from the calculation
@@ -287,6 +289,12 @@ export interface SummaryContext {
    * a report where nobody has said which one applies.
    */
   developmentStage?: number | null;
+  /**
+   * The volatility derivation that counts (migration 0134), when one has been
+   * run. Absent for an engagement whose sigma was selected by judgement, and
+   * the key-assumptions row then reads as it always did.
+   */
+  volatility?: VolatilityEstimateRow | null;
 }
 
 /**
@@ -397,7 +405,17 @@ export function buildReportSummary(
     const parts: string[] = [];
     if (volatility !== null) parts.push(`σ ${formatPercent(volatility, 0)}`);
     if (timeToExit !== null) parts.push(`T ${timeToExit.toFixed(2)}y`);
-    figures.push({ label: 'Key assumptions', value: parts.join(' · ') });
+    // Where sigma came from, on the one page a board member reads. A summary
+    // that states the assumption without its basis is asking to be taken on
+    // trust, which is the whole objection Exhibit F-1 answers; the note also
+    // says when a derivation was run and not adopted, because a board should
+    // not have to learn that from the exhibits.
+    const basis = volatilityNarrative(context.volatility ?? null, volatility);
+    figures.push({
+      label: 'Key assumptions',
+      value: parts.join(' · '),
+      ...(basis === null ? {} : { note: basis }),
+    });
   }
 
   const asOf = context.valuationDate ? ` as of ${context.valuationDate}` : '';

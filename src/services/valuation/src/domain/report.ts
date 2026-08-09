@@ -386,7 +386,7 @@ const P = (text: string) => `<p>${text}</p>`;
  *     it.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v57',
+  version: '409a.v58',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -583,10 +583,37 @@ const TEMPLATE_409A: ReportTemplate = {
           'Describe the option-pricing model allocation across share classes, including term, volatility and risk-free-rate inputs.',
         ) +
         P(
-          'Under the breakpoint method the payoff of each class is piecewise linear in exit equity value, so its expected value is the sum of Black-Scholes call spreads between consecutive breakpoints. The breakpoints, the value of each tranche and the resulting value of each class are set out in <strong>Exhibit F</strong>. State the source of the expected volatility and the basis for the expected time to a liquidity event.',
+          'Under the breakpoint method the payoff of each class is piecewise linear in exit equity value, so its expected value is the sum of Black-Scholes call spreads between consecutive breakpoints. The breakpoints, the value of each tranche and the resulting value of each class are set out in <strong>Exhibit F</strong>. State the basis for the expected time to a liquidity event; the expected volatility is dealt with in the section that follows.',
         ) +
         P(
           'Inputs applied: expected volatility {{volatility}}, expected time to liquidity {{time_to_exit_years}} years, risk-free rate {{risk_free_rate}}. The allocation indicates a marketable, controlling value of <strong>{{marketable_value_per_share}}</strong> per common share before the discounts below.',
+        ),
+    },
+    {
+      /*
+       * Volatility gets its own chapter because it is the allocation input that
+       * is challenged, and because two different figures travel under the one
+       * word. σ_enterprise is what the allocation runs on; σ_class is the
+       * geared figure an option-based DLOM struck on common needs, and the two
+       * differ by the leverage of the preference stack. A report that stated
+       * one number under "volatility" and applied the other in Exhibit H-1 was
+       * not wrong so much as unreadable, and a reviewer who spots the
+       * difference without an explanation has to assume the worse reading.
+       *
+       * Named the way the legacy deliverable names it, so a reader moving
+       * between the two finds the same section.
+       */
+      key: 'selected_volatility',
+      heading: 'Selected Volatility',
+      html:
+        P(
+          'The common stock of {{company_name}} is not publicly traded, so it has no observable return volatility of its own. The expected volatility applied in the allocation is therefore estimated from the observed returns of the guideline public companies identified in the market approach, measured over a defined window and taken at the median, which is robust to a single outlier peer.',
+        ) +
+        P(
+          'The estimator, the observation window, each guideline company’s measured volatility and the peers considered but not measured are set out in <strong>Exhibit F-1</strong>. State whether the window was matched to the expected time to a liquidity event, and the basis for any departure from the derived figure.',
+        ) +
+        P(
+          'The volatility of the enterprise is not the volatility of a share class. Each class is a levered claim on the enterprise — under the breakpoint method, a spread of call options — and common, ranking behind the preference stack, is the most geared. Where an option-based marketability discount is struck on common, it takes common’s own volatility; the class volatilities are set out in <strong>Exhibit H-1</strong>.',
         ),
     },
     {
@@ -727,8 +754,13 @@ const TEMPLATE_409A: ReportTemplate = {
         '<li>Exhibit B — Reconciliation of Valuation Approaches</li>' +
         '<li>Exhibit C — Income Approach (Discounted Cash Flow)</li>' +
         '<li>Exhibit D — Market Approach (Guideline Multiples)</li>' +
+        // D-1 has been rendered since the peer set was first stored and was
+        // never listed here; an index that omits an exhibit the report
+        // contains is the one thing an index must not do.
+        '<li>Exhibit D-1 — Guideline Company Set</li>' +
         '<li>Exhibit E — Asset Approach</li>' +
         '<li>Exhibit F — Allocation of Equity Value</li>' +
+        '<li>Exhibit F-1 — Selected Volatility</li>' +
         '<li>Exhibit G — Probability-Weighted Expected Return Scenarios</li>' +
         '<li>Exhibit H — Discounts and Concluded Value</li>' +
         '<li>Exhibit H-1 — Marketability Discount: Derivation</li>' +
