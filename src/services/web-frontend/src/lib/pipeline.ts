@@ -184,6 +184,43 @@ export interface Calculation {
   /** Blocking errors on a failed run, review warnings on a successful one. */
   diagnostics?: EngineIssue[];
   created_at: string;
+  /**
+   * Whether this run recorded pipeline steps — false for every calculation
+   * older than migration 0126, and for one the engine rejected before starting.
+   * The steps themselves are never in the list: they are the engine's whole
+   * working state and only the inspector reads them.
+   */
+  has_trace?: boolean;
+}
+
+/**
+ * One engine pipeline stage, as the engine recorded it (`engine/trace.py`).
+ *
+ * `status` is the field the result document structurally cannot carry. An
+ * approach with zero weight and an approach carried over from a previous
+ * per-approach recalculation are both simply missing from `results.approaches`,
+ * in exactly the same way, and they mean opposite things: `skipped` was
+ * excluded on purpose, `reused` is a number older than the inputs beside it.
+ */
+export interface CalculationStep {
+  seq: number;
+  key: string;
+  label: string;
+  status: 'computed' | 'reused' | 'skipped';
+  inputs: unknown;
+  outputs: unknown;
+  note: string | null;
+  elapsed_ms: number;
+}
+
+export interface CalculationDetail {
+  calculation: Calculation;
+  /** The exact payload posted to the engine, and the document it returned. */
+  request: Record<string, unknown>;
+  response: Record<string, unknown> | null;
+  steps: CalculationStep[];
+  /** False on a run that predates the trace column — see `Calculation.has_trace`. */
+  traced: boolean;
 }
 
 /** Human label for a dotted engine field path: `inputs.income.discount_rate` → "Income · discount rate". */

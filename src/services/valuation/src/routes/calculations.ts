@@ -10,9 +10,11 @@ import { listComparableItems } from '../repos/comparableItems.js';
 import { marketMultiples } from '../domain/comparables.js';
 import {
   createCalculation,
+  findCalculationWithTrace,
   latestSucceededCalculation,
   listCalculations,
   type CalculationRow,
+  type CalculationStep,
 } from '../repos/calculations.js';
 import {
   InternalServiceError,
@@ -51,6 +53,11 @@ export interface EngineComputeResponse {
   };
   /** Review warnings from the engine's pre-flight validator (non-blocking). */
   warnings?: UpstreamIssue[];
+  /**
+   * Ordered pipeline steps for the inspector. Absent from an engine older than
+   * the `trace` request flag, which is why nothing here requires it.
+   */
+  trace?: CalculationStep[];
 }
 
 export interface EngineValidateResponse {
@@ -185,6 +192,12 @@ export async function runCalculation(
     params: engineParams(args.paramsRow),
     inputs: args.inputs,
     ...(args.recompute ? { recompute: args.recompute, prior_approaches: args.priorApproaches } : {}),
+    // Every run, not on request. The run worth inspecting is always one that
+    // already happened, so a trace you have to ask for in advance is one you
+    // never have when it matters. It costs the engine a few dict copies and
+    // costs the row a few kilobytes; the column is read by one endpoint and
+    // selected by nothing else (`CALCULATION_COLUMNS`).
+    trace: true,
   };
   try {
     const response = await postJson<EngineComputeResponse>(
@@ -206,6 +219,7 @@ export async function runCalculation(
         // Review warnings travel with the run: a value that computes cleanly
         // can still rest on an assumption a reviewer has to sign off on.
         diagnostics: parseIssues(response.warnings),
+        trace: response.trace ?? null,
         createdBy: args.createdBy,
       },
       args.actor,
@@ -362,4 +376,50 @@ export function registerCalculationRoutes(
     await loadValuation(id);
     return { calculations: await listCalculations(deps.pool, id) };
   });
+
+  /**
+   * The calculation step inspector (409.ai gap §1.3).
+   *
+   * `calculations` has always stored the two ends of a run — the exact payload
+   * posted to the engine and the document it returned — and nothing of the
+   * middle. Answering "why is the market approach $4M when the multiples say
+   * 8x" meant reading compute.py beside the stored payload and redoing the
+   * arithmetic. This serves all three: the request, the response, and the
+   * engine's own account of each stage in between.
+   *
+   * A failed run is served too, and is the more useful case: its steps stop at
+   * whichever stage raised, which names the stage without anyone reading a log.
+   */
+  app.get(
+    '/api/v1/valuations/:id/calculations/:calculationId',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
+      const { id, calculationId } = req.params as { id: string; calculationId: string };
+      await loadValuation(id);
+      if (!isUlid(calculationId)) throw problems.notFound();
+      const calculation = await findCalculationWithTrace(deps.pool, id, calculationId);
+      if (!calculation) throw problems.notFound();
+
+      const { trace, ...rest } = calculation;
+      return {
+        calculation: rest,
+        // The raw pair, named for what they are rather than left to be inferred
+        // from `calculation.inputs`: this is the payload that went over the wire
+        // to the engine and the document that came back, which is what someone
+        // reproducing a run by hand needs to copy.
+        request: calculation.inputs,
+        response: calculation.results,
+        steps: trace ?? [],
+        /**
+         * Distinguishes "this run recorded no steps" from "this run predates
+         * the trace column" — the second is every calculation older than
+         * migration 0126, and an empty step list with no explanation reads as
+         * a broken inspector rather than as history.
+         */
+        traced: Array.isArray(trace),
+      };
+    },
+  );
 }

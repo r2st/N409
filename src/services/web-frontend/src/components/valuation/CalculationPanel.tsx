@@ -9,6 +9,7 @@ import {
   type PreflightResult,
 } from '../../lib/pipeline';
 import { Button, EmptyState, ErrorNote, Spinner, StatCard } from '../ui';
+import { CalculationInspector } from './CalculationInspector';
 
 interface ApproachRow {
   key: string;
@@ -84,6 +85,10 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
   const [busy, setBusy] = useState<'full' | RecalcApproach | null>(null);
   const [checking, setChecking] = useState(false);
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
+  // Which run is open in the step inspector. One at a time: the panel is the
+  // engine's whole working state for a single calculation, and two side by side
+  // is a diff view, which is a different feature.
+  const [inspecting, setInspecting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -286,29 +291,47 @@ export function CalculationPanel({ valuationId, currency }: { valuationId: strin
           <h3 className="overline mb-3 text-ink-400">History</h3>
           <ul className="divide-y divide-paper-300 rounded-lg border border-paper-300 bg-surface shadow-card">
             {calculations.map((calc) => (
-              <li key={calc.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
-                <span
-                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${
-                    calc.status === 'succeeded'
-                      ? 'bg-bond-50 text-bond-700 ring-bond-200'
-                      : 'bg-red-50 text-red-800 ring-red-200'
-                  }`}
-                >
-                  {calc.status}
-                </span>
-                <span className="tnum font-semibold text-ink-900">
-                  {calc.status === 'succeeded'
-                    ? formatMoney(calc.fmv_per_share, currency)
-                    : (calc.error ?? 'failed')}
-                </span>
-                {Array.isArray(calc.results?.recomputed) && (
-                  <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[0.65rem] font-bold text-sky-800 uppercase">
-                    recalc: {(calc.results.recomputed as string[]).join(', ')}
+              <li key={calc.id} className="text-sm">
+                <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+                  <span
+                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset ${
+                      calc.status === 'succeeded'
+                        ? 'bg-bond-50 text-bond-700 ring-bond-200'
+                        : 'bg-red-50 text-red-800 ring-red-200'
+                    }`}
+                  >
+                    {calc.status}
                   </span>
+                  <span className="tnum font-semibold text-ink-900">
+                    {calc.status === 'succeeded'
+                      ? formatMoney(calc.fmv_per_share, currency)
+                      : (calc.error ?? 'failed')}
+                  </span>
+                  {Array.isArray(calc.results?.recomputed) && (
+                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[0.65rem] font-bold text-sky-800 uppercase">
+                      recalc: {(calc.results.recomputed as string[]).join(', ')}
+                    </span>
+                  )}
+                  {/* Offered on every run, including a failed one — that is the
+                      case where the result document says nothing at all and the
+                      steps are the only account of where the run died. */}
+                  <button
+                    type="button"
+                    onClick={() => setInspecting((cur) => (cur === calc.id ? null : calc.id))}
+                    aria-expanded={inspecting === calc.id}
+                    className="cursor-pointer text-xs font-semibold text-bond-700 hover:underline"
+                  >
+                    {inspecting === calc.id ? 'Hide steps' : 'Inspect steps'}
+                  </button>
+                  <span className="tnum ml-auto text-xs text-ink-400">
+                    {formatDateTime(calc.created_at)} · {calc.engine_version}
+                  </span>
+                </div>
+                {inspecting === calc.id && (
+                  <div className="px-4 pb-4">
+                    <CalculationInspector valuationId={valuationId} calculationId={calc.id} />
+                  </div>
                 )}
-                <span className="tnum ml-auto text-xs text-ink-400">
-                  {formatDateTime(calc.created_at)} · {calc.engine_version}
-                </span>
               </li>
             ))}
           </ul>

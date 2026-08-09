@@ -35,6 +35,7 @@ from .dlom import (
 )
 from .hybrid import blend_hybrid, resolve_hybrid_weights
 from .pwerm import allocate_pwerm
+from .trace import Trace
 from .volatility import estimate_volatility
 from .wacc import compute_wacc
 from .waterfall import allocate_waterfall
@@ -436,15 +437,32 @@ def _pwerm_allocation(inputs: dict) -> dict:
     return allocation
 
 
-def _compute_pwerm(params: dict, inputs: dict) -> dict:
+def _compute_pwerm(params: dict, inputs: dict, trace: Trace | None = None) -> dict:
     """PWERM allocation path (allocation_method == 'pwerm').
 
     The scenarios themselves determine equity value and its allocation to
     common, so PWERM bypasses the weighted-approach step the OPM path uses.
     Common per-share value then feeds the same DLOC/DLOM discounts.
     """
+    tr = trace or Trace.off()
+    # Recorded as a skipped step rather than simply left out. A trace whose
+    # steps differ silently by allocation method makes the reader wonder
+    # whether the weighting is missing or merely inapplicable, and that is the
+    # single most load-bearing fact about how PWERM differs from the rest.
+    tr.record(
+        "weighting",
+        "Weighted equity value",
+        status="skipped",
+        note="PWERM derives equity value from its scenarios; the four approaches do not run",
+    )
     allocation = _pwerm_allocation(inputs)
     equity_value = allocation["equity_value"]
+    tr.record(
+        "allocation",
+        "Allocation to common (pwerm)",
+        inputs={"scenarios": inputs.get("pwerm")},
+        outputs=allocation,
+    )
 
     # Still required and still validated — a PWERM payload without a common
     # share count is incomplete, and a negative pool is a typo either way — but
@@ -469,6 +487,7 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
     # The waterfall already spread value across the cap table's common shares.
     common_per_share = allocation["common_per_share"]
     fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
+    _record_discounts(tr, params, common_per_share, dloc, dlom, dlom_method, dlom_detail, fmv_per_share)
 
     results: dict = {
         "equity_value": round(equity_value, 2),
@@ -489,7 +508,7 @@ def _compute_pwerm(params: dict, inputs: dict) -> dict:
 
 
 def _weighted_equity(
-    params: dict, inputs: dict, recompute: list[str] | None, prior: dict
+    params: dict, inputs: dict, recompute: list[str] | None, prior: dict, trace: Trace | None = None
 ) -> dict:
     """Weighted marketable equity value across the four approaches.
 
@@ -497,11 +516,46 @@ def _weighted_equity(
     scenarios instead). Returns the equity value, the per-approach results and
     weights, and the resolved time / rate / cash / debt.
     """
+    tr = trace or Trace.off()
 
     def _fresh(name: str) -> bool:
         """Full runs compute everything; partial runs compute the selected
         approaches and anything the prior run can't supply."""
         return recompute is None or name in recompute or name not in prior
+
+    def _record_approach(name: str, label: str, weight: float, section: dict | None) -> None:
+        """One step per approach, including the ones that produced nothing.
+
+        A zero-weight approach and one reused from an earlier run are both
+        simply absent from `results.approaches`, and they mean opposite things:
+        the first was excluded on purpose, the second is a number computed
+        against inputs that may since have changed. The step view is the only
+        place that distinction is visible.
+        """
+        if weight <= 0:
+            tr.record(
+                f"approach.{name}",
+                label,
+                status="skipped",
+                inputs={"weight": weight},
+                note="zero weight — excluded from the conclusion",
+            )
+        elif _fresh(name):
+            tr.record(
+                f"approach.{name}",
+                label,
+                inputs={"weight": weight, **(section or {})},
+                outputs=approaches[name],
+            )
+        else:
+            tr.record(
+                f"approach.{name}",
+                label,
+                status="reused",
+                inputs={"weight": weight},
+                outputs=approaches[name],
+                note="carried from the previous run — this recalculation did not name it",
+            )
 
     weights = _weights(params)
     t = _time_to_exit(params, inputs)
@@ -611,11 +665,53 @@ def _weighted_equity(
         "income": weights["weight_income"],
         "market": weights["weight_market"],
     }
+    _record_approach("asset", "Asset approach", weights["weight_asset"], _section(inputs, "asset"))
+    _record_approach(
+        "opm_backsolve",
+        "OPM backsolve (last round)",
+        weights["weight_opm"],
+        {
+            k: inputs.get(k)
+            for k in (
+                "last_round_post_money",
+                "last_round_price_per_share",
+                "last_round_class",
+                "volatility",
+            )
+            if inputs.get(k) is not None
+        },
+    )
+    _record_approach("income", "Income approach (DCF)", weights["weight_income"], _section(inputs, "income"))
+    _record_approach("market", "Market approach (comparables)", weights["weight_market"], _section(inputs, "market"))
+
     equity_value = sum(
         approaches[name]["equity_value"] * w for name, w in weight_by_approach.items() if w > 0
     )
     if equity_value <= 0:
         raise EngineInputError(f"weighted equity value is not positive ({equity_value:.2f})")
+
+    tr.record(
+        "weighting",
+        "Weighted equity value",
+        # The multiplication itself, term by term. A weighted mean is the one
+        # step where a reviewer's disagreement is almost always with a single
+        # contribution rather than with the total, and reading it off the
+        # result document means multiplying four pairs by hand.
+        inputs={
+            "terms": [
+                {
+                    "approach": name,
+                    "equity_value": approaches[name]["equity_value"],
+                    "weight": w,
+                    "contribution": approaches[name]["equity_value"] * w,
+                }
+                for name, w in weight_by_approach.items()
+                if w > 0
+            ],
+            "weight_total": sum(w for w in weight_by_approach.values() if w > 0),
+        },
+        outputs={"equity_value": equity_value, "time_to_exit_years": t, "risk_free_rate": r},
+    )
 
     return {
         "equity_value": equity_value,
@@ -761,14 +857,100 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
     }
 
 
-def _compute_opm(params: dict, inputs: dict, recompute: list[str] | None, prior: dict) -> dict:
+# ── Step recorders shared by the allocation paths ────────────────────────────
+# Written once rather than inlined four times, for the reason `_discounts_block`
+# already exists: the last thing inlined across these four branches went missing
+# from three of them, and a step view that is complete on the OPM path and
+# silently short on the CVM one is worse than one that is short everywhere.
+
+
+def _record_allocation(
+    trace: Trace, key: str, equity_value: float, inputs: dict, alloc: dict, t: float, r: float
+) -> None:
+    """The step that turns an equity value into a per-share figure for common.
+
+    `alloc["allocation"]["method"]` is the interesting output — waterfall,
+    single breakpoint, or as-converted. Which one ran is decided from the shape
+    of the cap table rather than from any parameter, so it is a decision nobody
+    made explicitly and nothing else in the result document reports.
+    """
+    allocation = alloc.get("allocation") or {}
+    trace.record(
+        f"allocation.{key}" if key.startswith("hybrid") else "allocation",
+        f"Allocation to common ({key})",
+        inputs={
+            "equity_value": equity_value,
+            "time_to_exit_years": t,
+            "risk_free_rate": r,
+            "volatility": alloc.get("volatility"),
+            "shares_outstanding_common": inputs.get("shares_outstanding_common"),
+            "shares_outstanding_preferred": inputs.get("shares_outstanding_preferred"),
+            "options_outstanding": inputs.get("options_outstanding"),
+            "liquidation_preference": inputs.get("liquidation_preference"),
+            "share_classes": inputs.get("share_classes"),
+        },
+        outputs={
+            "method": allocation.get("method"),
+            "allocation": allocation,
+            "common_per_share": alloc.get("common_per_share"),
+            "fully_diluted_common": alloc.get("fully_diluted_common"),
+            "fully_diluted_basis": alloc.get("fully_diluted_basis"),
+        },
+    )
+
+
+def _record_discounts(
+    trace: Trace,
+    params: dict,
+    common_per_share: float,
+    dloc: float,
+    dlom: float,
+    method: str | None,
+    detail: dict | None,
+    fmv_per_share: float,
+) -> None:
+    """The last step, and the one most often argued about.
+
+    Both discounts are shown applied *multiplicatively and in order*, because
+    the common error when checking this by hand is to subtract their sum: at
+    10% DLOC and 30% DLOM that is 60% of the marketable value rather than 63%,
+    and on a per-share figure the gap is the difference between two defensible
+    conclusions.
+    """
+    marketable = common_per_share
+    after_dloc = marketable * (1.0 - dloc)
+    trace.record(
+        "discounts",
+        "DLOC and DLOM",
+        inputs={
+            "marketable_common_per_share": marketable,
+            "dloc": dloc,
+            "dlom": dlom,
+            "dlom_method": method,
+            "dlom_detail": detail,
+        },
+        outputs={
+            "after_dloc": after_dloc,
+            "after_dlom": after_dloc * (1.0 - dlom),
+            "fmv_per_share": fmv_per_share,
+            "combined_discount": 1.0 - (1.0 - dloc) * (1.0 - dlom),
+        },
+    )
+
+
+def _compute_opm(
+    params: dict, inputs: dict, recompute: list[str] | None, prior: dict, trace: Trace | None = None
+) -> dict:
     """Default allocation path: weighted approaches → OPM allocation → DLOM."""
-    we = _weighted_equity(params, inputs, recompute, prior)
+    tr = trace or Trace.off()
+    we = _weighted_equity(params, inputs, recompute, prior, tr)
     equity_value, t, r = we["equity_value"], we["t"], we["r"]
     alloc = _opm_allocate(equity_value, params, inputs, t, r)
+    _record_allocation(tr, "opm", equity_value, inputs, alloc, t, r)
 
     dloc, dlom, method, dlom_detail = _resolve_discounts(params, alloc["volatility"], t, r)
     fmv_per_share = alloc["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
+    _record_discounts(tr, params, alloc["common_per_share"], dloc, dlom, method, dlom_detail, fmv_per_share)
 
     results: dict = {
         "equity_value": round(equity_value, 2),
@@ -800,12 +982,16 @@ def _compute_opm(params: dict, inputs: dict, recompute: list[str] | None, prior:
     return {"engine_version": ENGINE_VERSION, "results": results}
 
 
-def _compute_cvm(params: dict, inputs: dict, recompute: list[str] | None, prior: dict) -> dict:
+def _compute_cvm(
+    params: dict, inputs: dict, recompute: list[str] | None, prior: dict, trace: Trace | None = None
+) -> dict:
     """Current Value Method: weighted equity value allocated by the σ→0
     deterministic waterfall (current_value.allocate_cvm), then DLOC/DLOM."""
-    we = _weighted_equity(params, inputs, recompute, prior)
+    tr = trace or Trace.off()
+    we = _weighted_equity(params, inputs, recompute, prior, tr)
     equity_value, t, r = we["equity_value"], we["t"], we["r"]
     allocation = allocate_cvm(equity_value, inputs)
+    _record_allocation(tr, "cvm", equity_value, inputs, {"allocation": allocation, **allocation}, t, r)
 
     volatility = _num(inputs.get("volatility"), "volatility", positive=True)
     if params.get("dlom_method") in MODEL_DLOM_METHODS and volatility is None:
@@ -813,6 +999,9 @@ def _compute_cvm(params: dict, inputs: dict, recompute: list[str] | None, prior:
 
     dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t, r)
     fmv_per_share = allocation["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
+    _record_discounts(
+        tr, params, allocation["common_per_share"], dloc, dlom, method, dlom_detail, fmv_per_share
+    )
 
     results: dict = {
         "equity_value": round(equity_value, 2),
@@ -843,14 +1032,24 @@ def _compute_cvm(params: dict, inputs: dict, recompute: list[str] | None, prior:
     return {"engine_version": ENGINE_VERSION, "results": results}
 
 
-def _compute_hybrid(params: dict, inputs: dict, recompute: list[str] | None, prior: dict) -> dict:
+def _compute_hybrid(
+    params: dict, inputs: dict, recompute: list[str] | None, prior: dict, trace: Trace | None = None
+) -> dict:
     """Hybrid: blend the OPM common-per-share (weighted approaches + waterfall)
     with the PWERM common-per-share by configurable weights, then DLOC/DLOM."""
+    tr = trace or Trace.off()
     weights = resolve_hybrid_weights(inputs)
-    we = _weighted_equity(params, inputs, recompute, prior)
+    we = _weighted_equity(params, inputs, recompute, prior, tr)
     t, r = we["t"], we["r"]
     opm_alloc = _opm_allocate(we["equity_value"], params, inputs, t, r)
+    _record_allocation(tr, "hybrid.opm_leg", we["equity_value"], inputs, opm_alloc, t, r)
     pwerm_allocation = _pwerm_allocation(inputs)
+    tr.record(
+        "allocation.pwerm_leg",
+        "PWERM leg (scenario allocation)",
+        inputs={"scenarios": inputs.get("pwerm")},
+        outputs=pwerm_allocation,
+    )
 
     blend = blend_hybrid(
         {
@@ -869,10 +1068,21 @@ def _compute_hybrid(params: dict, inputs: dict, recompute: list[str] | None, pri
 
     t_blend = blend["blended_time_to_exit_years"]
     volatility = opm_alloc["volatility"]
+    tr.record(
+        "allocation.blend",
+        "Hybrid blend of the two legs",
+        inputs={
+            "weights": weights,
+            "opm_common_per_share": opm_alloc["common_per_share"],
+            "pwerm_common_per_share": pwerm_allocation["common_per_share"],
+        },
+        outputs=blend,
+    )
     dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t_blend, r)
     common_per_share = blend["common_per_share"]
     fully_diluted_common = opm_alloc["fully_diluted_common"]
     fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
+    _record_discounts(tr, params, common_per_share, dloc, dlom, method, dlom_detail, fmv_per_share)
 
     results: dict = {
         "equity_value": blend["equity_value"],
@@ -942,6 +1152,7 @@ def compute(
     auto_volatility: bool = False,
     auto_wacc: bool = False,
     auto_comparables: bool = False,
+    trace: bool = False,
 ) -> dict:
     """Full 409A computation, or — with `recompute` — a per-subsystem rerun.
 
@@ -953,7 +1164,14 @@ def compute(
     The `auto_*` flags run the estimation engines (volatility / WACC /
     comparables) to pre-fill their manual inputs before the calculation; a
     manual value always takes precedence, so the flags are backward compatible.
+
+    With `trace`, the returned document carries a `trace` list: one entry per
+    pipeline stage with what it consumed and produced. Opt-in because those
+    payloads are the engine's entire working state and most callers never read
+    them. It cannot change a number — `Trace` copies what it is handed and
+    returns nothing to the arithmetic.
     """
+    tr = Trace(enabled=trace)
     inputs, auto_meta = _apply_autopilot(
         params,
         inputs,
@@ -961,6 +1179,21 @@ def compute(
         auto_wacc=auto_wacc,
         auto_comparables=auto_comparables,
     )
+    if auto_meta is not None:
+        tr.record(
+            "autopilot",
+            "Estimation engines (pre-fill)",
+            inputs={
+                "auto_volatility": auto_volatility,
+                "auto_wacc": auto_wacc,
+                "auto_comparables": auto_comparables,
+            },
+            # What the estimators derived, and — the part worth having — which
+            # of them a manual input overrode. An analyst who set volatility by
+            # hand and still sees an auto figure here needs to know which one
+            # the allocation used.
+            outputs=auto_meta,
+        )
 
     if recompute is not None:
         unknown = set(recompute) - set(APPROACH_KEYS)
@@ -977,15 +1210,20 @@ def compute(
     if allocation_method == "pwerm":
         # Self-contained: discrete exit scenarios set both equity value and its
         # allocation to common, bypassing the weighted-approach + OPM chain.
-        out = _compute_pwerm(params, inputs)
+        out = _compute_pwerm(params, inputs, tr)
     elif allocation_method == "cvm":
-        out = _compute_cvm(params, inputs, recompute, prior)
+        out = _compute_cvm(params, inputs, recompute, prior, tr)
     elif allocation_method == "hybrid":
-        out = _compute_hybrid(params, inputs, recompute, prior)
+        out = _compute_hybrid(params, inputs, recompute, prior, tr)
     else:
-        out = _compute_opm(params, inputs, recompute, prior)
+        out = _compute_opm(params, inputs, recompute, prior, tr)
 
     if auto_meta is not None:
         out["results"]["auto"] = auto_meta
     _assert_finite_results(out["results"])
+    # Outside `results`, deliberately. `results` is persisted as the answer, fed
+    # to the report renderer and diffed between runs; a debug record that grew
+    # a new step would read as the valuation having changed.
+    if tr.enabled:
+        out["trace"] = tr.as_list()
     return out

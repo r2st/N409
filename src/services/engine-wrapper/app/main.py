@@ -101,6 +101,15 @@ class ComputeRequest(BaseModel):
     auto_volatility: bool = False
     auto_wacc: bool = False
     auto_comparables: bool = False
+    # Step-by-step record of the pipeline for the calculation inspector, under
+    # `trace` on the response. Off by default so the flag is the caller's
+    # decision rather than the engine's: the steps carry the engine's whole
+    # working state — every approach's inputs, the cap table, the waterfall —
+    # and the estimation and sensitivity callers that compute a figure to throw
+    # away have no use for them. The valuation service does ask on every run,
+    # for the reason its own call site gives: the run worth inspecting is
+    # always one that already happened.
+    trace: bool = False
 
 
 class SensitivityRequest(BaseModel):
@@ -388,6 +397,7 @@ def engine_compute(request: ComputeRequest) -> JSONResponse | dict:
             auto_volatility=request.auto_volatility,
             auto_wacc=request.auto_wacc,
             auto_comparables=request.auto_comparables,
+            trace=request.trace,
         )
     except EngineInputError as exc:
         # Validation missed it (autopilot-derived inputs, a deeper numeric
