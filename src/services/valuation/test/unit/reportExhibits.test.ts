@@ -826,6 +826,114 @@ describe('dlomDerivationExhibit', () => {
     expect(text).toContain('Rule 144');
   });
 
+  it('prints the discount off the field the engine actually records', () => {
+    /*
+     * The engine's study rows carry `discount` (engine dlom.py `_study_rows`),
+     * and this column used to read `median`/`mean`/`dlom` — none of which exist
+     * on them. Every row's discount printed as an em dash, so the exhibit whose
+     * entire job is to show what the conclusion rests on tabulated the study
+     * names against nothing.
+     */
+    const studies = {
+      ...RESULTS,
+      discounts: {
+        dloc: 0.1,
+        dlom: 0.13,
+        dlom_method: 'restricted_stock',
+        dlom_detail: {
+          method: 'restricted_stock',
+          statistic: 'median',
+          dlom: 0.13,
+          low: 0.13,
+          high: 0.13,
+          study_count: 1,
+          thin_study_set: true,
+          straddles_rule_144_amendment: false,
+          studies: [
+            {
+              study: 'Columbia Financial Advisors (post-amendment)',
+              period_start: 1997,
+              period_end: 1998,
+              discount: 0.13,
+              statistic: 'mean',
+            },
+          ],
+        },
+      },
+    };
+    const text = plain(dlomDerivationExhibit(studies, CONTEXT)!.html);
+    expect(text).toContain('13.0%');
+    expect(text).toContain('1997–1998');
+    // And the engine's own caveat about a set this narrow, which nothing printed.
+    expect(text).toContain('fewer than three studies');
+  });
+
+  it('carries the Rule 144 straddle caveat the engine flagged', () => {
+    const studies = {
+      ...RESULTS,
+      discounts: {
+        dloc: 0.1,
+        dlom: 0.17,
+        dlom_method: 'restricted_stock',
+        dlom_detail: {
+          method: 'restricted_stock',
+          statistic: 'median',
+          dlom: 0.17,
+          low: 0.13,
+          high: 0.21,
+          straddles_rule_144_amendment: true,
+          studies: [
+            { study: 'Columbia Financial Advisors (pre-amendment)', period_start: 1996, period_end: 1997, discount: 0.21 },
+            { study: 'Columbia Financial Advisors (post-amendment)', period_start: 1997, period_end: 1998, discount: 0.13 },
+          ],
+        },
+      },
+    };
+    const text = plain(dlomDerivationExhibit(studies, CONTEXT)!.html);
+    expect(text).toContain('spans the April 1997 amendment');
+    // The range is stated so nobody reads the median as a midpoint.
+    expect(text).toContain('13.0%');
+    expect(text).toContain('21.0%');
+  });
+
+  it('describes a pre-IPO conclusion as pre-IPO, with its selection bias', () => {
+    /*
+     * The prose used to be written once, for restricted stock, and applied to
+     * whatever reached it. A pre-IPO leg described as "restricted-stock
+     * studies" with the Rule 144 note attached is not a stylistic problem — it
+     * is a statement about the evidence that is untrue, on the exhibit a
+     * reviewer reads to check the discount.
+     */
+    const preIpo = {
+      ...RESULTS,
+      discounts: {
+        dloc: 0.1,
+        dlom: 0.455,
+        dlom_method: 'pre_ipo',
+        dlom_detail: {
+          method: 'pre_ipo',
+          statistic: 'median',
+          dlom: 0.455,
+          low: 0.352,
+          high: 0.5,
+          predates_modern_ipo_market: false,
+          selection_bias:
+            'The sample is companies that went on to complete an IPO, so part of the measured ' +
+            'discount is the change in the company’s prospects over the period.',
+          studies: [
+            { study: 'Emory 1997-2000', period_start: 1997, period_end: 2000, discount: 0.5, statistic: 'mean' },
+            { study: 'Willamette 1997', period_start: 1997, period_end: 1997, discount: 0.352, statistic: 'median' },
+          ],
+        },
+      },
+    };
+    const text = plain(dlomDerivationExhibit(preIpo, CONTEXT)!.html);
+    expect(text).toContain('Pre-IPO transaction studies');
+    expect(text).toContain('pre-IPO studies');
+    expect(text).toContain('went on to complete an IPO');
+    expect(text).not.toContain('Rule 144');
+  });
+
   it('says a qualitative discount is a judgement', () => {
     const qualitative = {
       ...RESULTS,

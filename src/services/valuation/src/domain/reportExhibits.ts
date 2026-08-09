@@ -978,6 +978,7 @@ const DLOM_MODEL_NAMES: Record<string, string> = {
   ghaidarov: 'Ghaidarov average-strike put model',
   longstaff: 'Longstaff upper bound',
   restricted_stock: 'Restricted-stock studies',
+  pre_ipo: 'Pre-IPO transaction studies',
   qualitative: 'Qualitative — analyst judgement',
 };
 
@@ -1035,10 +1036,25 @@ function derivationRows(
 }
 
 /**
- * The restricted-stock studies a discount was blended from, where it was.
+ * The published studies a discount was blended from, and the caveats on them.
  *
- * Set selection is the whole objection to the method, so naming the studies is
- * not a courtesy. Empty for every method that rests on no study set.
+ * Set selection is the whole objection to the empirical methods, so naming the
+ * studies is not a courtesy. Empty for every method that rests on no study set.
+ *
+ * Two families reach this, and they are not interchangeable — restricted-stock
+ * placements measure what the market paid for a known resale restriction;
+ * pre-IPO transactions measure the discount to an offering price that had not
+ * been set yet. The prose and the caveats therefore follow `detail.method`
+ * rather than being written once for the family that happened to come first: a
+ * pre-IPO leg described as restricted stock, with the Rule 144 note attached,
+ * is a statement about the evidence that is simply untrue.
+ *
+ * The caveat rows are the engine's own flags (`thin_study_set`,
+ * `straddles_rule_144_amendment`, `predates_modern_ipo_market`,
+ * `selection_bias`), transcribed rather than re-derived. They existed on the
+ * calculation and no exhibit printed them, which put the reviewer's first
+ * question — how thin is this set, and does it span the 1997 break — behind a
+ * database query.
  */
 function studyBlock(detail: Record<string, unknown>): string[] {
   const studies = list(detail.studies)
@@ -1046,27 +1062,86 @@ function studyBlock(detail: Record<string, unknown>): string[] {
     .filter((s): s is Record<string, unknown> => s !== null);
   if (studies.length === 0) return [];
   const statistic = text(detail.statistic) ?? 'median';
-  return [
-    P(
-      `The discount is the ${esc(statistic)} of the selected restricted-stock studies. Observations ` +
-        'predating the 1997 and 2008 amendments to Rule 144 measured a longer restriction on ' +
-        'resale than applies today, and are identified as such.',
-    ),
+  const preIpo = text(detail.method) === 'pre_ipo';
+
+  const intro = preIpo
+    ? `The discount is the ${esc(statistic)} of the selected pre-IPO studies: the prices at which ` +
+      'shares changed hands privately in the months before the company’s offering, against the ' +
+      'offering price itself.'
+    : `The discount is the ${esc(statistic)} of the selected restricted-stock studies: the ` +
+      'discounts at which stock restricted from resale under Rule 144 actually changed hands. ' +
+      'Observations predating the 1997 amendment measured a two-year restriction rather than the ' +
+      'one that applies today, and are identified by their period below.';
+
+  const out = [
+    P(intro),
     table({
-      head: ['Study', 'Period', 'Observations', 'Discount'],
+      head: ['Study', 'Period', 'Statistic', 'Discount'],
       rows: studies.map((s) => {
-        const value = num(s.median) ?? num(s.mean) ?? num(s.dlom);
+        // `discount` is what the engine's tables and a firm-supplied table both
+        // carry (engine dlom.py `_study_rows`). The two fallbacks are for a
+        // stored calculation written before that shape settled — without them
+        // this column silently printed a dash for every row, which is how it
+        // shipped: a study table with no discounts in it.
+        const value = num(s.discount) ?? num(s.median) ?? num(s.mean);
         const from = num(s.period_start);
         const to = num(s.period_end);
         return [
           text(s.study) ?? '—',
           from !== null && to !== null ? `${from}–${to}` : '—',
-          num(s.observations) === null ? '—' : shares(num(s.observations) as number),
+          text(s.statistic) ?? '—',
           value === null ? '—' : formatPercent(value),
         ];
       }),
     }),
   ];
+
+  const caveats: string[] = [];
+  if (detail.thin_study_set === true) {
+    caveats.push(
+      'The selected set is fewer than three studies, which is a narrow basis on which to conclude.',
+    );
+  }
+  if (detail.straddles_rule_144_amendment === true) {
+    caveats.push(
+      'The set spans the April 1997 amendment to Rule 144, which shortened the holding period from ' +
+        'two years to one. Discounts either side of it describe different securities, and the ' +
+        'blended figure averages two regimes.',
+    );
+  }
+  if (preIpo) {
+    // Not conditional on a flag: it is true of every pre-IPO set, and it is
+    // the reason these discounts run roughly twice the restricted-stock ones.
+    const bias = text(detail.selection_bias);
+    caveats.push(
+      bias ??
+        'The sample is companies that went on to complete an IPO, so part of the measured discount ' +
+          'is the change in the company’s prospects over the period rather than marketability alone.',
+    );
+    if (detail.predates_modern_ipo_market === true) {
+      caveats.push(
+        'The set reaches back before 1990, to an IPO market with a different process and a ' +
+          'different retail bid from the one a company would face today.',
+      );
+    }
+  }
+  const low = num(detail.low);
+  const high = num(detail.high);
+  if (low !== null && high !== null) {
+    caveats.push(
+      `The selected studies range from ${formatPercent(low)} to ${formatPercent(high)}; the ` +
+        `concluded figure is their ${esc(statistic)}, not the midpoint of that range.`,
+    );
+  }
+  if (caveats.length > 0) {
+    out.push(
+      table({
+        head: ['On the study set'],
+        rows: caveats.map((c) => [c]),
+      }),
+    );
+  }
+  return out;
 }
 
 /**
