@@ -146,6 +146,38 @@ export const PARAM_COLUMNS = [
   'allocation_method',
 ] as const;
 
+/**
+ * The `jsonb` columns among them, which have to be serialized on the way in.
+ *
+ * node-pg maps a JS value to a Postgres parameter by its *JavaScript* type, not
+ * by the column it is bound to: an array becomes an array literal, a plain
+ * object becomes `[object Object]`. That is right for `dloc_studies` (`text[]`)
+ * and wrong for every jsonb column here, and only `market_custom_ranges` was
+ * ever stringified.
+ *
+ * The five that were not are not obscure. `dlom_methods` is the weighted-DLOM
+ * feature; `dlom_study_table`, `dlom_pre_ipo_table` and `dloc_study_table` are
+ * how a firm supplies its own subscription study data instead of the engine's
+ * built-in indicative tables; `required_return_table` is the firm's own stage
+ * ladder for Appendix III. Each has a validated Zod schema on the route, a
+ * column with a CHECK constraint, engine code that reads it and an exhibit that
+ * prints it — and each one 500'd on `invalid input syntax for type json` at the
+ * only step that could ever set it. The features were complete and unreachable.
+ *
+ * Typed against the column list rather than as bare strings, so a name that is
+ * misspelled or no longer a column is a compile error here. A jsonb column
+ * added later still has to be added to this set by hand — there is nothing in
+ * the schema for the type system to read.
+ */
+export const JSONB_PARAM_COLUMNS: ReadonlySet<(typeof PARAM_COLUMNS)[number]> = new Set([
+  'dloc_study_table',
+  'dlom_methods',
+  'dlom_study_table',
+  'dlom_pre_ipo_table',
+  'required_return_table',
+  'market_custom_ranges',
+]);
+
 export async function findParams(pool: pg.Pool, valuationId: string): Promise<ValuationParamsRow | null> {
   const { rows } = await pool.query<ValuationParamsRow>(
     'SELECT * FROM valuation_params WHERE valuation_id = $1',
@@ -215,7 +247,11 @@ export async function patchParams(
     const sets: string[] = ['updated_at = now()'];
     const params: unknown[] = [];
     for (const [key, value] of entries) {
-      params.push(key === 'market_custom_ranges' && value !== null ? JSON.stringify(value) : value);
+      // NULL stays NULL: `JSON.stringify(null)` is the four characters "null",
+      // which stores a jsonb null literal rather than clearing the column, and
+      // `IS NULL` would stop being true of a cleared table.
+      const jsonb = JSONB_PARAM_COLUMNS.has(key as (typeof PARAM_COLUMNS)[number]);
+      params.push(jsonb && value !== null ? JSON.stringify(value) : value);
       sets.push(`${key} = $${params.length}`);
     }
     params.push(current.valuation_id);
