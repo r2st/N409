@@ -20,24 +20,70 @@ const DEVELOPMENT_STAGE_OPTIONS = [
   { value: '6', label: 'Stage 6 — Established operating history' },
 ] as const;
 
+/**
+ * The DLOM models the engine implements (engine/dlom.py). The form used to
+ * offer three of the seven: an analyst who wanted Ghaidarov, Longstaff, or
+ * either study family had no way to ask for it from the product, only through
+ * the API. The option-pricing three are grouped apart from the empirical two
+ * because the question a reviewer asks first is which family the discount came
+ * from, not which formula within it.
+ */
+const DLOM_METHOD_OPTIONS = [
+  { value: 'chaffee', label: 'Chaffee (protective put)' },
+  { value: 'finnerty', label: 'Finnerty (average-strike put)' },
+  { value: 'ghaidarov', label: 'Ghaidarov (average-strike, corrected)' },
+  { value: 'longstaff', label: 'Longstaff (lookback — upper bound)' },
+  { value: 'restricted_stock', label: 'Restricted-stock studies' },
+  { value: 'pre_ipo', label: 'Pre-IPO studies' },
+  { value: 'qualitative', label: 'Qualitative' },
+] as const;
+
+/**
+ * How the DLOC was derived (engine/dloc.py). An empty value keeps the historic
+ * behaviour — `dloc` applied as a figure the analyst states outright — which is
+ * what every engagement written before migration 0132 carries.
+ */
+const DLOC_METHOD_OPTIONS = [
+  { value: '', label: 'Stated figure' },
+  { value: 'control_premium', label: 'Inverted from a control premium' },
+  { value: 'studies', label: 'Control-premium studies' },
+  { value: 'qualitative', label: 'Qualitative (analyst judgement)' },
+] as const;
+
 interface FormState {
+  rolling_forward: boolean;
+  inception_date: string;
+  fiscal_year_end: string;
   weight_asset: string;
   weight_opm: string;
   weight_income: string;
   weight_market: string;
   dloc: string;
+  dloc_method: string;
+  control_premium: string;
+  dloc_synergy_share: string;
+  dloc_statistic: string;
   dlom_method: string;
   dlom_qualitative: string;
+  dlom_statistic: string;
   revenue_status: string;
   development_stage: string;
   exit_timeline: string;
   last_round_date: string;
+  last_year_revenue: string;
+  ytd_revenue: string;
   runway_months: string;
   market_method: string;
   market_horizon: string;
   asset_method: string;
   allocation_method: string;
   business_overview: string;
+}
+
+/** One leg of a weighted DLOM blend (`dlom_methods`). */
+interface DlomLeg {
+  method: string;
+  weight: string;
 }
 
 /** One editable PWERM exit scenario (values in whole currency units). */
@@ -72,19 +118,48 @@ const emptyScenario = (): ScenarioRow => ({
 
 const str = (v: string | number | null) => (v === null || v === undefined ? '' : String(v));
 
+/**
+ * Money crosses the wire in cents (`last_year_revenue_cents`) and is typed in
+ * whole currency units. Kept as a string in form state rather than a number so
+ * a half-typed "12." survives a keystroke, and rounded on the way out because
+ * the column is an integer.
+ */
+const centsToUnits = (v: string | number | null | undefined): string => {
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  return Number.isFinite(n) ? String(n / 100) : '';
+};
+
+const unitsToCents = (v: string): number | null => {
+  const t = v.trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? Math.round(n * 100) : null;
+};
+
 function fromParams(p: ValuationParams): FormState {
   return {
+    rolling_forward: p.rolling_forward === true,
+    inception_date: p.inception_date?.slice(0, 10) ?? '',
+    fiscal_year_end: p.fiscal_year_end?.slice(0, 10) ?? '',
     weight_asset: str(p.weight_asset),
     weight_opm: str(p.weight_opm),
     weight_income: str(p.weight_income),
     weight_market: str(p.weight_market),
     dloc: str(p.dloc),
+    dloc_method: p.dloc_method ?? '',
+    control_premium: str(p.control_premium ?? null),
+    dloc_synergy_share: str(p.dloc_synergy_share ?? null),
+    dloc_statistic: p.dloc_statistic ?? '',
     dlom_method: p.dlom_method ?? '',
     dlom_qualitative: str(p.dlom_qualitative),
+    dlom_statistic: p.dlom_statistic ?? '',
     revenue_status: p.revenue_status ?? '',
     development_stage: str(p.development_stage),
     exit_timeline: p.exit_timeline?.slice(0, 10) ?? '',
     last_round_date: p.last_round_date?.slice(0, 10) ?? '',
+    last_year_revenue: centsToUnits(p.last_year_revenue_cents),
+    ytd_revenue: centsToUnits(p.ytd_revenue_cents),
     runway_months: str(p.runway_months),
     market_method: p.market_method ?? '',
     market_horizon: p.market_horizon ?? '',
@@ -94,7 +169,16 @@ function fromParams(p: ValuationParams): FormState {
   };
 }
 
-const WEIGHTS: Array<{ key: keyof FormState; label: string }> = [
+/** The blend legs as the API carries them, or `[]` when a single method is set. */
+function legsFromParams(p: ValuationParams): DlomLeg[] {
+  const raw = p.dlom_methods;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((m) => ({ method: String(m.method), weight: str(m.weight) }));
+}
+
+type WeightKey = 'weight_asset' | 'weight_opm' | 'weight_income' | 'weight_market';
+
+const WEIGHTS: Array<{ key: WeightKey; label: string }> = [
   { key: 'weight_asset', label: 'Asset approach' },
   { key: 'weight_opm', label: 'OPM backsolve' },
   { key: 'weight_income', label: 'Income (DCF)' },
@@ -113,12 +197,14 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const [scenariosSaved, setScenariosSaved] = useState(false);
   const [hybridOpmWeight, setHybridOpmWeight] = useState('0.5');
   const [hybridPwermWeight, setHybridPwermWeight] = useState('0.5');
+  const [dlomLegs, setDlomLegs] = useState<DlomLeg[]>([]);
 
   const load = useCallback(async () => {
     try {
       const { params: p } = await api<{ params: ValuationParams }>(`/valuations/${valuationId}/params`);
       setParams(p);
       setForm(fromParams(p));
+      setDlomLegs(legsFromParams(p));
       try {
         const { engine_inputs } = await api<{
           engine_inputs: {
@@ -172,33 +258,110 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     income: form.weight_income,
     market: form.weight_market,
   });
-  const qualitativeMissing = form.dlom_method === 'qualitative' && form.dlom_qualitative.trim() === '';
 
-  const set = (key: keyof FormState) => (value: string) => {
+  const blending = dlomLegs.length > 0;
+  /*
+   * The blend's own checks, mirroring `validateDlomMethods` on the service so
+   * the analyst is told at the field rather than by a 422. Weights are never
+   * normalised here for the reason the service gives: legs summing to 0.9 are a
+   * mistake in someone's spreadsheet, and scaling them up would conclude on a
+   * discount nobody chose.
+   */
+  const blendTotal = dlomLegs.reduce((sum, leg) => sum + (Number(leg.weight) || 0), 0);
+  const blendMethods = dlomLegs.map((leg) => leg.method);
+  const blendDuplicate = blendMethods.find((m, i) => m !== '' && blendMethods.indexOf(m) !== i) ?? null;
+  const blendIssue: string | null = !blending
+    ? null
+    : dlomLegs.length < 2
+      ? 'A blend needs at least two methods — remove the leg to conclude on one method instead.'
+      : blendMethods.some((m) => m === '')
+        ? 'Every leg needs a method.'
+        : blendDuplicate !== null
+          ? `${DLOM_METHOD_OPTIONS.find((o) => o.value === blendDuplicate)?.label ?? blendDuplicate} is weighted twice.`
+          : Math.abs(blendTotal - 1) > 1e-4
+            ? 'Blend weights must sum to 1.0000.'
+            : null;
+
+  // A qualitative leg needs its figure whether it is the single method or one
+  // weight among several — the service refuses both the same way.
+  const qualitativeSelected = blending
+    ? blendMethods.includes('qualitative')
+    : form.dlom_method === 'qualitative';
+  const qualitativeMissing = qualitativeSelected && form.dlom_qualitative.trim() === '';
+  // `dlom_statistic` is read by both study families, so the field is offered
+  // whenever either is in play — concluded on, or weighted as a leg.
+  const studySelected = (blending ? blendMethods : [form.dlom_method]).some(
+    (m) => m === 'restricted_stock' || m === 'pre_ipo',
+  );
+  // `dloc` itself stays optional — an engagement that concludes no control
+  // discount is a normal outcome — but a method that cannot run without its
+  // input is not, so those are caught here rather than by the engine.
+  const controlPremiumMissing = form.dloc_method === 'control_premium' && form.control_premium.trim() === '';
+  const dlocQualitativeMissing = form.dloc_method === 'qualitative' && form.dloc.trim() === '';
+  // The column is a non-negative bigint of cents. A number input's spinner
+  // cannot reach a negative here, but a paste can, and the 422 it earns says
+  // "last_year_revenue_cents" rather than which box to look in.
+  const revenueIssue = [form.last_year_revenue, form.ytd_revenue].some(
+    (v) => v.trim() !== '' && Number(v) < 0,
+  )
+    ? 'Revenue cannot be negative.'
+    : null;
+
+  const set = (key: keyof FormState) => (value: string | boolean) => {
     setSaved(false);
     setForm((f) => (f ? { ...f, [key]: value } : f));
   };
 
   const numOrNull = (v: string) => (v.trim() === '' ? null : Number(v));
 
+  const saveBlocked = Boolean(
+    weightsIssue ||
+    qualitativeMissing ||
+    blendIssue ||
+    controlPremiumMissing ||
+    dlocQualitativeMissing ||
+    revenueIssue,
+  );
+
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    if (weightsIssue || qualitativeMissing) return;
+    if (saveBlocked) return;
     setError(null);
     setBusy(true);
     try {
       const body = {
+        rolling_forward: form.rolling_forward,
+        inception_date: form.inception_date || null,
+        fiscal_year_end: form.fiscal_year_end || null,
         weight_asset: numOrNull(form.weight_asset),
         weight_opm: numOrNull(form.weight_opm),
         weight_income: numOrNull(form.weight_income),
         weight_market: numOrNull(form.weight_market),
         dloc: numOrNull(form.dloc),
-        dlom_method: form.dlom_method || null,
+        dloc_method: form.dloc_method || null,
+        control_premium: numOrNull(form.control_premium),
+        dloc_synergy_share: numOrNull(form.dloc_synergy_share),
+        dloc_statistic: form.dloc_statistic || null,
+        /*
+         * The two DLOM forms are mutually exclusive (the table's
+         * `valuation_params_one_dlom_form` CHECK), so whichever is not in use
+         * is sent as an explicit null rather than omitted. Omitting it would
+         * leave the other one on the row and the save would be refused —
+         * switching from a blend back to a single method has to clear the blend
+         * in the same request that sets the method.
+         */
+        dlom_method: blending ? null : form.dlom_method || null,
+        dlom_methods: blending
+          ? dlomLegs.map((leg) => ({ method: leg.method, weight: Number(leg.weight) }))
+          : null,
         dlom_qualitative: numOrNull(form.dlom_qualitative),
+        dlom_statistic: form.dlom_statistic || null,
         revenue_status: form.revenue_status || null,
         development_stage: numOrNull(form.development_stage),
         exit_timeline: form.exit_timeline || null,
         last_round_date: form.last_round_date || null,
+        last_year_revenue_cents: unitsToCents(form.last_year_revenue),
+        ytd_revenue_cents: unitsToCents(form.ytd_revenue),
         runway_months: numOrNull(form.runway_months),
         market_method: form.market_method || null,
         market_horizon: form.market_horizon || null,
@@ -212,6 +375,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       );
       setParams(updated);
       setForm(fromParams(updated));
+      setDlomLegs(legsFromParams(updated));
       setSaved(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save params.');
@@ -278,6 +442,85 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         </div>
       )}
 
+      {/* ── Engagement basics (409.ai §7.1/§7.7). Every field here is a column
+          the API has always accepted and no screen ever offered: an analyst
+          could not record that a valuation was a roll-forward, when the company
+          was incorporated, or what it earned last year, except through the
+          intake form or the API. */}
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+        <h3 className="overline mb-5 text-ink-400">Engagement basics</h3>
+        <div className="grid gap-5 sm:grid-cols-3">
+          <Field
+            label="Inception date"
+            hint="Incorporation, for the age of the enterprise."
+            tooltip="When the company was formed. Used to describe the stage of the enterprise and to sanity-check the financial history."
+          >
+            <TextInput
+              type="date"
+              disabled={readOnly}
+              value={form.inception_date}
+              onChange={(e) => set('inception_date')(e.target.value)}
+            />
+          </Field>
+          <Field label="Fiscal year end" hint="Anchors the historical and projected periods.">
+            <TextInput
+              type="date"
+              disabled={readOnly}
+              value={form.fiscal_year_end}
+              onChange={(e) => set('fiscal_year_end')(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Expected exit"
+            hint="Drives time-to-liquidity in OPM & DLOM."
+            tooltip="The date a liquidity event is expected. It sets the term on the option-pricing allocation and on the put that prices the marketability discount."
+          >
+            <TextInput
+              type="date"
+              disabled={readOnly}
+              value={form.exit_timeline}
+              onChange={(e) => set('exit_timeline')(e.target.value)}
+            />
+          </Field>
+          <Field label="Last round date">
+            <TextInput
+              type="date"
+              disabled={readOnly}
+              value={form.last_round_date}
+              onChange={(e) => set('last_round_date')(e.target.value)}
+            />
+          </Field>
+          <Field label="Runway (months)">
+            <TextInput
+              type="number"
+              min={0}
+              max={600}
+              disabled={readOnly}
+              value={form.runway_months}
+              onChange={(e) => set('runway_months')(e.target.value)}
+            />
+          </Field>
+          <div className="flex items-center">
+            <label className="flex cursor-pointer items-start gap-2.5 text-sm text-ink-800">
+              <input
+                type="checkbox"
+                disabled={readOnly}
+                checked={form.rolling_forward}
+                onChange={(e) => set('rolling_forward')(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-bond-600"
+                data-testid="rolling-forward"
+              />
+              <span>
+                <span className="font-semibold">Rolling forward</span>
+                <span className="mt-0.5 block text-xs text-ink-400">
+                  A refresh of an earlier engagement for the same company, rather than a first opinion.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+      </section>
+
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-5 flex items-baseline justify-between">
           <h3 className="overline flex items-center gap-1.5 text-ink-400">
@@ -324,7 +567,50 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             </Field>
           ))}
         </div>
-        {weightsIssue && <p className="mt-3 text-sm font-medium text-red-600">{weightsIssue}</p>}
+        {weightsIssue && (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <p className="text-sm font-medium text-red-600">{weightsIssue}</p>
+            {/*
+             * Offered only while the weights are wrong, and only when there is
+             * something to scale — the save is already blocked, and sliders in
+             * increments of 0.05 land off 1.0000 constantly. It rescales what
+             * the analyst chose rather than inventing a split, which is why it
+             * is a button here and emphatically not something the service does
+             * on its own (see `validateWeights`).
+             */}
+            {!readOnly && weightTotal > 0 && (
+              <Button
+                type="button"
+                variant="secondary"
+                data-testid="normalise-weights"
+                onClick={() => {
+                  setSaved(false);
+                  setForm((f) => {
+                    if (!f) return f;
+                    const total = WEIGHTS.reduce((sum, w) => sum + (Number(f[w.key]) || 0), 0);
+                    if (total <= 0) return f;
+                    const scaled = { ...f };
+                    // The last weight absorbs the rounding, so the four always
+                    // sum to exactly 1.0000 at four decimal places.
+                    let used = 0;
+                    WEIGHTS.forEach(({ key }, i) => {
+                      if (i === WEIGHTS.length - 1) {
+                        scaled[key] = (Math.round((1 - used) * 1e4) / 1e4).toString();
+                        return;
+                      }
+                      const w = Math.round(((Number(f[key]) || 0) / total) * 1e4) / 1e4;
+                      used += w;
+                      scaled[key] = w.toString();
+                    });
+                    return scaled;
+                  });
+                }}
+              >
+                Scale to 1.0000
+              </Button>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
@@ -582,41 +868,187 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
 
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h3 className="overline mb-5 text-ink-400">Discounts</h3>
+
+        {/* ── DLOC ──────────────────────────────────────────────────────────
+            The method drives which inputs matter, so only those are shown: a
+            control premium box is noise on an engagement that states its
+            discount outright, and worse than noise when it holds a stale figure
+            the engine is not reading. */}
+        <h4 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-ink-800">
+          Lack of control (DLOC)
+          <InfoTooltip text="Minority holders cannot direct the company, so their shares may be worth less than a controlling stake. The method says how that discount was arrived at — the report names it either way." />
+        </h4>
         <div className="grid gap-5 sm:grid-cols-3">
-          <Field
-            label="DLOC (fraction)"
-            hint="Discount for lack of control, 0–1."
-            tooltip="Discount for Lack of Control: minority holders can't direct the company, so their shares may be worth less. Enter a fraction from 0 to 1."
-          >
-            <TextInput
-              type="number"
-              min={0}
-              max={1}
-              step={0.01}
-              disabled={readOnly}
-              value={form.dloc}
-              onChange={(e) => set('dloc')(e.target.value)}
-            />
-          </Field>
-          <Field
-            label="DLOM method"
-            hint="Chaffee/Finnerty are computed by the engine."
-            tooltip="Discount for Lack of Marketability: private stock can't be sold freely. Chaffee and Finnerty model it as a protective put; Qualitative takes a fraction you enter."
-          >
+          <Field label="Derivation" hint="Named in the report as the basis for the discount.">
             <Select
               disabled={readOnly}
-              value={form.dlom_method}
-              onChange={(e) => set('dlom_method')(e.target.value)}
+              value={form.dloc_method}
+              onChange={(e) => set('dloc_method')(e.target.value)}
+              data-testid="dloc-method"
             >
-              <option value="">Not set</option>
-              <option value="chaffee">Chaffee (protective put)</option>
-              <option value="finnerty">Finnerty (average-strike put)</option>
-              <option value="qualitative">Qualitative</option>
+              {DLOC_METHOD_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </Select>
           </Field>
-          {form.dlom_method === 'qualitative' && (
+
+          {/* 'studies' concludes the discount itself; the other three read the
+              `dloc` box, either as the answer or as the analyst's judgement. */}
+          {form.dloc_method !== 'studies' && (
+            <Field
+              label="DLOC (fraction)"
+              hint="0–1."
+              error={dlocQualitativeMissing ? 'Required for the qualitative method.' : null}
+            >
+              <TextInput
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                disabled={readOnly || form.dloc_method === 'control_premium'}
+                value={form.dloc}
+                onChange={(e) => set('dloc')(e.target.value)}
+                data-testid="dloc"
+              />
+            </Field>
+          )}
+
+          {form.dloc_method === 'control_premium' && (
+            <>
+              <Field
+                label="Control premium (fraction)"
+                hint="Inverted, not subtracted: 0.25 → a 20% discount."
+                error={controlPremiumMissing ? 'Required for this derivation.' : null}
+                tooltip="A premium and a discount are the same fact from opposite sides, and the conversion is not symmetric: DLOC = 1 − 1/(1+CP). The engine computes the discount, so the DLOC box is read-only here."
+              >
+                <TextInput
+                  type="number"
+                  min={0}
+                  max={10}
+                  step={0.01}
+                  disabled={readOnly}
+                  value={form.control_premium}
+                  onChange={(e) => set('control_premium')(e.target.value)}
+                  data-testid="control-premium"
+                />
+              </Field>
+              <Field
+                label="Synergy share (fraction)"
+                hint="Removed before inverting. Blank keeps the whole premium."
+                tooltip="The share of an observed acquisition premium attributable to synergies rather than to control. Buyers pay for both; only the control half is evidence for a DLOC."
+              >
+                <TextInput
+                  type="number"
+                  min={0}
+                  max={0.99}
+                  step={0.01}
+                  disabled={readOnly}
+                  value={form.dloc_synergy_share}
+                  onChange={(e) => set('dloc_synergy_share')(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
+
+          {form.dloc_method === 'studies' && (
+            <Field
+              label="Study statistic"
+              hint="Blank uses the engine's default."
+              tooltip="Which figure to take from each published control-premium study. The studies themselves come from the engine's table."
+            >
+              <Select
+                disabled={readOnly}
+                value={form.dloc_statistic}
+                onChange={(e) => set('dloc_statistic')(e.target.value)}
+                data-testid="dloc-statistic"
+              >
+                <option value="">Engine default</option>
+                <option value="median">Median</option>
+                <option value="mean">Mean</option>
+              </Select>
+            </Field>
+          )}
+        </div>
+
+        {/* ── DLOM ────────────────────────────────────────────────────────── */}
+        <h4 className="mt-8 mb-3 flex items-center gap-1.5 text-sm font-semibold text-ink-800">
+          Lack of marketability (DLOM)
+          <InfoTooltip text="Private stock cannot be sold freely. The option-pricing models price that as a put over the holding period; the study families read it off observed discounts. A blend weights several." />
+        </h4>
+
+        {/*
+         * One method or a weighted blend, never both — the table's
+         * `valuation_params_one_dlom_form` CHECK. Presenting that as a pair of
+         * radios rather than an eighth "blended" entry in the method list keeps
+         * the exclusivity visible, and is why switching back to a single method
+         * clears the legs rather than leaving them where a later save would be
+         * refused for carrying two answers.
+         */}
+        <div className="mb-4 flex flex-wrap gap-x-6 gap-y-2" role="radiogroup" aria-label="DLOM form">
+          {[
+            { blend: false, label: 'Conclude on one method' },
+            { blend: true, label: 'Weight several methods' },
+          ].map((o) => (
+            <label
+              key={String(o.blend)}
+              className="flex cursor-pointer items-center gap-2 text-sm text-ink-800"
+            >
+              <input
+                type="radio"
+                name="dlom-form"
+                disabled={readOnly}
+                checked={blending === o.blend}
+                onChange={() => {
+                  setSaved(false);
+                  if (o.blend) {
+                    // Seed the blend from the concluded method, so choosing to
+                    // weight does not throw away the choice already made.
+                    const seed = form.dlom_method === '' ? 'chaffee' : form.dlom_method;
+                    const second = seed === 'finnerty' ? 'chaffee' : 'finnerty';
+                    setDlomLegs([
+                      { method: seed, weight: '0.5' },
+                      { method: second, weight: '0.5' },
+                    ]);
+                    set('dlom_method')('');
+                  } else {
+                    setDlomLegs([]);
+                  }
+                }}
+                className="h-4 w-4 accent-bond-600"
+                data-testid={o.blend ? 'dlom-form-blend' : 'dlom-form-single'}
+              />
+              {o.label}
+            </label>
+          ))}
+        </div>
+
+        <div className="grid gap-5 sm:grid-cols-3">
+          {!blending && (
+            <Field label="DLOM method" hint="All but Qualitative are computed by the engine.">
+              <Select
+                disabled={readOnly}
+                value={form.dlom_method}
+                onChange={(e) => set('dlom_method')(e.target.value)}
+                data-testid="dlom-method"
+              >
+                <option value="">Not set</option>
+                {DLOM_METHOD_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+
+          {/* A qualitative leg needs its figure whether it is the conclusion or
+              one weight among several — the service refuses both the same way. */}
+          {qualitativeSelected && (
             <Field
               label="Qualitative DLOM (fraction)"
+              hint="0–1."
               error={qualitativeMissing ? 'Required for the qualitative method.' : null}
             >
               <TextInput
@@ -627,10 +1059,113 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                 disabled={readOnly}
                 value={form.dlom_qualitative}
                 onChange={(e) => set('dlom_qualitative')(e.target.value)}
+                data-testid="dlom-qualitative"
               />
             </Field>
           )}
+
+          {/* Shared by both study families, so it is offered whenever either is
+              in play — as the conclusion or as a leg of the blend. */}
+          {studySelected && (
+            <Field
+              label="Study statistic"
+              hint="Blank uses the engine's default."
+              tooltip="Which figure to take from each published study. Shared by the restricted-stock and pre-IPO tables, so a blend weighting both reads them the same way."
+            >
+              <Select
+                disabled={readOnly}
+                value={form.dlom_statistic}
+                onChange={(e) => set('dlom_statistic')(e.target.value)}
+                data-testid="dlom-statistic"
+              >
+                <option value="">Engine default</option>
+                <option value="median">Median</option>
+                <option value="mean">Mean</option>
+              </Select>
+            </Field>
+          )}
         </div>
+
+        {blending && (
+          <div className="mt-5" data-testid="dlom-blend">
+            <ol className="space-y-3">
+              {dlomLegs.map((leg, i) => (
+                <li key={i} className="flex flex-wrap items-end gap-3">
+                  <div className="min-w-[16rem] flex-1">
+                    <Field label={`Method ${i + 1}`}>
+                      <Select
+                        disabled={readOnly}
+                        value={leg.method}
+                        onChange={(e) => {
+                          setSaved(false);
+                          const method = e.target.value;
+                          setDlomLegs((legs) => legs.map((l, j) => (j === i ? { ...l, method } : l)));
+                        }}
+                      >
+                        <option value="">Select a method</option>
+                        {DLOM_METHOD_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  <div className="w-32">
+                    <Field label="Weight">
+                      <TextInput
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        disabled={readOnly}
+                        value={leg.weight}
+                        onChange={(e) => {
+                          setSaved(false);
+                          const weight = e.target.value;
+                          setDlomLegs((legs) => legs.map((l, j) => (j === i ? { ...l, weight } : l)));
+                        }}
+                      />
+                    </Field>
+                  </div>
+                  {!readOnly && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="mb-1"
+                      onClick={() => {
+                        setSaved(false);
+                        setDlomLegs((legs) => legs.filter((_, j) => j !== i));
+                      }}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ol>
+
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <span className="tnum text-sm text-ink-600">
+                Total <span className="font-semibold text-ink-900">{blendTotal.toFixed(4)}</span>
+              </span>
+              {!readOnly && dlomLegs.length < DLOM_METHOD_OPTIONS.length && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setSaved(false);
+                    setDlomLegs((legs) => [...legs, { method: '', weight: '' }]);
+                  }}
+                  data-testid="add-dlom-leg"
+                >
+                  Add method
+                </Button>
+              )}
+            </div>
+            {blendIssue && <p className="mt-2 text-sm font-medium text-red-600">{blendIssue}</p>}
+          </div>
+        )}
       </section>
 
       <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
@@ -667,30 +1202,33 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               ))}
             </Select>
           </Field>
-          <Field label="Expected exit" hint="Drives time-to-liquidity in OPM & DLOM.">
-            <TextInput
-              type="date"
-              disabled={readOnly}
-              value={form.exit_timeline}
-              onChange={(e) => set('exit_timeline')(e.target.value)}
-            />
-          </Field>
-          <Field label="Last round date">
-            <TextInput
-              type="date"
-              disabled={readOnly}
-              value={form.last_round_date}
-              onChange={(e) => set('last_round_date')(e.target.value)}
-            />
-          </Field>
-          <Field label="Runway (months)">
+          {/* The dates and the runway moved up to Engagement basics, where they
+              sit with the rest of the engagement's own facts. */}
+          <Field
+            label="Last full year revenue"
+            hint="Whole currency units."
+            error={revenueIssue}
+            tooltip="Revenue for the last completed fiscal year. Feeds the revenue multiple in the market approach and the stage-of-development conclusion."
+          >
             <TextInput
               type="number"
               min={0}
-              max={600}
+              step={1000}
               disabled={readOnly}
-              value={form.runway_months}
-              onChange={(e) => set('runway_months')(e.target.value)}
+              value={form.last_year_revenue}
+              onChange={(e) => set('last_year_revenue')(e.target.value)}
+              data-testid="last-year-revenue"
+            />
+          </Field>
+          <Field label="Revenue year to date" hint="Whole currency units.">
+            <TextInput
+              type="number"
+              min={0}
+              step={1000}
+              disabled={readOnly}
+              value={form.ytd_revenue}
+              onChange={(e) => set('ytd_revenue')(e.target.value)}
+              data-testid="ytd-revenue"
             />
           </Field>
           <Field label="Market metric">
@@ -741,9 +1279,25 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       </section>
 
       {!readOnly && (
-        <Button type="submit" disabled={busy || Boolean(weightsIssue) || qualitativeMissing}>
-          {busy ? 'Saving…' : 'Save methodology'}
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" disabled={busy || saveBlocked}>
+            {busy ? 'Saving…' : 'Save methodology'}
+          </Button>
+          {/* The blocking field can be several sections up a long form, and a
+              disabled button with no reason beside it reads as a broken one.
+              The field keeps its own inline error; this only says which. */}
+          {saveBlocked && (
+            <p className="text-sm text-ink-600" data-testid="save-blocked">
+              {weightsIssue
+                ? 'Approach weights need fixing before this can be saved.'
+                : blendIssue
+                  ? 'The DLOM blend needs fixing before this can be saved.'
+                  : revenueIssue
+                    ? 'Revenue needs fixing before this can be saved.'
+                    : 'A discount is missing an input it cannot be computed without.'}
+            </p>
+          )}
+        </div>
       )}
     </form>
   );

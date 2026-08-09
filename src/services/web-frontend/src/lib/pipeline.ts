@@ -232,6 +232,28 @@ export function fieldLabel(field: string): string {
     .join(' · ');
 }
 
+/**
+ * The methodology enums, mirroring the valuation service's `repos/params.ts`.
+ * The engine implements all seven DLOM models and all three DLOC derivations;
+ * these types are what stops the form quietly offering a subset again.
+ */
+export const DLOM_METHODS = [
+  'chaffee',
+  'finnerty',
+  'ghaidarov',
+  'longstaff',
+  'restricted_stock',
+  'pre_ipo',
+  'qualitative',
+] as const;
+export type DlomMethod = (typeof DLOM_METHODS)[number];
+
+export const DLOC_METHODS = ['control_premium', 'studies', 'qualitative'] as const;
+export type DlocMethod = (typeof DLOC_METHODS)[number];
+
+export const ALLOCATION_METHODS = ['opm', 'pwerm', 'hybrid', 'cvm', 'monte_carlo'] as const;
+export type AllocationMethod = (typeof ALLOCATION_METHODS)[number];
+
 export interface ValuationParams {
   valuation_id: string;
   rolling_forward: boolean;
@@ -251,13 +273,22 @@ export interface ValuationParams {
   weight_income: string | null;
   weight_market: string | null;
   dloc: string | null;
+  /** How the DLOC was derived; null applies `dloc` as a stated figure. */
+  dloc_method: DlocMethod | null;
+  control_premium: string | null;
+  dloc_synergy_share: string | null;
+  dloc_statistic: 'median' | 'mean' | null;
   dlom: string | null;
-  dlom_method: 'chaffee' | 'finnerty' | 'qualitative' | null;
+  dlom_method: DlomMethod | null;
+  /** A discount weighted across several methods; mutually exclusive with
+   *  `dlom_method` (the table's `valuation_params_one_dlom_form` CHECK). */
+  dlom_methods: Array<{ method: DlomMethod; weight: number }> | null;
   dlom_qualitative: string | null;
+  dlom_statistic: 'median' | 'mean' | null;
   market_method: 'revenue' | 'ebitda' | null;
   market_horizon: 'ltm' | 'ntm' | null;
   asset_method: 'cost_to_replicate' | 'nav' | null;
-  allocation_method: 'opm' | 'pwerm';
+  allocation_method: AllocationMethod;
   updated_at: string;
 }
 
