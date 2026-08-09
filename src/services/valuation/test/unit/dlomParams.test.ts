@@ -36,6 +36,7 @@ describe('dlom_method', () => {
       'finnerty',
       'ghaidarov',
       'longstaff',
+      'pre_ipo',
       'qualitative',
       'restricted_stock',
     ]);
@@ -125,6 +126,61 @@ describe('dlom_study_table', () => {
 
   it('rejects an empty table', () => {
     expect(ok({ dlom_study_table: [] }).success).toBe(false);
+  });
+});
+
+/**
+ * The pre-IPO study family (migration 0131).
+ *
+ * It gets its own selection keys rather than sharing `dlom_studies`, and the
+ * case that forces it is the one where both families are live: a `dlom_methods`
+ * blend weighting a restricted-stock leg against a pre-IPO one. A shared column
+ * could not address both tables at once, so each leg's selection would be
+ * unrepresentable in the presence of the other.
+ */
+describe('dlom_pre_ipo_studies', () => {
+  it('accepts a selection', () => {
+    expect(ok({ dlom_pre_ipo_studies: ['Emory 1997-2000', 'Willamette 1997'] }).success).toBe(true);
+  });
+
+  it('accepts null — the engine default set', () => {
+    expect(ok({ dlom_pre_ipo_studies: null }).success).toBe(true);
+  });
+
+  it('rejects an empty selection', () => {
+    expect(ok({ dlom_pre_ipo_studies: [] }).success).toBe(false);
+  });
+
+  it('is independent of the restricted-stock selection', () => {
+    // Both set at once is the blend case, and it has to be expressible.
+    expect(
+      ok({ dlom_studies: ['Gelman'], dlom_pre_ipo_studies: ['Emory 1997-2000'] }).success,
+    ).toBe(true);
+  });
+});
+
+describe('dlom_pre_ipo_table', () => {
+  const row = { study: 'Firm pre-IPO 2024', discount: 0.44 };
+
+  it('takes the same row shape as the restricted-stock table', () => {
+    // Identical on purpose: it is what lets the engine read either family
+    // through one blender, so neither leg of a blend can grow a reporting
+    // field the other lacks.
+    expect(
+      ok({
+        dlom_pre_ipo_table: [{ ...row, period_start: 1997, period_end: 2000, statistic: 'mean' }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a discount of 1.0 or more, a negative one, and an empty table', () => {
+    expect(ok({ dlom_pre_ipo_table: [{ ...row, discount: 1 }] }).success).toBe(false);
+    expect(ok({ dlom_pre_ipo_table: [{ ...row, discount: -0.1 }] }).success).toBe(false);
+    expect(ok({ dlom_pre_ipo_table: [] }).success).toBe(false);
+  });
+
+  it('rejects an unrecognised field rather than dropping it', () => {
+    expect(ok({ dlom_pre_ipo_table: [{ ...row, dicsount: 0.2 }] }).success).toBe(false);
   });
 });
 

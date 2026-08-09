@@ -7,7 +7,9 @@ import { recordEvent, type EventActor } from '../events/record.js';
 /**
  * Every DLOM method the engine dispatches on (engine dlom.py DLOM_METHODS).
  * The first four are model-derived and need a volatility; 'restricted_stock'
- * blends published study discounts; 'qualitative' is the analyst's own figure.
+ * and 'pre_ipo' blend published study discounts from two different empirical
+ * families (see migration 0131 for why they are not one table); 'qualitative'
+ * is the analyst's own figure.
  */
 export const DLOM_METHODS = [
   'chaffee',
@@ -15,6 +17,7 @@ export const DLOM_METHODS = [
   'ghaidarov',
   'longstaff',
   'restricted_stock',
+  'pre_ipo',
   'qualitative',
 ] as const;
 export type DlomMethod = (typeof DLOM_METHODS)[number];
@@ -53,6 +56,12 @@ export interface ValuationParamsRow {
   dlom_studies: string[] | null;
   dlom_statistic: 'median' | 'mean' | null;
   dlom_study_table: unknown;
+  /** Pre-IPO study configuration (migration 0131); only read when dlom_method
+   * is 'pre_ipo'. Its own columns rather than the two above because the two
+   * study tables share no names — a blend weighting both families has to be
+   * able to select from each. `dlom_statistic` is shared by both. */
+  dlom_pre_ipo_studies: string[] | null;
+  dlom_pre_ipo_table: unknown;
   /** A firm's own required-return ladder by stage (migration 0130). NULL means
    * the built-in literature ranges. */
   required_return_table: unknown;
@@ -91,6 +100,8 @@ export const PARAM_COLUMNS = [
   'dlom_studies',
   'dlom_statistic',
   'dlom_study_table',
+  'dlom_pre_ipo_studies',
+  'dlom_pre_ipo_table',
   'required_return_table',
   'market_method',
   'market_horizon',

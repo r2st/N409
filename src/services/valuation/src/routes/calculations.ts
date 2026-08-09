@@ -91,6 +91,10 @@ export function engineParams(p: ValuationParamsRow): Record<string, unknown> {
     dlom_studies: p.dlom_studies,
     dlom_statistic: p.dlom_statistic,
     dlom_study_table: p.dlom_study_table,
+    // The same, for the other empirical family. `dlom_statistic` above is
+    // shared by both — how the rows combine is the same question either way.
+    dlom_pre_ipo_studies: p.dlom_pre_ipo_studies,
+    dlom_pre_ipo_table: p.dlom_pre_ipo_table,
     market_method: p.market_method,
     market_horizon: p.market_horizon,
     revenue_status: p.revenue_status,

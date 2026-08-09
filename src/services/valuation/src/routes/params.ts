@@ -84,6 +84,27 @@ export const ParamsPatchBody = z
       .min(1)
       .max(60)
       .nullable(),
+    // Pre-IPO study configuration (migration 0131). Its own keys because the
+    // two study tables share no names, so a blend weighting both families has
+    // to be able to select from each; `dlom_statistic` is shared by both. Row
+    // shape is identical to the restricted-stock table above, which is what
+    // lets the engine read either through one blender.
+    dlom_pre_ipo_studies: z.array(z.string().min(1).max(200)).min(1).max(40).nullable(),
+    dlom_pre_ipo_table: z
+      .array(
+        z
+          .object({
+            study: z.string().min(1).max(200),
+            discount: z.number().min(0).max(0.99),
+            period_start: z.number().int().min(1900).max(2200).optional(),
+            period_end: z.number().int().min(1900).max(2200).optional(),
+            statistic: z.enum(['median', 'mean']).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(60)
+      .nullable(),
     // A firm's own required-return ladder, replacing the built-in literature
     // ranges Appendix III prints. Validated for shape here; `low <= high` is
     // checked per row because a band whose ends are the wrong way round would
