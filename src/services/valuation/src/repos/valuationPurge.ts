@@ -1,63 +1,81 @@
 import type pg from 'pg';
 
 /**
- * Hard-delete valuations and everything hanging off them.
+ * Retire valuations that should not appear in the product, by explicit id.
  *
- * There is no route for this and there should not be: the product deletes
- * nothing, because an engagement is the audit record of an opinion somebody
- * signed. Archiving is what the workflow offers, and it is the right answer for
- * a real engagement.
+ * This started out as a hard delete, on the assumption that the only obstacle
+ * was the foreign key: every child table of `valuations` cascades except
+ * `valuation_events`, which is `ON DELETE NO ACTION`, so the plan was to remove
+ * the events first and in the same transaction.
  *
- * What it is *not* the right answer for is the four rows a deployment check
- * left in production — `M1 SmokeCo`, `Smoke M3 Co` twice — which have no
- * calculation, no report and no client, and which were the entire contents of
- * the valuations list on the live site for a month. Archiving those hides them
- * behind a filter and leaves them in every count. So this exists, as a function
- * the operator tools call by explicit id, tested against a real schema.
+ * That assumption was wrong, and production said so on the first run —
+ * `valuation_events is append-only (DELETE blocked)`. The table also carries
+ * `valuation_events_immutable`, a `BEFORE UPDATE OR DELETE` trigger from
+ * migration 0001 whose whole body is `RAISE EXCEPTION`, with a matching
+ * `BEFORE TRUNCATE` one beside it. The comment above them reads "no UPDATE or
+ * DELETE, ever (compliance/audit foundation)". There is no session flag and no
+ * escape hatch, deliberately. A hard delete is therefore not something this
+ * codebase can do without first disabling a compliance control, which is not a
+ * trade a seeding tool is entitled to make on anyone's behalf.
  *
- * The one thing it has to get right is the order. Every child table of
- * `valuations` cascades on delete except one: `valuation_events` — the
- * append-only audit spine — is `ON DELETE NO ACTION`, deliberately, so that
- * nothing can quietly erase the history of an engagement as a side effect of
- * some other statement. A plain `DELETE FROM valuations` therefore fails on the
- * foreign key rather than doing half the job, which is the safe failure; this
- * function removes the events first and in the same transaction, so the delete
- * is all-or-nothing.
+ * So this archives instead, which turns out to be what the schema was pointing
+ * at all along. `archived_at` is filtered out of every list read — see the
+ * `archived_at IS NULL` clause in `repos/valuations.ts`, applied unless a
+ * caller asks for archived work explicitly — so an archived engagement is gone
+ * from the product's views without being gone from its history. It is also
+ * reversible, which a delete is not.
+ *
+ * The rename is the other half, and it is what makes `--replace` work.
+ * Archiving alone leaves the row still matching its company name, so a re-run
+ * would see the name as taken and skip the very sample it was asked to rebuild.
+ * Suffixing frees the name, and leaves a row that reads as what it is.
  */
-export interface PurgeResult {
-  /** Ids that existed and were removed. */
-  deleted: string[];
-  /** Ids that were asked for and did not exist. Not an error — just reported. */
+export interface RetireResult {
+  /** Ids that existed, were live, and are now archived and renamed. */
+  retired: string[];
+  /** Ids that were asked for and do not exist. Not an error — just reported. */
   missing: string[];
-  /** Audit rows removed alongside them. */
-  eventsDeleted: number;
+  /** Ids that were already archived, and so were left untouched. */
+  alreadyArchived: string[];
 }
 
-export async function purgeValuations(pool: pg.Pool, ids: readonly string[]): Promise<PurgeResult> {
+/** Appended to the company name so the original no longer collides. */
+const RETIRED_SUFFIX = ' [retired]';
+
+export async function retireValuations(pool: pg.Pool, ids: readonly string[]): Promise<RetireResult> {
   const wanted = [...new Set(ids)];
-  if (wanted.length === 0) return { deleted: [], missing: [], eventsDeleted: 0 };
+  if (wanted.length === 0) return { retired: [], missing: [], alreadyArchived: [] };
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const present = await client.query<{ id: string }>(
-      'SELECT id FROM valuations WHERE id = ANY($1::ulid[])',
+    const present = await client.query<{ id: string; archived: boolean }>(
+      'SELECT id, archived_at IS NOT NULL AS archived FROM valuations WHERE id = ANY($1::ulid[])',
       [wanted],
     );
-    const deleted = present.rows.map((r) => r.id);
-    if (deleted.length === 0) {
-      await client.query('ROLLBACK');
-      return { deleted: [], missing: wanted, eventsDeleted: 0 };
+    const found = present.rows.map((r) => r.id);
+    const alreadyArchived = present.rows.filter((r) => r.archived).map((r) => r.id);
+    const toRetire = present.rows.filter((r) => !r.archived).map((r) => r.id);
+
+    if (toRetire.length > 0) {
+      // The suffix is applied only where it is not already there, so retiring a
+      // row twice cannot produce "Name [retired] [retired]".
+      await client.query(
+        `UPDATE valuations
+            SET archived_at = now(),
+                company_name = CASE
+                  WHEN company_name LIKE ('%' || $2::text) THEN company_name
+                  ELSE company_name || $2::text
+                END
+          WHERE id = ANY($1::ulid[])`,
+        [toRetire, RETIRED_SUFFIX],
+      );
     }
-    const events = await client.query('DELETE FROM valuation_events WHERE valuation_id = ANY($1::ulid[])', [
-      deleted,
-    ]);
-    await client.query('DELETE FROM valuations WHERE id = ANY($1::ulid[])', [deleted]);
     await client.query('COMMIT');
     return {
-      deleted,
-      missing: wanted.filter((id) => !deleted.includes(id)),
-      eventsDeleted: events.rowCount ?? 0,
+      retired: toRetire,
+      missing: wanted.filter((id) => !found.includes(id)),
+      alreadyArchived,
     };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -71,18 +89,27 @@ export async function purgeValuations(pool: pg.Pool, ids: readonly string[]): Pr
  * Ids of the valuations carrying one of these exact company names.
  *
  * The seeder uses it to find the previous run's samples so `--replace` can
- * remove them, and the purge CLI uses it so an operator can name the smoke
- * tests rather than paste ULIDs. Exact match, never a pattern: a `LIKE 'Smoke%'`
- * in a delete path is one careless generalisation away from taking a client's
- * engagement with it.
+ * retire them, and the operator tools use it so a smoke test can be named
+ * rather than have its ULID pasted. Exact match, never a pattern: a
+ * `LIKE 'Smoke%'` in a path that mutates rows is one careless generalisation
+ * away from taking a client's engagement with it.
+ *
+ * Archived rows are reported too, with a flag, because the caller is deciding
+ * what to do about a *name* — and a name held by an archived row is still held.
  */
 export async function findValuationIdsByCompanyName(
   pool: pg.Pool,
   names: readonly string[],
-): Promise<Array<{ id: string; company_name: string; state: string }>> {
+): Promise<Array<{ id: string; company_name: string; state: string; archived: boolean }>> {
   if (names.length === 0) return [];
-  const res = await pool.query<{ id: string; company_name: string; state: string }>(
-    'SELECT id, company_name, state FROM valuations WHERE company_name = ANY($1::text[]) ORDER BY created_at',
+  const res = await pool.query<{
+    id: string;
+    company_name: string;
+    state: string;
+    archived: boolean;
+  }>(
+    `SELECT id, company_name, state, archived_at IS NOT NULL AS archived
+       FROM valuations WHERE company_name = ANY($1::text[]) ORDER BY created_at`,
     [[...names]],
   );
   return res.rows;

@@ -1,12 +1,17 @@
 /**
  * Seed the three sample engagements, end to end, through the real API.
  *
- * The live site had nothing on it. A visitor who signed in saw four rows called
- * `M1 SmokeCo` and `Smoke M3 Co`, all `pending`, left behind by a deployment
- * check in July — and behind them every screen that makes this product worth
- * looking at (the workbook, the exhibits, the calculation inspector, the report
- * editor, the discount derivations) renders as an empty frame until an
- * engagement has actually been through the engine.
+ * The live site had nothing on it. A visitor who signed in saw four `pending`
+ * rows dated July and nothing else — and behind them every screen that makes
+ * this product worth looking at (the workbook, the exhibits, the calculation
+ * inspector, the report editor, the discount derivations) renders as an empty
+ * frame until an engagement has actually been through the engine.
+ *
+ * Three of those four were deployment checks, owned by `@n409.test` and
+ * `@test.local` addresses. The fourth, `SimplEquation`, belongs to a real
+ * person's account and is not ours to touch — which is the reason `--purge`
+ * takes exact ids and has no pattern form. "Everything pending from July" would
+ * have swept up a client.
  *
  * This drives `src/services/valuation/src/domain/sampleEngagements.ts` through
  * the same endpoints an analyst uses — create, profile, params, engine inputs,
@@ -30,18 +35,21 @@
  *     cd /opt/N409 && set -a && . ./.env && set +a && node tools/seed-samples.mjs --replace
  *
  * Options:
- *   --replace          delete any existing valuation whose company name matches
+ *   --replace          retire any existing valuation whose company name matches
  *                      a sample, then re-seed it. Without this, a name already
  *                      present is skipped rather than duplicated.
- *   --purge=A,B,C      hard-delete these valuation ids first (the July smoke
- *                      tests). Exact ids only — there is no pattern form.
+ *   --purge=A,B,C      retire these valuation ids first (the July smoke tests).
+ *                      Exact ids only — there is no pattern form. "Retire" is
+ *                      archive-and-rename, not delete: `valuation_events` is
+ *                      append-only behind a compliance trigger, so nothing here
+ *                      can hard-delete an engagement. See repos/valuationPurge.
  *   --only=key         seed one sample: saas | biotech | manufacturing.
  *   --keep-draft       stop before publishing, leaving the engagements in
  *                      'draft_accepted' with the report rendered.
  *   --dry-run          print the plan and touch nothing.
  *
  * Environment:
- *   DATABASE_URL       required — used to mint the ops token and to purge.
+ *   DATABASE_URL       required — used to mint the ops token and to retire rows.
  *   API_URL            valuation API base (default http://127.0.0.1:3001).
  *   JWT_SECRET, JWT_ISSUER
  *                      required — the token is minted for an existing admin.
@@ -58,7 +66,7 @@ import { inflateSync } from 'node:zlib';
 
 const ROOT = new URL('../src/services/valuation/dist', import.meta.url).pathname;
 const { SAMPLE_ENGAGEMENTS, asc718SectionHtml } = await import(`${ROOT}/domain/sampleEngagements.js`);
-const { purgeValuations, findValuationIdsByCompanyName } = await import(`${ROOT}/repos/valuationPurge.js`);
+const { retireValuations, findValuationIdsByCompanyName } = await import(`${ROOT}/repos/valuationPurge.js`);
 const { signSession } = await import(`${ROOT}/auth/jwt.js`);
 const { createUser } = await import(`${ROOT}/repos/users.js`);
 const { hashPassword } = await import(`${ROOT}/auth/password.js`);
@@ -415,10 +423,11 @@ try {
     if (DRY_RUN) {
       console.log(`[dry-run] would purge ${PURGE_IDS.length} valuation(s): ${PURGE_IDS.join(', ')}`);
     } else {
-      const purged = await purgeValuations(pool, PURGE_IDS);
+      const done = await retireValuations(pool, PURGE_IDS);
       console.log(
-        `purged ${purged.deleted.length} valuation(s) and ${purged.eventsDeleted} audit event(s)` +
-          (purged.missing.length > 0 ? `; not found: ${purged.missing.join(', ')}` : ''),
+        `retired ${done.retired.length} valuation(s)` +
+          (done.alreadyArchived.length > 0 ? `; already archived: ${done.alreadyArchived.join(', ')}` : '') +
+          (done.missing.length > 0 ? `; not found: ${done.missing.join(', ')}` : ''),
       );
     }
   }
@@ -432,11 +441,11 @@ try {
       if (DRY_RUN) {
         console.log(`[dry-run] would replace ${existing.length} existing sample(s)`);
       } else {
-        const purged = await purgeValuations(
+        const done = await retireValuations(
           pool,
           existing.map((r) => r.id),
         );
-        console.log(`replaced ${purged.deleted.length} existing sample engagement(s)`);
+        console.log(`retired ${done.retired.length} existing sample engagement(s)`);
       }
     } else {
       const names = new Set(existing.map((r) => r.company_name));
