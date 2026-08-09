@@ -1,47 +1,61 @@
-d30c5c3b29530cac964130b4eaceeba26c557b70
+61539cd0c2299c61331b10f05a56247002007612
 # N409 deployed revision
-# commit:    d30c5c3b29530cac964130b4eaceeba26c557b70
-# subject:   fix: three defects on the pages of a 409A a board actually reads
-# previous:  08c1064 (the search chain and the bot challenge).
-# includes:  5 commits.
+# commit:    61539cd0c2299c61331b10f05a56247002007612
+# subject:   fix: the running head names the section at the top of the page
+# previous:  d30c5c3 (the four defects reading a rendered 409A found).
+# includes:  5 commits — a report-accuracy and production-readiness round.
 #
-#            d30c5c3 — what reading a rendered report found. Every number the
-#              engine produced was right to the last decimal; the document
-#              carrying them was not, and the whole suite passed throughout.
-#              The executive summary printed `<2c"RrT 4.00y` for its key
-#              assumptions and the value bridge lost the minus sign on both
-#              discounts, because pdfkit does not fail on a character WinAnsi
-#              cannot carry — it emits a byte anyway. The cover broke across two
-#              pages mid-fact, because a fixed anchor written for five facts met
-#              a 409A carrying seven. Every page named the company twice. And
-#              the Conclusion of Value chapter read "is $ … per share" three
-#              pages after the summary concluded $1.2242, because every QA check
-#              grades a number and none of them opened the report.
-#              `tools/sample-report.mjs` is how all four were found and is the
-#              way to find the next one.
+#            The method for all of it was `tools/sample-report.mjs`: seed a
+#            Series B cap table, run the real engine, render the real PDF, and
+#            read it. Every number the engine produced checked out by hand —
+#            the weighted mean, the OPM single-breakpoint split, the Finnerty
+#            discount, the per-share conclusion. The document carrying them did
+#            not, four times over, with the whole suite passing throughout.
 #
-#            8bbfa54 — the calculation step inspector. `calculations` stored the
-#              payload posted to the engine and the document returned, and
-#              nothing of the middle, so "why is the market approach $4M when
-#              the multiples say 8x" meant re-doing the arithmetic by hand.
-#              `engine/trace.py` records each stage as it runs — including
-#              whether it ran, which is the one thing a result document
-#              structurally cannot say: a zero-weight approach and one carried
-#              over from a previous recalculation are both simply absent from
-#              `results.approaches`, and they mean opposite things.
+#            61539cd — a section beginning part way down a page does not own
+#              that page's running head. Exhibits are long tables; one spills
+#              over and the next starts underneath it, so a sheet whose top half
+#              was Exhibit F's breakpoint schedule was headed "29. Exhibit H".
+#              Landmarks now carry the y they start at.
 #
-#            225d828 — this host has held a Stripe *test* key since before the
-#              deploy, and `configured` was `Boolean(secretKey)`. Every unpaid
-#              engagement showed its client a Pay now button leading to a real
-#              Checkout page that accepts 4242 4242 4242 4242 and declines every
-#              card they own, with nothing on either end saying why. A test key
-#              is now configured for ops and unconfigured for everyone else.
+#            2808d2f — figures are served before prose in table column widths.
+#              When the natural widths exceed the page every column shrank by
+#              the same factor, including one holding a currency figure, which
+#              has no wrap that reads as anything but a mistake: Exhibit H, the
+#              table that states the conclusion, printed `($0.1723` with the
+#              bracket alone on the next line. Also five tests that move the
+#              stored calculation and re-render, so "the document contains
+#              $1.2345" cannot pass against a renderer with $1.2345 in it.
 #
-#            c16c5c4 — research retrieval and synthesis fail differently. A
-#              completed search whose write-up died on an exhausted OpenRouter
-#              quota returns its sources with `synthesized=false` instead of a
-#              503, and both report gates learned to check it: those citations
-#              are real and no report may quote them.
+#            33c33d5 — the DLOM models pinned to the formulas the papers state,
+#              recomputed independently from `math` and `NormalDist`. The
+#              existing tests were all behavioural and none would have noticed
+#              the family being scaled by 0.9; both option models are also
+#              non-literal rewrites (factored against an `e^{sigma^2 T}`
+#              overflow, series-expanded against cancellation), which is exactly
+#              the kind of change that stays plausible while being wrong.
+#              Finnerty at 62% over four years is 24.48%, worked by hand in the
+#              test, and that is what the sample report concludes on.
+#
+#            2477312 — Monte Carlo, the seventh method. Not a fifth way to price
+#              what the OPM already prices exactly; the case it answers is an
+#              exit that is not one distribution — an IPO at five years beside a
+#              trade sale at two, each with its own volatility. Validated
+#              against the closed form as an oracle: at one scenario it must
+#              land inside its own standard error of `allocate_waterfall`, and
+#              it does. Seeded, because a 409A that returns a different value
+#              each run is indefensible, and the seed and the standard error are
+#              printed in Exhibit F.
+#
+#            d30c5c3 — the four defects. WinAnsi cannot carry sigma or U+2212
+#              and pdfkit emits a byte anyway, so the executive summary printed
+#              `<2c"RrT 4.00y` and the value bridge lost both minus signs; the
+#              cover's fact block was anchored for five facts and a 409A now
+#              carries seven, so every cover broke mid-fact onto page two; every
+#              page named the company twice; and the Conclusion of Value chapter
+#              read "is $ ... per share" three pages after the summary concluded
+#              $1.2242, because every QA check grades a number and none of them
+#              opened the report.
 #
 # gap:       the OpenRouter account is on the keyless free tier, which allows
 #            50 model requests a day, and it is exhausted — so every model in
