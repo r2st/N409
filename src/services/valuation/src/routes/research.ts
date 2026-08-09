@@ -123,10 +123,7 @@ function actorFor(principal: Principal) {
   return { actorType: 'human' as const, actorId: principal.id };
 }
 
-export function registerResearchRoutes(
-  app: FastifyInstance,
-  deps: { pool: pg.Pool; aiUrl: string },
-): void {
+export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Pool; aiUrl: string }): void {
   const loadOps = async (id: string, principal: Principal): Promise<ValuationRow> => {
     if (!isOps(principal)) throw problems.forbidden('Market research is operations-only');
     if (!isUlid(id)) throw problems.notFound();
@@ -168,7 +165,10 @@ export function registerResearchRoutes(
         ...(prompt?.model ? { model: prompt.model } : {}),
         ...(def.recency ? { recency: def.recency } : {}),
       },
-      { timeoutMs: RESEARCH_TIMEOUT_MS },
+      {
+        timeoutMs: RESEARCH_TIMEOUT_MS,
+        record: { valuationId: valuation.id, name: `ai research (${def.label})` },
+      },
     );
 
     const row = await recordMarketResearch(deps.pool, {
@@ -285,40 +285,38 @@ export function registerResearchRoutes(
    * Each topic's failure is reported rather than thrown, because the alternative
    * is that one provider 503 discards the four answers already retrieved.
    */
-  app.post(
-    '/api/v1/valuations/:id/research/refresh-all',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal = requirePrincipal(req);
-      const { id } = req.params as { id: string };
-      const valuation = await loadOps(id, principal);
+  app.post('/api/v1/valuations/:id/research/refresh-all', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadOps(id, principal);
 
-      const parsed = z
-        .object({ region: z.enum(RESEARCH_REGIONS).default('un') })
-        .safeParse(req.body ?? {});
-      if (!parsed.success) throw problems.unprocessable('Invalid region');
+    const parsed = z.object({ region: z.enum(RESEARCH_REGIONS).default('un') }).safeParse(req.body ?? {});
+    if (!parsed.success) throw problems.unprocessable('Invalid region');
 
-      const results: Array<{ topic: ResearchTopic; ok: boolean; error?: string }> = [];
-      for (const def of RESEARCH_TOPIC_LIST) {
-        if (def.acceptsSubject) continue;
-        const facts = await publicFacts(deps.pool, id, {
-          region: def.regionScoped ? parsed.data.region : null,
-        });
-        try {
-          await runOne(valuation, def.topic, facts, principal);
-          results.push({ topic: def.topic, ok: true });
-        } catch (err) {
-          const message =
-            err instanceof ResearchInputError || err instanceof InternalServiceError
-              ? err.message
-              : 'Research run failed';
-          req.log.warn({ err, topic: def.topic }, 'research refresh-all: topic failed');
-          results.push({ topic: def.topic, ok: false, error: message });
-        }
+    const results: Array<{ topic: ResearchTopic; ok: boolean; error?: string }> = [];
+    for (const def of RESEARCH_TOPIC_LIST) {
+      if (def.acceptsSubject) continue;
+      const facts = await publicFacts(deps.pool, id, {
+        region: def.regionScoped ? parsed.data.region : null,
+      });
+      try {
+        await runOne(valuation, def.topic, facts, principal);
+        results.push({ topic: def.topic, ok: true });
+      } catch (err) {
+        const message =
+          err instanceof ResearchInputError || err instanceof InternalServiceError
+            ? err.message
+            : 'Research run failed';
+        req.log.warn({ err, topic: def.topic }, 'research refresh-all: topic failed');
+        results.push({ topic: def.topic, ok: false, error: message });
       }
-      return { results, succeeded: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
-    },
-  );
+    }
+    return {
+      results,
+      succeeded: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+    };
+  });
 }
 
 /** Re-exported for the tests and the narrative thread. */

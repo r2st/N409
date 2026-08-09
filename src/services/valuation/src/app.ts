@@ -76,6 +76,7 @@ import { registerNarrativePromptRoutes } from './routes/narrativePrompts.js';
 import { registerCompanyProfileRoutes } from './routes/companyProfile.js';
 import { registerPackageRoutes } from './routes/packageView.js';
 import { registerInboxRoutes } from './routes/inbox.js';
+import { registerNetworkItemRoutes } from './routes/networkItems.js';
 import { registerJobRoutes } from './routes/jobs.js';
 import { registerSupportRoutes } from './routes/support.js';
 import { registerContactRoutes } from './routes/contact.js';
@@ -109,7 +110,8 @@ import { registerAdminDocumentRoutes } from './routes/adminDocuments.js';
 import { registerComparableRoutes } from './routes/comparables.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
-import { probeReady } from './clients/internal.js';
+import { probeReady, setNetworkSink } from './clients/internal.js';
+import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 
 export interface AppDeps {
   config: Config;
@@ -203,6 +205,37 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   app.addHook('onRequest', (req, _reply, done) => {
     bindRequestId(String(req.id));
     done();
+  });
+
+  // Persist every engagement-scoped engine/AI call (409.ai §11, migration
+  // 0127). Set here rather than passed through the twelve route modules that
+  // make such calls: the client is a JSON HTTP client, and giving it a database
+  // handle to log its own traffic would make it untestable without one.
+  //
+  // Deliberately not awaited. The write is diagnostic, it is one indexed insert,
+  // and holding a calculation open on it would let a slow log make a slow
+  // valuation. `recordNetworkItem` cannot throw, so nothing here is unhandled.
+  setNetworkSink((call) => {
+    const onError = (err: unknown) => app.log.warn({ err, name: call.name }, 'network item not recorded');
+    void recordNetworkItem(
+      pool,
+      {
+        valuationId: call.valuationId,
+        service: call.service,
+        name: call.name,
+        request: call.request,
+        response: call.response,
+        status: call.status,
+        error: call.error,
+        durationMs: call.durationMs,
+        requestId: call.requestId,
+      },
+      onError,
+    ).then((id) => {
+      // Prune only after a row was actually added — on the failure path there
+      // is nothing new to push the count over the bound.
+      if (id) void pruneNetworkItems(pool, call.valuationId, KEEP_PER_VALUATION, onError);
+    });
   });
 
   const jwt = { secret: config.JWT_SECRET, issuer: config.JWT_ISSUER, ttlSeconds: config.JWT_TTL_SECONDS };
@@ -394,6 +427,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });
   registerInboxRoutes(app, { pool });
+  registerNetworkItemRoutes(app, { pool });
   registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerApiTokenRoutes(app, { pool });
   registerOperationsRoutes(app, { pool });

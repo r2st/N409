@@ -221,7 +221,10 @@ export async function runAiPipeline(
       'ai-service',
       `${deps.aiUrl}/ai/v1/pipelines/${pipeline}`,
       payload,
-      { timeoutMs: AI_PIPELINE_TIMEOUT_MS },
+      {
+        timeoutMs: AI_PIPELINE_TIMEOUT_MS,
+        record: { valuationId: valuation.id, name: `ai ${pipeline}` },
+      },
     );
     const completed = await completeAiJob(
       deps.pool,

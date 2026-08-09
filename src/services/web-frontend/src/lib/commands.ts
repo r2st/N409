@@ -58,6 +58,7 @@ const VALUATION_TABS: { path: string; label: string; access: 'all' | 'ops' | 'op
   { path: 'asc718', label: 'ASC 718', access: 'ops' },
   { path: 'monitoring', label: 'Monitoring', access: 'ops' },
   { path: 'package', label: 'Package', access: 'ops' },
+  { path: 'network', label: 'Network Log', access: 'ops' },
   { path: 'audit-trail', label: 'Change History', access: 'all' },
 ];
 

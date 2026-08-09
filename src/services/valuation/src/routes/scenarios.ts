@@ -161,7 +161,10 @@ export function registerScenarioRoutes(
         'engine',
         `${deps.engineUrl}/engine/v1/compute`,
         payload,
-        { timeoutMs: 30_000 },
+        {
+          timeoutMs: 30_000,
+          record: { valuationId: valuation.id, name: 'engine compute (scenario preview)' },
+        },
       );
       const baseline = baselineOf(calc);
       const equity = response.results.equity_value;
@@ -224,7 +227,10 @@ export function registerScenarioRoutes(
         'engine',
         `${deps.engineUrl}/engine/v1/compute`,
         payload,
-        { timeoutMs: 30_000 },
+        {
+          timeoutMs: 30_000,
+          record: { valuationId: valuation.id, name: `engine compute (scenario ${name})` },
+        },
       );
       const scenario = await createScenario(
         deps.pool,

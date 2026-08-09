@@ -204,7 +204,10 @@ export async function runCalculation(
       'engine',
       `${deps.engineUrl}/engine/v1/compute`,
       payload,
-      { timeoutMs: 30_000 },
+      {
+        timeoutMs: 30_000,
+        record: { valuationId: args.valuation.id, name: 'engine compute' },
+      },
     );
     return await createCalculation(
       deps.pool,
@@ -352,7 +355,7 @@ export function registerCalculationRoutes(
           inputs,
           ...(recompute ? { recompute, prior_approaches: priorApproaches ?? {} } : {}),
         },
-        { timeoutMs: 15_000 },
+        { timeoutMs: 15_000, record: { valuationId: id, name: 'engine validate' } },
       );
       return {
         ok: response.ok === true,

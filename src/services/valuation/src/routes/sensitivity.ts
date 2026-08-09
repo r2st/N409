@@ -140,7 +140,7 @@ export function registerSensitivityRoutes(
         'engine',
         `${deps.engineUrl}/engine/v1/sensitivity`,
         payload,
-        { timeoutMs: 60_000 },
+        { timeoutMs: 60_000, record: { valuationId: valuation.id, name: 'engine sensitivity' } },
       );
       return { sensitivity: { ...result, currency: valuation.currency } };
     } catch (err) {

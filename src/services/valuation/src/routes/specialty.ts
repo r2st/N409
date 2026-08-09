@@ -125,7 +125,7 @@ export function registerSpecialtyRoutes(
         'engine',
         `${deps.engineUrl}${request.path}`,
         request.body,
-        { timeoutMs: 30_000 },
+        { timeoutMs: 30_000, record: { valuationId: id, name: `engine specialty (${kind})` } },
       );
       const headline = specialtyHeadline(kind, request, result);
       const calculation = await createCalculation(

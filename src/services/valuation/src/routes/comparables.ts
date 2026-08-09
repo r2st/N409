@@ -382,7 +382,10 @@ export function registerComparableRoutes(
               ...(exclude_tickers.length > 0 ? { exclude_tickers } : {}),
             },
           },
-          { timeoutMs: SCREEN_TIMEOUT_MS },
+          {
+            timeoutMs: SCREEN_TIMEOUT_MS,
+            record: { valuationId: valuation.id, name: 'engine comparables' },
+          },
         );
       } catch (err) {
         if (err instanceof InternalServiceError) {

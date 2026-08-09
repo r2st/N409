@@ -406,6 +406,8 @@ export function ValuationWorkspace() {
         {ops && <Tab to={`${base}/asc718`} label="ASC 718" />}
         {ops && <Tab to={`${base}/monitoring`} label="Monitoring" />}
         {ops && <Tab to={`${base}/package`} label="Package" />}
+        {/* Ops-only: the payloads are the engine's raw working state. */}
+        {ops && <Tab to={`${base}/network`} label="Network Log" />}
         <Tab to={`${base}/audit-trail`} label="Change History" />
       </ScrollableTabs>
 
