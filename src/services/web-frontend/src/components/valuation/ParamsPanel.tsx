@@ -4,6 +4,23 @@ import { api, ApiError } from '../../lib/api';
 import { weightsProblem, type ValuationParams } from '../../lib/pipeline';
 import { Button, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
 import { HelpIcon } from '../HelpIcon';
+import {
+  CONTROL_PREMIUM_STUDIES,
+  DEFAULT_CONTROL_PREMIUM_SET,
+  DEFAULT_PRE_IPO_SET,
+  DEFAULT_RESTRICTED_STOCK_SET,
+  PRE_IPO_STUDIES,
+  RESTRICTED_STOCK_STUDIES,
+  StudySelector,
+  emptySelection,
+  indicativeNote,
+  preIpoNote,
+  rule144Note,
+  selectionFromParams,
+  studyTableProblem,
+  tableForApi,
+  type StudySelection,
+} from './StudySelector';
 
 /**
  * The AICPA six-stage scale, in the words the report states it in. Duplicated
@@ -198,6 +215,23 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const [hybridOpmWeight, setHybridOpmWeight] = useState('0.5');
   const [hybridPwermWeight, setHybridPwermWeight] = useState('0.5');
   const [dlomLegs, setDlomLegs] = useState<DlomLeg[]>([]);
+  /*
+   * The three study selections. Kept beside the form rather than in it because
+   * each is an array pair (`*_studies` + `*_study_table`) rather than a scalar,
+   * and because they are saved unconditionally: an analyst who switches away
+   * from a study method and back should find the set they chose still chosen,
+   * which is the same reason `calculations.ts` forwards them whatever the
+   * method is.
+   */
+  const [rsSelection, setRsSelection] = useState<StudySelection>(emptySelection);
+  const [preIpoSelection, setPreIpoSelection] = useState<StudySelection>(emptySelection);
+  const [dlocSelection, setDlocSelection] = useState<StudySelection>(emptySelection);
+
+  const loadSelections = (p: ValuationParams) => {
+    setRsSelection(selectionFromParams(p.dlom_studies, p.dlom_study_table, 'discount'));
+    setPreIpoSelection(selectionFromParams(p.dlom_pre_ipo_studies, p.dlom_pre_ipo_table, 'discount'));
+    setDlocSelection(selectionFromParams(p.dloc_studies, p.dloc_study_table, 'premium'));
+  };
 
   const load = useCallback(async () => {
     try {
@@ -205,6 +239,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       setParams(p);
       setForm(fromParams(p));
       setDlomLegs(legsFromParams(p));
+      loadSelections(p);
       try {
         const { engine_inputs } = await api<{
           engine_inputs: {
@@ -290,9 +325,13 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const qualitativeMissing = qualitativeSelected && form.dlom_qualitative.trim() === '';
   // `dlom_statistic` is read by both study families, so the field is offered
   // whenever either is in play — concluded on, or weighted as a leg.
-  const studySelected = (blending ? blendMethods : [form.dlom_method]).some(
-    (m) => m === 'restricted_stock' || m === 'pre_ipo',
-  );
+  const dlomMethods = blending ? blendMethods : [form.dlom_method];
+  const studySelected = dlomMethods.some((m) => m === 'restricted_stock' || m === 'pre_ipo');
+  // Each family's set is offered only when that family is in play. The two
+  // tables share no study names, so showing both pickers at once would invite
+  // a selection the engine refuses as unknown.
+  const restrictedStockSelected = dlomMethods.includes('restricted_stock');
+  const preIpoSelected = dlomMethods.includes('pre_ipo');
   // `dloc` itself stays optional — an engagement that concludes no control
   // discount is a normal outcome — but a method that cannot run without its
   // input is not, so those are caught here rather than by the engine.
@@ -314,12 +353,22 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
 
   const numOrNull = (v: string) => (v.trim() === '' ? null : Number(v));
 
+  // A malformed custom study table is refused at the field. Checked for all
+  // three families whether or not the section is on screen, because the tables
+  // are saved unconditionally — an invalid one hidden behind a method switch
+  // would still be in the request.
+  const studyTableIssue =
+    studyTableProblem(rsSelection.table, 'discount') ??
+    studyTableProblem(preIpoSelection.table, 'discount') ??
+    studyTableProblem(dlocSelection.table, 'premium');
+
   const saveBlocked = Boolean(
     weightsIssue ||
     qualitativeMissing ||
     blendIssue ||
     controlPremiumMissing ||
     dlocQualitativeMissing ||
+    studyTableIssue ||
     revenueIssue,
   );
 
@@ -343,6 +392,15 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         dloc_synergy_share: numOrNull(form.dloc_synergy_share),
         dloc_statistic: form.dloc_statistic || null,
         /*
+         * The three study selections, sent whatever the method is — the engine
+         * ignores the ones its method does not read, and clearing them on a
+         * method switch would throw away a set the analyst chose. An empty
+         * selection is the column's NULL, which is what asks for the engine's
+         * default set; an empty table is NULL, which asks for its built-ins.
+         */
+        dloc_studies: dlocSelection.studies.length > 0 ? dlocSelection.studies : null,
+        dloc_study_table: tableForApi(dlocSelection.table, 'premium', false),
+        /*
          * The two DLOM forms are mutually exclusive (the table's
          * `valuation_params_one_dlom_form` CHECK), so whichever is not in use
          * is sent as an explicit null rather than omitted. Omitting it would
@@ -355,7 +413,11 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           ? dlomLegs.map((leg) => ({ method: leg.method, weight: Number(leg.weight) }))
           : null,
         dlom_qualitative: numOrNull(form.dlom_qualitative),
+        dlom_studies: rsSelection.studies.length > 0 ? rsSelection.studies : null,
         dlom_statistic: form.dlom_statistic || null,
+        dlom_study_table: tableForApi(rsSelection.table, 'discount', true),
+        dlom_pre_ipo_studies: preIpoSelection.studies.length > 0 ? preIpoSelection.studies : null,
+        dlom_pre_ipo_table: tableForApi(preIpoSelection.table, 'discount', true),
         revenue_status: form.revenue_status || null,
         development_stage: numOrNull(form.development_stage),
         exit_timeline: form.exit_timeline || null,
@@ -376,6 +438,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       setParams(updated);
       setForm(fromParams(updated));
       setDlomLegs(legsFromParams(updated));
+      loadSelections(updated);
       setSaved(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save params.');
@@ -972,6 +1035,24 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           )}
         </div>
 
+        {form.dloc_method === 'studies' && (
+          <StudySelector
+            testId="dloc-studies"
+            label="Control-premium studies"
+            tooltip="An acquisition premium is the spread paid for a whole public company over the pre-announcement trading price of the same stock — the market's own measurement of control against marketable minority. The selected rows are blended on the premium scale and inverted once, at the end."
+            builtIn={CONTROL_PREMIUM_STUDIES}
+            defaultSet={DEFAULT_CONTROL_PREMIUM_SET}
+            valueKey="premium"
+            note={indicativeNote}
+            value={dlocSelection}
+            onChange={(next) => {
+              setSaved(false);
+              setDlocSelection(next);
+            }}
+            readOnly={readOnly}
+          />
+        )}
+
         {/* ── DLOM ────────────────────────────────────────────────────────── */}
         <h4 className="mt-8 mb-3 flex items-center gap-1.5 text-sm font-semibold text-ink-800">
           Lack of marketability (DLOM)
@@ -1165,6 +1246,46 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             </div>
             {blendIssue && <p className="mt-2 text-sm font-medium text-red-600">{blendIssue}</p>}
           </div>
+        )}
+
+        {/* One picker per family, shown when that family is concluded on or
+            weighted as a leg. A blend across both shows both. */}
+        {restrictedStockSelected && (
+          <StudySelector
+            testId="dlom-studies"
+            label="Restricted-stock studies"
+            tooltip="Observed discounts on private placements of stock that is restricted from resale — as close as the market gets to pricing marketability on its own. The default set is the studies that observed only post-1997-amendment placements."
+            builtIn={RESTRICTED_STOCK_STUDIES}
+            defaultSet={DEFAULT_RESTRICTED_STOCK_SET}
+            valueKey="discount"
+            withStatistic
+            note={rule144Note}
+            value={rsSelection}
+            onChange={(next) => {
+              setSaved(false);
+              setRsSelection(next);
+            }}
+            readOnly={readOnly}
+          />
+        )}
+
+        {preIpoSelected && (
+          <StudySelector
+            testId="dlom-pre-ipo-studies"
+            label="Pre-IPO studies"
+            tooltip="Discounts of private transactions in a company's own stock to the price of the IPO that followed. A different measurement from the restricted-stock family, not a second sample of it: the figures run roughly twice as large, and part of what they measure is the change in the company's prospects."
+            builtIn={PRE_IPO_STUDIES}
+            defaultSet={DEFAULT_PRE_IPO_SET}
+            valueKey="discount"
+            withStatistic
+            note={preIpoNote}
+            value={preIpoSelection}
+            onChange={(next) => {
+              setSaved(false);
+              setPreIpoSelection(next);
+            }}
+            readOnly={readOnly}
+          />
         )}
       </section>
 

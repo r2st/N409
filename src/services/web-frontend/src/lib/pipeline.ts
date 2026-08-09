@@ -277,14 +277,29 @@ export interface ValuationParams {
   dloc_method: DlocMethod | null;
   control_premium: string | null;
   dloc_synergy_share: string | null;
+  /** Which control-premium studies to blend; null is the engine's default set.
+   *  Only read when dloc_method is 'studies'. */
+  dloc_studies: string[] | null;
   dloc_statistic: 'median' | 'mean' | null;
+  /** A firm's own control-premium rows, replacing the engine's indicative
+   *  built-in table. Null uses the built-ins. */
+  dloc_study_table: unknown;
   dlom: string | null;
   dlom_method: DlomMethod | null;
   /** A discount weighted across several methods; mutually exclusive with
    *  `dlom_method` (the table's `valuation_params_one_dlom_form` CHECK). */
   dlom_methods: Array<{ method: DlomMethod; weight: number }> | null;
   dlom_qualitative: string | null;
+  /** Restricted-stock study configuration; null studies is the engine's
+   *  default set (post-1997-amendment only). */
+  dlom_studies: string[] | null;
   dlom_statistic: 'median' | 'mean' | null;
+  dlom_study_table: unknown;
+  /** The pre-IPO family's own keys — the two tables share no study names, so a
+   *  blend weighting both families has to select from each. `dlom_statistic`
+   *  above is shared by both. */
+  dlom_pre_ipo_studies: string[] | null;
+  dlom_pre_ipo_table: unknown;
   market_method: 'revenue' | 'ebitda' | null;
   market_horizon: 'ltm' | 'ntm' | null;
   asset_method: 'cost_to_replicate' | 'nav' | null;
