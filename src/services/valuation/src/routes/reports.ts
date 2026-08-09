@@ -286,6 +286,9 @@ async function summaryFor(
     peers,
     financials,
     developmentStage: paramsRow?.development_stage ?? null,
+    // A firm's own required-return ladder, where it has supplied one; the
+    // built-in literature ranges otherwise (Appendix III).
+    requiredReturnTable: paramsRow?.required_return_table ?? null,
   };
   // UK option-scheme deliverables carry the HMRC agreement request as a final
   // appendix. Null for every other kind, so nothing changes for a 409A.

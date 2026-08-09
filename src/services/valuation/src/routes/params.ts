@@ -88,6 +88,25 @@ export const ParamsPatchBody = z
       .min(1)
       .max(60)
       .nullable(),
+    // A firm's own required-return ladder, replacing the built-in literature
+    // ranges Appendix III prints. Validated for shape here; `low <= high` is
+    // checked per row because a band whose ends are the wrong way round would
+    // print as a range nobody could satisfy.
+    required_return_table: z
+      .array(
+        z
+          .object({
+            stage: z.number().int().min(1).max(6),
+            category: z.string().min(1).max(200),
+            low: z.number().gt(0).lt(5),
+            high: z.number().gt(0).lt(5),
+          })
+          .strict()
+          .refine((b) => b.low <= b.high, { message: 'low must not exceed high' }),
+      )
+      .min(1)
+      .max(20)
+      .nullable(),
     market_method: z.enum(['revenue', 'ebitda']).nullable(),
     market_horizon: z.enum(['ltm', 'ntm']).nullable(),
     market_custom_ranges: z.record(z.unknown()).nullable(),

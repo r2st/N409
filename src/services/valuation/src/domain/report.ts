@@ -734,6 +734,7 @@ const TEMPLATE_409A: ReportTemplate = {
         '<li>Exhibit H-1 — Marketability Discount: Derivation</li>' +
         '<li>Appendix I — Discount Rate Build-Up (WACC)</li>' +
         '<li>Appendix II — Historical Financial Statements</li>' +
+        '<li>Appendix III — Required Rates of Return by Stage of Development</li>' +
         '</ul>' +
         P(
           'An exhibit is included only where the corresponding analysis was applied in this valuation; exhibits for approaches and methods not used are omitted.',

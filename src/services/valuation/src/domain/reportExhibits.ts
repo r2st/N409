@@ -5,6 +5,7 @@ import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
 import { MULTIPLE_LABELS, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
+import { requiredReturnRows } from './requiredReturns.js';
 
 /**
  * The supporting exhibits of the deliverable — the schedules a reviewer checks
@@ -52,6 +53,17 @@ export interface ExhibitContext {
    * simply not rendered.
    */
   financials?: readonly ComputedSheet[];
+  /**
+   * The stage of enterprise development the analyst concluded (AICPA scale),
+   * from the methodology params. Null until somebody has concluded one — it is
+   * never inferred — and Appendix III is then not rendered.
+   */
+  developmentStage?: number | null;
+  /**
+   * A firm's own required-return table, replacing the built-in ladder, as
+   * `valuation_params.required_return_table` stores it.
+   */
+  requiredReturnTable?: unknown;
 }
 
 /** One row of the peer set, as Exhibit D-1 prints it. */
@@ -1361,6 +1373,67 @@ export function financialsExhibit(
   ]);
 }
 
+// ── Appendix III — what a company at this stage is expected to return ────────
+
+/**
+ * The venture capital required-return ladder, against the stage concluded.
+ *
+ * Appendix I says how the discount rate was built. It cannot say whether the
+ * result is plausible for a company at this stage, and that is the question a
+ * reviewer actually has: 22% is unremarkable for a profitable business and
+ * implausible for one with a prototype and no revenue. This is the table the
+ * legacy deliverable carries for that purpose.
+ *
+ * Rendered only where a stage has been concluded. The ladder without a marked
+ * row is a page of general reference in a company-specific document — and the
+ * stage is a judgement nobody has recorded yet, not something to infer here.
+ *
+ * It corroborates; it does not derive. The concluded rate stays whatever the
+ * build-up produced, and a rate outside the band is a thing for the analyst to
+ * explain rather than for this appendix to overrule — which is why the row is
+ * marked rather than the rate being restated from it.
+ */
+export function requiredReturnExhibit(ctx: ExhibitContext): ReportPdfSection | null {
+  const stage = ctx.developmentStage;
+  if (typeof stage !== 'number') return null;
+
+  let rows;
+  try {
+    rows = requiredReturnRows(stage, ctx.requiredReturnTable);
+  } catch {
+    // A firm's malformed override is refused by the params route at save time.
+    // Reaching here means a stored row is unreadable, and a render must not
+    // die inside a PDF for it — the appendix drops, as every other one does.
+    return null;
+  }
+  if (!rows.some((r) => r.matched)) return null;
+
+  return section('Appendix III — Required Rates of Return by Stage of Development', [
+    P(
+      'The rate applied in the income approach is built up in <strong>Appendix I</strong>. The ranges ' +
+        'below are the indicative required rates of return the venture capital literature reports by ' +
+        'stage of enterprise development, and are set out so that the concluded rate can be read ' +
+        'against what is expected of a company at this stage. Required returns fall as a company ' +
+        'matures because the required return is compensation for the risk that remains, and each ' +
+        'milestone retires one kind of it.',
+    ),
+    table({
+      head: ['Stage', 'Investment category', 'Indicative range'],
+      rows: rows.map((r) => [
+        r.matched ? `<strong>${esc(r.label)}</strong>` : esc(r.label),
+        r.matched ? `<strong>${esc(r.category)}</strong>` : esc(r.category),
+        `${r.matched ? '<strong>' : ''}${formatPercent(r.low, 0)} – ${formatPercent(r.high, 0)}${r.matched ? '</strong>' : ''}`,
+      ]),
+    }),
+    P(
+      'The row in bold is the stage concluded for this enterprise. These ranges are corroborative ' +
+        'context drawn from the published venture capital rate-of-return literature; they are not a ' +
+        'survey vintage, and they are not the source of the concluded rate. Where the rate applied ' +
+        'falls outside the range for the concluded stage, the reason is stated in the income approach.',
+    ),
+  ]);
+}
+
 // ── assembly ─────────────────────────────────────────────────────────────────
 
 /**
@@ -1489,5 +1562,6 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     // sequence with them.
     waccExhibit(results, ctx),
     financialsExhibit(ctx.financials, ctx),
+    requiredReturnExhibit(ctx),
   ].filter((s): s is ReportPdfSection => s !== null);
 }

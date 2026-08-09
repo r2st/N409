@@ -53,6 +53,9 @@ export interface ValuationParamsRow {
   dlom_studies: string[] | null;
   dlom_statistic: 'median' | 'mean' | null;
   dlom_study_table: unknown;
+  /** A firm's own required-return ladder by stage (migration 0130). NULL means
+   * the built-in literature ranges. */
+  required_return_table: unknown;
   market_method: 'revenue' | 'ebitda' | null;
   market_horizon: 'ltm' | 'ntm' | null;
   market_custom_ranges: unknown;
@@ -88,6 +91,7 @@ export const PARAM_COLUMNS = [
   'dlom_studies',
   'dlom_statistic',
   'dlom_study_table',
+  'required_return_table',
   'market_method',
   'market_horizon',
   'market_custom_ranges',

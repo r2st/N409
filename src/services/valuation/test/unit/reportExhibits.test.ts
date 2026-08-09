@@ -12,7 +12,9 @@ import {
   peerSetExhibit,
   pwermExhibit,
   financialsExhibit,
+  requiredReturnExhibit,
   waccExhibit,
+  type ExhibitContext,
 } from '../../src/domain/reportExhibits.js';
 import { ALLOWED_TAGS, sanitizeHtml } from '../../src/domain/report.js';
 import { computeWorkbook } from '../../src/domain/workbook.js';
@@ -1272,5 +1274,46 @@ describe('Appendix II — historical financial statements', () => {
   it('renders only tags the report whitelist allows', () => {
     const out = financialsExhibit(cells(), CONTEXT)!;
     expect(sanitizeHtml(out.html)).toBe(out.html);
+  });
+});
+
+/**
+ * Appendix III's own behaviour is pinned in `requiredReturns.test.ts`, next to
+ * the ladder it prints. What belongs here is only its place in the assembled
+ * deliverable: that the stage reaches it through `buildExhibits`, and that the
+ * appendix sorts after Appendix II rather than ahead of the exhibits.
+ */
+describe('Appendix III in the assembled exhibit list', () => {
+  const APPENDIX_III = 'Appendix III — Required Rates of Return by Stage of Development';
+  const calc = {
+    status: 'succeeded',
+    inputs: { params: {}, inputs: {} },
+    results: { equity_value: 1, fmv_per_share: 1 },
+  } as unknown as CalculationRow;
+  const headings = (ctx: Partial<ExhibitContext>) =>
+    buildExhibits(calc, { ...CONTEXT, ...ctx }).map((s) => s.heading);
+
+  it('is included once a stage has been concluded', () => {
+    expect(headings({ developmentStage: 3 })).toContain(APPENDIX_III);
+  });
+
+  it('is left out when nobody has concluded a stage', () => {
+    expect(headings({ developmentStage: null })).not.toContain(APPENDIX_III);
+    expect(headings({})).not.toContain(APPENDIX_III);
+  });
+
+  it('carries a firm’s own ladder through from the params', () => {
+    const out = buildExhibits(calc, {
+      ...CONTEXT,
+      developmentStage: 1,
+      requiredReturnTable: [{ stage: 1, category: 'Our angel band', low: 0.55, high: 0.85 }],
+    }).find((s) => s.heading === APPENDIX_III)!;
+    expect(out.html).toContain('Our angel band');
+    expect(out.html).not.toContain('Seed / start-up');
+  });
+
+  it('comes last — the appendices follow the exhibits, in their stated order', () => {
+    const all = headings({ developmentStage: 3 });
+    expect(all[all.length - 1]).toBe(APPENDIX_III);
   });
 });
