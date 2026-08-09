@@ -22,11 +22,17 @@
     "test:unit": "npm run build && npm run test:unit --workspaces --if-present",
     "migrate": "npm run migrate -w @n409/valuation",
     "dev:db": "docker compose up -d postgres redis",
+    "e2e": "npm run e2e:db && playwright test --config e2e/playwright.config.ts",
+    "e2e:db": "node e2e/reset-db.mjs",
+    "e2e:headed": "npm run e2e:db && playwright test --config e2e/playwright.config.ts --headed",
+    "e2e:ui": "playwright test --config e2e/playwright.config.ts --ui",
+    "e2e:report": "playwright show-report e2e/.artifacts/report",
     "sample:report": "npm run build && node tools/sample-report.mjs",
     "sample:engine": "cd src/services/engine-wrapper && .venv/bin/python -m uvicorn app.main:app --port 8799"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.0",
+    "@playwright/test": "^1.62.1",
     "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^9.30.0",
     "eslint-config-prettier": "^10.1.0",
