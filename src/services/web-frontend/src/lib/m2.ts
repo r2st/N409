@@ -93,6 +93,12 @@ export interface ReportSection {
   key: string;
   heading: string;
   html: string;
+  /**
+   * Kept out of the rendered deliverable, but not deleted — the text survives so
+   * unhiding restores what was written rather than the skeleton. Absent on every
+   * chapter nobody has hidden.
+   */
+  hidden?: boolean;
 }
 
 export interface ReportContent {

@@ -186,6 +186,36 @@ describe('against the real 409A skeleton', () => {
     expect(verdict.placeholders.some((p) => p.key === 'asc718' && p.blocking)).toBe(true);
   });
 
+  it('does not grade a chapter the analyst hid', () => {
+    /*
+     * The skeleton's own instructions are written with fill-me markers in them,
+     * and hiding a chapter is exactly what an analyst does when it does not
+     * apply — a company with no option plan has nothing to say under ASC 718.
+     * Grading the hidden text would make the toggle useless where it is most
+     * wanted: the gate would refuse to publish over prose no reader will see.
+     */
+    const hidden = {
+      title: 'T',
+      sections: [
+        { ...CONCLUSION_UNFILLED, hidden: true },
+        { key: 'introduction', heading: 'Introduction', html: '<p>Finished prose.</p>' },
+      ],
+    };
+    const verdict = reportReadiness(hidden);
+    expect(verdict.placeholders).toEqual([]);
+    expect(verdict.status).toBe('pass');
+  });
+
+  it('grades the same chapter again once it is unhidden', () => {
+    // The text survived the save, so the finding has to come back with it —
+    // otherwise hiding a chapter to clear the gate and unhiding it afterwards
+    // would publish the unfilled marker.
+    const shown = content([CONCLUSION_UNFILLED]);
+    expect(findReportPlaceholders(shown).some((p) => p.key === 'conclusion' && p.blocking)).toBe(
+      true,
+    );
+  });
+
   it('names a computed marker no calculation resolves', () => {
     const content = {
       title: 'T',

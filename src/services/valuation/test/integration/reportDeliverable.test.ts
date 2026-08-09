@@ -305,6 +305,184 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
   });
 
   /**
+   * A chapter the analyst omitted.
+   *
+   * A template is a superset of what any one engagement needs, and the analyst's
+   * only options were to leave the skeleton's instructions on the page or to
+   * empty the section — and an empty chapter under a numbered heading reads as an
+   * omission rather than a decision. What matters here is that "omitted" means
+   * absent from the rendered document while still present in storage, because
+   * unhiding has to restore the prose rather than the skeleton.
+   */
+  describe('a chapter marked as omitted', () => {
+    let omitted: ValuationRow;
+
+    beforeAll(async () => {
+      if (!dbUp) return;
+      omitted = await seed('Omit One, Inc.', true);
+    });
+
+    /** Save the body with `keys` marked hidden; returns the stored content. */
+    async function omit(id: string, keys: string[]) {
+      const current = (await opsGet(`/api/v1/valuations/${id}/report`)).json();
+      const content = current.version.content;
+      content.sections = content.sections.map((s: { key: string }) =>
+        keys.includes(s.key) ? { ...s, hidden: true } : s,
+      );
+      const saved = await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${id}/report`,
+        headers: authHeader(ops.token),
+        payload: { content },
+      });
+      expect(saved.statusCode).toBe(200);
+      return saved.json().version.content as {
+        sections: Array<{ key: string; heading: string; html: string; hidden?: boolean }>;
+      };
+    }
+
+    it('is accepted by the save path and round-trips as hidden', async () => {
+      const stored = await omit(omitted.id, ['asset_approach']);
+      const section = stored.sections.find((s) => s.key === 'asset_approach');
+      expect(section?.hidden).toBe(true);
+      // Kept, not deleted — this is what makes unhiding restore the prose.
+      expect(section?.html.length).toBeGreaterThan(0);
+      // And nothing else grew the key.
+      expect(stored.sections.filter((s) => s.hidden === true)).toHaveLength(1);
+    });
+
+    it('does not reach the rendered document', async () => {
+      const v = await seed('Omit Two, Inc.', true);
+      const before = await pdfText(v.id);
+      expect(before).toContain('Qualifications of the Valuation Analyst');
+
+      await omit(v.id, ['qualifications']);
+      const after = await pdfText(v.id);
+      expect(after).not.toContain('Qualifications of the Valuation Analyst');
+      // The rest of the deliverable is untouched, including the schedules —
+      // omitting a chapter is not a way to lose an exhibit.
+      expect(after).toContain('Conclusion of Value');
+      expect(after).toContain('Exhibit A');
+    });
+
+    it('leaves no gap in the numbering it was part of', async () => {
+      /*
+       * The contents, the bookmarks and the running heads are all derived from
+       * the section list the renderer receives, so an omitted chapter has to be
+       * absent from that list rather than present-and-blank. A gap in the
+       * numbering would be the same omission the toggle exists to avoid,
+       * differently spelled.
+       */
+      const v = await seed('Omit Three, Inc.', true);
+      const sections = (await opsGet(`/api/v1/valuations/${v.id}/report`)).json().version.content
+        .sections as Array<{ key: string; heading: string }>;
+
+      // A chapter after both omissions, so its number has to move by exactly two.
+      const dropped = ['economic_outlook', 'market_movement'];
+      const later = sections.findIndex((s) => s.key === 'conclusion');
+      expect(later).toBeGreaterThan(0);
+      for (const key of dropped) {
+        expect(sections.findIndex((s) => s.key === key)).toBeGreaterThan(0);
+        expect(sections.findIndex((s) => s.key === key)).toBeLessThan(later);
+      }
+      const heading = sections[later]!.heading;
+
+      // Asserted as "<number>. <heading>" — the form the contents and the chapter
+      // title both take. A bare number would match any figure on the page.
+      const full = await pdfText(v.id);
+      expect(full).toContain(`${later + 1}. ${heading}`);
+
+      await omit(v.id, dropped);
+      const after = await pdfText(v.id);
+      expect(after).toContain(`${later - 1}. ${heading}`);
+      expect(after).not.toContain(`${later + 1}. ${heading}`);
+      // And the omitted chapters are gone from the contents, not merely renumbered.
+      for (const key of dropped) {
+        expect(after).not.toContain(sections.find((s) => s.key === key)!.heading);
+      }
+    });
+
+    it('comes back when the chapter is included again', async () => {
+      const v = await seed('Omit Four, Inc.', true);
+      await omit(v.id, ['safe_harbor']);
+      expect(await pdfText(v.id)).not.toContain('Section 409A Safe Harbor');
+
+      const stored = (await opsGet(`/api/v1/valuations/${v.id}/report`)).json();
+      stored.version.content.sections = stored.version.content.sections.map(
+        (s: { key: string; hidden?: boolean }) =>
+          s.key === 'safe_harbor' ? { key: s.key, heading: 'x', html: 'y', ...s, hidden: false } : s,
+      );
+      // Re-save with the flag cleared rather than with a fresh skeleton: the
+      // prose that comes back has to be the prose that was there.
+      const restored = await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${v.id}/report`,
+        headers: authHeader(ops.token),
+        payload: { content: stored.version.content },
+      });
+      expect(restored.statusCode).toBe(200);
+      expect(await pdfText(v.id)).toContain('Section 409A Safe Harbor');
+    });
+
+    it('does not hold up the QA gate on a marker inside it', async () => {
+      /*
+       * The skeleton's instructions are written with fill-me markers in them, and
+       * hiding a chapter is what an analyst does when it does not apply — a
+       * company with no option plan has nothing to say under ASC 718. Grading the
+       * hidden text would make the toggle useless where it is most wanted: the
+       * gate would refuse to publish over prose no reader will see.
+       */
+      const v = await seed('Omit Five, Inc.', true);
+      const current = (await opsGet(`/api/v1/valuations/${v.id}/report`)).json();
+      const content = current.version.content;
+      const asc718 = {
+        key: 'asc718',
+        heading: 'ASC 718 Stock-Based Compensation',
+        html: '<p>Grant … at $ … per share.</p>',
+      };
+      const body = {
+        title: content.title,
+        sections: [
+          { key: 'introduction', heading: 'Introduction', html: '<p>Finished prose.</p>' },
+          asc718,
+        ],
+      };
+
+      /** The gate's verdict on the report body specifically. */
+      const placeholderCheck = async () => {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${v.id}/qa`,
+          headers: authHeader(ops.token),
+          payload: {},
+        });
+        expect(res.statusCode).toBe(201); // a review is a created record
+        return (
+          res.json().review.checks as Array<{ key: string; status: string }>
+        ).find((c) => c.key === 'report_placeholders');
+      };
+
+      const put = async (sections: unknown[]) => {
+        const res = await ctx.app.inject({
+          method: 'PUT',
+          url: `/api/v1/valuations/${v.id}/report`,
+          headers: authHeader(ops.token),
+          payload: { content: { ...body, sections } },
+        });
+        expect(res.statusCode).toBe(200);
+      };
+
+      // Visible, the unfilled marker is a finding — this is the control.
+      await put(body.sections);
+      expect((await placeholderCheck())?.status).not.toBe('pass');
+
+      // Omitted, it is not.
+      await put([body.sections[0], { ...asc718, hidden: true }]);
+      expect((await placeholderCheck())?.status).toBe('pass');
+    });
+  });
+
+  /**
    * Where every figure in the deliverable comes from.
    *
    * The tests above assert that the schedules are *present*. These assert that

@@ -117,6 +117,18 @@ export function findReportPlaceholders(
 ): ReportPlaceholder[] {
   const found: ReportPlaceholder[] = [];
   for (const section of content.sections) {
+    /*
+     * A hidden chapter is not in the deliverable, so an unfilled marker in one
+     * is not an unfinished report. Scanning it anyway would make the toggle
+     * useless exactly where it is most wanted: the skeleton's own instructions
+     * are the thing an analyst hides when a chapter does not apply, and those
+     * instructions are written with markers in them. The gate would then refuse
+     * to publish over text no reader will ever see.
+     *
+     * Filtered on the same predicate the renderer uses, so the gate's answer and
+     * the PDF's contents cannot drift apart.
+     */
+    if (section.hidden === true) continue;
     const text = textOf(section.html);
     const blocking = BLOCKING_SECTIONS.has(section.key) || BLOCKING_HEADINGS.test(section.heading);
 

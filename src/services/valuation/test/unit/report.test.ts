@@ -6,6 +6,7 @@ import {
   sanitizeContent,
   sanitizeHtml,
   templateForKind,
+  visibleSections,
 } from '../../src/domain/report.js';
 import { VALUATION_KINDS } from '../../src/domain/valuation.js';
 
@@ -49,6 +50,79 @@ describe('sanitizeHtml', () => {
     expect(content.sections[0]!.html).toBe('<p>a</p>');
   });
 
+  it('round-trips a hidden section, and omits the key when it is not hidden', () => {
+    const content = sanitizeContent({
+      title: 'T',
+      sections: [
+        { key: 'asc718', heading: 'ASC 718', html: '<p>a</p>', hidden: true },
+        { key: 'conclusion', heading: 'Conclusion', html: '<p>b</p>' },
+        // An explicit `false` normalises away: a report nobody has hidden
+        // anything in should not grow a key per chapter in its stored jsonb.
+        { key: 'dloc', heading: 'DLOC', html: '<p>c</p>', hidden: false },
+      ],
+    });
+    expect(content.sections[0]!.hidden).toBe(true);
+    expect(Object.hasOwn(content.sections[1]!, 'hidden')).toBe(false);
+    expect(Object.hasOwn(content.sections[2]!, 'hidden')).toBe(false);
+  });
+
+  it('keeps the hidden section in storage but out of the rendered list', () => {
+    // Hidden, not deleted — the whole point is that unhiding restores what was
+    // written rather than the skeleton, so the text has to survive the save.
+    const content = sanitizeContent({
+      title: 'T',
+      sections: [
+        { key: 'a', heading: 'A', html: '<p>keep</p>' },
+        { key: 'b', heading: 'B', html: '<p>authored, then hidden</p>', hidden: true },
+        { key: 'c', heading: 'C', html: '<p>keep</p>' },
+      ],
+    });
+    expect(content.sections).toHaveLength(3);
+    expect(content.sections[1]!.html).toBe('<p>authored, then hidden</p>');
+    expect(visibleSections(content).map((s) => s.key)).toEqual(['a', 'c']);
+  });
+});
+
+describe('visibleSections', () => {
+  const VARS = {
+    company_name: 'Northwind Robotics, Inc.',
+    kind: '409a' as const,
+    valuation_ref: 'VAL-1777',
+    date: '2026-06-30',
+    currency: 'USD',
+  };
+
+  it('is the identity on a report with nothing hidden', () => {
+    const body = instantiateTemplate(templateForKind('409a'), VARS);
+    expect(visibleSections(body)).toHaveLength(body.sections.length);
+  });
+
+  it('leaves no gap in what the renderer receives', () => {
+    /*
+     * The numbering, the table of contents, the bookmarks and the running heads
+     * are all derived from this list, so a hidden chapter has to be absent from
+     * it rather than present-and-blank. An empty chapter under a numbered
+     * heading reads as an omission, which is the defect the toggle exists to
+     * avoid — a gap in the numbering would be the same omission, differently
+     * spelled.
+     */
+    const body = instantiateTemplate(templateForKind('409a'), VARS);
+    const hide = new Set(['asset_approach', 'asc718']);
+    const withHidden = {
+      ...body,
+      sections: body.sections.map((s) => (hide.has(s.key) ? { ...s, hidden: true } : s)),
+    };
+    const rendered = visibleSections(withHidden);
+    expect(rendered).toHaveLength(body.sections.length - 2);
+    for (const key of hide) expect(rendered.some((s) => s.key === key)).toBe(false);
+    // Order is otherwise untouched: filtering, not re-sorting.
+    expect(rendered.map((s) => s.key)).toEqual(
+      body.sections.filter((s) => !hide.has(s.key)).map((s) => s.key),
+    );
+  });
+});
+
+describe('sanitizeHtml, continued', () => {
   it('leaves an unterminated comment or raw-text element where it stands', () => {
     // No `-->` to be found: the marker is text from there on, and the tags
     // after it still face the whitelist.

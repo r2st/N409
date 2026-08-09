@@ -7,6 +7,7 @@ import {
   sanitizeHtml,
   type Report,
   type ReportContent,
+  type ReportSection,
   type ReportVersionSummary,
 } from '../../lib/m2';
 import { formatDateTime } from '../../lib/format';
@@ -161,7 +162,10 @@ export function ReportTab() {
       await load();
     });
 
-  const updateSection = (index: number, patch: Partial<{ heading: string; html: string }>) => {
+  const updateSection = (
+    index: number,
+    patch: Partial<{ heading: string; html: string; hidden: boolean }>,
+  ) => {
     setContent((cur) => {
       if (!cur) return cur;
       const sections = cur.sections.map((s, i) => (i === index ? { ...s, ...patch } : s));
@@ -169,6 +173,20 @@ export function ReportTab() {
     });
     setDirty(true);
   };
+
+  /*
+   * What the deliverable will contain, which is what both halves of this page
+   * are numbered against.
+   *
+   * The analyst still sees every chapter — hiding one has to be reversible from
+   * the same place it was done — but the number beside it is the number it will
+   * carry in the PDF, so a hidden chapter takes none. A reader sees only the
+   * visible set, because the draft shared with them is a preview of the
+   * document, not of the editor.
+   */
+  const visible = content.sections.filter((s) => s.hidden !== true);
+  const numberOf = (section: ReportSection) => visible.indexOf(section) + 1;
+  const shown = ops ? content.sections : visible;
 
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_18rem]">
@@ -236,34 +254,63 @@ export function ReportTab() {
           <h2 className="font-display text-xl font-semibold text-ink-900">{content.title}</h2>
         )}
 
-        {content.sections.map((section, index) => (
-          <section
-            key={section.key}
-            className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
-          >
-            {ops ? (
-              <>
-                <TextInput
-                  value={section.heading}
-                  onChange={(e) => updateSection(index, { heading: e.target.value })}
-                  className="mb-3 !text-base font-semibold"
-                  aria-label={`Heading for section ${index + 1}`}
-                />
-                <RichTextEditor value={section.html} onChange={(html) => updateSection(index, { html })} />
-              </>
-            ) : (
-              <>
-                <h3 className="mb-3 font-display text-base font-semibold text-ink-900">
-                  {index + 1}. {section.heading}
-                </h3>
-                <div
-                  className="report-editor text-sm leading-relaxed text-ink-800"
-                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(section.html) }}
-                />
-              </>
-            )}
-          </section>
-        ))}
+        {shown.map((section) => {
+          const index = content.sections.indexOf(section);
+          const isHidden = section.hidden === true;
+          return (
+            <section
+              key={section.key}
+              className={`rounded-lg border p-5 shadow-card ${
+                isHidden ? 'border-dashed border-ink-300 bg-paper-100' : 'border-paper-300 bg-surface'
+              }`}
+            >
+              {ops ? (
+                <>
+                  <div className="mb-3 flex items-start gap-3">
+                    <TextInput
+                      value={section.heading}
+                      onChange={(e) => updateSection(index, { heading: e.target.value })}
+                      className="!text-base font-semibold"
+                      aria-label={`Heading for section ${index + 1}`}
+                    />
+                    <Button
+                      variant="secondary"
+                      onClick={() => updateSection(index, { hidden: !isHidden })}
+                      aria-pressed={isHidden}
+                      title={
+                        isHidden
+                          ? 'Include this chapter in the rendered report. The text you wrote is still here.'
+                          : 'Leave this chapter out of the rendered report. The text is kept, not deleted, and the version history still shows it.'
+                      }
+                    >
+                      {isHidden ? 'Include' : 'Omit'}
+                    </Button>
+                  </div>
+                  {isHidden && (
+                    <p className="mb-3 text-xs font-medium text-ink-500">
+                      Omitted from the rendered report. The text below is kept and will come back if
+                      you include the chapter again.
+                    </p>
+                  )}
+                  <RichTextEditor
+                    value={section.html}
+                    onChange={(html) => updateSection(index, { html })}
+                  />
+                </>
+              ) : (
+                <>
+                  <h3 className="mb-3 font-display text-base font-semibold text-ink-900">
+                    {numberOf(section)}. {section.heading}
+                  </h3>
+                  <div
+                    className="report-editor text-sm leading-relaxed text-ink-800"
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(section.html) }}
+                  />
+                </>
+              )}
+            </section>
+          );
+        })}
       </div>
 
       {ops && (

@@ -35,6 +35,23 @@ export interface ReportSection {
   key: string;
   heading: string;
   html: string;
+  /**
+   * Kept out of the rendered deliverable.
+   *
+   * A template is a superset of what any one engagement needs: a 409A for a
+   * company with no option plan has nothing to say under ASC 718, and one whose
+   * asset approach carried no weight does not want a chapter explaining the
+   * approach it did not use. Today the analyst's only options are to leave the
+   * skeleton's instructions on the page or to empty the section, and an empty
+   * chapter under a numbered heading reads as an omission rather than a
+   * decision.
+   *
+   * Hidden, not deleted. The section keeps its text, so unhiding restores what
+   * was written rather than the skeleton, and the version history still shows
+   * what the report contained at each point — which is the whole reason the
+   * body is versioned.
+   */
+  hidden?: boolean;
 }
 
 export interface ReportContent {
@@ -252,8 +269,33 @@ function dropJunkTags(source: string): string {
 export function sanitizeContent(content: ReportContent): ReportContent {
   return {
     title: content.title,
-    sections: content.sections.map((s) => ({ ...s, html: sanitizeHtml(s.html) })),
+    // Built field by field rather than spread, so the three keys a section is
+    // allowed to carry are the three keys it leaves with. A spread would also
+    // carry an explicit `hidden: false` straight through the conditional below
+    // — which is how an untouched report grows a key per chapter.
+    sections: content.sections.map((s) => ({
+      key: s.key,
+      heading: s.heading,
+      html: sanitizeHtml(s.html),
+      // Normalised to a boolean the storage round-trips, and omitted when false
+      // so only a chapter somebody actually hid is recorded as hidden.
+      ...(s.hidden === true ? { hidden: true as const } : {}),
+    })),
   };
+}
+
+/**
+ * The chapters the deliverable actually contains.
+ *
+ * Applied at the render boundary rather than at save, because the hidden text
+ * has to survive in storage for unhiding to restore it. Numbering, the table of
+ * contents, the bookmarks and the running heads are all derived from the list
+ * the renderer receives, so filtering here is what makes a hidden chapter
+ * genuinely absent rather than blank — a gap in the numbering would be the same
+ * omission it was, differently spelled.
+ */
+export function visibleSections(content: ReportContent): ReportSection[] {
+  return content.sections.filter((s) => s.hidden !== true);
 }
 
 // ── Templates ─────────────────────────────────────────────────────────────────

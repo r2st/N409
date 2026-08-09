@@ -10,6 +10,7 @@ import {
   instantiateTemplate,
   sanitizeContent,
   templateForKind,
+  visibleSections,
   type ReportContent,
 } from '../domain/report.js';
 import { findActiveTemplateForKind, templateLabel } from '../repos/reportTemplates.js';
@@ -54,6 +55,12 @@ const SectionSchema = z
     key: z.string().min(1).max(100),
     heading: z.string().min(1).max(300),
     html: z.string().max(100_000),
+    /**
+     * Optional so every client that predates the toggle keeps saving valid
+     * bodies, and so a section the analyst has never touched carries no key at
+     * all rather than an explicit `false` per chapter.
+     */
+    hidden: z.boolean().optional(),
   })
   .strict();
 
@@ -339,7 +346,13 @@ async function renderVersionPdf(
       { label: 'Rendered', value: renderedAt.toISOString().slice(0, 10) },
     ],
     // The authored body first, then the computed schedules it refers to.
-    sections: [...body.sections.map((s) => ({ heading: s.heading, html: s.html })), ...exhibits],
+    // Hidden chapters are dropped here, at the render boundary, so a hidden one
+    // is genuinely absent rather than blank: the numbering, the contents, the
+    // bookmarks and the running heads are all derived from this list.
+    sections: [
+      ...visibleSections(body).map((s) => ({ heading: s.heading, html: s.html })),
+      ...exhibits,
+    ],
     summary,
     branding: await brandingFor(pool, valuation),
     generated_at: renderedAt,
