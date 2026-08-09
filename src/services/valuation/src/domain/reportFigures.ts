@@ -58,11 +58,7 @@ export type ReportFigures = Record<string, string>;
  * directly.
  */
 function esc(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 interface ResultsShape {
@@ -91,10 +87,7 @@ const INT = new Intl.NumberFormat('en-US');
  * `{{fmv_per_share}}` is. It also means a placeholder that no longer resolves
  * degrades to itself rather than to "undefined".
  */
-export function reportFigures(
-  calculation: CalculationRow | null,
-  currency: string,
-): ReportFigures {
+export function reportFigures(calculation: CalculationRow | null, currency: string): ReportFigures {
   if (!calculation || calculation.status !== 'succeeded' || !calculation.results) return {};
   const results = calculation.results as ResultsShape;
   const out: ReportFigures = {};
@@ -115,10 +108,7 @@ export function reportFigures(
   put('common_equity_value', commonEquity !== null ? formatCurrency(commonEquity, currency, 0) : null);
 
   const marketable = marketableValuePerShare(results);
-  put(
-    'marketable_value_per_share',
-    marketable !== null ? formatCurrency(marketable, currency, 4) : null,
-  );
+  put('marketable_value_per_share', marketable !== null ? formatCurrency(marketable, currency, 4) : null);
 
   const shares = num(results.fully_diluted_common);
   put('fully_diluted_common', shares !== null ? INT.format(Math.round(shares)) : null);
@@ -136,8 +126,7 @@ export function reportFigures(
   const riskFree = num(results.assumptions?.risk_free_rate);
   put('risk_free_rate', riskFree !== null ? formatPercent(riskFree, 2) : null);
   const term =
-    num(results.assumptions?.time_to_exit_years) ??
-    num(results.assumptions?.expected_time_to_exit_years);
+    num(results.assumptions?.time_to_exit_years) ?? num(results.assumptions?.expected_time_to_exit_years);
   put('time_to_exit_years', term !== null ? term.toFixed(2) : null);
 
   // ── the market-movement adjustment ─────────────────────────────────────────

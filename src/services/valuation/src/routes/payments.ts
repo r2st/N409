@@ -331,9 +331,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // no money will move; a client is never shown the button at all, and
         // telling them which Stripe account this deployment holds would be
         // internal detail leaking onto a payment screen.
-        ...(isOps(principal) && stripeKeyMode(deps.stripeSecretKey) === 'test'
-          ? { test_mode: true }
-          : {}),
+        ...(isOps(principal) && stripeKeyMode(deps.stripeSecretKey) === 'test' ? { test_mode: true } : {}),
       },
     };
   });

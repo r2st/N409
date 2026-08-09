@@ -130,7 +130,7 @@ describe('registerProblemHandler', () => {
     await app.close();
   });
 
-  it("keeps a 4xx thrown by fastify itself, message and all", async () => {
+  it('keeps a 4xx thrown by fastify itself, message and all', async () => {
     // A malformed JSON body never reaches a handler — fastify throws with a
     // statusCode of its own, and that status is the useful answer. Its message
     // describes the request, not the server, so it is safe to echo.

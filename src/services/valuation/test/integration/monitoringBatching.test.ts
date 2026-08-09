@@ -9,10 +9,7 @@ import {
 } from '../../src/repos/calculations.js';
 import { findParams, findParamsByValuationIds } from '../../src/repos/params.js';
 import { findCapTable, findCapTablesByValuationIds } from '../../src/repos/capTables.js';
-import {
-  findResolutionByValuation,
-  findResolutionsByValuationIds,
-} from '../../src/repos/boardApprovals.js';
+import { findResolutionByValuation, findResolutionsByValuationIds } from '../../src/repos/boardApprovals.js';
 
 const dbUp = await isDbAvailable();
 
@@ -54,10 +51,10 @@ describe.skipIf(!dbUp)('monitoring — snapshot batching', () => {
       },
       { actorType: 'human', actorId: ops.id },
     );
-    await pool.query(
-      "UPDATE valuations SET state = 'published', assigned_reviewer_id = $2 WHERE id = $1",
-      [id, ops.id],
-    );
+    await pool.query("UPDATE valuations SET state = 'published', assigned_reviewer_id = $2 WHERE id = $1", [
+      id,
+      ops.id,
+    ]);
     await app.inject({
       method: 'PATCH',
       url: `/api/v1/valuations/${id}/params`,

@@ -130,9 +130,7 @@ describe('fillFigures', () => {
     // Deliberate: an unresolved `{{fmv_per_share}}` is a draft nobody can
     // mistake for a conclusion, whereas an em-dash or a zero reads as an answer.
     expect(fillFigures(content, {}).sections[0]!.html).toContain('{{fmv_per_share}}');
-    expect(fillFigures(content, { equity_value: '$1' }).sections[0]!.html).toContain(
-      '{{fmv_per_share}}',
-    );
+    expect(fillFigures(content, { equity_value: '$1' }).sections[0]!.html).toContain('{{fmv_per_share}}');
   });
 
   it('does not mutate the stored content', () => {
@@ -183,10 +181,7 @@ describe('the 409A skeleton and the figures it names', () => {
   });
 
   it('states the conclusion once the calculation exists', () => {
-    const body = fillFigures(
-      instantiateTemplate(template, vars),
-      reportFigures(calculation(), 'USD'),
-    );
+    const body = fillFigures(instantiateTemplate(template, vars), reportFigures(calculation(), 'USD'));
     const conclusion = body.sections.find((s) => s.key === 'conclusion')!;
     expect(conclusion.html).toContain('$1.4947');
     expect(conclusion.html).toContain('$42,664,610');
@@ -197,10 +192,7 @@ describe('the 409A skeleton and the figures it names', () => {
   });
 
   it('leaves no ellipsis where a computed figure belongs', () => {
-    const body = fillFigures(
-      instantiateTemplate(template, vars),
-      reportFigures(calculation(), 'USD'),
-    );
+    const body = fillFigures(instantiateTemplate(template, vars), reportFigures(calculation(), 'USD'));
     // The ASC 718 rows that belong to the *grants* keep their ellipsis — they
     // are measured against the awards on file, not by this valuation — but
     // every row the 409A supplies is filled, and no `{{…}}` survives anywhere.

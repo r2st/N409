@@ -89,16 +89,16 @@ describe('research sources exhibit', () => {
 
   it('skips a citation with no URL rather than printing a blank row', () => {
     const out = researchSourcesExhibit([
-      row({ citations: [{ url: '' }, { url: 'https://example.com/real' }] as MarketResearchRow['citations'] }),
+      row({
+        citations: [{ url: '' }, { url: 'https://example.com/real' }] as MarketResearchRow['citations'],
+      }),
     ]);
     expect(out!.html).toContain('https://example.com/real');
     expect(out!.html.match(/<tr>/g)?.length ?? 0).toBeLessThanOrEqual(2);
   });
 
   it('returns null when the only row has citations that are all URL-less', () => {
-    const out = researchSourcesExhibit([
-      row({ citations: [{ url: '' }] as MarketResearchRow['citations'] }),
-    ]);
+    const out = researchSourcesExhibit([row({ citations: [{ url: '' }] as MarketResearchRow['citations'] })]);
     expect(out).toBeNull();
   });
 

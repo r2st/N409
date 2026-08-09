@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  NAMED_BUCKETS,
-  NAMED_BUCKET_KEYS,
-  namedBucket,
-  namedBucketsFor,
-} from '../../src/domain/workflow.js';
+import { NAMED_BUCKETS, NAMED_BUCKET_KEYS, namedBucket, namedBucketsFor } from '../../src/domain/workflow.js';
 import { VALUATION_STATES } from '../../src/domain/valuation.js';
 import { buildValuationWhere } from '../../src/repos/valuations.js';
 

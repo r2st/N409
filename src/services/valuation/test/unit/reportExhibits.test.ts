@@ -753,7 +753,13 @@ describe('dlomDerivationExhibit', () => {
       delta_total: 1,
       classes: {
         Common: { kind: 'common', value: 19_900_045, delta: 0.555, elasticity: 1.1971, volatility: 0.7422 },
-        'Series A': { kind: 'preferred', value: 6_215_857, delta: 0.1422, elasticity: 0.9762, volatility: 0.6052 },
+        'Series A': {
+          kind: 'preferred',
+          value: 6_215_857,
+          delta: 0.1422,
+          elasticity: 0.9762,
+          volatility: 0.6052,
+        },
       },
     },
   };
@@ -827,7 +833,11 @@ describe('dlomDerivationExhibit', () => {
         dloc: 0.1,
         dlom: 0.2,
         dlom_method: 'qualitative',
-        dlom_detail: { method: 'qualitative', dlom: 0.2, basis: 'analyst judgement — no model or study was applied' },
+        dlom_detail: {
+          method: 'qualitative',
+          dlom: 0.2,
+          basis: 'analyst judgement — no model or study was applied',
+        },
       },
     };
     expect(plain(dlomDerivationExhibit(qualitative, CONTEXT)!.html)).toContain('judgement');
@@ -845,10 +855,9 @@ describe('dlomDerivationExhibit', () => {
   });
 
   it('follows Exhibit H in the assembled deliverable', () => {
-    const headings = buildExhibits(
-      calculation({ results: MODEL } as Partial<CalculationRow>),
-      CONTEXT,
-    ).map((s) => s.heading);
+    const headings = buildExhibits(calculation({ results: MODEL } as Partial<CalculationRow>), CONTEXT).map(
+      (s) => s.heading,
+    );
     expect(headings.at(-2)).toBe('Exhibit H — Discounts and Concluded Value');
     expect(headings.at(-1)).toBe('Exhibit H-1 — Marketability Discount: Derivation');
   });
@@ -1108,8 +1117,7 @@ describe('Appendix I — the WACC build-up', () => {
     auto: { wacc: { ...AUTO_WACC, ...over } },
   });
 
-  const html = (over?: Record<string, unknown>) =>
-    waccExhibit(withWacc(over), { currency: 'USD' })!.html;
+  const html = (over?: Record<string, unknown>) => waccExhibit(withWacc(over), { currency: 'USD' })!.html;
 
   it('states every component of the cost of equity', () => {
     const out = html();
@@ -1159,10 +1167,7 @@ describe('Appendix I — the WACC build-up', () => {
   });
 
   it('survives a build-up missing a component', () => {
-    const out = waccExhibit(
-      { auto: { wacc: { wacc: 0.25, capm: {} } } },
-      { currency: 'USD' },
-    );
+    const out = waccExhibit({ auto: { wacc: { wacc: 0.25, capm: {} } } }, { currency: 'USD' });
     expect(out).not.toBeNull();
     expect(out!.html).toContain('25.00%');
   });
@@ -1204,10 +1209,7 @@ describe('Appendix II — historical financial statements', () => {
   });
 
   it('omits the forecast periods — the appendix is of reported figures', () => {
-    const out = financialsExhibit(
-      cells({ 'income_statement.revenue.fy_plus_1': 99_000_000 }),
-      CONTEXT,
-    )!;
+    const out = financialsExhibit(cells({ 'income_statement.revenue.fy_plus_1': 99_000_000 }), CONTEXT)!;
     expect(out.html).toContain('FY (current)');
     expect(out.html).not.toContain('FY+1');
     // The forecast figure itself must not reach the page under any column.

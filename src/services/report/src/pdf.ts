@@ -410,9 +410,9 @@ const GLYPH_SUBSTITUTIONS: ReadonlyArray<readonly [RegExp, string]> = [
  * extra" rather than as a 224-entry table.
  */
 const CP1252_EXTRAS = new Set([
-  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152,
-  0x017d, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a,
-  0x0153, 0x017e, 0x0178,
+  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x017d,
+  0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x017e,
+  0x0178,
 ]);
 
 function isDrawable(code: number): boolean {
@@ -1809,10 +1809,7 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
    * with a font file to license and ship and every metric in this renderer to
    * re-tune, and it would not make today's report correct any sooner.
    */
-  const drawText = doc.text.bind(doc) as (
-    text: string,
-    ...rest: unknown[]
-  ) => PDFKit.PDFDocument;
+  const drawText = doc.text.bind(doc) as (text: string, ...rest: unknown[]) => PDFKit.PDFDocument;
   (doc as { text: unknown }).text = (text: unknown, ...rest: unknown[]) =>
     // pdfkit accepts a number here too (it stringifies), so this coerces the
     // same way rather than refusing what the library allows.
@@ -2298,8 +2295,7 @@ export function runningHeadings(
         firstOnPage = landmark.label;
         // No `y` means the landmark begins its own page (the contents, the
         // summary), so it is at the top by construction.
-        firstStartsAtTop =
-          landmark.y === undefined || landmark.y <= topMargin + RUNNING_HEAD_TOP_SLACK;
+        firstStartsAtTop = landmark.y === undefined || landmark.y <= topMargin + RUNNING_HEAD_TOP_SLACK;
       }
       // The last one still becomes what later pages carry, since it is the
       // section actually running when the page ends.

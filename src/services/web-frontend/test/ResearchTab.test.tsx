@@ -173,9 +173,7 @@ describe('ResearchTab', () => {
   });
 
   it('surfaces a refused run rather than failing silently', async () => {
-    mockApi(() =>
-      jsonResponse({ status: 422, detail: 'Set the industry on the Company tab first.' }, 422),
-    );
+    mockApi(() => jsonResponse({ status: 422, detail: 'Set the industry on the Company tab first.' }, 422));
     renderTab();
     await screen.findByText('The sector consolidated through 2025.');
     const card = screen.getByRole('heading', { name: 'Industry overview' }).closest('section')!;

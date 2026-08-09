@@ -96,7 +96,10 @@ export function requiredReturnBands(override?: unknown): readonly RequiredReturn
     if (typeof category !== 'string' || category.trim() === '') {
       throw new Error(`required_return_table[${i}].category is required`);
     }
-    for (const [key, v] of [['low', low], ['high', high]] as const) {
+    for (const [key, v] of [
+      ['low', low],
+      ['high', high],
+    ] as const) {
       if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v >= 5) {
         throw new Error(`required_return_table[${i}].${key} must be a fraction in (0, 5)`);
       }

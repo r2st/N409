@@ -59,11 +59,7 @@ export const ParamsPatchBody = z
      * see `validateDlomMethods`.
      */
     dlom_methods: z
-      .array(
-        z
-          .object({ method: z.enum(DLOM_METHODS), weight: Fraction })
-          .strict(),
-      )
+      .array(z.object({ method: z.enum(DLOM_METHODS), weight: Fraction }).strict())
       .min(2)
       .max(DLOM_METHODS.length)
       .nullable(),
@@ -164,7 +160,8 @@ export function validateDlomMethods(
   current: Record<string, unknown>,
   patch: ParamsPatch,
 ): { ok: true } | { ok: false; detail: string } {
-  const blend = 'dlom_methods' in patch ? patch.dlom_methods : (current.dlom_methods as ParamsPatch['dlom_methods']);
+  const blend =
+    'dlom_methods' in patch ? patch.dlom_methods : (current.dlom_methods as ParamsPatch['dlom_methods']);
   if (blend === null || blend === undefined) return { ok: true };
 
   const method = 'dlom_method' in patch ? patch.dlom_method : current.dlom_method;

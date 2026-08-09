@@ -90,9 +90,7 @@ describe('dlom_study_table', () => {
   it('accepts the optional period and statistic fields', () => {
     expect(
       ok({
-        dlom_study_table: [
-          { ...row, period_start: 2018, period_end: 2024, statistic: 'median' },
-        ],
+        dlom_study_table: [{ ...row, period_start: 2018, period_end: 2024, statistic: 'median' }],
       }).success,
     ).toBe(true);
   });
@@ -177,9 +175,7 @@ describe('dlom_methods', () => {
   });
 
   it('rejects a method the engine cannot dispatch on', () => {
-    expect(
-      ok({ dlom_methods: [{ method: 'black_scholes', weight: 0.5 }, BLEND[1]] }).success,
-    ).toBe(false);
+    expect(ok({ dlom_methods: [{ method: 'black_scholes', weight: 0.5 }, BLEND[1]] }).success).toBe(false);
   });
 
   it('rejects a weight outside [0, 1]', () => {
@@ -189,9 +185,7 @@ describe('dlom_methods', () => {
 
   it('rejects a leg missing its weight, or carrying anything extra', () => {
     expect(ok({ dlom_methods: [{ method: 'finnerty' }, BLEND[1]] }).success).toBe(false);
-    expect(
-      ok({ dlom_methods: [{ ...BLEND[0], note: 'because' }, BLEND[1]] }).success,
-    ).toBe(false);
+    expect(ok({ dlom_methods: [{ ...BLEND[0], note: 'because' }, BLEND[1]] }).success).toBe(false);
   });
 });
 
@@ -261,10 +255,8 @@ describe('validateDlomMethods', () => {
 
   it('allows a blend that clears the single method in the same patch', () => {
     expect(
-      validateDlomMethods(
-        { ...EMPTY, dlom_method: 'chaffee' },
-        { dlom_method: null, dlom_methods: BLEND },
-      ).ok,
+      validateDlomMethods({ ...EMPTY, dlom_method: 'chaffee' }, { dlom_method: null, dlom_methods: BLEND })
+        .ok,
     ).toBe(true);
   });
 
@@ -286,12 +278,8 @@ describe('validateDlomMethods', () => {
     ];
     expect(validateDlomMethods(EMPTY, { dlom_methods: blend }).ok).toBe(false);
     // Supplied in the same patch, or already on the row — either is enough.
-    expect(
-      validateDlomMethods(EMPTY, { dlom_methods: blend, dlom_qualitative: 0.2 }).ok,
-    ).toBe(true);
-    expect(
-      validateDlomMethods({ ...EMPTY, dlom_qualitative: 0.2 }, { dlom_methods: blend }).ok,
-    ).toBe(true);
+    expect(validateDlomMethods(EMPTY, { dlom_methods: blend, dlom_qualitative: 0.2 }).ok).toBe(true);
+    expect(validateDlomMethods({ ...EMPTY, dlom_qualitative: 0.2 }, { dlom_methods: blend }).ok).toBe(true);
   });
 
   it('accepts a nil-weighted method', () => {

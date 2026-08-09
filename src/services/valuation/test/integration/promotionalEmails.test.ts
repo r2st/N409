@@ -23,7 +23,11 @@ describe.skipIf(!dbUp)('promotional auto emails', () => {
   let client: Awaited<ReturnType<typeof seedUser>>;
 
   const scan = () =>
-    runDueAutoEmails({ pool, publicBaseUrl: 'https://app.example.com', now: new Date('2100-01-01T00:00:00Z') });
+    runDueAutoEmails({
+      pool,
+      publicBaseUrl: 'https://app.example.com',
+      now: new Date('2100-01-01T00:00:00Z'),
+    });
 
   const outbox = async (templateKey: string) => {
     const { rows } = await pool.query<{ body: string; to_email: string }>(
@@ -54,7 +58,10 @@ describe.skipIf(!dbUp)('promotional auto emails', () => {
     expect(res.statusCode).toBe(200);
     const campaigns = res.json().auto_emails as Array<{ template_key: string; promotional: boolean }>;
 
-    const promotional = campaigns.filter((c) => c.promotional).map((c) => c.template_key).sort();
+    const promotional = campaigns
+      .filter((c) => c.promotional)
+      .map((c) => c.template_key)
+      .sort();
     expect(promotional).toEqual(
       [
         'cancelled_followup',

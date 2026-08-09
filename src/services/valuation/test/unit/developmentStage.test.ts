@@ -83,8 +83,9 @@ describe('the suggestion', () => {
     // projection is a plan, and nothing in the payload distinguishes a company
     // that has been profitable for three years from one that expects to be.
     for (const flows of [[5_000_000], [1, 2, 3], [10_000_000, 20_000_000]]) {
-      expect(suggestDevelopmentStage({ revenueStatus: 'post_revenue', freeCashFlows: flows }).stage)
-        .not.toBe(6);
+      expect(suggestDevelopmentStage({ revenueStatus: 'post_revenue', freeCashFlows: flows }).stage).not.toBe(
+        6,
+      );
     }
   });
 

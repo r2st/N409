@@ -40,9 +40,7 @@ function day(value: Date | string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 }
 
-export function researchSourcesExhibit(
-  rows: readonly MarketResearchRow[],
-): ReportPdfSection | null {
+export function researchSourcesExhibit(rows: readonly MarketResearchRow[]): ReportPdfSection | null {
   const grounded = rows.filter(
     (r) => Array.isArray(r.citations) && r.citations.length > 0 && r.synthesized !== false,
   );

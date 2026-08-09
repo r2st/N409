@@ -65,7 +65,10 @@ const mockDetail = (over: Partial<CalculationDetail> = {}) =>
 
 const renderInspector = () =>
   render(
-    <CalculationInspector valuationId="01VAL000000000000000000001" calculationId="01CALC00000000000000000001" />,
+    <CalculationInspector
+      valuationId="01VAL000000000000000000001"
+      calculationId="01CALC00000000000000000001"
+    />,
   );
 
 /**

@@ -758,10 +758,7 @@ export function allocationExhibit(
   if (seed !== null) simulation.push(['Random seed', String(Math.round(seed))]);
   const stdErr = num(allocation.standard_error_per_share);
   if (stdErr !== null) {
-    simulation.push([
-      'Standard error of the simulated value per share',
-      formatCurrency(stdErr, currency, 6),
-    ]);
+    simulation.push(['Standard error of the simulated value per share', formatCurrency(stdErr, currency, 6)]);
   }
 
   return section('Exhibit F — Allocation of Equity Value', [
@@ -775,9 +772,7 @@ export function allocationExhibit(
     ),
     inputRows.length > 0 ? table({ head: ['Allocation input', 'Value'], rows: inputRows }) : null,
     aggregate.length > 0 ? table({ head: ['Component', 'Value'], rows: aggregate }) : null,
-    simulation.length > 0
-      ? table({ head: ['Simulation parameter', 'Value'], rows: simulation })
-      : null,
+    simulation.length > 0 ? table({ head: ['Simulation parameter', 'Value'], rows: simulation }) : null,
     schedule,
     byClass,
   ]);
@@ -968,13 +963,7 @@ function classValueBlock(
         'rights is not in that position.',
     ),
     table({
-      head: [
-        'Class',
-        'Type',
-        'Shares',
-        'Value per share — marketable',
-        'Value per share — non-marketable',
-      ],
+      head: ['Class', 'Type', 'Shares', 'Value per share — marketable', 'Value per share — non-marketable'],
       rows,
     }),
   ];
@@ -1477,19 +1466,45 @@ export function waccExhibit(
   const dec = (v: unknown, dp = 4) => (num(v) === null ? '—' : (num(v) as number).toFixed(dp));
 
   const equity: string[][] = [
-    ['Risk-free rate', pct(capm.risk_free_rate), 'Treasury yield at the valuation date, matched to the forecast horizon'],
-    ['Equity risk premium', pct(capm.equity_risk_premium), 'Expected return on equities over the risk-free rate'],
-    ['Unlevered beta', dec(capm.beta_unlevered), 'Median of the guideline set, stripped of their capital structures'],
+    [
+      'Risk-free rate',
+      pct(capm.risk_free_rate),
+      'Treasury yield at the valuation date, matched to the forecast horizon',
+    ],
+    [
+      'Equity risk premium',
+      pct(capm.equity_risk_premium),
+      'Expected return on equities over the risk-free rate',
+    ],
+    [
+      'Unlevered beta',
+      dec(capm.beta_unlevered),
+      'Median of the guideline set, stripped of their capital structures',
+    ],
     ['Relevered beta', dec(capm.beta_relevered), 'Re-levered to the subject’s target debt-to-equity'],
-    ['Size premium', pct(capm.size_premium), text(capm.size_tier) ? `Size tier: ${esc(text(capm.size_tier) as string)}` : 'Excess return of small capitalisations'],
-    ['Company-specific risk premium', pct(capm.company_specific_premium), 'Risk of this company not captured by beta or size'],
+    [
+      'Size premium',
+      pct(capm.size_premium),
+      text(capm.size_tier)
+        ? `Size tier: ${esc(text(capm.size_tier) as string)}`
+        : 'Excess return of small capitalisations',
+    ],
+    [
+      'Company-specific risk premium',
+      pct(capm.company_specific_premium),
+      'Risk of this company not captured by beta or size',
+    ],
   ];
 
   const blend: string[][] = [
     ['Cost of equity', pct(wacc.cost_of_equity), 'Modified CAPM — the build-up above'],
     ['Cost of debt (pre-tax)', pct(wacc.cost_of_debt), ''],
     ['Cost of debt (after tax)', pct(wacc.after_tax_cost_of_debt), `Tax rate ${pct(wacc.tax_rate, 1)}`],
-    ['Weight — equity', pct(weights.equity, 1), `Target debt-to-equity ${dec(wacc.target_debt_to_equity, 2)}`],
+    [
+      'Weight — equity',
+      pct(weights.equity, 1),
+      `Target debt-to-equity ${dec(wacc.target_debt_to_equity, 2)}`,
+    ],
     ['Weight — debt', pct(weights.debt, 1), ''],
   ];
 

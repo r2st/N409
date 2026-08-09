@@ -100,8 +100,7 @@ describe.skipIf(!dbUp)('named listing buckets', () => {
 
   it('counts the state buckets to exactly All', async () => {
     const c = await counts();
-    const stateBuckets =
-      c.incomplete + c.unverified + c.in_progress + c.drafted + c.published + c.ignored;
+    const stateBuckets = c.incomplete + c.unverified + c.in_progress + c.drafted + c.published + c.ignored;
     expect(stateBuckets).toBe(c.all);
   });
 

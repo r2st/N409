@@ -123,9 +123,7 @@ function unwrittenSections(
 ): Set<string> {
   if (baseline) {
     const skeleton = new Map(baseline.sections.map((s) => [s.key, s.html]));
-    return new Set(
-      content.sections.filter((s) => skeleton.get(s.key) === s.html).map((s) => s.key),
-    );
+    return new Set(content.sections.filter((s) => skeleton.get(s.key) === s.html).map((s) => s.key));
   }
   return new Set(findReportPlaceholders(content, figures).map((p) => p.key));
 }
@@ -152,10 +150,7 @@ export function paragraphsToHtml(body: string): string {
 }
 
 function escapeText(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**

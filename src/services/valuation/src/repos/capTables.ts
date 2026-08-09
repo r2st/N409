@@ -38,10 +38,9 @@ export async function findCapTablesByValuationIds(
   valuationIds: string[],
 ): Promise<Map<string, CapTableRow>> {
   if (valuationIds.length === 0) return new Map();
-  const { rows } = await pool.query<CapTableRow>(
-    'SELECT * FROM cap_tables WHERE valuation_id = ANY($1)',
-    [[...new Set(valuationIds)]],
-  );
+  const { rows } = await pool.query<CapTableRow>('SELECT * FROM cap_tables WHERE valuation_id = ANY($1)', [
+    [...new Set(valuationIds)],
+  ]);
   return new Map(rows.map((row) => [row.valuation_id, row]));
 }
 

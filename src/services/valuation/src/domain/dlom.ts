@@ -39,16 +39,12 @@ interface DlomLegLike {
  * engine's pre-flight and the engine itself each reject it with a message about
  * the leg. Here it simply does not select a model.
  */
-export function selectsModelDlom(params: {
-  dlom_method?: unknown;
-  dlom_methods?: unknown;
-}): boolean {
+export function selectsModelDlom(params: { dlom_method?: unknown; dlom_methods?: unknown }): boolean {
   if (isModelDlomMethod(params.dlom_method)) return true;
   const blend = params.dlom_methods;
   if (!Array.isArray(blend)) return false;
   return blend.some(
-    (leg: DlomLegLike) =>
-      leg !== null && typeof leg === 'object' && isModelDlomMethod(leg.method),
+    (leg: DlomLegLike) => leg !== null && typeof leg === 'object' && isModelDlomMethod(leg.method),
   );
 }
 

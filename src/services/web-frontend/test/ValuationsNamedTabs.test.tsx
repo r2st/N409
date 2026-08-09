@@ -116,9 +116,7 @@ describe('ValuationsPage named tabs', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: /Unverified/ }));
     await waitFor(() =>
-      expect(calls.some((c) => c.includes('/valuations?') && c.includes('bucket=unverified'))).toBe(
-        true,
-      ),
+      expect(calls.some((c) => c.includes('/valuations?') && c.includes('bucket=unverified'))).toBe(true),
     );
   });
 

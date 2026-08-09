@@ -25,49 +25,45 @@ import { requirePrincipal } from '../plugins/auth.js';
  * most, and making it ops-only just moves the question into email.
  */
 export function registerDataCompletenessRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
-  app.get(
-    '/api/v1/valuations/:id/completeness',
-    { preHandler: app.authenticate },
-    async (req) => {
-      const principal: Principal = requirePrincipal(req);
-      const { id } = req.params as { id: string };
-      if (!isUlid(id)) throw problems.notFound();
+  app.get('/api/v1/valuations/:id/completeness', { preHandler: app.authenticate }, async (req) => {
+    const principal: Principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
 
-      const valuation = await findValuationById(deps.pool, id);
-      if (!valuation) throw problems.notFound();
-      const readable = canReadValuation(principal, {
-        userId: valuation.user_id,
-        partnerId: valuation.partner_id,
-      });
-      // 404 rather than 403: whether a valuation exists is itself scoped.
-      if (!readable) throw problems.notFound();
+    const valuation = await findValuationById(deps.pool, id);
+    if (!valuation) throw problems.notFound();
+    const readable = canReadValuation(principal, {
+      userId: valuation.user_id,
+      partnerId: valuation.partner_id,
+    });
+    // 404 rather than 403: whether a valuation exists is itself scoped.
+    if (!readable) throw problems.notFound();
 
-      const [params, questionnaire, capTable, documents] = await Promise.all([
-        findParams(deps.pool, valuation.id),
-        findQuestionnaire(deps.pool, valuation.id),
-        findCapTable(deps.pool, valuation.id),
-        listDocuments(deps.pool, valuation.id),
-      ]);
+    const [params, questionnaire, capTable, documents] = await Promise.all([
+      findParams(deps.pool, valuation.id),
+      findQuestionnaire(deps.pool, valuation.id),
+      findCapTable(deps.pool, valuation.id),
+      listDocuments(deps.pool, valuation.id),
+    ]);
 
-      // `engine_inputs` is the extracted-financials blob merged onto the params
-      // row (repos/params.ts). It is the same object the engine payload is
-      // assembled from, so scoring against it asks the question the engine will
-      // ask rather than one adjacent to it.
-      const engineInputs =
-        params && typeof params.engine_inputs === 'object' && params.engine_inputs !== null
-          ? (params.engine_inputs as Record<string, unknown>)
-          : {};
+    // `engine_inputs` is the extracted-financials blob merged onto the params
+    // row (repos/params.ts). It is the same object the engine payload is
+    // assembled from, so scoring against it asks the question the engine will
+    // ask rather than one adjacent to it.
+    const engineInputs =
+      params && typeof params.engine_inputs === 'object' && params.engine_inputs !== null
+        ? (params.engine_inputs as Record<string, unknown>)
+        : {};
 
-      const report = scoreCompleteness({
-        kind: valuation.kind,
-        answers: questionnaire?.answers ?? {},
-        documents: documents.map((d) => ({ category: d.category })),
-        engineInputs,
-        params: params ?? {},
-        shareClasses: capTable?.entries ?? [],
-      });
+    const report = scoreCompleteness({
+      kind: valuation.kind,
+      answers: questionnaire?.answers ?? {},
+      documents: documents.map((d) => ({ category: d.category })),
+      engineInputs,
+      params: params ?? {},
+      shareClasses: capTable?.entries ?? [],
+    });
 
-      return { completeness: report };
-    },
-  );
+    return { completeness: report };
+  });
 }

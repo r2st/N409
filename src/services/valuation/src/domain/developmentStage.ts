@@ -121,8 +121,7 @@ export function suggestDevelopmentStage(args: {
     .filter((v) => Number.isFinite(v));
   const firstFlow = flows[0];
   const revenue = typeof args.revenueLtm === 'number' ? args.revenueLtm : null;
-  const hasRevenue =
-    args.revenueStatus === 'post_revenue' || (revenue !== null && revenue > 0);
+  const hasRevenue = args.revenueStatus === 'post_revenue' || (revenue !== null && revenue > 0);
 
   if (!hasRevenue) {
     if (args.revenueStatus === 'pre_revenue') {

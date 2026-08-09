@@ -72,7 +72,14 @@ const PPA_RESPONSE = {
   history: [],
 };
 
-const UNSUPPORTED = { kind: '409a', supported: false, engine: null, calculation: null, result: null, history: [] };
+const UNSUPPORTED = {
+  kind: '409a',
+  supported: false,
+  engine: null,
+  calculation: null,
+  result: null,
+  history: [],
+};
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -170,9 +177,7 @@ describe('SpecialtyTab', () => {
       target: { value: '{"intangibles":[{"name":"Tech","method":"relief_from_royalty"}]}' },
     });
     await userEvent.click(screen.getByRole('button', { name: /run purchase price allocation/i }));
-    await waitFor(() =>
-      expect(body).toMatchObject({ inputs: { intangibles: [{ name: 'Tech' }] } }),
-    );
+    await waitFor(() => expect(body).toMatchObject({ inputs: { intangibles: [{ name: 'Tech' }] } }));
   });
 
   it('lists failed runs with the engine’s reason', async () => {

@@ -428,14 +428,10 @@ describe('the concluded stage of enterprise development', () => {
     // Never inferred: a report with no stage on it is a report where the
     // analyst has not said which one applies, and printing a guess would be
     // the platform asserting a judgement on their behalf.
-    expect(
-      summaryWith(null)!.figures.some((f) => f.label === 'Stage of enterprise development'),
-    ).toBe(false);
+    expect(summaryWith(null)!.figures.some((f) => f.label === 'Stage of enterprise development')).toBe(false);
   });
 
   it('ignores a stage outside the scale', () => {
-    expect(
-      summaryWith(9)!.figures.some((f) => f.label === 'Stage of enterprise development'),
-    ).toBe(false);
+    expect(summaryWith(9)!.figures.some((f) => f.label === 'Stage of enterprise development')).toBe(false);
   });
 });

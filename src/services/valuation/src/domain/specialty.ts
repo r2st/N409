@@ -109,7 +109,8 @@ export const SPECIALTY_ENGINES: Record<SpecialtyKind, SpecialtyEngineDef> = {
     kind: 'esop',
     label: 'ESOP valuation',
     path: '/engine/v1/esop',
-    produces: 'Fair market value per share on the plan’s basis, with the repurchase projection where the plan facts allow one.',
+    produces:
+      'Fair market value per share on the plan’s basis, with the repurchase projection where the plan facts allow one.',
     runInputs: [],
     hmrcForm: null,
   },
@@ -444,15 +445,15 @@ function fairValue820Request(answers: Answers, overrides: Answers): SpecialtyReq
  */
 function giftEstateRequest(answers: Answers, overrides: Answers): SpecialtyRequest {
   const inputs: Record<string, unknown> = {
-    entity_value: require(
-      num(answers, 'entity_value') ?? (num(overrides, 'entity_value') as number | null),
-      'A gift & estate valuation needs the entity value — answer it in the questionnaire or ' +
-        'pass `entity_value` in the run inputs.',
-    ),
-    percent_interest: require(
-      num(answers, 'percent_interest'),
-      'Answer the percentage-interest question first.',
-    ),
+    entity_value: require(num(answers, 'entity_value') ??
+      (num(overrides, 'entity_value') as
+        | number
+        | null), 'A gift & estate valuation needs the entity value — answer it in the questionnaire or ' +
+      'pass `entity_value` in the run inputs.'),
+    percent_interest: require(num(
+      answers,
+      'percent_interest',
+    ), 'Answer the percentage-interest question first.'),
     transfer_type: str(answers, 'transfer_type') ?? 'gift',
   };
   put(inputs, 'transfer_date', str(answers, 'transfer_date'));
@@ -472,10 +473,7 @@ function ifrs2Request(answers: Answers, overrides: Answers): SpecialtyRequest {
   const inputs: Record<string, unknown> = {
     settlement: str(answers, 'settlement') ?? 'equity_settled',
     vesting_condition: str(answers, 'vesting_condition') ?? 'service',
-    exercise_price: require(
-      num(answers, 'exercise_price'),
-      'Answer the exercise-price question first.',
-    ),
+    exercise_price: require(num(answers, 'exercise_price'), 'Answer the exercise-price question first.'),
   };
   put(inputs, 'grant_date', str(answers, 'grant_date'));
   put(inputs, 'vesting_years', num(answers, 'vesting_years'));

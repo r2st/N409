@@ -256,7 +256,9 @@ export function researchQuestion(topic: ResearchTopic, facts: PublicResearchFact
     }
 
     case 'competitor_analysis': {
-      const set = facts.comparableSet ? ` The analyst’s guideline set is named “${facts.comparableSet}”.` : '';
+      const set = facts.comparableSet
+        ? ` The analyst’s guideline set is named “${facts.comparableSet}”.`
+        : '';
       return (
         `Which companies compete in the ${needIndustry()} industry? List both listed and ` +
         'private participants. For each give the name, a stock ticker where it is listed, ' +
@@ -382,7 +384,13 @@ export function narrativeResearchPayload(
     synthesized?: boolean;
     created_at: Date | string;
   }>,
-): Array<{ topic: string; region: string | null; answer: string; citations: unknown; retrieved_at: string }> | null {
+): Array<{
+  topic: string;
+  region: string | null;
+  answer: string;
+  citations: unknown;
+  retrieved_at: string;
+}> | null {
   const grounded = rows.filter(
     (r) => Array.isArray(r.citations) && r.citations.length > 0 && r.synthesized !== false,
   );

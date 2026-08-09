@@ -146,10 +146,9 @@ export function AdminDataRemediationPage() {
     <div>
       <h1 className="font-display text-3xl font-semibold text-ink-900">Data remediation</h1>
       <p className="mt-2 max-w-3xl text-sm text-ink-500">
-        Stored results computed before an engine or a check changed. Unpublished engagements can be
-        re-run here. Published ones are listed and never re-run automatically — a published opinion
-        is a signed document, and correcting it is a decision to record against the engagement, not
-        a sweep.
+        Stored results computed before an engine or a check changed. Unpublished engagements can be re-run
+        here. Published ones are listed and never re-run automatically — a published opinion is a signed
+        document, and correcting it is a decision to record against the engagement, not a sweep.
       </p>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -167,16 +166,15 @@ export function AdminDataRemediationPage() {
 
         {rerunnable.length > 0 && (
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button
-              onClick={() => void rerun()}
-              disabled={busy || selected.size === 0 || overLimit}
-            >
+            <Button onClick={() => void rerun()} disabled={busy || selected.size === 0 || overLimit}>
               {busy
                 ? 'Re-running…'
                 : `Re-run ${selected.size} selected engagement${selected.size === 1 ? '' : 's'}`}
             </Button>
             <button
-              onClick={() => setSelected(new Set(rerunnable.slice(0, data.max_rerun).map((r) => r.valuation_id)))}
+              onClick={() =>
+                setSelected(new Set(rerunnable.slice(0, data.max_rerun).map((r) => r.valuation_id)))
+              }
               className="cursor-pointer text-sm font-semibold text-bond-600 hover:text-bond-700"
             >
               Select all re-runnable
@@ -308,9 +306,7 @@ export function AdminDataRemediationPage() {
                       {pct(row.applied_dlom)}
                     </td>
                     <td className="py-2 pr-4 text-ink-600">{row.review_status}</td>
-                    <td className="tnum py-2 pr-4 text-xs text-ink-400">
-                      {formatDateTime(row.reviewed_at)}
-                    </td>
+                    <td className="tnum py-2 pr-4 text-xs text-ink-400">{formatDateTime(row.reviewed_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -318,9 +314,9 @@ export function AdminDataRemediationPage() {
           </div>
         )}
         <p className="mt-3 max-w-3xl text-xs text-ink-400">
-          Re-running the QA checks on an unpublished engagement clears its row. A published one needs
-          the discount re-examined and the outcome recorded on the engagement’s decision log — the
-          gate cannot be re-opened retrospectively.
+          Re-running the QA checks on an unpublished engagement clears its row. A published one needs the
+          discount re-examined and the outcome recorded on the engagement’s decision log — the gate cannot be
+          re-opened retrospectively.
         </p>
       </section>
     </div>

@@ -68,8 +68,7 @@ export function resolveNarrativeSections(
   }
 
   winners.sort(
-    (a, b) =>
-      a.row.sort_order - b.row.sort_order || a.row.section_key.localeCompare(b.row.section_key),
+    (a, b) => a.row.sort_order - b.row.sort_order || a.row.section_key.localeCompare(b.row.section_key),
   );
   return winners.map(({ row, overridden }) => ({
     key: row.section_key,

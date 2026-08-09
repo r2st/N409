@@ -126,9 +126,7 @@ describe('CompletenessTab', () => {
       jsonResponse({ completeness: { ...BLOCKED, score: 95 } }),
     );
     renderTab();
-    await waitFor(() =>
-      expect(screen.getByTestId('completeness-banner')).toHaveTextContent(/not ready/i),
-    );
+    await waitFor(() => expect(screen.getByTestId('completeness-banner')).toHaveTextContent(/not ready/i));
     expect(screen.getByTestId('completeness-score')).toHaveTextContent('95%');
   });
 
@@ -139,9 +137,7 @@ describe('CompletenessTab', () => {
   });
 
   it('refetches on refresh', async () => {
-    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ completeness: BLOCKED }),
-    );
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ completeness: BLOCKED }));
     renderTab();
     await screen.findByTestId('completeness-score');
     const before = spy.mock.calls.length;
@@ -150,9 +146,7 @@ describe('CompletenessTab', () => {
   });
 
   it('surfaces a load failure', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ title: 'Not found' }, 404),
-    );
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ title: 'Not found' }, 404));
     renderTab();
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
   });

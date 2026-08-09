@@ -188,8 +188,7 @@ export function SpecialtyTab() {
   if (!data.supported || !data.engine) {
     return (
       <EmptyState title="No specialty engine for this report type">
-        A {data.kind} engagement runs through the standard calculation pipeline. Use the Calculations
-        tab.
+        A {data.kind} engagement runs through the standard calculation pipeline. Use the Calculations tab.
       </EmptyState>
     );
   }
@@ -221,9 +220,8 @@ export function SpecialtyTab() {
             </Field>
             <p className="mt-1.5 text-xs text-ink-400">
               {engine.runInputs.map((i) => i.label).join(' and ')}{' '}
-              {engine.runInputs.length === 1 ? 'is' : 'are'} analyst work product — the questionnaire
-              does not collect{' '}
-              {engine.runInputs.length === 1 ? 'it' : 'them'}, and the engine refuses without{' '}
+              {engine.runInputs.length === 1 ? 'is' : 'are'} analyst work product — the questionnaire does not
+              collect {engine.runInputs.length === 1 ? 'it' : 'them'}, and the engine refuses without{' '}
               {engine.runInputs.length === 1 ? 'it' : 'them'}.
             </p>
           </div>

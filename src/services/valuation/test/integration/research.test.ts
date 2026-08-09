@@ -204,30 +204,29 @@ describe.skipIf(!dbUp)('market research', () => {
 
   it('supersedes the prior row for the same topic rather than overwriting it', async () => {
     await run({ topic: 'competitor_analysis' });
-    const first = (await list()).json().research.find((r: { topic: string }) => r.topic === 'competitor_analysis');
+    const first = (await list())
+      .json()
+      .research.find((r: { topic: string }) => r.topic === 'competitor_analysis');
     await run({ topic: 'competitor_analysis' });
 
-    const live = (await list()).json().research.filter(
-      (r: { topic: string }) => r.topic === 'competitor_analysis',
-    );
+    const live = (await list())
+      .json()
+      .research.filter((r: { topic: string }) => r.topic === 'competitor_analysis');
     expect(live).toHaveLength(1);
     expect(live[0].id).not.toBe(first.id);
 
     // The old answer is still there, marked, because a report drafted from it
     // cites it and rewriting the answer under the citation would be a lie.
-    const { rows } = await pool.query(
-      'SELECT superseded_at FROM market_research WHERE id = $1',
-      [first.id],
-    );
+    const { rows } = await pool.query('SELECT superseded_at FROM market_research WHERE id = $1', [first.id]);
     expect(rows[0].superseded_at).not.toBeNull();
   });
 
   it('keeps region-scoped topics separate per market', async () => {
     await run({ topic: 'market_conditions', region: 'us' });
     await run({ topic: 'market_conditions', region: 'uk' });
-    const live = (await list()).json().research.filter(
-      (r: { topic: string }) => r.topic === 'market_conditions',
-    );
+    const live = (await list())
+      .json()
+      .research.filter((r: { topic: string }) => r.topic === 'market_conditions');
     expect(live.map((r: { region: string }) => r.region).sort()).toEqual(['uk', 'us']);
   });
 

@@ -288,14 +288,11 @@ export function ReportTab() {
                   </div>
                   {isHidden && (
                     <p className="mb-3 text-xs font-medium text-ink-500">
-                      Omitted from the rendered report. The text below is kept and will come back if
-                      you include the chapter again.
+                      Omitted from the rendered report. The text below is kept and will come back if you
+                      include the chapter again.
                     </p>
                   )}
-                  <RichTextEditor
-                    value={section.html}
-                    onChange={(html) => updateSection(index, { html })}
-                  />
+                  <RichTextEditor value={section.html} onChange={(html) => updateSection(index, { html })} />
                 </>
               ) : (
                 <>

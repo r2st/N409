@@ -178,9 +178,7 @@ function SectionCard({
             off
           </span>
         )}
-        <span className="tnum ml-auto text-xs text-ink-400">
-          Updated {formatDateTime(prompt.updated_at)}
-        </span>
+        <span className="tnum ml-auto text-xs text-ink-400">Updated {formatDateTime(prompt.updated_at)}</span>
       </div>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-3">
@@ -190,11 +188,7 @@ function SectionCard({
           </Field>
         </div>
         <Field label="Sort order" hint="Sparse — leave gaps so a section can be inserted between two.">
-          <TextInput
-            value={sortOrder}
-            onChange={(e) => setSortOrder(e.target.value)}
-            inputMode="numeric"
-          />
+          <TextInput value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} inputMode="numeric" />
         </Field>
       </div>
 
@@ -383,17 +377,15 @@ export function AdminNarrativePromptsPage() {
   // whole assembled list, not just the rows they can edit here.
   const inheritedCount = isBase
     ? 0
-    : prompts.filter(
-        (p) => p.kind === null && !rows.some((r) => r.section_key === p.section_key),
-      ).length;
+    : prompts.filter((p) => p.kind === null && !rows.some((r) => r.section_key === p.section_key)).length;
 
   return (
     <div>
       <h1 className="font-display text-3xl font-semibold text-ink-900">Narrative prompt library</h1>
       <p className="mt-2 max-w-2xl text-sm text-ink-500">
-        What each report section must cover, per report type. The base library applies to any
-        deliverable; a report type’s row with the same key replaces it. Changes apply to the next
-        drafted narrative — no deploy needed.
+        What each report section must cover, per report type. The base library applies to any deliverable; a
+        report type’s row with the same key replaces it. Changes apply to the next drafted narrative — no
+        deploy needed.
       </p>
 
       <div className="mt-6 flex flex-wrap items-end gap-4">
@@ -405,7 +397,9 @@ export function AdminNarrativePromptsPage() {
               return (
                 <option key={k} value={k}>
                   {KIND_LABELS[k] ?? k}
-                  {overrides > 0 ? ` — ${overrides} override${overrides === 1 ? '' : 's'}` : ' — no overrides'}
+                  {overrides > 0
+                    ? ` — ${overrides} override${overrides === 1 ? '' : 's'}`
+                    : ' — no overrides'}
                 </option>
               );
             })}
@@ -428,9 +422,9 @@ export function AdminNarrativePromptsPage() {
         {rows.length === 0 ? (
           <EmptyState title="No overrides for this report type">
             This deliverable is drafted entirely from the base library
-            {inheritedCount > 0 ? ` — all ${inheritedCount} sections` : ''}. Add an override by
-            editing the base section and saving it under this kind, or leave it as is: a report type
-            with nothing to say differently should say the same thing.
+            {inheritedCount > 0 ? ` — all ${inheritedCount} sections` : ''}. Add an override by editing the
+            base section and saving it under this kind, or leave it as is: a report type with nothing to say
+            differently should say the same thing.
           </EmptyState>
         ) : (
           rows.map((p) => (
@@ -447,8 +441,8 @@ export function AdminNarrativePromptsPage() {
 
       {!isBase && inheritedCount > 0 && (
         <p className="mt-6 text-sm text-ink-400">
-          Plus {inheritedCount} section{inheritedCount === 1 ? '' : 's'} inherited unchanged from the
-          base library. Switch to the base library to edit them for every report type.
+          Plus {inheritedCount} section{inheritedCount === 1 ? '' : 's'} inherited unchanged from the base
+          library. Switch to the base library to edit them for every report type.
         </p>
       )}
     </div>

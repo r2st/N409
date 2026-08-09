@@ -490,10 +490,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       };
       const body = {
         title: content.title,
-        sections: [
-          { key: 'introduction', heading: 'Introduction', html: '<p>Finished prose.</p>' },
-          asc718,
-        ],
+        sections: [{ key: 'introduction', heading: 'Introduction', html: '<p>Finished prose.</p>' }, asc718],
       };
 
       /** The gate's verdict on the report body specifically. */
@@ -505,9 +502,9 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
           payload: {},
         });
         expect(res.statusCode).toBe(201); // a review is a created record
-        return (
-          res.json().review.checks as Array<{ key: string; status: string }>
-        ).find((c) => c.key === 'report_placeholders');
+        return (res.json().review.checks as Array<{ key: string; status: string }>).find(
+          (c) => c.key === 'report_placeholders',
+        );
       };
 
       const put = async (sections: unknown[]) => {
@@ -906,5 +903,4 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       expect((await draft(v.id, client.token)).statusCode).toBe(403);
     });
   });
-
 });

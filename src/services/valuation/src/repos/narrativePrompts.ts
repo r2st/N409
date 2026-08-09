@@ -38,14 +38,10 @@ export async function listNarrativePrompts(pool: pg.Pool): Promise<NarrativeProm
   return rows;
 }
 
-export async function findNarrativePromptById(
-  pool: pg.Pool,
-  id: string,
-): Promise<NarrativePromptRow | null> {
-  const { rows } = await pool.query<NarrativePromptRow>(
-    'SELECT * FROM narrative_prompts WHERE id = $1',
-    [id],
-  );
+export async function findNarrativePromptById(pool: pg.Pool, id: string): Promise<NarrativePromptRow | null> {
+  const { rows } = await pool.query<NarrativePromptRow>('SELECT * FROM narrative_prompts WHERE id = $1', [
+    id,
+  ]);
   return rows[0] ?? null;
 }
 

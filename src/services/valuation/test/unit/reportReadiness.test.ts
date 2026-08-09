@@ -65,11 +65,13 @@ describe('finding unfilled placeholders', () => {
   it('reads prose, not markup', () => {
     // An ellipsis inside an attribute is not a sentence an analyst has to
     // finish, and a marker split by an inline tag still is one.
-    expect(findReportPlaceholders(content([{ key: 'a', heading: 'A', html: '<p title="…">Done.</p>' }]))).toEqual(
-      [],
-    );
     expect(
-      findReportPlaceholders(content([{ key: 'conclusion', heading: 'C', html: '<p>is $ <em>…</em> per share.</p>' }])),
+      findReportPlaceholders(content([{ key: 'a', heading: 'A', html: '<p title="…">Done.</p>' }])),
+    ).toEqual([]);
+    expect(
+      findReportPlaceholders(
+        content([{ key: 'conclusion', heading: 'C', html: '<p>is $ <em>…</em> per share.</p>' }]),
+      ),
     ).toHaveLength(1);
   });
 
@@ -211,9 +213,7 @@ describe('against the real 409A skeleton', () => {
     // otherwise hiding a chapter to clear the gate and unhiding it afterwards
     // would publish the unfilled marker.
     const shown = content([CONCLUSION_UNFILLED]);
-    expect(findReportPlaceholders(shown).some((p) => p.key === 'conclusion' && p.blocking)).toBe(
-      true,
-    );
+    expect(findReportPlaceholders(shown).some((p) => p.key === 'conclusion' && p.blocking)).toBe(true);
   });
 
   it('names a computed marker no calculation resolves', () => {

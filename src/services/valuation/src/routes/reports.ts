@@ -362,10 +362,7 @@ async function renderVersionPdf(
     // Hidden chapters are dropped here, at the render boundary, so a hidden one
     // is genuinely absent rather than blank: the numbering, the contents, the
     // bookmarks and the running heads are all derived from this list.
-    sections: [
-      ...visibleSections(body).map((s) => ({ heading: s.heading, html: s.html })),
-      ...exhibits,
-    ],
+    sections: [...visibleSections(body).map((s) => ({ heading: s.heading, html: s.html })), ...exhibits],
     summary,
     branding: await brandingFor(pool, valuation),
     generated_at: renderedAt,
@@ -569,9 +566,7 @@ export function registerReportRoutes(
     const version = await getVersion(deps.pool, report.id, report.current_version);
     if (!version) throw problems.notFound('No report content to draft into');
     if (DELIVERED_REPORT_STATES.has(valuation.state)) {
-      throw problems.conflict(
-        'This engagement is published — save a new version before drafting into it',
-      );
+      throw problems.conflict('This engagement is published — save a new version before drafting into it');
     }
 
     /*

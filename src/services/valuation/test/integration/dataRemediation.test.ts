@@ -143,10 +143,7 @@ describe.skipIf(!dbUp)('data remediation', () => {
   it('lists the affected backsolves and nothing else', async () => {
     const body = (await queue()).json();
     const rows = body.stale_backsolves.rows as Array<{ company_name: string; published: boolean }>;
-    expect(rows.map((r) => r.company_name).sort()).toEqual([
-      'Stale Published Co',
-      'Stale Unpublished Co',
-    ]);
+    expect(rows.map((r) => r.company_name).sort()).toEqual(['Stale Published Co', 'Stale Unpublished Co']);
     // The zero-pool run and the QA-only engagement are not backsolve defects.
     expect(rows.map((r) => r.company_name)).not.toContain('Clean Co');
     expect(body.stale_backsolves.published).toBe(1);

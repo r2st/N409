@@ -77,8 +77,8 @@ function Citations({ citations }: { citations: Citation[] }) {
   if (citations.length === 0) {
     return (
       <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200 ring-inset">
-        No sources returned. An answer with no citations is an ordinary completion — do not quote it
-        in a report.
+        No sources returned. An answer with no citations is an ordinary completion — do not quote it in a
+        report.
       </p>
     );
   }
@@ -291,8 +291,7 @@ export function ResearchTab() {
     );
 
   const byTopic = new Map(data.research.map((r) => [`${r.topic}:${r.region ?? ''}`, r]));
-  const latestFor = (topic: string): ResearchRow | undefined =>
-    data.research.find((r) => r.topic === topic);
+  const latestFor = (topic: string): ResearchRow | undefined => data.research.find((r) => r.topic === topic);
 
   // Clients see only what was retrieved; running it spends money, so the whole
   // control column is ops-only rather than disabled-and-visible.
@@ -302,10 +301,10 @@ export function ResearchTab() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-2xl text-sm text-ink-500">
-          Web-grounded research from public sources, with citations. Questions are built from the
-          industry and classification code alone — the company name, cap table and financials never
-          reach a search provider. Research retrieved more than {data.stale_days} days before the
-          measurement date is flagged stale.
+          Web-grounded research from public sources, with citations. Questions are built from the industry and
+          classification code alone — the company name, cap table and financials never reach a search
+          provider. Research retrieved more than {data.stale_days} days before the measurement date is flagged
+          stale.
         </p>
         {data.can_run && topics.length > 0 && (
           <Button onClick={() => void refreshAll()} disabled={running !== null}>

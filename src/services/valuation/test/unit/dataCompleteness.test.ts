@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  scoreCompleteness,
-  type CompletenessSubject,
-} from '../../src/domain/dataCompleteness.js';
+import { scoreCompleteness, type CompletenessSubject } from '../../src/domain/dataCompleteness.js';
 
 /**
  * Missing-data completeness.
@@ -170,9 +167,7 @@ describe('market approach', () => {
 
 describe('income approach', () => {
   it('is silent when unweighted', () => {
-    expect(blocking(subject({ params: { weight_income: 0 } }))).not.toContain(
-      'financials.free_cash_flows',
-    );
+    expect(blocking(subject({ params: { weight_income: 0 } }))).not.toContain('financials.free_cash_flows');
   });
 
   it('flags a weighted approach with no forecast', () => {

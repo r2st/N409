@@ -51,13 +51,7 @@ const CATEGORY_LABELS: Record<GapCategory, string> = {
   questionnaire: 'Questionnaire',
 };
 
-const CATEGORY_ORDER: GapCategory[] = [
-  'parameters',
-  'cap_table',
-  'financials',
-  'documents',
-  'questionnaire',
-];
+const CATEGORY_ORDER: GapCategory[] = ['parameters', 'cap_table', 'financials', 'documents', 'questionnaire'];
 
 function SeverityPill({ severity }: { severity: GapSeverity }) {
   return (
@@ -87,9 +81,7 @@ export function CompletenessTab() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api<{ completeness: CompletenessReport }>(
-        `/valuations/${valuation.id}/completeness`,
-      );
+      const res = await api<{ completeness: CompletenessReport }>(`/valuations/${valuation.id}/completeness`);
       setData(res.completeness);
       setError(null);
     } catch (err) {
@@ -172,8 +164,7 @@ export function CompletenessTab() {
           <section key={category} className="rounded-lg border border-paper-300 bg-surface shadow-card">
             <header className="border-b border-paper-200 px-6 py-3">
               <h3 className="text-sm font-semibold text-ink-900">
-                {CATEGORY_LABELS[category]}{' '}
-                <span className="font-normal text-ink-500">({gaps.length})</span>
+                {CATEGORY_LABELS[category]} <span className="font-normal text-ink-500">({gaps.length})</span>
               </h3>
             </header>
             <ul className="divide-y divide-paper-200">

@@ -731,9 +731,9 @@ function AutoEmailEditor({
         <span>
           Promotional
           <span className="block text-xs text-ink-400">
-            Marketing rather than transactional. Sent only to recipients who have not opted out of
-            marketing, and with an unsubscribe footer. Leave off for anything about the client&rsquo;s
-            own engagement — an opt-out must never silence a status update.
+            Marketing rather than transactional. Sent only to recipients who have not opted out of marketing,
+            and with an unsubscribe footer. Leave off for anything about the client&rsquo;s own engagement —
+            an opt-out must never silence a status update.
           </span>
         </span>
       </label>

@@ -81,9 +81,7 @@ describe('question assembly', () => {
   });
 
   it('industry_finder needs the prose description, not just a code', () => {
-    expect(() => researchQuestion('industry_finder', facts({ industry: null }))).toThrow(
-      ResearchInputError,
-    );
+    expect(() => researchQuestion('industry_finder', facts({ industry: null }))).toThrow(ResearchInputError);
   });
 
   it('company_overview needs an explicit subject', () => {
@@ -132,9 +130,7 @@ describe('confidentiality containment', () => {
 
   it('refuses a guideline-company subject that is the engagement’s own company', () => {
     expect(() => assertSubjectNotClient('Acme Robotics', 'Acme Robotics')).toThrow(ResearchInputError);
-    expect(() => assertSubjectNotClient('acme robotics inc', 'Acme Robotics')).toThrow(
-      ResearchInputError,
-    );
+    expect(() => assertSubjectNotClient('acme robotics inc', 'Acme Robotics')).toThrow(ResearchInputError);
     expect(() => assertSubjectNotClient('ABB Ltd', 'Acme Robotics')).not.toThrow();
   });
 });

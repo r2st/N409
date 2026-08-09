@@ -73,11 +73,7 @@ describe('resolveNarrativeSections', () => {
         sort_order: 30,
       }),
     ];
-    expect(keys(rows, 'qsbs')).toEqual([
-      'executive_summary',
-      'gross_asset_test',
-      'dlom_analysis',
-    ]);
+    expect(keys(rows, 'qsbs')).toEqual(['executive_summary', 'gross_asset_test', 'dlom_analysis']);
   });
 
   it('drops a disabled base section', () => {

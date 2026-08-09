@@ -350,9 +350,10 @@ describe('specialtyHeadline', () => {
   it('reports a total for the three kinds that conclude no per-share figure', () => {
     // None of these values shares; a per-share column filled here would be a
     // number the deliverable never concluded.
-    expect(
-      specialtyHeadline('820', { path: '', body: {} }, { total_fair_value: 7_000_000 }),
-    ).toEqual({ equityValue: 7_000_000, fmvPerShare: null });
+    expect(specialtyHeadline('820', { path: '', body: {} }, { total_fair_value: 7_000_000 })).toEqual({
+      equityValue: 7_000_000,
+      fmvPerShare: null,
+    });
 
     expect(
       specialtyHeadline(
