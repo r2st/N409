@@ -297,3 +297,252 @@ class TestPreFlightAgreesWithTheEngine:
         inputs = {k: v for k, v in BASE_INPUTS.items() if k != "volatility"}
         issues = validate_payload({**BASE_PARAMS, "dlom_method": method}, inputs)
         assert any("volatility" in i.field for i in issues if i.severity == ERROR)
+
+
+def _no_volatility_payload():
+    """A payload whose only possible use for a volatility is the DLOM.
+
+    All the weight on the income approach and a CVM allocation, so neither the
+    backsolve nor a Black-Scholes waterfall needs one. Without that, the run
+    fails on the allocation before it reaches the discount and the test proves
+    nothing about the DLOM guard.
+    """
+    params = {
+        **BASE_PARAMS,
+        "weight_opm": 0.0,
+        "weight_income": 1.0,
+        "allocation_method": "cvm",
+    }
+    inputs = {k: v for k, v in BASE_INPUTS.items() if k != "volatility"}
+    inputs["income"] = {
+        "free_cash_flows": [1_000_000, 1_500_000],
+        "discount_rate": 0.25,
+        "terminal_growth": 0.03,
+    }
+    inputs.pop("liquidation_preference", None)
+    return params, inputs
+
+
+class TestWeightedBlend:
+    """Several methods, weighted into one discount.
+
+    A marketability discount is the one figure in a 409A with no single
+    defensible derivation: the option models price the cost of being unable to
+    sell from the subject's own volatility and holding period, the studies
+    report what the market paid for restricted shares, and the standard
+    appraisal answer is to weight them rather than declare one correct. The
+    engine could only pick one, so an appraiser wanting a 50/50 had to compute
+    it by hand and enter the result as `qualitative` — recording their
+    arithmetic as judgement, and leaving the report unable to say where the
+    number came from.
+    """
+
+    BLEND = [
+        {"method": "finnerty", "weight": 0.5},
+        {"method": "restricted_stock", "weight": 0.5},
+    ]
+
+    def test_the_concluded_discount_is_the_weighted_average(self):
+        res = run(dlom_methods=self.BLEND)
+        d = res["discounts"]
+        legs = {c["method"]: c for c in d["dlom_detail"]["components"]}
+        expected = sum(c["dlom"] * c["weight"] for c in legs.values())
+        assert d["dlom"] == pytest.approx(round(expected, 4), abs=1e-9)
+        assert d["dlom_method"] == "weighted"
+
+    def test_each_leg_agrees_with_a_single_method_run_of_it(self):
+        """The property that makes a blend reviewable: a leg is the same
+        arithmetic the single-method path would have produced, so the two
+        cannot drift. Asserted against `run`, not against a second call to the
+        model, because it is the *dispatch* that could disagree."""
+        blended = {
+            c["method"]: c["dlom"]
+            for c in run(dlom_methods=self.BLEND)["discounts"]["dlom_detail"]["components"]
+        }
+        for method, leg in blended.items():
+            alone = run(dlom_method=method)["discounts"]["dlom"]
+            assert leg == pytest.approx(alone, abs=1e-4), method
+
+    def test_each_leg_keeps_its_own_working(self):
+        # A weighted average is checked by reading the legs, so a component
+        # without its inputs is a number a reviewer has to take on trust.
+        legs = {
+            c["method"]: c for c in run(dlom_methods=self.BLEND)["discounts"]["dlom_detail"]["components"]
+        }
+        assert legs["finnerty"]["detail"]["volatility"] == 0.6
+        assert legs["finnerty"]["detail"]["time_to_liquidity_years"] > 0
+        assert legs["restricted_stock"]["detail"]["studies"]
+        # And the weighted contribution, so the table adds up on the page.
+        assert legs["finnerty"]["weighted"] == pytest.approx(
+            legs["finnerty"]["dlom"] * 0.5, abs=1e-6
+        )
+
+    def test_a_leg_reads_its_own_inputs(self):
+        """A blend is a choice about weighting, not a different set of inputs:
+        a restricted_stock leg still honours the selected study set."""
+        res = run(
+            dlom_methods=self.BLEND,
+            dlom_studies=["Gelman", "Moroney"],
+            dlom_statistic="mean",
+        )
+        leg = next(
+            c for c in res["discounts"]["dlom_detail"]["components"]
+            if c["method"] == "restricted_stock"
+        )
+        assert leg["dlom"] == pytest.approx(restricted_stock_dlom(["Gelman", "Moroney"], statistic="mean")["dlom"], abs=1e-6)
+
+    def test_weights_are_not_normalised(self):
+        """Weights totalling 0.9 are a mistake in somebody's spreadsheet, not
+        an instruction to scale up by a ninth. Rescaling them would conclude on
+        a discount nobody chose — the same rule the approach weights follow."""
+        with pytest.raises(EngineInputError, match="sum to 1"):
+            run(dlom_methods=[
+                {"method": "finnerty", "weight": 0.5},
+                {"method": "restricted_stock", "weight": 0.4},
+            ])
+
+    def test_a_zero_weighted_leg_is_computed_but_contributes_nothing(self):
+        """An appraiser who computed Longstaff to show it as an upper bound and
+        weighted it to nothing is documenting the bound, not concluding on it —
+        so the leg has to appear with its figure and add zero."""
+        res = run(dlom_methods=[
+            {"method": "finnerty", "weight": 1.0},
+            {"method": "longstaff", "weight": 0.0},
+        ])
+        d = res["discounts"]
+        legs = {c["method"]: c for c in d["dlom_detail"]["components"]}
+        assert legs["longstaff"]["dlom"] > 0
+        assert legs["longstaff"]["weighted"] == 0.0
+        assert d["dlom"] == pytest.approx(run(dlom_method="finnerty")["discounts"]["dlom"], abs=1e-4)
+
+    def test_both_forms_together_is_an_error(self):
+        with pytest.raises(EngineInputError, match="not both"):
+            run(dlom_method="finnerty", dlom_methods=self.BLEND)
+
+    def test_a_blend_of_one_is_refused(self):
+        with pytest.raises(EngineInputError, match="at least 2 methods"):
+            run(dlom_methods=[{"method": "finnerty", "weight": 1.0}])
+
+    def test_a_repeated_method_is_refused(self):
+        # Two weights on one number; whichever the engine dropped would be the
+        # one the analyst meant.
+        with pytest.raises(EngineInputError, match="twice"):
+            run(dlom_methods=[
+                {"method": "finnerty", "weight": 0.5},
+                {"method": "finnerty", "weight": 0.5},
+            ])
+
+    @pytest.mark.parametrize("bad", [
+        [{"method": "nope", "weight": 1.0}, {"method": "finnerty", "weight": 0.0}],
+        [{"method": "finnerty", "weight": "half"}, {"method": "longstaff", "weight": 0.5}],
+        [{"method": "finnerty", "weight": 1.5}, {"method": "longstaff", "weight": -0.5}],
+        [{"method": "finnerty", "weight": 0.5}, "longstaff"],
+    ])
+    def test_malformed_rows_are_refused(self, bad):
+        with pytest.raises(EngineInputError):
+            run(dlom_methods=bad)
+
+    def test_a_model_leg_still_requires_a_volatility(self):
+        """The check that a blend could have slipped past. Every guard asked
+        `dlom_method in MODEL_DLOM_METHODS`, which sees nothing in a blend — and
+        `finnerty_dlom` answers 0.0 for sigma <= 0 rather than raising, so the
+        run would have concluded on a discount with its Finnerty leg silently
+        contributing nothing."""
+        params, inputs = _no_volatility_payload()
+        with pytest.raises(EngineInputError, match="volatility"):
+            compute({**params, "dlom_methods": self.BLEND}, inputs)
+
+    def test_a_blend_with_no_model_leg_needs_no_volatility(self):
+        params, inputs = _no_volatility_payload()
+        res = compute(
+            {
+                **params,
+                "dlom_qualitative": 0.2,
+                "dlom_methods": [
+                    {"method": "restricted_stock", "weight": 0.6},
+                    {"method": "qualitative", "weight": 0.4},
+                ],
+            },
+            inputs,
+        )["results"]
+        assert res["discounts"]["dlom"] == pytest.approx(0.13 * 0.6 + 0.2 * 0.4, abs=1e-4)
+
+
+class TestBlendPreFlight:
+    """The pre-flight agrees with the engine about which blends are legal.
+
+    Every problem the engine raises on is reachable only after the calculation
+    is dispatched. The weights-summing case is the one with no safe recovery:
+    they are deliberately not normalised, so a blend totalling 90% concludes a
+    tenth low rather than on the analyst's figures scaled up.
+    """
+
+    def preflight(self, **overrides):
+        return validate_payload({**BASE_PARAMS, **overrides}, dict(BASE_INPUTS))
+
+    def test_weights_not_summing_to_one_is_an_error(self):
+        issues = self.preflight(dlom_methods=[
+            {"method": "finnerty", "weight": 0.5},
+            {"method": "restricted_stock", "weight": 0.4},
+        ])
+        assert "weights_sum" in codes(issues, ERROR)
+
+    def test_a_valid_blend_is_clean(self):
+        issues = self.preflight(dlom_methods=[
+            {"method": "finnerty", "weight": 0.5},
+            {"method": "restricted_stock", "weight": 0.5},
+        ])
+        assert codes(issues, ERROR) == set()
+
+    def test_both_forms_together_is_an_error(self):
+        issues = self.preflight(
+            dlom_method="finnerty",
+            dlom_methods=[
+                {"method": "finnerty", "weight": 0.5},
+                {"method": "restricted_stock", "weight": 0.5},
+            ],
+        )
+        assert "conflicting" in codes(issues, ERROR)
+
+    def test_an_unknown_method_is_named(self):
+        issues = self.preflight(dlom_methods=[
+            {"method": "montecarlo_dlom", "weight": 0.5},
+            {"method": "finnerty", "weight": 0.5},
+        ])
+        assert "out_of_range" in codes(issues, ERROR)
+
+    def test_a_zero_weighted_leg_warns_rather_than_fails(self):
+        issues = self.preflight(dlom_methods=[
+            {"method": "finnerty", "weight": 1.0},
+            {"method": "longstaff", "weight": 0.0},
+        ])
+        assert codes(issues, ERROR) == set()
+        assert "zero_weight" in codes(issues, WARNING)
+
+    def test_a_study_leg_still_has_its_set_checked(self):
+        issues = self.preflight(
+            dlom_methods=[
+                {"method": "restricted_stock", "weight": 0.5},
+                {"method": "finnerty", "weight": 0.5},
+            ],
+            dlom_studies=["Nonesuch Partners"],
+        )
+        assert "unknown_study" in codes(issues, ERROR)
+
+    def test_a_qualitative_leg_needs_its_own_figure(self):
+        issues = self.preflight(dlom_methods=[
+            {"method": "qualitative", "weight": 0.5},
+            {"method": "finnerty", "weight": 0.5},
+        ])
+        assert "required" in codes(issues, ERROR)
+
+    def test_a_model_leg_requires_volatility_in_preflight(self):
+        params, inputs = _no_volatility_payload()
+        issues = validate_payload(
+            {**params, "dlom_methods": [
+                {"method": "finnerty", "weight": 0.5},
+                {"method": "restricted_stock", "weight": 0.5},
+            ]},
+            inputs,
+        )
+        assert any("volatility" in i.field for i in issues if i.severity == ERROR)

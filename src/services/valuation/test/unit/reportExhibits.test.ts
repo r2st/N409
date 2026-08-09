@@ -864,6 +864,179 @@ describe('dlomDerivationExhibit', () => {
   });
 });
 
+// ── Exhibit H-1 — several methods, weighted ───────────────────────────────────
+
+/**
+ * The DLOM method-weighting table.
+ *
+ * A marketability discount is the one figure in a 409A with no single defensible
+ * derivation: the option models price the cost of being unable to sell from the
+ * subject's own volatility and holding period, and the restricted-stock studies
+ * report what the market actually paid for restricted shares. The standard
+ * appraisal answer is to weight them, which the engine could not do — so an
+ * appraiser wanting a 50/50 computed it by hand and entered the result as
+ * `qualitative`, recording their arithmetic as judgement and leaving the report
+ * unable to say where the number came from.
+ */
+describe('a DLOM concluded by weighting several methods', () => {
+  const WEIGHTED = {
+    ...RESULTS,
+    discounts: {
+      dloc: 0.1,
+      dlom: 0.1874,
+      dlom_method: 'weighted',
+      dlom_detail: {
+        method: 'weighted',
+        dlom: 0.187402,
+        weight_total: 1,
+        components: [
+          {
+            method: 'finnerty',
+            weight: 0.5,
+            dlom: 0.244803,
+            weighted: 0.122402,
+            detail: {
+              method: 'finnerty',
+              volatility: 0.62,
+              time_to_liquidity_years: 4,
+              dlom: 0.244803,
+              formula: 'Finnerty average-strike put — 2N(v/2) - 1',
+            },
+          },
+          {
+            method: 'restricted_stock',
+            weight: 0.5,
+            dlom: 0.13,
+            weighted: 0.065,
+            detail: {
+              method: 'restricted_stock',
+              dlom: 0.13,
+              statistic: 'median',
+              studies: [
+                {
+                  study: 'Columbia Financial Advisors (post-amendment)',
+                  period_start: 1997,
+                  period_end: 1998,
+                  discount: 0.13,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  };
+
+  const text = (results = WEIGHTED) => plain(dlomDerivationExhibit(results, CONTEXT)!.html);
+
+  it('tabulates every method with its weight and its indicated discount', () => {
+    const out = text();
+    expect(out).toContain('Finnerty average-strike put model');
+    expect(out).toContain('Restricted-stock studies');
+    expect(out).toContain('50.00%'); // both weights
+    expect(out).toContain('24.5%'); // Finnerty indicated
+    expect(out).toContain('13.0%'); // studies indicated
+  });
+
+  it('states the weighted contribution rather than leaving it to be multiplied out', () => {
+    // The concluded figure has to be visibly the sum of the column above it;
+    // otherwise the table shows the ingredients of an answer without showing
+    // that it is the answer.
+    const out = text();
+    expect(out).toContain('12.2%'); // 24.48% × 50%
+    expect(out).toContain('6.5%'); // 13.0% × 50%
+    expect(out).toContain('18.7%'); // and the concluded total
+  });
+
+  it('carries each leg’s own derivation under it', () => {
+    // A weighted average is checked by reading the legs, so four percentages
+    // with nothing behind them would move the unreviewable bare figure from
+    // Exhibit H to Exhibit H-1 rather than removing it.
+    const out = text();
+    expect(out).toContain('62.0%'); // the volatility the Finnerty leg used
+    expect(out).toContain('4.00 years');
+    expect(out).toContain('Columbia Financial Advisors (post-amendment)');
+    expect(out).toContain('1997–1998');
+  });
+
+  it('keeps a nil-weighted method in the table', () => {
+    /*
+     * An appraiser who computed Longstaff to show it as an upper bound and
+     * weighted it to nothing is documenting the bound. Dropping the row would
+     * hide a method that was considered — which is the opposite of what the
+     * table is for.
+     */
+    const withNil = {
+      ...WEIGHTED,
+      discounts: {
+        ...WEIGHTED.discounts,
+        dlom_detail: {
+          ...WEIGHTED.discounts.dlom_detail,
+          components: [
+            ...WEIGHTED.discounts.dlom_detail.components,
+            {
+              method: 'longstaff',
+              weight: 0,
+              dlom: 0.42,
+              weighted: 0,
+              detail: { method: 'longstaff', bound_multiple: 1.4498, is_upper_bound: true },
+            },
+          ],
+        },
+      },
+    };
+    const out = text(withNil);
+    expect(out).toContain('Longstaff upper bound');
+    expect(out).toContain('42.0%');
+    expect(out).toContain('0.00%');
+    // And it is still disclosed as a bound rather than an estimate.
+    expect(out).toContain('upper bound');
+  });
+
+  it('says why the methods are weighted rather than ranked', () => {
+    const out = text();
+    expect(out).toContain('evidence of different kinds');
+  });
+
+  it('falls back to nothing rather than an empty table with no components', () => {
+    const empty = {
+      ...RESULTS,
+      discounts: {
+        dloc: 0.1,
+        dlom: 0.2,
+        dlom_method: 'weighted',
+        dlom_detail: { method: 'weighted', dlom: 0.2, components: [] },
+      },
+    };
+    // The exhibit still renders (the class volatilities are in RESULTS), but it
+    // does not claim a weighting it has no rows for.
+    const out = plain(dlomDerivationExhibit(empty, CONTEXT)!.html);
+    expect(out).not.toContain('DLOM method');
+  });
+
+  it('escapes a method name from the calculation record', () => {
+    const hostile = {
+      ...RESULTS,
+      discounts: {
+        dloc: 0.1,
+        dlom: 0.2,
+        dlom_method: 'weighted',
+        dlom_detail: {
+          method: 'weighted',
+          dlom: 0.2,
+          components: [
+            { method: '<img src=x>', weight: 0.5, dlom: 0.2, weighted: 0.1 },
+            { method: 'finnerty', weight: 0.5, dlom: 0.2, weighted: 0.1 },
+          ],
+        },
+      },
+    };
+    const html = dlomDerivationExhibit(hostile, CONTEXT)!.html;
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img src=x&gt;');
+  });
+});
+
 // ── Exhibit H — value per class, marketable and non-marketable ───────────────
 
 describe('the per-class value table in Exhibit H', () => {

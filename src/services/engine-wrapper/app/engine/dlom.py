@@ -38,6 +38,29 @@ MODEL_DLOM_METHODS: frozenset[str] = frozenset({"chaffee", "finnerty", "ghaidaro
 #: Every DLOM method the engine dispatches on, model and non-model alike.
 DLOM_METHODS: frozenset[str] = MODEL_DLOM_METHODS | {"restricted_stock", "qualitative"}
 
+
+def selects_model_dlom(params: dict) -> bool:
+    """Whether these params ask for a discount that needs a volatility.
+
+    Every caller used to spell ``params.get("dlom_method") in
+    MODEL_DLOM_METHODS`` inline, at four sites. Once a run could weight several
+    methods (``dlom_methods``), all four stopped seeing an option model reached
+    through a blend — and because ``chaffee_dlom`` answers 0.0 for σ ≤ 0 rather
+    than raising, a blend with a Finnerty leg and no volatility would have
+    concluded on a discount with that leg silently contributing nothing. Asking
+    the question in one place is what makes that unrepresentable.
+    """
+    if params.get("dlom_method") in MODEL_DLOM_METHODS:
+        return True
+    blend = params.get("dlom_methods")
+    if not isinstance(blend, list):
+        return False
+    # A malformed row is not this predicate's business — `_blended_dlom` rejects
+    # it with a message about the row. Here it simply does not select a model.
+    return any(
+        isinstance(entry, dict) and entry.get("method") in MODEL_DLOM_METHODS for entry in blend
+    )
+
 #: The discount a DLOM model is allowed to return. A model that wants 100% is
 #: saying the interest is worthless, which is a conclusion about the security
 #: rather than about its marketability.

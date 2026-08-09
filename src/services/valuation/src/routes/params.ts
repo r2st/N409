@@ -50,6 +50,23 @@ export const ParamsPatchBody = z
     dloc: Fraction.nullable(),
     dlom: Fraction.nullable(),
     dlom_method: z.enum(DLOM_METHODS).nullable(),
+    /**
+     * A discount weighted across several methods, instead of concluded on one.
+     *
+     * The weights are checked for shape here and for *sum* below, with the
+     * engine's pre-flight re-checking both: the DB constraint (migration 0129)
+     * is the last line, and each is cheap. What none of them do is normalise —
+     * see `validateDlomMethods`.
+     */
+    dlom_methods: z
+      .array(
+        z
+          .object({ method: z.enum(DLOM_METHODS), weight: Fraction })
+          .strict(),
+      )
+      .min(2)
+      .max(DLOM_METHODS.length)
+      .nullable(),
     dlom_qualitative: Fraction.nullable(),
     // Restricted-stock study configuration. Validated for shape here and for
     // *membership* by the engine's pre-flight, which owns the study table and
@@ -107,6 +124,64 @@ export function validateWeights(
   return { ok: true };
 }
 
+/**
+ * Validates the merged DLOM selection (current row + patch).
+ *
+ * Three things, all of which the engine also checks — this is the one that can
+ * refuse at save time, before a calculation is dispatched:
+ *
+ *   * one form or the other. A row carrying both `dlom_method` and
+ *     `dlom_methods` has two answers to "which discount was concluded", and
+ *     whichever the engine read would be the one the analyst did not mean.
+ *   * weights summing to 1. They are deliberately *not* normalised: weights
+ *     totalling 0.9 are a mistake in somebody's spreadsheet, not an instruction
+ *     to scale up by a ninth, and rescaling them would conclude on a discount
+ *     nobody chose. Compared in basis points for the same reason
+ *     `validateWeights` is — 0.1 + 0.2 + 0.7 is not 1.0 in binary floating point.
+ *   * a qualitative leg needs its own figure, exactly as a qualitative
+ *     single-method run does. Nothing derives it.
+ */
+export function validateDlomMethods(
+  current: Record<string, unknown>,
+  patch: ParamsPatch,
+): { ok: true } | { ok: false; detail: string } {
+  const blend = 'dlom_methods' in patch ? patch.dlom_methods : (current.dlom_methods as ParamsPatch['dlom_methods']);
+  if (blend === null || blend === undefined) return { ok: true };
+
+  const method = 'dlom_method' in patch ? patch.dlom_method : current.dlom_method;
+  if (method !== null && method !== undefined) {
+    return {
+      ok: false,
+      detail:
+        'Set either dlom_method (one method) or dlom_methods (a weighted blend), not both — ' +
+        'clear dlom_method to weight several',
+    };
+  }
+
+  const names = blend.map((m) => m.method);
+  const duplicate = names.find((n, i) => names.indexOf(n) !== i);
+  if (duplicate !== undefined) {
+    return { ok: false, detail: `${duplicate} is weighted twice — give each method a single weight` };
+  }
+
+  const bps = blend.reduce((acc, m) => acc + Math.round(m.weight * 10000), 0);
+  if (bps !== 10000) {
+    return {
+      ok: false,
+      detail: `DLOM method weights must sum to 1.0 (got ${(bps / 10000).toFixed(4)})`,
+    };
+  }
+
+  const qual = 'dlom_qualitative' in patch ? patch.dlom_qualitative : current.dlom_qualitative;
+  if (names.includes('qualitative') && (qual === null || qual === undefined)) {
+    return {
+      ok: false,
+      detail: 'dlom_qualitative is required when "qualitative" is one of the weighted methods',
+    };
+  }
+  return { ok: true };
+}
+
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
 }
@@ -155,6 +230,9 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     if (method === 'qualitative' && (dlomQual === null || dlomQual === undefined)) {
       throw problems.unprocessable('dlom_qualitative is required when dlom_method is "qualitative"');
     }
+
+    const blend = validateDlomMethods(current, parsed.data);
+    if (!blend.ok) throw problems.unprocessable(blend.detail);
 
     const updated = await patchParams(
       deps.pool,

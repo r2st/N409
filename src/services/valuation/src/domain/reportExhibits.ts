@@ -974,6 +974,183 @@ const DLOM_MODEL_NAMES: Record<string, string> = {
 };
 
 /**
+ * The inputs one DLOM method was struck on, as `Derivation / Value / Note` rows.
+ *
+ * Shared by the single-method table and by each leg of a weighted blend, so a
+ * Finnerty run and a Finnerty leg are described identically. The engine records
+ * the same `dlom_detail` shape for both (`compute._single_dlom`), which is what
+ * makes one renderer correct for both — and a second copy of these rows for the
+ * blend is how a leg would come to state a volatility the leg did not use.
+ */
+function derivationRows(
+  detail: Record<string, unknown>,
+  discounts: Record<string, unknown> | null,
+): string[][] {
+  const method = text(detail.method) ?? text(discounts?.dlom_method) ?? 'unknown';
+  const rows: string[][] = [['Method applied', DLOM_MODEL_NAMES[method] ?? esc(method), '']];
+
+  const formula = text(detail.formula);
+  if (formula) rows.push(['Basis', esc(formula), '']);
+
+  const vol = num(detail.volatility);
+  if (vol !== null) {
+    rows.push([
+      'Volatility applied (σ)',
+      formatPercent(vol),
+      'Of the interest valued over the holding period',
+    ]);
+  }
+  const term = num(detail.time_to_liquidity_years);
+  if (term !== null) {
+    rows.push([
+      'Holding period applied (T)',
+      `${term.toFixed(2)} years`,
+      'Expected time to a liquidity event',
+    ]);
+  }
+  const rate = num(detail.risk_free_rate);
+  if (rate !== null) {
+    rows.push(['Risk-free rate (r)', formatPercent(rate, 2), 'Matched to the holding period']);
+  }
+  if (detail.is_upper_bound === true) {
+    const bound = num(detail.bound_multiple);
+    rows.push([
+      'Reported as an upper bound',
+      bound === null ? 'Yes' : ratio(bound),
+      'Longstaff bounds the discount rather than estimating it — the concluded ' +
+        'figure is a ceiling, not a point estimate',
+    ]);
+  }
+  const basis = text(detail.basis);
+  if (basis) rows.push(['Basis for the judgement', esc(basis), '']);
+  return rows;
+}
+
+/**
+ * The restricted-stock studies a discount was blended from, where it was.
+ *
+ * Set selection is the whole objection to the method, so naming the studies is
+ * not a courtesy. Empty for every method that rests on no study set.
+ */
+function studyBlock(detail: Record<string, unknown>): string[] {
+  const studies = list(detail.studies)
+    .map((raw) => record(raw))
+    .filter((s): s is Record<string, unknown> => s !== null);
+  if (studies.length === 0) return [];
+  const statistic = text(detail.statistic) ?? 'median';
+  return [
+    P(
+      `The discount is the ${esc(statistic)} of the selected restricted-stock studies. Observations ` +
+        'predating the 1997 and 2008 amendments to Rule 144 measured a longer restriction on ' +
+        'resale than applies today, and are identified as such.',
+    ),
+    table({
+      head: ['Study', 'Period', 'Observations', 'Discount'],
+      rows: studies.map((s) => {
+        const value = num(s.median) ?? num(s.mean) ?? num(s.dlom);
+        const from = num(s.period_start);
+        const to = num(s.period_end);
+        return [
+          text(s.study) ?? '—',
+          from !== null && to !== null ? `${from}–${to}` : '—',
+          num(s.observations) === null ? '—' : shares(num(s.observations) as number),
+          value === null ? '—' : formatPercent(value),
+        ];
+      }),
+    }),
+  ];
+}
+
+/**
+ * A discount concluded by weighting several methods: the weighting table first,
+ * then each leg's own derivation.
+ *
+ * This is the table the legacy deliverable devotes to the DLOM — "DLOM Method /
+ * Weight / Selected DLOM" — and the reason it exists is that a marketability
+ * discount is the one figure in a 409A with no single defensible derivation. The
+ * option models price the cost of being unable to sell from the subject's own
+ * volatility and holding period; the restricted-stock studies report what the
+ * market actually paid for restricted shares. They are evidence of different
+ * kinds, and the standard appraisal answer is to weight them rather than to
+ * declare one correct.
+ *
+ * The weighted column is stated, not left for the reader to multiply out, because
+ * the concluded figure has to be visibly the sum of the column above it —
+ * otherwise the table shows the ingredients of an answer without showing that it
+ * is the answer.
+ *
+ * A nil-weighted method stays in the table. An appraiser who computed Longstaff
+ * to show it as an upper bound and weighted it to nothing is documenting the
+ * bound, and dropping the row would hide a method that was considered.
+ */
+function methodWeightingBlock(
+  detail: Record<string, unknown>,
+  discounts: Record<string, unknown> | null,
+): string[] {
+  const components = list(detail.components)
+    .map((raw) => record(raw))
+    .filter((c): c is Record<string, unknown> => c !== null);
+  if (components.length === 0) return [];
+
+  const concluded = num(detail.dlom) ?? num(discounts?.dlom);
+  const out: string[] = [
+    P(
+      'No single method measures marketability. The option models price the cost of being unable ' +
+        'to sell from the subject’s own volatility and expected holding period; the ' +
+        'restricted-stock studies report the discounts at which restricted shares actually ' +
+        'changed hands. They are evidence of different kinds, and are weighted below rather than ' +
+        'ranked.',
+    ),
+    table({
+      head: ['DLOM method', 'Weight', 'Indicated DLOM', 'Weighted'],
+      rows: components.map((c) => {
+        const name = text(c.method) ?? 'unknown';
+        const weight = num(c.weight);
+        const indicated = num(c.dlom);
+        const weighted = num(c.weighted);
+        return [
+          DLOM_MODEL_NAMES[name] ?? esc(name),
+          // Weights to two places, matching the footed 100.00%: a column of
+          // "33.3%" thrice under a total of 100.00% invites the reader to check
+          // an addition that was never done in one decimal place.
+          weight === null ? '—' : formatPercent(weight, 2),
+          indicated === null ? '—' : formatPercent(indicated),
+          weighted === null ? '—' : formatPercent(weighted),
+        ];
+      }),
+      foot: [
+        'Selected discount for lack of marketability',
+        '100.00%',
+        '',
+        concluded === null ? '—' : formatPercent(concluded),
+      ],
+    }),
+  ];
+
+  /*
+   * Each leg's own inputs, under its own subheading.
+   *
+   * A weighted average is checked by reading the legs, so a table of four
+   * percentages with nothing behind them moves the unreviewable bare figure from
+   * Exhibit H to Exhibit H-1 rather than removing it. Only the legs that recorded
+   * a derivation get a block — a qualitative leg has a sentence, not a model.
+   */
+  for (const c of components) {
+    const legDetail = record(c.detail);
+    if (!legDetail) continue;
+    const name = text(c.method) ?? 'unknown';
+    const rows = derivationRows(legDetail, null);
+    if (rows.length <= 1 && list(legDetail.studies).length === 0) continue;
+    out.push(
+      P(`<strong>${DLOM_MODEL_NAMES[name] ?? esc(name)}</strong>`),
+      table({ head: ['Derivation', 'Value', 'Note'], rows }),
+      ...studyBlock(legDetail),
+    );
+  }
+  return out;
+}
+
+/**
  * How the DLOM was arrived at, and the class volatilities that bear on it.
  *
  * Exhibit H applies the discount; nothing said where it came from. A reviewer
@@ -1018,87 +1195,22 @@ export function dlomDerivationExhibit(
     ),
   ];
 
-  if (detail) {
-    const method = text(detail.method) ?? text(discounts?.dlom_method) ?? 'unknown';
-    const rows: string[][] = [['Method applied', DLOM_MODEL_NAMES[method] ?? esc(method), '']];
-
-    const formula = text(detail.formula);
-    if (formula) rows.push(['Basis', esc(formula), '']);
-
-    const vol = num(detail.volatility);
-    if (vol !== null) {
-      rows.push([
-        'Volatility applied (σ)',
-        formatPercent(vol),
-        'Of the interest valued over the holding period',
-      ]);
-    }
-    const term = num(detail.time_to_liquidity_years);
-    if (term !== null) {
-      rows.push([
-        'Holding period applied (T)',
-        `${term.toFixed(2)} years`,
-        'Expected time to a liquidity event',
-      ]);
-    }
-    const rate = num(detail.risk_free_rate);
-    if (rate !== null) {
-      rows.push(['Risk-free rate (r)', formatPercent(rate, 2), 'Matched to the holding period']);
-    }
-    if (detail.is_upper_bound === true) {
-      const bound = num(detail.bound_multiple);
-      rows.push([
-        'Reported as an upper bound',
-        bound === null ? 'Yes' : ratio(bound),
-        'Longstaff bounds the discount rather than estimating it — the concluded ' +
-          'figure is a ceiling, not a point estimate',
-      ]);
-    }
-    const basis = text(detail.basis);
-    if (basis) rows.push(['Basis for the judgement', esc(basis), '']);
-
+  if (detail && text(detail.method) === 'weighted') {
+    body.push(...methodWeightingBlock(detail, discounts));
+  } else if (detail) {
     const concluded = num(detail.dlom) ?? num(discounts?.dlom);
     body.push(
       table({
         head: ['Derivation', 'Value', 'Note'],
-        rows,
+        rows: derivationRows(detail, discounts),
         foot: [
           'Concluded discount for lack of marketability',
           concluded === null ? '—' : formatPercent(concluded),
           'Carried into Exhibit H',
         ],
       }),
+      ...studyBlock(detail),
     );
-
-    // The study set, where the conclusion rests on one. Set selection is the
-    // whole objection to the method, so naming the studies is not a courtesy.
-    const studies = list(detail.studies)
-      .map((raw) => record(raw))
-      .filter((s): s is Record<string, unknown> => s !== null);
-    if (studies.length > 0) {
-      const statistic = text(detail.statistic) ?? 'median';
-      body.push(
-        P(
-          `The discount is the ${esc(statistic)} of the selected restricted-stock studies. Observations ` +
-            'predating the 1997 and 2008 amendments to Rule 144 measured a longer restriction on ' +
-            'resale than applies today, and are identified as such.',
-        ),
-        table({
-          head: ['Study', 'Period', 'Observations', 'Discount'],
-          rows: studies.map((s) => {
-            const value = num(s.median) ?? num(s.mean) ?? num(s.dlom);
-            const from = num(s.period_start);
-            const to = num(s.period_end);
-            return [
-              text(s.study) ?? '—',
-              from !== null && to !== null ? `${from}–${to}` : '—',
-              num(s.observations) === null ? '—' : shares(num(s.observations) as number),
-              value === null ? '—' : formatPercent(value),
-            ];
-          }),
-        }),
-      );
-    }
   }
 
   if (classVol) {

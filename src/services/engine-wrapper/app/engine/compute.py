@@ -25,13 +25,14 @@ from .approaches import (
 from .bs import bs_call
 from .current_value import allocate_cvm
 from .dlom import (
-    MODEL_DLOM_METHODS,
+    DLOM_METHODS,
     chaffee_dlom,
     finnerty_dlom,
     ghaidarov_dlom,
     longstaff_bound,
     longstaff_dlom,
     restricted_stock_dlom,
+    selects_model_dlom,
 )
 from .hybrid import blend_hybrid, resolve_hybrid_weights
 from .market_movement import apply_movement, market_movement
@@ -351,14 +352,46 @@ def _market_metric(params: dict, inputs: dict, market_in: dict) -> tuple[str, st
 def _resolve_discounts(
     params: dict, volatility: float | None, t: float, r: float
 ) -> tuple[float, float, str | None, dict | None]:
-    """DLOC + DLOM (model, study or qualitative), as fractions in [0, 1).
+    """DLOC + DLOM (model, study, qualitative, or a weighted blend of those).
 
-    The fourth return is the model's own working, or None for the methods that
-    have none. Only `restricted_stock` produces any: its answer is a blend of a
-    named set of studies, and the set is the reviewable part — see
-    `dlom.restricted_stock_dlom`.
+    The fourth return is the working behind the discount, or None for the
+    methods that have none.
+
+    A blend is requested with `dlom_methods`, and it takes precedence over the
+    singular `dlom_method` in the sense that the two may not both be set — see
+    `_blended_dlom` for why an appraiser weights several methods rather than
+    picking one, and why the weights are not normalised for them.
     """
     dloc = _num(params.get("dloc"), "dloc") or 0.0
+    blend_in = params.get("dlom_methods")
+    if blend_in is not None:
+        if params.get("dlom_method") is not None:
+            raise EngineInputError(
+                "set either dlom_method (one method) or dlom_methods (a weighted blend), "
+                "not both — the two would disagree about which discount was concluded"
+            )
+        detail = _blended_dlom(blend_in, params, volatility, t, r)
+        dlom = float(detail["dlom"])
+        if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
+            raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
+        return dloc, round(dlom, 4), "weighted", detail
+
+    dlom, method, detail = _single_dlom(params, volatility, t, r)
+    if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
+        raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
+    return dloc, round(dlom, 4), method, detail
+
+
+def _single_dlom(
+    params: dict, volatility: float | None, t: float, r: float
+) -> tuple[float, str | None, dict | None]:
+    """One method's discount and its working.
+
+    Split out of `_resolve_discounts` so a weighted blend computes each of its
+    components through exactly the path a single-method run would take. A blend
+    whose components were derived by a second copy of these branches could
+    report a Chaffee leg the single-method run does not agree with.
+    """
     method = params.get("dlom_method")
     detail: dict | None = None
     if method == "chaffee":
@@ -399,9 +432,109 @@ def _resolve_discounts(
         }
     else:
         dlom = _num(params.get("dlom"), "dlom") or 0.0
-    if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
-        raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
-    return dloc, round(dlom, 4), method, detail
+    return dlom, method, detail
+
+
+#: A blend narrower than this is a single method with extra steps. Two is the
+#: point at which weighting means anything, and the appraisal literature's whole
+#: argument for it is that the option models and the empirical studies measure
+#: different things — so a blend of one is refused rather than quietly accepted.
+_MIN_BLEND_METHODS = 2
+
+
+def _blended_dlom(
+    raw: object, params: dict, volatility: float | None, t: float, r: float
+) -> dict:
+    """Several DLOM methods, weighted into one concluded discount.
+
+    Why a blend at all. A marketability discount is the one figure in a 409A
+    with no single defensible derivation: the option models price the *cost of
+    being unable to sell* from the subject's own volatility and holding period,
+    and the restricted-stock studies report what the market actually paid for
+    restricted shares. They are evidence of different kinds, and the standard
+    appraisal answer is to weight them rather than to declare one correct —
+    which is what the legacy deliverable's "DLOM Method / Weight / Selected
+    DLOM" table is. The engine could only pick one, so an appraiser wanting a
+    50/50 of Finnerty and the studies had to compute it by hand and enter the
+    result as `qualitative`, which recorded their arithmetic as judgement and
+    left the report unable to say where the number came from.
+
+    The weights are not normalised. Weights that sum to 0.9 are a mistake in
+    somebody's spreadsheet, not an instruction to scale up by a ninth, and
+    silently rescaling them would conclude on a discount nobody chose. This is
+    the same rule `_weights` applies to the approach weights, for the same
+    reason and to the same tolerance.
+
+    Each component is resolved through `_single_dlom`, so a leg of a blend and a
+    single-method run of the same method are the same arithmetic on the same
+    inputs, and each component's own working is kept: the concluded figure is a
+    weighted average, and a reviewer checks a weighted average by reading the
+    legs.
+    """
+    if not isinstance(raw, list) or not raw:
+        raise EngineInputError("dlom_methods must be a non-empty list of {method, weight} objects")
+    if len(raw) < _MIN_BLEND_METHODS:
+        raise EngineInputError(
+            f"dlom_methods needs at least {_MIN_BLEND_METHODS} methods to weight "
+            "(use dlom_method for a single method)"
+        )
+
+    components: list[dict] = []
+    seen: set[str] = set()
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise EngineInputError(f"dlom_methods[{i}] must be an object")
+        name = entry.get("method")
+        if not isinstance(name, str) or name not in DLOM_METHODS:
+            raise EngineInputError(
+                f"dlom_methods[{i}].method must be one of {sorted(DLOM_METHODS)} (got {name!r})"
+            )
+        if name in seen:
+            # Two rows for one method are two weights on one number; whichever
+            # the engine dropped would be the one the analyst meant.
+            raise EngineInputError(f"dlom_methods names {name!r} twice — give it a single weight")
+        seen.add(name)
+        weight = entry.get("weight")
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool):
+            raise EngineInputError(f"dlom_methods[{i}].weight must be a number")
+        weight = float(weight)
+        if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
+            raise EngineInputError(
+                f"dlom_methods[{i}].weight must be a fraction in [0, 1] (got {weight:g})"
+            )
+
+        components.append({"method": name, "weight": weight})
+
+    total = sum(c["weight"] for c in components)
+    if abs(total - 1.0) > 1e-6:
+        raise EngineInputError(f"dlom_methods weights must sum to 1.0 (got {total:.4f})")
+
+    for component in components:
+        # Each leg sees the run's params with its own method selected, so a
+        # `restricted_stock` leg still reads `dlom_studies` / `dlom_statistic`
+        # and a `qualitative` leg still reads `dlom_qualitative`. A blend is a
+        # choice about weighting, not a different set of inputs.
+        leg_params = {**params, "dlom_method": component["method"]}
+        leg_params.pop("dlom_methods", None)
+        leg_dlom, _, leg_detail = _single_dlom(leg_params, volatility, t, r)
+        component["dlom"] = round(leg_dlom, 6)
+        component["weighted"] = round(leg_dlom * component["weight"], 6)
+        if leg_detail is not None:
+            component["detail"] = leg_detail
+
+    concluded = sum(c["weighted"] for c in components)
+    return {
+        "method": "weighted",
+        "dlom": min(max(round(concluded, 6), 0.0), 0.99),
+        "components": components,
+        "weight_total": round(total, 6),
+        "basis": (
+            "Weighted average of the methods below. The option models price the cost of "
+            "being unable to sell from the subject's own volatility and holding period; the "
+            "restricted-stock studies report what the market paid for restricted shares. "
+            "They are evidence of different kinds and are weighted rather than ranked."
+        ),
+    }
 
 
 # The formula each option-based model applies, as the report prints it. Kept
@@ -560,9 +693,8 @@ def _compute_pwerm(params: dict, inputs: dict, trace: Trace | None = None) -> di
     # Expected (probability-weighted) time to exit drives any model DLOM.
     t = allocation["expected_time_to_exit_years"]
     r = _num(inputs.get("risk_free_rate"), "risk_free_rate") or DEFAULT_RISK_FREE_RATE
-    method = params.get("dlom_method")
     volatility = _num(inputs.get("volatility"), "volatility", positive=True)
-    if method in MODEL_DLOM_METHODS and volatility is None:
+    if selects_model_dlom(params) and volatility is None:
         raise EngineInputError("volatility is required for the selected model DLOM")
 
     dloc, dlom, dlom_method, dlom_detail = _resolve_discounts(params, volatility, t, r)
@@ -905,7 +1037,7 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
     needs_vol = (
         liquidation_preference > 0
         or has_waterfall
-        or (params.get("dlom_method") in MODEL_DLOM_METHODS)
+        or selects_model_dlom(params)
     )
     if needs_vol and volatility is None:
         raise EngineInputError("volatility is required (OPM allocation / model DLOM)")
@@ -1121,7 +1253,7 @@ def _compute_cvm(
     _record_allocation(tr, "cvm", equity_value, inputs, {"allocation": allocation, **allocation}, t, r)
 
     volatility = _num(inputs.get("volatility"), "volatility", positive=True)
-    if params.get("dlom_method") in MODEL_DLOM_METHODS and volatility is None:
+    if selects_model_dlom(params) and volatility is None:
         raise EngineInputError("volatility is required for the selected model DLOM")
 
     dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t, r)

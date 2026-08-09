@@ -79,6 +79,11 @@ export function engineParams(p: ValuationParamsRow): Record<string, unknown> {
     dloc: num(p.dloc),
     dlom: num(p.dlom),
     dlom_method: p.dlom_method,
+    // A weighted blend, when one was configured. Null and `dlom_method` set is
+    // the single-method case; the engine refuses both at once, as do the route
+    // and the table, because two answers to "which discount was concluded" is
+    // the one state with no safe reading.
+    dlom_methods: p.dlom_methods,
     dlom_qualitative: num(p.dlom_qualitative),
     // Only meaningful for dlom_method = 'restricted_stock'; the engine ignores
     // them otherwise. Passed unconditionally so switching the method does not

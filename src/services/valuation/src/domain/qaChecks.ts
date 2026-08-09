@@ -6,6 +6,8 @@
  * scrutiny); a 'fail' blocks publishing, a 'warn' surfaces for the analyst.
  */
 
+import { modelDlomMethodsIn, selectsModelDlom } from './dlom.js';
+
 export type QaStatus = 'pass' | 'warn' | 'fail';
 
 export interface QaCheck {
@@ -154,11 +156,16 @@ export function runQaChecks(args: {
   // warning can tell "the analyst chose 45%" from "Chaffee produced 45% at the
   // volatility and horizon this run used", which are different conversations.
   const dlomMethod = engineParams.dlom_method;
-  const modelDlom = dlomMethod === 'chaffee' || dlomMethod === 'finnerty';
+  // Every volatility-derived method, not the two that were spelled inline here
+  // — and a weighted blend counts, because the point of the parenthetical is to
+  // tell "the analyst chose 45%" from "the models produced 45% at this run's
+  // volatility and horizon", which is exactly as true of a blend.
+  const modelDlom = selectsModelDlom(engineParams);
+  const modelNames = modelDlomMethodsIn(engineParams).join(' / ');
   const dlomSource = appliedDiscount(args.calculation, 'dlom');
   if (dlomSource !== null) {
     const dlom = dlomSource.value;
-    const via = dlomSource.fromResults && modelDlom ? ` (${String(dlomMethod)} model)` : '';
+    const via = dlomSource.fromResults && modelDlom ? ` (${modelNames} model)` : '';
     const status: QaStatus = dlom < 0 || dlom > 0.6 ? 'fail' : dlom > 0.35 ? 'warn' : 'pass';
     add(
       'dlom_range',

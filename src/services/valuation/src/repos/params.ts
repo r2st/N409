@@ -41,6 +41,12 @@ export interface ValuationParamsRow {
   dloc: string | null;
   dlom: string | null;
   dlom_method: DlomMethod | null;
+  /**
+   * A discount weighted across several methods instead of concluded on one
+   * (migration 0129). Mutually exclusive with `dlom_method` — enforced by the
+   * route, the engine's pre-flight and a table constraint.
+   */
+  dlom_methods: Array<{ method: DlomMethod; weight: number }> | null;
   dlom_qualitative: string | null;
   /** Restricted-stock study configuration; only read when dlom_method is
    * 'restricted_stock'. NULL studies means the engine's default set. */
@@ -77,6 +83,7 @@ export const PARAM_COLUMNS = [
   'dloc',
   'dlom',
   'dlom_method',
+  'dlom_methods',
   'dlom_qualitative',
   'dlom_studies',
   'dlom_statistic',

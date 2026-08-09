@@ -11,6 +11,8 @@
  * current valuation_params row and the valuation itself.
  */
 
+import { modelDlomMethodsIn, selectsModelDlom } from './dlom.js';
+
 export type HealthCategory = 'methodology' | 'assumptions' | 'completeness' | 'mathematical' | 'temporal';
 
 /** A passing check is `ok`; findings escalate info < warning < error. */
@@ -76,6 +78,8 @@ export interface HealthParams {
   dlom?: unknown;
   dloc?: unknown;
   dlom_method?: unknown;
+  /** A weighted DLOM blend (migration 0129), when one was configured. */
+  dlom_methods?: unknown;
   allocation_method?: unknown;
   fiscal_year_end?: unknown;
   inception_date?: unknown;
@@ -165,17 +169,30 @@ export function runHealthChecks(args: {
         : 'The income approach is weighted but no free-cash-flow projection is set',
     );
   }
-  const dlomMethod = engineParams.dlom_method ?? params.dlom_method;
-  if (dlomMethod === 'chaffee' || dlomMethod === 'finnerty') {
+  /*
+   * Asked through `selectsModelDlom` rather than as `=== 'chaffee' || ===
+   * 'finnerty'`, which is what this was and which was already wrong by two
+   * methods: Ghaidarov and Longstaff are equally volatility-derived, so a run
+   * selecting one with no volatility set was told nothing. A weighted blend
+   * would have slipped past for the worse reason — a model leg with no
+   * volatility contributes silently nothing to the concluded discount, so the
+   * failure looks like a plausible number rather than a zero.
+   */
+  const dlomSelection = {
+    dlom_method: engineParams.dlom_method ?? params.dlom_method,
+    dlom_methods: engineParams.dlom_methods ?? params.dlom_methods,
+  };
+  if (selectsModelDlom(dlomSelection)) {
     const vol = num(engineInputs.volatility);
+    const named = modelDlomMethodsIn(dlomSelection).join(' / ');
     add(
       'methodology',
       'dlom_model_needs_volatility',
       'Model DLOM has a volatility input',
       vol !== null && vol > 0 ? 'ok' : 'error',
       vol !== null && vol > 0
-        ? `${String(dlomMethod)} DLOM will use volatility ${pct(vol)}`
-        : `${String(dlomMethod)} DLOM needs a volatility input`,
+        ? `${named} DLOM will use volatility ${pct(vol)}`
+        : `${named} DLOM needs a volatility input`,
     );
   }
 

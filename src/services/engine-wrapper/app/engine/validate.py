@@ -31,9 +31,11 @@ from datetime import date
 
 from .anomalies import detect_anomalies
 from .dlom import (
+    DLOM_METHODS,
     MODEL_DLOM_METHODS,
     RESTRICTED_STOCK_STUDIES,
     is_post_amendment,
+    selects_model_dlom,
 )
 from .projection import MAX_FORECAST_YEARS
 # The modules that own a shape this validator mirrors. Imported rather than
@@ -702,7 +704,7 @@ def _check_cap_table(
         )
 
     volatility = _finite(inputs.get("volatility"))
-    model_dlom = params.get("dlom_method") in MODEL_DLOM_METHODS
+    model_dlom = selects_model_dlom(params)
     # Only the OPM-style allocations price a Black-Scholes call; PWERM and CVM
     # walk the deterministic waterfall and need volatility solely for a model
     # DLOM. With auto_volatility the estimator supplies it during compute.
@@ -758,6 +760,15 @@ def _check_discounts(c: _Collector, params: dict) -> None:
             )
 
     method = params.get("dlom_method")
+    blend = params.get("dlom_methods")
+    if blend is not None:
+        # A weighted blend is checked as a set of weights here; each leg's own
+        # inputs are checked by the branch that leg selects, and the concluded
+        # figure only exists after compute. `_check_dlom_blend` returns nothing
+        # for `dlom` because there is no single number to range-check yet.
+        _check_dlom_blend(c, params)
+        return
+
     if method == "qualitative":
         qualitative = params.get("dlom_qualitative")
         if qualitative is None and params.get("dlom") is None:
@@ -793,6 +804,121 @@ def _check_discounts(c: _Collector, params: dict) -> None:
                 "Reviewers will expect a model DLOM (Chaffee / Finnerty / Ghaidarov / "
                 "Longstaff) or a cited restricted-stock study.",
             )
+
+
+def _check_dlom_blend(c: _Collector, params: dict) -> None:
+    """Pre-flight for a weighted DLOM (`dlom_methods`): the methods and weights.
+
+    The engine raises on every problem found here, but only once the calculation
+    has been dispatched. Checking at save time is what lets the params editor
+    refuse a blend whose weights total 90% — which is the mistake this shape
+    makes easy, and the one with no safe recovery: the weights are deliberately
+    not normalised (see `compute._blended_dlom`), so a blend summing to 0.9
+    concludes on a discount a tenth lower than the analyst intended rather than
+    on their figures scaled up.
+    """
+    blend = params.get("dlom_methods")
+    if params.get("dlom_method") is not None:
+        c.error(
+            "conflicting",
+            "params.dlom_methods",
+            "dlom_method and dlom_methods are both set",
+            "Choose one method, or weight several — not both.",
+        )
+        return
+    if not isinstance(blend, list) or not blend:
+        c.error(
+            "invalid_shape",
+            "params.dlom_methods",
+            "dlom_methods must be a non-empty list of {method, weight} objects",
+            "Leave it unset and set dlom_method to conclude on a single method.",
+        )
+        return
+    if len(blend) < 2:
+        c.error(
+            "invalid_shape",
+            "params.dlom_methods",
+            "a weighted DLOM needs at least two methods",
+            "Set dlom_method instead to conclude on one.",
+        )
+        return
+
+    total = 0.0
+    seen: set[str] = set()
+    ok = True
+    for i, entry in enumerate(blend):
+        field = f"params.dlom_methods[{i}]"
+        if not isinstance(entry, dict):
+            c.error("invalid_shape", field, "each entry must be an object with method and weight")
+            ok = False
+            continue
+        name = entry.get("method")
+        if not isinstance(name, str) or name not in DLOM_METHODS:
+            c.error(
+                "out_of_range",
+                f"{field}.method",
+                f"method must be one of {sorted(DLOM_METHODS)} (got {name!r})",
+            )
+            ok = False
+        elif name in seen:
+            c.error(
+                "duplicate",
+                f"{field}.method",
+                f"{name!r} is weighted twice",
+                "Give each method a single weight.",
+            )
+            ok = False
+        else:
+            seen.add(name)
+            if name == "restricted_stock":
+                _check_restricted_stock(c, params)
+            elif name == "qualitative" and params.get("dlom_qualitative") is None:
+                c.error(
+                    "required",
+                    "params.dlom_qualitative",
+                    "a qualitative leg needs dlom_qualitative",
+                    "It is the analyst's own figure; nothing derives it.",
+                )
+                ok = False
+
+        weight = _finite(entry.get("weight"))
+        if weight is None:
+            c.error("not_a_number", f"{field}.weight", "weight must be a finite number")
+            ok = False
+        elif not 0.0 <= weight <= 1.0:
+            c.error(
+                "out_of_range",
+                f"{field}.weight",
+                f"weight must be a fraction in [0, 1] (got {weight:g})",
+            )
+            ok = False
+        else:
+            total += weight
+
+    if ok and abs(total - 1.0) > 1e-6:
+        c.error(
+            "weights_sum",
+            "params.dlom_methods",
+            f"DLOM method weights must sum to 1.0 (got {total:.4f})",
+            "Adjust the weights so they total 100%.",
+        )
+
+    # A zero-weighted method is in the table and out of the answer, which is a
+    # reviewable choice rather than a mistake — an appraiser who computed
+    # Longstaff to show it as an upper bound and weighted it to nothing is
+    # documenting the bound, not concluding on it.
+    zero = [
+        str(e.get("method"))
+        for e in blend
+        if isinstance(e, dict) and _finite(e.get("weight")) == 0.0
+    ]
+    if zero:
+        c.warn(
+            "zero_weight",
+            "params.dlom_methods",
+            f"{sorted(zero)} carry no weight in the concluded discount",
+            "They will appear in the report's method table with a nil weight.",
+        )
 
 
 def _check_restricted_stock(c: _Collector, params: dict) -> None:

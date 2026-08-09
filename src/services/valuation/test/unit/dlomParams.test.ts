@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ParamsPatchBody } from '../../src/routes/params.js';
+import { ParamsPatchBody, validateDlomMethods } from '../../src/routes/params.js';
 import { DLOM_METHODS } from '../../src/repos/params.js';
 
 /**
@@ -141,5 +141,169 @@ describe('market horizon', () => {
 
   it.each(['revenue', 'ebitda'])('accepts market_method %s', (method) => {
     expect(ok({ market_method: method }).success).toBe(true);
+  });
+});
+
+// ── a weighted blend of methods ───────────────────────────────────────────────
+
+/**
+ * A discount weighted across several methods (migration 0129).
+ *
+ * The weights are checked in three places — here at save time, in the engine's
+ * pre-flight, and in the engine itself — plus a table constraint on the
+ * mutual exclusion. That looks redundant until you see what the shape makes
+ * easy: a blend whose weights total 90%. They are deliberately never
+ * normalised, so that blend concludes a tenth low rather than on the analyst's
+ * figures scaled up, and nothing about the resulting report looks wrong.
+ */
+describe('dlom_methods', () => {
+  const BLEND = [
+    { method: 'finnerty', weight: 0.5 },
+    { method: 'restricted_stock', weight: 0.5 },
+  ];
+
+  it('accepts a well-formed blend', () => {
+    expect(ok({ dlom_methods: BLEND }).success).toBe(true);
+  });
+
+  it('accepts null (no blend — conclude on one method)', () => {
+    expect(ok({ dlom_methods: null }).success).toBe(true);
+  });
+
+  it('rejects a blend of one', () => {
+    // A single method with extra steps. Two is the point at which weighting
+    // means anything, and `dlom_method` is how one method is selected.
+    expect(ok({ dlom_methods: [{ method: 'finnerty', weight: 1 }] }).success).toBe(false);
+  });
+
+  it('rejects a method the engine cannot dispatch on', () => {
+    expect(
+      ok({ dlom_methods: [{ method: 'black_scholes', weight: 0.5 }, BLEND[1]] }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a weight outside [0, 1]', () => {
+    expect(ok({ dlom_methods: [{ method: 'finnerty', weight: 1.5 }, BLEND[1]] }).success).toBe(false);
+    expect(ok({ dlom_methods: [{ method: 'finnerty', weight: -0.5 }, BLEND[1]] }).success).toBe(false);
+  });
+
+  it('rejects a leg missing its weight, or carrying anything extra', () => {
+    expect(ok({ dlom_methods: [{ method: 'finnerty' }, BLEND[1]] }).success).toBe(false);
+    expect(
+      ok({ dlom_methods: [{ ...BLEND[0], note: 'because' }, BLEND[1]] }).success,
+    ).toBe(false);
+  });
+});
+
+describe('validateDlomMethods', () => {
+  const BLEND = [
+    { method: 'finnerty' as const, weight: 0.5 },
+    { method: 'restricted_stock' as const, weight: 0.5 },
+  ];
+  const EMPTY = { dlom_method: null, dlom_methods: null, dlom_qualitative: null };
+
+  it('passes a blend summing to 1', () => {
+    expect(validateDlomMethods(EMPTY, { dlom_methods: BLEND }).ok).toBe(true);
+  });
+
+  it('passes when no blend is configured at all', () => {
+    expect(validateDlomMethods(EMPTY, {}).ok).toBe(true);
+    expect(validateDlomMethods(EMPTY, { dlom_method: 'finnerty' }).ok).toBe(true);
+  });
+
+  it('refuses weights that do not sum to 1 rather than normalising them', () => {
+    /*
+     * The whole point. Weights totalling 0.9 are a mistake in somebody's
+     * spreadsheet, not an instruction to scale up by a ninth — rescaling would
+     * conclude on a discount nobody chose, and the report would state it with
+     * every appearance of having been reasoned. Same rule the four approach
+     * weights follow.
+     */
+    const result = validateDlomMethods(EMPTY, {
+      dlom_methods: [
+        { method: 'finnerty', weight: 0.5 },
+        { method: 'restricted_stock', weight: 0.4 },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.detail).toContain('0.9000');
+  });
+
+  it('accepts thirds, which do not sum to 1 in binary floating point', () => {
+    // Compared in basis points for exactly this: 0.3333 × 3 is not 1.0, and an
+    // analyst splitting three ways evenly is not making a mistake.
+    expect(
+      validateDlomMethods(EMPTY, {
+        dlom_methods: [
+          { method: 'finnerty', weight: 0.3333 },
+          { method: 'chaffee', weight: 0.3333 },
+          { method: 'restricted_stock', weight: 0.3334 },
+        ],
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('refuses both forms at once', () => {
+    // Two answers to "which discount was concluded"; whichever the engine read
+    // would be the one the analyst did not mean.
+    const result = validateDlomMethods(EMPTY, { dlom_method: 'chaffee', dlom_methods: BLEND });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.detail).toContain('not both');
+  });
+
+  it('sees a conflict with a method already on the row', () => {
+    // The patch is partial, so the conflict is between what is being saved and
+    // what is already there — a blend saved onto a row that already names a
+    // single method is the same illegal state.
+    const result = validateDlomMethods({ ...EMPTY, dlom_method: 'chaffee' }, { dlom_methods: BLEND });
+    expect(result.ok).toBe(false);
+  });
+
+  it('allows a blend that clears the single method in the same patch', () => {
+    expect(
+      validateDlomMethods(
+        { ...EMPTY, dlom_method: 'chaffee' },
+        { dlom_method: null, dlom_methods: BLEND },
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('refuses a method weighted twice', () => {
+    const result = validateDlomMethods(EMPTY, {
+      dlom_methods: [
+        { method: 'finnerty', weight: 0.5 },
+        { method: 'finnerty', weight: 0.5 },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.detail).toContain('twice');
+  });
+
+  it('requires a qualitative leg to carry its own figure', () => {
+    const blend = [
+      { method: 'qualitative' as const, weight: 0.5 },
+      { method: 'finnerty' as const, weight: 0.5 },
+    ];
+    expect(validateDlomMethods(EMPTY, { dlom_methods: blend }).ok).toBe(false);
+    // Supplied in the same patch, or already on the row — either is enough.
+    expect(
+      validateDlomMethods(EMPTY, { dlom_methods: blend, dlom_qualitative: 0.2 }).ok,
+    ).toBe(true);
+    expect(
+      validateDlomMethods({ ...EMPTY, dlom_qualitative: 0.2 }, { dlom_methods: blend }).ok,
+    ).toBe(true);
+  });
+
+  it('accepts a nil-weighted method', () => {
+    // An appraiser who computed Longstaff to show it as an upper bound and
+    // weighted it to nothing is documenting the bound, not concluding on it.
+    expect(
+      validateDlomMethods(EMPTY, {
+        dlom_methods: [
+          { method: 'finnerty', weight: 1 },
+          { method: 'longstaff', weight: 0 },
+        ],
+      }).ok,
+    ).toBe(true);
   });
 });
