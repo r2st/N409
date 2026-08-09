@@ -263,6 +263,94 @@ describe('runningHeadings', () => {
     expect(headings[1]).toBe('1. First');
   });
 
+  /**
+   * A section that begins part way down a page does not own that page's
+   * running head — the part above it belongs to whatever ran over from the
+   * sheet before.
+   *
+   * Common on a valuation report, because the exhibits are long tables: one
+   * spills onto the next page and the next exhibit starts under it. A sheet
+   * whose top half was Exhibit F's breakpoint schedule was headed "29. Exhibit
+   * H — Discounts and Concluded Value", so a reader checking which schedule
+   * they were looking at was told the wrong one.
+   */
+  describe('when a section starts part way down a page', () => {
+    const TOP = 72;
+
+    it('keeps the previous label, because the previous section is what is above it', () => {
+      const headings = runningHeadings(
+        3,
+        0,
+        [
+          { page: 1, label: '28. Exhibit F', y: TOP },
+          // Exhibit F's table runs onto page 2; Exhibit H starts below it.
+          { page: 2, label: '29. Exhibit H', y: 520 },
+        ],
+        TOP,
+      );
+      expect(headings[2]).toBe('28. Exhibit F');
+    });
+
+    it('takes the new label when the section does start at the top', () => {
+      const headings = runningHeadings(
+        3,
+        0,
+        [
+          { page: 1, label: '28. Exhibit F', y: TOP },
+          { page: 2, label: '29. Exhibit H', y: TOP },
+        ],
+        TOP,
+      );
+      expect(headings[2]).toBe('29. Exhibit H');
+    });
+
+    it('allows a heading\u2019s own height of slack', () => {
+      // A section heading drawn at the top of the text area still leaves the
+      // cursor a few points below the margin; that is the top of the page.
+      const headings = runningHeadings(
+        2,
+        0,
+        [
+          { page: 0, label: '1. First', y: TOP },
+          { page: 1, label: '2. Second', y: TOP + 12 },
+        ],
+        TOP,
+      );
+      expect(headings[1]).toBe('2. Second');
+    });
+
+    it('still labels the following page with the section actually running', () => {
+      // The rule is about the *top* of a page. Once Exhibit H has the whole
+      // sheet, it takes the header.
+      const headings = runningHeadings(
+        4,
+        0,
+        [
+          { page: 1, label: '28. Exhibit F', y: TOP },
+          { page: 2, label: '29. Exhibit H', y: 520 },
+        ],
+        TOP,
+      );
+      expect(headings[2]).toBe('28. Exhibit F');
+      expect(headings[3]).toBe('29. Exhibit H');
+    });
+
+    it('treats a landmark with no y as starting its own page', () => {
+      // The contents and the summary always begin a fresh sheet, so they carry
+      // no position and are at the top by construction.
+      const headings = runningHeadings(
+        2,
+        0,
+        [
+          { page: 0, label: '1. First', y: TOP },
+          { page: 1, label: 'Executive Summary' },
+        ],
+        TOP,
+      );
+      expect(headings[1]).toBe('Executive Summary');
+    });
+  });
+
   it('carries the last landmark of a crowded page onto the next one', () => {
     // Page 1 opens with §1 and ends inside §3, so page 2 is still §3.
     const headings = runningHeadings(3, 0, [

@@ -1973,11 +1973,17 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
 
   // Sections
   const sectionStartPages: number[] = [];
+  // Where down the page each section begins. A section that starts at the top
+  // of a sheet owns that sheet's running head; one that starts two thirds of
+  // the way down does not, because the two thirds above it belong to whatever
+  // ran over from before. See `runningHeadings`.
+  const sectionStartY: number[] = [];
   input.sections.forEach((section, idx) => {
     if (idx === 0) doc.addPage();
     else doc.moveDown(1.5);
     ensureRoom(doc, 96);
     sectionStartPages.push(currentPageIndex(doc));
+    sectionStartY.push(doc.y);
     // Both the bookmark and the destination bind to the page that is current
     // now, which is why they are created here and not in a later pass.
     outline.addItem(`${idx + 1}. ${section.heading}`);
@@ -2065,6 +2071,7 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     ...input.sections.map((section, idx) => ({
       page: sectionStartPages[idx]!,
       label: `${idx + 1}. ${section.heading}`,
+      y: sectionStartY[idx],
     })),
   ]);
 
@@ -2195,28 +2202,54 @@ export interface PageLandmark {
   /** Absolute buffered-page index where this part of the report starts. */
   page: number;
   label: string;
+  /**
+   * How far down the page it starts, in points. Omitted for the landmarks that
+   * always begin a fresh sheet (the contents, the summary).
+   */
+  y?: number;
 }
 
 /**
- * The running-head label for every page: the most recent landmark that began at
- * or before it.
+ * How far down a page a section may begin and still own that page's running
+ * head.
+ *
+ * Anything within a heading's height of the top margin is the top of the page
+ * for this purpose — the section is what a reader sees when they look up. Below
+ * that, something else is.
+ */
+export const RUNNING_HEAD_TOP_SLACK = 24;
+
+/**
+ * The running-head label for every page: the section a reader is looking at
+ * when they glance at the top of that sheet.
  *
  * Derived after layout because a section's start page is not known until it has
  * been laid out, and a section that runs over three pages has to keep labelling
  * all three — a header that only appeared on the page where a section began
  * would be worse than none at all.
  *
+ * Two rules, and both come from the same question: what is at the top of this
+ * sheet?
+ *
  * Where several sections begin on one page — six one-paragraph sections fit on
- * a sheet comfortably — the page is labelled with the *first* of them, not the
- * last. Taking the last produced the reliably wrong answer: a page opening with
- * "1. Introduction and Scope" carried a running head reading "5. Allocation of
- * Equity Value", naming a section four headings further down. The first
- * landmark is what a reader sees at the top of the sheet the header sits on.
+ * a sheet comfortably — the page is labelled with the *first* of them. Taking
+ * the last produced the reliably wrong answer: a page opening with "1.
+ * Introduction and Scope" carried a running head reading "5. Allocation of
+ * Equity Value", naming a section four headings further down.
+ *
+ * And where the first section to begin on a page begins *part way down it*, the
+ * page keeps the previous label, because the part above the heading belongs to
+ * whatever ran over from the sheet before. That case is not rare on a valuation
+ * report: a long exhibit's table continues onto the next page and the next
+ * exhibit starts under it, so a sheet whose top half was Exhibit F's breakpoint
+ * schedule was headed "29. Exhibit H — Discounts and Concluded Value". A reader
+ * checking which schedule they are looking at is told the wrong one.
  */
 export function runningHeadings(
   pageCount: number,
   firstPage: number,
   landmarks: readonly PageLandmark[],
+  topMargin = 72,
 ): Array<string | null> {
   const sorted = [...landmarks].sort((a, b) => a.page - b.page);
   const headings: Array<string | null> = [];
@@ -2224,14 +2257,25 @@ export function runningHeadings(
   let next = 0;
   for (let page = firstPage; page < firstPage + pageCount; page += 1) {
     let firstOnPage: string | null = null;
+    let firstStartsAtTop = false;
     while (next < sorted.length && sorted[next]!.page <= page) {
-      if (firstOnPage === null) firstOnPage = sorted[next]!.label;
+      const landmark = sorted[next]!;
+      if (firstOnPage === null) {
+        firstOnPage = landmark.label;
+        // No `y` means the landmark begins its own page (the contents, the
+        // summary), so it is at the top by construction.
+        firstStartsAtTop =
+          landmark.y === undefined || landmark.y <= topMargin + RUNNING_HEAD_TOP_SLACK;
+      }
       // The last one still becomes what later pages carry, since it is the
       // section actually running when the page ends.
-      carried = sorted[next]!.label;
+      carried = landmark.label;
       next += 1;
     }
-    headings.push(firstOnPage ?? carried);
+    // `carried` at this point is the last landmark on this page, so the label
+    // for a page whose top belongs to an earlier section has to be captured
+    // before the loop above overwrites it — hence `previous`.
+    headings.push(firstOnPage === null ? carried : firstStartsAtTop ? firstOnPage : headings[headings.length - 1] ?? firstOnPage);
   }
   return headings;
 }
