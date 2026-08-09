@@ -155,7 +155,6 @@ export function runQaChecks(args: {
   // names the model when one produced the figure, so a reviewer reading a
   // warning can tell "the analyst chose 45%" from "Chaffee produced 45% at the
   // volatility and horizon this run used", which are different conversations.
-  const dlomMethod = engineParams.dlom_method;
   // Every volatility-derived method, not the two that were spelled inline here
   // — and a weighted blend counts, because the point of the parenthetical is to
   // tell "the analyst chose 45%" from "the models produced 45% at this run's

@@ -12,7 +12,6 @@ import {
   peerSetExhibit,
   pwermExhibit,
   financialsExhibit,
-  requiredReturnExhibit,
   waccExhibit,
   type ExhibitContext,
 } from '../../src/domain/reportExhibits.js';

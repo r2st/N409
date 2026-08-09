@@ -39,7 +39,6 @@ const { buildApp } = await import(`${ROOT}/dist/app.js`);
 const { loadConfig } = await import(`${ROOT}/dist/config.js`);
 const { createUser } = await import(`${ROOT}/dist/repos/users.js`);
 const { hashPassword } = await import(`${ROOT}/dist/auth/password.js`);
-const { newUlid } = await import('@n409/shared');
 
 const BASE_URL = process.env.DATABASE_URL ?? 'postgres://n409:n409_dev@localhost:5432/n409_dev';
 const OUT = process.env.OUT ?? process.cwd();
@@ -243,7 +242,7 @@ const readable = () => {
   return out
     .join('\n')
     .replace(/<([0-9a-fA-F]+)>/g, (_, hex) =>
-      Buffer.from(hex, 'hex').toString('utf16le').replace(/ /g, ''),
+      Buffer.from(hex, 'hex').toString('utf16le').replaceAll('\u0000', ''),
     );
 };
 const text = readable();

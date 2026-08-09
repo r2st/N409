@@ -377,8 +377,12 @@ const GLYPH_SUBSTITUTIONS: ReadonlyArray<readonly [RegExp, string]> = [
   // 0xA0 and is left alone; these are not.
   [/[\u2007\u2009\u200a\u202f\u2060]/g, ' '],
   // Zero-width characters: invisible on the page and not encodable, so they
-  // become nothing rather than a byte.
-  [/[\u200b\u200c\u200d\ufeff]/g, ''],
+  // become nothing rather than a byte. Spelled as an alternation rather than a
+  // character class because U+200D ZERO WIDTH JOINER inside a class is what
+  // `no-misleading-character-class` warns about — a class would also split a
+  // ZWJ emoji sequence, which is moot here since no emoji is WinAnsi-encodable
+  // anyway, but the alternation says what is meant without the warning.
+  [/\u200b|\u200c|\u200d|\ufeff/g, ''],
   // The quotation marks a word processor produces — ' ' " " ‚ „ — and the
   // ellipsis are all CP1252 already, so they are deliberately absent from this
   // list: downgrading them to typewriter quotes would make the typography of a

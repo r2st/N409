@@ -1464,7 +1464,9 @@ export function requiredReturnExhibit(ctx: ExhibitContext): ReportPdfSection | n
  */
 export function waccExhibit(
   results: Record<string, unknown>,
-  ctx: ExhibitContext,
+  // Takes the standard exhibit context and happens not to need it: the build-up
+  // is rates and betas end to end, so nothing here is formatted per currency.
+  _ctx: ExhibitContext,
 ): ReportPdfSection | null {
   const wacc = record(record(results.auto)?.wacc);
   if (!wacc) return null;
