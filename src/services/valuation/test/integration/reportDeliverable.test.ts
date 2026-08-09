@@ -305,6 +305,54 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
   });
 
   /**
+   * Appendix II — the statements the Financial Analysis chapter discusses.
+   *
+   * Asserted on figures rather than on the heading. The template's index names
+   * every appendix, so the heading is on the page whether or not the workbook
+   * was ever read — which is the same trap the exhibit assertions above avoid.
+   */
+  describe('the historical financials appendix', () => {
+    it('is absent while nobody has entered any financials', async () => {
+      // `uncomputed` has no workbook and no calculation; `computed` has a
+      // calculation but, until the next test writes them, no financials.
+      const text = await pdfText(computed.id);
+      expect(text).not.toContain('Income statement');
+    });
+
+    it('prints the reported statements, with the workbook’s own derived rows', async () => {
+      const patched = await ctx.app.inject({
+        method: 'PATCH',
+        url: `/api/v1/valuations/${computed.id}/workbook`,
+        headers: authHeader(ops.token),
+        payload: {
+          cells: [
+            { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_minus_1', value: 4_000_000 },
+            { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 6_000_000 },
+            { sheet: 'income_statement', row_key: 'cogs', column_key: 'fy_current', value: 1_500_000 },
+            { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_plus_1', value: 99_000_000 },
+            { sheet: 'balance_sheet', row_key: 'cash', column_key: 'fy_current', value: 3_000_000 },
+          ],
+        },
+      });
+      expect(patched.statusCode).toBe(200);
+
+      const text = await pdfText(computed.id);
+      expect(text).toContain('Income statement');
+      expect(text).toContain('Balance sheet');
+      // Entered figures.
+      expect(text).toContain('$6,000,000');
+      expect(text).toContain('$3,000,000');
+      // Derived by `computeWorkbook`, not by the appendix: 6.0M − 1.5M, and 75%.
+      expect(text).toContain('$4,500,000');
+      expect(text).toContain('75.0%');
+      // The forecast period is management's expectation, not a reported figure,
+      // and an appendix of this name must not carry it.
+      expect(text).not.toContain('$99,000,000');
+      expect(text).not.toContain('FY+1');
+    });
+  });
+
+  /**
    * A chapter the analyst omitted.
    *
    * A template is a superset of what any one engagement needs, and the analyst's
@@ -826,7 +874,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       await opsGet(`/api/v1/valuations/${v.id}/report`);
       const res = await draft(v.id, ops.token);
       expect(res.statusCode).toBe(200);
-      expect(res.json().template_version).toBe('409a.v56');
+      expect(res.json().template_version).toBe('409a.v57');
       const keys = (res.json().version.content.sections as Array<{ key: string }>).map((s) => s.key);
       expect(keys).toContain('purpose_and_scope');
     });
@@ -849,7 +897,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       const v = await seed('Redraft Three, Inc.', true);
       await opsGet(`/api/v1/valuations/${v.id}/report`);
       const res = await draft(v.id, ops.token);
-      expect(res.json().report.template_version).toBe('409a.v56');
+      expect(res.json().report.template_version).toBe('409a.v57');
     });
 
     it('is refused to a client', async () => {

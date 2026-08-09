@@ -32,6 +32,8 @@ import { runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { buildExhibits } from '../domain/reportExhibits.js';
 import { listComparableItems } from '../repos/comparableItems.js';
+import { listWorkbookCells } from '../repos/workbook.js';
+import { computeWorkbook } from '../domain/workbook.js';
 import { impliedMultiples } from '../domain/comparables.js';
 import { researchSourcesExhibit } from '../domain/researchExhibit.js';
 import { listMarketResearch } from '../repos/marketResearch.js';
@@ -270,11 +272,19 @@ async function summaryFor(
   // methodology params. Absent until they have concluded one — it is never
   // inferred, so a report with no stage on it is one where nobody has said.
   const paramsRow = await findParams(pool, valuation.id);
+  // The reported financial statements behind the Financial Analysis chapter
+  // (Appendix II). Resolved rather than read: the derived rows — margins,
+  // subtotals, growth — are recomputed here exactly as the workbook UI computes
+  // them, so the appendix cannot print a margin the workbook disagrees with.
+  // Empty for an engagement whose financials nobody has entered, and the
+  // appendix is then not rendered.
+  const financials = computeWorkbook(await listWorkbookCells(pool, valuation.id));
   const context = {
     currency: valuation.currency,
     companyName: valuation.company_name,
     valuationDate,
     peers,
+    financials,
     developmentStage: paramsRow?.development_stage ?? null,
   };
   // UK option-scheme deliverables carry the HMRC agreement request as a final

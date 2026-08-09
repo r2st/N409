@@ -386,7 +386,7 @@ const P = (text: string) => `<p>${text}</p>`;
  *     it.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v56',
+  version: '409a.v57',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -732,6 +732,8 @@ const TEMPLATE_409A: ReportTemplate = {
         '<li>Exhibit G — Probability-Weighted Expected Return Scenarios</li>' +
         '<li>Exhibit H — Discounts and Concluded Value</li>' +
         '<li>Exhibit H-1 — Marketability Discount: Derivation</li>' +
+        '<li>Appendix I — Discount Rate Build-Up (WACC)</li>' +
+        '<li>Appendix II — Historical Financial Statements</li>' +
         '</ul>' +
         P(
           'An exhibit is included only where the corresponding analysis was applied in this valuation; exhibits for approaches and methods not used are omitted.',

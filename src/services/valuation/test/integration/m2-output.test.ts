@@ -314,7 +314,7 @@ describe.skipIf(!dbUp)('M2 — output & delivery (overwrites, workbook, reports)
       const res = await opsGet(`/api/v1/valuations/${valuationId}/report`);
       expect(res.statusCode).toBe(200);
       const { report, version } = res.json();
-      expect(report.template_version).toBe('409a.v56');
+      expect(report.template_version).toBe('409a.v57');
       expect(report.status).toBe('draft');
       expect(report.current_version).toBe(1);
       expect(version.version).toBe(1);

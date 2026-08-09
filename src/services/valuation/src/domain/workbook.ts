@@ -61,6 +61,28 @@ const FISCAL_PERIODS: readonly WorkbookColumnDef[] = [
   { key: 'fy_plus_2', label: 'FY+2' },
 ];
 
+/**
+ * The periods that are forecast rather than reported.
+ *
+ * The workbook holds both in one grid because an analyst models them together,
+ * but they are different kinds of evidence and a report must not print them as
+ * though they were the same: FY-2 through FY (current) are what the company
+ * did, and FY+1 onward is what management expects. The historical-financials
+ * appendix (`reportExhibits.financialsExhibit`) shows only the reported ones —
+ * an appendix of that name carrying two columns of somebody's forecast would
+ * misdescribe its own contents in a document a reviewer relies on.
+ *
+ * Exported so the appendix and the workbook cannot come to disagree about which
+ * column is which. `fy_current` counts as reported, the same call
+ * `workbookTabs.ACTUALS_COLUMN` already makes.
+ */
+export const PROJECTION_COLUMN_KEYS: ReadonlySet<string> = new Set(['fy_plus_1', 'fy_plus_2']);
+
+/** Whether a fiscal-period column holds a forecast. */
+export function isProjectionColumn(columnKey: string): boolean {
+  return PROJECTION_COLUMN_KEYS.has(columnKey);
+}
+
 const input = (key: string, label: string, format: WorkbookFormat = 'currency'): WorkbookRowDef => ({
   key,
   label,

@@ -4,6 +4,7 @@ import { APPROACH_LABELS, ALLOCATION_LABELS, formatCurrency, formatPercent, num 
 import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
 import { MULTIPLE_LABELS, type MultipleKey } from './comparables.js';
+import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
 
 /**
  * The supporting exhibits of the deliverable — the schedules a reviewer checks
@@ -45,6 +46,12 @@ export interface ExhibitContext {
    * simply not rendered — the report reads exactly as it did before.
    */
   peers?: readonly ExhibitPeer[];
+  /**
+   * The valuation workbook, resolved (`workbook.computeWorkbook`). Absent for
+   * an engagement whose financials nobody has entered, and Appendix II is then
+   * simply not rendered.
+   */
+  financials?: readonly ComputedSheet[];
 }
 
 /** One row of the peer set, as Exhibit D-1 prints it. */
@@ -1258,6 +1265,102 @@ export function dlomDerivationExhibit(
   return section('Exhibit H-1 — Marketability Discount: Derivation', body);
 }
 
+// ── Appendix II — the financial statements the analysis rests on ─────────────
+
+/** The sheets this appendix prints, in the order a statement set is read. */
+const FINANCIAL_SHEET_KEYS = ['income_statement', 'balance_sheet'] as const;
+
+/**
+ * One workbook cell, formatted the way its row is denominated.
+ *
+ * A null is printed as an em dash rather than as a zero. The distinction is the
+ * whole point of the null-propagating arithmetic in `computeWorkbook`: a
+ * company with no inventory line and a company whose inventory is genuinely
+ * nil are different facts, and a statement that renders both as `$0` asserts
+ * the second about the first.
+ */
+function financialCell(value: number | null, format: WorkbookFormat, currency: string): string {
+  if (value === null) return '—';
+  if (format === 'percent') return formatPercent(value, 1);
+  if (format === 'number') return value.toLocaleString('en-US');
+  // Whole units. A statement is read for magnitude and trend, and cents across
+  // five columns cost a reader width without telling them anything.
+  return formatCurrency(value, currency, 0);
+}
+
+/**
+ * The reported financial statements, as an appendix.
+ *
+ * The Financial Analysis chapter discusses historical performance in prose, and
+ * before this the figures behind that prose existed only in the workbook. That
+ * asks a reviewer to take the narrative on trust — the one thing an appendix
+ * exists to prevent — and it is why the legacy deliverable carries an
+ * `appendix-historical-financials` of its own.
+ *
+ * Reported periods only: `isProjectionColumn` drops FY+1 and FY+2. Management's
+ * forecast is evidence of a different kind, it is already disclosed where it is
+ * actually used (Exhibit C discounts it), and an appendix titled "Historical
+ * Financial Statements" that carried it would misdescribe itself.
+ *
+ * Rows with nothing in them across every reported period are dropped. The
+ * workbook's schema is fixed, so a SaaS company with no inventory and no COGS
+ * would otherwise print a page of em dashes and bury the four lines that matter.
+ * A row with a figure in even one period stays, dashes and all, because the gap
+ * is then itself information.
+ *
+ * Derived rows (margins, growth, totals) are printed with their inputs rather
+ * than separately, exactly as `computeWorkbook` resolved them — so the appendix
+ * cannot state a margin the workbook does not agree with.
+ */
+export function financialsExhibit(
+  sheets: readonly ComputedSheet[] | undefined,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  if (!sheets || sheets.length === 0) return null;
+
+  const blocks: string[] = [];
+  for (const key of FINANCIAL_SHEET_KEYS) {
+    const sheet = sheets.find((s) => s.key === key);
+    if (!sheet) continue;
+
+    const columns = sheet.columns.filter((c) => !isProjectionColumn(c.key));
+    if (columns.length === 0) continue;
+    const keep = new Set(columns.map((c) => c.key));
+
+    const rows = sheet.rows
+      .map((row) => ({
+        row,
+        cells: row.cells.filter((c) => keep.has(c.column_key)),
+      }))
+      .filter(({ cells }) => cells.some((c) => c.value !== null))
+      .map(({ row, cells }) => [
+        esc(row.label),
+        ...cells.map((c) => financialCell(c.value, row.format, ctx.currency)),
+      ]);
+    if (rows.length === 0) continue;
+
+    blocks.push(
+      `<h3>${esc(sheet.label)}</h3>`,
+      table({ head: ['', ...columns.map((c) => esc(c.label))], rows }),
+    );
+  }
+
+  if (blocks.length === 0) return null;
+
+  return section('Appendix II — Historical Financial Statements', [
+    P(
+      'The financial statements below are the reported figures the analysis rests on, as entered in ' +
+        'the valuation workbook and carried into the engine without adjustment. Subtotals, margins ' +
+        'and growth rates are computed from the lines above them rather than entered, so they cannot ' +
+        'disagree with the statements they summarise. Periods are the company’s fiscal years; ' +
+        'management’s forecast is not reproduced here, and is set out where it is applied in ' +
+        '<strong>Exhibit C</strong>. A line the company does not report is shown as a dash rather ' +
+        'than as nil.',
+    ),
+    ...blocks,
+  ]);
+}
+
 // ── assembly ─────────────────────────────────────────────────────────────────
 
 /**
@@ -1385,5 +1488,6 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     // Appendices last: they support the exhibits rather than being read in
     // sequence with them.
     waccExhibit(results, ctx),
+    financialsExhibit(ctx.financials, ctx),
   ].filter((s): s is ReportPdfSection => s !== null);
 }

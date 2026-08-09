@@ -11,9 +11,11 @@ import {
   marketExhibit,
   peerSetExhibit,
   pwermExhibit,
+  financialsExhibit,
   waccExhibit,
 } from '../../src/domain/reportExhibits.js';
 import { ALLOWED_TAGS, sanitizeHtml } from '../../src/domain/report.js';
+import { computeWorkbook } from '../../src/domain/workbook.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
 
 const CONTEXT = {
@@ -1172,5 +1174,103 @@ describe('Appendix I — the WACC build-up', () => {
     } as unknown as CalculationRow;
     const headings = buildExhibits(calc, CONTEXT).map((s) => s.heading);
     expect(headings).toContain('Appendix I — Discount Rate Build-Up (WACC)');
+  });
+});
+
+/**
+ * Appendix II — the reported statements the Financial Analysis chapter discusses.
+ */
+describe('Appendix II — historical financial statements', () => {
+  /** A workbook with enough entered to produce both statements. */
+  const cells = (over: Record<string, number> = {}) =>
+    computeWorkbook([
+      { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_minus_1', value: 4_000_000 },
+      { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 6_000_000 },
+      { sheet: 'income_statement', row_key: 'cogs', column_key: 'fy_current', value: 1_500_000 },
+      { sheet: 'balance_sheet', row_key: 'cash', column_key: 'fy_current', value: 3_000_000 },
+      ...Object.entries(over).map(([k, value]) => {
+        const [sheet, row_key, column_key] = k.split('.');
+        return { sheet, row_key, column_key, value };
+      }),
+    ]);
+
+  it('prints both statements with their labels', () => {
+    const out = financialsExhibit(cells(), CONTEXT)!;
+    expect(out.heading).toBe('Appendix II — Historical Financial Statements');
+    expect(out.html).toContain('Income statement');
+    expect(out.html).toContain('Balance sheet');
+    expect(out.html).toContain('$6,000,000');
+  });
+
+  it('omits the forecast periods — the appendix is of reported figures', () => {
+    const out = financialsExhibit(
+      cells({ 'income_statement.revenue.fy_plus_1': 99_000_000 }),
+      CONTEXT,
+    )!;
+    expect(out.html).toContain('FY (current)');
+    expect(out.html).not.toContain('FY+1');
+    // The forecast figure itself must not reach the page under any column.
+    expect(out.html).not.toContain('99,000,000');
+  });
+
+  it('carries the derived rows the workbook computed, not re-derived ones', () => {
+    // gross profit 6.0M - 1.5M = 4.5M; gross margin 75%; revenue growth 50%.
+    const out = financialsExhibit(cells(), CONTEXT)!;
+    expect(out.html).toContain('$4,500,000');
+    expect(out.html).toContain('75.0%');
+    expect(out.html).toContain('50.0%');
+  });
+
+  it('drops rows the company reports nothing on, and dashes a gap it does', () => {
+    const out = financialsExhibit(cells(), CONTEXT)!;
+    // Nothing was entered for inventory in any reported period.
+    expect(out.html).not.toContain('Inventory');
+    // Revenue is reported in FY-1 and FY (current) but not FY-2, so the row
+    // stays and the missing period reads as absent rather than as nil.
+    expect(out.html).toContain('Revenue');
+    expect(out.html).toContain('—');
+    expect(out.html).not.toContain('$0');
+  });
+
+  it('is null when nobody has entered any financials', () => {
+    expect(financialsExhibit(computeWorkbook([]), CONTEXT)).toBeNull();
+    expect(financialsExhibit(undefined, CONTEXT)).toBeNull();
+  });
+
+  it('is null when the only figures entered are forecast', () => {
+    const forecastOnly = computeWorkbook([
+      { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_plus_1', value: 9_000_000 },
+    ]);
+    expect(financialsExhibit(forecastOnly, CONTEXT)).toBeNull();
+  });
+
+  it('renders an unrecognised currency code rather than sinking the appendix', () => {
+    const out = financialsExhibit(cells(), { ...CONTEXT, currency: 'ZZZ' })!;
+    // Intl separates an unrecognised code from the figure with U+00A0, so this
+    // matches on the two parts rather than pinning the byte between them.
+    expect(out.html).toMatch(/ZZZ\s6,000,000/);
+  });
+
+  it('escapes a class of text it does not control — the sheet labels', () => {
+    // The labels are ours today, but they reach a table cell through `esc` for
+    // the same reason every other exhibit's cells do.
+    const out = financialsExhibit(cells(), CONTEXT)!;
+    expect(out.html).toContain('Cash &amp; equivalents');
+    expect(out.html).not.toContain('Cash & equivalents');
+  });
+
+  it('is included in the assembled exhibit list', () => {
+    const calc = {
+      status: 'succeeded',
+      inputs: { params: {}, inputs: {} },
+      results: { equity_value: 1, fmv_per_share: 1 },
+    } as unknown as CalculationRow;
+    const headings = buildExhibits(calc, { ...CONTEXT, financials: cells() }).map((s) => s.heading);
+    expect(headings).toContain('Appendix II — Historical Financial Statements');
+  });
+
+  it('renders only tags the report whitelist allows', () => {
+    const out = financialsExhibit(cells(), CONTEXT)!;
+    expect(sanitizeHtml(out.html)).toBe(out.html);
   });
 });
