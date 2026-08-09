@@ -32,6 +32,7 @@ import pg from 'pg';
 import { writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { inflateSync as zlibInflate } from 'node:zlib';
+import { pdfText as extractPdfText } from './pdf-text.mjs';
 
 const ROOT = new URL('../src/services/valuation', import.meta.url).pathname;
 const { migrate } = await import(`${ROOT}/dist/db/migrate.js`);
@@ -228,23 +229,7 @@ writeFileSync(`${OUT}/sample-results.json`, JSON.stringify(calculation.results, 
  * means a figure the body asked for and the calculation did not supply, and a
  * bare "$ …" means a figure nobody wired up at all.
  */
-const readable = () => {
-  const raw = pdfRes.rawPayload;
-  const out = [];
-  // Streams are Flate-compressed; the text inside them is hex-encoded runs.
-  for (const m of raw.toString('latin1').matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
-    try {
-      out.push(zlibInflate(Buffer.from(m[1], 'latin1')).toString('latin1'));
-    } catch {
-      /* not a Flate stream */
-    }
-  }
-  return out
-    .join('\n')
-    .replace(/<([0-9a-fA-F]+)>/g, (_, hex) =>
-      Buffer.from(hex, 'hex').toString('utf16le').replaceAll('\u0000', ''),
-    );
-};
+const readable = () => extractPdfText(pdfRes.rawPayload, { inflateSync: zlibInflate });
 const text = readable();
 const leftovers = [...new Set([...text.matchAll(/\{\{\w+\}\}/g)].map((m) => m[0]))];
 console.log('\n── UNFILLED FIGURES ───────────────────────────────────────────');

@@ -63,6 +63,7 @@
 import pg from 'pg';
 import { randomBytes } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
+import { pdfText as extractPdfText, stripDotLeaders } from './pdf-text.mjs';
 
 const ROOT = new URL('../src/services/valuation/dist', import.meta.url).pathname;
 const { SAMPLE_ENGAGEMENTS, asc718SectionHtml } = await import(`${ROOT}/domain/sampleEngagements.js`);
@@ -255,26 +256,12 @@ async function must(method, path, body, opts) {
 /**
  * Pull readable text out of the PDF the API just produced.
  *
- * The same trick `tools/sample-report.mjs` uses, and for the same reason: the
+ * The same helper `tools/sample-report.mjs` uses, and for the same reason: the
  * assertion worth making is about the *document*, not about the JSON that
- * preceded it. A report whose Conclusion of Value reads "$ … per share" three
+ * preceded it. A report whose Conclusion of Value reads "$ ... per share" three
  * pages after the summary printed a figure passes every unit test in the suite.
  */
-function pdfText(buffer) {
-  const out = [];
-  for (const m of buffer.toString('latin1').matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
-    try {
-      out.push(inflateSync(Buffer.from(m[1], 'latin1')).toString('latin1'));
-    } catch {
-      /* not a Flate stream */
-    }
-  }
-  return out
-    .join('\n')
-    .replace(/<([0-9a-fA-F]+)>/g, (_, hex) =>
-      Buffer.from(hex, 'hex').toString('utf16le').replaceAll('\u0000', ''),
-    );
-}
+const pdfText = (buffer) => extractPdfText(buffer, { inflateSync });
 
 // ── seeding one engagement ───────────────────────────────────────────────────
 
@@ -381,7 +368,7 @@ async function seed(sample, ownerId) {
   const pdf = await must('GET', `/api/v1/valuations/${id}/report.pdf`, undefined, { raw: true });
   const text = pdfText(pdf.buffer);
   const unresolved = [...new Set([...text.matchAll(/\{\{\w+\}\}/g)].map((m) => m[0]))];
-  const ellipses = /[…]|\.\.\./.test(text);
+  const ellipses = /[…]|\.\.\./.test(stripDotLeaders(text));
   log(`pdf: ${pdf.buffer.length} bytes`);
   if (unresolved.length > 0) {
     failures += 1;
