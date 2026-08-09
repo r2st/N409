@@ -1,0 +1,157 @@
+import { describe, expect, it } from 'vitest';
+import { findReportPlaceholders, reportReadiness } from '../../src/domain/reportReadiness.js';
+import type { ReportContent } from '../../src/domain/report.js';
+import { instantiateTemplate, templateForKind } from '../../src/domain/report.js';
+
+/**
+ * Whether the drafted body is finished.
+ *
+ * Found by rendering a real 409A rather than by reading code. The deliverable
+ * carried an executive summary stating $1.2242, an Exhibit H deriving it from
+ * the allocated value through both discounts — and, between them, a Conclusion
+ * of Value chapter reading "the fair market value of one share of common stock
+ * of Northwind Robotics, Inc. as of 2026-06-30 is $ … per share".
+ *
+ * Every QA check that existed grades a number. None of them opened the report.
+ * The skeletons are right to ship fill-me markers — an analyst has to be told
+ * what to supply and where — but nothing noticed when one survived to a
+ * document a board reads to adopt a share price.
+ */
+
+const content = (sections: Array<{ key: string; heading: string; html: string }>): ReportContent => ({
+  title: 'IRC 409A Valuation Report — Northwind Robotics, Inc.',
+  sections,
+});
+
+const CONCLUSION_UNFILLED = {
+  key: 'conclusion',
+  heading: 'Conclusion of Value',
+  html: '<p>Based on the analyses described herein, the fair market value of one share of common stock of Northwind Robotics, Inc. as of 2026-06-30 is $ … per share.</p>',
+};
+
+const CONCLUSION_FILLED = {
+  key: 'conclusion',
+  heading: 'Conclusion of Value',
+  html: '<p>Based on the analyses described herein, the fair market value of one share of common stock of Northwind Robotics, Inc. as of 2026-06-30 is $1.2242 per share.</p>',
+};
+
+const NARRATIVE_UNFILLED = {
+  key: 'qualifications',
+  heading: 'Qualifications of the Valuation Analyst',
+  html: '<p>Set out the professional qualifications: name, role and firm …</p>',
+};
+
+describe('finding unfilled placeholders', () => {
+  it('finds the ellipsis a skeleton left behind', () => {
+    const found = findReportPlaceholders(content([CONCLUSION_UNFILLED]));
+    expect(found).toHaveLength(1);
+    expect(found[0]!.heading).toBe('Conclusion of Value');
+  });
+
+  it('quotes the sentence, so nobody is sent hunting for the marker', () => {
+    // A finding that says "section 17 has a placeholder" makes the analyst read
+    // the section. One that says which sentence makes them fix it.
+    const [found] = findReportPlaceholders(content([CONCLUSION_UNFILLED]));
+    expect(found!.excerpt).toContain('is $ … per share');
+  });
+
+  it('finds three dots as well as the ellipsis character', () => {
+    const found = findReportPlaceholders(
+      content([{ ...CONCLUSION_UNFILLED, html: '<p>The value is $... per share.</p>' }]),
+    );
+    expect(found).toHaveLength(1);
+  });
+
+  it('reads prose, not markup', () => {
+    // An ellipsis inside an attribute is not a sentence an analyst has to
+    // finish, and a marker split by an inline tag still is one.
+    expect(findReportPlaceholders(content([{ key: 'a', heading: 'A', html: '<p title="…">Done.</p>' }]))).toEqual(
+      [],
+    );
+    expect(
+      findReportPlaceholders(content([{ key: 'conclusion', heading: 'C', html: '<p>is $ <em>…</em> per share.</p>' }])),
+    ).toHaveLength(1);
+  });
+
+  it('says nothing about a finished section', () => {
+    expect(findReportPlaceholders(content([CONCLUSION_FILLED]))).toEqual([]);
+  });
+});
+
+describe('the verdict', () => {
+  it('fails a report that will not state what the shares are worth', () => {
+    // The case this exists for.
+    const verdict = reportReadiness(content([CONCLUSION_UNFILLED]));
+    expect(verdict.status).toBe('fail');
+    expect(verdict.detail).toContain('Conclusion of Value');
+  });
+
+  it('fails an ASC 718 table of empty cells', () => {
+    // A client's auditor reads that table as the measured expense.
+    const verdict = reportReadiness(
+      content([
+        CONCLUSION_FILLED,
+        { key: 'asc718', heading: 'ASC 718 Stock-Based Compensation', html: '<p>Expected term … years</p>' },
+      ]),
+    );
+    expect(verdict.status).toBe('fail');
+  });
+
+  it('only warns about a section that does not state the answer', () => {
+    // An unwritten qualifications section is an incomplete report somebody may
+    // still have reason to publish; an unwritten conclusion is a report that
+    // contradicts itself. Grading both as fatal would make the gate something
+    // people route around.
+    const verdict = reportReadiness(content([CONCLUSION_FILLED, NARRATIVE_UNFILLED]));
+    expect(verdict.status).toBe('warn');
+    expect(verdict.detail).toContain('Qualifications');
+  });
+
+  it('fails when a blocking section is unfilled alongside a narrative one', () => {
+    const verdict = reportReadiness(content([CONCLUSION_UNFILLED, NARRATIVE_UNFILLED]));
+    expect(verdict.status).toBe('fail');
+    // Both are reported — the analyst fixes the document once.
+    expect(verdict.placeholders).toHaveLength(2);
+  });
+
+  it('blocks on the heading when the section has no key to match', () => {
+    // A report drafted from a managed (DB-backed) template carries no
+    // code-authored key, and the conclusion chapter is called the same thing in
+    // both kinds.
+    const verdict = reportReadiness(
+      content([{ key: 'sec-4', heading: 'Conclusion of Value', html: '<p>is $ … per share</p>' }]),
+    );
+    expect(verdict.status).toBe('fail');
+  });
+
+  it('passes a finished report', () => {
+    expect(reportReadiness(content([CONCLUSION_FILLED])).status).toBe('pass');
+  });
+
+  it('passes a valuation with no report drafted at all', () => {
+    // Not the same failure. A valuation with no report is not a report with
+    // holes in it, and the publish path refuses that case for its own reasons.
+    expect(reportReadiness(null).status).toBe('pass');
+  });
+});
+
+describe('against the real 409A skeleton', () => {
+  const drafted = instantiateTemplate(templateForKind('409a'), {
+    company_name: 'Northwind Robotics, Inc.',
+    kind: '409a',
+    valuation_ref: '01J8Z9WQ5T7K2M4N6P8R0S1V3X',
+    date: '2026-06-30',
+    currency: 'USD',
+  });
+
+  it('a freshly drafted 409A does not pass — it has not been written yet', () => {
+    // The point of the skeleton is that an analyst fills it in. The check has
+    // to agree with that, or it is grading nothing.
+    expect(reportReadiness(drafted).status).toBe('fail');
+  });
+
+  it('and the conclusion is one of the sections it names', () => {
+    const verdict = reportReadiness(drafted);
+    expect(verdict.placeholders.some((p) => p.key === 'conclusion' && p.blocking)).toBe(true);
+  });
+});

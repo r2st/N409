@@ -316,6 +316,124 @@ export function breakLongRuns(text: string, limit: number = MAX_UNBROKEN_RUN): s
 }
 
 /**
+ * Characters the built-in fonts cannot draw, and what to draw instead.
+ *
+ * This renderer uses pdfkit's standard-14 Helvetica, whose encoding is WinAnsi
+ * (CP1252). That covers Latin-1 and the punctuation this domain actually wants
+ * — em dash, curly quotes, ·, ×, ±, ², the currency signs. It does not cover
+ * Greek, arrows, or the *typographic minus* U+2212, and pdfkit does not fail on
+ * a character it cannot encode: it emits a byte anyway. The result is silent
+ * mojibake in the finished PDF.
+ *
+ * That is not a cosmetic bug on this document. The executive summary printed
+ * its key assumptions as `<2c"RrT 4.00y` where it meant `σ 62% · r 4.21% ·
+ * T 4.00y`, and the value-bridge chart printed `"$0.1410` where it meant
+ * `−$0.1410`. Both sit on the page a board reads to adopt a share price.
+ *
+ * The mapping is transliteration, not deletion: every entry is the closest
+ * thing the font can draw, so meaning survives. `σ` becomes `sigma` because a
+ * bare `s` beside a percentage would read as a typo rather than as a symbol.
+ */
+const GLYPH_SUBSTITUTIONS: ReadonlyArray<readonly [RegExp, string]> = [
+  // The minus sign proper (U+2212) — indistinguishable from a hyphen on the
+  // page, and the reason every negative figure in the value bridge was broken.
+  [/\u2212/g, '-'],
+  // Greek letters used as finance symbols. Spelled out rather than dropped.
+  [/\u03c3/g, 'sigma'],
+  [/\u03bc/g, 'mu'],
+  [/\u03c0/g, 'pi'],
+  [/\u0394/g, 'delta'],
+  [/\u03b2/g, 'beta'],
+  [/\u03b1/g, 'alpha'],
+  // Comparison and maths operators outside CP1252.
+  [/\u2264/g, '<='],
+  [/\u2265/g, '>='],
+  [/\u2260/g, '!='],
+  [/\u2248/g, '~='],
+  [/\u221e/g, 'infinity'],
+  [/\u221a/g, 'sqrt'],
+  [/\u2211/g, 'sum'],
+  // Arrows — a rollforward or bridge label reaches for these.
+  [/\u2192/g, '->'],
+  [/\u2190/g, '<-'],
+  [/\u2194/g, '<->'],
+  // Spaces that are not the space character. A non-breaking space IS WinAnsi
+  // 0xA0 and is left alone; these are not.
+  [/[\u2007\u2009\u200a\u202f\u2060]/g, ' '],
+  // Zero-width characters: invisible on the page and not encodable, so they
+  // become nothing rather than a byte.
+  [/[\u200b\u200c\u200d\ufeff]/g, ''],
+  // The quotation marks a word processor produces — ' ' " " ‚ „ — and the
+  // ellipsis are all CP1252 already, so they are deliberately absent from this
+  // list: downgrading them to typewriter quotes would make the typography of a
+  // published deliverable worse in order to fix a problem it does not have.
+  // Only the two reversed forms CP1252 lacks are rewritten.
+  [/\u201b/g, "'"],
+  [/\u201f/g, '"'],
+  // U+2010 HYPHEN and U+2011 NON-BREAKING HYPHEN are not CP1252; the ASCII
+  // hyphen-minus at 0x2D is.
+  [/[\u2010\u2011]/g, '-'],
+];
+
+/**
+ * The last resort, for a character no substitution names.
+ *
+ * Report bodies are analyst-authored and can carry anything a keyboard or a
+ * paste produces — a CJK company name, an emoji, a mathematical script capital.
+ * None of it can be drawn by a standard-14 font. `?` per character is the
+ * honest outcome: visibly wrong, so it is noticed and fixed, rather than a
+ * plausible-looking wrong glyph that is not.
+ *
+ * Anything below 0x100 that is not a C0 control is CP1252-representable, as are
+ * the handful of CP1252 extras (0x152 OE, 0x2014 em dash, 0x20AC euro, …). The
+ * test is written as "can this round-trip through latin1 or is it a known
+ * extra" rather than as a 224-entry table.
+ */
+const CP1252_EXTRAS = new Set([
+  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152,
+  0x017d, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a,
+  0x0153, 0x017e, 0x0178,
+]);
+
+function isDrawable(code: number): boolean {
+  // Tab, newline and carriage return are layout instructions pdfkit handles;
+  // the rest of the C0 range would be drawn as garbage.
+  if (code === 0x09 || code === 0x0a || code === 0x0d) return true;
+  if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return false;
+  if (code <= 0xff) return true;
+  return CP1252_EXTRAS.has(code);
+}
+
+/**
+ * Makes a string safe to hand to a standard-14 font.
+ *
+ * Applied at the one place text reaches pdfkit rather than at the call sites
+ * that happen to emit a symbol today (`reportSummary.ts` writes `σ`,
+ * `reportExhibits.ts` writes `(σ)`). Fixing those three would leave the next
+ * one broken, and — the case that actually matters — would do nothing for
+ * *authored* section bodies, which are free text an analyst pastes into a legal
+ * deliverable.
+ */
+export function fontSafe(text: string): string {
+  let out = text;
+  for (const [pattern, replacement] of GLYPH_SUBSTITUTIONS) out = out.replace(pattern, replacement);
+  // Fast path: the overwhelming majority of report text is plain Latin-1 after
+  // the substitutions above, and scanning is cheaper than rebuilding.
+  // eslint-disable-next-line no-control-regex
+  if (!/[^\u0000-\u00ff]/.test(out) && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(out)) {
+    return out;
+  }
+  let safe = '';
+  for (const ch of out) {
+    const code = ch.codePointAt(0)!;
+    // A codepoint above the BMP arrives as one iteration but two UTF-16 units;
+    // one '?' for the character is right, not one per surrogate.
+    safe += isDrawable(code) ? ch : '?';
+  }
+  return safe;
+}
+
+/**
  * Parses the sanitized subset into render blocks. Defensive: unknown or
  * mis-nested tags never throw — text content always survives.
  */
@@ -1621,6 +1739,30 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
     pdfVersion: '1.7',
   });
 
+  /*
+   * Every string this renderer draws goes through `fontSafe` first.
+   *
+   * Wrapped here, once, rather than applied at the 40-odd `.text()` call sites.
+   * Two reasons, and the second is the one that matters: a call site added
+   * later cannot forget it, and the largest source of unrepresentable
+   * characters is not this file at all — it is the authored section bodies,
+   * which are free text an analyst pastes into a legal deliverable and which
+   * reach pdfkit through the same method.
+   *
+   * The alternative is embedding a Unicode TTF. That is the right answer the
+   * day this platform has to set a CJK company name; it is a different change,
+   * with a font file to license and ship and every metric in this renderer to
+   * re-tune, and it would not make today's report correct any sooner.
+   */
+  const drawText = doc.text.bind(doc) as (
+    text: string,
+    ...rest: unknown[]
+  ) => PDFKit.PDFDocument;
+  (doc as { text: unknown }).text = (text: unknown, ...rest: unknown[]) =>
+    // pdfkit accepts a number here too (it stringifies), so this coerces the
+    // same way rather than refusing what the library allows.
+    drawText(fontSafe(typeof text === 'string' ? text : String(text)), ...rest);
+
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve, reject) => {
     doc.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -1705,9 +1847,38 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
       .stroke();
   });
 
-  // Cover facts sit in a fixed block low on the page, so a long title grows
-  // into the space above them instead of shunting them towards the footer.
-  doc.y = Math.max(doc.y + 24, doc.page.height - 250);
+  /*
+   * Cover facts sit in a block anchored to the *bottom* of the cover, so a long
+   * title grows into the space above them instead of shunting them towards the
+   * footer.
+   *
+   * The anchor is measured, not assumed. It used to be a fixed
+   * `page.height - 250`, which fitted the five facts a cover carried when it
+   * was written. A 409A now carries seven — the valuation date was added
+   * because a reader who takes the render date for the valuation date takes the
+   * wrong one — and 250pt is about 60pt short of seven stacked pairs. The block
+   * ran past the bottom margin and pdfkit did the only thing it can: it broke
+   * the page. The cover of every 409A this platform produced ended with
+   * "CURRENCY" and page two began with "USD".
+   *
+   * Measuring with `heightOfString` under the same fonts the loop draws with is
+   * what stops that recurring the next time a fact is added.
+   */
+  const metaHeight = input.meta.reduce((total, item) => {
+    doc.font(FONTS.bold).fontSize(9);
+    const label = doc.heightOfString(item.label.toUpperCase(), { width: usable, align: 'center' });
+    doc.font(FONTS.regular).fontSize(11);
+    const value = doc.heightOfString(item.value, { width: usable, align: 'center' });
+    // `moveDown(n)` advances by `n * currentLineHeight(true)` — *with* the line
+    // gap. Measuring without it under-reports every gap by a fifth, which on
+    // seven facts is a whole fact's worth of page and put the last one
+    // overleaf again.
+    return total + label + value + doc.currentLineHeight(true) * 0.7;
+  }, 0);
+  // `max` with the cursor keeps the block clear of the rule above when there
+  // are enough facts to need the whole page; the cover then fills downward from
+  // the rule, which is still the best available layout and still one page.
+  doc.y = Math.max(doc.y + 24, doc.page.height - doc.page.margins.bottom - metaHeight);
   for (const item of input.meta) {
     // Label and value are a stacked pair — one element, spoken as one fact, so
     // "Valuation date" cannot be read apart from the date it labels.
@@ -1835,6 +2006,24 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   // Page furniture. Both bands are stamped after layout, when the total page
   // count and the section each page belongs to are finally known.
   const confidentiality = input.confidentiality === null ? null : (input.confidentiality ?? 'Confidential');
+  /*
+   * The footer names the document once.
+   *
+   * It used to be built as `${company} — ${title}`, and the default title
+   * `domain/report.ts` generates is already `${template.name} — ${company}`. So
+   * every page of every report produced by the platform's own templates read
+   * "Northwind Robotics, Inc. — IRC 409A Valuation Report — Northwind Robotics,
+   * Inc.", which then had to be truncated to fit and looked like a bug because
+   * it was one.
+   *
+   * The company name is still prefixed when the title does not carry it, which
+   * is the case for a title an analyst has retyped — the footer is the only
+   * place a loose page says which company it belongs to, and losing that is the
+   * worse failure of the two.
+   */
+  const runningTitle = input.title.includes(input.company_name)
+    ? input.title
+    : `${input.company_name} — ${input.title}`;
   const headings = runningHeadings(range.count, range.start, [
     ...(tocPages.length > 0 ? [{ page: tocPages[0]!, label: TOC_HEADING }] : []),
     ...(summaryPage !== null ? [{ page: summaryPage, label: SUMMARY_HEADING }] : []),
@@ -1887,7 +2076,7 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
       });
     }
 
-    const parts = [`${input.company_name} — ${input.title}`];
+    const parts = [runningTitle];
     if (confidentiality) parts.push(confidentiality);
     parts.push(`Page ${i - range.start + 1} of ${range.count}`);
     artifact(doc, () => {

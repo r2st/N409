@@ -7,6 +7,8 @@ import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { createQaReview, listQaReviews } from '../repos/qaReviews.js';
+import { findReportByValuation, getVersion } from '../repos/reports.js';
+import { reportReadiness } from '../domain/reportReadiness.js';
 import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -64,6 +66,31 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     }
     const params = await findParams(deps.pool, valuation.id);
     const deterministic = runQaChecks({ calculation, params });
+
+    /*
+     * The deliverable itself, not just the arithmetic behind it.
+     *
+     * Every check above grades a number. None of them opens the report, and the
+     * report is the thing that leaves the building — so a 409A whose Conclusion
+     * of Value chapter still read "is $ … per share", three pages after an
+     * executive summary stating $1.2242, passed QA and published. The skeletons
+     * are right to ship fill-me markers; what was missing was anything that
+     * noticed one survived to the deliverable.
+     *
+     * Folded into the same review the publish gate already consults, rather
+     * than added as a second gate: one place says whether this valuation may
+     * go out, and a reviewer reads one list.
+     */
+    const report = await findReportByValuation(deps.pool, valuation.id);
+    const reportVersion = report ? await getVersion(deps.pool, report.id, report.current_version) : null;
+    const readiness = reportReadiness(reportVersion?.content ?? null);
+    deterministic.checks.push({
+      key: 'report_placeholders',
+      label: 'Report body has no unfilled template placeholders',
+      status: readiness.status,
+      detail: readiness.detail,
+    });
+    deterministic.status = worstStatus([deterministic.status, readiness.status]);
 
     let aiFindings: Record<string, unknown> | null = null;
     let aiModel: string | null = null;
