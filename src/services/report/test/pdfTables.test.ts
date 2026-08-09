@@ -169,6 +169,61 @@ describe('columnWidths', () => {
     expect(widths[0]).toBeCloseTo(widths[1]!, 6);
     expect(sum(widths)).toBeCloseTo(USABLE, 6);
   });
+
+  /**
+   * Exhibit H — the table that states the conclusion of a 409A — is a long
+   * prose label, one currency figure, and a long prose basis. Both prose
+   * columns hit the ceiling, so normalising everything by the same factor
+   * squeezed the figure by the few points it was short and printed the DLOC
+   * line as `($0.1723` with its closing bracket alone on the next line.
+   *
+   * A label that wraps is still a label. A number that wraps is a mistake.
+   */
+  describe('when the natural widths do not fit', () => {
+    const EXHIBIT_H = [
+      ['Step', 'Per share', 'Basis'],
+      [
+        'Less: discount for lack of control — 8.0%',
+        '($0.1723)',
+        'A minority holder cannot compel a liquidity event or direct the business',
+      ],
+      [
+        'Concluded fair market value per common share as of 2026-06-30',
+        '$1.2242',
+        'Non-marketable, minority basis',
+      ],
+    ];
+
+    it('gives the figure column the width its figures need', () => {
+      const widths = columnWidths(EXHIBIT_H, USABLE, measure, 1);
+      const widestFigure = measure('($0.1723)', false);
+      expect(widths[1]!).toBeGreaterThanOrEqual(widestFigure);
+    });
+
+    it('takes the room from the prose, which can wrap', () => {
+      const widths = columnWidths(EXHIBIT_H, USABLE, measure, 1);
+      expect(widths[0]!).toBeGreaterThan(widths[1]!);
+      expect(widths[2]!).toBeGreaterThan(widths[1]!);
+      expect(sum(widths)).toBeCloseTo(USABLE, 6);
+    });
+
+    it('will not starve prose to feed figures', () => {
+      // The mirror failure. A table of wide figures beside one label must not
+      // reduce the label to an unreadable ribbon, so the reservation gives way
+      // rather than pushing prose under the floor.
+      const allFigures = [
+        ['Label', 'A', 'B', 'C', 'D'],
+        ['x', '$1,234,567,890', '$9,876,543,210', '$1,111,111,111', '$2,222,222,222'],
+      ];
+      const widths = columnWidths(allFigures, USABLE, measure, 1);
+      expect(Math.min(...widths)).toBeGreaterThan(20);
+      expect(sum(widths)).toBeCloseTo(USABLE, 6);
+    });
+
+    it('still fills the width exactly', () => {
+      expect(sum(columnWidths(EXHIBIT_H, USABLE, measure, 1))).toBeCloseTo(USABLE, 6);
+    });
+  });
 });
 
 describe('runningHeadings', () => {

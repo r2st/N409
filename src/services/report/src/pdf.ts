@@ -841,13 +841,28 @@ export function columnAlignments(rows: readonly string[][], headerRows: number):
 const MIN_COLUMN_WIDTH = 42;
 
 /**
- * Column widths proportional to the widest cell each column holds.
+ * Column widths proportional to the widest cell each column holds — but figures
+ * are served before prose.
  *
  * Equal columns waste the page: a "Metric / FY-1 / FY-2" table gave a third of
- * the width to two-character year headings and wrapped the labels. Each
- * column's natural width is clamped before the split so one long prose cell
- * cannot starve the rest, then the whole set is normalised to fill the width —
- * a table that stops short of the margin reads as a rendering accident.
+ * the width to two-character year headings and wrapped the labels. So each
+ * column's natural width is measured, clamped so one long prose cell cannot
+ * starve the rest, and the set normalised to fill the width — a table that
+ * stops short of the margin reads as a rendering accident.
+ *
+ * Normalising *everything* proportionally is what went wrong. When the natural
+ * widths exceed the page every column shrinks by the same factor, including one
+ * holding a currency figure — and a figure has no wrap that reads as anything
+ * but a mistake. Exhibit H, the table that states the conclusion of a 409A,
+ * printed its DLOC line as `($0.1723` with the closing bracket alone on the
+ * next line, because two prose columns either side had both hit the ceiling and
+ * squeezed the number by the few points it was short.
+ *
+ * A typesetter setting a financial table does the opposite: the figures get the
+ * width they need and the labels wrap around them, because a label that wraps
+ * is still a label. So numeric columns are given their natural width first and
+ * prose columns divide what is left. The reservation is itself capped, so a
+ * table that is all figures cannot leave prose with nothing.
  */
 export function columnWidths(
   rows: readonly string[][],
@@ -871,7 +886,27 @@ export function columnWidths(
 
   const total = natural.reduce((sum, w) => sum + w, 0);
   if (total <= 0) return Array.from({ length: cols }, () => usable / cols);
-  return natural.map((w) => (w / total) * usable);
+  // Everything fits: proportional is proportional, and the two branches agree.
+  if (total <= usable) return natural.map((w) => (w / total) * usable);
+
+  // Over-full. Decide which columns hold figures the same way the renderer
+  // decides which to right-align, so a column cannot be aligned as a figure and
+  // widthed as prose.
+  const alignment = columnAlignments(rows, headerRows);
+  const numeric = alignment.map((a) => a === 'right');
+  const proseTotal = natural.reduce((sum, w, i) => sum + (numeric[i] ? 0 : w), 0);
+  const numericTotal = total - proseTotal;
+
+  // Prose has to keep a floor, or a wide figure column would reduce a label to
+  // an unreadable ribbon — the failure this is meant to prevent, mirrored.
+  const proseCols = numeric.filter((n) => !n).length;
+  const proseFloor = proseCols * MIN_COLUMN_WIDTH;
+  if (proseCols === 0 || numericTotal <= 0 || usable - numericTotal < proseFloor) {
+    return natural.map((w) => (w / total) * usable);
+  }
+
+  const forProse = usable - numericTotal;
+  return natural.map((w, i) => (numeric[i] ? w : (w / proseTotal) * forProse));
 }
 
 const TABLE_PADDING = 5;
