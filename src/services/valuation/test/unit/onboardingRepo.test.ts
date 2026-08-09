@@ -46,7 +46,12 @@ describe('onboardingFacts', () => {
     await onboardingFacts(pool, { kind: 'own', userId: '01USER' });
 
     const { sql, params } = calls[0]!;
-    expect(sql).toContain('WITH scoped AS (SELECT id FROM valuations WHERE user_id = $1)');
+    // Archived engagements are out of the facts as well as out of the list —
+    // an onboarding checklist that counts work the firm has retired is telling
+    // the user to finish something that is gone.
+    expect(sql).toContain(
+      'WITH scoped AS (SELECT id FROM valuations WHERE archived_at IS NULL AND user_id = $1)',
+    );
     expect(params).toEqual(['01USER']);
     // Every count must run through the scoped set, never the bare table.
     for (const table of ['cap_tables', 'documents', 'valuation_params', 'calculations', 'reports']) {
@@ -58,7 +63,7 @@ describe('onboardingFacts', () => {
   it('scopes a partner to their organisation', async () => {
     const { pool, calls } = fakePool(FULL_ROW);
     await onboardingFacts(pool, { kind: 'partner', partnerId: '01PARTNER' });
-    expect(calls[0]!.sql).toContain('WHERE partner_id = $1');
+    expect(calls[0]!.sql).toContain('WHERE archived_at IS NULL AND partner_id = $1');
     expect(calls[0]!.params).toEqual(['01PARTNER']);
   });
 

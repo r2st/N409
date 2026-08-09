@@ -90,6 +90,54 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
     expect(kinds).toContain('skipped_hold');
   });
 
+  /**
+   * The assertion the suite above was missing, and the reason a write-only soft
+   * delete survived: every test here proved `archived_at` was *stamped*, and
+   * none proved it was *read*. The sweep reported an archive, the action log
+   * agreed, and the engagement stayed in the list the whole time.
+   */
+  it('takes an archived engagement out of the list, the count and the search', async () => {
+    await ctx.app.inject({
+      method: 'PUT',
+      url: '/api/v1/admin/retention/policies/valuation',
+      headers: authHeader(admin.token),
+      payload: { archive_after_days: 365, retention_days: 730, enabled: true },
+    });
+
+    const gone = await agedValuation('VanishCo', 500);
+    const stays = await agedValuation('RemainCo', 100);
+
+    const list = async (query = '') => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations${query}`,
+        headers: authHeader(admin.token),
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json() as { valuations: { id: string }[]; total: number };
+    };
+
+    const before = await list();
+    expect(before.valuations.map((v) => v.id)).toContain(gone.id);
+    const totalBefore = before.total;
+
+    await runRetentionSweep(ctx.pool);
+
+    const after = await list();
+    expect(after.valuations.map((v) => v.id)).not.toContain(gone.id);
+    // Still listed, so this is the archive doing it and not an empty page.
+    expect(after.valuations.map((v) => v.id)).toContain(stays.id);
+    // The count is a separate query over the same WHERE builder; it drifted
+    // from the page it paginates when only one of the two was filtered.
+    expect(after.total).toBe(totalBefore - 1);
+
+    // Search reaches the whole table rather than the page, so it is its own way
+    // back to an archived row.
+    const searched = await list('?q=VanishCo');
+    expect(searched.valuations).toHaveLength(0);
+    expect(searched.total).toBe(0);
+  });
+
   it('releases a hold so the next sweep archives it', async () => {
     await ctx.app.inject({
       method: 'PUT',

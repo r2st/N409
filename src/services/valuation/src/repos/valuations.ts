@@ -270,6 +270,13 @@ export interface ValuationFilters {
   createdTo?: string;
   dueFrom?: string;
   dueTo?: string;
+  /**
+   * Include archived engagements, which are excluded from every read by
+   * default. Opt-in rather than opt-out because the default is what a list, a
+   * count and an export all want, and the one caller that wants the whole
+   * table (retention's own reporting) is better off saying so.
+   */
+  includeArchived?: boolean;
 }
 
 /** Rich sort (M4): whitelisted columns only — never interpolate user input. */
@@ -354,6 +361,21 @@ export function buildValuationWhere(
     params.push(value);
     where.push(`${alias}${clause.replace('?', `$${params.length}`)}`);
   };
+
+  /*
+   * Archived engagements are out of every read unless one is asked for.
+   *
+   * `archived_at` was written by the retention sweep and read by nothing: the
+   * list, the counts, the bucket strip and the export all selected it back, so
+   * a soft delete deleted nothing a user could see and the sweep's only visible
+   * effect was a row in its own action log. A soft delete whose read path never
+   * landed is worse than none — it reports success and changes nothing.
+   *
+   * Here rather than in each of the ten callers because that is the shape the
+   * bug already took once: one WHERE builder, and every read that forgets is a
+   * read that shows archived work.
+   */
+  if (!filters.includeArchived) where.push(`${alias}archived_at IS NULL`);
 
   if (scope.kind === 'partner') add('partner_id = ?', scope.partnerId);
   if (scope.kind === 'own') add('user_id = ?', scope.userId);

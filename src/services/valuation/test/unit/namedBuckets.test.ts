@@ -74,7 +74,15 @@ describe('bucket filtering in SQL', () => {
   });
 
   it('the All bucket adds no predicate of its own', () => {
-    const { whereSql } = buildValuationWhere({ kind: 'all' }, { bucket: 'all' });
+    // "All" is all of the *live* work: the archived baseline every read carries
+    // is not the bucket's doing, so it is what an unfiltered build looks like.
+    const baseline = buildValuationWhere({ kind: 'all' }, {}).whereSql;
+    expect(baseline).toBe('WHERE archived_at IS NULL');
+    expect(buildValuationWhere({ kind: 'all' }, { bucket: 'all' }).whereSql).toBe(baseline);
+  });
+
+  it('All still means all when archived engagements are asked for', () => {
+    const { whereSql } = buildValuationWhere({ kind: 'all' }, { bucket: 'all', includeArchived: true });
     expect(whereSql).toBe('');
   });
 
