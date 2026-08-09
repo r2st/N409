@@ -22,10 +22,10 @@ export const CONSENT_STORAGE_KEY = 'n409-cookie-consent';
  * other spec ever meets the dialog.
  */
 export async function denyConsentInStorage(page: Page): Promise<void> {
-  await page.evaluate(
-    ([key, value]) => window.localStorage.setItem(key, value),
-    [CONSENT_STORAGE_KEY, 'denied'] as const,
-  );
+  await page.evaluate(([key, value]) => window.localStorage.setItem(key, value), [
+    CONSENT_STORAGE_KEY,
+    'denied',
+  ] as const);
 }
 
 /**

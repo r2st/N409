@@ -8,14 +8,7 @@
  */
 
 import { expect, test as setup } from '@playwright/test';
-import {
-  ADMIN,
-  ANALYST,
-  STORAGE_STATE,
-  ensureAccount,
-  grantRoles,
-  markVerified,
-} from '../support/accounts';
+import { ADMIN, ANALYST, STORAGE_STATE, ensureAccount, grantRoles, markVerified } from '../support/accounts';
 import { denyConsentInStorage } from '../support/consent';
 
 const API = 'http://127.0.0.1:3001';

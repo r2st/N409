@@ -223,6 +223,53 @@ describe('columnWidths', () => {
     it('still fills the width exactly', () => {
       expect(sum(columnWidths(EXHIBIT_H, USABLE, measure, 1))).toBeCloseTo(USABLE, 6);
     });
+
+    /**
+     * The reservation is for the figures, not for the heading over them.
+     *
+     * Exhibit H's per-class table heads two currency columns "Value per share —
+     * marketable" and "Value per share — non-marketable" over cells holding
+     * "$2.0779". Reserving the *heading* width handed those two columns 66% of
+     * the page and squeezed "Class" and "Type" to the floor, so the concluding
+     * exhibit of a 409A printed its share classes as "Option / pool" and their
+     * type as "preferre / d" — the same defect this branch exists to prevent,
+     * pointed the other way.
+     */
+    describe('a figure column headed by a long label', () => {
+      const PER_CLASS = [
+        ['Class', 'Type', 'Shares', 'Value per share — marketable', 'Value per share — non-marketable'],
+        ['Common', 'common', '9,250,000', '$2.0779', '$1.3883'],
+        ['Series A', 'preferred', '2,400,000', '$2.5175', '—'],
+        ['Option pool', 'option', '1,750,000', '$1.8301', '—'],
+      ];
+
+      it('leaves the label columns wide enough for what is in them', () => {
+        const widths = columnWidths(PER_CLASS, USABLE, measure, 1);
+        expect(widths[0]!).toBeGreaterThan(measure('Option pool', false));
+        expect(widths[1]!).toBeGreaterThan(measure('preferred', false));
+      });
+
+      it('reserves the figures their width and no more', () => {
+        const widths = columnWidths(PER_CLASS, USABLE, measure, 1);
+        expect(widths[3]!).toBeGreaterThanOrEqual(measure('$2.0779', false));
+        // The heading wraps instead: it is a label, and a label that wraps is
+        // still a label. Reserving its width is what starved the columns above.
+        expect(widths[3]!).toBeLessThan(measure('Value per share — marketable', true));
+        expect(sum(widths)).toBeCloseTo(USABLE, 6);
+      });
+
+      it('does not narrow a table that already fitted', () => {
+        // Only the squeeze reaches the correction, so a heading with room to
+        // sit on one line keeps it.
+        const roomy = [
+          ['Metric', 'Amount'],
+          ['Revenue', '$4,200,000'],
+        ];
+        const widths = columnWidths(roomy, USABLE, measure, 1);
+        expect(widths[1]!).toBeGreaterThan(measure('Amount', true));
+        expect(sum(widths)).toBeCloseTo(USABLE, 6);
+      });
+    });
   });
 });
 

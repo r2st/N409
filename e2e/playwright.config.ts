@@ -14,8 +14,7 @@ import { defineConfig, devices } from '@playwright/test';
  * stale process can never be mistaken for a healthy one.
  */
 
-const DATABASE_URL =
-  process.env.E2E_DATABASE_URL ?? 'postgres://n409:n409_dev@localhost:5432/n409_e2e';
+const DATABASE_URL = process.env.E2E_DATABASE_URL ?? 'postgres://n409:n409_dev@localhost:5432/n409_e2e';
 const JWT_SECRET = process.env.E2E_JWT_SECRET ?? 'e2e-only-secret-change-me-0123456789abcdef';
 // `localhost`, not `127.0.0.1`: Vite's dev server binds the hostname, which on
 // this platform resolves to ::1 first, so the v4 literal simply refuses the
@@ -63,8 +62,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command:
-        '.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 3003 --log-level warning',
+      command: '.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 3003 --log-level warning',
       cwd: `${repoRoot}src/services/engine-wrapper`,
       url: `${ENGINE_URL}/health`,
       reuseExistingServer: !process.env.CI,

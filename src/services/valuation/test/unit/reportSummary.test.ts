@@ -241,6 +241,8 @@ describe('buildReportSummary', () => {
     // Share counts are whole shares, thousands-separated.
     expect(byLabel['Fully diluted common']!.value).toBe('13,123,456');
     expect(byLabel['Key assumptions']!.value).toBe('σ 55% · T 3.50y');
+    // Nothing about a second σ where the calculation records only one.
+    expect(byLabel['Discount for lack of marketability']!.note).not.toContain('struck on');
 
     expect(summary.statement).toContain('Northwind Robotics, Inc.');
     expect(summary.statement).toContain('as of 2026-06-30');
@@ -249,6 +251,47 @@ describe('buildReportSummary', () => {
 
     // Ordered as the page is read. No history was supplied, so no trend line.
     expect(summary.charts!.map((c) => c.type)).toEqual(['bar', 'donut', 'waterfall']);
+  });
+
+  /**
+   * The summary page states one σ, and an option-based DLOM does not run on it.
+   *
+   * "Key assumptions" carries the enterprise volatility, because that is what
+   * the allocation ran on. The DLOM runs on the volatility of the *class* —
+   * common, geared by everything senior to it — and the two differ by the whole
+   * preference stack: 62% against 74% on the sample cap table. With only the
+   * first printed, the page asserted a σ that reproduces neither the discount
+   * beside it nor Exhibit H-1's derivation of it, and a reviewer checking one
+   * against the other found a number that would not divide out.
+   */
+  describe('the σ the marketability discount was struck on', () => {
+    const noteFor = (assumptions: Record<string, unknown>) =>
+      buildReportSummary(
+        calculation({ results: { ...RESULTS, assumptions: { ...RESULTS.assumptions, ...assumptions } } }),
+        CONTEXT,
+      )!.figures!.find((f) => f.label === 'Discount for lack of marketability')!.note;
+
+    it('names the class volatility beside the discount that used it', () => {
+      const note = noteFor({ dlom_volatility: 0.741875, dlom_volatility_basis: 'class' });
+      expect(note).toContain('Finnerty average-strike put model');
+      expect(note).toContain('σ 74%');
+      expect(note).toContain("common's own");
+    });
+
+    it('says nothing extra when the discount ran on the enterprise figure', () => {
+      // Then the σ above it is the σ it used, and a second mention is noise.
+      expect(noteFor({ dlom_volatility: 0.55, dlom_volatility_basis: 'enterprise' })).toBe(
+        'Finnerty average-strike put model',
+      );
+    });
+
+    it('says nothing extra when the two volatilities agree', () => {
+      // A cap table with no preference stack gears common by nothing, so the
+      // class basis and the enterprise figure are the same number.
+      expect(noteFor({ dlom_volatility: 0.55, dlom_volatility_basis: 'class' })).toBe(
+        'Finnerty average-strike put model',
+      );
+    });
   });
 
   /**

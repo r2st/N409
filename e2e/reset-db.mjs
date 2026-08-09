@@ -16,10 +16,8 @@ import { execFileSync } from 'node:child_process';
 import pg from 'pg';
 
 const DB_NAME = process.env.E2E_DB_NAME ?? 'n409_e2e';
-const ADMIN_URL =
-  process.env.E2E_ADMIN_DATABASE_URL ?? 'postgres://n409:n409_dev@localhost:5432/postgres';
-const DATABASE_URL =
-  process.env.E2E_DATABASE_URL ?? `postgres://n409:n409_dev@localhost:5432/${DB_NAME}`;
+const ADMIN_URL = process.env.E2E_ADMIN_DATABASE_URL ?? 'postgres://n409:n409_dev@localhost:5432/postgres';
+const DATABASE_URL = process.env.E2E_DATABASE_URL ?? `postgres://n409:n409_dev@localhost:5432/${DB_NAME}`;
 
 if (!/n409_e2e|_e2e|_test/.test(DATABASE_URL)) {
   throw new Error(

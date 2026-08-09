@@ -255,6 +255,34 @@ if (leftovers.length === 0) {
   console.log(`!! ${leftovers.length} unresolved: ${leftovers.join(', ')}`);
 }
 
+/*
+ * The other marker class, which this script described and never looked for.
+ *
+ * `{{placeholder}}` is the calculation's to fill and its survival is a failure.
+ * An ellipsis is the *analyst's* to fill (domain/reportReadiness.ts), so it is
+ * expected in a rehearsal nobody has written narrative into — printing it is
+ * still the point, because "$ … per share" reaching a rendered page is exactly
+ * what this file exists to make visible, and reading the list is how you tell
+ * an ASC 718 table awaiting per-grant data from a Conclusion of Value that lost
+ * its figure.
+ *
+ * It does not fail the run. A freshly drafted skeleton is *supposed* to carry
+ * these — that is what the marker means — so exiting non-zero on them would make
+ * the rehearsal red in its normal state and stop anyone reading the rest. The
+ * sections `reportReadiness` would refuse a publish on are marked, so the list
+ * says which of them an analyst has to reach before this could be delivered.
+ */
+const BLOCKING = /conclusion of value|asc\s*718/i;
+const ellipses = content?.sections?.filter((s) => /[…]|\.\.\./.test(s.html)) ?? [];
+console.log('\n── AWAITING THE ANALYST (ellipsis markers) ────────────────────');
+if (ellipses.length === 0) {
+  console.log('none');
+} else {
+  for (const s of ellipses) {
+    console.log(`  ${s.heading}${BLOCKING.test(s.heading) ? '  ← would block a publish' : ''}`);
+  }
+}
+
 await cleanup();
 if (failed > 0) {
   console.error(`\n${failed} step(s) failed.`);

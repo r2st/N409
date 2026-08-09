@@ -599,6 +599,42 @@ describe('fillTemplateVars', () => {
     expect(fillTemplateVars('{{company_name}} ({{kind}}) {{nope}}', VARS)).toBe('Acme (409a) {{nope}}');
   });
 
+  /**
+   * A sentence ending on a name that already ends in a full stop keeps one.
+   *
+   * `{{company_name}}.` is how the skeletons end a sentence, and most US
+   * companies are called "…, Inc." — so the 409A shipped sentences reading
+   * "the corresponding metric of Northwind Robotics, Inc.." on a page a board
+   * reads. There is no phrasing of the template that is right for both "Inc."
+   * and "Robotics", which is why this is handled at substitution.
+   */
+  describe('a name that ends in a full stop', () => {
+    const fill = (name: string) =>
+      fillTemplateVars('the metric of {{company_name}}.', { ...VARS, company_name: name });
+
+    it('does not double the stop', () => {
+      expect(fill('Northwind Robotics, Inc.')).toBe('the metric of Northwind Robotics, Inc.');
+      expect(fill('Widgets Ltd.')).toBe('the metric of Widgets Ltd.');
+    });
+
+    it('still ends the sentence for a name that does not', () => {
+      expect(fill('Northwind Robotics')).toBe('the metric of Northwind Robotics.');
+      expect(fill('Acme LLC')).toBe('the metric of Acme LLC.');
+    });
+
+    it('leaves an ellipsis alone, so the readiness gate still finds it', () => {
+      // `reportReadiness` reads `...` as a figure the analyst never supplied.
+      // Absorbing one of the three would hide the marker it looks for.
+      expect(fillTemplateVars('is {{company_name}}...', { ...VARS, company_name: 'Acme Inc.' })).toBe(
+        'is Acme Inc....',
+      );
+    });
+
+    it('leaves the stop attached to a placeholder it did not fill', () => {
+      expect(fillTemplateVars('of {{nope}}.', VARS)).toBe('of {{nope}}.');
+    });
+  });
+
   // `\w+` matches every name on `Object.prototype`, and a plain `vars[key]`
   // lookup found them — so `{{constructor}}` in a report template rendered as
   // `function Object() { [native code] }` into the report body, which the

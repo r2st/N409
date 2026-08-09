@@ -76,7 +76,12 @@ export default tseslint.config(
    * on everywhere else.
    */
   {
-    files: ['*.mjs', 'tools/**/*.mjs'],
+    // `e2e/*.mjs` is the same kind of script — `reset-db.mjs` drops and recreates
+    // the end-to-end database and says so on stdout — and was missed because the
+    // pattern above only reaches the repo root and `tools/`. It has been failing
+    // the lint with seven `no-undef`s on `process` and `console` since the
+    // harness landed.
+    files: ['*.mjs', 'tools/**/*.mjs', 'e2e/**/*.mjs'],
     languageOptions: { globals: globals.node },
     rules: { 'no-console': 'off' },
   },

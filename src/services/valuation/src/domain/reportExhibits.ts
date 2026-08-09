@@ -1189,6 +1189,15 @@ function classValueBlock(
   dloc: number,
   dlom: number,
   ctx: ExhibitContext,
+  /**
+   * Whether the allocation's output really is a controlling value — the same
+   * judgement the step table above makes, passed down rather than re-derived so
+   * the two halves of one exhibit cannot describe the input differently. They
+   * did: this paragraph asserted "marketable, controlling basis" three lines
+   * under a boxed note reporting that 75% of the weighted value arrived at a
+   * minority level already.
+   */
+  controlling: boolean,
 ): string[] {
   const classes = record(record(results.allocation)?.classes);
   if (!classes) return [];
@@ -1213,7 +1222,10 @@ function classValueBlock(
 
   return [
     P(
-      'The allocation values every class on a marketable, controlling basis. The concluded discounts ' +
+      (controlling
+        ? 'The allocation values every class on a marketable, controlling basis. '
+        : 'The allocation values every class on the same basis as the step table above. ') +
+        'The concluded discounts ' +
         'are applied below to the common stock, which is the interest this valuation concludes on. ' +
         'They are not carried across the preferred and option classes: a discount for lack of control ' +
         'and a discount for lack of marketability were reasoned about a minority holder of common with ' +
@@ -1609,8 +1621,8 @@ export function dlomDerivationExhibit(
         P(
           struckOn === 'class'
             ? `The volatility above is common’s own, taken from the schedule below. ${gearing} ` +
-              'An option-based discount struck on a class takes that class’s volatility, which is ' +
-              'why the figure above exceeds the enterprise volatility the allocation ran on.'
+                'An option-based discount struck on a class takes that class’s volatility, which is ' +
+                'why the figure above exceeds the enterprise volatility the allocation ran on.'
             : struckOn === 'enterprise'
               ? `The volatility above describes the enterprise, not the class the discount was ` +
                 `struck on. ${gearing} The volatility that belongs in an option-based discount ` +

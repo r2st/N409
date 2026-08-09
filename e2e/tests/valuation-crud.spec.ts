@@ -3,7 +3,7 @@
  * user touches before any modelling happens.
  */
 
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { STORAGE_STATE } from '../support/accounts';
 
 test.use({ storageState: STORAGE_STATE.admin });
@@ -20,17 +20,17 @@ function uniqueCompany(prefix: string): string {
  * `.first()` picks whichever the markup happens to order first. Every
  * list assertion goes through here so it is about what a user can see.
  */
-function visibleText(page: import('@playwright/test').Page, text: string) {
+function visibleText(page: Page, text: string) {
   return page.getByText(text).filter({ visible: true });
 }
 
 /** Search is applied on submit/blur, not on keystroke, so it has to be committed. */
-async function search(page: import('@playwright/test').Page, term: string) {
+async function search(page: Page, term: string) {
   await page.getByLabel('Search').fill(term);
   await page.getByLabel('Search').press('Enter');
 }
 
-async function createValuation(page: import('@playwright/test').Page, company: string) {
+async function createValuation(page: Page, company: string) {
   await page.goto('/valuations/new');
   await page.getByLabel('Company legal name').fill(company);
   await page.getByLabel('Currency').fill('USD');

@@ -591,6 +591,26 @@ describe('discount exhibit', () => {
     expect(seen).toContain('75%');
     // And the double count itself is disclosed, not left in a database column.
     expect(seen).toContain('applied on top');
+    // Both halves of the exhibit follow the same judgement. The per-class table
+    // below kept its own unconditional sentence and went on asserting a
+    // controlling basis three lines under the note reporting that 75% of the
+    // weighted value arrived at a minority level already.
+    expect(seen).not.toContain('values every class on a marketable, controlling basis');
+  });
+
+  it('still calls the allocation controlling where the weight really is', () => {
+    // The mirror case: an income-weighted valuation does produce a controlling
+    // value, and the original sentence is the right one for it.
+    const controlling = {
+      ...RESULTS,
+      discounts: {
+        ...(RESULTS.discounts as object),
+        dloc_detail: { method: 'stated', minority_basis_weight: 0.2 },
+      },
+    };
+    const seen = plain(discountExhibit(controlling, CONTEXT)!.html);
+    expect(seen).toContain('Marketable, controlling value');
+    expect(seen).toContain('values every class on a marketable, controlling basis');
   });
 
   it('shows a control premium being inverted, and the synergy taken out of it first', () => {
@@ -985,6 +1005,88 @@ describe('dlomDerivationExhibit', () => {
     expect(text).toContain('74.2%');
     expect(text).toContain('60.5%');
     expect(text).toContain('1.20x');
+  });
+
+  /**
+   * The exhibit has to say *which* volatility the discount was struck on.
+   *
+   * The engine strikes an option-based DLOM on the class's own volatility by
+   * default (`dlom_volatility_basis`), and on a company with a preference stack
+   * that figure is well above the enterprise one — 74.2% against 62% here. The
+   * paragraph under the derivation table was written when only the enterprise
+   * figure could reach it and said so unconditionally, so the corrected report
+   * printed "The volatility above describes the enterprise" directly beneath a
+   * row reading 74.2%: the exhibit contradicting itself on the one number the
+   * discount turns on.
+   */
+  describe('the volatility the discount was struck on', () => {
+    const onClass = {
+      ...MODEL,
+      discounts: {
+        ...MODEL.discounts,
+        dlom: 0.2738,
+        dlom_detail: {
+          ...MODEL.discounts.dlom_detail,
+          volatility: 0.741875,
+          volatility_basis: 'class',
+          dlom: 0.273762,
+        },
+      },
+    };
+
+    it('names the class when the discount ran on common’s own volatility', () => {
+      const text = plain(dlomDerivationExhibit(onClass, CONTEXT)!.html);
+      expect(text).toContain('Of the class valued');
+      expect(text).toContain('The volatility above is common’s own');
+      expect(text).not.toContain('The volatility above describes the enterprise');
+    });
+
+    it('says so when the discount ran on the enterprise figure instead', () => {
+      const onEnterprise = {
+        ...MODEL,
+        discounts: {
+          ...MODEL.discounts,
+          dlom_detail: { ...MODEL.discounts.dlom_detail, volatility_basis: 'enterprise' },
+        },
+      };
+      const text = plain(dlomDerivationExhibit(onEnterprise, CONTEXT)!.html);
+      expect(text).toContain('Of the enterprise as a whole, not of the class valued');
+      expect(text).toContain('describes the enterprise, not the class the discount was struck on');
+    });
+
+    it('reads the basis through a weighted blend, where it sits on each leg', () => {
+      // A blend records no basis of its own — a study leg has no volatility at
+      // all — so the label lives on the option-based legs.
+      const blended = {
+        ...MODEL,
+        discounts: {
+          ...MODEL.discounts,
+          dlom_method: 'weighted',
+          dlom_detail: {
+            method: 'weighted',
+            dlom: 0.28,
+            components: [
+              { method: 'restricted_stock', weight: 0.5, dlom: 0.29 },
+              {
+                method: 'finnerty',
+                weight: 0.5,
+                dlom: 0.2738,
+                detail: { method: 'finnerty', volatility: 0.741875, volatility_basis: 'class' },
+              },
+            ],
+          },
+        },
+      };
+      const text = plain(dlomDerivationExhibit(blended, CONTEXT)!.html);
+      expect(text).toContain('The volatility above is common’s own');
+    });
+
+    it('keeps its original wording for a calculation that predates the field', () => {
+      // Older stored calculations record no basis. They were struck on the
+      // enterprise figure, which is what the original sentence described.
+      const text = plain(dlomDerivationExhibit(MODEL, CONTEXT)!.html);
+      expect(text).toContain('The volatility above describes the enterprise');
+    });
   });
 
   it('discloses a Longstaff conclusion as an upper bound', () => {
