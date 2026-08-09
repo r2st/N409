@@ -170,6 +170,7 @@ const ALLOCATION_LABELS: Record<string, string> = {
   pwerm: 'PWERM',
   hybrid: 'Hybrid (OPM + PWERM)',
   cvm: 'Current value method',
+  monte_carlo: 'Monte Carlo simulation',
 };
 
 const DLOM_LABELS: Record<string, string> = {

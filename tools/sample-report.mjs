@@ -101,7 +101,8 @@ await call('PATCH', `/api/v1/valuations/${vid}/params`, ops.token, {
   weight_market: 0.35,
   dloc: 0.08,
   dlom_method: 'finnerty',
-  allocation_method: 'opm',
+  // ALLOCATION=monte_carlo exercises the simulated path end to end.
+  allocation_method: process.env.ALLOCATION ?? 'opm',
   market_method: 'revenue',
   market_horizon: 'ltm',
   exit_timeline: '2030-06-30',
@@ -125,6 +126,14 @@ await call('PATCH', `/api/v1/valuations/${vid}/engine-inputs`, ops.token, {
     terminal_growth: 0.03,
   },
   market: { metric: 9_400_000, multiples: [7.4, 6.1, 8.8, 5.9] },
+  // The cap table. Required by the Monte Carlo allocation, and it upgrades the
+  // OPM run from a single blended preference to the full breakpoint waterfall.
+  share_classes: [
+    { kind: 'preferred', name: 'Series B', shares: 4_000_000, preference: 12_000_000, seniority: 1 },
+    { kind: 'preferred', name: 'Series A', shares: 2_400_000, preference: 6_000_000, seniority: 2 },
+    { kind: 'common', name: 'Common', shares: 9_250_000 },
+    { kind: 'option', name: 'Option pool', shares: 1_750_000, strike: 0.55 },
+  ],
 });
 
 const calc = await call('POST', `/api/v1/valuations/${vid}/calculations`, ops.token, {});

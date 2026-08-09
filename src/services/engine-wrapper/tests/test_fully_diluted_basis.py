@@ -84,6 +84,15 @@ CASES = {
         },
     ),
     "cvm": ({"allocation_method": "cvm"}, {"share_classes": CAP_TABLE}),
+    # The simulated allocation values the option pool as its own class at its
+    # own strike, exactly as the breakpoint waterfall does, so it belongs with
+    # the cap-table-basis paths rather than the aggregate ones. Path count kept
+    # low: these tests are about which denominator is disclosed, and the
+    # reconciliation identity holds path-for-path regardless of sample size.
+    "monte_carlo": (
+        {"allocation_method": "monte_carlo"},
+        {"share_classes": CAP_TABLE, "monte_carlo": {"paths": 4_000}},
+    ),
 }
 
 

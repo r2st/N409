@@ -630,6 +630,36 @@ export function allocationExhibit(
   const fraction = num(allocation.common_fraction);
   if (fraction !== null) aggregate.push(["Common's share of the residual", formatPercent(fraction, 2)]);
 
+  /*
+   * A simulated allocation has to disclose what a closed-form one does not: how
+   * many paths, drawn from which seed, and how precise the result is.
+   *
+   * The seed because a concluded value nobody can re-derive is not a
+   * conclusion — a reviewer three years into an audit must be able to re-run
+   * the engagement and get this figure back. The standard error because a
+   * simulated number without one is a number pretending to be exact, and the
+   * reader is entitled to see it against the fourth decimal the conclusion is
+   * stated to.
+   */
+  const simulation: string[][] = [];
+  const paths = num(allocation.paths);
+  if (paths !== null) {
+    simulation.push([
+      'Simulated paths',
+      new Intl.NumberFormat('en-US').format(Math.round(paths)) +
+        (allocation.antithetic === true ? ' (antithetic pairs)' : ''),
+    ]);
+  }
+  const seed = num(allocation.seed);
+  if (seed !== null) simulation.push(['Random seed', String(Math.round(seed))]);
+  const stdErr = num(allocation.standard_error_per_share);
+  if (stdErr !== null) {
+    simulation.push([
+      'Standard error of the simulated value per share',
+      formatCurrency(stdErr, currency, 6),
+    ]);
+  }
+
   return section('Exhibit F — Allocation of Equity Value', [
     P(
       `Equity value is allocated across the capital structure using the <strong>${esc(label)}</strong>. ` +
@@ -641,6 +671,9 @@ export function allocationExhibit(
     ),
     inputRows.length > 0 ? table({ head: ['Allocation input', 'Value'], rows: inputRows }) : null,
     aggregate.length > 0 ? table({ head: ['Component', 'Value'], rows: aggregate }) : null,
+    simulation.length > 0
+      ? table({ head: ['Simulation parameter', 'Value'], rows: simulation })
+      : null,
     schedule,
     byClass,
   ]);
@@ -650,6 +683,20 @@ export function allocationExhibit(
 
 export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
   const allocation = record(results.allocation);
+  /*
+   * The Monte Carlo allocation also reports `allocation.scenarios`, and its
+   * entries are a different thing: a horizon and a volatility, with no exit
+   * value, because the whole point is that the exit is a distribution rather
+   * than a point. Rendering them through the columns below would print an exit
+   * equity value of $0 and a present value of $0 for every scenario in a
+   * board-facing exhibit headed "Probability-Weighted Expected Return".
+   *
+   * Keyed on the allocation method rather than on sniffing for an
+   * `exit_equity_value` field: this exhibit belongs to PWERM, and the next
+   * method that reports scenarios should be excluded by default too.
+   */
+  const methodKey = String(results.allocation_method ?? allocation?.method ?? '').toLowerCase();
+  if (methodKey === 'monte_carlo') return null;
   const scenarios = list(allocation?.scenarios)
     .map(record)
     .filter((s): s is Record<string, unknown> => s !== null);

@@ -51,7 +51,7 @@ export interface ValuationParamsRow {
   asset_method: 'cost_to_replicate' | 'nav' | null;
   /** How equity value is allocated to common: OPM (default), PWERM, a hybrid
    * blend of the two, or the Current Value Method. */
-  allocation_method: 'opm' | 'pwerm' | 'hybrid' | 'cvm';
+  allocation_method: 'opm' | 'pwerm' | 'hybrid' | 'cvm' | 'monte_carlo';
   updated_at: Date;
   [key: string]: unknown;
 }

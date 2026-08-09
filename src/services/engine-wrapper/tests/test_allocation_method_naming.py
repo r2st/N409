@@ -111,6 +111,13 @@ class TestEveryPathNamesItself:
                 },
             ),
             ("cvm", {**OPM_WEIGHTS, "allocation_method": "cvm"}, {"share_classes": CAP_TABLE}),
+            (
+                "monte_carlo",
+                {**OPM_WEIGHTS, "allocation_method": "monte_carlo"},
+                # Kept small: this test is about the label, and 2,000 paths
+                # settle it as well as 20,000 do.
+                {"share_classes": CAP_TABLE, "monte_carlo": {"paths": 2_000}},
+            ),
         ],
     )
     def test_result_echoes_the_selected_method(self, method, params, inputs):
@@ -119,5 +126,5 @@ class TestEveryPathNamesItself:
 
     def test_no_allocation_method_is_left_unnamed(self):
         """Guards the next path added: the parametrisation above covers the set."""
-        covered = {"opm", "pwerm", "hybrid", "cvm"}
+        covered = {"opm", "pwerm", "hybrid", "cvm", "monte_carlo"}
         assert set(ALLOCATION_METHODS) == covered

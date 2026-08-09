@@ -48,7 +48,10 @@ export const ALLOCATION_LABELS: Record<string, string> = {
   pwerm: 'PWERM',
   hybrid: 'Hybrid (OPM + PWERM)',
   cvm: 'Current value method',
-  // Mechanisms, as `allocation.method` reports them.
+  monte_carlo: 'Monte Carlo simulation',
+  // Mechanisms, as `allocation.method` reports them. Monte Carlo names itself
+  // identically on both fields — the simulation *is* the mechanism, so there is
+  // no second vocabulary for it the way the OPM has three branches.
   opm_waterfall: 'Option pricing model (cap-table waterfall)',
   opm_single_breakpoint: 'Option pricing model (single breakpoint)',
   as_converted: 'As-converted (pro-rata)',

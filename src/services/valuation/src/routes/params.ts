@@ -72,7 +72,7 @@ export const ParamsPatchBody = z
     market_horizon: z.enum(['ltm', 'ntm']).nullable(),
     market_custom_ranges: z.record(z.unknown()).nullable(),
     asset_method: z.enum(['cost_to_replicate', 'nav']).nullable(),
-    allocation_method: z.enum(['opm', 'pwerm', 'hybrid', 'cvm']),
+    allocation_method: z.enum(['opm', 'pwerm', 'hybrid', 'cvm', 'monte_carlo']),
   })
   .partial()
   .strict();

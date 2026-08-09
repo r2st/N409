@@ -34,6 +34,7 @@ from .dlom import (
     restricted_stock_dlom,
 )
 from .hybrid import blend_hybrid, resolve_hybrid_weights
+from .monte_carlo import allocate_monte_carlo
 from .pwerm import allocate_pwerm
 from .trace import Trace
 from .volatility import estimate_volatility
@@ -42,7 +43,7 @@ from .waterfall import allocate_waterfall
 
 ENGINE_VERSION = "py-1.0.0"
 
-ALLOCATION_METHODS = ("opm", "pwerm", "hybrid", "cvm")
+ALLOCATION_METHODS = ("opm", "pwerm", "hybrid", "cvm", "monte_carlo")
 DEFAULT_RISK_FREE_RATE = 0.04
 DEFAULT_TIME_TO_EXIT_YEARS = 3.0
 
@@ -1032,6 +1033,72 @@ def _compute_cvm(
     return {"engine_version": ENGINE_VERSION, "results": results}
 
 
+def _compute_monte_carlo(
+    params: dict, inputs: dict, recompute: list[str] | None, prior: dict, trace: Trace | None = None
+) -> dict:
+    """Simulated allocation: weighted equity value → Monte Carlo → DLOC/DLOM.
+
+    Structurally the OPM path with one substitution — the closed-form call-spread
+    allocation is replaced by simulation — because that is exactly what it is.
+    The weighting above it and the discounts below it are the same steps, run on
+    the same inputs, so switching a valuation to this method changes the
+    allocation and nothing else. See `monte_carlo.allocate_monte_carlo` for when
+    that substitution is worth making (it is not, for a single lognormal).
+    """
+    tr = trace or Trace.off()
+    we = _weighted_equity(params, inputs, recompute, prior, tr)
+    equity_value, t, r = we["equity_value"], we["t"], we["r"]
+
+    # Volatility is required rather than defaulted: it is the entire parameter
+    # the simulation is about, and a run without one would be a very expensive
+    # way to compute the deterministic waterfall.
+    volatility = _num(inputs.get("volatility"), "volatility", positive=True)
+    if volatility is None:
+        raise EngineInputError("volatility is required for the Monte Carlo allocation")
+
+    allocation = allocate_monte_carlo(equity_value, inputs, t=t, r=r, sigma=volatility)
+    _record_allocation(
+        tr,
+        "monte_carlo",
+        equity_value,
+        inputs,
+        {"allocation": allocation, "volatility": volatility, **allocation},
+        t,
+        r,
+    )
+
+    dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t, r)
+    common_per_share = allocation["common_per_share"]
+    fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
+    _record_discounts(tr, params, common_per_share, dloc, dlom, method, dlom_detail, fmv_per_share)
+
+    results: dict = {
+        "equity_value": round(equity_value, 2),
+        "approaches": {
+            name: {**data, "weight": we["weight_by_approach"][name]}
+            for name, data in we["approaches"].items()
+        },
+        "allocation": allocation,
+        "allocation_method": "monte_carlo",
+        "common_equity_value": round(allocation["common_value"], 2),
+        "assumptions": {
+            "time_to_exit_years": round(t, 4),
+            "risk_free_rate": r,
+            "volatility": volatility,
+        },
+        "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
+        # The simulation spreads value over the cap table's *common* classes;
+        # the option pool is its own class holding its own value, exactly as
+        # under the breakpoint waterfall. See the note in `_opm_allocate`.
+        "fully_diluted_common": allocation["common_shares"],
+        "fully_diluted_basis": "cap_table_common",
+        "fmv_per_share": round(fmv_per_share, 4),
+    }
+    if recompute is not None:
+        results["recomputed"] = sorted(recompute)
+    return {"engine_version": ENGINE_VERSION, "results": results}
+
+
 def _compute_hybrid(
     params: dict, inputs: dict, recompute: list[str] | None, prior: dict, trace: Trace | None = None
 ) -> dict:
@@ -1211,6 +1278,8 @@ def compute(
         # Self-contained: discrete exit scenarios set both equity value and its
         # allocation to common, bypassing the weighted-approach + OPM chain.
         out = _compute_pwerm(params, inputs, tr)
+    elif allocation_method == "monte_carlo":
+        out = _compute_monte_carlo(params, inputs, recompute, prior, tr)
     elif allocation_method == "cvm":
         out = _compute_cvm(params, inputs, recompute, prior, tr)
     elif allocation_method == "hybrid":

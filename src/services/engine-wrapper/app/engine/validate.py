@@ -63,7 +63,7 @@ WEIGHT_TO_APPROACH = {
     "weight_income": "income",
     "weight_market": "market",
 }
-ALLOCATION_METHODS = ("opm", "pwerm", "hybrid", "cvm")
+ALLOCATION_METHODS = ("opm", "pwerm", "hybrid", "cvm", "monte_carlo")
 
 
 @dataclass(frozen=True)
@@ -687,12 +687,30 @@ def _check_cap_table(
             "share_classes, which carries a preference per class and does not use these.",
         )
 
+    # Simulating a payoff needs the payoff structure it is simulating. Unlike
+    # every other allocation there is no aggregate fallback here — a blended
+    # preferred class behind one preference is precisely the case the closed
+    # form already prices exactly, so accepting it would mean offering a slower,
+    # noisier route to an answer the OPM gives outright.
+    if allocation_method == "monte_carlo" and not has_waterfall:
+        c.error(
+            "required",
+            "inputs.share_classes",
+            "the Monte Carlo allocation requires the cap table (inputs.share_classes)",
+            "Import or enter the share classes. For an aggregate preference stack use the "
+            "OPM allocation, which prices that structure exactly and without simulation.",
+        )
+
     volatility = _finite(inputs.get("volatility"))
     model_dlom = params.get("dlom_method") in MODEL_DLOM_METHODS
     # Only the OPM-style allocations price a Black-Scholes call; PWERM and CVM
     # walk the deterministic waterfall and need volatility solely for a model
     # DLOM. With auto_volatility the estimator supplies it during compute.
-    opm_allocation = allocation_method in ("opm", "hybrid")
+    #
+    # Monte Carlo belongs with the first group: volatility is the entire
+    # parameter it simulates, and a run without one is a very expensive way to
+    # evaluate the deterministic waterfall.
+    opm_allocation = allocation_method in ("opm", "hybrid", "monte_carlo")
     needs_volatility = not auto_volatility and (
         model_dlom or (opm_allocation and (preference > 0 or has_waterfall))
     )

@@ -209,6 +209,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const isPwerm = form.allocation_method === 'pwerm';
   const isHybrid = form.allocation_method === 'hybrid';
   const isCvm = form.allocation_method === 'cvm';
+  const isMonteCarlo = form.allocation_method === 'monte_carlo';
   const probabilityTotal = scenarios.reduce((sum, s) => sum + (Number(s.probability) || 0), 0);
   const probabilityOff = scenarios.length > 0 && Math.abs(probabilityTotal - 1) > 1e-4;
 
@@ -316,7 +317,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         <div className="grid gap-5 sm:grid-cols-2">
           <Field
             label="Equity allocation"
-            hint="OPM: Black-Scholes call. PWERM: discrete exit scenarios. Hybrid: blend of both. CVM: current-value waterfall."
+            hint="OPM: Black-Scholes call. PWERM: discrete exit scenarios. Hybrid: blend of both. CVM: current-value waterfall. Monte Carlo: simulated, per-scenario horizon and volatility."
           >
             <Select
               disabled={readOnly}
@@ -328,6 +329,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               <option value="pwerm">Probability-Weighted Expected Return (PWERM)</option>
               <option value="hybrid">Hybrid (OPM + PWERM blend)</option>
               <option value="cvm">Current Value Method (CVM)</option>
+              <option value="monte_carlo">Monte Carlo simulation</option>
             </Select>
           </Field>
           {isHybrid && (
@@ -375,6 +377,23 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           <p className="mt-3 text-sm text-ink-400">
             CVM allocates the current equity value by the deterministic liquidation waterfall — best for very
             early-stage, pre-revenue, or distressed companies.
+          </p>
+        )}
+        {/*
+          Said plainly, because the honest answer is "usually don't". Where the
+          exit is a single lognormal the OPM prices this payoff exactly, and
+          simulating it returns the same number with sampling noise on top — a
+          reviewer who sees Monte Carlo on a routine engagement will ask why,
+          and the analyst should have an answer better than "it sounded
+          thorough".
+        */}
+        {isMonteCarlo && (
+          <p className="mt-3 text-sm text-ink-400" data-testid="monte-carlo-note">
+            Monte Carlo simulates the exit distribution and needs the cap table on the Cap Table tab. It is
+            worth reaching for when the exit is not one distribution — say a five-year IPO case alongside a
+            two-year trade sale, each with its own volatility. With a single exit case the OPM prices the same
+            payoff exactly and without simulation noise. The run is seeded, so the concluded value reproduces,
+            and the report states the simulation&rsquo;s standard error.
           </p>
         )}
       </section>

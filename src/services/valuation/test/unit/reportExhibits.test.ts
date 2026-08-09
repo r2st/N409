@@ -564,3 +564,96 @@ describe('peer set exhibit', () => {
     expect(clean).toContain('Alpha Analytics (AAA)');
   });
 });
+
+/**
+ * The simulated allocation in the deliverable.
+ *
+ * A Monte Carlo run has to disclose two things a closed-form one does not, and
+ * both are about whether a reader can trust the figure: the seed, because a
+ * concluded value nobody can re-derive is not a conclusion, and the standard
+ * error, because a simulated number without one is a number pretending to be
+ * exact.
+ */
+describe('Exhibit F — a simulated allocation', () => {
+  const MC_RESULTS = {
+    equity_value: 72_000_000,
+    allocation_method: 'monte_carlo',
+    common_equity_value: 32_875_000,
+    fmv_per_share: 2.4545,
+    fully_diluted_common: 9_250_000,
+    fully_diluted_basis: 'cap_table_common',
+    assumptions: { volatility: 0.62, risk_free_rate: 0.0421, time_to_exit_years: 4 },
+    discounts: { dloc: 0.08, dlom: 0.25 },
+    allocation: {
+      method: 'monte_carlo',
+      paths: 20_000,
+      antithetic: true,
+      seed: 409,
+      common_value: 32_875_000,
+      common_shares: 9_250_000,
+      common_per_share: 3.5537,
+      standard_error_per_share: 0.0605,
+      scenarios: [
+        { name: 'IPO', probability: 0.3, years_to_exit: 5, volatility: 0.7, common_per_share: 3.66 },
+        { name: 'Trade sale', probability: 0.7, years_to_exit: 2, volatility: 0.5, common_per_share: 3.48 },
+      ],
+      classes: {
+        Common: { kind: 'common', shares: 9_250_000, value: 32_875_000, per_share: 3.5537 },
+      },
+    },
+  };
+
+  const html = () => allocationExhibit(MC_RESULTS, { currency: 'USD' })!.html;
+
+  it('names the method rather than echoing the key', () => {
+    expect(html()).toContain('Monte Carlo simulation');
+    expect(html()).not.toContain('MONTE_CARLO');
+  });
+
+  it('states the seed, so the run can be reproduced', () => {
+    expect(html()).toContain('Random seed');
+    expect(html()).toContain('409');
+  });
+
+  it('states the path count and that pairs were antithetic', () => {
+    expect(html()).toContain('20,000');
+    expect(html()).toContain('antithetic');
+  });
+
+  it('states the standard error against the figure it qualifies', () => {
+    // Reported to six decimals: the conclusion is stated to four, and an error
+    // rounded to the same place would read as zero.
+    expect(html()).toContain('Standard error');
+    expect(html()).toContain('0.060500');
+  });
+
+  it('does not claim the mixture is a PWERM schedule', () => {
+    // Monte Carlo scenarios carry a horizon and a volatility and no exit value,
+    // because the exit is a distribution. Rendering them through Exhibit G's
+    // columns would print $0 exit value and $0 present value for each, in an
+    // exhibit headed "Probability-Weighted Expected Return".
+    expect(pwermExhibit(MC_RESULTS, { currency: 'USD' })).toBeNull();
+  });
+
+  it('still renders Exhibit G for an actual PWERM run', () => {
+    const pwerm = {
+      ...MC_RESULTS,
+      allocation_method: 'pwerm',
+      assumptions: { expected_time_to_exit_years: 3.2 },
+      allocation: {
+        method: 'pwerm',
+        scenarios: [
+          {
+            name: 'IPO',
+            type: 'ipo',
+            probability: 0.3,
+            exit_equity_value: 120_000_000,
+            time_to_exit_years: 4,
+            common_present_value: 20_000_000,
+          },
+        ],
+      },
+    };
+    expect(pwermExhibit(pwerm, { currency: 'USD' })).not.toBeNull();
+  });
+});
