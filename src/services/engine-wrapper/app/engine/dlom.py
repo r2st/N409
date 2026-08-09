@@ -38,6 +38,19 @@ MODEL_DLOM_METHODS: frozenset[str] = frozenset({"chaffee", "finnerty", "ghaidaro
 #: Every DLOM method the engine dispatches on, model and non-model alike.
 DLOM_METHODS: frozenset[str] = MODEL_DLOM_METHODS | {"restricted_stock", "qualitative"}
 
+#: Which volatility an option-based DLOM is struck on. The models above take
+#: the volatility of *the interest being valued*, and in a 409A that interest is
+#: common — which sits behind the whole preference stack and is geared well
+#: above the enterprise as a result. "class" (the default) uses the common
+#: class's own volatility from the breakpoint waterfall; "enterprise" uses the
+#: total-equity figure, which is what the engine used to do unconditionally.
+#:
+#: Kept here rather than in `compute` so the pre-flight validator and the engine
+#: read the same vocabulary — see `compute._dlom_volatility` for the resolution
+#: rule, including why a payload without a cap table falls back rather than
+#: failing.
+DLOM_VOLATILITY_BASES: tuple[str, ...] = ("class", "enterprise")
+
 
 def selects_model_dlom(params: dict) -> bool:
     """Whether these params ask for a discount that needs a volatility.

@@ -11,15 +11,34 @@ import statistics
 
 from .compounding import compound_factor
 from .errors import EngineInputError
-from .projection import MAX_FORECAST_YEARS
+from .projection import (
+    MAX_FORECAST_YEARS,
+    terminal_value_exit_multiple,
+    terminal_value_gordon,
+)
 
 __all__ = [
+    "DCF_TERMINAL_METHODS",
     "EngineInputError",
     "asset_value",
     "income_dcf",
     "market_multiples",
     "opm_backsolve",
 ]
+
+#: How the DCF values everything past the explicit forecast period.
+#:
+#: ``gordon`` capitalises the final year's flow into a perpetuity; it is the
+#: default and the only thing this engine could do until now. ``exit_multiple``
+#: applies a market multiple to a terminal-year metric instead — which is what a
+#: DCF cross-checked against the market approach actually does, and what
+#: `projection.project_financials` has been able to *build* since it was
+#: written while the DCF that consumes it could not read it.
+#:
+#: The two answer different questions and a report normally shows both: Gordon
+#: says what the business is worth held forever, the exit multiple says what a
+#: buyer would pay at the horizon. Neither is a refinement of the other.
+DCF_TERMINAL_METHODS = ("gordon", "exit_multiple")
 
 
 def _finite_result(value: float, name: str, hint: str) -> float:
@@ -56,7 +75,46 @@ def income_dcf(
     terminal_growth: float = 0.0,
     cash: float = 0.0,
     debt: float = 0.0,
+    mid_year_convention: bool = False,
+    terminal_method: str = "gordon",
+    exit_multiple: float | None = None,
+    terminal_metric: float | None = None,
+    terminal_metric_basis: str | None = None,
 ) -> dict:
+    """Discounted cash flow: PV of the explicit forecast plus a terminal value.
+
+    **Mid-year convention.** End-of-year discounting assumes every dollar of a
+    year's cash flow lands on 31 December. It does not: it arrives roughly
+    evenly across the year, so the average dollar is about six months early and
+    ought to be discounted for ``n − 0.5`` years rather than ``n``. That is the
+    mid-year convention, it is standard in 409A and appraisal practice, and
+    leaving it off understates present value by roughly ``(1+r)^0.5 − 1`` — 8.2%
+    at a 17% discount rate, 12% at 25%. On a valuation whose income approach
+    carries real weight that is the difference between two defensible
+    conclusions, so it is offered explicitly rather than approximated.
+
+    It is *off* by default. Not because end-of-year is better — it is not — but
+    because turning it on silently would move every stored valuation's income
+    approach by 8-12% with nothing in the result document saying why. The
+    convention travels on the result (``mid_year_convention``) so a report
+    states which one it used.
+
+    Under the convention the Gordon terminal value is discounted at ``N − 0.5``
+    too, and that is not an approximation: if the perpetuity's own flows arrive
+    mid-year, its value at the horizon is ``(1+r)^0.5`` times the textbook
+    Gordon figure, and dividing that by ``(1+r)^N`` is exactly dividing the
+    textbook figure by ``(1+r)^(N−0.5)``. An *exit multiple* terminal value is
+    discounted at the full ``N`` either way, because it is not a flow spread
+    over a year — it is a single sale on the horizon date, and a mid-year stub
+    would assert that half the company was sold six months early.
+
+    **Terminal method.** ``gordon`` capitalises the final year's flow;
+    ``exit_multiple`` applies ``exit_multiple`` to ``terminal_metric`` (the
+    terminal-year EBITDA or revenue off the projection). Absent an explicit
+    metric the final free cash flow is used and the basis is recorded as
+    ``fcff``, because a multiple whose denominator is not named is a multiple
+    nobody can check.
+    """
     if not free_cash_flows:
         raise EngineInputError("income.free_cash_flows must be a non-empty list")
     # The explicit forecast period is the exponent every discount factor below
@@ -72,20 +130,63 @@ def income_dcf(
             f"income.free_cash_flows accepts at most {MAX_FORECAST_YEARS} years "
             f"(a DCF forecast period is 5-10 years); got {len(free_cash_flows)}"
         )
-    if discount_rate <= terminal_growth:
+    if terminal_method not in DCF_TERMINAL_METHODS:
+        raise EngineInputError(
+            f"income.terminal_method must be one of {list(DCF_TERMINAL_METHODS)} "
+            f"(got {terminal_method!r})"
+        )
+    # Only the Gordon perpetuity diverges as the rate approaches the growth
+    # rate. An exit multiple never capitalises anything, so demanding the same
+    # inequality of it would refuse a perfectly ordinary payload — one that
+    # values the horizon at 8x EBITDA and says nothing about perpetual growth.
+    if terminal_method == "gordon" and discount_rate <= terminal_growth:
         raise EngineInputError("income.discount_rate must exceed terminal_growth")
 
     # compound_factor rather than a bare `**`: it turns an overflow or a base at
     # or below zero into a 422 naming the rate, instead of an OverflowError or a
     # complex number that dies several frames later.
     horizon = len(free_cash_flows)
+    offset = 0.5 if mid_year_convention else 0.0
     factors = [
-        compound_factor(discount_rate, year + 1, "income.discount_rate") for year in range(horizon)
+        compound_factor(discount_rate, year + 1 - offset, "income.discount_rate")
+        for year in range(horizon)
     ]
     pv_fcf = sum(fcf / factor for fcf, factor in zip(free_cash_flows, factors))
-    terminal_fcf = free_cash_flows[-1] * (1.0 + terminal_growth)
-    terminal_value = terminal_fcf / (discount_rate - terminal_growth)
-    pv_terminal = terminal_value / factors[-1]
+
+    if terminal_method == "gordon":
+        terminal_value = terminal_value_gordon(free_cash_flows[-1], discount_rate, terminal_growth)
+        # The perpetuity's own flows are mid-year too, so it shares the stub —
+        # see the docstring. `factors[-1]` is already (1+r)^(N-0.5).
+        terminal_factor = factors[-1]
+        terminal_detail: dict = {
+            "method": "gordon",
+            "terminal_growth": terminal_growth,
+            "final_free_cash_flow": free_cash_flows[-1],
+        }
+    else:
+        if exit_multiple is None:
+            raise EngineInputError(
+                "income.exit_multiple is required when terminal_method is 'exit_multiple'"
+            )
+        metric = terminal_metric if terminal_metric is not None else free_cash_flows[-1]
+        basis = terminal_metric_basis or ("fcff" if terminal_metric is None else "unspecified")
+        if metric <= 0:
+            raise EngineInputError(
+                f"income.terminal_metric must be positive to strike an exit multiple "
+                f"against it (got {metric:g}) — use the Gordon terminal value instead"
+            )
+        terminal_value = terminal_value_exit_multiple(metric, exit_multiple)
+        # A sale on the horizon date, not a flow spread over the final year, so
+        # it takes the full N whether or not the explicit flows took a stub.
+        terminal_factor = compound_factor(discount_rate, horizon, "income.discount_rate")
+        terminal_detail = {
+            "method": "exit_multiple",
+            "exit_multiple": exit_multiple,
+            "terminal_metric": metric,
+            "terminal_metric_basis": basis,
+        }
+
+    pv_terminal = terminal_value / terminal_factor
     enterprise = pv_fcf + pv_terminal
     hint = (
         "check the cash-flow magnitudes, and that the discount rate is far "
@@ -96,6 +197,14 @@ def income_dcf(
         "pv_terminal": _finite_result(pv_terminal, "income.pv_terminal", hint),
         "enterprise_value": _finite_result(enterprise, "income.enterprise_value", hint),
         "equity_value": _finite_result(enterprise + cash - debt, "income.equity_value", hint),
+        # The two methodology choices, on the result rather than only on the
+        # request: a stored valuation is re-read by the report service and by
+        # the next year's roll-forward, and neither can tell an 8% difference in
+        # present value from a different forecast unless the convention is here.
+        "mid_year_convention": mid_year_convention,
+        "terminal_method": terminal_method,
+        "terminal_value": _finite_result(terminal_value, "income.terminal_value", hint),
+        "terminal_detail": terminal_detail,
     }
 
 

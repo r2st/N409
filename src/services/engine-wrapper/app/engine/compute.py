@@ -26,6 +26,7 @@ from .bs import bs_call
 from .current_value import allocate_cvm
 from .dlom import (
     DLOM_METHODS,
+    DLOM_VOLATILITY_BASES,
     chaffee_dlom,
     finnerty_dlom,
     ghaidarov_dlom,
@@ -117,6 +118,23 @@ def _num(value, name: str, *, positive: bool = False, nonneg: bool = False) -> f
     if nonneg and out < 0:
         raise EngineInputError(f"{name} cannot be negative")
     return out
+
+
+def _flag(value, name: str) -> bool:
+    """A true/false switch, or an EngineInputError naming the field.
+
+    The mirror image of `_num`'s bool guard, and refused for the same reason
+    read the other way round: a methodology switch is not a quantity, and
+    ``mid_year_convention: 1`` or ``"true"`` arriving from a form that
+    stringifies its checkboxes must not be read as a silent yes. The convention
+    moves the income approach by 8-12%, so which of the two ran has to be a
+    thing the caller said, not a coercion.
+    """
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise EngineInputError(f"{name} must be true or false")
+    return value
 
 
 def _section(inputs: dict, name: str) -> dict:
@@ -349,8 +367,18 @@ def _market_metric(params: dict, inputs: dict, market_in: dict) -> tuple[str, st
     return horizon, basis, resolved
 
 
+def _resolve_dloc(params: dict) -> float:
+    """The discount for lack of control. Placeholder until the study-based
+    derivation lands; see `_resolve_dloc_detail`."""
+    return _num(params.get("dloc"), "dloc") or 0.0
+
+
 def _resolve_discounts(
-    params: dict, volatility: float | None, t: float, r: float
+    params: dict,
+    volatility: float | None,
+    t: float,
+    r: float,
+    volatility_basis: str = "enterprise",
 ) -> tuple[float, float, str | None, dict | None]:
     """DLOC + DLOM (model, study, qualitative, or a weighted blend of those).
 
@@ -361,8 +389,13 @@ def _resolve_discounts(
     singular `dlom_method` in the sense that the two may not both be set — see
     `_blended_dlom` for why an appraiser weights several methods rather than
     picking one, and why the weights are not normalised for them.
+
+    ``volatility_basis`` labels which volatility ``volatility`` *is* — the
+    enterprise figure or the geared common-class one (see `_dlom_volatility`).
+    It changes no arithmetic here; it travels so that the model detail records
+    which of the two a reviewer is being shown.
     """
-    dloc = _num(params.get("dloc"), "dloc") or 0.0
+    dloc = _resolve_dloc(params)
     blend_in = params.get("dlom_methods")
     if blend_in is not None:
         if params.get("dlom_method") is not None:
@@ -370,20 +403,24 @@ def _resolve_discounts(
                 "set either dlom_method (one method) or dlom_methods (a weighted blend), "
                 "not both — the two would disagree about which discount was concluded"
             )
-        detail = _blended_dlom(blend_in, params, volatility, t, r)
+        detail = _blended_dlom(blend_in, params, volatility, t, r, volatility_basis)
         dlom = float(detail["dlom"])
         if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
             raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
         return dloc, round(dlom, 4), "weighted", detail
 
-    dlom, method, detail = _single_dlom(params, volatility, t, r)
+    dlom, method, detail = _single_dlom(params, volatility, t, r, volatility_basis)
     if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
         raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
     return dloc, round(dlom, 4), method, detail
 
 
 def _single_dlom(
-    params: dict, volatility: float | None, t: float, r: float
+    params: dict,
+    volatility: float | None,
+    t: float,
+    r: float,
+    volatility_basis: str = "enterprise",
 ) -> tuple[float, str | None, dict | None]:
     """One method's discount and its working.
 
@@ -396,19 +433,21 @@ def _single_dlom(
     detail: dict | None = None
     if method == "chaffee":
         dlom = chaffee_dlom(volatility or 0.0, t, r)
-        detail = _model_detail("chaffee", volatility, t, r, dlom, uses_rate=True)
+        detail = _model_detail("chaffee", volatility, t, r, dlom, volatility_basis, uses_rate=True)
     elif method == "finnerty":
         dlom = finnerty_dlom(volatility or 0.0, t)
-        detail = _model_detail("finnerty", volatility, t, r, dlom)
+        detail = _model_detail("finnerty", volatility, t, r, dlom, volatility_basis)
     elif method == "ghaidarov":
         dlom = ghaidarov_dlom(volatility or 0.0, t)
-        detail = _model_detail("ghaidarov", volatility, t, r, dlom)
+        detail = _model_detail("ghaidarov", volatility, t, r, dlom, volatility_basis)
     elif method == "longstaff":
         dlom = longstaff_dlom(volatility or 0.0, t)
         # The bound itself, not just the discount derived from it — a report
         # concluding on Longstaff has to disclose that it is an upper bound.
         detail = {
             "method": "longstaff",
+            "volatility": volatility,
+            "volatility_basis": volatility_basis,
             "bound_multiple": round(longstaff_bound(volatility or 0.0, t), 6),
             "is_upper_bound": True,
         }
@@ -443,7 +482,12 @@ _MIN_BLEND_METHODS = 2
 
 
 def _blended_dlom(
-    raw: object, params: dict, volatility: float | None, t: float, r: float
+    raw: object,
+    params: dict,
+    volatility: float | None,
+    t: float,
+    r: float,
+    volatility_basis: str = "enterprise",
 ) -> dict:
     """Several DLOM methods, weighted into one concluded discount.
 
@@ -516,7 +560,7 @@ def _blended_dlom(
         # choice about weighting, not a different set of inputs.
         leg_params = {**params, "dlom_method": component["method"]}
         leg_params.pop("dlom_methods", None)
-        leg_dlom, _, leg_detail = _single_dlom(leg_params, volatility, t, r)
+        leg_dlom, _, leg_detail = _single_dlom(leg_params, volatility, t, r, volatility_basis)
         component["dlom"] = round(leg_dlom, 6)
         component["weighted"] = round(leg_dlom * component["weight"], 6)
         if leg_detail is not None:
@@ -562,7 +606,13 @@ _DLOM_FORMULAE: dict[str, str] = {
 
 
 def _model_detail(
-    method: str, volatility: float | None, t: float, r: float, dlom: float, uses_rate: bool = False
+    method: str,
+    volatility: float | None,
+    t: float,
+    r: float,
+    dlom: float,
+    volatility_basis: str = "enterprise",
+    uses_rate: bool = False,
 ) -> dict:
     """The inputs an option-based DLOM was struck on, and the discount they gave.
 
@@ -577,10 +627,17 @@ def _model_detail(
     The risk-free rate is reported only for Chaffee, which is the only one of
     the three whose closed form uses it; listing it against Finnerty would
     imply a dependence the model does not have.
+
+    ``volatility_basis`` names *which* volatility the figure above it is: the
+    enterprise one, or the geared common-class one the waterfall implies. That
+    label is not decoration — the two differ by the whole preference stack, and
+    a reviewer handed a 79% volatility on a company whose enterprise volatility
+    is 62% needs to be told which one they are reading before they check it.
     """
     out: dict = {
         "method": method,
         "volatility": volatility,
+        "volatility_basis": volatility_basis,
         "time_to_liquidity_years": t,
         "dlom": round(dlom, 6),
         "formula": _DLOM_FORMULAE.get(method, ""),
@@ -872,6 +929,17 @@ def _weighted_equity(
                 _num(income_in.get("terminal_growth"), "income.terminal_growth") or 0.0,
                 cash=cash,
                 debt=debt,
+                mid_year_convention=_flag(
+                    income_in.get("mid_year_convention"), "income.mid_year_convention"
+                ),
+                terminal_method=str(income_in.get("terminal_method") or "gordon"),
+                exit_multiple=_num(income_in.get("exit_multiple"), "income.exit_multiple", positive=True),
+                terminal_metric=_num(income_in.get("terminal_metric"), "income.terminal_metric"),
+                terminal_metric_basis=(
+                    str(income_in["terminal_metric_basis"])
+                    if income_in.get("terminal_metric_basis") is not None
+                    else None
+                ),
             )
         else:
             approaches["income"] = _reused_prior(prior, "income")
@@ -1110,8 +1178,55 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
         "fully_diluted_basis": basis_kind,
         "volatility": volatility,
         "class_volatility": class_volatility,
+        "common_volatility": (
+            class_volatility.get("common_volatility") if class_volatility is not None else None
+        ),
         "common_per_share": common_per_share,
     }
+
+
+def _dlom_volatility(params: dict, alloc: dict) -> tuple[float | None, str]:
+    """The volatility an option-based DLOM is struck on, and which one it is.
+
+    "class" is the default and is the correct one: Chaffee, Finnerty, Ghaidarov
+    and Longstaff all price the cost of being unable to sell *the interest being
+    valued*, and the interest a 409A concludes on is common — which sits behind
+    the whole preference stack and is therefore geared well above the
+    enterprise. On the cap table in `test_class_volatility.py` a 62% enterprise
+    volatility is a 74% common volatility, and through Chaffee that is a 42.4%
+    DLOM rather than a 35.5% one: seven points of discount, on the per-share
+    figure a board adopts.
+
+    Passing the enterprise figure was the engine's behaviour until now, and it
+    understated every model DLOM on a company with a preference stack — which is
+    every venture-backed company the engine exists to value.
+
+    "enterprise" is kept because a report already issued on the enterprise
+    figure has to stay reproducible, and because an appraiser who concluded on
+    it deliberately should be able to say so rather than be overridden. It is
+    never the silent option: `discounts.dlom_detail.volatility_basis` and
+    `assumptions.dlom_volatility_basis` name the basis either way, and the
+    pre-flight warns when the enterprise figure is selected.
+
+    Only the breakpoint waterfall can answer "class": the two aggregate OPM
+    branches do not decompose the payoff into tranches, so there is no per-class
+    delta to take and the enterprise figure is the only one there is. A payload
+    asking for the class basis without a cap table therefore falls back rather
+    than failing — the request is for the better figure where one exists, not an
+    assertion that one does.
+    """
+    basis = str(params.get("dlom_volatility_basis") or "class").lower()
+    if basis not in DLOM_VOLATILITY_BASES:
+        raise EngineInputError(
+            f"dlom_volatility_basis must be one of {list(DLOM_VOLATILITY_BASES)} (got {basis!r})"
+        )
+    enterprise = alloc.get("volatility")
+    if basis == "enterprise":
+        return enterprise, "enterprise"
+    common = alloc.get("common_volatility")
+    if common is None or not (common > 0):
+        return enterprise, "enterprise"
+    return common, "class"
 
 
 # ── Step recorders shared by the allocation paths ────────────────────────────
@@ -1205,7 +1320,11 @@ def _compute_opm(
     alloc = _opm_allocate(equity_value, params, inputs, t, r)
     _record_allocation(tr, "opm", equity_value, inputs, alloc, t, r)
 
-    dloc, dlom, method, dlom_detail = _resolve_discounts(params, alloc["volatility"], t, r)
+    # The DLOM is struck on the volatility of the *interest being valued*, which
+    # is common — geared by everything senior to it — and not on the enterprise
+    # volatility that allocated the equity. See `_dlom_volatility`.
+    dlom_vol, vol_basis = _dlom_volatility(params, alloc)
+    dloc, dlom, method, dlom_detail = _resolve_discounts(params, dlom_vol, t, r, vol_basis)
     fmv_per_share = alloc["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
     _record_discounts(tr, params, alloc["common_per_share"], dloc, dlom, method, dlom_detail, fmv_per_share)
 
@@ -1228,6 +1347,11 @@ def _compute_opm(
             "time_to_exit_years": round(t, 4),
             "risk_free_rate": r,
             "volatility": alloc["volatility"],
+            # Two volatilities, named. `volatility` is the enterprise figure the
+            # allocation ran on; this is the one the discount ran on. They are
+            # the same number only when there is no cap table to gear common.
+            "dlom_volatility": dlom_vol,
+            "dlom_volatility_basis": vol_basis,
         },
         "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
         "fully_diluted_common": alloc["fully_diluted_common"],
@@ -1405,7 +1529,8 @@ def _compute_hybrid(
         },
         outputs=blend,
     )
-    dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t_blend, r)
+    dlom_vol, vol_basis = _dlom_volatility(params, opm_alloc)
+    dloc, dlom, method, dlom_detail = _resolve_discounts(params, dlom_vol, t_blend, r, vol_basis)
     common_per_share = blend["common_per_share"]
     fully_diluted_common = opm_alloc["fully_diluted_common"]
     fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
@@ -1425,6 +1550,8 @@ def _compute_hybrid(
             "time_to_exit_years": t_blend,
             "risk_free_rate": r,
             "volatility": volatility,
+            "dlom_volatility": dlom_vol,
+            "dlom_volatility_basis": vol_basis,
         },
         "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
         "fully_diluted_common": fully_diluted_common,

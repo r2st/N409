@@ -480,6 +480,13 @@ def class_volatilities(
     the waterfall values at zero — one so far out of the money that no tranche
     reaches it — has no defined return volatility, and is reported with a null
     rather than an infinity.
+
+    ``common_volatility`` is the same figure for the *aggregate* common claim —
+    the one interest a 409A actually concludes on — and is what an option-based
+    DLOM struck on common should be given. It is the value-weighted mean of the
+    common classes' volatilities, which is exact rather than approximate: each
+    class contributes ``sigma·S·delta_i``, so summing the numerators and the
+    values is the same operation as taking the elasticity of the summed claim.
     """
     normalized, segments, _tranches, values = _allocate(equity_value, classes, t, r, sigma)
     # `_allocate` has validated all three; narrowing here is for the type checker
@@ -516,8 +523,19 @@ def class_volatilities(
             "volatility": round(volatility, 6) if volatility is not None else None,
         }
 
+    # The aggregate common claim. `allocate_waterfall` strikes its
+    # `common_per_share` over exactly this set (kind == "common", options
+    # excluded, since the pool is valued as its own class at its own strike),
+    # so the volatility of the interest being valued is taken over the same set.
+    common_value = sum(values[c["name"]] for c in normalized if c["kind"] == "common")
+    common_delta = sum(deltas[c["name"]] for c in normalized if c["kind"] == "common")
+    common_volatility = (
+        round(sigma * equity_value * common_delta / common_value, 6) if common_value > 0 else None
+    )
+
     return {
         "enterprise_volatility": sigma,
+        "common_volatility": common_volatility,
         "time_to_exit_years": t,
         "risk_free_rate": r,
         "equity_value": round(equity_value, 2),

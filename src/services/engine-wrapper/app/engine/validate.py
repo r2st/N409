@@ -30,8 +30,10 @@ from dataclasses import dataclass, field as dc_field
 from datetime import date
 
 from .anomalies import detect_anomalies
+from .approaches import DCF_TERMINAL_METHODS
 from .dlom import (
     DLOM_METHODS,
+    DLOM_VOLATILITY_BASES,
     MODEL_DLOM_METHODS,
     RESTRICTED_STOCK_STUDIES,
     is_post_amendment,
@@ -312,6 +314,8 @@ def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> No
     # the half that names the field for the analyst instead of failing the run.)
     #
     # Absent still means zero. Anything present has to be a number.
+    terminal_method = _check_dcf_terminal(c, income)
+
     raw_growth = income.get("terminal_growth")
     growth = 0.0
     if raw_growth is not None:
@@ -327,7 +331,10 @@ def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> No
         else:
             growth = parsed_growth
     if rate is not None:
-        if rate <= growth:
+        # Only the Gordon perpetuity diverges at r <= g; an exit multiple
+        # capitalises nothing, so the engine does not demand the inequality
+        # there and neither can the pre-flight — see `approaches.income_dcf`.
+        if terminal_method == "gordon" and rate <= growth:
             c.error(
                 "rate_below_growth",
                 "inputs.income.discount_rate",
@@ -350,6 +357,87 @@ def _check_income(c: _Collector, inputs: dict, *, auto_wacc: bool = False) -> No
             f"terminal growth {growth:.1%} exceeds long-run GDP growth",
             "Perpetual growth above ~5% is hard to support in a valuation report.",
         )
+
+
+def _check_dcf_terminal(c: _Collector, income: dict) -> str:
+    """The DCF's terminal method and mid-year switch. Returns the method.
+
+    Returned rather than only reported because the ``r > g`` check above depends
+    on it: the inequality is a property of the Gordon perpetuity, and applying it
+    to an exit-multiple run would refuse a payload the engine accepts — the
+    precise pre-flight/engine disagreement this module exists to rule out.
+    """
+    method = income.get("terminal_method")
+    resolved = "gordon"
+    if method is not None:
+        if not isinstance(method, str) or method not in DCF_TERMINAL_METHODS:
+            c.error(
+                "invalid_choice",
+                "inputs.income.terminal_method",
+                f"terminal_method must be one of {list(DCF_TERMINAL_METHODS)} (got {method!r})",
+                "Leave it unset to capitalise the final year's cash flow into a "
+                "perpetuity (Gordon growth).",
+            )
+        else:
+            resolved = method
+
+    if resolved == "exit_multiple":
+        multiple = income.get("exit_multiple")
+        parsed = _finite(multiple)
+        if multiple is None:
+            c.error(
+                "required",
+                "inputs.income.exit_multiple",
+                "an exit-multiple terminal value needs inputs.income.exit_multiple",
+                "Use the market approach's concluded multiple, or switch the terminal "
+                "method back to Gordon growth.",
+            )
+        elif parsed is None or parsed <= 0:
+            c.error(
+                "out_of_range",
+                "inputs.income.exit_multiple",
+                "exit_multiple must be a positive number",
+            )
+        metric = income.get("terminal_metric")
+        if metric is None:
+            # Legal — the engine falls back to the final free cash flow — but an
+            # EV/FCF exit multiple is not what an analyst who typed "8x" meant,
+            # and the difference is invisible in the result unless it is said here.
+            c.warn(
+                "implied_terminal_metric",
+                "inputs.income.terminal_metric",
+                "no terminal metric supplied, so the exit multiple will be struck on "
+                "the final year's free cash flow",
+                "Supply the terminal-year EBITDA or revenue the multiple belongs to, "
+                "so the report can name the denominator.",
+            )
+        elif _finite(metric) is None or _finite(metric) <= 0:  # type: ignore[operator]
+            c.error(
+                "out_of_range",
+                "inputs.income.terminal_metric",
+                "terminal_metric must be a positive number to strike a multiple against it",
+            )
+
+    # The mid-year switch is checked for *shape* only, and deliberately draws no
+    # warning either way. End-of-year discounting is the weaker assumption — it
+    # puts every dollar on 31 December and understates present value by
+    # (1+r)^0.5 - 1, about 8% at a 17% discount rate — but it is also the
+    # engine's default and the basis every stored valuation was concluded on. A
+    # warning fired on the default is one that fires on every valuation, which
+    # is a banner rather than a finding and trains reviewers to skip the panel.
+    # Which convention ran is recorded on the result instead
+    # (`approaches.income.mid_year_convention`), where the report can state it.
+    mid_year = income.get("mid_year_convention")
+    if mid_year is not None and not isinstance(mid_year, bool):
+        c.error(
+            "not_a_boolean",
+            "inputs.income.mid_year_convention",
+            "mid_year_convention must be true or false",
+            "It selects the discounting convention, so it has to be an explicit "
+            "true or false rather than a number or a string.",
+        )
+
+    return resolved
 
 
 def _check_market(c: _Collector, inputs: dict, *, auto_comparables: bool = False) -> None:
@@ -758,6 +846,28 @@ def _check_discounts(c: _Collector, params: dict) -> None:
                 f"a {dloc:.1%} discount for lack of control is unusually large",
                 "Support it with the control-premium study you relied on.",
             )
+
+    basis = params.get("dlom_volatility_basis")
+    if basis is not None and (
+        not isinstance(basis, str) or basis.lower() not in DLOM_VOLATILITY_BASES
+    ):
+        c.error(
+            "invalid_choice",
+            "params.dlom_volatility_basis",
+            f"dlom_volatility_basis must be one of {list(DLOM_VOLATILITY_BASES)} (got {basis!r})",
+            "Leave it unset to strike the DLOM on the common class's own volatility, "
+            "which is the interest being valued.",
+        )
+    elif isinstance(basis, str) and basis.lower() == "enterprise":
+        c.warn(
+            "enterprise_dlom_volatility",
+            "params.dlom_volatility_basis",
+            "the DLOM will be struck on the enterprise volatility rather than on the "
+            "common class's own",
+            "Common sits behind the preference stack, so its return volatility is "
+            "higher than the enterprise's and the option models take the volatility of "
+            "the interest being valued. Document why the enterprise figure was used.",
+        )
 
     method = params.get("dlom_method")
     blend = params.get("dlom_methods")
