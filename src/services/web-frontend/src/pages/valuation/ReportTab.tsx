@@ -11,6 +11,7 @@ import {
   type ReportVersionSummary,
 } from '../../lib/m2';
 import { formatDateTime } from '../../lib/format';
+import { useUnsavedChanges } from '../../lib/unsavedChanges';
 import { useWorkspace } from './ValuationWorkspace';
 import { RichTextEditor } from '../../components/RichTextEditor';
 import { ExplanationCard } from '../../components/valuation/ExplanationCard';
@@ -22,6 +23,57 @@ const STATUS_LABELS: Record<Report['status'], string> = {
   changes: 'Changes requested',
   published: 'Published',
 };
+
+/** DOM id of a chapter's card, so the outline can link straight at it. */
+const sectionDomId = (key: string) => `report-section-${key}`;
+
+/**
+ * Jump list for the chapters (409.ai §12.2 "report structure").
+ *
+ * A finished 409A runs to twenty-seven chapters and some fifteen thousand
+ * pixels; without this the only way to reach "Discount for Lack of
+ * Marketability" is to scroll past twenty rich-text editors looking for it.
+ * The list carries the number each chapter will hold in the PDF, and marks the
+ * omitted ones — so it doubles as the answer to "what is actually in this
+ * document", which was otherwise only obtainable by rendering it.
+ *
+ * Plain `#` anchors rather than scroll handlers: they are focusable, they work
+ * with the keyboard and with a middle-click, and the browser's own
+ * `scroll-behavior: smooth` (index.css) animates them.
+ */
+function ReportOutline({
+  sections,
+  numberOf,
+}: {
+  sections: ReportSection[];
+  numberOf: (section: ReportSection) => number | null;
+}) {
+  return (
+    <nav aria-label="Report sections" data-testid="report-outline">
+      <h2 className="overline mb-3 text-ink-400">Sections</h2>
+      <ol className="space-y-0.5">
+        {sections.map((section) => {
+          const number = numberOf(section);
+          return (
+            <li key={section.key}>
+              <a
+                href={`#${sectionDomId(section.key)}`}
+                className={`flex gap-2 rounded px-2 py-1 text-sm hover:bg-paper-100 focus-visible:ring-2 focus-visible:ring-bond-600/30 focus-visible:outline-none ${
+                  number === null ? 'text-ink-400' : 'text-ink-700'
+                }`}
+              >
+                <span className="tnum w-5 shrink-0 text-right text-xs text-ink-400">{number ?? '—'}</span>
+                <span className={number === null ? 'line-through decoration-ink-300' : ''}>
+                  {section.heading || 'Untitled'}
+                </span>
+              </a>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
 
 /**
  * Report workspace: WYSIWYG section editor (ops), version history with
@@ -70,6 +122,12 @@ export function ReportTab() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Editing happens in place and saving is explicit, so until this point the
+  // only thing standing between a half-written chapter and the tab strip was
+  // the analyst remembering. Declared before the early returns below, because a
+  // hook cannot be conditional.
+  useUnsavedChanges(dirty, 'This report has unsaved edits. Leave the page and they will be lost.');
 
   if (!loaded) return <Spinner />;
   if (error && !report) return <ErrorNote>{error}</ErrorNote>;
@@ -185,7 +243,11 @@ export function ReportTab() {
    * document, not of the editor.
    */
   const visible = content.sections.filter((s) => s.hidden !== true);
-  const numberOf = (section: ReportSection) => visible.indexOf(section) + 1;
+  /** The chapter's number in the rendered PDF; null when it is omitted. */
+  const numberOf = (section: ReportSection): number | null => {
+    const at = visible.indexOf(section);
+    return at === -1 ? null : at + 1;
+  };
   const shown = ops ? content.sections : visible;
 
   return (
@@ -257,16 +319,29 @@ export function ReportTab() {
         {shown.map((section) => {
           const index = content.sections.indexOf(section);
           const isHidden = section.hidden === true;
+          const number = numberOf(section);
           return (
             <section
               key={section.key}
-              className={`rounded-lg border p-5 shadow-card ${
+              id={sectionDomId(section.key)}
+              // Anchored navigation lands the heading under the sticky page
+              // chrome rather than behind it.
+              className={`scroll-mt-6 rounded-lg border p-5 shadow-card ${
                 isHidden ? 'border-dashed border-ink-300 bg-paper-100' : 'border-paper-300 bg-surface'
               }`}
             >
               {ops ? (
                 <>
                   <div className="mb-3 flex items-start gap-3">
+                    {/* The number the chapter will carry in the PDF — an omitted
+                        one takes none, which is the quickest read on what the
+                        omit button just did. */}
+                    <span
+                      className="tnum mt-2 w-6 shrink-0 text-right text-sm font-semibold text-ink-400"
+                      aria-hidden
+                    >
+                      {number ?? '—'}
+                    </span>
                     <TextInput
                       value={section.heading}
                       onChange={(e) => updateSection(index, { heading: e.target.value })}
@@ -310,45 +385,52 @@ export function ReportTab() {
         })}
       </div>
 
-      {ops && (
-        <aside>
-          <h2 className="overline mb-4 text-ink-400">Version history</h2>
-          {versions.length === 0 && <p className="text-sm text-ink-400">No versions yet.</p>}
-          <ol className="space-y-3">
-            {versions.map((v) => (
-              <li
-                key={v.id}
-                className={`rounded-md border px-3.5 py-2.5 text-sm ${
-                  v.version === report.current_version
-                    ? 'border-bond-200 bg-bond-50'
-                    : 'border-paper-300 bg-surface'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-ink-800">
-                    v{v.version}
-                    {v.version === report.current_version && (
-                      <span className="ml-1.5 text-xs font-medium text-bond-700">current</span>
+      {/* The sidebar is no longer ops-only: the outline is the reader's table of
+          contents as much as the analyst's, and a client reading a shared draft
+          has the same twenty-seven chapters to get through. */}
+      <aside className="space-y-8 lg:sticky lg:top-6 lg:self-start">
+        <ReportOutline sections={shown} numberOf={numberOf} />
+
+        {ops && (
+          <div>
+            <h2 className="overline mb-4 text-ink-400">Version history</h2>
+            {versions.length === 0 && <p className="text-sm text-ink-400">No versions yet.</p>}
+            <ol className="space-y-3">
+              {versions.map((v) => (
+                <li
+                  key={v.id}
+                  className={`rounded-md border px-3.5 py-2.5 text-sm ${
+                    v.version === report.current_version
+                      ? 'border-bond-200 bg-bond-50'
+                      : 'border-paper-300 bg-surface'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-ink-800">
+                      v{v.version}
+                      {v.version === report.current_version && (
+                        <span className="ml-1.5 text-xs font-medium text-bond-700">current</span>
+                      )}
+                    </span>
+                    {v.version !== report.current_version && (
+                      <Button
+                        variant="ghost"
+                        className="!px-2 !py-0.5 !text-xs"
+                        onClick={() => void restore(v.version)}
+                        disabled={busy !== null}
+                      >
+                        Restore
+                      </Button>
                     )}
-                  </span>
-                  {v.version !== report.current_version && (
-                    <Button
-                      variant="ghost"
-                      className="!px-2 !py-0.5 !text-xs"
-                      onClick={() => void restore(v.version)}
-                      disabled={busy !== null}
-                    >
-                      Restore
-                    </Button>
-                  )}
-                </div>
-                <div className="tnum mt-0.5 text-xs text-ink-400">{formatDateTime(v.created_at)}</div>
-                {v.has_pdf && <div className="mt-0.5 text-xs text-bond-700">PDF rendered</div>}
-              </li>
-            ))}
-          </ol>
-        </aside>
-      )}
+                  </div>
+                  <div className="tnum mt-0.5 text-xs text-ink-400">{formatDateTime(v.created_at)}</div>
+                  {v.has_pdf && <div className="mt-0.5 text-xs text-bond-700">PDF rendered</div>}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </aside>
     </div>
   );
 }
