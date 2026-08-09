@@ -393,6 +393,25 @@ export function incomeExhibit(
   const rate = num(income.discount_rate);
   const growth = num(income.terminal_growth) ?? 0;
 
+  /*
+   * The two methodology choices come off the *result*, not off the inputs.
+   *
+   * The result is what the engine actually did; the inputs are what someone
+   * asked for, and a report that reads the request describes a calculation that
+   * may never have run. Both fields are absent on calculations stored before
+   * the engine reported them, and absent means the default it had then and has
+   * now — end-of-year discounting, Gordon terminal value — so an old engagement
+   * re-rendered today still prints the exhibit it printed before.
+   */
+  const midYear = approach.mid_year_convention === true;
+  const terminalMethod = approach.terminal_method === 'exit_multiple' ? 'exit_multiple' : 'gordon';
+  const terminalDetail = record(approach.terminal_detail) ?? {};
+
+  // Under the mid-year convention a year's flows are discounted for n − 0.5
+  // years, not n. Printing the end-of-year factor beside a mid-year present
+  // value gives a reader a schedule whose own columns do not multiply out.
+  const yearsTo = (i: number) => i + 1 - (midYear ? 0.5 : 0);
+
   const schedule =
     flows.length > 0
       ? table({
@@ -404,7 +423,7 @@ export function incomeExhibit(
             'Present value',
           ],
           rows: flows.map((fcf, i) => {
-            const factor = rate === null ? null : Math.pow(1 + rate, i + 1);
+            const factor = rate === null ? null : Math.pow(1 + rate, yearsTo(i));
             return [
               `Year ${i + 1}`,
               ...(revenues.length === flows.length
@@ -430,13 +449,47 @@ export function incomeExhibit(
     if (value !== null) bridge.push([label, formatCurrency(value, currency, 0), note]);
   };
   if (rate !== null)
-    bridge.push(['Discount rate', formatPercent(rate, 2), 'Weighted average cost of capital']);
-  bridge.push(['Terminal growth rate', formatPercent(growth, 2), 'Perpetual growth beyond the forecast']);
+    bridge.push([
+      'Discount rate',
+      formatPercent(rate, 2),
+      midYear
+        ? 'Weighted average cost of capital, mid-year convention'
+        : 'Weighted average cost of capital, end-of-year convention',
+    ]);
+  // A terminal growth rate is a Gordon input. Printing it against an
+  // exit-multiple terminal value states an assumption the calculation never
+  // made — and states it in the one column a reviewer reads to check the
+  // method.
+  if (terminalMethod === 'gordon') {
+    bridge.push(['Terminal growth rate', formatPercent(growth, 2), 'Perpetual growth beyond the forecast']);
+  } else {
+    const multiple = num(terminalDetail.exit_multiple);
+    const metric = num(terminalDetail.terminal_metric);
+    const basis =
+      typeof terminalDetail.terminal_metric_basis === 'string' ? terminalDetail.terminal_metric_basis : null;
+    const basisLabel =
+      basis === 'ebitda'
+        ? 'terminal-year EBITDA'
+        : basis === 'revenue'
+          ? 'terminal-year revenue'
+          : basis === 'fcff'
+            ? 'terminal-year free cash flow'
+            : 'the terminal-year metric';
+    if (multiple !== null) bridge.push(['Exit multiple', ratio(multiple, 2), `Applied to ${basisLabel}`]);
+    if (metric !== null)
+      bridge.push([
+        'Terminal-year metric',
+        formatCurrency(metric, currency, 0),
+        basisLabel.replace('terminal-year ', 'The ') + ' the multiple is struck on',
+      ]);
+  }
   push('Present value of the explicit forecast', num(approach.pv_explicit));
   push(
     'Present value of the terminal value',
     num(approach.pv_terminal),
-    'Gordon growth on the final-year flow',
+    terminalMethod === 'gordon'
+      ? 'Gordon growth on the final-year flow'
+      : 'Exit multiple on the terminal-year metric',
   );
   push('Indicated enterprise value', num(approach.enterprise_value));
   push('Add: cash and equivalents', num(inputs.cash));
@@ -1048,7 +1101,9 @@ function dlocDerivationBlock(detail: Record<string, unknown> | null, dloc: numbe
     );
   }
   if (detail.thin_study_set === true) {
-    caveats.push('The selected set is fewer than three studies, which is a narrow basis on which to conclude.');
+    caveats.push(
+      'The selected set is fewer than three studies, which is a narrow basis on which to conclude.',
+    );
   }
   if (detail.double_counts_minority === true) {
     caveats.push(

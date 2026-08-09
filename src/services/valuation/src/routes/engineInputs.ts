@@ -125,6 +125,26 @@ export const EngineInputsBody = z
         revenues: z.array(nonNeg).max(30).nullable().optional(),
         discount_rate: z.number().positive().max(1).nullable().optional(),
         terminal_growth: z.number().min(0).max(1).nullable().optional(),
+
+        /**
+         * The two methodology choices the DCF offers (approaches.income_dcf).
+         *
+         * The engine has read all five of these since it learned to, validates
+         * them in `validate.py`, and reports the choice back on the result so a
+         * report can state it. Nothing could ever set them: this object is
+         * `.strict()`, so an analyst asking for a mid-year convention or an
+         * exit-multiple terminal value got a 400 and the engagement kept the
+         * end-of-year Gordon default it never chose.
+         *
+         * The bound on `exit_multiple` is a sanity rail, not a view: 100x
+         * EBITDA is not a 409A input, and a fat-fingered 850 that reaches the
+         * engine computes cleanly and wrongly.
+         */
+        mid_year_convention: z.boolean().nullable().optional(),
+        terminal_method: z.enum(['gordon', 'exit_multiple']).nullable().optional(),
+        exit_multiple: z.number().positive().max(100).nullable().optional(),
+        terminal_metric: z.number().nullable().optional(),
+        terminal_metric_basis: z.enum(['ebitda', 'revenue', 'fcff']).nullable().optional(),
       })
       .strict()
       .nullable()
@@ -224,13 +244,38 @@ export const EngineInputsBody = z
         });
       }
     }
-    const dr = val.income?.discount_rate;
-    const tg = val.income?.terminal_growth;
-    if (dr != null && tg != null && dr <= tg) {
+    const income = val.income;
+    const dr = income?.discount_rate;
+    const tg = income?.terminal_growth;
+    // Only a Gordon perpetuity diverges as the rate approaches the growth rate.
+    // An exit multiple capitalises nothing, so demanding the inequality of it
+    // refuses an ordinary payload — one that values the horizon at 8x EBITDA
+    // and says nothing about perpetual growth. The engine draws the line in the
+    // same place (approaches.income_dcf); this is that rule, not a second one.
+    const method = income?.terminal_method ?? 'gordon';
+    if (method === 'gordon' && dr != null && tg != null && dr <= tg) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['income', 'discount_rate'],
         message: 'Discount rate must exceed terminal growth.',
+      });
+    }
+    // Caught here as well as in the engine because the failure is otherwise
+    // deferred: the document stores, the engagement looks configured, and the
+    // 422 arrives on whoever next presses Calculate.
+    if (method === 'exit_multiple' && income?.exit_multiple == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['income', 'exit_multiple'],
+        message: 'An exit-multiple terminal value needs an exit_multiple.',
+      });
+    }
+    if (income?.terminal_metric != null && income.terminal_metric <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['income', 'terminal_metric'],
+        message:
+          'terminal_metric must be positive to strike a multiple against it — use the Gordon terminal value instead.',
       });
     }
   });

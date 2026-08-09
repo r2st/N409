@@ -133,6 +133,80 @@ describe('EngineInputsBody', () => {
     expect(res.success).toBe(false);
   });
 
+  /*
+   * The DCF's two methodology choices. The engine has read all of these, and
+   * validated them, since it learned to; this object is `.strict()`, so every
+   * one of them was a 400 and no engagement could be stored with the mid-year
+   * convention or an exit-multiple terminal value it asked for.
+   */
+  describe('DCF methodology choices', () => {
+    it('accepts the mid-year convention', () => {
+      const res = EngineInputsBody.safeParse({
+        income: { discount_rate: 0.25, terminal_growth: 0.03, mid_year_convention: true },
+      });
+      expect(res.success).toBe(true);
+      expect(res.success && res.data.income?.mid_year_convention).toBe(true);
+    });
+
+    it('accepts an exit-multiple terminal value with its metric and basis', () => {
+      const res = EngineInputsBody.safeParse({
+        income: {
+          discount_rate: 0.25,
+          terminal_method: 'exit_multiple',
+          exit_multiple: 8.5,
+          terminal_metric: 4_400_000,
+          terminal_metric_basis: 'ebitda',
+        },
+      });
+      expect(res.success).toBe(true);
+      expect(res.success && res.data.income?.exit_multiple).toBe(8.5);
+    });
+
+    it('refuses an exit-multiple terminal value with no multiple to strike', () => {
+      const res = EngineInputsBody.safeParse({
+        income: { discount_rate: 0.25, terminal_method: 'exit_multiple' },
+      });
+      expect(res.success).toBe(false);
+    });
+
+    it('lets an exit multiple sit below the terminal growth rate, which capitalises nothing', () => {
+      // The Gordon inequality is a Gordon rule: a perpetuity diverges as the
+      // rate approaches growth, and a sale at 8x EBITDA does not.
+      const res = EngineInputsBody.safeParse({
+        income: {
+          discount_rate: 0.03,
+          terminal_growth: 0.05,
+          terminal_method: 'exit_multiple',
+          exit_multiple: 8.5,
+        },
+      });
+      expect(res.success).toBe(true);
+    });
+
+    it('still holds a Gordon run to the inequality when the method is named explicitly', () => {
+      const res = EngineInputsBody.safeParse({
+        income: { discount_rate: 0.03, terminal_growth: 0.05, terminal_method: 'gordon' },
+      });
+      expect(res.success).toBe(false);
+    });
+
+    it('refuses a non-positive metric to strike a multiple against', () => {
+      const res = EngineInputsBody.safeParse({
+        income: { terminal_method: 'exit_multiple', exit_multiple: 8.5, terminal_metric: -1 },
+      });
+      expect(res.success).toBe(false);
+    });
+
+    it('refuses an unknown terminal method and an implausible multiple', () => {
+      expect(EngineInputsBody.safeParse({ income: { terminal_method: 'liquidation' } }).success).toBe(false);
+      expect(
+        EngineInputsBody.safeParse({
+          income: { terminal_method: 'exit_multiple', exit_multiple: 850 },
+        }).success,
+      ).toBe(false);
+    });
+  });
+
   it('rejects non-positive common shares and negative preferences', () => {
     expect(EngineInputsBody.safeParse({ shares_outstanding_common: 0 }).success).toBe(false);
     expect(

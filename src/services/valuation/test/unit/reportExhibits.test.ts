@@ -293,6 +293,79 @@ describe('income approach exhibit', () => {
   it('is absent when the income approach carried no weight', () => {
     expect(incomeExhibit(INPUTS, { ...RESULTS, approaches: {} }, CONTEXT)).toBeNull();
   });
+
+  /*
+   * The exhibit described one methodology and the engine could run four. Every
+   * assertion above holds an end-of-year Gordon run against an exhibit that
+   * printed "Gordon growth on the final-year flow" no matter what ran, so none
+   * of them could tell the difference — which is the whole failure.
+   */
+  const withIncome = (income: Record<string, unknown>) => ({
+    ...RESULTS,
+    approaches: { ...RESULTS.approaches, income: { ...RESULTS.approaches.income, ...income } },
+  });
+
+  it('discounts on the mid-year convention when that is what ran', () => {
+    const seen = plain(incomeExhibit(INPUTS, withIncome({ mid_year_convention: true }), CONTEXT)!.html);
+    // Year 1 is half a year out, not a full one: 1 / 1.25^0.5, not 1 / 1.25.
+    expect(seen).toContain('0.8944x');
+    expect(seen).not.toContain('0.8000x');
+    expect(seen).toContain('mid-year convention');
+  });
+
+  it('names the end-of-year convention rather than leaving the reader to assume one', () => {
+    const seen = plain(incomeExhibit(INPUTS, RESULTS, CONTEXT)!.html);
+    expect(seen).toContain('end-of-year convention');
+    expect(seen).toContain('0.8000x');
+  });
+
+  it('states an exit-multiple terminal value as one, with the metric it was struck on', () => {
+    const seen = plain(
+      incomeExhibit(
+        INPUTS,
+        withIncome({
+          terminal_method: 'exit_multiple',
+          terminal_detail: {
+            method: 'exit_multiple',
+            exit_multiple: 8.5,
+            terminal_metric: 4_400_000,
+            terminal_metric_basis: 'ebitda',
+          },
+        }),
+        CONTEXT,
+      )!.html,
+    );
+    expect(seen).toContain('Exit multiple');
+    expect(seen).toContain('8.50x');
+    expect(seen).toContain('$4,400,000');
+    expect(seen).toContain('terminal-year EBITDA');
+    expect(seen).toContain('Exit multiple on the terminal-year metric');
+    // A terminal growth rate is a Gordon input. Printing 3.00% here would state
+    // an assumption this calculation never made.
+    expect(seen).not.toContain('Terminal growth rate');
+    expect(seen).not.toContain('Gordon growth');
+  });
+
+  it('reads the methodology off the result, not off the request', () => {
+    // Inputs asking for an exit multiple against a result that ran Gordon: the
+    // exhibit must describe what computed, since that is the number beside it.
+    const inputs = {
+      ...INPUTS,
+      income: { ...INPUTS.income, terminal_method: 'exit_multiple', exit_multiple: 8.5 },
+    };
+    const seen = plain(incomeExhibit(inputs, RESULTS, CONTEXT)!.html);
+    expect(seen).toContain('Gordon growth on the final-year flow');
+    expect(seen).not.toContain('Exit multiple');
+  });
+
+  it('keeps the old exhibit for a calculation stored before the engine reported either choice', () => {
+    // No mid_year_convention and no terminal_method on the approach: the
+    // defaults it ran under, so the re-render must not silently restate it.
+    const seen = plain(incomeExhibit(INPUTS, RESULTS, CONTEXT)!.html);
+    expect(seen).toContain('Terminal growth rate');
+    expect(seen).toContain('3.00%');
+    expect(seen).toContain('Gordon growth on the final-year flow');
+  });
 });
 
 // ── Exhibit D ────────────────────────────────────────────────────────────────
@@ -971,8 +1044,18 @@ describe('dlomDerivationExhibit', () => {
           high: 0.21,
           straddles_rule_144_amendment: true,
           studies: [
-            { study: 'Columbia Financial Advisors (pre-amendment)', period_start: 1996, period_end: 1997, discount: 0.21 },
-            { study: 'Columbia Financial Advisors (post-amendment)', period_start: 1997, period_end: 1998, discount: 0.13 },
+            {
+              study: 'Columbia Financial Advisors (pre-amendment)',
+              period_start: 1996,
+              period_end: 1997,
+              discount: 0.21,
+            },
+            {
+              study: 'Columbia Financial Advisors (post-amendment)',
+              period_start: 1997,
+              period_end: 1998,
+              discount: 0.13,
+            },
           ],
         },
       },
@@ -1009,8 +1092,20 @@ describe('dlomDerivationExhibit', () => {
             'The sample is companies that went on to complete an IPO, so part of the measured ' +
             'discount is the change in the company’s prospects over the period.',
           studies: [
-            { study: 'Emory 1997-2000', period_start: 1997, period_end: 2000, discount: 0.5, statistic: 'mean' },
-            { study: 'Willamette 1997', period_start: 1997, period_end: 1997, discount: 0.352, statistic: 'median' },
+            {
+              study: 'Emory 1997-2000',
+              period_start: 1997,
+              period_end: 2000,
+              discount: 0.5,
+              statistic: 'mean',
+            },
+            {
+              study: 'Willamette 1997',
+              period_start: 1997,
+              period_end: 1997,
+              discount: 0.352,
+              statistic: 'median',
+            },
           ],
         },
       },

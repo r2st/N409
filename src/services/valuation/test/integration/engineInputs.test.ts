@@ -149,4 +149,49 @@ describe.skipIf(!dbUp)('Financial model (engine_inputs) API', () => {
     expect(inputs).toBeTruthy();
     expect((inputs?.income as { free_cash_flows: number[] }).free_cash_flows).toEqual([1e6, 2e6, 3e6]);
   });
+
+  /**
+   * The DCF's methodology choices, over the whole path they have to survive:
+   * the route that would not accept them, the jsonb document that never held
+   * them, and the payload the engine reads them from. Asserting the schema
+   * alone would have passed on the day the engine could not be told either.
+   */
+  it('carries the mid-year convention and an exit-multiple terminal value to the engine', async () => {
+    const saved = await patch(ops.token, {
+      income: {
+        free_cash_flows: [1e6, 2e6, 3e6],
+        discount_rate: 0.25,
+        mid_year_convention: true,
+        terminal_method: 'exit_multiple',
+        exit_multiple: 8.5,
+        terminal_metric: 4_400_000,
+        terminal_metric_basis: 'ebitda',
+      },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    lastEnginePayload = null;
+    const calc = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/calculations`,
+      headers: authHeader(ops.token),
+      payload: {},
+    });
+    expect(calc.statusCode).toBe(201);
+
+    const income = (lastEnginePayload as { inputs?: { income?: Record<string, unknown> } } | null)?.inputs
+      ?.income;
+    expect(income?.mid_year_convention).toBe(true);
+    expect(income?.terminal_method).toBe('exit_multiple');
+    expect(income?.exit_multiple).toBe(8.5);
+    expect(income?.terminal_metric).toBe(4_400_000);
+    expect(income?.terminal_metric_basis).toBe('ebitda');
+  });
+
+  it('refuses an exit-multiple terminal value with nothing to strike', async () => {
+    const res = await patch(ops.token, {
+      income: { discount_rate: 0.25, terminal_method: 'exit_multiple' },
+    });
+    expect(res.statusCode).toBe(422);
+  });
 });
