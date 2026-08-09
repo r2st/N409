@@ -1,4 +1,23 @@
-61539cd0c2299c61331b10f05a56247002007612
+176dadc94f4f731b6646d9bbbe67c27fd603fd34
+# N409 deployed revision
+# commit:    176dadc94f4f731b6646d9bbbe67c27fd603fd34
+# subject:   fix: a published 409A cannot be re-rendered into a different document
+# previous:  61539cd (the running head, and the report-accuracy round).
+# includes:  1 commit.
+#
+#            176dadc — the exhibits are computed at render time from the latest
+#              calculation, which is what makes them agree with the summary
+#              page and equally what means a recalculation moves every figure a
+#              re-render would produce. `POST /report/render` overwrote the
+#              stored PDF for the current version with no state guard, so a
+#              published engagement whose client holds v3 — in board minutes, in
+#              an auditor's file — could be re-rendered into a different
+#              document under the same version number with a different concluded
+#              value, and nobody outside this system could tell. A delivered
+#              version's bytes are now written once; a new version is how
+#              revised figures are published, which leaves both documents in the
+#              history.
+#
 # N409 deployed revision
 # commit:    61539cd0c2299c61331b10f05a56247002007612
 # subject:   fix: the running head names the section at the top of the page
