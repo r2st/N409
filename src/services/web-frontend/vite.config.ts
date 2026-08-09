@@ -146,7 +146,10 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: { '/api': 'http://localhost:3001' },
+    // The valuation service's own PORT is configurable, and a developer running
+    // two checkouts (or an agent alongside a local stack) needs the dev proxy to
+    // follow it. Same variable name the web service uses for the same target.
+    proxy: { '/api': (process.env.VALUATION_URL ?? 'http://localhost:3001').trim() },
   },
   test: {
     environment: 'jsdom',
