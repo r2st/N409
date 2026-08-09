@@ -205,6 +205,31 @@ class MarketFeedClient:
 
         return self._cached(key, produce, fallback)
 
+    def _info_entry(self, ticker: str, date: str | None = None, *, fallback=None) -> dict:
+        """One ticker's raw provider ``info``, memoized.
+
+        Both the multiples summary and the universe refresh read whole-``info``
+        fields off the same fetch, so they share a cache key rather than each
+        paying for its own round trip against the same ticker.
+        """
+        return self._cached(
+            ("multiples", ticker, date),
+            lambda p: {"source": "yfinance", "info": p.info(ticker)},
+            fallback,
+        )
+
+    def get_company_info(self, ticker: str, *, date: str | None = None, fallback=None) -> dict:
+        """Everything the provider reports for one ticker, or a fallback payload.
+
+        The multiples endpoint projects ``info`` down to six ratios. The
+        universe refresh needs market cap, reported revenue and growth as well,
+        which are in the same dict and would otherwise cost a second fetch.
+        """
+        entry = self._info_entry(ticker, date, fallback=fallback)
+        if entry.get("source") != "yfinance":
+            return entry
+        return {"source": "yfinance", "ticker": ticker, "info": entry.get("info", {})}
+
     def get_company_multiples(
         self,
         tickers: list[str],
@@ -222,11 +247,7 @@ class MarketFeedClient:
         companies: dict[str, dict] = {}
         any_live = False
         for ticker in tickers:
-            entry = self._cached(
-                ("multiples", ticker, date),
-                lambda p, tk=ticker: {"source": "yfinance", "info": p.info(tk)},
-                None,
-            )
+            entry = self._info_entry(ticker, date)
             if entry.get("source") == "yfinance":
                 any_live = True
                 info = entry.get("info", {})

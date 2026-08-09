@@ -6,17 +6,27 @@ rejected outright, and a known one is answered with its SIC classification,
 market capitalisation, and trading multiples so the agent (and the analyst)
 work from real figures rather than a model's guess.
 
-There is no live market-data vendor wired into the platform, so this is a
-curated static snapshot of well-known, liquid public companies — enough to
-anchor comp selection and to keep the pipeline deterministic and testable
-offline. Every figure is an illustrative reference point, not a real-time
-quote; callers must surface it as such. Multiples are enterprise-value based
-(EV/Revenue, EV/EBITDA); ``ev_ebitda`` is null for companies whose EBITDA is
-negative or not meaningfully positive, which is common for high-growth names.
+What is tabulated here is a curated static snapshot of well-known, liquid
+public companies: the classification (ticker, name, SIC) that no price feed
+supplies, plus a set of illustrative figures that keeps the pipeline
+deterministic and testable with no network at all. Multiples are
+enterprise-value based (EV/Revenue, EV/EBITDA); ``ev_ebitda`` is null for
+companies whose EBITDA is negative or not meaningfully positive, which is
+common for high-growth names.
+
+A row's *figures* are not necessarily the ones typed below. ``market_universe``
+overlays observed market data from the live feed onto this classification, and
+a row says which it is carrying: ``figures_source`` is ``"snapshot"`` for the
+figures in this file and ``"live"`` for observed ones, paired with
+``figures_as_of`` — the same two facts, under the same two names, that
+``comparable_items`` stores on the Node side (migration 0133). A snapshot
+figure is an illustrative reference point rather than a real-time quote, and
+callers must surface it as such; that is what the pair is for.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
 from .errors import EngineInputError
@@ -29,7 +39,12 @@ class Company:
     sic_code: str
     sic_description: str
     sector: str
-    market_cap: float  # USD, illustrative snapshot
+    # USD. Tabulated on every snapshot row, where it is also what the derived
+    # revenue below is measured from. Null is reachable only on a refreshed row
+    # whose source did not report one — a live row does not read it, and
+    # borrowing the snapshot's figure to fill the hole would date a live row's
+    # scale to whenever this file was last touched.
+    market_cap: float | None
     ev_revenue: float  # EV / LTM revenue
     ev_ebitda: float | None  # EV / LTM EBITDA; None when EBITDA is not positive
     # LTM revenue growth, as a fraction. Screening needs a growth axis: two
@@ -37,19 +52,56 @@ class Company:
     # comparable to a target growing at 80% if one of them is growing at 5%.
     revenue_growth: float | None = None
     country: str = "US"
+    # Set only on a row refreshed from observed market data, where reported LTM
+    # revenue is a figure in its own right rather than something to imply. None
+    # on every snapshot row, which is what keeps `revenue` derived below.
+    revenue_ltm: float | None = None
+    # Where this row's *figures* came from, and when. "snapshot" means the
+    # values typed in this file, whose vintage nobody knows, so the timestamp
+    # is None — the same honest NULL the `comparable_items` columns carry.
+    figures_source: str = "snapshot"
+    figures_as_of: str | None = None
 
     @property
     def revenue(self) -> float:
-        """LTM revenue implied by the snapshot: market cap ÷ EV/Revenue.
+        """LTM revenue: observed where the row was refreshed, implied otherwise.
 
-        Derived rather than tabulated so the snapshot cannot drift internally —
-        a revenue column typed independently of the multiple it came from is a
-        column that eventually disagrees with it, and a screen matching on size
-        would then rank against a figure the multiples do not support.
-        (Market cap stands in for enterprise value here; the snapshot is
-        illustrative and the two are close enough for a size band.)
+        The snapshot does not tabulate revenue — it is derived as market cap ÷
+        EV/Revenue so the table cannot drift internally. A revenue column typed
+        independently of the multiple it came from is a column that eventually
+        disagrees with it, and a screen matching on size would then rank
+        against a figure the multiples do not support. (Market cap stands in
+        for enterprise value there; the snapshot is illustrative and the two
+        are close enough for a size band.)
+
+        A live row has no such problem: its revenue and its multiples are read
+        off the same filing at the same moment, so the reported figure is used
+        and the derivation — which would silently substitute market cap for a
+        real enterprise value and understate revenue by exactly the net debt —
+        is not.
         """
+        if self.revenue_ltm is not None:
+            return self.revenue_ltm
+        # Unreachable on a snapshot row, which is the only kind that gets here:
+        # every one of them tabulates a market cap. Asserted rather than
+        # defaulted, because a zero would be a silently wrong size band.
+        assert self.market_cap is not None, f"{self.ticker}: no revenue and no market cap"
         return self.market_cap / self.ev_revenue
+
+    @property
+    def enterprise_value(self) -> float | None:
+        """The EV the row's own multiples are struck on.
+
+        For a snapshot row this is market cap by construction, and is returned
+        as exactly that rather than as a round trip through the multiple. For a
+        live row it is EV/Revenue × revenue, which is the real enterprise value
+        — market cap plus net debt — and is what a caller storing an "EV"
+        column alongside revenue must store if the multiples it implies are to
+        reproduce the ones reported here.
+        """
+        if self.revenue_ltm is None:
+            return self.market_cap
+        return self.ev_revenue * self.revenue_ltm
 
     @property
     def ebitda_margin(self) -> float | None:
@@ -64,7 +116,12 @@ class Company:
         return self.ev_revenue / self.ev_ebitda
 
     def to_dict(self) -> dict:
-        return {**asdict(self), "revenue": self.revenue, "ebitda_margin": self.ebitda_margin}
+        return {
+            **asdict(self),
+            "revenue": self.revenue,
+            "ebitda_margin": self.ebitda_margin,
+            "enterprise_value": self.enterprise_value,
+        }
 
 
 # Illustrative snapshot. Ordered roughly by sector for readability; lookup is by
@@ -97,12 +154,20 @@ _COMPANIES: tuple[Company, ...] = (
     Company("EPAM", "EPAM Systems, Inc.", "7379", "Computer Rental & Leasing", "IT Services", 12_000_000_000, 2.4, 16.0, 0.02),
     Company("ACN", "Accenture plc", "8742", "Management Consulting Services", "IT Consulting", 220_000_000_000, 3.2, 19.0, 0.05),
     # ── Fintech / payments (SIC 7389 services-computer / 6199 finance) ─────────
-    Company("SQ", "Block, Inc.", "7389", "Computer Related Services", "Payments Fintech", 40_000_000_000, 2.1, 28.0, 0.14),
+    # Block trades as XYZ, not SQ. The old symbol is not merely stale: the
+    # agent's ticker check answers from this table, so a table naming a retired
+    # symbol *accepts* the dead one and *rejects* the live one, and a refresh
+    # keyed on it finds nothing to refresh.
+    Company("XYZ", "Block, Inc.", "7389", "Computer Related Services", "Payments Fintech", 40_000_000_000, 2.1, 28.0, 0.14),
     Company("PYPL", "PayPal Holdings, Inc.", "7389", "Computer Related Services", "Payments Fintech", 65_000_000_000, 2.3, 11.0, 0.07),
     Company("ADYEY", "Adyen N.V.", "7389", "Computer Related Services", "Payments Fintech", 45_000_000_000, 20.0, 38.0, 0.23, "NL"),
     Company("COIN", "Coinbase Global, Inc.", "6199", "Finance Services", "Crypto Exchange", 55_000_000_000, 7.5, 24.0, 0.40),
     Company("AFRM", "Affirm Holdings, Inc.", "6199", "Finance Services", "BNPL Fintech", 12_000_000_000, 5.0, None, 0.35),
-    Company("WISE", "Wise plc", "6199", "Finance Services", "Cross-border Payments", 11_000_000_000, 6.8, 26.0, 0.24, "GB"),
+    # Wise plc is LSE-listed and its symbol is WISE.L. Bare "WISE" is a
+    # generative-AI ETF — a different security, in a different asset class,
+    # under the name of a payments company. Left uncorrected it was the one row
+    # here that could have put a fund's multiples into a fintech comp set.
+    Company("WISE.L", "Wise plc", "6199", "Finance Services", "Cross-border Payments", 11_000_000_000, 6.8, 26.0, 0.24, "GB"),
     # ── E-commerce / marketplaces (SIC 5961 catalog & mail-order) ─────────────
     Company("AMZN", "Amazon.com, Inc.", "5961", "Catalog & Mail-Order Houses", "E-commerce", 1_800_000_000_000, 3.1, 20.0, 0.11),
     Company("ETSY", "Etsy, Inc.", "5961", "Catalog & Mail-Order Houses", "E-commerce Marketplace", 7_000_000_000, 2.7, 12.0, 0.02),
@@ -152,20 +217,33 @@ def normalize_ticker(raw: object) -> str:
     return text
 
 
-def lookup(tickers: object) -> dict:
+def by_ticker(companies: Sequence[Company] | None = None) -> dict[str, Company]:
+    """Index a company set by ticker; the static snapshot when none is given."""
+    if companies is None:
+        return _BY_TICKER
+    return {c.ticker: c for c in companies}
+
+
+def lookup(tickers: object, *, companies: Sequence[Company] | None = None) -> dict:
     """Verify a list of proposed tickers.
 
     Returns ``{"companies": [...verified...], "not_found": [...], "count": n}``.
     Duplicates and blanks are collapsed; order follows first appearance so the
     caller can zip the result back against its request. Unknown tickers are the
     signal the agent uses to drop a hallucinated comp.
+
+    ``companies`` supplies the set to verify against — normally the resolved
+    universe from ``market_universe``, so a verified ticker is answered with
+    observed figures where they were available. It defaults to the static
+    snapshot, which is what keeps this function callable with no network.
     """
     if not isinstance(tickers, list):
         raise EngineInputError("market-data: 'tickers' must be a list")
     if len(tickers) > MAX_TICKERS:
         raise EngineInputError(f"market-data: at most {MAX_TICKERS} tickers per request")
 
-    companies: list[dict] = []
+    index = by_ticker(companies)
+    verified: list[dict] = []
     not_found: list[str] = []
     seen: set[str] = set()
     for raw in tickers:
@@ -173,14 +251,14 @@ def lookup(tickers: object) -> dict:
         if not symbol or symbol in seen:
             continue
         seen.add(symbol)
-        company = _BY_TICKER.get(symbol)
+        company = index.get(symbol)
         if company is None:
             not_found.append(symbol)
         else:
-            companies.append(company.to_dict())
-    return {"companies": companies, "not_found": not_found, "count": len(companies)}
+            verified.append(company.to_dict())
+    return {"companies": verified, "not_found": not_found, "count": len(verified)}
 
 
-def universe() -> list[dict]:
+def universe(companies: Sequence[Company] | None = None) -> list[dict]:
     """The full reference set — used by the /market-data GET probe and tests."""
-    return [c.to_dict() for c in _COMPANIES]
+    return [c.to_dict() for c in (_COMPANIES if companies is None else companies)]

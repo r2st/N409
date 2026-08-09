@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
@@ -38,11 +38,17 @@ async function startEngineStub() {
       }
     );
   });
+  // The screen's answer, overridable per test. The default is an all-snapshot
+  // universe, which is what an engine with no live feed returns; a test that
+  // wants observed figures says so, because "live" and "snapshot" are stamped
+  // onto the stored rows differently and the difference reaches the exhibit.
+  let screenReply: Record<string, unknown> | null = null;
   stub.post('/engine/v1/comparables', async (req) => {
     lastInputs = ((req.body as { inputs?: Record<string, unknown> })?.inputs ?? {}) as Record<
       string,
       unknown
     >;
+    if (screenReply !== null) return screenReply;
     return {
       selected: [
         {
@@ -81,6 +87,9 @@ async function startEngineStub() {
     setFeed: (next: FeedReply) => {
       feed = next;
       feedCalls.length = 0;
+    },
+    setScreen: (next: Record<string, unknown> | null) => {
+      screenReply = next;
     },
     feedCalls: () => [...feedCalls],
   };
@@ -385,6 +394,177 @@ describe.skipIf(!dbUp)('comparable items', () => {
       const alpha = rows.find((r) => r.ticker === 'AAA');
       expect(alpha?.figures_source).toBe('snapshot');
       expect(alpha?.figures_as_of).toBeTruthy();
+    });
+
+    /**
+     * The engine screens against observed market data where its feed answered
+     * and the curated snapshot where it did not, so a single screen can return
+     * both. This route used to hard-code `snapshot` for every row, which was
+     * true while the engine had no live universe and is a lie now.
+     */
+    describe('provenance from the engine screen', () => {
+      const LIVE_AS_OF = '2026-08-09T12:00:00Z';
+
+      const liveScreen = (rows: Array<Record<string, unknown>>, universe: Record<string, unknown>) => ({
+        selected: rows,
+        screened_out: [],
+        universe_size: 40,
+        universe,
+      });
+
+      afterEach(() => engine.setScreen(null));
+
+      it('stamps a live row as observed, at the moment the engine observed it', async () => {
+        engine.setScreen(
+          liveScreen(
+            [
+              {
+                ticker: 'AAA',
+                name: 'Alpha Analytics',
+                sic_code: '7372',
+                market_cap: 1_000,
+                enterprise_value: 1_200,
+                revenue: 100,
+                ebitda_margin: 0.5,
+                score: 0.82,
+                breakdown: { industry: 1 },
+                figures_source: 'live',
+                figures_as_of: LIVE_AS_OF,
+              },
+            ],
+            { source: 'live', as_of: LIVE_AS_OF, live_count: 40, snapshot_count: 0, warning_count: 0 },
+          ),
+        );
+        const rows = (await screen()).json().comparables as Array<{
+          ticker: string;
+          figures_source: string | null;
+          figures_as_of: string | null;
+        }>;
+        const alpha = rows.find((r) => r.ticker === 'AAA');
+        expect(alpha?.figures_source).toBe('live');
+        // The engine's stamp, not the screen's clock: a live figure is only
+        // live at the moment it was observed.
+        expect(new Date(alpha!.figures_as_of!).toISOString()).toBe('2026-08-09T12:00:00.000Z');
+      });
+
+      it('stamps each row from its own figures, not the set from one of them', async () => {
+        engine.setScreen(
+          liveScreen(
+            [
+              {
+                ticker: 'AAA',
+                name: 'Alpha Analytics',
+                sic_code: '7372',
+                enterprise_value: 1_200,
+                revenue: 100,
+                ebitda_margin: 0.5,
+                score: 0.82,
+                figures_source: 'live',
+                figures_as_of: LIVE_AS_OF,
+              },
+              {
+                ticker: 'BBB',
+                name: 'Beta Systems',
+                sic_code: '7372',
+                market_cap: 1_400,
+                enterprise_value: 1_400,
+                revenue: 100,
+                ebitda_margin: 0.5,
+                score: 0.61,
+                figures_source: 'snapshot',
+                figures_as_of: null,
+              },
+            ],
+            { source: 'mixed', as_of: LIVE_AS_OF, live_count: 38, snapshot_count: 2, warning_count: 2 },
+          ),
+        );
+        const rows = (await screen()).json().comparables as Array<{
+          ticker: string;
+          figures_source: string | null;
+        }>;
+        expect(rows.find((r) => r.ticker === 'AAA')?.figures_source).toBe('live');
+        expect(rows.find((r) => r.ticker === 'BBB')?.figures_source).toBe('snapshot');
+      });
+
+      it('stores the enterprise value the multiples were struck on', async () => {
+        // Market cap is not EV for a live row — the gap is the net debt — and
+        // storing it would understate every multiple implied from the set by
+        // exactly that gap.
+        engine.setScreen(
+          liveScreen(
+            [
+              {
+                ticker: 'AAA',
+                name: 'Alpha Analytics',
+                sic_code: '7372',
+                market_cap: 1_000,
+                enterprise_value: 1_200,
+                revenue: 100,
+                ebitda_margin: 0.5,
+                score: 0.82,
+                figures_source: 'live',
+                figures_as_of: LIVE_AS_OF,
+              },
+            ],
+            { source: 'live', as_of: LIVE_AS_OF, live_count: 40, snapshot_count: 0, warning_count: 0 },
+          ),
+        );
+        const rows = (await screen()).json().comparables as Array<{
+          ticker: string;
+          ev: number | null;
+          multiples: { ev_revenue_ltm: number | null };
+        }>;
+        const alpha = rows.find((r) => r.ticker === 'AAA');
+        expect(alpha?.ev).toBe(1_200);
+        // 1,200 / 100 — struck on the engine's enterprise value, so it
+        // reproduces the engine's own EV/Revenue. Had the row stored market cap
+        // (1,000) instead, this would read 10 and understate the multiple by
+        // exactly the net debt.
+        expect(alpha?.multiples.ev_revenue_ltm).toBe(12);
+      });
+
+      it('falls back to market cap for an engine that reports no enterprise value', async () => {
+        // The engine before this change, and any older one still deployed.
+        const rows = (await screen()).json().comparables as Array<{ ticker: string; ev: number | null }>;
+        expect(rows.find((r) => r.ticker === 'BBB')?.ev).toBe(1_400);
+      });
+
+      it('reports which universe was screened, and records it on the event spine', async () => {
+        engine.setScreen(
+          liveScreen(
+            [
+              {
+                ticker: 'AAA',
+                name: 'Alpha Analytics',
+                sic_code: '7372',
+                enterprise_value: 1_200,
+                revenue: 100,
+                score: 0.82,
+                figures_source: 'live',
+                figures_as_of: LIVE_AS_OF,
+              },
+            ],
+            { source: 'mixed', as_of: LIVE_AS_OF, live_count: 38, snapshot_count: 2, warning_count: 2 },
+          ),
+        );
+        const body = (await screen()).json() as { universe: Record<string, unknown> };
+        expect(body.universe).toMatchObject({ source: 'mixed', live_count: 38, snapshot_count: 2 });
+
+        // On the event too: the row stamps get overwritten by whoever edits the
+        // set next, and "what was this screened against" is asked months later.
+        const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+          `SELECT payload FROM admin_events
+            WHERE subject_id = $1 AND type = 'comparables_screened'
+            ORDER BY occurred_at DESC LIMIT 1`,
+          [screenValuationId],
+        );
+        expect(rows[0]?.payload.universe).toMatchObject({ source: 'mixed', live_count: 38 });
+      });
+
+      it('treats an engine that says nothing about its universe as the snapshot', async () => {
+        const body = (await screen()).json() as { universe: { source: string } };
+        expect(body.universe.source).toBe('snapshot');
+      });
     });
 
     /**

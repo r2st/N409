@@ -1,8 +1,10 @@
 """Live market-feed client tests — stub providers, no network access."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.engine.market_feed import MarketFeedClient
+from app.engine.market_universe import set_client
 from app.main import app
 
 client = TestClient(app)
@@ -33,6 +35,24 @@ class StubProvider:
     def financials(self, ticker):
         self.calls["financials"] += 1
         return {"market_cap": 1e9, "total_revenue": 2e8, "ebitda": 5e7, "beta": 1.1}
+
+
+@pytest.fixture()
+def route_provider():
+    """Install a stub behind the route's shared client, and take it out again.
+
+    The endpoint reads the process-wide client, so a test that swaps one in and
+    walks away leaves every later test talking to its stub. Yields the provider
+    so call counts stay assertable.
+    """
+
+    def install(provider=None):
+        stub = provider if provider is not None else StubProvider()
+        set_client(MarketFeedClient(provider=stub))
+        return stub
+
+    yield install
+    set_client(None)
 
 
 class BoomProvider:
@@ -93,12 +113,10 @@ def test_unknown_metric_falls_back():
     assert out["source"] == "fallback"
 
 
-def test_market_feed_endpoint_prices():
-    # Swap the shared app client's provider for a stub so the route is exercised
+def test_market_feed_endpoint_prices(route_provider):
+    # Swap the shared client's provider for a stub so the route is exercised
     # without a network dependency.
-    import app.main as main
-
-    main._market_feed = MarketFeedClient(provider=StubProvider())
+    route_provider()
     r = client.post(
         "/engine/v1/market-feed",
         json={"kind": "prices", "ticker": "DDOG", "start": "2026-01-01", "end": "2026-02-01"},
@@ -113,10 +131,8 @@ def test_market_feed_endpoint_prices():
     assert unknown.status_code == 422
 
 
-def test_market_feed_endpoint_multiples_and_financials():
-    import app.main as main
-
-    main._market_feed = MarketFeedClient(provider=StubProvider())
+def test_market_feed_endpoint_multiples_and_financials(route_provider):
+    route_provider()
     m = client.post("/engine/v1/market-feed", json={"kind": "multiples", "tickers": ["DDOG", "DT"]})
     assert m.status_code == 200
     assert m.json()["median"]["ev_revenue"] == 7.0
@@ -212,10 +228,8 @@ def test_no_median_is_ever_nan_over_http():
 # so the shape is rejected before any of that runs.
 
 
-def test_market_feed_rejects_non_string_tickers():
-    import app.main as main
-
-    main._market_feed = MarketFeedClient(provider=StubProvider())
+def test_market_feed_rejects_non_string_tickers(route_provider):
+    route_provider()
     # An unhashable element is the one that used to crash the memo lookup.
     unhashable = client.post("/engine/v1/market-feed", json={"kind": "multiples", "tickers": [[]]})
     assert unhashable.status_code == 422
@@ -225,11 +239,8 @@ def test_market_feed_rejects_non_string_tickers():
     assert numeric.status_code == 422
 
 
-def test_market_feed_bounds_the_ticker_list():
-    import app.main as main
-
-    stub = StubProvider()
-    main._market_feed = MarketFeedClient(provider=stub)
+def test_market_feed_bounds_the_ticker_list(route_provider):
+    stub = route_provider()
     over = client.post(
         "/engine/v1/market-feed", json={"kind": "multiples", "tickers": ["DDOG"] * 51}
     )
@@ -243,10 +254,8 @@ def test_market_feed_bounds_the_ticker_list():
     assert at_limit.status_code == 200
 
 
-def test_market_feed_bounds_the_metrics_list():
-    import app.main as main
-
-    main._market_feed = MarketFeedClient(provider=StubProvider())
+def test_market_feed_bounds_the_metrics_list(route_provider):
+    route_provider()
     over = client.post(
         "/engine/v1/market-feed",
         json={"kind": "multiples", "tickers": ["DDOG"], "metrics": ["pe"] * 33},

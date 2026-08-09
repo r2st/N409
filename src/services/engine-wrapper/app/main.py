@@ -24,7 +24,7 @@ from .ratelimit import limit_per_minute, make_rate_limit_middleware
 from .engine.market_data import MAX_TICKERS
 from .engine.market_data import lookup as market_lookup
 from .engine.market_data import universe as market_universe
-from .engine.market_feed import MarketFeedClient
+from .engine.market_universe import default_client, resolve_universe
 from .engine.fund_valuation import (
     calibrate_implied_volatility,
     fund_valuation,
@@ -126,6 +126,10 @@ class SensitivityRequest(BaseModel):
 class MarketDataRequest(BaseModel):
     # Candidate tickers to verify (from the comparable-company AI agent).
     tickers: list = Field(default_factory=list)
+    # None defers to the deployment's ENGINE_LIVE_UNIVERSE setting; False pins
+    # the answer to the curated snapshot, which is what a caller reproducing an
+    # earlier run wants.
+    live: bool | None = None
 
 
 class VolatilityRequest(BaseModel):
@@ -433,25 +437,37 @@ def engine_sensitivity(request: SensitivityRequest) -> dict:
 
 
 @app.get("/engine/v1/market-data")
-def market_data_universe() -> dict:
-    """The comparable-company reference universe (illustrative snapshot)."""
-    companies = market_universe()
-    return {"companies": companies, "count": len(companies)}
+def market_data_universe(live: bool | None = None) -> dict:
+    """The comparable-company reference universe.
+
+    Live where the market feed answered and the curated snapshot where it did
+    not; ``provenance`` says which, and every row carries its own
+    ``figures_source``/``figures_as_of`` pair.
+    """
+    resolution = resolve_universe(live=live)
+    companies = market_universe(resolution.companies)
+    return {
+        "companies": companies,
+        "count": len(companies),
+        "provenance": resolution.provenance(),
+    }
 
 
 @app.post("/engine/v1/market-data")
 def market_data(request: MarketDataRequest) -> dict:
     """Verify candidate tickers and return their SIC codes, market caps, and
     trading multiples so the comparable-company agent works from real figures."""
+    resolution = resolve_universe(live=request.live)
     try:
-        return market_lookup(request.tickers)
+        return {
+            **market_lookup(request.tickers, companies=resolution.companies),
+            "provenance": resolution.provenance(),
+        }
     except EngineInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ── Standalone estimation engines (callable independently of /compute) ────────
-# A single shared client memoizes live fetches across requests within a process.
-_market_feed = MarketFeedClient()
 
 
 @app.post("/engine/v1/volatility")
@@ -698,17 +714,17 @@ def market_feed(request: MarketFeedRequest) -> dict:
     if kind == "prices":
         if not (request.ticker and request.start and request.end):
             raise HTTPException(status_code=422, detail="prices needs ticker, start, end")
-        return _market_feed.get_historical_prices(
+        return default_client().get_historical_prices(
             request.ticker, request.start, request.end, fallback=request.fallback
         )
     if kind == "financials":
         if not request.ticker:
             raise HTTPException(status_code=422, detail="financials needs ticker")
-        return _market_feed.get_company_financials(request.ticker, fallback=request.fallback)
+        return default_client().get_company_financials(request.ticker, fallback=request.fallback)
     if kind == "multiples":
         if not request.tickers:
             raise HTTPException(status_code=422, detail="multiples needs tickers")
-        return _market_feed.get_company_multiples(
+        return default_client().get_company_multiples(
             request.tickers, request.metrics, request.date, fallback=request.fallback
         )
     raise AssertionError(f"unreachable: kind={request.kind!r}")  # Pydantic Literal covers this

@@ -25,6 +25,7 @@ import {
   multipleKeyFor,
   resolveExcludeReason,
   summarizeSet,
+  type ComparableFiguresSource,
 } from '../domain/comparables.js';
 
 /**
@@ -103,16 +104,27 @@ interface ScreenedCandidate {
   name?: unknown;
   sic_code?: unknown;
   market_cap?: unknown;
+  enterprise_value?: unknown;
   revenue?: unknown;
   ebitda_margin?: unknown;
   score?: unknown;
   breakdown?: unknown;
+  figures_source?: unknown;
+  figures_as_of?: unknown;
 }
 
 interface ScreenResponse {
   selected?: ScreenedCandidate[];
   screened_out?: Array<{ ticker?: unknown; name?: unknown; score?: unknown; reason?: unknown }>;
   universe_size?: unknown;
+  /** Whether the engine ranked observed figures, the snapshot, or a mix of both. */
+  universe?: {
+    source?: unknown;
+    as_of?: unknown;
+    live_count?: unknown;
+    snapshot_count?: unknown;
+    warning_count?: unknown;
+  };
   target?: Record<string, unknown>;
 }
 
@@ -423,20 +435,26 @@ export function registerComparableRoutes(
         throw err;
       }
 
-      // Market cap stands in for enterprise value in the engine's snapshot (see
-      // `Company.revenue`), so it is what the stored EV column holds — storing
-      // it under any other name would suggest a precision the snapshot has not
-      // got, and the implied multiples reproduce the engine's own exactly.
-      // Stamped `snapshot`, because that is what the engine screened against.
-      // `market_data.py` calls itself "a curated static snapshot… an
-      // illustrative reference point, not a real-time quote", and until these
-      // columns existed nothing carried that sentence as far as the reviewer
-      // reading the multiple in Exhibit D-1. POST .../comparables/refresh
-      // replaces these figures with observed ones and re-stamps the row.
+      // The stored EV column takes the engine's `enterprise_value`, which is
+      // the one the row's own multiples are struck on: exactly the market cap
+      // for a snapshot row (where market cap stands in for EV — see
+      // `Company.revenue`) and the real, net-debt-inclusive figure for a row
+      // refreshed from the market. Storing market cap in both cases would
+      // reproduce the engine's multiples only in the first, and understate the
+      // multiple by the net debt in the second.
+      //
+      // Provenance is taken per row rather than assumed for the set. The
+      // engine screens against live figures where its feed answered and the
+      // curated snapshot where it did not, so a screen can legitimately return
+      // both, and Exhibit D-1 already knows how to say so. Hard-coding
+      // `snapshot` here — which is what this did while the engine had no live
+      // universe — would now be the columns actively lying.
       const screenedAt = new Date();
       const selected = (screen.selected ?? []).map((c) => {
         const revenueLtm = fin(c.revenue);
         const margin = fin(c.ebitda_margin);
+        const live = str(c.figures_source) === 'live';
+        const asOf = live ? new Date(String(c.figures_as_of ?? '')) : null;
         return {
           ticker: str(c.ticker),
           name: str(c.name) ?? str(c.ticker) ?? 'Unnamed comparable',
@@ -444,11 +462,14 @@ export function registerComparableRoutes(
           included: true,
           revenueLtm,
           ebitdaLtm: revenueLtm !== null && margin !== null ? revenueLtm * margin : null,
-          ev: fin(c.market_cap),
+          ev: fin(c.enterprise_value) ?? fin(c.market_cap),
           score: fin(c.score),
           scoreBreakdown: c.breakdown ?? {},
-          figuresSource: 'snapshot' as const,
-          figuresAsOf: screenedAt,
+          figuresSource: (live ? 'live' : 'snapshot') as ComparableFiguresSource,
+          // A live figure is only live at the moment it was observed, so the
+          // engine's stamp is the one that counts; the screen's own clock is
+          // the right answer only for a row whose figures have no other date.
+          figuresAsOf: asOf !== null && !Number.isNaN(asOf.getTime()) ? asOf : screenedAt,
         };
       });
       const rejected = (screen.screened_out ?? []).map((c) => ({
@@ -463,10 +484,22 @@ export function registerComparableRoutes(
         ...selected,
         ...rejected,
       ]);
+      // Recorded on the event, not only on the rows: "which universe was this
+      // screened against" is a question asked months later about a set whose
+      // rows have since been edited, and by then the row-level stamps have been
+      // overwritten by whoever touched them.
+      const universe = {
+        source: str(screen.universe?.source) ?? 'snapshot',
+        as_of: str(screen.universe?.as_of),
+        live_count: fin(screen.universe?.live_count) ?? 0,
+        snapshot_count: fin(screen.universe?.snapshot_count) ?? fin(screen.universe_size),
+        warning_count: fin(screen.universe?.warning_count) ?? 0,
+      };
       await audit(valuation, principal, 'comparables_screened', {
         selected: selected.length,
         screened_out: rejected.length,
         universe_size: fin(screen.universe_size),
+        universe,
       });
 
       const items = await listComparableItems(deps.pool, valuation.id);
@@ -475,6 +508,7 @@ export function registerComparableRoutes(
         statistics: summarizeSet(items),
         screened: written.length,
         target: screen.target ?? target,
+        universe,
       });
     },
   );

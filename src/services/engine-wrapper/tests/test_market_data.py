@@ -92,7 +92,11 @@ def test_post_market_data_verifies(client):
 def test_post_market_data_empty_list_ok(client):
     resp = client.post("/engine/v1/market-data", json={"tickers": []})
     assert resp.status_code == 200
-    assert resp.json() == {"companies": [], "not_found": [], "count": 0}
+    body = resp.json()
+    assert (body["companies"], body["not_found"], body["count"]) == ([], [], 0)
+    # The provenance block rides along even on an empty verification: the
+    # question "what would these figures have been" is answerable either way.
+    assert body["provenance"]["source"] in {"live", "mixed", "snapshot"}
 
 
 def test_post_market_data_oversized_is_422(client):

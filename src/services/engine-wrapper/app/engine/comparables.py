@@ -40,7 +40,7 @@ import statistics
 
 from .errors import EngineInputError
 from .market_data import Company, normalize_ticker
-from .market_data import _COMPANIES as UNIVERSE  # noqa: PLC2701 — same package
+from .market_universe import resolve_universe
 
 # Default dimension weights. Industry dominates because a market approach that
 # reaches outside the industry is challenged on that first, and everything else
@@ -199,12 +199,20 @@ def screen_comparables(
     limit: int = MAX_SELECTED,
     include_tickers: list | None = None,
     exclude_tickers: list | None = None,
+    live: bool | None = None,
 ) -> dict:
     """Rank the reference universe against the target.
 
     ``include_tickers`` forces a candidate into the result whatever it scores —
     the analyst has a comp they intend to use and wants it scored alongside the
     rest rather than argued with. ``exclude_tickers`` removes one outright.
+
+    The universe is resolved against observed market data where the feed is
+    available (see ``market_universe``) and falls back to the curated snapshot
+    where it is not; ``live=False`` pins the snapshot for a reproducible rerun.
+    Either way the result reports which it screened, per row and in aggregate —
+    a multiple is not the same claim struck on a live figure as on a reference
+    one, and the difference has to survive as far as the reviewer.
     """
     if sic_code is None and revenue is None and revenue_growth is None and ebitda_margin is None:
         raise EngineInputError(
@@ -216,10 +224,11 @@ def screen_comparables(
 
     forced = {normalize_ticker(t) for t in (include_tickers or [])}
     banned = {normalize_ticker(t) for t in (exclude_tickers or [])}
+    resolution = resolve_universe(live=live)
 
     ranked: list[dict] = []
     screened_out: list[dict] = []
-    for company in UNIVERSE:
+    for company in resolution.companies:
         if company.ticker in banned:
             continue
         scored = score_company(
@@ -249,7 +258,8 @@ def screen_comparables(
     return {
         "selected": ranked[:top_n],
         "screened_out": sorted(screened_out, key=lambda r: -r["score"])[:20],
-        "universe_size": len(UNIVERSE),
+        "universe_size": len(resolution.companies),
+        "universe": resolution.provenance(),
         "min_score": floor,
         "target": {
             "sic_code": sic_code,
@@ -407,6 +417,7 @@ def comparable_analysis(
     limit: int = MAX_SELECTED,
     include_tickers: list | None = None,
     exclude_tickers: list | None = None,
+    live: bool | None = None,
 ) -> dict:
     """Screen, score, and produce the multiple statistics and implied values."""
     revenue = _opt_num(revenue, "comparables.revenue", minimum=0.0)
@@ -423,6 +434,7 @@ def comparable_analysis(
         limit=limit,
         include_tickers=include_tickers,
         exclude_tickers=exclude_tickers,
+        live=live,
     )
     selected = screen["selected"]
 
