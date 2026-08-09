@@ -7,6 +7,7 @@ import { computeStats } from '../lib/stats';
 import { attentionItems } from '../lib/attention';
 import {
   displayName,
+  eventLabel,
   formatDate,
   GROUP_LABELS,
   KIND_LABELS,
@@ -53,12 +54,6 @@ const STRIP_BUCKETS = [
   { key: 'published', label: 'Published' },
   { key: 'ignored', label: 'Ignored' },
 ] as const;
-
-/** `valuation_state_changed` → `Valuation state changed`. */
-function eventLabel(type: string): string {
-  const words = type.replace(/[._]/g, ' ');
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -190,7 +185,13 @@ export function DashboardPage() {
                     to={`/valuations?bucket=${key}`}
                     className="rounded-lg border border-paper-300 bg-surface px-4 py-3 shadow-card transition-shadow hover:shadow-lift"
                   >
-                    <div className="overline truncate text-ink-400">{label}</div>
+                    {/* Seven cards across a desktop row leaves ~120px each, and
+                        `truncate` spent it by cutting "In Progress" to "In
+                        Progre…" — the audit records the same defect on 409.ai
+                        (§33.6). The label wraps to a second line instead; the
+                        cards are in a grid, so the row keeps a straight top
+                        edge whether or not one of them takes two lines. */}
+                    <div className="overline text-ink-400">{label}</div>
                     <div className="mt-1 flex items-baseline gap-2">
                       <span className="tnum font-display text-xl font-semibold text-ink-900">
                         {tally?.total ?? 0}

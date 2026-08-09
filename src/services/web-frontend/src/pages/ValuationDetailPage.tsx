@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, apiDownload, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { editableFields, isOps } from '../lib/rbac';
-import { formatDate, formatDateTime, STATE_LABELS } from '../lib/format';
+import { eventLabel, formatDate, formatDateTime, STATE_LABELS } from '../lib/format';
 import { VALUATION_STATES } from '../lib/types';
 import type { Valuation, ValuationEvent } from '../lib/types';
 import { useWorkspace } from './valuation/ValuationWorkspace';
@@ -26,28 +26,6 @@ function Meta({ label, value }: { label: string; value: ReactNode }) {
     </div>
   );
 }
-
-const EVENT_LABELS: Record<string, string> = {
-  valuation_created: 'Valuation created',
-  valuation_updated: 'Details updated',
-  state_changed: 'State changed',
-  comment_added: 'Comment added',
-  review_decision: 'Review decision',
-  email_received: 'Email received',
-  valuation_cloned: 'Cloned from another valuation',
-  overwrite_applied: 'Override applied',
-  overwrite_reverted: 'Override reverted',
-  workbook_updated: 'Workbook updated',
-  report_saved: 'Report saved',
-  report_reverted: 'Report version restored',
-  report_rendered: 'Report PDF rendered',
-  funding_round_added: 'Funding round added',
-  funding_round_updated: 'Funding round updated',
-  funding_round_deleted: 'Funding round removed',
-  transaction_added: 'Transaction added',
-  transaction_updated: 'Transaction updated',
-  transaction_deleted: 'Transaction removed',
-};
 
 /** Overview tab — engagement facts, role-gated editing, workflow, funding, audit. */
 export function ValuationDetailPage() {
@@ -298,7 +276,7 @@ export function ValuationDetailPage() {
             {events.map((ev) => (
               <li key={ev.id} className="relative">
                 <span className="absolute top-1.5 -left-[1.42rem] h-2.5 w-2.5 rounded-full border-2 border-paper-100 bg-bond-500" />
-                <div className="text-sm font-semibold text-ink-800">{EVENT_LABELS[ev.type] ?? ev.type}</div>
+                <div className="text-sm font-semibold text-ink-800">{eventLabel(ev.type)}</div>
                 {ev.type === 'state_changed' && ev.payload && (
                   <div className="mt-0.5 text-xs text-ink-600">
                     {String((ev.payload as { from?: string }).from ?? '')} →{' '}
