@@ -621,6 +621,15 @@ export interface PaymentQuote {
   currency: string;
   kind: ValuationKind;
   configured: boolean;
+  /**
+   * Present and true only for ops, and only when the deployment holds a Stripe
+   * *test* key. Such a key opens a real Checkout page that takes `4242…` and
+   * declines every real card, so the checkout is offered to ops (who are
+   * exercising the pipeline deliberately) and withheld from clients, who get
+   * the invoice fallback instead. Absent on every other response, including
+   * from an API older than the field.
+   */
+  test_mode?: boolean;
   /** Entry price for the kind, before the band and any add-on. */
   base_cents: number;
   band: RaiseBand;

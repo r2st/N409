@@ -9,6 +9,34 @@ import crypto from 'node:crypto';
 
 export const STRIPE_API = 'https://api.stripe.com/v1';
 
+/**
+ * Which Stripe account a secret key addresses. Stripe encodes this in the key
+ * itself (`sk_test_…` / `rk_test_…` vs `sk_live_…` / `rk_live_…`), which is the
+ * only place it is knowable without a round trip.
+ *
+ * It matters because the two modes are indistinguishable *after* the key is
+ * accepted. A test key opens a real Checkout page at a real Stripe URL, and
+ * that page declines every card a client owns while accepting `4242…`. So the
+ * failure mode of configuring one in production is not an error anybody sees:
+ * it is a client following a "Pay now" button to a page their card cannot get
+ * through, with nothing on either end saying why.
+ *
+ * `unknown` covers a key in neither shape — a malformed paste, or a prefix
+ * Stripe has not issued yet. It is deliberately not folded into `live`: the
+ * caller decides, and the decision differs (`configured` wants "not test",
+ * a warning banner wants "definitely test").
+ */
+export type StripeKeyMode = 'test' | 'live' | 'unknown';
+
+export function stripeKeyMode(secretKey: string | undefined | null): StripeKeyMode | null {
+  if (!secretKey) return null;
+  // Restricted keys (`rk_`) carry the same mode marker and are a perfectly
+  // ordinary thing to deploy — a key scoped to Checkout and nothing else.
+  if (/^[sr]k_test_/.test(secretKey)) return 'test';
+  if (/^[sr]k_live_/.test(secretKey)) return 'live';
+  return 'unknown';
+}
+
 /** Flattens {a: {b: 1}, c: [x]} into Stripe's a[b]=1&c[0]=x form encoding. */
 export function encodeForm(params: Record<string, unknown>, prefix = ''): string {
   const parts: string[] = [];

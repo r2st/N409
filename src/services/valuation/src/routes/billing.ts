@@ -12,7 +12,7 @@ import {
   StripeApiError,
   verifyWebhookSignature,
 } from '../payments/stripe.js';
-import { isSettled } from './payments.js';
+import { checkoutAvailableTo, isSettled } from './payments.js';
 import {
   cancelSubscription,
   createInvoice,
@@ -77,15 +77,21 @@ const tsToDate = (v: unknown): Date | null =>
   typeof v === 'number' && Number.isFinite(v) ? new Date(v * 1000) : null;
 
 export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): void {
-  app.get('/api/v1/billing/plans', { preHandler: app.authenticate }, async () => ({
+  app.get('/api/v1/billing/plans', { preHandler: app.authenticate }, async (req) => ({
     plans: await listPlans(deps.pool),
-    configured: Boolean(deps.stripeSecretKey),
+    // Per-caller for the reason `checkoutAvailableTo` documents: a test key
+    // opens a Checkout page that declines every card a subscriber owns. A
+    // recurring plan is the worse of the two flows to get this wrong on — the
+    // one-off is a failed payment, this is a subscription that never starts.
+    configured: checkoutAvailableTo(deps.stripeSecretKey, requirePrincipal(req)),
   }));
 
   // Start a recurring subscription checkout for a retainer/enterprise plan.
   app.post('/api/v1/billing/subscribe', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    if (!deps.stripeSecretKey) throw billingUnavailable('Payments are not configured');
+    if (!checkoutAvailableTo(deps.stripeSecretKey, principal)) {
+      throw billingUnavailable('Payments are not configured');
+    }
     const parsed = SubscribeBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid plan', { errors: parsed.error.issues });
 

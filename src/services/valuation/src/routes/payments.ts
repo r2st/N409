@@ -32,6 +32,7 @@ import { valuationScope } from '../auth/rbac.js';
 import {
   createCheckoutSession,
   retrieveReceipt,
+  stripeKeyMode,
   StripeApiError,
   verifyWebhookSignature,
 } from '../payments/stripe.js';
@@ -94,6 +95,30 @@ export function isSettled(paymentStatus: unknown): boolean {
   return paymentStatus !== 'unpaid';
 }
 
+/**
+ * Whether this deployment's Stripe key may take a *client's* money.
+ *
+ * A test key is fully functional — it opens a real Checkout page and settles
+ * real-looking sessions — which is exactly the problem. It accepts `4242…` and
+ * declines every card a client actually holds, and neither end says why: the
+ * client sees a card decline they will blame on their bank, and our records
+ * show a session that expired. So a test key counts as configured for ops, who
+ * are the people deliberately exercising the pipeline end to end, and counts as
+ * *unconfigured* for everyone else, who then get the honest invoice fallback
+ * that a deployment with no key at all gives them.
+ *
+ * `unknown` (a key in neither Stripe shape) is treated as live. A malformed
+ * key fails loudly at the API call, which is a better outcome than silently
+ * withholding checkout from every client because a prefix was unrecognised.
+ */
+export function checkoutAvailableTo(
+  secretKey: string | undefined,
+  principal: Principal,
+): secretKey is string {
+  if (!secretKey) return false;
+  return stripeKeyMode(secretKey) !== 'test' || isOps(principal);
+}
+
 const CheckoutBody = z
   .object({
     // Ops-only override; clients always pay list price.
@@ -138,6 +163,18 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
 
       if (!deps.stripeSecretKey) {
         throw paymentsUnavailable('Payments are not configured (STRIPE_SECRET_KEY unset)');
+      }
+      if (!checkoutAvailableTo(deps.stripeSecretKey, principal)) {
+        // Same problem type and status as an unset key, deliberately: to a
+        // client the two situations are the same situation — we cannot take
+        // their card today — and the pay panel already renders that one
+        // sentence. A separate code would only give the browser a new branch
+        // to get wrong, and the fact worth recording is in the log line.
+        req.log.warn(
+          { valuation_id: valuation.id },
+          'checkout refused: Stripe is in test mode and the caller is not ops',
+        );
+        throw paymentsUnavailable('Payments are not configured (Stripe is in test mode)');
       }
       if (valuation.paid_status !== 'unpaid') {
         throw problems.conflict(`Valuation is already ${valuation.paid_status}`);
@@ -284,8 +321,19 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         ...quote,
         lines: quoteLines(quote),
         currency: valuation.currency || 'USD',
-        // false → the UI shows the invoice-fallback messaging up front.
-        configured: Boolean(deps.stripeSecretKey),
+        // false → the UI shows the invoice-fallback messaging up front. It is
+        // per-caller rather than per-deployment because a test key is usable
+        // by ops and not by a client; the checkout applies the same predicate,
+        // so the panel never offers a button the POST would refuse.
+        configured: checkoutAvailableTo(deps.stripeSecretKey, principal),
+        // Sent only when it is true and only to the caller who can act on it.
+        // An ops user about to click "Pay now" against a test key needs to know
+        // no money will move; a client is never shown the button at all, and
+        // telling them which Stripe account this deployment holds would be
+        // internal detail leaking onto a payment screen.
+        ...(isOps(principal) && stripeKeyMode(deps.stripeSecretKey) === 'test'
+          ? { test_mode: true }
+          : {}),
       },
     };
   });

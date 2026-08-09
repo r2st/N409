@@ -144,6 +144,22 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
         </dl>
       )}
 
+      {/* Only ops ever see this: the API sends `test_mode` to nobody else, and
+          withholds the checkout entirely from a client while it is true. The
+          warning is worth the space because the page it leads to is
+          indistinguishable from the real one — same Stripe domain, same card
+          form — and the only way to find out afterwards is to notice that no
+          money arrived. */}
+      {quote?.test_mode && (
+        <p
+          className="mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800"
+          data-testid="stripe-test-mode"
+        >
+          Stripe is in test mode. Checkout opens a real page but no money moves — only test cards are
+          accepted. Clients are shown the invoice fallback instead of this button.
+        </p>
+      )}
+
       <div className="mt-4 flex flex-wrap items-center gap-4">
         {quote && !quote.configured ? (
           <p className="ml-auto text-sm text-amber-800">

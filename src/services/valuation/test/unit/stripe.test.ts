@@ -7,10 +7,13 @@ import {
   encodeForm,
   parseSignatureHeader,
   retrieveReceipt,
+  stripeKeyMode,
   StripeApiError,
   verifyWebhookSignature,
 } from '../../src/payments/stripe.js';
+import type { Principal } from '../../src/auth/rbac.js';
 import {
+  checkoutAvailableTo,
   isSettled,
   priceForKind,
   DEFAULT_PRICE_CENTS,
@@ -275,5 +278,78 @@ describe('checkout sessions', () => {
     // that into an ok-looking session with an undefined URL.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<html>502</html>', { status: 502 }));
     await expect(createCheckoutSession('sk_test', args)).rejects.toThrow(StripeApiError);
+  });
+});
+
+/**
+ * Test-mode detection, and the one rule it exists to enforce.
+ *
+ * A Stripe test key is not a broken key — it is a fully working key pointed at
+ * an account with no money in it. It opens a real Checkout page on Stripe's own
+ * domain, renders a real card form, and declines every card a client actually
+ * holds while accepting `4242 4242 4242 4242`. Nothing on either end reports
+ * this: the client reads a decline they will blame on their bank, and our
+ * records show a session that quietly expired.
+ *
+ * So the mode is read off the key and the checkout is withheld from clients
+ * while it says `test`, which lands them on the same honest invoice fallback a
+ * deployment with no key at all gives them.
+ */
+describe('Stripe key mode', () => {
+  const ops = (): Principal => ({ id: '01HOPS000000000000000000', roles: ['admin'], partnerId: null });
+  const client = (): Principal => ({
+    id: '01HCLI000000000000000000',
+    roles: ['valuation_user'],
+    partnerId: null,
+  });
+
+  it('reads the mode off the key prefix, which is the only place it is written', () => {
+    expect(stripeKeyMode('sk_test_51Abc')).toBe('test');
+    expect(stripeKeyMode('sk_live_51Abc')).toBe('live');
+  });
+
+  it('reads a restricted key too', () => {
+    // `rk_` keys are an ordinary thing to deploy — one scoped to Checkout and
+    // nothing else — and they carry the same mode marker.
+    expect(stripeKeyMode('rk_test_51Abc')).toBe('test');
+    expect(stripeKeyMode('rk_live_51Abc')).toBe('live');
+  });
+
+  it('says nothing at all when there is no key', () => {
+    // null, not 'unknown': "no key" and "a key I cannot classify" lead to
+    // opposite decisions below.
+    expect(stripeKeyMode(undefined)).toBeNull();
+    expect(stripeKeyMode('')).toBeNull();
+  });
+
+  it('calls an unrecognised prefix unknown rather than guessing', () => {
+    expect(stripeKeyMode('pk_test_51Abc')).toBe('unknown');
+    expect(stripeKeyMode('whsec_nonsense')).toBe('unknown');
+  });
+
+  describe('who may be offered a checkout', () => {
+    it('nobody, when no key is configured', () => {
+      expect(checkoutAvailableTo(undefined, ops())).toBe(false);
+      expect(checkoutAvailableTo(undefined, client())).toBe(false);
+    });
+
+    it('everybody, on a live key', () => {
+      expect(checkoutAvailableTo('sk_live_51Abc', ops())).toBe(true);
+      expect(checkoutAvailableTo('sk_live_51Abc', client())).toBe(true);
+    });
+
+    it('ops only, on a test key', () => {
+      // The whole point. Ops are exercising the pipeline deliberately and know
+      // what a test key is; a client is trying to buy a report.
+      expect(checkoutAvailableTo('sk_test_51Abc', ops())).toBe(true);
+      expect(checkoutAvailableTo('sk_test_51Abc', client())).toBe(false);
+    });
+
+    it('everybody, on a key it cannot classify', () => {
+      // A malformed key fails loudly at the first API call, which is a better
+      // outcome than silently withholding checkout from every paying client
+      // because Stripe issued a prefix this regex predates.
+      expect(checkoutAvailableTo('sk_something_new', client())).toBe(true);
+    });
   });
 });

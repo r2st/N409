@@ -484,3 +484,101 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
     });
   });
 });
+
+/**
+ * A deployment holding a Stripe *test* key.
+ *
+ * This is not a hypothetical configuration — it is the state every deployment
+ * passes through on its way to taking money, and the state this one is in
+ * today. The danger is that a test key is fully functional: it opens a real
+ * Checkout Session at a real Stripe URL, and that page accepts `4242…` while
+ * declining every card a client owns. Neither side is told why. So the rule
+ * the routes enforce is that a test key is configured for ops and unconfigured
+ * for everyone else, and these tests are about the two halves agreeing —
+ * a quote that offers a button the checkout would refuse is the actual bug.
+ */
+describe.skipIf(!dbUp)('payments with a Stripe test key', () => {
+  let ctx: TestApp;
+  let ops: { id: string; email: string; token: string };
+  let client: { id: string; email: string; token: string };
+  let clientValuation: string;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ STRIPE_SECRET_KEY: 'sk_test_integration' });
+    ops = await seedUser(ctx, { roles: ['admin'] });
+    client = await seedUser(ctx, { roles: ['valuation_user'] });
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: '409a', company_name: 'Test Mode Co' },
+    });
+    expect(res.statusCode).toBe(201);
+    clientValuation = res.json().valuation.id as string;
+  });
+  afterAll(async () => ctx?.teardown());
+
+  const quoteFor = async (token: string) => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${clientValuation}/payments/quote`,
+      headers: authHeader(token),
+    });
+    expect(res.statusCode).toBe(200);
+    return res.json().quote;
+  };
+
+  it('tells the client the same thing an unconfigured deployment does', async () => {
+    const quote = await quoteFor(client.token);
+    expect(quote.configured).toBe(false);
+    // And nothing about which Stripe account we hold — that is internal detail
+    // on a screen the client is trying to pay from.
+    expect(quote.test_mode).toBeUndefined();
+  });
+
+  it('refuses the client a checkout rather than opening one their card will fail', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${clientValuation}/payments/checkout`,
+      headers: authHeader(client.token),
+      payload: {},
+    });
+    expect(res.statusCode).toBe(503);
+    // Same problem type as an unset key: to the client it is the same
+    // situation, and the pay panel already renders that one sentence.
+    expect(res.json().type).toBe('urn:n409:problem:payments-unconfigured');
+  });
+
+  it('leaves the checkout open to ops, and says why they should care', async () => {
+    const quote = await quoteFor(ops.token);
+    expect(quote.configured).toBe(true);
+    expect(quote.test_mode).toBe(true);
+  });
+
+  it('still quotes the same price to both — only the button differs', async () => {
+    // The mode gates who may pay, never what they would have paid. A price
+    // that moved with the key would make every test-mode rehearsal worthless.
+    const [asClient, asOps] = await Promise.all([quoteFor(client.token), quoteFor(ops.token)]);
+    expect(asClient.amount_cents).toBe(asOps.amount_cents);
+    expect(asClient.lines).toEqual(asOps.lines);
+  });
+
+  it('withholds subscription checkout from a client too', async () => {
+    // The worse of the two flows to get wrong: a one-off is a failed payment,
+    // a subscription is one that silently never starts.
+    const plans = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/billing/plans',
+      headers: authHeader(client.token),
+    });
+    expect(plans.json().configured).toBe(false);
+
+    const sub = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/billing/subscribe',
+      headers: authHeader(client.token),
+      payload: { plan_tier: 'annual_retainer' },
+    });
+    expect(sub.statusCode).toBe(503);
+  });
+});

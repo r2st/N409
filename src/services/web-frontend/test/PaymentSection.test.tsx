@@ -87,6 +87,56 @@ describe('PaymentSection (price transparency before checkout)', () => {
     await waitFor(() => expect(screen.getByText(/we will invoice you instead/i)).toBeInTheDocument());
   });
 
+  /**
+   * A Stripe test key opens a real Checkout page on Stripe's own domain that
+   * accepts `4242…` and declines every real card. The API only sends
+   * `test_mode` to ops, and only ops are given the button at all while it is
+   * set — so these two tests are the whole of what the browser has to get
+   * right: warn the person who can click, and say nothing to the person who
+   * cannot.
+   */
+  it('warns ops that a test-mode checkout moves no money', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/payments/quote'))
+        return jsonResponse({ quote: { ...QUOTE, test_mode: true } });
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('stripe-test-mode')).toBeInTheDocument());
+    expect(screen.getByTestId('stripe-test-mode')).toHaveTextContent(/no money moves/i);
+    // Still clickable — exercising the pipeline end to end is what the key is
+    // for, and the point of the warning is that the click is deliberate.
+    expect(screen.getByRole('button', { name: /pay/i })).toBeInTheDocument();
+  });
+
+  it('shows a client the invoice fallback, with no mention of test mode', async () => {
+    // What the API sends a client when the key is a test key: `configured`
+    // false and no `test_mode` at all. Which Stripe account this deployment
+    // holds is not a client's business, and the sentence they need is the one
+    // an unconfigured deployment already gives them.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/payments/quote'))
+        return jsonResponse({ quote: { ...QUOTE, configured: false } });
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByText(/we will invoice you instead/i)).toBeInTheDocument());
+    expect(screen.queryByTestId('stripe-test-mode')).not.toBeInTheDocument();
+    expect(screen.queryByText(/test mode/i)).not.toBeInTheDocument();
+  });
+
+  it('says nothing about test mode on an ordinary live quote', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/payments/quote')) return jsonResponse({ quote: QUOTE });
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('payment-quote')).toBeInTheDocument());
+    expect(screen.queryByTestId('stripe-test-mode')).not.toBeInTheDocument();
+  });
+
   it('renders nothing for paid valuations', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     const { container } = render(<PaymentSection valuation={{ ...VALUATION, paid_status: 'paid' }} />);

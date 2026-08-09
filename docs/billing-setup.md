@@ -105,6 +105,40 @@ handlers live at different paths, so they are two endpoints with two secrets. Le
 unset it falls back to `STRIPE_WEBHOOK_SECRET`, which is correct only for a
 deployment that registers a single endpoint or that has not enabled subscriptions.
 
+## Test keys are handled, not merely tolerated
+
+A `sk_test_…` key is the state every deployment passes through on its way to
+taking money, and it is the more dangerous of the two failure modes — more so
+than no key at all, because it *works*. It opens a real Checkout Session at a
+real `checkout.stripe.com` URL with a real card form. That form accepts
+`4242 4242 4242 4242` and declines every card a client actually holds, and
+nothing on either end says why: the client reads a decline they will blame on
+their bank, and our records show a session that expired.
+
+So the mode is read off the key prefix (`payments/stripe.ts`, `stripeKeyMode`)
+and the routes apply one rule (`routes/payments.ts`, `checkoutAvailableTo`):
+
+| | Live key | Test key | No key |
+|---|---|---|---|
+| Client sees | Pay now | *Invoice fallback* | Invoice fallback |
+| Ops see | Pay now | Pay now + test-mode warning | Invoice fallback |
+| `configured` in the quote | `true` | `false` for clients, `true` for ops | `false` |
+| `test_mode` in the quote | absent | `true`, ops only | absent |
+
+The quote and the checkout apply the *same* predicate, so the pay panel never
+offers a button the POST would refuse. A client who cannot be charged is told
+the one sentence an unconfigured deployment already tells them; which Stripe
+account this deployment holds is not something to print on a payment screen.
+
+An unrecognised prefix counts as live. A malformed key fails loudly at the
+first API call, which beats silently withholding checkout from every paying
+client because Stripe issued a prefix the regex predates.
+
+**This deployment currently holds a test key**, so nothing above is theoretical:
+online payment is live for ops rehearsal and clients are still being invoiced.
+Going live is one variable — replace `STRIPE_SECRET_KEY` with the `sk_live_…`
+key and restart; no code changes.
+
 ## Activation, in order
 
 1. **Create the Stripe account / use the existing one** and take a live secret key.
