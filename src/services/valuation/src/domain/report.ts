@@ -10,6 +10,27 @@ import type { ValuationKind } from './valuation.js';
  * (@n409/report) understands exactly this subset.
  */
 
+/**
+ * States in which the rendered deliverable is the file of record.
+ *
+ * Once a 409A is published the client holds the PDF: it is attached to board
+ * minutes, filed with an auditor, and relied on for a grant's safe harbour.
+ * Re-rendering it in place would replace that file with a different one under
+ * the same version number — same engagement, same "v3", different concluded
+ * value — and nobody outside this system would have any way to notice.
+ *
+ * That is not hypothetical. The exhibits are computed at render time from the
+ * *latest* calculation, which is what makes them agree with the summary page,
+ * and it also means a recalculation moves everything a re-render would produce.
+ * So the two facts together are what require this: a report whose figures are
+ * derived fresh must have its rendered bytes frozen once they are delivered.
+ *
+ * Draft states are deliberately not here. Rendering, recalculating and
+ * re-rendering is the ordinary drafting loop, and nothing outside the platform
+ * holds those bytes.
+ */
+export const DELIVERED_REPORT_STATES: ReadonlySet<string> = new Set(['published']);
+
 export interface ReportSection {
   key: string;
   heading: string;

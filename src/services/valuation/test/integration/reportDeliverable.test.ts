@@ -1,6 +1,6 @@
 import { inflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createValuation, type ValuationRow } from '../../src/repos/valuations.js';
+import { createValuation, patchValuation, type ValuationRow } from '../../src/repos/valuations.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -319,6 +319,19 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
    * a document that quotes something else is the same failure as a wrong engine.
    */
   describe('every headline figure traces to the stored calculation', () => {
+    /**
+     * Publish through the repo, not with raw SQL.
+     *
+     * `findValuationById` reads through a cache that every write path
+     * invalidates, so an UPDATE issued behind it leaves the application holding
+     * the old state — which is a fair description of what a test using SQL to
+     * set up application state deserves.
+     */
+    async function publish(id: string): Promise<void> {
+      const { rows } = await ctx.pool.query<ValuationRow>('SELECT * FROM valuations WHERE id = $1', [id]);
+      await patchValuation(ctx.pool, rows[0]!, { state: 'published' }, { ...actor, actorId: ops.id });
+    }
+
     /** A second engagement, so the mutation cannot disturb the tests above. */
     async function withResults(company: string, results: Record<string, unknown>): Promise<string> {
       const v = await createValuation(
@@ -405,6 +418,115 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
         allocation_method: 'cvm',
       });
       expect(await pdfText(id)).toContain('Current value method');
+    });
+
+    /**
+     * And the limit of that, which is the compliance half of the same fact.
+     *
+     * Deriving the exhibits fresh is what keeps them agreeing with the summary
+     * page. It is also what means a recalculation moves every figure a
+     * re-render would produce — so on an engagement the client has already been
+     * given, re-rendering in place would put a different document under the
+     * same version number, with a different concluded value, and nobody outside
+     * this system would have any way to notice.
+     */
+    describe('once the engagement is published', () => {
+      async function publishedWithPdf(company: string): Promise<string> {
+        const id = await withResults(company, { ...RESULTS, fmv_per_share: 1.11 });
+        await pdfText(id); // renders and stores v1
+        await publish(id);
+        return id;
+      }
+
+      it('refuses to re-render the version the client already holds', async () => {
+        const id = await publishedWithPdf('Delivered One, Inc.');
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/report/render`,
+          headers: authHeader(ops.token),
+          payload: {},
+        });
+        expect(res.statusCode).toBe(409);
+        expect(res.json().detail).toMatch(/already been delivered/);
+      });
+
+      it('keeps serving the bytes that were delivered', async () => {
+        const id = await publishedWithPdf('Delivered Two, Inc.');
+        // A recalculation lands afterwards — the ordinary reason somebody
+        // reaches for the render button.
+        await createCalculation(
+          ctx.pool,
+          {
+            valuationId: id,
+            engineVersion: '1.4.0',
+            status: 'succeeded',
+            inputs: { params: {}, inputs: ENGINE_INPUTS },
+            results: { ...RESULTS, fmv_per_share: 7.77 },
+            equityValue: RESULTS.equity_value,
+            fmvPerShare: 7.77,
+            createdBy: client.id,
+          },
+          { ...actor, actorId: client.id },
+        );
+
+        const pdf = await opsGet(`/api/v1/valuations/${id}/report.pdf`);
+        expect(pdf.statusCode).toBe(200);
+        const text = readable(pdf.rawPayload);
+        expect(text).toContain('$1.1100');
+        expect(text).not.toContain('$7.7700');
+      });
+
+      it('renders a new version, which is how revised figures are published', async () => {
+        // The escape hatch, and it is the right one: both documents stay in the
+        // history, each with its own version number and its own bytes.
+        const id = await publishedWithPdf('Delivered Three, Inc.');
+        const current = (await opsGet(`/api/v1/valuations/${id}/report`)).json();
+        const saved = await ctx.app.inject({
+          method: 'PUT',
+          url: `/api/v1/valuations/${id}/report`,
+          headers: authHeader(ops.token),
+          payload: { content: current.version.content },
+        });
+        expect(saved.statusCode).toBe(200);
+
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/report/render`,
+          headers: authHeader(ops.token),
+          payload: {},
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.json().version).toBe(2);
+      });
+
+      it('still renders a published report that was never rendered at all', async () => {
+        // Nothing has been delivered, so there is nothing to protect — and
+        // refusing here would leave the engagement with no deliverable.
+        const id = await withResults('Delivered Four, Inc.', { ...RESULTS, fmv_per_share: 2.22 });
+        await opsGet(`/api/v1/valuations/${id}/report`); // create, do not render
+        await publish(id);
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/report/render`,
+          headers: authHeader(ops.token),
+          payload: {},
+        });
+        expect(res.statusCode).toBe(200);
+      });
+
+      it('leaves a draft engagement free to re-render', async () => {
+        // Render, recalculate, re-render is the ordinary drafting loop, and
+        // nothing outside the platform holds those bytes.
+        const id = await withResults('Drafting, Inc.', { ...RESULTS, fmv_per_share: 3.33 });
+        await pdfText(id);
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/report/render`,
+          headers: authHeader(ops.token),
+          payload: {},
+        });
+        expect(res.statusCode).toBe(200);
+      });
     });
 
     it('re-renders to the new figures when the calculation is superseded', async () => {

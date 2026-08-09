@@ -6,6 +6,7 @@ import { renderReportPdf, type ReportPdfSection, type ReportPdfSummary } from '@
 import { canEditWorkingData, canReadReport, canReadValuation } from '../auth/rbac.js';
 import {
   contentFromManagedTemplate,
+  DELIVERED_REPORT_STATES,
   instantiateTemplate,
   sanitizeContent,
   templateForKind,
@@ -435,6 +436,26 @@ export function registerReportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
     const version = await getVersion(deps.pool, report.id, report.current_version);
     if (!version) throw problems.notFound('No report content to render');
+    /*
+     * A delivered deliverable is not re-rendered in place.
+     *
+     * The exhibits are computed at render time from the latest calculation —
+     * which is what keeps them agreeing with the summary page, and equally what
+     * means a recalculation moves every figure a re-render would produce. On a
+     * published engagement the client already holds the PDF: it is in board
+     * minutes and in an auditor's file. Overwriting it would put a different
+     * document under the same "v3", with a different concluded value, and
+     * nobody outside this system could tell.
+     *
+     * Saving the report creates a new version, and that version renders
+     * normally — so the way to publish revised figures is the way that leaves
+     * both documents in the history.
+     */
+    if (DELIVERED_REPORT_STATES.has(valuation.state) && version.pdf) {
+      throw problems.conflict(
+        `Version ${version.version} has already been delivered — save a new version to publish revised figures`,
+      );
+    }
     const pdf = await renderVersionPdf(
       deps.pool,
       valuation,

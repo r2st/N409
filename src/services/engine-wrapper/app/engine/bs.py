@@ -82,6 +82,31 @@ def bs_call(s: float, k: float, t: float, r: float, sigma: float) -> float:
     return s * norm_cdf(d1) - k * discount_factor(r, t) * norm_cdf(d2)
 
 
+def bs_call_delta(s: float, k: float, t: float, r: float, sigma: float) -> float:
+    """``∂C/∂S`` — ``N(d1)``, degenerating to the intrinsic indicator as t or sigma → 0.
+
+    Every branch mirrors ``bs_call`` above, because the two have to agree: the
+    class volatilities in ``waterfall.class_volatilities`` divide a delta by the
+    value the same inputs produced, and a delta computed on a different
+    degenerate branch than its value is a ratio of two unrelated numbers.
+
+    The ``k <= 0`` case is 1.0 for the same reason ``bs_call`` returns ``s``
+    there: a call struck at or below zero *is* the underlying, and the first
+    tranche of every breakpoint waterfall is struck at zero.
+    """
+    if s <= 0:
+        return 0.0
+    if k <= 0:
+        return 1.0
+    if t <= 0 or sigma <= 0:
+        # Intrinsic: the option is either the underlying or nothing, and its
+        # sensitivity to the underlying is 1 or 0 to match.
+        return 1.0 if s > k * discount_factor(r, max(t, 0.0)) else 0.0
+    sqrt_t = math.sqrt(t)
+    d1 = (math.log(s) - math.log(k) + (r + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
+    return norm_cdf(d1)
+
+
 def bs_put(s: float, k: float, t: float, r: float, sigma: float) -> float:
     """European put via put-call parity."""
     return bs_call(s, k, t, r, sigma) - s + k * discount_factor(r, max(t, 0.0))

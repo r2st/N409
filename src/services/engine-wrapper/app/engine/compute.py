@@ -34,12 +34,13 @@ from .dlom import (
     restricted_stock_dlom,
 )
 from .hybrid import blend_hybrid, resolve_hybrid_weights
+from .market_movement import apply_movement, market_movement
 from .monte_carlo import allocate_monte_carlo
 from .pwerm import allocate_pwerm
 from .trace import Trace
 from .volatility import estimate_volatility
 from .wacc import compute_wacc
-from .waterfall import allocate_waterfall
+from .waterfall import allocate_waterfall, class_volatilities
 
 ENGINE_VERSION = "py-1.0.0"
 
@@ -362,10 +363,13 @@ def _resolve_discounts(
     detail: dict | None = None
     if method == "chaffee":
         dlom = chaffee_dlom(volatility or 0.0, t, r)
+        detail = _model_detail("chaffee", volatility, t, r, dlom, uses_rate=True)
     elif method == "finnerty":
         dlom = finnerty_dlom(volatility or 0.0, t)
+        detail = _model_detail("finnerty", volatility, t, r, dlom)
     elif method == "ghaidarov":
         dlom = ghaidarov_dlom(volatility or 0.0, t)
+        detail = _model_detail("ghaidarov", volatility, t, r, dlom)
     elif method == "longstaff":
         dlom = longstaff_dlom(volatility or 0.0, t)
         # The bound itself, not just the discount derived from it — a report
@@ -388,11 +392,69 @@ def _resolve_discounts(
     elif method == "qualitative":
         dlom_q = _num(params.get("dlom_qualitative"), "dlom_qualitative")
         dlom = dlom_q if dlom_q is not None else _req(params.get("dlom"), "dlom")
+        detail = {
+            "method": "qualitative",
+            "dlom": round(dlom, 6),
+            "basis": "analyst judgement — no model or study was applied",
+        }
     else:
         dlom = _num(params.get("dlom"), "dlom") or 0.0
     if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
         raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
     return dloc, round(dlom, 4), method, detail
+
+
+# The formula each option-based model applies, as the report prints it. Kept
+# beside the branch that calls the model rather than in the report service: the
+# engine is what knows which closed form actually ran, and a deliverable that
+# names a different one than the arithmetic used is the defect this exists to
+# prevent.
+_DLOM_FORMULAE: dict[str, str] = {
+    "chaffee": (
+        "Chaffee protective put — an at-the-money European put over the holding period, "
+        "priced by Black-Scholes on a unit share: the cost of insuring against the price "
+        "moving while the holder cannot sell"
+    ),
+    "finnerty": (
+        "Finnerty average-strike put — 2Φ(v/2) − 1 with effective variance "
+        "v²T = σ²T + ln(2(e^{σ²T} − σ²T − 1)) − 2ln(e^{σ²T} − 1); "
+        "the value forgone by giving up the choice of when to sell"
+    ),
+    "ghaidarov": (
+        "Ghaidarov average-strike put — the same 2Φ(v/2) − 1 with the corrected "
+        "effective variance v²T = ln(2(e^{σ²T} − σ²T − 1)/(σ²T)²), "
+        "which removes Finnerty's ~32.3% ceiling"
+    ),
+}
+
+
+def _model_detail(
+    method: str, volatility: float | None, t: float, r: float, dlom: float, uses_rate: bool = False
+) -> dict:
+    """The inputs an option-based DLOM was struck on, and the discount they gave.
+
+    Without this the result document carries a bare percentage. A reviewer
+    asked to accept a 24.5% marketability discount has to be able to see the
+    volatility and the holding period it came from, because those two inputs
+    *are* the argument — the model itself is arithmetic nobody disputes. The
+    same three numbers are what the report's DLOM exhibit tabulates, so they
+    are recorded here rather than re-derived there from inputs that may have
+    moved since the run.
+
+    The risk-free rate is reported only for Chaffee, which is the only one of
+    the three whose closed form uses it; listing it against Finnerty would
+    imply a dependence the model does not have.
+    """
+    out: dict = {
+        "method": method,
+        "volatility": volatility,
+        "time_to_liquidity_years": t,
+        "dlom": round(dlom, 6),
+        "formula": _DLOM_FORMULAE.get(method, ""),
+    }
+    if uses_rate:
+        out["risk_free_rate"] = r
+    return out
 
 
 def _discounts_block(dloc: float, dlom: float, method: str | None, detail: dict | None) -> dict:
@@ -406,6 +468,26 @@ def _discounts_block(dloc: float, dlom: float, method: str | None, detail: dict 
     if detail is not None:
         block["dlom_detail"] = detail
     return block
+
+
+def _attach_market_movement(results: dict, we: dict) -> None:
+    """Lift the market-movement adjustment to the top of the result document.
+
+    It already rides on `approaches.opm_backsolve`, where the arithmetic used
+    it. It is repeated here because it is a *conclusion-level* adjustment — the
+    legacy deliverable gives it its own chapter — and a consumer building the
+    reconciliation exhibit should not have to know which approach happened to
+    carry it. Absent entirely when no benchmark was supplied, so its presence
+    means an adjustment was made rather than that one was considered.
+    """
+    if we.get("market_movement") is not None:
+        results["market_movement"] = we["market_movement"]
+
+
+def _attach_class_volatility(results: dict, alloc: dict) -> None:
+    """Same, for the per-class volatility schedule (only the waterfall has one)."""
+    if alloc.get("class_volatility") is not None:
+        results["class_volatility"] = alloc["class_volatility"]
 
 
 def _pwerm_allocation(inputs: dict) -> dict:
@@ -565,6 +647,7 @@ def _weighted_equity(
     debt = _num(inputs.get("debt"), "debt") or 0.0
 
     approaches: dict[str, dict] = {}
+    market_movement_applied: dict | None = None
 
     if weights["weight_asset"] > 0:
         if _fresh("asset"):
@@ -615,6 +698,35 @@ def _weighted_equity(
                 approaches["opm_backsolve"] = opm_backsolve(post_money)
         else:
             approaches["opm_backsolve"] = _reused_prior(prior, "opm_backsolve")
+
+        # The round the backsolve reads is dated; the valuation is not. Where
+        # the analyst has supplied a benchmark for the interval between them,
+        # the indication is moved by it before it is weighted — see
+        # `market_movement`. The unadjusted figure is kept beside the adjusted
+        # one, because "what the round said" and "what we concluded it implies
+        # today" are two different assertions and a reviewer checks both.
+        movement_in = inputs.get("market_movement")
+        if isinstance(movement_in, dict) and movement_in:
+            movement = market_movement(movement_in)
+            unadjusted = approaches["opm_backsolve"]["equity_value"]
+            adjusted = apply_movement(unadjusted, movement)
+            approaches["opm_backsolve"] = {
+                **approaches["opm_backsolve"],
+                "equity_value": adjusted,
+                "unadjusted_equity_value": unadjusted,
+                "market_movement": movement,
+            }
+            market_movement_applied = movement
+            tr.record(
+                "market_movement",
+                "Market movement adjustment",
+                inputs={"unadjusted_equity_value": unadjusted, **movement},
+                outputs={"equity_value": adjusted},
+                note=(
+                    f"the round indication moved {movement['index_return'] * 100:+.1f}% on the "
+                    f"benchmark at beta {movement['beta']:g}"
+                ),
+            )
 
     if weights["weight_income"] > 0:
         if _fresh("income"):
@@ -718,6 +830,7 @@ def _weighted_equity(
         "equity_value": equity_value,
         "approaches": approaches,
         "weight_by_approach": weight_by_approach,
+        "market_movement": market_movement_applied,
         "t": t,
         "r": r,
         "cash": cash,
@@ -819,6 +932,7 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
     basis_kind = "common_plus_options"
 
     waterfall_per_share: float | None = None
+    class_volatility: dict | None = None
     if has_waterfall:
         # Full cap-table waterfall (remaining-gaps §2 — multi-breakpoint).
         allocation = allocate_waterfall(equity_value, share_classes, t, r, volatility or 0.0)
@@ -826,6 +940,15 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
         waterfall_per_share = allocation["common_per_share"]
         share_basis = allocation["common_shares"]
         basis_kind = "cap_table_common"
+        # The gearing each class carries, from the same breakpoints. Only the
+        # waterfall path can produce it: the two aggregate branches below do not
+        # decompose the payoff into tranches, so there is no per-class delta to
+        # take. A report on a valuation without a cap table therefore omits the
+        # class-volatility schedule rather than printing the enterprise figure
+        # against every class, which would assert something false.
+        class_volatility = class_volatilities(
+            equity_value, share_classes, t, r, volatility or 0.0
+        )
     elif preferred_shares > 0 and liquidation_preference > 0:
         upside = bs_call(equity_value, liquidation_preference, t, r, volatility or 0.0)
         common_fraction = fully_diluted_common / (fully_diluted_common + preferred_shares)
@@ -854,6 +977,7 @@ def _opm_allocate(equity_value: float, params: dict, inputs: dict, t: float, r: 
         "fully_diluted_common": share_basis,
         "fully_diluted_basis": basis_kind,
         "volatility": volatility,
+        "class_volatility": class_volatility,
         "common_per_share": common_per_share,
     }
 
@@ -978,6 +1102,8 @@ def _compute_opm(
         "fully_diluted_basis": alloc["fully_diluted_basis"],
         "fmv_per_share": round(fmv_per_share, 4),
     }
+    _attach_market_movement(results, we)
+    _attach_class_volatility(results, alloc)
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
     return {"engine_version": ENGINE_VERSION, "results": results}
@@ -1028,6 +1154,7 @@ def _compute_cvm(
         ),
         "fmv_per_share": round(fmv_per_share, 4),
     }
+    _attach_market_movement(results, we)
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
     return {"engine_version": ENGINE_VERSION, "results": results}
@@ -1094,6 +1221,7 @@ def _compute_monte_carlo(
         "fully_diluted_basis": "cap_table_common",
         "fmv_per_share": round(fmv_per_share, 4),
     }
+    _attach_market_movement(results, we)
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
     return {"engine_version": ENGINE_VERSION, "results": results}
@@ -1171,6 +1299,8 @@ def _compute_hybrid(
         "fully_diluted_basis": opm_alloc["fully_diluted_basis"],
         "fmv_per_share": round(fmv_per_share, 4),
     }
+    _attach_market_movement(results, we)
+    _attach_class_volatility(results, opm_alloc)
     if recompute is not None:
         results["recomputed"] = sorted(recompute)
     return {"engine_version": ENGINE_VERSION, "results": results}

@@ -93,8 +93,42 @@ class TestModelWorkingTravels:
         assert "straddles_rule_144_amendment" in detail
 
     @pytest.mark.parametrize("method", ["chaffee", "finnerty", "ghaidarov"])
-    def test_methods_with_no_working_omit_the_key(self, method):
-        assert "dlom_detail" not in run(dlom_method=method)["discounts"]
+    def test_option_models_carry_the_inputs_they_were_struck_on(self, method):
+        """A bare percentage is not a reviewable marketability discount.
+
+        The model is arithmetic nobody disputes; the volatility and the holding
+        period *are* the argument, so the report has to be able to print them
+        beside the answer. Previously only longstaff and restricted_stock
+        reported any working and the three option models reported none, which
+        left the DLOM exhibit unable to show a derivation for the two methods
+        (Chaffee, Finnerty) that valuations actually conclude on.
+        """
+        detail = run(dlom_method=method)["discounts"]["dlom_detail"]
+        assert detail["method"] == method
+        assert detail["volatility"] == pytest.approx(0.6)
+        assert detail["time_to_liquidity_years"] > 0
+        assert detail["formula"]
+
+    def test_only_chaffee_reports_a_risk_free_rate(self):
+        """Listing the rate against a model whose closed form does not use it
+        would imply a dependence that is not there."""
+        assert "risk_free_rate" in run(dlom_method="chaffee")["discounts"]["dlom_detail"]
+        for method in ("finnerty", "ghaidarov"):
+            assert "risk_free_rate" not in run(dlom_method=method)["discounts"]["dlom_detail"]
+
+    def test_the_detail_discount_matches_the_concluded_one(self):
+        """The working and the answer come from one call, so they cannot differ
+        — asserted because a re-derivation in the report is exactly what this
+        block exists to make unnecessary."""
+        for method in ("chaffee", "finnerty", "ghaidarov"):
+            res = run(dlom_method=method)["discounts"]
+            assert res["dlom_detail"]["dlom"] == pytest.approx(res["dlom"], abs=5e-5)
+
+    def test_qualitative_says_it_is_a_judgement(self):
+        detail = run(dlom_method="qualitative", dlom_qualitative=0.2)["discounts"]["dlom_detail"]
+        assert detail["method"] == "qualitative"
+        assert detail["dlom"] == pytest.approx(0.2)
+        assert "judgement" in detail["basis"]
 
     @pytest.mark.parametrize(
         "allocation_method,extra_inputs",

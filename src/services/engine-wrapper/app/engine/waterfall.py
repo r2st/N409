@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import math
 
-from .bs import bs_call
+from .bs import bs_call, bs_call_delta
 from .errors import EngineInputError
 
 _KINDS = ("preferred", "common", "option")
@@ -442,6 +442,90 @@ def allocate_waterfall(
         "common_value": round(common_value, 2),
         "common_shares": common_shares,
         "common_per_share": round(common_value / common_shares, 6),
+    }
+
+
+def class_volatilities(
+    equity_value: float,
+    classes: list[dict],
+    t: float | None,
+    r: float | None,
+    sigma: float | None,
+) -> dict:
+    """Per-class volatility implied by the same breakpoint waterfall.
+
+    The enterprise volatility ``sigma`` describes the *total* equity. A share
+    class is a levered claim on that equity — a call spread, per the
+    decomposition above — so its own return volatility is not sigma, and for
+    common it is materially higher: common sits behind the whole preference
+    stack, which gears it.
+
+    The standard result follows from Itô on ``V_class = f(S)``:
+
+        sigma_class = sigma · (S / V_class) · ∂V_class/∂S
+
+    where the elasticity ``(S/V)·∂V/∂S`` is the class's option gearing. Each
+    class's delta is the participation-weighted sum of its tranches' spread
+    deltas, ``N(d1(K_from)) − N(d1(K_to))``, which is the term-by-term
+    derivative of the very sum ``_allocate`` uses for the values — so the two
+    are guaranteed consistent rather than separately derived.
+
+    This is the figure a 409A report needs in two places: it is the volatility
+    that belongs in an option-based DLOM struck on common (Chaffee and Finnerty
+    both take the volatility of the *interest being valued*, not of the
+    enterprise), and it is the "class volatility" schedule a reviewer looks for
+    behind a DLOM concluded on a single class.
+
+    Returns ``{"enterprise_volatility": …, "classes": {name: {...}}}``. A class
+    the waterfall values at zero — one so far out of the money that no tranche
+    reaches it — has no defined return volatility, and is reported with a null
+    rather than an infinity.
+    """
+    normalized, segments, _tranches, values = _allocate(equity_value, classes, t, r, sigma)
+    # `_allocate` has validated all three; narrowing here is for the type checker
+    # and costs nothing at runtime.
+    assert t is not None and r is not None and sigma is not None
+
+    deltas: dict[str, float] = {c["name"]: 0.0 for c in normalized}
+    for seg in segments:
+        d_from = bs_call_delta(equity_value, seg["from"], t, r, sigma)
+        d_to = bs_call_delta(equity_value, seg["to"], t, r, sigma) if seg["to"] is not None else 0.0
+        spread_delta = d_from - d_to
+        for name, fraction in seg["participants"].items():
+            deltas[name] += spread_delta * fraction
+
+    out: dict[str, dict] = {}
+    for c in normalized:
+        name = c["name"]
+        value = values[name]
+        delta = deltas[name]
+        # Elasticity is (S/V)·ΔV/ΔS. Undefined at V = 0, and the whole point of
+        # reporting it is that a reader can check it, so an undefined one is
+        # reported as undefined.
+        if value > 0:
+            elasticity = equity_value * delta / value
+            volatility = sigma * elasticity
+        else:
+            elasticity = None
+            volatility = None
+        out[name] = {
+            "kind": c["kind"],
+            "value": round(value, 2),
+            "delta": round(delta, 6),
+            "elasticity": round(elasticity, 6) if elasticity is not None else None,
+            "volatility": round(volatility, 6) if volatility is not None else None,
+        }
+
+    return {
+        "enterprise_volatility": sigma,
+        "time_to_exit_years": t,
+        "risk_free_rate": r,
+        "equity_value": round(equity_value, 2),
+        "classes": out,
+        # Σ over classes of ∂V_class/∂S is ∂(Σ V_class)/∂S = ∂S/∂S = 1, since the
+        # waterfall conserves value. Reported so a reviewer can check the
+        # schedule adds up without redoing the option arithmetic.
+        "delta_total": round(sum(deltas.values()), 6),
     }
 
 
