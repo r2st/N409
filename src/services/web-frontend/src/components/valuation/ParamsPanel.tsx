@@ -29,6 +29,7 @@ interface FormState {
   dlom_method: string;
   dlom_qualitative: string;
   revenue_status: string;
+  development_stage: string;
   exit_timeline: string;
   last_round_date: string;
   runway_months: string;
@@ -81,6 +82,7 @@ function fromParams(p: ValuationParams): FormState {
     dlom_method: p.dlom_method ?? '',
     dlom_qualitative: str(p.dlom_qualitative),
     revenue_status: p.revenue_status ?? '',
+    development_stage: str(p.development_stage),
     exit_timeline: p.exit_timeline?.slice(0, 10) ?? '',
     last_round_date: p.last_round_date?.slice(0, 10) ?? '',
     runway_months: str(p.runway_months),
@@ -194,6 +196,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         dlom_method: form.dlom_method || null,
         dlom_qualitative: numOrNull(form.dlom_qualitative),
         revenue_status: form.revenue_status || null,
+        development_stage: numOrNull(form.development_stage),
         exit_timeline: form.exit_timeline || null,
         last_round_date: form.last_round_date || null,
         runway_months: numOrNull(form.runway_months),
@@ -642,6 +645,26 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               <option value="">Not set</option>
               <option value="pre_revenue">Pre-revenue</option>
               <option value="post_revenue">Post-revenue</option>
+            </Select>
+          </Field>
+          <Field
+            label="Stage of development"
+            hint="Names the AICPA stage in the report, and prints Appendix III against it."
+          >
+            <Select
+              disabled={readOnly}
+              value={form.development_stage}
+              onChange={(e) => set('development_stage')(e.target.value)}
+              data-testid="development-stage"
+            >
+              {/* Left unset until an analyst concludes one — the stage is a
+                  judgement, and the report says nothing rather than guess. */}
+              <option value="">Not set</option>
+              {DEVELOPMENT_STAGE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </Select>
           </Field>
           <Field label="Expected exit" hint="Drives time-to-liquidity in OPM & DLOM.">

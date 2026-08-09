@@ -109,3 +109,59 @@ describe('ParamsPanel — PWERM', () => {
     expect(call.body).toMatchObject({ pwerm: { scenarios: [{ probability: 1, equity_value: 20_000_000 }] } });
   });
 });
+
+/**
+ * The stage of enterprise development, which the report states in the income
+ * approach and prints Appendix III against. It reaches the params through this
+ * select and nowhere else, so a stage that cannot be set here is an appendix
+ * that never renders for a real engagement.
+ */
+describe('ParamsPanel — stage of development', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('offers the six AICPA stages, and starts unset', async () => {
+    mockApi();
+    render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
+    const select = (await screen.findByTestId('development-stage')) as HTMLSelectElement;
+    expect(select.value).toBe('');
+    // Six stages plus the "Not set" the analyst leaves it on until they have
+    // concluded one — the stage is a judgement, never inferred.
+    expect(select.querySelectorAll('option')).toHaveLength(7);
+    expect(screen.getByRole('option', { name: /Stage 4/ })).toBeInTheDocument();
+  });
+
+  it('sends the concluded stage as a number on save', async () => {
+    const patched = mockApi();
+    render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
+    await userEvent.selectOptions(await screen.findByTestId('development-stage'), '4');
+    await userEvent.click(screen.getByRole('button', { name: /save methodology/i }));
+    await waitFor(() => expect(patched.length).toBeGreaterThan(0));
+    expect(patched[0]!.body).toMatchObject({ development_stage: 4 });
+  });
+
+  it('sends null when the analyst has concluded no stage', async () => {
+    const patched = mockApi();
+    render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
+    await screen.findByTestId('development-stage');
+    await userEvent.click(screen.getByRole('button', { name: /save methodology/i }));
+    await waitFor(() => expect(patched.length).toBeGreaterThan(0));
+    expect(patched[0]!.body).toMatchObject({ development_stage: null });
+  });
+
+  it('shows a stage already concluded', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      String(url).includes('/engine-inputs')
+        ? jsonResponse({ engine_inputs: {} })
+        : jsonResponse({ params: { ...PARAMS, development_stage: 2 } }),
+    );
+    render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={false} />);
+    const select = (await screen.findByTestId('development-stage')) as HTMLSelectElement;
+    expect(select.value).toBe('2');
+  });
+
+  it('is not editable on a read-only valuation', async () => {
+    mockApi();
+    render(<ParamsPanel valuationId={PARAMS.valuation_id} readOnly={true} />);
+    expect(await screen.findByTestId('development-stage')).toBeDisabled();
+  });
+});
