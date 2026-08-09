@@ -151,7 +151,50 @@ describe('against the real 409A skeleton', () => {
   });
 
   it('and the conclusion is one of the sections it names', () => {
+    // With no calculation behind it, the conclusion's `{{fmv_per_share}}`
+    // resolves to nothing and would reach the page as literal braces — the same
+    // defect the ellipsis was, so it is graded the same way.
     const verdict = reportReadiness(drafted);
     expect(verdict.placeholders.some((p) => p.key === 'conclusion' && p.blocking)).toBe(true);
+  });
+
+  it('stops naming the conclusion once the calculation supplies its figures', () => {
+    // The computed markers are *supposed* to sit in the stored body — that is
+    // what lets a re-render restate the prose after a recalculation. Flagging
+    // them on sight would make a finished 409A permanently unpublishable.
+    const figures = {
+      fmv_per_share: '$1.4947',
+      equity_value: '$42,664,610',
+      marketable_value_per_share: '$2.1514',
+      dloc: '8.0%',
+      dlom: '24.5%',
+      combined_discount: '30.5%',
+      volatility: '62.0%',
+      risk_free_rate: '4.21%',
+      time_to_exit_years: '4.00',
+      asc718_underlying: '$1.4947',
+      market_movement_factor: 'none applied',
+      market_movement_return: 'not measured',
+      market_movement_index: 'no benchmark selected',
+      fully_diluted_common: '9,250,000',
+      common_equity_value: '$19,900,045',
+    };
+    const verdict = reportReadiness(drafted, figures);
+    expect(verdict.placeholders.some((p) => p.key === 'conclusion')).toBe(false);
+    // ASC 718 still blocks: its per-grant rows are ellipses an analyst fills in,
+    // and the calculation cannot supply them.
+    expect(verdict.placeholders.some((p) => p.key === 'asc718' && p.blocking)).toBe(true);
+  });
+
+  it('names a computed marker no calculation resolves', () => {
+    const content = {
+      title: 'T',
+      sections: [
+        { key: 'conclusion', heading: 'Conclusion of Value', html: '<p>FMV is {{made_up_key}}.</p>' },
+      ],
+    };
+    const verdict = reportReadiness(content, { fmv_per_share: '$1' });
+    expect(verdict.status).toBe('fail');
+    expect(verdict.placeholders[0]!.key).toBe('conclusion');
   });
 });

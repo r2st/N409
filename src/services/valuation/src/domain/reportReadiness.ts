@@ -26,10 +26,29 @@ import type { ReportContent } from './report.js';
  * *Conclusion of Value* is a deliverable that contradicts itself, while an
  * unfilled *Qualifications* section is an incomplete report somebody may still
  * have reason to publish. So one fails the gate and the other warns.
+ *
+ * There are now two marker classes, and the difference between them matters:
+ *
+ *   * the ellipsis — "an analyst fills this in". Its presence in the stored
+ *     body is the finding, because nothing else will ever fill it.
+ *   * `{{fmv_per_share}}` and friends — "the calculation fills this in", at
+ *     render time (domain/reportFigures.ts). Its presence in the stored body is
+ *     *correct* and is what lets a re-render restate the prose after a
+ *     recalculation. It is a finding only when nothing resolves it, which is
+ *     exactly the case where it would reach the page as literal braces.
+ *
+ * So the computed markers are checked against the figures the current
+ * calculation actually supplies, rather than being flagged on sight. Checking
+ * them at all is the point: moving the conclusion from an ellipsis to a
+ * placeholder would otherwise have moved it out from under the gate that was
+ * built to catch it.
  */
 
 /** The markers a skeleton uses to say "an analyst fills this in". */
 const PLACEHOLDER = /[…]|\.\.\./;
+
+/** The markers the calculation fills in at render time. */
+const COMPUTED = /\{\{(\w+)\}\}/g;
 
 /**
  * Sections whose placeholders block a publish rather than warn.
@@ -84,18 +103,48 @@ function excerptAround(text: string, at: number): string {
   return clause.length > 200 ? `${clause.slice(0, 197)}…` : clause;
 }
 
-export function findReportPlaceholders(content: ReportContent): ReportPlaceholder[] {
+/**
+ * The names the current calculation can fill in, as `reportFigures` produces
+ * them. Absent (or empty) means nothing will resolve, so every computed marker
+ * in the body is a finding — which is the honest verdict on a report drafted
+ * before the engine has run.
+ */
+export type ResolvableFigures = Readonly<Record<string, string>>;
+
+export function findReportPlaceholders(
+  content: ReportContent,
+  figures: ResolvableFigures = {},
+): ReportPlaceholder[] {
   const found: ReportPlaceholder[] = [];
   for (const section of content.sections) {
     const text = textOf(section.html);
-    const match = PLACEHOLDER.exec(text);
-    if (!match) continue;
-    found.push({
-      key: section.key,
-      heading: section.heading,
-      excerpt: excerptAround(text, match.index),
-      blocking: BLOCKING_SECTIONS.has(section.key) || BLOCKING_HEADINGS.test(section.heading),
-    });
+    const blocking = BLOCKING_SECTIONS.has(section.key) || BLOCKING_HEADINGS.test(section.heading);
+
+    const manual = PLACEHOLDER.exec(text);
+    if (manual) {
+      found.push({
+        key: section.key,
+        heading: section.heading,
+        excerpt: excerptAround(text, manual.index),
+        blocking,
+      });
+      // One finding per section: the excerpt sends the analyst to the section,
+      // and listing every marker in it turns a review into a wall.
+      continue;
+    }
+
+    COMPUTED.lastIndex = 0;
+    let computed: RegExpExecArray | null;
+    while ((computed = COMPUTED.exec(text)) !== null) {
+      if (Object.hasOwn(figures, computed[1]!)) continue;
+      found.push({
+        key: section.key,
+        heading: section.heading,
+        excerpt: excerptAround(text, computed.index),
+        blocking,
+      });
+      break;
+    }
   }
   return found;
 }
@@ -113,11 +162,14 @@ export interface ReportReadiness {
  * with no report is not a report with holes in it, and the publish path has its
  * own reasons to refuse that case.
  */
-export function reportReadiness(content: ReportContent | null): ReportReadiness {
+export function reportReadiness(
+  content: ReportContent | null,
+  figures: ResolvableFigures = {},
+): ReportReadiness {
   if (!content) {
     return { status: 'pass', placeholders: [], detail: 'No report drafted yet.' };
   }
-  const placeholders = findReportPlaceholders(content);
+  const placeholders = findReportPlaceholders(content, figures);
   if (placeholders.length === 0) {
     return { status: 'pass', placeholders, detail: 'No unfilled template placeholders remain.' };
   }

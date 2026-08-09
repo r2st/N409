@@ -24,6 +24,7 @@ import {
   type ReportRow,
 } from '../repos/reports.js';
 import { buildReportSummary } from '../domain/reportSummary.js';
+import { fillFigures, reportFigures, type ReportFigures } from '../domain/reportFigures.js';
 import { buildExhibits } from '../domain/reportExhibits.js';
 import { listComparableItems } from '../repos/comparableItems.js';
 import { impliedMultiples } from '../domain/comparables.js';
@@ -230,6 +231,12 @@ async function summaryFor(
   summary: ReportPdfSummary | undefined;
   exhibits: ReportPdfSection[];
   valuationDate: string | null;
+  /**
+   * The concluded figures, for the `{{placeholders}}` the authored body carries.
+   * Empty when no calculation has succeeded, which leaves them unresolved — see
+   * domain/reportFigures.ts for why that is the right failure.
+   */
+  figures: ReportFigures;
 }> {
   const calculation = await latestSucceededCalculation(pool, valuation.id);
   const payload = calculation?.inputs as { inputs?: { valuation_date?: unknown } } | undefined;
@@ -283,6 +290,7 @@ async function summaryFor(
       ...[researchSourcesExhibit(research)].filter((s): s is ReportPdfSection => s !== null),
     ],
     valuationDate,
+    figures: reportFigures(calculation, valuation.currency),
   };
 }
 
@@ -297,9 +305,15 @@ async function renderVersionPdf(
   // One instant for both the cover's "Rendered" line and the PDF's own
   // CreationDate, so a reader comparing the two never sees them disagree.
   const renderedAt = new Date();
-  const { summary, exhibits, valuationDate } = await summaryFor(pool, valuation);
+  const { summary, exhibits, valuationDate, figures } = await summaryFor(pool, valuation);
+  // The authored body states the conclusion, and only the calculation knows it.
+  // Resolved here rather than at instantiation, and never written back: the
+  // stored version keeps its placeholders, so a re-render after a recalculation
+  // restates the prose instead of leaving a stale number in it. See
+  // domain/reportFigures.ts.
+  const body = fillFigures(content, figures);
   const pdf = await renderReportPdf({
-    title: content.title,
+    title: body.title,
     company_name: valuation.company_name,
     meta: [
       { label: 'Engagement', value: valuation.id },
@@ -316,7 +330,7 @@ async function renderVersionPdf(
       { label: 'Rendered', value: renderedAt.toISOString().slice(0, 10) },
     ],
     // The authored body first, then the computed schedules it refers to.
-    sections: [...content.sections.map((s) => ({ heading: s.heading, html: s.html })), ...exhibits],
+    sections: [...body.sections.map((s) => ({ heading: s.heading, html: s.html })), ...exhibits],
     summary,
     branding: await brandingFor(pool, valuation),
     generated_at: renderedAt,
@@ -426,6 +440,50 @@ export function registerReportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     return {
       report: saved.report,
       version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
+    };
+  });
+
+  /**
+   * Re-draft the body from the kind's current template.
+   *
+   * `GET /report` creates a report from the template on first ops access and
+   * never touches it again, which is right — the body is authored, and an
+   * analyst's prose must not be overwritten by a deployment. But it left no way
+   * to *adopt* a newer skeleton on an engagement that already has a report, and
+   * that is what a template version is for: v56 states the concluded figures
+   * and carries four chapters v55 did not, and every open engagement was stuck
+   * on whatever skeleton existed the day someone first opened its report tab.
+   *
+   * Appends a new version rather than replacing the current one, so the
+   * analyst's existing draft stays in the history and a revert is one call
+   * away. Ops-only, like every other write here.
+   */
+  app.post('/api/v1/valuations/:id/report/draft', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadForEdit(deps.pool, principal, id);
+    const report = await loadOrCreateReport(deps.pool, principal, valuation);
+
+    const managed = await findActiveTemplateForKind(deps.pool, valuation.kind);
+    const vars = templateVars(valuation, await valuationDateFor(deps.pool, valuation.id));
+    const { templateVersion, content } = managed
+      ? { templateVersion: templateLabel(managed), content: contentFromManagedTemplate(managed, vars) }
+      : (() => {
+          const builtin = templateForKind(valuation.kind);
+          return { templateVersion: builtin.version, content: instantiateTemplate(builtin, vars) };
+        })();
+
+    const saved = await saveVersion(deps.pool, {
+      report,
+      content,
+      actor: actorFor(principal),
+      origin: { redraftedFrom: templateVersion },
+      templateVersion,
+    });
+    return {
+      report: saved.report,
+      version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
+      template_version: templateVersion,
     };
   });
 

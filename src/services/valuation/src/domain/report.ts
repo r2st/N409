@@ -310,9 +310,41 @@ const P = (text: string) => `<p>${text}</p>`;
  * Each new section names the exhibit that carries its figures (domain/
  * reportExhibits.ts), so the authored prose and the computed schedules read as
  * one document rather than two.
+ *
+ * v56 does two things.
+ *
+ * First, it makes the skeleton *state the conclusion*. Every figure in the body
+ * was an ellipsis — "the fair market value … is $ … per share", eight rows of
+ * "$ …" in the ASC 718 table — because the skeleton is instantiated before the
+ * engine has run and so could only carry facts known at that moment. The
+ * placeholders below (`{{fmv_per_share}}`, `{{dlom}}`, `{{volatility}}` …)
+ * resolve at *render* time against the calculation that produced the
+ * conclusion; see domain/reportFigures.ts, which owns the substitution and the
+ * reasoning. An analyst who wants different words still types over them.
+ *
+ * Second, it closes the last structural gaps against the chapter list the
+ * legacy 409.ai deliverable works through, which had no counterpart here:
+ *
+ *   * purpose and intended use — the legacy report's §1.1/§3.2, and the first
+ *     thing a reader of a tax opinion checks. The skeleton stated the standard
+ *     of value and never who the report was for or what it may be relied on
+ *     for, which is precisely the question a limiting-conditions section
+ *     answers too late;
+ *   * company analysis — the Rev. Rul. 59-60 §4.01 factors, one by one. "4.
+ *     Company Overview" invited a paragraph of description; the ruling asks for
+ *     eight specific findings and a reviewer works down them;
+ *   * market movement — the legacy §8.1. The backsolve reads a value out of a
+ *     dated financing round, and concluding on it unadjusted asserts the market
+ *     did not move in between. The engine now measures the adjustment
+ *     (engine/market_movement.py); this is where the report explains it;
+ *   * use, distribution and subsequent events — the legacy §§12.4–12.8. A
+ *     valuation report that does not say who may rely on it, what happens if
+ *     the analyst is subpoenaed, and that it is not updated for later events is
+ *     one whose limits are decided after the fact by whoever is arguing about
+ *     it.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v55',
+  version: '409a.v56',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -322,6 +354,23 @@ const TEMPLATE_409A: ReportTemplate = {
         P(
           'This report presents our determination of the fair market value of the common stock of <strong>{{company_name}}</strong> as of {{date}}, prepared for purposes of Section 409A of the Internal Revenue Code and ASC 718.',
         ) + P('Engagement reference: {{valuation_ref}}. Reporting currency: {{currency}}.'),
+    },
+    {
+      key: 'purpose_and_scope',
+      heading: 'Purpose of the Valuation & Intended Use',
+      html:
+        P(
+          'This valuation was prepared for <strong>{{company_name}}</strong> for the sole purpose of establishing the fair market value of its common stock, to support the exercise price of stock options granted under Section 409A of the Internal Revenue Code and the grant-date measurement of share-based compensation under ASC 718.',
+        ) +
+        '<ul>' +
+        '<li><strong>Intended user</strong> — the board of directors of {{company_name}} and its officers, together with the company’s accountants and auditors in connection with the financial reporting of share-based payment.</li>' +
+        '<li><strong>Intended use</strong> — setting option exercise prices and measuring compensation cost. No other use is intended or authorized.</li>' +
+        '<li><strong>Subject interest</strong> — one share of common stock, on a non-marketable, minority-interest basis.</li>' +
+        '<li><strong>Scope of work</strong> — a full appraisal reported in this detailed report; no scope limitation was agreed or applied.</li>' +
+        '</ul>' +
+        P(
+          'The valuation is not an opinion on the price at which the company or any interest in it would transact in a negotiated sale, a fairness opinion, an audit, or investment advice, and it should not be relied on for any of those purposes.',
+        ),
     },
     {
       key: 'standard_of_value',
@@ -358,6 +407,27 @@ const TEMPLATE_409A: ReportTemplate = {
       html: P(
         'Describe the business of {{company_name}}: products, customers, stage, headcount, and capital raised to date.',
       ),
+    },
+    {
+      key: 'company_analysis',
+      heading: 'Company Analysis',
+      html:
+        P(
+          'Revenue Ruling 59-60 §4.01 sets out the factors to be considered in valuing the stock of a closely held corporation. Each is addressed below; where a factor carries little weight for a company at this stage, say so and why rather than omitting it.',
+        ) +
+        '<ul>' +
+        '<li><strong>Nature and history of the business</strong> — formation, what the company does, how the business has developed and any discontinuity in that record.</li>' +
+        '<li><strong>Economic and industry outlook</strong> — addressed in the two sections that follow.</li>' +
+        '<li><strong>Book value and financial condition</strong> — balance-sheet position, cash and runway, and the extent to which book value bears on the value of a business of this kind.</li>' +
+        '<li><strong>Earning capacity</strong> — historical and prospective, and the basis on which the projections relied on were prepared.</li>' +
+        '<li><strong>Dividend-paying capacity</strong> — the capacity, not the history; a growth company that pays none may still have capacity, and the ruling asks about capacity.</li>' +
+        '<li><strong>Goodwill and other intangible value</strong> — brand, technology, assembled workforce, and whether these are captured by the approaches applied.</li>' +
+        '<li><strong>Prior sales of stock and the size of the block</strong> — the financing history, the terms of the most recent round, and any secondary transactions in common.</li>' +
+        '<li><strong>Comparable companies</strong> — the guideline set, addressed under the market approach.</li>' +
+        '</ul>' +
+        P(
+          'Set out the specific risks a buyer of common stock would price: concentration, competition, regulatory exposure, key-person dependence and the funding required to reach the next milestone.',
+        ),
     },
     {
       key: 'capital_structure',
@@ -435,6 +505,23 @@ const TEMPLATE_409A: ReportTemplate = {
       ),
     },
     {
+      key: 'market_movement',
+      heading: 'Adjustment Factor: Market Movement',
+      html:
+        P(
+          'The option-pricing backsolve reads a value out of the most recent financing round: the price at which that round transacted is evidence of what the company was worth <em>on the day it closed</em>. That is the strongest single input available to this valuation, and it is also the one that decays. Where time has passed between the round and the valuation date, concluding on the round price unadjusted asserts that the market for companies of this profile did not move in the interval.',
+        ) +
+        P(
+          'Where an adjustment has been applied, the round indication is moved by the return of a public benchmark over the same interval, geared by the subject’s sensitivity to it: <strong>factor = 1 + β × benchmark return</strong>. Identify the benchmark selected and why it is the right proxy for this company, the measurement dates, and the basis for the beta applied. Both the unadjusted and the adjusted indications are set out in <strong>Exhibit B</strong>.',
+        ) +
+        P(
+          'Benchmark: {{market_movement_index}}. Return over the period: {{market_movement_return}}. Adjustment factor: {{market_movement_factor}}.',
+        ) +
+        P(
+          'Where no adjustment has been applied — because the round is close enough to the valuation date that no measurable movement separates them, or because no benchmark is a defensible proxy — say so and state the reason. An unadjusted round indication is a conclusion, not an omission, and should read as one.',
+        ),
+    },
+    {
       key: 'reconciliation',
       heading: 'Reconciliation of Value Indications',
       html:
@@ -443,7 +530,8 @@ const TEMPLATE_409A: ReportTemplate = {
         ) +
         P(
           'Explain the weighting: the relevance of each approach to a company of this stage and sector, the quality of the inputs available to it, and the reason any approach considered was assigned no weight. The concluded equity value carried forward to the allocation below is the weighted result.',
-        ),
+        ) +
+        P('Concluded total equity value: <strong>{{equity_value}}</strong>.'),
     },
     {
       key: 'allocation',
@@ -454,6 +542,9 @@ const TEMPLATE_409A: ReportTemplate = {
         ) +
         P(
           'Under the breakpoint method the payoff of each class is piecewise linear in exit equity value, so its expected value is the sum of Black-Scholes call spreads between consecutive breakpoints. The breakpoints, the value of each tranche and the resulting value of each class are set out in <strong>Exhibit F</strong>. State the source of the expected volatility and the basis for the expected time to a liquidity event.',
+        ) +
+        P(
+          'Inputs applied: expected volatility {{volatility}}, expected time to liquidity {{time_to_exit_years}} years, risk-free rate {{risk_free_rate}}. The allocation indicates a marketable, controlling value of <strong>{{marketable_value_per_share}}</strong> per common share before the discounts below.',
         ),
     },
     {
@@ -464,16 +555,26 @@ const TEMPLATE_409A: ReportTemplate = {
           'The allocation above produces the value of a common share on a controlling basis. A holder of common stock in {{company_name}} holds a minority interest: it cannot compel a liquidity event, set the timing or terms of an exit, direct the business, or access the company’s cash flows. A discount for lack of control is therefore applied to reflect the difference between a controlling and a minority interest in the same equity.',
         ) +
         P(
-          'State the basis for the concluded discount — control premium studies, the specific rights held by the preferred classes, or the analyst’s qualitative assessment — and the concluded percentage. The discount as applied is set out in <strong>Exhibit H</strong>.',
+          'State the basis for the concluded discount — control premium studies, the specific rights held by the preferred classes, or the analyst’s qualitative assessment. The concluded discount is <strong>{{dloc}}</strong>, applied as set out in <strong>Exhibit H</strong>.',
         ),
     },
     {
       key: 'dlom',
       heading: 'Discount for Lack of Marketability',
       html:
-        P('Describe the DLOM analysis (Chaffee / Finnerty / qualitative) and the concluded discount.') +
         P(
-          'No public market exists for the common stock of {{company_name}}, and transfer is further restricted by the company’s charter and by the terms of its stock plan. A discount for lack of marketability is applied to reflect the cost and delay of achieving liquidity. Where an option-based model is applied, state the volatility and holding period assumed. The discount as applied is set out in <strong>Exhibit H</strong>.',
+          'No public market exists for the common stock of {{company_name}}, and transfer is further restricted by the company’s charter and by the terms of its stock plan. A discount for lack of marketability is applied to reflect the cost and delay of achieving liquidity.',
+        ) +
+        P(
+          'Describe the analysis supporting the concluded discount and why the method selected suits this holding:',
+        ) +
+        '<ul>' +
+        '<li><strong>Quantitative — restricted stock studies.</strong> Where the conclusion rests on empirical studies of private placements of registered but unregistered-for-resale stock, name the studies relied on and note that observations predating the 1997 and 2008 amendments to Rule 144 measured a longer restriction than applies today.</li>' +
+        '<li><strong>Quantitative — option-based models.</strong> Chaffee prices a protective put over the holding period; Finnerty and Ghaidarov price the average-strike put — the value of giving up the choice of when to sell. State the volatility and the holding period assumed, and note that the volatility of the <em>subject class</em> is not the volatility of the enterprise: common is a levered claim behind the preference stack, and <strong>Exhibit H-1</strong> sets out the class volatilities.</li>' +
+        '<li><strong>Qualitative.</strong> Where judgement adjusts a modelled figure, identify the factors weighed — distribution history, transfer restrictions, the pool of likely buyers, the expected time to liquidity — and the direction and size of the adjustment.</li>' +
+        '</ul>' +
+        P(
+          'The concluded discount is <strong>{{dlom}}</strong>. Its derivation is set out in <strong>Exhibit H-1</strong> and its application in <strong>Exhibit H</strong>.',
         ),
     },
     {
@@ -481,10 +582,13 @@ const TEMPLATE_409A: ReportTemplate = {
       heading: 'Conclusion of Value',
       html:
         P(
-          'Based on the analyses described herein, the fair market value of one share of common stock of {{company_name}} as of {{date}} is $ … per share.',
+          'Based on the analyses described herein, it is our opinion that the fair market value of one share of common stock of <strong>{{company_name}}</strong> as of {{date}} is <strong>{{fmv_per_share}}</strong> per share.',
         ) +
         P(
-          'The conclusion is stated on a non-marketable, minority-interest basis. The derivation from the allocated common value per share through the discounts applied is set out in <strong>Exhibit H</strong>, and the concluded figure is stated on the summary page of this report.',
+          'The conclusion is stated on a non-marketable, minority-interest basis. It derives from a concluded total equity value of {{equity_value}}, allocated to a marketable, controlling common value of {{marketable_value_per_share}} per share, less a discount for lack of control of {{dloc}} and a discount for lack of marketability of {{dlom}} — a combined discount of {{combined_discount}}. The full derivation is set out in <strong>Exhibit H</strong>.',
+        ) +
+        P(
+          'This conclusion is valid as of the valuation date stated and is subject to the assumptions and limiting conditions set out below.',
         ),
     },
     {
@@ -497,15 +601,21 @@ const TEMPLATE_409A: ReportTemplate = {
         P(
           'Grant-date fair value is estimated with the Black-Scholes-Merton option-pricing model using the expected term, expected volatility, risk-free rate and dividend yield tabulated below; the resulting compensation cost is recognized on a straight-line basis over each award’s requisite service (vesting) period, net of expected forfeitures.',
         ) +
-        '<table><thead><tr><th>Assumption</th><th>Input</th></tr></thead><tbody>' +
-        '<tr><td>Underlying fair value (409A)</td><td>$ … per share</td></tr>' +
-        '<tr><td>Exercise price</td><td>$ …</td></tr>' +
-        '<tr><td>Expected term</td><td>… years</td></tr>' +
-        '<tr><td>Expected volatility</td><td>… %</td></tr>' +
-        '<tr><td>Risk-free rate</td><td>… %</td></tr>' +
-        '<tr><td>Dividend yield</td><td>… %</td></tr>' +
-        '<tr><td>Grant-date fair value per option</td><td>$ …</td></tr>' +
-        '<tr><td>Total compensation cost</td><td>$ …</td></tr>' +
+        // The rows the 409A supplies are filled from the calculation; the rows
+        // that belong to the *grants* (strike, expected term, the resulting
+        // per-option value) are left for the analyst, because they are measured
+        // against the awards on file rather than by this valuation. Marked as
+        // such rather than left as a bare ellipsis, so a reader can tell an
+        // unfilled row from an inapplicable one.
+        '<table><thead><tr><th>Assumption</th><th>Input</th><th>Source</th></tr></thead><tbody>' +
+        '<tr><td>Underlying fair value (409A)</td><td>{{asc718_underlying}} per share</td><td>Concluded above</td></tr>' +
+        '<tr><td>Expected volatility</td><td>{{volatility}}</td><td>As applied in the allocation</td></tr>' +
+        '<tr><td>Risk-free rate</td><td>{{risk_free_rate}}</td><td>As applied in the allocation</td></tr>' +
+        '<tr><td>Expected term</td><td>… years</td><td>Per grant — SAB 14 simplified method or exercise history</td></tr>' +
+        '<tr><td>Exercise price</td><td>… per share</td><td>Per grant</td></tr>' +
+        '<tr><td>Dividend yield</td><td>0.0%</td><td>No dividends expected over the term</td></tr>' +
+        '<tr><td>Grant-date fair value per option</td><td>… per option</td><td>Black-Scholes-Merton on the above</td></tr>' +
+        '<tr><td>Total compensation cost</td><td>…</td><td>Fair value × awards, net of expected forfeitures</td></tr>' +
         '</tbody></table>',
     },
     {
@@ -514,6 +624,18 @@ const TEMPLATE_409A: ReportTemplate = {
       html: P(
         'This report is valid only for the stated purpose and date, and relies on information provided by management, which we have not audited.',
       ),
+    },
+    {
+      key: 'use_and_distribution',
+      heading: 'Use, Distribution & Subsequent Events',
+      html:
+        '<ul>' +
+        '<li><strong>Use of this report.</strong> This report is prepared for the intended user and intended use stated at the front of it. Any other use is unauthorized, and no third party acquires any right or claim against us by obtaining a copy.</li>' +
+        '<li><strong>Distribution.</strong> Neither this report nor any part of it — including the conclusion of value, the identity of the analysts, or any reference to the professional bodies to which they belong — may be published, quoted or referred to publicly without our prior written consent.</li>' +
+        '<li><strong>Subsequent events.</strong> This valuation reflects facts and conditions existing at the valuation date. Events occurring afterwards — a financing, an offer, a loss of a key customer, a change in market conditions — may materially affect the conclusion, and we have no obligation to update this report for them. Under Treasury Regulation §1.409A-1(b)(5)(iv)(B)(1) the presumption of reasonableness does not survive a material event occurring after the valuation date.</li>' +
+        '<li><strong>Legal matters.</strong> We express no opinion on questions of law: title, the enforceability of the charter and stock-plan provisions relied on, the tax treatment of any grant, or compliance with securities law. We have relied on the governing documents as provided without legal review.</li>' +
+        '<li><strong>Testimony.</strong> We are not required to give testimony or to appear in court or before any administrative body by reason of having prepared this report, unless arrangements to do so have been made in advance and in writing.</li>' +
+        '</ul>',
     },
     {
       key: 'safe_harbor',
@@ -567,6 +689,7 @@ const TEMPLATE_409A: ReportTemplate = {
         '<li>Exhibit F — Allocation of Equity Value</li>' +
         '<li>Exhibit G — Probability-Weighted Expected Return Scenarios</li>' +
         '<li>Exhibit H — Discounts and Concluded Value</li>' +
+        '<li>Exhibit H-1 — Marketability Discount: Derivation</li>' +
         '</ul>' +
         P(
           'An exhibit is included only where the corresponding analysis was applied in this valuation; exhibits for approaches and methods not used are omitted.',
@@ -1586,7 +1709,7 @@ export function templateForKind(kind: ValuationKind): ReportTemplate {
  * matches the names on `Object.prototype`, so `{{constructor}}` in a report
  * template rendered as `function Object() { [native code] }`.
  */
-export function fillTemplateVars(text: string, vars: ReportTemplateVars): string {
+export function fillTemplateVars(text: string, vars: object): string {
   return text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => {
     if (!Object.hasOwn(vars, key)) return m;
     const v = (vars as unknown as Record<string, unknown>)[key];

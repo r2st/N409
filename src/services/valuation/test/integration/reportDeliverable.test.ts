@@ -558,4 +558,127 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       expect(text).not.toContain('$0.9000');
     });
   });
+
+  // ── the body states the conclusion ─────────────────────────────────────────
+
+  /**
+   * The defect that motivated `domain/reportFigures.ts`.
+   *
+   * The exhibits and the summary page have been computed at render time since
+   * they existed. The authored body never was, so the chapter whose entire
+   * purpose is to state the conclusion said "the fair market value … is $ …
+   * per share" — three pages after the summary printed it. Every unit test
+   * passed while it did, because a test asserts what somebody thought to check.
+   */
+  describe('the authored body', () => {
+    // Its own engagement per test rather than the shared `computed`, whose body
+    // earlier tests in this file overwrite with a one-line placeholder to
+    // exercise the editor. These assertions are about the *skeleton*, so they
+    // need one that nobody has edited.
+    let body: ValuationRow;
+    beforeAll(async () => {
+      body = await seed('Skeleton Figures, Inc.', true);
+    });
+
+    it('states the concluded figures rather than an ellipsis', async () => {
+      const text = await pdfText(body.id);
+      expect(text).toContain('$1.2345');
+      expect(text).toContain('$42,000,000');
+      // The literal shape of the defect, in the chapter that carried it.
+      expect(text).not.toContain('is$…pershare');
+    });
+
+    it('leaves no unresolved placeholder anywhere in a computed deliverable', async () => {
+      // A `{{…}}` on the page is a figure the skeleton asked for and nothing
+      // supplied — the failure this whole mechanism can produce, so it is
+      // asserted directly rather than inferred from the figures above.
+      expect(await pdfText(body.id)).not.toMatch(/\{\{\w+\}\}/);
+    });
+
+    it('fills the ASC 718 assumptions the 409A supplies', async () => {
+      const text = await pdfText(body.id);
+      expect(text).toContain('65.0%'); // volatility, as applied in the allocation
+      expect(text).toContain('4.20%'); // risk-free rate
+    });
+
+    it('does not write the figures back into the stored version', async () => {
+      // The stored body keeps its placeholders, which is what lets a re-render
+      // after a recalculation restate the prose instead of carrying a stale
+      // number. See the re-render test above.
+      const v = await seed('Skeleton Stored, Inc.', true);
+      await pdfText(v.id);
+      const res = await opsGet(`/api/v1/valuations/${v.id}/report`);
+      const sections = res.json().version.content.sections as Array<{ html: string }>;
+      expect(sections.map((s) => s.html).join('')).toContain('{{fmv_per_share}}');
+    });
+
+    it('leaves the placeholders visible when no calculation has succeeded', async () => {
+      // Deliberate. An unresolved placeholder is a draft nobody can mistake for
+      // a conclusion; an em-dash or a zero reads as an answer.
+      const text = await pdfText(uncomputed.id);
+      expect(text).toMatch(/\{\{\w+\}\}/);
+    });
+
+    it('carries the chapters a reviewer of a 409A works through', async () => {
+      const v = await seed('Skeleton Chapters, Inc.', true);
+      const res = await opsGet(`/api/v1/valuations/${v.id}/report`);
+      const keys = (res.json().version.content.sections as Array<{ key: string }>).map((s) => s.key);
+      // The four the skeleton had no counterpart for against the legacy
+      // deliverable's chapter list.
+      expect(keys).toContain('purpose_and_scope');
+      expect(keys).toContain('company_analysis');
+      expect(keys).toContain('market_movement');
+      expect(keys).toContain('use_and_distribution');
+    });
+  });
+
+  // ── re-drafting onto a newer skeleton ──────────────────────────────────────
+
+  describe('POST /report/draft', () => {
+    const draft = (id: string, token: string) =>
+      ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/report/draft`,
+        headers: authHeader(token),
+        payload: {},
+      });
+
+    it('re-instantiates the body from the kind’s current template', async () => {
+      const v = await seed('Redraft One, Inc.', true);
+      await opsGet(`/api/v1/valuations/${v.id}/report`);
+      const res = await draft(v.id, ops.token);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().template_version).toBe('409a.v56');
+      const keys = (res.json().version.content.sections as Array<{ key: string }>).map((s) => s.key);
+      expect(keys).toContain('purpose_and_scope');
+    });
+
+    it('appends a version rather than overwriting the analyst’s draft', async () => {
+      // The whole reason this is a separate endpoint: adopting a newer skeleton
+      // must not silently discard prose somebody wrote.
+      const v = await seed('Redraft Two, Inc.', true);
+      const before = await opsGet(`/api/v1/valuations/${v.id}/report`);
+      const beforeVersion = before.json().report.current_version;
+
+      const res = await draft(v.id, ops.token);
+      expect(res.json().report.current_version).toBe(beforeVersion + 1);
+
+      const versions = await opsGet(`/api/v1/valuations/${v.id}/report/versions`);
+      expect(versions.json().versions.length).toBeGreaterThan(1);
+    });
+
+    it('moves the report onto the new template version', async () => {
+      const v = await seed('Redraft Three, Inc.', true);
+      await opsGet(`/api/v1/valuations/${v.id}/report`);
+      const res = await draft(v.id, ops.token);
+      expect(res.json().report.template_version).toBe('409a.v56');
+    });
+
+    it('is refused to a client', async () => {
+      const v = await seed('Redraft Four, Inc.', true);
+      await opsGet(`/api/v1/valuations/${v.id}/report`);
+      expect((await draft(v.id, client.token)).statusCode).toBe(403);
+    });
+  });
+
 });

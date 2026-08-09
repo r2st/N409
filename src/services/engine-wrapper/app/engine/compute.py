@@ -416,12 +416,12 @@ _DLOM_FORMULAE: dict[str, str] = {
         "moving while the holder cannot sell"
     ),
     "finnerty": (
-        "Finnerty average-strike put — 2Φ(v/2) − 1 with effective variance "
+        "Finnerty average-strike put — 2N(v/2) - 1 with effective variance "
         "v²T = σ²T + ln(2(e^{σ²T} − σ²T − 1)) − 2ln(e^{σ²T} − 1); "
         "the value forgone by giving up the choice of when to sell"
     ),
     "ghaidarov": (
-        "Ghaidarov average-strike put — the same 2Φ(v/2) − 1 with the corrected "
+        "Ghaidarov average-strike put — the same 2N(v/2) - 1 with the corrected "
         "effective variance v²T = ln(2(e^{σ²T} − σ²T − 1)/(σ²T)²), "
         "which removes Finnerty's ~32.3% ceiling"
     ),

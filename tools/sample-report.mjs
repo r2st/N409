@@ -18,12 +18,20 @@
  *     cd src/services/engine-wrapper && .venv/bin/python -m uvicorn app.main:app --port 8799 &
  *     npm run build && node tools/sample-report.mjs
  *
+ * or, doing all of that for you:  npm run sample:report
+ *
  * Writes `sample-409a.pdf` and `sample-results.json` to OUT (default: cwd), and
  * drops the throwaway database on the way out.
+ *
+ * Exits non-zero on a failed step. It used to press on regardless and then die
+ * on `calculation.results` of an undefined calculation — a stack trace naming
+ * this file for an engine that was not running, which is the one failure the
+ * script exists to make obvious.
  */
 import pg from 'pg';
 import { writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { inflateSync as zlibInflate } from 'node:zlib';
 
 const ROOT = new URL('../src/services/valuation', import.meta.url).pathname;
 const { migrate } = await import(`${ROOT}/dist/db/migrate.js`);
@@ -45,6 +53,23 @@ const url = new URL(BASE_URL);
 url.pathname = `/${dbName}`;
 const pool = new pg.Pool({ connectionString: url.toString(), max: 5 });
 await migrate(pool);
+
+/** Drop the throwaway database, on every exit path including the failing ones. */
+let cleanedUp = false;
+const cleanup = async () => {
+  if (cleanedUp) return;
+  cleanedUp = true;
+  try {
+    await app?.close();
+  } catch {
+    /* already closed */
+  }
+  await pool.end().catch(() => {});
+  const drop = new pg.Client({ connectionString: BASE_URL });
+  await drop.connect();
+  await drop.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+  await drop.end();
+};
 
 const config = loadConfig({
   ...process.env,
@@ -78,23 +103,41 @@ const ops = await seed(['admin']);
 const client = await seed(['valuation_user']);
 const auth = (t) => ({ authorization: `Bearer ${t}` });
 
+let failed = 0;
 const call = async (method, path, token, payload) => {
   const res = await app.inject({ method, url: path, headers: auth(token), payload });
   if (res.statusCode >= 400) {
+    failed += 1;
     console.error(`!! ${method} ${path} → ${res.statusCode}`, res.body.slice(0, 600));
+  }
+  return res;
+};
+
+/** Stop at the first step whose failure makes everything after it meaningless. */
+const must = async (method, path, token, payload) => {
+  const res = await call(method, path, token, payload);
+  if (res.statusCode >= 400) {
+    console.error(
+      `\nAborting: ${method} ${path} failed. ` +
+        (path.endsWith('/calculations')
+          ? 'Is the engine running on :8799? See the usage note at the top of this file.'
+          : ''),
+    );
+    await cleanup();
+    process.exit(1);
   }
   return res;
 };
 
 // ── A company an analyst would recognise ─────────────────────────────────────
 // Series B SaaS: $18M raised, $9.4M LTM revenue, a real preference stack.
-const created = await call('POST', '/api/v1/valuations', client.token, {
+const created = await must('POST', '/api/v1/valuations', client.token, {
   kind: '409a',
   company_name: 'Northwind Robotics, Inc.',
 });
 const vid = created.json().valuation.id;
 
-await call('PATCH', `/api/v1/valuations/${vid}/params`, ops.token, {
+await must('PATCH', `/api/v1/valuations/${vid}/params`, ops.token, {
   weight_asset: 0,
   weight_opm: 0.4,
   weight_income: 0.25,
@@ -108,7 +151,7 @@ await call('PATCH', `/api/v1/valuations/${vid}/params`, ops.token, {
   exit_timeline: '2030-06-30',
 });
 
-await call('PATCH', `/api/v1/valuations/${vid}/engine-inputs`, ops.token, {
+await must('PATCH', `/api/v1/valuations/${vid}/engine-inputs`, ops.token, {
   valuation_date: '2026-06-30',
   shares_outstanding_common: 9_250_000,
   options_outstanding: 1_750_000,
@@ -126,6 +169,17 @@ await call('PATCH', `/api/v1/valuations/${vid}/engine-inputs`, ops.token, {
     terminal_growth: 0.03,
   },
   market: { metric: 9_400_000, multiples: [7.4, 6.1, 8.8, 5.9] },
+  // The round closed in October and this valuation is dated the following June.
+  // Exercising the adjustment here is the point: the deliverable has to be able
+  // to say what moved between the two, and Exhibit B has to show both figures.
+  market_movement: {
+    index_name: 'S&P North American Technology Software Index',
+    index_start: 4_812.6,
+    index_end: 4_390.1,
+    period_start: '2025-10-15',
+    period_end: '2026-06-30',
+    beta: 1.15,
+  },
   // The cap table. Required by the Monte Carlo allocation, and it upgrades the
   // OPM run from a single blended preference to the full breakpoint waterfall.
   share_classes: [
@@ -136,21 +190,22 @@ await call('PATCH', `/api/v1/valuations/${vid}/engine-inputs`, ops.token, {
   ],
 });
 
-const calc = await call('POST', `/api/v1/valuations/${vid}/calculations`, ops.token, {});
+const calc = await must('POST', `/api/v1/valuations/${vid}/calculations`, ops.token, {});
 const calculation = calc.json().calculation;
 console.log('\n── ENGINE OUTPUT ──────────────────────────────────────────────');
 console.log(JSON.stringify(calculation.results, null, 1));
 
 const detail = await call('GET', `/api/v1/valuations/${vid}/calculations/${calculation.id}`, ops.token);
 console.log('\n── ENGINE STEPS ───────────────────────────────────────────────');
-for (const s of detail.json().steps) {
+for (const s of detail.json().steps ?? []) {
   console.log(`${s.seq}. ${s.label} [${s.status}] ${s.note ?? ''}`);
 }
 
-// Draft the report so there is a body to render, then render the PDF.
-await call('POST', `/api/v1/valuations/${vid}/report/draft`, ops.token, {});
-const report = await call('GET', `/api/v1/valuations/${vid}/report`, ops.token);
+// Draft the report from the kind's current skeleton, then render the PDF.
+const drafted = await must('POST', `/api/v1/valuations/${vid}/report/draft`, ops.token, {});
+const report = await must('GET', `/api/v1/valuations/${vid}/report`, ops.token);
 console.log('\n── REPORT SECTIONS ────────────────────────────────────────────');
+console.log(`template ${drafted.json().template_version}`);
 const content = report.json().version?.content;
 if (content) {
   content.sections.forEach((s, i) => console.log(`${String(i + 1).padStart(2)}. ${s.heading}`));
@@ -158,17 +213,51 @@ if (content) {
   console.log('(no draft)', JSON.stringify(report.json()).slice(0, 400));
 }
 
-const pdfRes = await call('GET', `/api/v1/valuations/${vid}/report.pdf`, ops.token);
-if (pdfRes.statusCode === 200) {
-  writeFileSync(`${OUT}/sample-409a.pdf`, pdfRes.rawPayload);
-  console.log(`\nPDF: ${OUT}/sample-409a.pdf (${pdfRes.rawPayload.length} bytes)`);
-}
+const pdfRes = await must('GET', `/api/v1/valuations/${vid}/report.pdf`, ops.token);
+writeFileSync(`${OUT}/sample-409a.pdf`, pdfRes.rawPayload);
+console.log(`\nPDF: ${OUT}/sample-409a.pdf (${pdfRes.rawPayload.length} bytes)`);
 
 writeFileSync(`${OUT}/sample-results.json`, JSON.stringify(calculation.results, null, 2));
 
-await app.close();
-await pool.end();
-const drop = new pg.Client({ connectionString: BASE_URL });
-await drop.connect();
-await drop.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-await drop.end();
+/*
+ * The check the whole rehearsal exists for.
+ *
+ * A deliverable whose Conclusion of Value chapter reads "$ … per share" three
+ * pages after the summary page printed $1.4947 passes every unit test in the
+ * suite, because a test asserts what somebody already thought to check. So the
+ * finished PDF is searched for the leftovers: an unresolved `{{placeholder}}`
+ * means a figure the body asked for and the calculation did not supply, and a
+ * bare "$ …" means a figure nobody wired up at all.
+ */
+const readable = () => {
+  const raw = pdfRes.rawPayload;
+  const out = [];
+  // Streams are Flate-compressed; the text inside them is hex-encoded runs.
+  for (const m of raw.toString('latin1').matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
+    try {
+      out.push(zlibInflate(Buffer.from(m[1], 'latin1')).toString('latin1'));
+    } catch {
+      /* not a Flate stream */
+    }
+  }
+  return out
+    .join('\n')
+    .replace(/<([0-9a-fA-F]+)>/g, (_, hex) =>
+      Buffer.from(hex, 'hex').toString('utf16le').replace(/ /g, ''),
+    );
+};
+const text = readable();
+const leftovers = [...new Set([...text.matchAll(/\{\{\w+\}\}/g)].map((m) => m[0]))];
+console.log('\n── UNFILLED FIGURES ───────────────────────────────────────────');
+if (leftovers.length === 0) {
+  console.log('none — every placeholder in the body resolved');
+} else {
+  failed += 1;
+  console.log(`!! ${leftovers.length} unresolved: ${leftovers.join(', ')}`);
+}
+
+await cleanup();
+if (failed > 0) {
+  console.error(`\n${failed} step(s) failed.`);
+  process.exit(1);
+}

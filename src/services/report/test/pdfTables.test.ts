@@ -335,6 +335,39 @@ describe('runningHeadings', () => {
       expect(headings[3]).toBe('29. Exhibit H');
     });
 
+    it('names the section actually running over, not the previous page’s label', () => {
+      // The two differ whenever several sections shared the previous page, and
+      // that is the shape the exhibits produce: page 11 of the sample 409A
+      // opens with §23 and also carries §24 and §25, so it is correctly headed
+      // "23. Index of Exhibits". Page 12 is the continuation of §25's table
+      // with §26 starting under it.
+      //
+      // Propagating page 11's *label* headed page 12 "23. Index of Exhibits" —
+      // naming a section that finished two schedules earlier, on a sheet whose
+      // visible content is Exhibit B's reconciliation table. The section that
+      // was running when page 11 ended is §25, and that is what the page shows.
+      const headings = runningHeadings(
+        3,
+        0,
+        [
+          { page: 1, label: '23. Index of Exhibits', y: TOP },
+          { page: 1, label: '24. Exhibit A', y: 300 },
+          { page: 1, label: '25. Exhibit B', y: 600 },
+          { page: 2, label: '26. Exhibit C', y: 400 },
+        ],
+        TOP,
+      );
+      expect(headings[1]).toBe('23. Index of Exhibits');
+      expect(headings[2]).toBe('25. Exhibit B');
+    });
+
+    it('falls back to the section on the page when nothing ran over', () => {
+      // The first page of the range has no predecessor, so a section beginning
+      // half way down it is still the only honest label.
+      const headings = runningHeadings(1, 0, [{ page: 0, label: '1. First', y: 400 }], TOP);
+      expect(headings[0]).toBe('1. First');
+    });
+
     it('treats a landmark with no y as starting its own page', () => {
       // The contents and the summary always begin a fresh sheet, so they carry
       // no position and are at the top by construction.

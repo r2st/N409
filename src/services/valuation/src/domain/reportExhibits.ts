@@ -265,7 +265,92 @@ export function approachExhibit(
         concluded === null ? '—' : formatCurrency(concluded, currency, 0),
       ],
     }),
+    // Below the reconciliation rather than beside it: the adjustment is applied
+    // to one indication before it is weighted, so a reader meets the weighted
+    // table first and then the working behind the one figure that moved.
+    ...movementBlock(results, approaches, ctx),
   ]);
+}
+
+/**
+ * The market-movement adjustment, where one was applied.
+ *
+ * The backsolve indication in the table above is the *adjusted* figure, because
+ * that is what was weighted. Printing only the adjusted one would hide the
+ * single most contestable step in the reconciliation: the round transacted at a
+ * price, and this valuation concluded that the price means something different
+ * today. Both figures and the factor between them are set out, so the
+ * adjustment can be disagreed with rather than merely noticed.
+ *
+ * Empty when no benchmark was supplied, which is the common case — a valuation
+ * dated close to its round has nothing to adjust for, and a row reading
+ * "1.0000x" would imply somebody measured one.
+ */
+function movementBlock(
+  results: Record<string, unknown>,
+  approaches: Record<string, unknown>,
+  ctx: ExhibitContext,
+): string[] {
+  const movement = record(results.market_movement);
+  if (!movement) return [];
+  const backsolve = record(approaches.opm_backsolve);
+  const before = num(backsolve?.unadjusted_equity_value);
+  const after = num(backsolve?.equity_value);
+  const factor = num(movement.factor);
+  if (factor === null) return [];
+
+  const indexName = text(movement.index_name);
+  const indexReturn = num(movement.index_return);
+  const beta = num(movement.beta);
+  const start = num(movement.index_start);
+  const end = num(movement.index_end);
+  const from = text(movement.period_start);
+  const to = text(movement.period_end);
+
+  const rows: string[][] = [];
+  if (before !== null) {
+    rows.push([
+      'Indicated equity value — last round, unadjusted',
+      formatCurrency(before, ctx.currency, 0),
+      'Backsolve to the round price per share',
+    ]);
+  }
+  // Index *levels*, not multiples — `ratio` would suffix them with an "x" and
+  // print the S&P at "4812.60x".
+  const level = (v: number) => INT.format(Math.round(v * 100) / 100);
+  rows.push([
+    `Benchmark${indexName ? ` — ${esc(indexName)}` : ''}`,
+    start !== null && end !== null ? `${level(start)} → ${level(end)}` : '—',
+    from && to ? `${esc(from)} to ${esc(to)}` : 'Round date to valuation date',
+  ]);
+  if (indexReturn !== null) {
+    rows.push(['Benchmark return over the period', formatPercent(indexReturn), 'End ÷ start − 1']);
+  }
+  if (beta !== null) {
+    rows.push([
+      'Sensitivity to the benchmark (β)',
+      beta.toFixed(2),
+      'Elasticity of the subject to the benchmark',
+    ]);
+  }
+  rows.push(['Adjustment factor', ratio(factor), '1 + β × benchmark return']);
+
+  return [
+    P(
+      'The option-pricing backsolve reads a value out of a dated financing round. Where time has ' +
+        'passed between that round and the valuation date, the indication is moved by the return of ' +
+        'a public benchmark over the same interval, geared by the subject’s sensitivity to it.',
+    ),
+    table({
+      head: ['Market movement adjustment', 'Value', 'Basis'],
+      rows,
+      foot: [
+        'Indicated equity value — last round, as adjusted',
+        after === null ? '—' : formatCurrency(after, ctx.currency, 0),
+        'Carried into the weighting above',
+      ],
+    }),
+  ];
 }
 
 // ── Exhibit C — income approach ──────────────────────────────────────────────
@@ -806,7 +891,259 @@ export function discountExhibit(
         'Non-marketable, minority basis',
       ],
     }),
+    ...classValueBlock(results, dloc, dlom, ctx),
   ]);
+}
+
+/**
+ * Each class, marketable and non-marketable side by side.
+ *
+ * The chain above is the *common* share, which is what a §409A concludes on.
+ * A reader of the cap table wants the same two numbers for every class —
+ * a 409A that allocates $13.2M to Series B and never says what that is per
+ * share on a marketable and a non-marketable basis makes the reader do the
+ * arithmetic from two separate exhibits.
+ *
+ * The discounts are applied only to the classes they were concluded for. DLOC
+ * and DLOM were reasoned about a minority holder of common with no market and
+ * no ability to compel an exit; a preferred series holding a board seat and a
+ * registration right is not in that position, and carrying the same two
+ * percentages across the whole table would assert a conclusion nobody reached.
+ * Those rows state their marketable value and leave the discounted column
+ * blank, with the reason in the note.
+ */
+function classValueBlock(
+  results: Record<string, unknown>,
+  dloc: number,
+  dlom: number,
+  ctx: ExhibitContext,
+): string[] {
+  const classes = record(record(results.allocation)?.classes);
+  if (!classes) return [];
+  const factor = (1 - dloc) * (1 - dlom);
+
+  const rows = Object.entries(classes)
+    .map(([name, raw]) => ({ name, value: record(raw) }))
+    .filter((c) => c.value !== null)
+    .map((c) => {
+      const perShare = num(c.value?.per_share);
+      const kind = text(c.value?.kind) ?? '—';
+      const discounted = kind === 'common' && perShare !== null ? perShare * factor : null;
+      return [
+        esc(c.name),
+        kind,
+        num(c.value?.shares) === null ? '—' : shares(num(c.value?.shares) as number),
+        perShare === null ? '—' : formatCurrency(perShare, ctx.currency, 4),
+        discounted === null ? '—' : formatCurrency(discounted, ctx.currency, 4),
+      ];
+    });
+  if (rows.length === 0) return [];
+
+  return [
+    P(
+      'The allocation values every class on a marketable, controlling basis. The concluded discounts ' +
+        'are applied below to the common stock, which is the interest this valuation concludes on. ' +
+        'They are not carried across the preferred and option classes: a discount for lack of control ' +
+        'and a discount for lack of marketability were reasoned about a minority holder of common with ' +
+        'no market and no ability to compel an exit, and a series holding governance and registration ' +
+        'rights is not in that position.',
+    ),
+    table({
+      head: [
+        'Class',
+        'Type',
+        'Shares',
+        'Value per share — marketable',
+        'Value per share — non-marketable',
+      ],
+      rows,
+    }),
+  ];
+}
+
+// ── Exhibit H-1 — the marketability discount, derived ────────────────────────
+
+/** Study rows carry their own names; everything else is a model. */
+const DLOM_MODEL_NAMES: Record<string, string> = {
+  chaffee: 'Chaffee protective-put model',
+  finnerty: 'Finnerty average-strike put model',
+  ghaidarov: 'Ghaidarov average-strike put model',
+  longstaff: 'Longstaff upper bound',
+  restricted_stock: 'Restricted-stock studies',
+  qualitative: 'Qualitative — analyst judgement',
+};
+
+/**
+ * How the DLOM was arrived at, and the class volatilities that bear on it.
+ *
+ * Exhibit H applies the discount; nothing said where it came from. A reviewer
+ * asked to accept a 24.5% marketability discount cannot check a bare
+ * percentage — the model is arithmetic nobody disputes, and the volatility and
+ * holding period it was struck on *are* the argument. The legacy deliverable
+ * devotes six subsections to this (its §§10.1–10.6) and N409 had none.
+ *
+ * Two blocks, and both are conditional on what the run produced:
+ *
+ *   * the derivation — the model applied and its inputs, or the study set and
+ *     the statistic blended from it. `dlom_detail` is what the engine now
+ *     records for every method (engine/compute.py `_model_detail`), so this is
+ *     transcription rather than re-derivation: the exhibit cannot state inputs
+ *     the calculation did not actually use.
+ *
+ *   * the class volatilities — only the breakpoint waterfall produces these,
+ *     and they matter because the volatility that belongs in an option-based
+ *     DLOM struck on *common* is common's own, not the enterprise's. Common
+ *     sits behind the whole preference stack, so it is a levered claim and its
+ *     return volatility is higher. Showing the two side by side is what lets a
+ *     reader see whether the discount was struck on the right one.
+ */
+export function dlomDerivationExhibit(
+  results: Record<string, unknown>,
+  // Every figure here is a rate, a ratio or a period — nothing is denominated,
+  // so unlike its neighbours this exhibit needs neither the currency nor the
+  // valuation date. The parameter stays for symmetry with the rest of the
+  // module and with `buildExhibits`, which calls them uniformly.
+  _ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const discounts = record(results.discounts);
+  const detail = record(discounts?.dlom_detail);
+  const classVol = record(results.class_volatility);
+  if (!detail && !classVol) return null;
+
+  const body: string[] = [
+    P(
+      'The discount applied in Exhibit H is derived below. The model or study is the uncontested ' +
+        'part; the inputs it was struck on are the analysis, and are stated here so that the ' +
+        'conclusion can be tested rather than merely read.',
+    ),
+  ];
+
+  if (detail) {
+    const method = text(detail.method) ?? text(discounts?.dlom_method) ?? 'unknown';
+    const rows: string[][] = [['Method applied', DLOM_MODEL_NAMES[method] ?? esc(method), '']];
+
+    const formula = text(detail.formula);
+    if (formula) rows.push(['Basis', esc(formula), '']);
+
+    const vol = num(detail.volatility);
+    if (vol !== null) {
+      rows.push([
+        'Volatility applied (σ)',
+        formatPercent(vol),
+        'Of the interest valued over the holding period',
+      ]);
+    }
+    const term = num(detail.time_to_liquidity_years);
+    if (term !== null) {
+      rows.push([
+        'Holding period applied (T)',
+        `${term.toFixed(2)} years`,
+        'Expected time to a liquidity event',
+      ]);
+    }
+    const rate = num(detail.risk_free_rate);
+    if (rate !== null) {
+      rows.push(['Risk-free rate (r)', formatPercent(rate, 2), 'Matched to the holding period']);
+    }
+    if (detail.is_upper_bound === true) {
+      const bound = num(detail.bound_multiple);
+      rows.push([
+        'Reported as an upper bound',
+        bound === null ? 'Yes' : ratio(bound),
+        'Longstaff bounds the discount rather than estimating it — the concluded ' +
+          'figure is a ceiling, not a point estimate',
+      ]);
+    }
+    const basis = text(detail.basis);
+    if (basis) rows.push(['Basis for the judgement', esc(basis), '']);
+
+    const concluded = num(detail.dlom) ?? num(discounts?.dlom);
+    body.push(
+      table({
+        head: ['Derivation', 'Value', 'Note'],
+        rows,
+        foot: [
+          'Concluded discount for lack of marketability',
+          concluded === null ? '—' : formatPercent(concluded),
+          'Carried into Exhibit H',
+        ],
+      }),
+    );
+
+    // The study set, where the conclusion rests on one. Set selection is the
+    // whole objection to the method, so naming the studies is not a courtesy.
+    const studies = list(detail.studies)
+      .map((raw) => record(raw))
+      .filter((s): s is Record<string, unknown> => s !== null);
+    if (studies.length > 0) {
+      const statistic = text(detail.statistic) ?? 'median';
+      body.push(
+        P(
+          `The discount is the ${esc(statistic)} of the selected restricted-stock studies. Observations ` +
+            'predating the 1997 and 2008 amendments to Rule 144 measured a longer restriction on ' +
+            'resale than applies today, and are identified as such.',
+        ),
+        table({
+          head: ['Study', 'Period', 'Observations', 'Discount'],
+          rows: studies.map((s) => {
+            const value = num(s.median) ?? num(s.mean) ?? num(s.dlom);
+            const from = num(s.period_start);
+            const to = num(s.period_end);
+            return [
+              text(s.study) ?? '—',
+              from !== null && to !== null ? `${from}–${to}` : '—',
+              num(s.observations) === null ? '—' : shares(num(s.observations) as number),
+              value === null ? '—' : formatPercent(value),
+            ];
+          }),
+        }),
+      );
+    }
+  }
+
+  if (classVol) {
+    const classes = record(classVol.classes);
+    const enterprise = num(classVol.enterprise_volatility);
+    if (classes && enterprise !== null) {
+      const rows = Object.entries(classes)
+        .map(([name, raw]) => ({ name, value: record(raw) }))
+        .filter((c) => c.value !== null)
+        .map((c) => {
+          const vol = num(c.value?.volatility);
+          const elasticity = num(c.value?.elasticity);
+          const delta = num(c.value?.delta);
+          return [
+            esc(c.name),
+            text(c.value?.kind) ?? '—',
+            delta === null ? '—' : delta.toFixed(4),
+            elasticity === null ? '—' : ratio(elasticity, 2),
+            vol === null ? '—' : formatPercent(vol),
+          ];
+        });
+      body.push(
+        P(
+          `The volatility above describes the enterprise. Each share class is a levered claim on it — ` +
+            'under the breakpoint method, a spread of call options — so each carries its own return ' +
+            'volatility: σ_class = σ × (equity value ÷ class value) × ∂(class value)/∂(equity value). ' +
+            'Common ranks behind the preference stack and is therefore the most geared. The volatility ' +
+            'that belongs in an option-based discount struck on a particular class is that class’s own.',
+        ),
+        table({
+          head: ['Class', 'Type', 'Delta', 'Gearing', 'Class volatility'],
+          rows,
+          foot: [
+            'Enterprise',
+            '',
+            classVol.delta_total === undefined ? '' : Number(classVol.delta_total).toFixed(4),
+            '1.00x',
+            formatPercent(enterprise),
+          ],
+        }),
+      );
+    }
+  }
+
+  return section('Exhibit H-1 — Marketability Discount: Derivation', body);
 }
 
 // ── assembly ─────────────────────────────────────────────────────────────────
@@ -843,5 +1180,8 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     allocationExhibit(results, ctx),
     pwermExhibit(results, ctx),
     discountExhibit(results, ctx),
+    // Immediately after H, because it is H's supporting detail — the same
+    // relationship D-1 has with D.
+    dlomDerivationExhibit(results, ctx),
   ].filter((s): s is ReportPdfSection => s !== null);
 }

@@ -103,8 +103,18 @@ export async function saveVersion(
     report: ReportRow;
     content: ReportContent;
     actor: EventActor;
-    /** audit trail: 'editor' for a save, or the version number a revert restored */
-    origin: 'editor' | { revertedFrom: number };
+    /**
+     * Audit trail: 'editor' for a save, the version a revert restored, or the
+     * skeleton a re-draft instantiated.
+     */
+    origin: 'editor' | { revertedFrom: number } | { redraftedFrom: string };
+    /**
+     * Moves the report onto a new skeleton. Only the re-draft path passes it —
+     * an ordinary save keeps the version the body was authored against, because
+     * `template_version` is what the cover page states the document was drawn
+     * from and editing prose does not change that.
+     */
+    templateVersion?: string;
   },
 ): Promise<{ report: ReportRow; version: ReportVersionRow }> {
   return withTransaction(pool, async (client) => {
@@ -123,18 +133,30 @@ export async function saveVersion(
       [newUlid(), locked.id, nextVersion, JSON.stringify(args.content), args.actor.actorId ?? null],
     );
     const { rows: reportRows } = await client.query<ReportRow>(
-      'UPDATE reports SET current_version = $1, updated_at = now() WHERE id = $2 RETURNING *',
-      [nextVersion, locked.id],
+      `UPDATE reports
+          SET current_version = $1,
+              template_version = COALESCE($3, template_version),
+              updated_at = now()
+        WHERE id = $2
+      RETURNING *`,
+      [nextVersion, locked.id, args.templateVersion ?? null],
     );
 
-    const isRevert = args.origin !== 'editor';
+    const restored =
+      typeof args.origin === 'object' && 'revertedFrom' in args.origin ? args.origin.revertedFrom : null;
+    const redrafted =
+      typeof args.origin === 'object' && 'redraftedFrom' in args.origin ? args.origin.redraftedFrom : null;
     await recordEvent(client, {
       valuationId: locked.valuation_id,
-      type: isRevert ? EVENT_TYPES.reportReverted : EVENT_TYPES.reportSaved,
+      type: restored !== null ? EVENT_TYPES.reportReverted : EVENT_TYPES.reportSaved,
       actor: args.actor,
       payload: {
         version: nextVersion,
-        ...(isRevert ? { restored_version: (args.origin as { revertedFrom: number }).revertedFrom } : {}),
+        ...(restored !== null ? { restored_version: restored } : {}),
+        // A re-draft is a save — the body is new content on a new version — but
+        // one whose provenance is a skeleton rather than a person, and an audit
+        // reader needs to be able to tell the two apart.
+        ...(redrafted !== null ? { redrafted_from_template: redrafted } : {}),
       },
     });
     return { report: reportRows[0]!, version: versionRows[0]! };

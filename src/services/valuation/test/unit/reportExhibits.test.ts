@@ -6,6 +6,7 @@ import {
   buildExhibits,
   capitalizationExhibit,
   discountExhibit,
+  dlomDerivationExhibit,
   incomeExhibit,
   marketExhibit,
   peerSetExhibit,
@@ -655,5 +656,241 @@ describe('Exhibit F — a simulated allocation', () => {
       },
     };
     expect(pwermExhibit(pwerm, { currency: 'USD' })).not.toBeNull();
+  });
+});
+
+// ── Exhibit B — the market movement adjustment ───────────────────────────────
+
+describe('market movement in Exhibit B', () => {
+  const MOVED = {
+    ...RESULTS,
+    market_movement: {
+      factor: 0.899,
+      index_return: -0.0878,
+      beta: 1.15,
+      index_start: 4812.6,
+      index_end: 4390.1,
+      index_name: 'S&P North American Technology Software Index',
+      period_start: '2025-10-15',
+      period_end: '2026-06-30',
+    },
+    approaches: {
+      ...RESULTS.approaches,
+      opm_backsolve: {
+        ...RESULTS.approaches.opm_backsolve,
+        equity_value: 46_748_000,
+        unadjusted_equity_value: 52_000_000,
+        market_movement: { factor: 0.899 },
+      },
+    },
+  };
+
+  const html = () => plain(approachExhibit(MOVED, CONTEXT)!.html);
+
+  it('shows the round indication before and after the adjustment', () => {
+    // Printing only the adjusted figure would hide the most contestable step in
+    // the reconciliation: the round transacted at a price, and this valuation
+    // concluded the price means something different today.
+    expect(html()).toContain('$52,000,000');
+    expect(html()).toContain('$46,748,000');
+  });
+
+  it('names the benchmark, the period and the beta', () => {
+    const text = html();
+    expect(text).toContain('S&amp;P North American Technology Software Index');
+    expect(text).toContain('2025-10-15 to 2026-06-30');
+    expect(text).toContain('1.15');
+    expect(text).toContain('-8.8%');
+  });
+
+  it('prints index levels as levels, not as multiples', () => {
+    // `ratio()` would suffix them and print the S&P at "4812.60x".
+    const text = html();
+    expect(text).toContain('4,812.6');
+    expect(text).not.toContain('4,812.6x');
+  });
+
+  it('states the factor and how it was derived', () => {
+    expect(html()).toContain('0.8990x');
+    expect(html()).toContain('1 + β × benchmark return');
+  });
+
+  it('says nothing at all when no adjustment was made', () => {
+    // The common case. A row reading "1.0000x" would imply somebody measured a
+    // movement, on a valuation dated days after its round where nobody did.
+    const text = plain(approachExhibit(RESULTS, CONTEXT)!.html);
+    expect(text).not.toContain('Market movement');
+    expect(text).not.toContain('Benchmark');
+  });
+});
+
+// ── Exhibit H-1 — the marketability discount, derived ────────────────────────
+
+describe('dlomDerivationExhibit', () => {
+  const MODEL = {
+    ...RESULTS,
+    discounts: {
+      dloc: 0.1,
+      dlom: 0.2448,
+      dlom_method: 'finnerty',
+      dlom_detail: {
+        method: 'finnerty',
+        volatility: 0.62,
+        time_to_liquidity_years: 4,
+        dlom: 0.244969,
+        formula: 'Finnerty average-strike put — 2N(v/2) - 1 with effective variance',
+      },
+    },
+    class_volatility: {
+      enterprise_volatility: 0.62,
+      time_to_exit_years: 4,
+      risk_free_rate: 0.0421,
+      equity_value: 42_000_000,
+      delta_total: 1,
+      classes: {
+        Common: { kind: 'common', value: 19_900_045, delta: 0.555, elasticity: 1.1971, volatility: 0.7422 },
+        'Series A': { kind: 'preferred', value: 6_215_857, delta: 0.1422, elasticity: 0.9762, volatility: 0.6052 },
+      },
+    },
+  };
+
+  it('states the inputs the model was struck on', () => {
+    // A bare 24.5% is not reviewable: the model is arithmetic nobody disputes,
+    // and the volatility and holding period *are* the argument.
+    const text = plain(dlomDerivationExhibit(MODEL, CONTEXT)!.html);
+    expect(text).toContain('Finnerty average-strike put model');
+    expect(text).toContain('62.0%');
+    expect(text).toContain('4.00 years');
+    expect(text).toContain('24.5%');
+  });
+
+  it('shows each class carrying its own volatility, above the enterprise for common', () => {
+    const text = plain(dlomDerivationExhibit(MODEL, CONTEXT)!.html);
+    // Common ranks behind the whole preference stack, so it is a levered claim
+    // and its return volatility exceeds the enterprise's — which is the whole
+    // reason the schedule is worth printing.
+    expect(text).toContain('74.2%');
+    expect(text).toContain('60.5%');
+    expect(text).toContain('1.20x');
+  });
+
+  it('discloses a Longstaff conclusion as an upper bound', () => {
+    const longstaff = {
+      ...RESULTS,
+      discounts: {
+        dloc: 0.1,
+        dlom: 0.31,
+        dlom_method: 'longstaff',
+        dlom_detail: { method: 'longstaff', bound_multiple: 1.4498, is_upper_bound: true, dlom: 0.31 },
+      },
+    };
+    const text = plain(dlomDerivationExhibit(longstaff, CONTEXT)!.html);
+    expect(text).toContain('upper bound');
+    expect(text).toContain('1.4498x');
+  });
+
+  it('names the restricted-stock studies a blended conclusion rests on', () => {
+    const studies = {
+      ...RESULTS,
+      discounts: {
+        dloc: 0.1,
+        dlom: 0.221,
+        dlom_method: 'restricted_stock',
+        dlom_detail: {
+          method: 'restricted_stock',
+          statistic: 'median',
+          dlom: 0.221,
+          studies: [
+            { study: 'silber', period_start: 1981, period_end: 1988, observations: 69, median: 0.339 },
+            { study: 'stout_2018', period_start: 2008, period_end: 2018, observations: 143, median: 0.182 },
+          ],
+        },
+      },
+    };
+    const text = plain(dlomDerivationExhibit(studies, CONTEXT)!.html);
+    // Set selection is the whole objection to the method, so naming the studies
+    // is not a courtesy.
+    expect(text).toContain('silber');
+    expect(text).toContain('stout_2018');
+    expect(text).toContain('1981–1988');
+    expect(text).toContain('Rule 144');
+  });
+
+  it('says a qualitative discount is a judgement', () => {
+    const qualitative = {
+      ...RESULTS,
+      discounts: {
+        dloc: 0.1,
+        dlom: 0.2,
+        dlom_method: 'qualitative',
+        dlom_detail: { method: 'qualitative', dlom: 0.2, basis: 'analyst judgement — no model or study was applied' },
+      },
+    };
+    expect(plain(dlomDerivationExhibit(qualitative, CONTEXT)!.html)).toContain('judgement');
+  });
+
+  it('renders on the class volatilities alone when no model detail exists', () => {
+    const { discounts: _d, ...noDetail } = MODEL;
+    expect(dlomDerivationExhibit(noDetail, CONTEXT)).not.toBeNull();
+  });
+
+  it('is absent when the run produced neither', () => {
+    // A calculation predating the engine change, or an aggregate allocation
+    // with no cap table to decompose. The report reads as it did before.
+    expect(dlomDerivationExhibit(RESULTS, CONTEXT)).toBeNull();
+  });
+
+  it('follows Exhibit H in the assembled deliverable', () => {
+    const headings = buildExhibits(
+      calculation({ results: MODEL } as Partial<CalculationRow>),
+      CONTEXT,
+    ).map((s) => s.heading);
+    expect(headings.at(-2)).toBe('Exhibit H — Discounts and Concluded Value');
+    expect(headings.at(-1)).toBe('Exhibit H-1 — Marketability Discount: Derivation');
+  });
+
+  it('escapes a class name rather than emitting it as markup', () => {
+    const hostile = {
+      ...MODEL,
+      class_volatility: {
+        ...MODEL.class_volatility,
+        classes: { '<img src=x>': { kind: 'common', value: 1, delta: 1, elasticity: 1, volatility: 0.5 } },
+      },
+    };
+    const html = dlomDerivationExhibit(hostile, CONTEXT)!.html;
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img src=x&gt;');
+  });
+});
+
+// ── Exhibit H — value per class, marketable and non-marketable ───────────────
+
+describe('the per-class value table in Exhibit H', () => {
+  const html = () => plain(discountExhibit(RESULTS, CONTEXT)!.html);
+
+  it('states each class marketable and the common class discounted', () => {
+    const text = html();
+    expect(text).toContain('Series A');
+    expect(text).toContain('$5.0000'); // Series A, marketable
+    expect(text).toContain('$1.8281'); // Common, marketable
+    // 1.828148 × (1 − 0.10) × (1 − 0.25)
+    expect(text).toContain('$1.2340');
+  });
+
+  it('does not carry the common discounts across the preferred classes', () => {
+    // DLOC and DLOM were reasoned about a minority holder of common with no
+    // market. Applying them to a series holding governance and registration
+    // rights would assert a conclusion nobody reached.
+    const text = html();
+    expect(text).not.toContain('$3.3750'); // 5.0000 discounted, were it applied
+    expect(text).toContain('is not in that position');
+  });
+
+  it('is absent when the allocation reports no classes', () => {
+    const aggregate = { ...RESULTS, allocation: { method: 'as_converted', common_fraction: 0.8 } };
+    const text = plain(discountExhibit(aggregate, CONTEXT)!.html);
+    expect(text).not.toContain('Value per share — marketable');
+    // The common chain above it still renders — that is the exhibit's job.
+    expect(text).toContain('Concluded fair market value');
   });
 });

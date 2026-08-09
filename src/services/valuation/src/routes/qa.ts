@@ -9,6 +9,7 @@ import { latestSucceededCalculation } from '../repos/calculations.js';
 import { createQaReview, listQaReviews } from '../repos/qaReviews.js';
 import { findReportByValuation, getVersion } from '../repos/reports.js';
 import { reportReadiness } from '../domain/reportReadiness.js';
+import { reportFigures } from '../domain/reportFigures.js';
 import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -83,7 +84,13 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      */
     const report = await findReportByValuation(deps.pool, valuation.id);
     const reportVersion = report ? await getVersion(deps.pool, report.id, report.current_version) : null;
-    const readiness = reportReadiness(reportVersion?.content ?? null);
+    // Checked against what this calculation can actually fill in. A computed
+    // marker the run supplies is not a hole; one it does not is a set of literal
+    // braces on the deliverable, and is graded as such.
+    const readiness = reportReadiness(
+      reportVersion?.content ?? null,
+      reportFigures(calculation, valuation.currency),
+    );
     deterministic.checks.push({
       key: 'report_placeholders',
       label: 'Report body has no unfilled template placeholders',

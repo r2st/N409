@@ -345,6 +345,16 @@ const GLYPH_SUBSTITUTIONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\u0394/g, 'delta'],
   [/\u03b2/g, 'beta'],
   [/\u03b1/g, 'alpha'],
+  // Capital sigma, which is what a summation is written with as often as the
+  // operator below. Only the lowercase form was mapped, so `\u03a3 class values`
+  // reached the page as `? class values`.
+  [/\u03a3/g, 'sum'],
+  // Capital phi \u2014 the standard normal CDF, which is how every DLOM model in
+  // this domain is written down. `2\u03a6(v/2) \u2212 1` reached the page as `2?(v/2)`,
+  // on the exhibit whose entire purpose is to show the formula applied. `N` is
+  // the other conventional name for the same function, so the transliteration
+  // is one a reader of the model recognises rather than a spelled-out word.
+  [/\u03a6/g, 'N'],
   // Comparison and maths operators outside CP1252.
   [/\u2264/g, '<='],
   [/\u2265/g, '>='],
@@ -353,6 +363,12 @@ const GLYPH_SUBSTITUTIONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\u221e/g, 'infinity'],
   [/\u221a/g, 'sqrt'],
   [/\u2211/g, 'sum'],
+  // The partial-derivative operator. A valuation report reaches for it wherever
+  // it explains a sensitivity \u2014 the class-volatility exhibit states the gearing
+  // as sigma \u00d7 (S/V) \u00d7 \u2202V/\u2202S \u2014 and `d` is how the same quantity is written in
+  // every text that avoids the symbol.
+  [/\u2202/g, 'd'],
+  [/\u222b/g, 'integral'],
   // Arrows — a rollforward or bridge label reaches for these.
   [/\u2192/g, '->'],
   [/\u2190/g, '<-'],
@@ -2238,12 +2254,22 @@ export const RUNNING_HEAD_TOP_SLACK = 24;
  * Equity Value", naming a section four headings further down.
  *
  * And where the first section to begin on a page begins *part way down it*, the
- * page keeps the previous label, because the part above the heading belongs to
- * whatever ran over from the sheet before. That case is not rare on a valuation
- * report: a long exhibit's table continues onto the next page and the next
- * exhibit starts under it, so a sheet whose top half was Exhibit F's breakpoint
- * schedule was headed "29. Exhibit H — Discounts and Concluded Value". A reader
- * checking which schedule they are looking at is told the wrong one.
+ * page is labelled with whatever ran over from the sheet before, because that
+ * is what occupies the top. That case is not rare on a valuation report: a long
+ * exhibit's table continues onto the next page and the next exhibit starts
+ * under it, so a sheet whose top half was Exhibit F's breakpoint schedule was
+ * headed "29. Exhibit H — Discounts and Concluded Value". A reader checking
+ * which schedule they are looking at is told the wrong one.
+ *
+ * "Whatever ran over" is the last section to have *begun* on or before the
+ * previous page — not the label that page displayed. The two differ, and taking
+ * the displayed one is how the bug above survived its own fix: page 11 of the
+ * sample deliverable opens with §23 and also carries §24 and §25, so it is
+ * correctly headed "23. Index of Exhibits". Page 12 is the continuation of §25's
+ * table with §26 starting under it — and reading page 11's *label* propagated
+ * "23. Index of Exhibits" onto it, naming a section that had finished two
+ * schedules earlier. Reading the section that was actually running when page 11
+ * ended gives "25. Exhibit B", which is what the page shows.
  */
 export function runningHeadings(
   pageCount: number,
@@ -2256,6 +2282,10 @@ export function runningHeadings(
   let carried: string | null = null;
   let next = 0;
   for (let page = firstPage; page < firstPage + pageCount; page += 1) {
+    // The section running as this page opens, captured before the loop below
+    // advances `carried` past it. This is the label for a page whose top
+    // belongs to an earlier section.
+    const runningIn = carried;
     let firstOnPage: string | null = null;
     let firstStartsAtTop = false;
     while (next < sorted.length && sorted[next]!.page <= page) {
@@ -2272,10 +2302,12 @@ export function runningHeadings(
       carried = landmark.label;
       next += 1;
     }
-    // `carried` at this point is the last landmark on this page, so the label
-    // for a page whose top belongs to an earlier section has to be captured
-    // before the loop above overwrites it — hence `previous`.
-    headings.push(firstOnPage === null ? carried : firstStartsAtTop ? firstOnPage : headings[headings.length - 1] ?? firstOnPage);
+    if (firstOnPage === null) headings.push(carried);
+    else if (firstStartsAtTop) headings.push(firstOnPage);
+    // `runningIn` is null only on the very first page of the range, where
+    // nothing has run over — there the section that begins on it is the only
+    // honest answer however far down it starts.
+    else headings.push(runningIn ?? firstOnPage);
   }
   return headings;
 }

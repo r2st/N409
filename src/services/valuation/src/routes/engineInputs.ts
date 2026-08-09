@@ -78,6 +78,34 @@ export const EngineInputsBody = z
     last_round_price_per_share: nonNeg.nullable().optional(),
     last_round_class: ClassName.nullable().optional(),
 
+    /**
+     * Market-movement adjustment to the round indication
+     * (engine/market_movement.py, report §"Adjustment Factor: Market Movement").
+     *
+     * The backsolve reads a value out of a *dated* round, so a valuation months
+     * later concludes on a stale price unless it is moved by what the market
+     * did in between. Either the two benchmark levels — the reviewable form —
+     * or a return the analyst computed elsewhere.
+     *
+     * The band on the levels is only a shape check; the engine holds the real
+     * one, refusing a factor outside [0.2, 5] because a start of 56 against an
+     * end of 5,600 is a decimal point rather than a market move. Left there
+     * rather than restated here so the two cannot drift.
+     */
+    market_movement: z
+      .object({
+        index_name: z.string().trim().min(1).max(120).nullable().optional(),
+        index_start: pos.nullable().optional(),
+        index_end: pos.nullable().optional(),
+        return: z.number().min(-0.99).max(10).nullable().optional(),
+        beta: z.number().min(0).max(5).nullable().optional(),
+        period_start: DateStr.nullable().optional(),
+        period_end: DateStr.nullable().optional(),
+      })
+      .strict()
+      .nullable()
+      .optional(),
+
     // Asset approach.
     asset: z
       .object({
