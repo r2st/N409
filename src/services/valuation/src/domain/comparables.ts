@@ -20,6 +20,25 @@ export const COMPARABLE_SOURCES = ['ai', 'analyst', 'market_feed'] as const;
 export type ComparableSource = (typeof COMPARABLE_SOURCES)[number];
 
 /**
+ * Where a row's *figures* came from — a different question from who put the
+ * row in the set (migration 0133).
+ *
+ * `snapshot` is the engine's curated static reference set, which calls itself
+ * illustrative; `live` is an observed quote from the market feed, only true as
+ * of the moment beside it; `analyst` is hand-entered. Every row written before
+ * these existed is a `snapshot` row of unknown vintage, and is stored NULL
+ * rather than backfilled to a timestamp nobody has.
+ */
+export const COMPARABLE_FIGURES_SOURCES = ['snapshot', 'live', 'analyst'] as const;
+export type ComparableFiguresSource = (typeof COMPARABLE_FIGURES_SOURCES)[number];
+
+export const FIGURES_SOURCE_LABELS: Record<ComparableFiguresSource, string> = {
+  snapshot: 'Reference snapshot',
+  live: 'Observed market data',
+  analyst: 'Analyst entered',
+};
+
+/**
  * Rows an analyst may delete outright.
  *
  * Only their own. An AI- or feed-sourced row is excluded with a reason, which

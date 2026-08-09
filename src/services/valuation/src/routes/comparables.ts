@@ -45,6 +45,24 @@ import {
 /** Wall clock for one screen. The engine's universe is in-process, so this is generous. */
 const SCREEN_TIMEOUT_MS = 20_000;
 
+/**
+ * Wall clock for one live-feed fetch. Shorter than the screen and per ticker,
+ * not per set: this one leaves the process for a third-party API, and a refresh
+ * of a dozen comps must not be able to hold a request open for minutes because
+ * the far end is slow. A timeout here is a `unavailable` row, not a failure.
+ */
+const FEED_TIMEOUT_MS = 8_000;
+
+/** The `financials` shape of `engine/v1/market-feed` (engine market_feed.py). */
+interface MarketFeedResponse {
+  /** `"yfinance"` when observed; `"fallback"` when the live source could not answer. */
+  source?: unknown;
+  warning?: unknown;
+  market_cap?: unknown;
+  total_revenue?: unknown;
+  ebitda?: unknown;
+}
+
 const TICKER = z
   .string()
   .trim()
@@ -215,6 +233,7 @@ export function registerComparableRoutes(
       ebitdaLtm: body.ebitda_ltm ?? null,
       ebitdaNtm: body.ebitda_ntm ?? null,
       ev: body.ev ?? null,
+      figuresSource: 'analyst',
       createdBy: principal.id,
     });
     await audit(valuation, principal, 'comparable_added', {
@@ -259,6 +278,14 @@ export function registerComparableRoutes(
       }
     }
 
+    // Editing a figure by hand makes the row an analyst's figure, whatever it
+    // was before. A row that still reported "Observed market data" after
+    // somebody typed over the EV would be the provenance columns actively
+    // lying, which is worse than not having them — include/exclude and the
+    // labelling fields are judgement, not figures, and leave it alone.
+    const FIGURE_FIELDS = ['revenue_ltm', 'revenue_ntm', 'ebitda_ltm', 'ebitda_ntm', 'ev'] as const;
+    const figuresEdited = FIGURE_FIELDS.some((f) => f in body);
+
     const row = await updateComparableItem(deps.pool, valuation.id, itemId, {
       ...('ticker' in body ? { ticker: body.ticker ?? null } : {}),
       ...('name' in body && body.name !== undefined ? { name: body.name } : {}),
@@ -268,6 +295,7 @@ export function registerComparableRoutes(
       ...('ebitda_ltm' in body ? { ebitdaLtm: body.ebitda_ltm ?? null } : {}),
       ...('ebitda_ntm' in body ? { ebitdaNtm: body.ebitda_ntm ?? null } : {}),
       ...('ev' in body ? { ev: body.ev ?? null } : {}),
+      ...(figuresEdited ? { figuresSource: 'analyst' as const, figuresAsOf: new Date() } : {}),
       included,
       excludeReason,
     });
@@ -399,6 +427,13 @@ export function registerComparableRoutes(
       // `Company.revenue`), so it is what the stored EV column holds — storing
       // it under any other name would suggest a precision the snapshot has not
       // got, and the implied multiples reproduce the engine's own exactly.
+      // Stamped `snapshot`, because that is what the engine screened against.
+      // `market_data.py` calls itself "a curated static snapshot… an
+      // illustrative reference point, not a real-time quote", and until these
+      // columns existed nothing carried that sentence as far as the reviewer
+      // reading the multiple in Exhibit D-1. POST .../comparables/refresh
+      // replaces these figures with observed ones and re-stamps the row.
+      const screenedAt = new Date();
       const selected = (screen.selected ?? []).map((c) => {
         const revenueLtm = fin(c.revenue);
         const margin = fin(c.ebitda_margin);
@@ -412,6 +447,8 @@ export function registerComparableRoutes(
           ev: fin(c.market_cap),
           score: fin(c.score),
           scoreBreakdown: c.breakdown ?? {},
+          figuresSource: 'snapshot' as const,
+          figuresAsOf: screenedAt,
         };
       });
       const rejected = (screen.screened_out ?? []).map((c) => ({
@@ -438,6 +475,118 @@ export function registerComparableRoutes(
         statistics: summarizeSet(items),
         screened: written.length,
         target: screen.target ?? target,
+      });
+    },
+  );
+
+  /**
+   * Replace the peer set's figures with observed market data.
+   *
+   * `engine/v1/market-feed` has served live yfinance financials, with a
+   * documented graceful fallback, since it was written — and had no caller, so
+   * every multiple on the platform traced back to the engine's static
+   * reference snapshot however old that snapshot was. This is that endpoint's
+   * caller.
+   *
+   * Three rules the shape follows from:
+   *
+   *   * A row is refreshed or it is left exactly as it was. The feed answers
+   *     per ticker and can answer for some and not others; half-updating a row
+   *     from a partial response would produce an EV from today against a
+   *     revenue from the snapshot, and the implied multiple would be a number
+   *     that never existed anywhere.
+   *   * A fallback is reported, not swallowed. The engine returns
+   *     `source: "fallback"` with a warning precisely so a caller can say the
+   *     figures are estimates; the response carries that per ticker, and the
+   *     rows keep the provenance they already had.
+   *   * Analyst rows are not touched. Somebody typed those on purpose.
+   */
+  app.post(
+    '/api/v1/valuations/:id/comparables/refresh',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id } = req.params as { id: string };
+      const valuation = await loadOps(id, principal);
+
+      const items = await listComparableItems(deps.pool, valuation.id);
+      // Included rows only: the excluded half is kept as the record of what was
+      // considered, and re-fetching figures for a comp somebody screened out
+      // spends the quota to update a number no approach reads.
+      const targets = items.filter((r) => r.included && r.ticker !== null && r.figures_source !== 'analyst');
+      if (targets.length === 0) {
+        throw problems.unprocessable(
+          'No included comparable in this set carries a ticker to refresh — screen the set, ' +
+            'or add a comp with a ticker first',
+        );
+      }
+
+      const refreshed: Array<{ ticker: string; as_of: string }> = [];
+      const unavailable: Array<{ ticker: string; warning: string }> = [];
+
+      for (const row of targets) {
+        const ticker = row.ticker!;
+        let feed: MarketFeedResponse;
+        try {
+          feed = await postJson<MarketFeedResponse>(
+            'engine',
+            `${deps.engineUrl}/engine/v1/market-feed`,
+            { kind: 'financials', ticker },
+            {
+              timeoutMs: FEED_TIMEOUT_MS,
+              record: { valuationId: valuation.id, name: 'engine market-feed' },
+            },
+          );
+        } catch (err) {
+          if (err instanceof InternalServiceError) {
+            // One unreachable ticker is not a failed refresh. The loop is the
+            // unit of work an analyst pressed the button for, and reporting
+            // "the feed is down for BADCO" beside four updated rows is more
+            // use than a 502 that leaves them guessing which.
+            req.log.warn({ err, ticker }, 'market feed fetch failed');
+            unavailable.push({ ticker, warning: err.message });
+            continue;
+          }
+          throw err;
+        }
+
+        const marketCap = fin(feed.market_cap);
+        const revenue = fin(feed.total_revenue);
+        const ebitda = fin(feed.ebitda);
+        // `source` is the engine's own word for whether this was observed. A
+        // payload that fell back carries the caller's estimates, not a quote,
+        // and writing it as `live` is the one thing these columns exist to
+        // prevent.
+        if (feed.source !== 'yfinance' || marketCap === null || revenue === null) {
+          unavailable.push({
+            ticker,
+            warning: str(feed.warning) ?? 'the live source returned no usable figures',
+          });
+          continue;
+        }
+
+        const asOf = new Date();
+        await updateComparableItem(deps.pool, valuation.id, row.id, {
+          ev: marketCap,
+          revenueLtm: revenue,
+          ebitdaLtm: ebitda,
+          figuresSource: 'live',
+          figuresAsOf: asOf,
+        });
+        refreshed.push({ ticker, as_of: asOf.toISOString() });
+      }
+
+      await audit(valuation, principal, 'comparables_refreshed', {
+        refreshed: refreshed.map((r) => r.ticker),
+        unavailable: unavailable.map((r) => r.ticker),
+      });
+
+      const after = await listComparableItems(deps.pool, valuation.id);
+      return reply.status(200).send({
+        comparables: after.map(presentComparable),
+        statistics: summarizeSet(after),
+        refreshed,
+        unavailable,
       });
     },
   );

@@ -1755,10 +1755,27 @@ export function templateForKind(kind: ValuationKind): ReportTemplate {
  * template rendered as `function Object() { [native code] }`.
  */
 export function fillTemplateVars(text: string, vars: object): string {
-  return text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => {
+  return text.replace(/\{\{(\w+)\}\}(\.(?!\.))?/g, (m, key: string, stop: string | undefined) => {
     if (!Object.hasOwn(vars, key)) return m;
     const v = (vars as unknown as Record<string, unknown>)[key];
-    return v === undefined || v === null ? m : String(v);
+    if (v === undefined || v === null) return m;
+    const filled = String(v);
+    /*
+     * A sentence ending on a name that already ends in a full stop keeps one.
+     *
+     * `{{company_name}}.` is how a skeleton ends a sentence, and most US
+     * companies are called "…, Inc." — so the 409A shipped sentences reading
+     * "the corresponding metric of Northwind Robotics, Inc.." Handling it at
+     * substitution rather than in the skeletons is what makes it hold: there is
+     * no phrasing of the template that is right for both "Inc." and "Robotics",
+     * and the same names reach ops-authored managed templates, which this
+     * function also fills.
+     *
+     * Only a lone period is absorbed — the `(?!\.)` leaves an ellipsis, which
+     * `reportReadiness` reads as an unfilled figure, exactly as it found it.
+     */
+    if (stop === undefined) return filled;
+    return filled.endsWith('.') ? filled : `${filled}.`;
   });
 }
 

@@ -704,6 +704,48 @@ describe('peer set exhibit', () => {
     expect(peerSetExhibit([], RESULTS)).toBeNull();
   });
 
+  /*
+   * Where the figures behind the multiples came from (migration 0133). A
+   * reader cannot check a multiple without knowing whether its inputs were
+   * observed in the market or read off a maintained reference table, and the
+   * exhibit could not say because nothing recorded it.
+   */
+  describe('provenance of the figures', () => {
+    const withFigures = (source: string | null, asOf: string | null = '2026-08-01T00:00:00.000Z') =>
+      peers.map((p) => (p.included ? { ...p, figures_source: source, figures_as_of: asOf } : p));
+
+    it('says so when the figures are observed market data', () => {
+      const seen = plain(peerSetExhibit(withFigures('live'), RESULTS)!.html);
+      expect(seen).toContain('observed market data');
+      expect(seen).toContain('current as at 2026-08-01');
+    });
+
+    it('says plainly that a reference figure is not a quote', () => {
+      const seen = plain(peerSetExhibit(withFigures('snapshot'), RESULTS)!.html);
+      expect(seen).toContain('maintained reference set');
+      expect(seen).toContain('rather than from a real-time market feed');
+    });
+
+    it('treats a row written before the columns existed as the reference set', () => {
+      // Null is what every pre-0133 row holds, and the reference set is where
+      // those figures came from. Silence would let a reader assume otherwise.
+      const seen = plain(peerSetExhibit(withFigures(null, null), RESULTS)!.html);
+      expect(seen).toContain('maintained reference set');
+      // …but no vintage is claimed, because none was ever recorded.
+      expect(seen).not.toContain('current as at');
+    });
+
+    it('does not pass a mixed set off as one source', () => {
+      const mixed = peers.map((p, i) =>
+        p.included
+          ? { ...p, figures_source: i === 0 ? 'live' : 'analyst', figures_as_of: '2026-08-01T00:00:00.000Z' }
+          : p,
+      );
+      const seen = plain(peerSetExhibit(mixed, RESULTS)!.html);
+      expect(seen).toContain('more than one source');
+    });
+  });
+
   it('is absent when the run applied no market approach', () => {
     // A set an analyst screened but never weighted into the conclusion is
     // working material; printing it as a supporting schedule overstates it.

@@ -44,6 +44,26 @@ interface Comparable {
   ebitda_ntm: number | null;
   score: number | null;
   multiples: Record<MultipleKey, number | null>;
+  /** Where the figures came from and when (migration 0133); null on older rows. */
+  figures_source: 'snapshot' | 'live' | 'analyst' | null;
+  figures_as_of: string | null;
+}
+
+/**
+ * Where a row's figures came from — a different question from `source`, which
+ * is who put the row in the set. An analyst reading a multiple has no way to
+ * check it without this, and until the refresh existed the honest answer for
+ * every row was the reference set.
+ */
+const FIGURES_LABELS: Record<string, string> = {
+  snapshot: 'Reference',
+  live: 'Market',
+  analyst: 'Entered',
+};
+
+interface RefreshResponse {
+  refreshed: Array<{ ticker: string; as_of: string }>;
+  unavailable: Array<{ ticker: string; warning: string }>;
 }
 
 interface MultipleSummary {
@@ -167,6 +187,32 @@ export function ComparablesTab() {
       'Could not re-screen the comparable set.',
     );
 
+  /*
+   * A refresh that reaches no ticker is not an error the user should have to
+   * read as one, so the per-ticker outcome is kept and shown rather than being
+   * collapsed into the error line. The engine's feed degrades to a documented
+   * fallback rather than failing, and a silent no-op would leave an analyst
+   * believing they were now looking at observed market data.
+   */
+  const [feedNote, setFeedNote] = useState<string | null>(null);
+  const refresh = async () => {
+    setFeedNote(null);
+    await run(async () => {
+      const res = await api<RefreshResponse>(`/valuations/${valuation.id}/comparables/refresh`, {
+        method: 'POST',
+        body: {},
+      });
+      const done = res.refreshed.length;
+      const missed = res.unavailable;
+      setFeedNote(
+        missed.length === 0
+          ? `Refreshed ${done} ${done === 1 ? 'company' : 'companies'} from observed market data.`
+          : `Refreshed ${done} of ${done + missed.length}. No live figures for ` +
+              `${missed.map((m) => m.ticker).join(', ')} — those rows keep the figures they had.`,
+      );
+    }, 'Could not refresh the comparable set from market data.');
+  };
+
   const addPeer = async (e: FormEvent) => {
     e.preventDefault();
     const ok = await run(
@@ -214,6 +260,9 @@ export function ComparablesTab() {
             <Button variant="ghost" onClick={() => setAdding((v) => !v)} disabled={busy}>
               {adding ? 'Cancel' : '+ Add peer'}
             </Button>
+            <Button variant="ghost" onClick={refresh} disabled={busy}>
+              Refresh from market
+            </Button>
             <Button onClick={screen} disabled={busy}>
               Re-screen
             </Button>
@@ -224,6 +273,12 @@ export function ComparablesTab() {
       {error && (
         <div className="mt-4">
           <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+
+      {feedNote && (
+        <div className="mt-4 rounded-lg border border-paper-300 bg-surface px-4 py-3 text-sm text-ink-500">
+          {feedNote}
         </div>
       )}
 
@@ -332,6 +387,20 @@ export function ComparablesTab() {
                       <span className="font-medium text-ink-900">{row.name}</span>
                       {row.ticker && <span className="tnum text-xs text-ink-400">{row.ticker}</span>}
                       <SourceBadge source={row.source} />
+                      {/* Where the figures came from, beside who chose the row —
+                          a multiple cannot be checked without both. Absent on
+                          rows written before the columns existed, and silence
+                          is better than guessing a vintage for them. */}
+                      {row.figures_source && (
+                        <span
+                          className="text-[0.7rem] text-ink-400"
+                          title={
+                            row.figures_as_of ? `Figures as at ${row.figures_as_of.slice(0, 10)}` : undefined
+                          }
+                        >
+                          {FIGURES_LABELS[row.figures_source] ?? row.figures_source}
+                        </span>
+                      )}
                     </div>
                   </td>
                   {columns.map((key) => (

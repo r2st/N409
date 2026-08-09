@@ -894,15 +894,17 @@ export function columnWidths(
   if (cols === 1) return [usable];
 
   const ceiling = Math.max(MIN_COLUMN_WIDTH, usable * 0.5);
-  const natural = Array.from({ length: cols }, (_, c) => {
+  const widthOf = (c: number, from: number) => {
     let widest = 0;
     rows.forEach((row, rowIdx) => {
+      if (rowIdx < from) return;
       const cell = row[c] ?? '';
       if (cell === '') return;
       widest = Math.max(widest, measure(cell, rowIdx < headerRows));
     });
     return Math.min(ceiling, Math.max(MIN_COLUMN_WIDTH, widest + TABLE_PADDING * 2));
-  });
+  };
+  const natural = Array.from({ length: cols }, (_, c) => widthOf(c, 0));
 
   const total = natural.reduce((sum, w) => sum + w, 0);
   if (total <= 0) return Array.from({ length: cols }, () => usable / cols);
@@ -914,8 +916,30 @@ export function columnWidths(
   // widthed as prose.
   const alignment = columnAlignments(rows, headerRows);
   const numeric = alignment.map((a) => a === 'right');
-  const proseTotal = natural.reduce((sum, w, i) => sum + (numeric[i] ? 0 : w), 0);
-  const numericTotal = total - proseTotal;
+
+  // What a numeric column *reserves* is the width of its widest figure, not of
+  // its heading. The reservation exists because a wrapped number reads as a
+  // mistake; a wrapped heading does not, and is the same trade this function
+  // already makes for prose columns. Measuring the heading instead inverted it:
+  // Exhibit H heads two columns "Value per share — marketable" and "Value per
+  // share — non-marketable", which between them reserved 66% of the page for
+  // cells holding "$2.0779", and the "Class" and "Type" columns either side were
+  // squeezed to the floor — so the concluding exhibit of a 409A printed its
+  // share classes as "Option / pool" and their type as "preferre / d".
+  //
+  // Only the squeeze reaches here, so this narrows nothing that already fitted:
+  // a table with room keeps its headings on one line via the branch above.
+  const reserved = natural.map((w, i) => (numeric[i] ? Math.min(w, widthOf(i, headerRows)) : w));
+  const reservedTotal = reserved.reduce((sum, w) => sum + w, 0);
+  // Dropping the headings from the reservation is often the whole shortfall. When
+  // it is, every column grows from there in proportion — which lets the headings
+  // take back what the figures did not need, rather than handing the entire
+  // surplus to the prose columns and leaving a label column three times the width
+  // of anything in it.
+  if (reservedTotal <= usable) return reserved.map((w) => (w / reservedTotal) * usable);
+
+  const proseTotal = reserved.reduce((sum, w, i) => sum + (numeric[i] ? 0 : w), 0);
+  const numericTotal = reservedTotal - proseTotal;
 
   // Prose has to keep a floor, or a wide figure column would reduce a label to
   // an unreadable ribbon — the failure this is meant to prevent, mirrored.
@@ -926,7 +950,7 @@ export function columnWidths(
   }
 
   const forProse = usable - numericTotal;
-  return natural.map((w, i) => (numeric[i] ? w : (w / proseTotal) * forProse));
+  return reserved.map((w, i) => (numeric[i] ? w : (w / proseTotal) * forProse));
 }
 
 const TABLE_PADDING = 5;

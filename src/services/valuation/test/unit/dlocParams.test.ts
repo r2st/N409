@@ -93,9 +93,7 @@ describe('dloc_study_table', () => {
 
   it('accepts a minimal row and the optional period', () => {
     expect(ok({ dloc_study_table: [row] }).success).toBe(true);
-    expect(
-      ok({ dloc_study_table: [{ ...row, period_start: 2019, period_end: 2024 }] }).success,
-    ).toBe(true);
+    expect(ok({ dloc_study_table: [{ ...row, period_start: 2019, period_end: 2024 }] }).success).toBe(true);
   });
 
   it('carries a premium, not a discount', () => {

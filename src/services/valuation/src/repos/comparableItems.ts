@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
-import type { ComparableSource } from '../domain/comparables.js';
+import type { ComparableFiguresSource, ComparableSource } from '../domain/comparables.js';
 
 /**
  * The persisted peer set (migration 0119).
@@ -29,6 +29,14 @@ export interface ComparableItemRow {
   ev: number | null;
   score: number | null;
   score_breakdown: Record<string, unknown>;
+  /**
+   * Where this row's *figures* came from, and when (migration 0133) — a
+   * different question from `source`, which is who put the row in the set.
+   * NULL on every row written before the columns existed, and that means the
+   * engine's static snapshot at an unknown moment.
+   */
+  figures_source: ComparableFiguresSource | null;
+  figures_as_of: Date | null;
   created_by: string | null;
   created_at: Date;
   updated_at: Date;
@@ -93,16 +101,26 @@ export interface ComparableItemInput {
   ev?: number | null;
   score?: number | null;
   scoreBreakdown?: unknown;
+  /** Both or neither — the schema's pair CHECK, stated once here too. */
+  figuresSource?: ComparableFiguresSource | null;
+  figuresAsOf?: Date | null;
   createdBy?: string | null;
 }
 
 const INSERT_SQL = `
   INSERT INTO comparable_items
     (id, valuation_id, ticker, name, sic, source, included, exclude_reason,
-     revenue_ltm, revenue_ntm, ebitda_ltm, ebitda_ntm, ev, score, score_breakdown, created_by)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16)`;
+     revenue_ltm, revenue_ntm, ebitda_ltm, ebitda_ntm, ev, score, score_breakdown,
+     figures_source, figures_as_of, created_by)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18)`;
 
 function insertParams(input: ComparableItemInput): unknown[] {
+  // A source with no moment is a claim with no vintage, and a moment with no
+  // source names nothing. The schema refuses the mismatch; normalising here
+  // means a caller that sets one and forgets the other gets the sane row
+  // rather than a constraint violation halfway through a bulk screen.
+  const figuresSource = input.figuresSource ?? null;
+  const figuresAsOf = figuresSource === null ? null : (input.figuresAsOf ?? new Date());
   return [
     newUlid(),
     input.valuationId,
@@ -119,6 +137,8 @@ function insertParams(input: ComparableItemInput): unknown[] {
     input.ev ?? null,
     input.score ?? null,
     JSON.stringify(input.scoreBreakdown ?? {}),
+    figuresSource,
+    figuresAsOf,
     input.createdBy ?? null,
   ];
 }
@@ -142,6 +162,8 @@ export interface ComparableItemPatch {
   ebitdaLtm?: number | null;
   ebitdaNtm?: number | null;
   ev?: number | null;
+  figuresSource?: ComparableFiguresSource | null;
+  figuresAsOf?: Date | null;
 }
 
 const PATCH_COLUMNS: Array<[keyof ComparableItemPatch, string]> = [
@@ -155,6 +177,8 @@ const PATCH_COLUMNS: Array<[keyof ComparableItemPatch, string]> = [
   ['ebitdaLtm', 'ebitda_ltm'],
   ['ebitdaNtm', 'ebitda_ntm'],
   ['ev', 'ev'],
+  ['figuresSource', 'figures_source'],
+  ['figuresAsOf', 'figures_as_of'],
 ];
 
 /** Sparse update; an absent key leaves the column alone, an explicit null clears it. */

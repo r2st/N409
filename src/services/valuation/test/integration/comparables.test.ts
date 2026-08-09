@@ -15,10 +15,29 @@ const dbUp = await isDbAvailable();
  * plumbing that makes those two reachable.
  */
 
+/** What the market-feed stub answers for one ticker, keyed by ticker. */
+type FeedReply = Record<string, Record<string, unknown>>;
+
 /** Stands in for `engine/v1/comparables`: two ranked comps and one screened out. */
 async function startEngineStub() {
   const stub = Fastify({ logger: false });
   let lastInputs: Record<string, unknown> = {};
+  // The live feed's answers, per ticker. Default is the documented fallback —
+  // no live source — because that is what an install with no network gets, and
+  // a test suite that only ever exercises the happy path would not have caught
+  // a refresh that wrote fallback estimates as observed market data.
+  let feed: FeedReply = {};
+  const feedCalls: string[] = [];
+  stub.post('/engine/v1/market-feed', async (req) => {
+    const ticker = String((req.body as { ticker?: unknown })?.ticker ?? '');
+    feedCalls.push(ticker);
+    return (
+      feed[ticker] ?? {
+        source: 'fallback',
+        warning: 'yfinance is not installed; returning the caller fallback',
+      }
+    );
+  });
   stub.post('/engine/v1/comparables', async (req) => {
     lastInputs = ((req.body as { inputs?: Record<string, unknown> })?.inputs ?? {}) as Record<
       string,
@@ -55,7 +74,16 @@ async function startEngineStub() {
   await stub.listen({ port: 0, host: '127.0.0.1' });
   const address = stub.server.address();
   const port = typeof address === 'object' && address ? address.port : 0;
-  return { url: `http://127.0.0.1:${port}`, close: () => stub.close(), inputs: () => lastInputs };
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => stub.close(),
+    inputs: () => lastInputs,
+    setFeed: (next: FeedReply) => {
+      feed = next;
+      feedCalls.length = 0;
+    },
+    feedCalls: () => [...feedCalls],
+  };
 }
 
 describe.skipIf(!dbUp)('comparable items', () => {
@@ -343,6 +371,216 @@ describe.skipIf(!dbUp)('comparable items', () => {
         [screenValuationId],
       );
       expect(rows[0]?.payload).toMatchObject({ selected: 2, screened_out: 1 });
+    });
+
+    it('stamps screened figures as coming from the reference snapshot', async () => {
+      // The screen reads `market_data.py`, which calls itself illustrative.
+      // Before migration 0133 nothing recorded that, so a reference figure and
+      // an observed quote were indistinguishable everywhere downstream.
+      const rows = (await screen()).json().comparables as Array<{
+        ticker: string;
+        figures_source: string | null;
+        figures_as_of: string | null;
+      }>;
+      const alpha = rows.find((r) => r.ticker === 'AAA');
+      expect(alpha?.figures_source).toBe('snapshot');
+      expect(alpha?.figures_as_of).toBeTruthy();
+    });
+
+    /**
+     * The live market feed — `engine/v1/market-feed`, which had no caller at
+     * all until this route, so every multiple the platform had ever reported
+     * traced back to the static reference set however old it was.
+     */
+    describe('refresh from observed market data', () => {
+      // Its own engagement, not the one above: the screening tests deliberately
+      // leave an analyst exclusion standing on BBB, and a refresh that skips
+      // excluded rows would then be tested against a one-row set by accident.
+      let feedValuationId: string;
+
+      beforeAll(async () => {
+        const created = await app.inject({
+          method: 'POST',
+          url: '/api/v1/valuations',
+          headers: authHeader(ops.token),
+          payload: { kind: '409a', company_name: 'FeedCo' },
+        });
+        feedValuationId = created.json().valuation.id;
+        for (const [key, value] of [
+          ['industry_id', 7372],
+          ['ltm_revenue', 4_000_000],
+          ['ltm_ebitda', 800_000],
+        ] as const) {
+          await app.inject({
+            method: 'PUT',
+            url: `/api/v1/valuations/${feedValuationId}/overwrites/${key}`,
+            headers: authHeader(ops.token),
+            payload: { value, reason: 'test fixture' },
+          });
+        }
+      });
+
+      const screenFeed = () =>
+        app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${feedValuationId}/comparables/screen`,
+          headers: authHeader(ops.token),
+          payload: {},
+        });
+
+      const refresh = (token = ops.token) =>
+        app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${feedValuationId}/comparables/refresh`,
+          headers: authHeader(token),
+          payload: {},
+        });
+
+      const rowsNow = async () =>
+        (
+          await app.inject({
+            method: 'GET',
+            url: `/api/v1/valuations/${feedValuationId}/comparables`,
+            headers: authHeader(ops.token),
+          })
+        ).json().comparables as Array<{
+          id: string;
+          ticker: string;
+          ev: number | null;
+          revenue_ltm: number | null;
+          ebitda_ltm: number | null;
+          included: boolean;
+          figures_source: string | null;
+          multiples: Record<string, number | null>;
+        }>;
+
+      it('rejects a non-ops caller', async () => {
+        expect((await refresh(client.token)).statusCode).toBe(403);
+      });
+
+      it('replaces the figures with observed ones and re-stamps the row', async () => {
+        await screenFeed();
+        engine.setFeed({
+          AAA: { source: 'yfinance', market_cap: 5_000, total_revenue: 250, ebitda: 60 },
+          BBB: { source: 'yfinance', market_cap: 2_800, total_revenue: 200, ebitda: 40 },
+        });
+
+        const res = await refresh();
+        expect(res.statusCode).toBe(200);
+        expect(res.json().refreshed).toHaveLength(2);
+        expect(res.json().unavailable).toEqual([]);
+
+        const alpha = (await rowsNow()).find((r) => r.ticker === 'AAA')!;
+        expect(alpha.ev).toBe(5_000);
+        expect(alpha.revenue_ltm).toBe(250);
+        expect(alpha.ebitda_ltm).toBe(60);
+        expect(alpha.figures_source).toBe('live');
+        // And the multiple the market approach reads follows the new figures:
+        // 5,000 / 250, not the snapshot's 1,000 / 100.
+        expect(alpha.multiples.ev_revenue_ltm).toBeCloseTo(20, 6);
+      });
+
+      it('leaves a row exactly as it was when the feed falls back', async () => {
+        await screenFeed();
+        // The engine returns `source: "fallback"` with a warning rather than
+        // failing. Writing those figures as observed market data is the one
+        // thing the provenance columns exist to prevent.
+        engine.setFeed({ AAA: { source: 'yfinance', market_cap: 9_000, total_revenue: 300, ebitda: 75 } });
+
+        const res = await refresh();
+        expect(res.statusCode).toBe(200);
+        expect(res.json().refreshed.map((r: { ticker: string }) => r.ticker)).toEqual(['AAA']);
+        expect(res.json().unavailable.map((r: { ticker: string }) => r.ticker)).toEqual(['BBB']);
+
+        const rows = await rowsNow();
+        const beta = rows.find((r) => r.ticker === 'BBB')!;
+        expect(beta.figures_source).toBe('snapshot');
+        expect(beta.ev).toBe(1_400); // the screened figure, untouched
+        expect(rows.find((r) => r.ticker === 'AAA')?.figures_source).toBe('live');
+      });
+
+      it('does not spend a fetch on an excluded comp', async () => {
+        await screenFeed();
+        const beta = (await rowsNow()).find((r) => r.ticker === 'BBB')!;
+        await app.inject({
+          method: 'PATCH',
+          url: `/api/v1/valuations/${feedValuationId}/comparables/${beta.id}`,
+          headers: authHeader(ops.token),
+          payload: { included: false, exclude_reason: 'not comparable on scale' },
+        });
+
+        engine.setFeed({ AAA: { source: 'yfinance', market_cap: 5_000, total_revenue: 250, ebitda: 60 } });
+        await refresh();
+        expect(engine.feedCalls()).toEqual(['AAA']);
+      });
+
+      it('does not overwrite figures an analyst entered by hand', async () => {
+        await screenFeed();
+        const added = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${feedValuationId}/comparables`,
+          headers: authHeader(ops.token),
+          payload: { ticker: 'HAND', name: 'Hand Entered', ev: 777, revenue_ltm: 77 },
+        });
+        expect(added.statusCode).toBe(201);
+        expect(added.json().comparable.figures_source).toBe('analyst');
+
+        engine.setFeed({
+          AAA: { source: 'yfinance', market_cap: 5_000, total_revenue: 250, ebitda: 60 },
+          HAND: { source: 'yfinance', market_cap: 1, total_revenue: 1, ebitda: 1 },
+        });
+        await refresh();
+        expect(engine.feedCalls()).not.toContain('HAND');
+        const hand = (await rowsNow()).find((r) => r.ticker === 'HAND')!;
+        expect(hand.ev).toBe(777);
+        expect(hand.figures_source).toBe('analyst');
+      });
+
+      it('marks a row an analyst figure once they have typed over it', async () => {
+        await screenFeed();
+        engine.setFeed({
+          AAA: { source: 'yfinance', market_cap: 5_000, total_revenue: 250, ebitda: 60 },
+          BBB: { source: 'yfinance', market_cap: 2_800, total_revenue: 200, ebitda: 40 },
+        });
+        await refresh();
+
+        const alpha = (await rowsNow()).find((r) => r.ticker === 'AAA')!;
+        const patched = await app.inject({
+          method: 'PATCH',
+          url: `/api/v1/valuations/${feedValuationId}/comparables/${alpha.id}`,
+          headers: authHeader(ops.token),
+          payload: { ev: 4_000 },
+        });
+        expect(patched.statusCode).toBe(200);
+        // It stopped being observed market data the moment somebody changed it.
+        expect(patched.json().comparable.figures_source).toBe('analyst');
+      });
+
+      it('refuses a refresh on a set with no ticker to fetch', async () => {
+        const empty = await app.inject({
+          method: 'POST',
+          url: '/api/v1/valuations',
+          headers: authHeader(ops.token),
+          payload: { kind: '409a', company_name: 'NoPeersCo' },
+        });
+        const res = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${empty.json().valuation.id}/comparables/refresh`,
+          headers: authHeader(ops.token),
+          payload: {},
+        });
+        expect(res.statusCode).toBe(422);
+      });
+
+      it('records the refresh on the admin event spine', async () => {
+        const { rows } = await pool.query<{ payload: Record<string, unknown> }>(
+          `SELECT payload FROM admin_events
+            WHERE subject_id = $1 AND type = 'comparables_refreshed'
+            ORDER BY occurred_at DESC LIMIT 1`,
+          [feedValuationId],
+        );
+        expect(rows[0]?.payload).toBeTruthy();
+      });
     });
   });
 });

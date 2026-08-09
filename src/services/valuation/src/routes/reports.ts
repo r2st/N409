@@ -267,6 +267,10 @@ async function summaryFor(
     source: row.source,
     score: row.score,
     multiples: impliedMultiples(row),
+    // Where the figures behind the multiples came from — Exhibit D-1 states it,
+    // and cannot state it if the row is not carried this far.
+    figures_source: row.figures_source,
+    figures_as_of: row.figures_as_of,
   }));
   // The analyst's concluded stage of enterprise development, from the
   // methodology params. Absent until they have concluded one — it is never

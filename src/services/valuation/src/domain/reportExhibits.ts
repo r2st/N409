@@ -75,6 +75,9 @@ export interface ExhibitPeer {
   source: string;
   score: number | null;
   multiples: Partial<Record<MultipleKey, number | null>>;
+  /** Migration 0133 — where the figures came from, and when. Null on rows written before it. */
+  figures_source?: string | null;
+  figures_as_of?: Date | string | null;
 }
 
 /**
@@ -634,6 +637,50 @@ export function peerSetExhibit(
         })
       : null;
 
+  /*
+   * Where the figures behind these multiples came from.
+   *
+   * A reader cannot check a multiple without knowing whether its inputs were
+   * observed in the market or taken from a maintained reference table, and
+   * until migration 0133 the exhibit could not tell them because nothing
+   * recorded it. Stated as a sentence under the schedule rather than a column
+   * per row: it is one fact about the set in the ordinary case, and a column
+   * of identical cells is noise.
+   */
+  const provenance = (() => {
+    if (included.length === 0) return null;
+    const kinds = new Set(included.map((p) => p.figures_source ?? 'snapshot'));
+    const asOf = included
+      .map((p) => (p.figures_as_of ? new Date(p.figures_as_of) : null))
+      .filter((d): d is Date => d !== null && !Number.isNaN(d.getTime()))
+      .sort((a, b) => a.getTime() - b.getTime())[0];
+    const stamp = asOf ? ` The figures were current as at ${asOf.toISOString().slice(0, 10)}.` : '';
+
+    if (kinds.size > 1) {
+      return P(
+        'The financial figures behind these multiples come from more than one source across the ' +
+          'set — observed market data, the maintained reference set, and analyst entry are all ' +
+          `represented.${stamp}`,
+      );
+    }
+    const only = [...kinds][0];
+    if (only === 'live')
+      return P(
+        'The financial figures behind these multiples are observed market data for the companies ' +
+          `named.${stamp}`,
+      );
+    if (only === 'analyst')
+      return P(
+        'The financial figures behind these multiples were entered by the analyst from the ' +
+          `sources cited in the workpapers.${stamp}`,
+      );
+    return P(
+      'The financial figures behind these multiples are drawn from a maintained reference set of ' +
+        'public-company data rather than from a real-time market feed, and are indicative of ' +
+        `scale and trading level rather than quoted as at a moment.${stamp}`,
+    );
+  })();
+
   return section('Exhibit D-1 — Guideline Company Set', [
     P(
       'The guideline companies below were screened on industry classification, scale, growth and ' +
@@ -641,6 +688,7 @@ export function peerSetExhibit(
         'companies considered and set aside are listed with the basis on which each was excluded.',
     ),
     selected,
+    provenance,
     excluded.length > 0
       ? P('The following companies were considered and are not reflected in the concluded multiples.')
       : null,
@@ -1011,7 +1059,7 @@ export function discountExhibit(
       ],
     }),
     ...dlocDerivationBlock(dlocDetail, dloc),
-    ...classValueBlock(results, dloc, dlom, ctx),
+    ...classValueBlock(results, dloc, dlom, ctx, controlling),
   ]);
 }
 
@@ -1182,6 +1230,26 @@ function classValueBlock(
 // ── Exhibit H-1 — the marketability discount, derived ────────────────────────
 
 /**
+ * Which volatility the DLOM was struck on — `class`, `enterprise`, or unstated.
+ *
+ * A weighted blend records no basis of its own: the label sits on each leg,
+ * because a study leg has no volatility at all and only the option-based legs
+ * carry one. They cannot disagree — `_blended_dlom` passes one basis to every
+ * leg — so the first leg that states one states it for the blend. Older
+ * calculations predate the field entirely and answer null, which is why the
+ * prose that reads this keeps its original wording for that case.
+ */
+function dlomVolatilityBasis(detail: Record<string, unknown>): string | null {
+  const own = text(detail.volatility_basis);
+  if (own) return own;
+  for (const leg of list(detail.components)) {
+    const basis = text(record(record(leg)?.detail)?.volatility_basis);
+    if (basis) return basis;
+  }
+  return null;
+}
+
+/**
  * The inputs one DLOM method was struck on, as `Derivation / Value / Note` rows.
  *
  * Shared by the single-method table and by each leg of a weighted blend, so a
@@ -1202,10 +1270,21 @@ function derivationRows(
 
   const vol = num(detail.volatility);
   if (vol !== null) {
+    // Which of the two volatilities this is, on the row that states it. The
+    // engine strikes an option-based DLOM on the *class's* volatility by
+    // default (`dlom_volatility_basis`), and that figure is roughly a fifth
+    // higher than the enterprise one on a company with a preference stack —
+    // so a reviewer checking the discount against the allocation's σ finds two
+    // different numbers and no statement of which is which.
+    const basis = text(detail.volatility_basis);
     rows.push([
       'Volatility applied (σ)',
       formatPercent(vol),
-      'Of the interest valued over the holding period',
+      basis === 'class'
+        ? 'Of the class valued — common, geared by the preference stack; see the schedule below'
+        : basis === 'enterprise'
+          ? 'Of the enterprise as a whole, not of the class valued — see the schedule below'
+          : 'Of the interest valued over the holding period',
     ]);
   }
   const term = num(detail.time_to_liquidity_years);
@@ -1514,13 +1593,31 @@ export function dlomDerivationExhibit(
             vol === null ? '—' : formatPercent(vol),
           ];
         });
+      // Whether the discount above was struck on the enterprise figure or on
+      // common's own changes what this paragraph has to say — under the class
+      // basis the σ printed above *is* the geared one, and telling the reader it
+      // "describes the enterprise" contradicts the table two rows up. The
+      // schedule is worth printing either way: it is what lets a reviewer see
+      // the gearing the discount does or does not carry.
+      const struckOn = detail ? dlomVolatilityBasis(detail) : null;
+      const gearing =
+        'Each share class is a levered claim on the enterprise — under the breakpoint method, a ' +
+        'spread of call options — so each carries its own return volatility: σ_class = σ × (equity ' +
+        'value ÷ class value) × ∂(class value)/∂(equity value). Common ranks behind the preference ' +
+        'stack and is therefore the most geared.';
       body.push(
         P(
-          `The volatility above describes the enterprise. Each share class is a levered claim on it — ` +
-            'under the breakpoint method, a spread of call options — so each carries its own return ' +
-            'volatility: σ_class = σ × (equity value ÷ class value) × ∂(class value)/∂(equity value). ' +
-            'Common ranks behind the preference stack and is therefore the most geared. The volatility ' +
-            'that belongs in an option-based discount struck on a particular class is that class’s own.',
+          struckOn === 'class'
+            ? `The volatility above is common’s own, taken from the schedule below. ${gearing} ` +
+              'An option-based discount struck on a class takes that class’s volatility, which is ' +
+              'why the figure above exceeds the enterprise volatility the allocation ran on.'
+            : struckOn === 'enterprise'
+              ? `The volatility above describes the enterprise, not the class the discount was ` +
+                `struck on. ${gearing} The volatility that belongs in an option-based discount ` +
+                'struck on a particular class is that class’s own, and on the schedule below that ' +
+                'figure is higher for common than the one applied.'
+              : `The volatility above describes the enterprise. ${gearing} The volatility that ` +
+                'belongs in an option-based discount struck on a particular class is that class’s own.',
         ),
         table({
           head: ['Class', 'Type', 'Delta', 'Gearing', 'Class volatility'],

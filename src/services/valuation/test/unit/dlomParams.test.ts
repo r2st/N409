@@ -153,9 +153,7 @@ describe('dlom_pre_ipo_studies', () => {
 
   it('is independent of the restricted-stock selection', () => {
     // Both set at once is the blend case, and it has to be expressible.
-    expect(
-      ok({ dlom_studies: ['Gelman'], dlom_pre_ipo_studies: ['Emory 1997-2000'] }).success,
-    ).toBe(true);
+    expect(ok({ dlom_studies: ['Gelman'], dlom_pre_ipo_studies: ['Emory 1997-2000'] }).success).toBe(true);
   });
 });
 

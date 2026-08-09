@@ -105,6 +105,10 @@ interface ResultsShape {
   discounts?: { dloc?: unknown; dlom?: unknown; dlom_method?: unknown } | null;
   assumptions?: {
     volatility?: unknown;
+    /** The σ the DLOM ran on, where the engine records one — see the DLOM figure. */
+    dlom_volatility?: unknown;
+    /** `class` or `enterprise`; absent on calculations predating the distinction. */
+    dlom_volatility_basis?: unknown;
     risk_free_rate?: unknown;
     time_to_exit_years?: unknown;
     expected_time_to_exit_years?: unknown;
@@ -344,10 +348,29 @@ export function buildReportSummary(
   }
   if (dlom !== null) {
     const method = results.discounts?.dlom_method;
+    const label = typeof method === 'string' ? (DLOM_LABELS[method] ?? method) : undefined;
+    /*
+     * The σ this discount was struck on, where it is not the σ on the same page.
+     *
+     * "Key assumptions" below states the enterprise volatility, because that is
+     * what the allocation ran on. An option-based DLOM runs on the volatility of
+     * the *class* — common, geared by everything senior to it — and the two differ
+     * by the whole preference stack: 62% and 74% on the sample cap table. Printing
+     * only the first left the summary page asserting a σ that reproduces neither
+     * the discount beside it nor Exhibit H-1's derivation of it, and a reviewer
+     * checking the one against the other found a number that did not divide out.
+     */
+    const dlomVol = num(results.assumptions?.dlom_volatility);
+    const struckOn =
+      results.assumptions?.dlom_volatility_basis === 'class' &&
+      dlomVol !== null &&
+      (volatility === null || Math.abs(dlomVol - volatility) > 0.0005)
+        ? `struck on σ ${formatPercent(dlomVol, 0)} — common's own, not the enterprise's`
+        : null;
     figures.push({
       label: 'Discount for lack of marketability',
       value: formatPercent(dlom),
-      note: typeof method === 'string' ? (DLOM_LABELS[method] ?? method) : undefined,
+      note: [label, struckOn].filter(Boolean).join(' · ') || undefined,
     });
   }
   /*
