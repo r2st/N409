@@ -272,7 +272,23 @@ def _segments(classes: list[dict]) -> list[dict]:
     capped_drawing = [c for c in preferred if c["participating"] and c["participation_cap"] is not None]
     capped_at_cap: list[dict] = []
     drawn: dict[str, float] = {c["name"]: c["preference"] for c in capped_drawing}
-    p_cur = sum(c["preference"] for c in preferred)  # preferences still being taken
+    # `p_cur` is the value absorbed *below* the residual pool — everything the
+    # classes outside the pool take before the pool sees a dollar. Every
+    # conversion breakpoint below is struck against it, since a converting class
+    # is choosing between what it holds and a share of `x - p_cur`.
+    #
+    # For a class still taking its preference that absorbed amount is the
+    # preference, which is where this starts. For a class frozen at its
+    # participation cap it is the *cap* — preference plus the participation it
+    # banked on the way up — and that is the correction the `cap` action below
+    # applies. Counting only the preference there understates what sits beneath
+    # the pool by the banked participation, which strikes every conversion
+    # breakpoint computed while that class is frozen too early: on the cap table
+    # in `test_participation_cap_ordering.py` a class converted at $12.0625M
+    # rather than $12.375M and was overpaid $192,307 at a $50M exit, with the
+    # shortfall taken from common and the uncapped participating class. Value
+    # still conserved, so nothing downstream could notice.
+    p_cur = sum(c["preference"] for c in preferred)
     b_cur = cursor  # == total preferences
 
     while True:
@@ -293,8 +309,16 @@ def _segments(classes: list[dict]) -> list[dict]:
             # cap in place of the preference: what a class gives up by
             # converting is whatever it holds *without* converting, and for a
             # capped class that has stopped participating that is the cap.
+            #
+            # The cap is therefore also what this class contributes to `p_cur`,
+            # so it is the cap that comes back out to leave what everything
+            # *else* absorbs. Subtracting the preference instead would leave the
+            # class's own banked participation sitting in its own conversion
+            # threshold.
             s_conv = c["shares"] * c["conversion_ratio"]
-            x_star = (p_cur - c["preference"]) + c["participation_cap"] * (s_cur + s_conv) / s_conv
+            x_star = (p_cur - c["participation_cap"]) + c["participation_cap"] * (
+                s_cur + s_conv
+            ) / s_conv
             candidates.append((max(x_star, b_cur), "convert_capped", c))
         for o in pending_options:
             candidates.append((max(p_cur + o["strike"] * s_cur, b_cur), "exercise", o))
@@ -319,13 +343,18 @@ def _segments(classes: list[dict]) -> list[dict]:
             # Out of the pool: the payoff is flat at the cap from here, so the
             # residual this class was drawing passes to everyone still in.
             del pool[cls["name"]]
+            # What this class absorbs beneath the pool stops being its
+            # preference and becomes its cap, because the participation it drew
+            # on the way up is now banked and frozen there too.
+            p_cur += cls["participation_cap"] - cls["preference"]
             capped_drawing.remove(cls)
             capped_at_cap.append(cls)
         elif action == "convert_capped":
-            # Back in at the as-converted count, giving up the preference it
-            # took in the stack — the residual base widens by exactly that.
+            # Back in at the as-converted count, giving up the whole cap it was
+            # holding — preference and banked participation alike — so the
+            # residual base widens by exactly that.
             pool[cls["name"]] = cls["shares"] * cls["conversion_ratio"]
-            p_cur -= cls["preference"]
+            p_cur -= cls["participation_cap"]
             capped_at_cap.remove(cls)
         else:
             pool[cls["name"]] = cls["shares"]

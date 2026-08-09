@@ -32,6 +32,7 @@ from .dlom import (
     ghaidarov_dlom,
     longstaff_bound,
     longstaff_dlom,
+    pre_ipo_dlom,
     restricted_stock_dlom,
     selects_model_dlom,
 )
@@ -457,6 +458,22 @@ def _single_dlom(
         blend = restricted_stock_dlom(
             selected=study_in if isinstance(study_in, list) else None,
             studies=table_in if isinstance(table_in, list) else None,
+            statistic=str(params.get("dlom_statistic") or "median"),
+        )
+        dlom = float(blend["dlom"])
+        detail = blend
+    elif method == "pre_ipo":
+        # Its own selection keys rather than `dlom_studies`. The two tables share
+        # no study names, so one key could not address both — and the case that
+        # matters is exactly the one where both are live: a `dlom_methods` blend
+        # weighting a restricted-stock leg against a pre-IPO one, where a shared
+        # key would make each leg's selection unrepresentable in the presence of
+        # the other.
+        pre_ipo_in = params.get("dlom_pre_ipo_studies")
+        pre_ipo_table = params.get("dlom_pre_ipo_table")
+        blend = pre_ipo_dlom(
+            selected=pre_ipo_in if isinstance(pre_ipo_in, list) else None,
+            studies=pre_ipo_table if isinstance(pre_ipo_table, list) else None,
             statistic=str(params.get("dlom_statistic") or "median"),
         )
         dlom = float(blend["dlom"])

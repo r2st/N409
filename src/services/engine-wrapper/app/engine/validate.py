@@ -35,6 +35,8 @@ from .dlom import (
     DLOM_METHODS,
     DLOM_VOLATILITY_BASES,
     MODEL_DLOM_METHODS,
+    PRE_IPO_RECENCY_YEAR,
+    PRE_IPO_STUDIES,
     RESTRICTED_STOCK_STUDIES,
     is_post_amendment,
     selects_model_dlom,
@@ -897,6 +899,11 @@ def _check_discounts(c: _Collector, params: dict) -> None:
         # reviewable choice rather than an error.
         dlom = None
         _check_restricted_stock(c, params)
+    elif method == "pre_ipo":
+        # Same again over the other empirical table, plus the caveat this family
+        # always carries — see `_check_pre_ipo`.
+        dlom = None
+        _check_pre_ipo(c, params)
     else:
         dlom = _finite(params.get("dlom"))
         if params.get("dlom") is not None and dlom is None:
@@ -982,6 +989,8 @@ def _check_dlom_blend(c: _Collector, params: dict) -> None:
             seen.add(name)
             if name == "restricted_stock":
                 _check_restricted_stock(c, params)
+            elif name == "pre_ipo":
+                _check_pre_ipo(c, params)
             elif name == "qualitative" and params.get("dlom_qualitative") is None:
                 c.error(
                     "required",
@@ -1098,6 +1107,80 @@ def _check_restricted_stock(c: _Collector, params: dict) -> None:
             "Discounts before and after the amendment describe different securities. "
             "Blending them produces a figure for a regime that never existed — select "
             "one side or explain the blend in the report.",
+        )
+
+
+def _check_pre_ipo(c: _Collector, params: dict) -> None:
+    """Pre-flight for the `pre_ipo` DLOM: the study set and the family's caveat.
+
+    The same job `_check_restricted_stock` does for the other empirical family,
+    against the other table — plus the one warning this family always earns.
+    """
+    known = {row["study"] for row in PRE_IPO_STUDIES}
+    table = params.get("dlom_pre_ipo_table")
+    if isinstance(table, list) and table:
+        known = {
+            str(row["study"]).strip()
+            for row in table
+            if isinstance(row, dict) and isinstance(row.get("study"), str) and row["study"].strip()
+        }
+
+    # Always, not only on an unusual set. A pre-IPO discount runs roughly twice
+    # a post-amendment restricted-stock one, and the reason is partly
+    # measurement rather than marketability — the sample is companies that went
+    # on to complete an IPO. A report concluding here without addressing that is
+    # the one a reviewer sends back, so the pre-flight says so at save time
+    # rather than leaving it to be noticed in review.
+    c.warn(
+        "pre_ipo_selection_bias",
+        "params.dlom_method",
+        "pre-IPO studies observe only companies that went on to complete an IPO, so "
+        "part of the measured discount is the change in prospects over the period",
+        "Address the selection bias in the report, and consider weighting this "
+        "against a restricted-stock leg through dlom_methods rather than concluding "
+        "on it alone.",
+    )
+
+    selected = params.get("dlom_pre_ipo_studies")
+    if selected is None:
+        return
+    if not isinstance(selected, list) or not selected:
+        c.error(
+            "invalid_shape",
+            "params.dlom_pre_ipo_studies",
+            "dlom_pre_ipo_studies must be a non-empty list of study names",
+            "Leave it unset to use the default set (the most recent window from each "
+            "study family, plus Emory's combined figure).",
+        )
+        return
+
+    unknown = sorted({str(n) for n in selected} - known)
+    if unknown:
+        c.error(
+            "unknown_study",
+            "params.dlom_pre_ipo_studies",
+            f"unknown pre-IPO studies: {unknown}",
+            f"Available studies: {sorted(known)}.",
+        )
+        return
+
+    # Keyed on when each window *closed*, not on when it opened — see
+    # `PRE_IPO_RECENCY_YEAR` for why this is the opposite key from the Rule 144
+    # test two functions up, and what goes wrong if the two are conflated.
+    by_name = {row["study"]: row for row in PRE_IPO_STUDIES}
+    dated = [by_name[n] for n in selected if n in by_name]
+    if any(
+        isinstance(r.get("period_end"), int) and r["period_end"] < PRE_IPO_RECENCY_YEAR
+        for r in dated
+    ):
+        c.warn(
+            "dated_study_window",
+            "params.dlom_pre_ipo_studies",
+            f"the selection includes a window that closed before {PRE_IPO_RECENCY_YEAR}, "
+            "when the IPO market worked differently",
+            "A discount observed in the early 1980s is weak evidence about a company "
+            "being valued today; prefer the recent windows, or say why the long series "
+            "is the better basis.",
         )
 
 
