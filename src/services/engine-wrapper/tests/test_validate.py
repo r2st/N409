@@ -19,7 +19,15 @@ GOOD_PARAMS = {
     "weight_opm": 0.5,
     "weight_income": 0.25,
     "weight_market": 0.25,
-    "dloc": 0.10,
+    # Zero, and not merely as a convenience. Three quarters of this payload's
+    # weight sits on the backsolve and the market approach, both of which
+    # already produce a marketable *minority* value — a backsolve inverts the
+    # price a minority investor paid, and guideline public company multiples
+    # are struck on minority trading prices. A DLOC on top of that discounts a
+    # second time for a control the value never included, and the pre-flight
+    # now says so (`_warn_level_of_value`). The fixture for "a payload with
+    # nothing wrong with it" has to be a payload with nothing wrong with it.
+    "dloc": 0.0,
     "dlom": 0.25,
     "exit_timeline": "2029-06-30",
     "allocation_method": "opm",

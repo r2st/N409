@@ -5,7 +5,8 @@ Pipeline (features.md §engine, requirements FR-14/15):
 2. Weighted marketable equity value (weights validated to sum to 1).
 3. OPM allocation to common: Black-Scholes call over the preferred
    liquidation preference; common participates pro-rata in the upside.
-4. DLOC, then DLOM (Chaffee / Finnerty / qualitative).
+4. DLOC (control premium / studies / qualitative), then DLOM (four option
+   models / two study families / qualitative, singly or weighted).
 5. FMV per share over fully diluted common (common + options).
 """
 
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import math
 from datetime import date
+from typing import NamedTuple
 
 from .approaches import (
     MARKET_HORIZONS,
@@ -24,6 +26,7 @@ from .approaches import (
 )
 from .bs import bs_call
 from .current_value import allocate_cvm
+from .dloc import resolve_dloc
 from .dlom import (
     DLOM_METHODS,
     DLOM_VOLATILITY_BASES,
@@ -368,10 +371,22 @@ def _market_metric(params: dict, inputs: dict, market_in: dict) -> tuple[str, st
     return horizon, basis, resolved
 
 
-def _resolve_dloc(params: dict) -> float:
-    """The discount for lack of control. Placeholder until the study-based
-    derivation lands; see `_resolve_dloc_detail`."""
-    return _num(params.get("dloc"), "dloc") or 0.0
+class Discounts(NamedTuple):
+    """Both discounts, each with the method and the working behind it.
+
+    A tuple rather than four positional returns because it grew to six: the
+    DLOC gained a method vocabulary of its own (`dloc.resolve_dloc`), and
+    threading two more values through five allocation paths by position is how
+    the DLOM's model detail came to be attached at one call site and silently
+    missing at the other three.
+    """
+
+    dloc: float
+    dlom: float
+    dloc_method: str | None
+    dloc_detail: dict | None
+    dlom_method: str | None
+    dlom_detail: dict | None
 
 
 def _resolve_discounts(
@@ -380,23 +395,29 @@ def _resolve_discounts(
     t: float,
     r: float,
     volatility_basis: str = "enterprise",
-) -> tuple[float, float, str | None, dict | None]:
+    weight_by_approach: dict | None = None,
+) -> Discounts:
     """DLOC + DLOM (model, study, qualitative, or a weighted blend of those).
 
-    The fourth return is the working behind the discount, or None for the
-    methods that have none.
+    Each discount carries the working behind it, or None for the methods that
+    have none.
 
-    A blend is requested with `dlom_methods`, and it takes precedence over the
-    singular `dlom_method` in the sense that the two may not both be set — see
-    `_blended_dlom` for why an appraiser weights several methods rather than
-    picking one, and why the weights are not normalised for them.
+    A DLOM blend is requested with `dlom_methods`, and it takes precedence over
+    the singular `dlom_method` in the sense that the two may not both be set —
+    see `_blended_dlom` for why an appraiser weights several methods rather
+    than picking one, and why the weights are not normalised for them.
 
     ``volatility_basis`` labels which volatility ``volatility`` *is* — the
     enterprise figure or the geared common-class one (see `_dlom_volatility`).
     It changes no arithmetic here; it travels so that the model detail records
     which of the two a reviewer is being shown.
+
+    ``weight_by_approach`` is passed through to the DLOC so it can say which
+    level of value the equity figure it is discounting arrived at. It changes
+    no arithmetic either — see `dloc.level_of_value_detail` for why the engine
+    reports a probable double count rather than refusing one.
     """
-    dloc = _resolve_dloc(params)
+    dloc, dloc_method, dloc_detail = resolve_dloc(params, weight_by_approach)
     blend_in = params.get("dlom_methods")
     if blend_in is not None:
         if params.get("dlom_method") is not None:
@@ -406,14 +427,24 @@ def _resolve_discounts(
             )
         detail = _blended_dlom(blend_in, params, volatility, t, r, volatility_basis)
         dlom = float(detail["dlom"])
-        if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
-            raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
-        return dloc, round(dlom, 4), "weighted", detail
+        _check_discount_range(dloc, dlom)
+        return Discounts(dloc, round(dlom, 4), dloc_method, dloc_detail, "weighted", detail)
 
     dlom, method, detail = _single_dlom(params, volatility, t, r, volatility_basis)
+    _check_discount_range(dloc, dlom)
+    return Discounts(dloc, round(dlom, 4), dloc_method, dloc_detail, method, detail)
+
+
+def _check_discount_range(dloc: float, dlom: float) -> None:
+    """Both discounts are fractions of the value they are struck on.
+
+    1.0 is excluded at both ends: a 100% discount says the interest is
+    worthless, which is a conclusion about the security rather than about its
+    control or its marketability, and the two applied multiplicatively would
+    make the other one unfalsifiable.
+    """
     if not 0.0 <= dloc < 1.0 or not 0.0 <= dlom < 1.0:
         raise EngineInputError("dloc/dlom must be fractions in [0, 1)")
-    return dloc, round(dlom, 4), method, detail
 
 
 def _single_dlom(
@@ -664,16 +695,26 @@ def _model_detail(
     return out
 
 
-def _discounts_block(dloc: float, dlom: float, method: str | None, detail: dict | None) -> dict:
+def _discounts_block(d: Discounts) -> dict:
     """The `results.discounts` object every allocation path reports.
 
-    One builder rather than four literals: the model detail was added in one
-    place and silently missing from the other three when this was inlined, and
+    One builder rather than five literals: the model detail was added in one
+    place and silently missing from the other four when this was inlined, and
     the report exhibit reads whichever path the valuation happened to take.
+
+    ``dloc_method`` and ``dloc_detail`` are absent rather than null when the
+    DLOC was a stated figure with no method behind it, which is what every
+    valuation before the method vocabulary existed will replay as. Present
+    therefore means derived, and a consumer does not have to distinguish "no
+    method" from "method recorded as none".
     """
-    block: dict = {"dloc": dloc, "dlom": round(dlom, 4), "dlom_method": method}
-    if detail is not None:
-        block["dlom_detail"] = detail
+    block: dict = {"dloc": d.dloc, "dlom": round(d.dlom, 4), "dlom_method": d.dlom_method}
+    if d.dlom_detail is not None:
+        block["dlom_detail"] = d.dlom_detail
+    if d.dloc_method is not None:
+        block["dloc_method"] = d.dloc_method
+    if d.dloc_detail is not None:
+        block["dloc_detail"] = d.dloc_detail
     return block
 
 
@@ -771,12 +812,15 @@ def _compute_pwerm(params: dict, inputs: dict, trace: Trace | None = None) -> di
     if selects_model_dlom(params) and volatility is None:
         raise EngineInputError("volatility is required for the selected model DLOM")
 
-    dloc, dlom, dlom_method, dlom_detail = _resolve_discounts(params, volatility, t, r)
+    # No `weight_by_approach`: PWERM derives equity value from its own exit
+    # scenarios rather than from the four weighted approaches, so there is no
+    # mix of levels of value to read. See `dloc.minority_basis_share`.
+    d = _resolve_discounts(params, volatility, t, r)
 
     # The waterfall already spread value across the cap table's common shares.
     common_per_share = allocation["common_per_share"]
-    fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
-    _record_discounts(tr, params, common_per_share, dloc, dlom, dlom_method, dlom_detail, fmv_per_share)
+    fmv_per_share = common_per_share * (1.0 - d.dloc) * (1.0 - d.dlom)
+    _record_discounts(tr, params, common_per_share, d, fmv_per_share)
 
     results: dict = {
         "equity_value": round(equity_value, 2),
@@ -788,7 +832,7 @@ def _compute_pwerm(params: dict, inputs: dict, trace: Trace | None = None) -> di
             "risk_free_rate": r,
             "volatility": volatility,
         },
-        "discounts": _discounts_block(dloc, dlom, dlom_method, dlom_detail),
+        "discounts": _discounts_block(d),
         "fully_diluted_common": fully_diluted_common,
         "fully_diluted_basis": "cap_table_common",
         "fmv_per_share": round(fmv_per_share, 4),
@@ -1292,10 +1336,7 @@ def _record_discounts(
     trace: Trace,
     params: dict,
     common_per_share: float,
-    dloc: float,
-    dlom: float,
-    method: str | None,
-    detail: dict | None,
+    d: Discounts,
     fmv_per_share: float,
 ) -> None:
     """The last step, and the one most often argued about.
@@ -1307,22 +1348,24 @@ def _record_discounts(
     conclusions.
     """
     marketable = common_per_share
-    after_dloc = marketable * (1.0 - dloc)
+    after_dloc = marketable * (1.0 - d.dloc)
     trace.record(
         "discounts",
         "DLOC and DLOM",
         inputs={
             "marketable_common_per_share": marketable,
-            "dloc": dloc,
-            "dlom": dlom,
-            "dlom_method": method,
-            "dlom_detail": detail,
+            "dloc": d.dloc,
+            "dloc_method": d.dloc_method,
+            "dloc_detail": d.dloc_detail,
+            "dlom": d.dlom,
+            "dlom_method": d.dlom_method,
+            "dlom_detail": d.dlom_detail,
         },
         outputs={
             "after_dloc": after_dloc,
-            "after_dlom": after_dloc * (1.0 - dlom),
+            "after_dlom": after_dloc * (1.0 - d.dlom),
             "fmv_per_share": fmv_per_share,
-            "combined_discount": 1.0 - (1.0 - dloc) * (1.0 - dlom),
+            "combined_discount": 1.0 - (1.0 - d.dloc) * (1.0 - d.dlom),
         },
     )
 
@@ -1341,9 +1384,9 @@ def _compute_opm(
     # is common — geared by everything senior to it — and not on the enterprise
     # volatility that allocated the equity. See `_dlom_volatility`.
     dlom_vol, vol_basis = _dlom_volatility(params, alloc)
-    dloc, dlom, method, dlom_detail = _resolve_discounts(params, dlom_vol, t, r, vol_basis)
-    fmv_per_share = alloc["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
-    _record_discounts(tr, params, alloc["common_per_share"], dloc, dlom, method, dlom_detail, fmv_per_share)
+    d = _resolve_discounts(params, dlom_vol, t, r, vol_basis, we["weight_by_approach"])
+    fmv_per_share = alloc["common_per_share"] * (1.0 - d.dloc) * (1.0 - d.dlom)
+    _record_discounts(tr, params, alloc["common_per_share"], d, fmv_per_share)
 
     results: dict = {
         "equity_value": round(equity_value, 2),
@@ -1370,7 +1413,7 @@ def _compute_opm(
             "dlom_volatility": dlom_vol,
             "dlom_volatility_basis": vol_basis,
         },
-        "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
+        "discounts": _discounts_block(d),
         "fully_diluted_common": alloc["fully_diluted_common"],
         "fully_diluted_basis": alloc["fully_diluted_basis"],
         "fmv_per_share": round(fmv_per_share, 4),
@@ -1397,11 +1440,9 @@ def _compute_cvm(
     if selects_model_dlom(params) and volatility is None:
         raise EngineInputError("volatility is required for the selected model DLOM")
 
-    dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t, r)
-    fmv_per_share = allocation["common_per_share"] * (1.0 - dloc) * (1.0 - dlom)
-    _record_discounts(
-        tr, params, allocation["common_per_share"], dloc, dlom, method, dlom_detail, fmv_per_share
-    )
+    d = _resolve_discounts(params, volatility, t, r, "enterprise", we["weight_by_approach"])
+    fmv_per_share = allocation["common_per_share"] * (1.0 - d.dloc) * (1.0 - d.dlom)
+    _record_discounts(tr, params, allocation["common_per_share"], d, fmv_per_share)
 
     results: dict = {
         "equity_value": round(equity_value, 2),
@@ -1417,7 +1458,7 @@ def _compute_cvm(
             "risk_free_rate": r,
             "volatility": volatility,
         },
-        "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
+        "discounts": _discounts_block(d),
         "fully_diluted_common": allocation["fully_diluted_common"],
         # `allocate_cvm` already reports the count its own per-share figure is
         # over — the cap table's common on the waterfall path, common + options
@@ -1467,10 +1508,10 @@ def _compute_monte_carlo(
         r,
     )
 
-    dloc, dlom, method, dlom_detail = _resolve_discounts(params, volatility, t, r)
+    d = _resolve_discounts(params, volatility, t, r, "enterprise", we["weight_by_approach"])
     common_per_share = allocation["common_per_share"]
-    fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
-    _record_discounts(tr, params, common_per_share, dloc, dlom, method, dlom_detail, fmv_per_share)
+    fmv_per_share = common_per_share * (1.0 - d.dloc) * (1.0 - d.dlom)
+    _record_discounts(tr, params, common_per_share, d, fmv_per_share)
 
     results: dict = {
         "equity_value": round(equity_value, 2),
@@ -1486,7 +1527,7 @@ def _compute_monte_carlo(
             "risk_free_rate": r,
             "volatility": volatility,
         },
-        "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
+        "discounts": _discounts_block(d),
         # The simulation spreads value over the cap table's *common* classes;
         # the option pool is its own class holding its own value, exactly as
         # under the breakpoint waterfall. See the note in `_opm_allocate`.
@@ -1547,11 +1588,11 @@ def _compute_hybrid(
         outputs=blend,
     )
     dlom_vol, vol_basis = _dlom_volatility(params, opm_alloc)
-    dloc, dlom, method, dlom_detail = _resolve_discounts(params, dlom_vol, t_blend, r, vol_basis)
+    d = _resolve_discounts(params, dlom_vol, t_blend, r, vol_basis, we["weight_by_approach"])
     common_per_share = blend["common_per_share"]
     fully_diluted_common = opm_alloc["fully_diluted_common"]
-    fmv_per_share = common_per_share * (1.0 - dloc) * (1.0 - dlom)
-    _record_discounts(tr, params, common_per_share, dloc, dlom, method, dlom_detail, fmv_per_share)
+    fmv_per_share = common_per_share * (1.0 - d.dloc) * (1.0 - d.dlom)
+    _record_discounts(tr, params, common_per_share, d, fmv_per_share)
 
     results: dict = {
         "equity_value": blend["equity_value"],
@@ -1570,7 +1611,7 @@ def _compute_hybrid(
             "dlom_volatility": dlom_vol,
             "dlom_volatility_basis": vol_basis,
         },
-        "discounts": _discounts_block(dloc, dlom, method, dlom_detail),
+        "discounts": _discounts_block(d),
         "fully_diluted_common": fully_diluted_common,
         "fully_diluted_basis": opm_alloc["fully_diluted_basis"],
         "fmv_per_share": round(fmv_per_share, 4),

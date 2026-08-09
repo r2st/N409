@@ -22,6 +22,19 @@ export const DLOM_METHODS = [
 ] as const;
 export type DlomMethod = (typeof DLOM_METHODS)[number];
 
+/**
+ * Every DLOC method the engine dispatches on (engine dloc.py DLOC_METHODS).
+ *
+ * 'control_premium' inverts a stated premium (DLOC = 1 − 1/(1+CP) — the two are
+ * the same fact from opposite sides, and the conversion is not symmetric);
+ * 'studies' blends published control-premium observations and inverts once, on
+ * the premium scale; 'qualitative' is the analyst's own figure. NULL — no
+ * method — applies `dloc` as a stated number, which is what every row written
+ * before migration 0132 does.
+ */
+export const DLOC_METHODS = ['control_premium', 'studies', 'qualitative'] as const;
+export type DlocMethod = (typeof DLOC_METHODS)[number];
+
 /** Mirrors the valuation_params table (1:1 with valuations, created at birth). */
 export interface ValuationParamsRow {
   valuation_id: string;
@@ -42,6 +55,23 @@ export interface ValuationParamsRow {
   weight_income: string | null;
   weight_market: string | null;
   dloc: string | null;
+  /**
+   * How the DLOC was derived (migration 0132). NULL applies `dloc` as a stated
+   * figure, which is what every row written before that migration does, and
+   * what a recalculation of an engagement concluded last year must keep doing.
+   */
+  dloc_method: DlocMethod | null;
+  /** Only read when dloc_method is 'control_premium'. Inverted, not subtracted:
+   * DLOC = 1 − 1/(1+CP), so a 25% premium is a 20% discount. */
+  control_premium: string | null;
+  /** Share of an observed acquisition premium attributed to synergies rather
+   * than to control, removed before the inversion. */
+  dloc_synergy_share: string | null;
+  /** Control-premium study configuration; only read when dloc_method is
+   * 'studies'. NULL studies means the engine's default set. */
+  dloc_studies: string[] | null;
+  dloc_statistic: 'median' | 'mean' | null;
+  dloc_study_table: unknown;
   dlom: string | null;
   dlom_method: DlomMethod | null;
   /**
@@ -93,6 +123,12 @@ export const PARAM_COLUMNS = [
   'weight_income',
   'weight_market',
   'dloc',
+  'dloc_method',
+  'control_premium',
+  'dloc_synergy_share',
+  'dloc_studies',
+  'dloc_statistic',
+  'dloc_study_table',
   'dlom',
   'dlom_method',
   'dlom_methods',

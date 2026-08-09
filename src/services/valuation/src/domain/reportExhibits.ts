@@ -836,9 +836,32 @@ export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitConte
 
 // ── Exhibit H — discounts and conclusion ─────────────────────────────────────
 
-const DLOM_BASIS: Record<string, string> = {
+/**
+ * Study rows carry their own names; everything else is a model.
+ *
+ * One map, read by Exhibit H's Basis column and by Exhibit H-1's derivation
+ * heading. There were two, and the older one listed three methods of the seven
+ * the engine dispatches on — so a valuation concluded on Ghaidarov, Longstaff,
+ * a restricted-stock blend or a pre-IPO blend printed its raw slug
+ * ("restricted_stock") in the Basis column of the exhibit that states the
+ * conclusion. A second copy of a vocabulary is a copy that goes stale, and this
+ * one did.
+ */
+const DLOM_MODEL_NAMES: Record<string, string> = {
   chaffee: 'Chaffee protective-put model',
   finnerty: 'Finnerty average-strike put model',
+  ghaidarov: 'Ghaidarov average-strike put model',
+  longstaff: 'Longstaff upper bound',
+  restricted_stock: 'Restricted-stock studies',
+  pre_ipo: 'Pre-IPO transaction studies',
+  qualitative: 'Qualitative — analyst judgement',
+  weighted: 'Several methods, weighted',
+};
+
+/** The same, for the control discount (engine dloc.py DLOC_METHODS). */
+const DLOC_METHOD_NAMES: Record<string, string> = {
+  control_premium: 'Inverted from a stated control premium',
+  studies: 'Blended from published control-premium studies',
   qualitative: 'Qualitative — analyst judgement',
 };
 
@@ -870,31 +893,60 @@ export function discountExhibit(
 
   const afterDloc = base * (1 - dloc);
   const method = text(discounts.dlom_method);
-  const rows: string[][] = [
-    [
-      'Marketable, controlling value per common share',
-      formatCurrency(base, currency, 4),
-      'Per the allocation above',
-    ],
-    [
-      `Less: discount for lack of control — ${formatPercent(dloc)}`,
-      `(${formatCurrency(base - afterDloc, currency, 4)})`,
-      'A minority holder cannot compel a liquidity event or direct the business',
-    ],
-    ['Marketable, minority value per common share', formatCurrency(afterDloc, currency, 4), ''],
-    [
-      `Less: discount for lack of marketability — ${formatPercent(dlom)}`,
-      `(${formatCurrency(afterDloc - fmv, currency, 4)})`,
-      method ? (DLOM_BASIS[method] ?? esc(method)) : 'No active market exists for the shares',
-    ],
-  ];
+  const dlocDetail = record(discounts.dloc_detail);
+  const dlocMethod = text(discounts.dloc_method);
+
+  /*
+   * What level of value the allocation actually produced.
+   *
+   * This line said "marketable, controlling" unconditionally, and for the
+   * typical 409A that is not true: most of the weight sits on a backsolve,
+   * which inverts the price a minority investor paid, and on guideline public
+   * company multiples, which are struck on minority trading prices. Neither
+   * produces a controlling value. The engine now measures the mix
+   * (`dloc.minority_basis_share`) and records it, so the label follows the
+   * calculation rather than asserting the case the exhibit was first written
+   * for.
+   */
+  const minorityWeight = num(dlocDetail?.minority_basis_weight);
+  const controlling = minorityWeight === null || minorityWeight <= 0.5;
+  const openingLabel = controlling
+    ? 'Marketable, controlling value per common share'
+    : 'Marketable value per common share, as allocated';
+  const openingBasis =
+    minorityWeight === null || minorityWeight === 0
+      ? 'Per the allocation above'
+      : `Per the allocation above; ${formatPercent(minorityWeight, 0)} of the weighted equity ` +
+        'value came from approaches that already produce a minority value';
+
+  const rows: string[][] = [[openingLabel, formatCurrency(base, currency, 4), openingBasis]];
+  if (dloc > 0 || controlling) {
+    rows.push(
+      [
+        `Less: discount for lack of control — ${formatPercent(dloc)}`,
+        `(${formatCurrency(base - afterDloc, currency, 4)})`,
+        dlocMethod
+          ? (DLOC_METHOD_NAMES[dlocMethod] ?? esc(dlocMethod))
+          : 'A minority holder cannot compel a liquidity event or direct the business',
+      ],
+      ['Marketable, minority value per common share', formatCurrency(afterDloc, currency, 4), ''],
+    );
+  }
+  rows.push([
+    `Less: discount for lack of marketability — ${formatPercent(dlom)}`,
+    `(${formatCurrency(afterDloc - fmv, currency, 4)})`,
+    method ? (DLOM_MODEL_NAMES[method] ?? esc(method)) : 'No active market exists for the shares',
+  ]);
 
   return section('Exhibit H — Discounts and Concluded Value', [
     P(
-      'The allocation produces the value of a common share on a marketable, controlling basis. Section ' +
-        '409A requires the fair market value of a minority interest in shares for which no market ' +
-        'exists, so a discount for lack of control and a discount for lack of marketability are ' +
-        'applied in turn. The discounts are multiplicative, in the order shown.',
+      (controlling
+        ? 'The allocation produces the value of a common share on a marketable, controlling basis. '
+        : 'The allocation produces the value of a common share on the basis its inputs carry — see ' +
+          'the note below. ') +
+        'Section 409A requires the fair market value of a minority interest in shares for which no ' +
+        'market exists, so a discount for lack of control and a discount for lack of marketability ' +
+        'are applied in turn. The discounts are multiplicative, in the order shown.',
     ),
     table({
       head: ['Step', 'Per share', 'Basis'],
@@ -905,8 +957,111 @@ export function discountExhibit(
         'Non-marketable, minority basis',
       ],
     }),
+    ...dlocDerivationBlock(dlocDetail, dloc),
     ...classValueBlock(results, dloc, dlom, ctx),
   ]);
+}
+
+/**
+ * How the control discount was arrived at, where it was derived rather than
+ * stated — and where it was applied to a value that was already at a minority
+ * level, which is the finding that changes a number.
+ *
+ * A DLOC steps control → marketable minority. Applied to a figure that arrived
+ * at a marketable minority level it discounts twice for one thing, and nothing
+ * about the result looks wrong: it is a plausible per-share figure that is
+ * simply too low. The engine reports the mix rather than refusing it, because
+ * an appraiser may have a reason and the engine overruling the analysis would
+ * be worse — but the reason has to be visible on the page that states the
+ * conclusion, not in a database column.
+ */
+function dlocDerivationBlock(detail: Record<string, unknown> | null, dloc: number): string[] {
+  if (!detail) return [];
+  const rows: string[][] = [];
+
+  const observed = num(detail.observed_control_premium);
+  const applied = num(detail.control_premium_applied);
+  if (observed !== null) {
+    rows.push(['Control premium observed', formatPercent(observed), 'As stated or blended']);
+  }
+  const synergy = num(detail.synergy_share);
+  if (synergy !== null && applied !== null) {
+    rows.push(
+      [
+        'Less: share attributed to synergies',
+        formatPercent(synergy),
+        'An acquisition premium impounds what the buyer expected to do with the target as ' +
+          'well as the value of control itself',
+      ],
+      ['Control premium applied', formatPercent(applied), ''],
+    );
+  }
+  const implied = num(detail.implied_control_premium);
+  if (implied !== null) {
+    rows.push(['Control premium implied by the discount', formatPercent(implied), 'CP = d ÷ (1 − d)']);
+  }
+  if (observed !== null || implied !== null) {
+    rows.push([
+      'Discount for lack of control',
+      formatPercent(dloc),
+      'DLOC = 1 − 1 ÷ (1 + CP). The premium and the discount are the same fact from ' +
+        'opposite sides, and the conversion is not symmetric',
+    ]);
+  }
+  const basis = text(detail.basis);
+  if (basis) rows.push(['Basis for the judgement', esc(basis), '']);
+
+  const out: string[] = [];
+  if (rows.length > 0) {
+    out.push(P('<strong>Discount for lack of control — derivation</strong>'));
+    out.push(table({ head: ['Derivation', 'Value', 'Note'], rows }));
+  }
+
+  const studies = list(detail.studies)
+    .map((raw) => record(raw))
+    .filter((s): s is Record<string, unknown> => s !== null);
+  if (studies.length > 0) {
+    out.push(
+      table({
+        head: ['Control-premium study', 'Period', 'Premium'],
+        rows: studies.map((s) => {
+          const from = num(s.period_start);
+          const to = num(s.period_end);
+          const premium = num(s.premium);
+          return [
+            text(s.study) ?? '—',
+            from !== null && to !== null ? `${from}–${to}` : '—',
+            premium === null ? '—' : formatPercent(premium),
+          ];
+        }),
+      }),
+    );
+  }
+
+  const caveats: string[] = [];
+  if (detail.indicative_table === true) {
+    caveats.push(
+      'The premiums above are the engine’s built-in decade summaries rather than an extraction ' +
+        'for this company’s own industry and period. The dispersion of control premiums across ' +
+        'industries is wider than across decades, and a concluded discount should rest on the ' +
+        'subject’s own peer transactions.',
+    );
+  }
+  if (detail.thin_study_set === true) {
+    caveats.push('The selected set is fewer than three studies, which is a narrow basis on which to conclude.');
+  }
+  if (detail.double_counts_minority === true) {
+    caveats.push(
+      text(detail.note) ??
+        'A majority of the weighted equity value came from approaches that already produce a ' +
+          'marketable minority value, and a discount for lack of control has been applied on top ' +
+          'of it.',
+    );
+  }
+  if (caveats.length > 0) {
+    out.push(table({ head: ['On the control discount'], rows: caveats.map((c) => [c]) }));
+  }
+  return out;
 }
 
 /**
@@ -970,17 +1125,6 @@ function classValueBlock(
 }
 
 // ── Exhibit H-1 — the marketability discount, derived ────────────────────────
-
-/** Study rows carry their own names; everything else is a model. */
-const DLOM_MODEL_NAMES: Record<string, string> = {
-  chaffee: 'Chaffee protective-put model',
-  finnerty: 'Finnerty average-strike put model',
-  ghaidarov: 'Ghaidarov average-strike put model',
-  longstaff: 'Longstaff upper bound',
-  restricted_stock: 'Restricted-stock studies',
-  pre_ipo: 'Pre-IPO transaction studies',
-  qualitative: 'Qualitative — analyst judgement',
-};
 
 /**
  * The inputs one DLOM method was struck on, as `Derivation / Value / Note` rows.

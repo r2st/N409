@@ -484,6 +484,94 @@ describe('discount exhibit', () => {
   it('is absent without a concluded value', () => {
     expect(discountExhibit({ discounts: { dloc: 0.1 } }, CONTEXT)).toBeNull();
   });
+
+  it('names every DLOM method rather than printing four of the seven as slugs', () => {
+    // The Basis column read a three-entry map of its own while Exhibit H-1 had
+    // the full one. A conclusion on a restricted-stock blend printed
+    // "restricted_stock" on the page that states the conclusion.
+    const studies = {
+      ...RESULTS,
+      discounts: { ...(RESULTS.discounts as object), dlom_method: 'restricted_stock' },
+    };
+    const seen = plain(discountExhibit(studies, CONTEXT)!.html);
+    expect(seen).toContain('Restricted-stock studies');
+    expect(seen).not.toContain('restricted_stock');
+  });
+
+  it('does not call the allocated value controlling when it was not', () => {
+    /*
+     * The line said "marketable, controlling" unconditionally, and for the
+     * typical 409A it is false: most of the weight sits on a backsolve, which
+     * inverts the price a minority investor paid, and on guideline public
+     * company multiples, which are minority trading prices. The engine now
+     * records the mix and the label follows it.
+     */
+    const minority = {
+      ...RESULTS,
+      discounts: {
+        ...(RESULTS.discounts as object),
+        dloc_detail: { method: 'stated', minority_basis_weight: 0.75, double_counts_minority: true },
+      },
+    };
+    const seen = plain(discountExhibit(minority, CONTEXT)!.html);
+    expect(seen).not.toContain('Marketable, controlling value');
+    expect(seen).toContain('75%');
+    // And the double count itself is disclosed, not left in a database column.
+    expect(seen).toContain('applied on top');
+  });
+
+  it('shows a control premium being inverted, and the synergy taken out of it first', () => {
+    const derived = {
+      ...RESULTS,
+      discounts: {
+        ...(RESULTS.discounts as object),
+        dloc_method: 'control_premium',
+        dloc_detail: {
+          method: 'control_premium',
+          observed_control_premium: 0.4,
+          synergy_share: 0.4,
+          control_premium_applied: 0.24,
+          dloc: 0.193548,
+        },
+      },
+    };
+    const seen = plain(discountExhibit(derived, CONTEXT)!.html);
+    expect(seen).toContain('Inverted from a stated control premium');
+    expect(seen).toContain('40.0%');
+    expect(seen).toContain('24.0%');
+    expect(seen).toContain('synergies');
+  });
+
+  it('flags a discount resting on the engine’s own decade summaries', () => {
+    const derived = {
+      ...RESULTS,
+      discounts: {
+        ...(RESULTS.discounts as object),
+        dloc_method: 'studies',
+        dloc_detail: {
+          method: 'studies',
+          observed_control_premium: 0.305,
+          indicative_table: true,
+          thin_study_set: true,
+          studies: [
+            { study: 'US public targets, 2010s', period_start: 2010, period_end: 2019, premium: 0.3 },
+            { study: 'US public targets, 2020s', period_start: 2020, period_end: 2024, premium: 0.31 },
+          ],
+        },
+      },
+    };
+    const seen = plain(discountExhibit(derived, CONTEXT)!.html);
+    expect(seen).toContain('US public targets, 2020s');
+    expect(seen).toContain('31.0%');
+    expect(seen).toContain('built-in decade summaries');
+    expect(seen).toContain('fewer than three studies');
+  });
+
+  it('says nothing about a DLOC the run did not derive', () => {
+    // Every valuation stored before the method vocabulary existed. The exhibit
+    // reads as it did before.
+    expect(plain(discountExhibit(RESULTS, CONTEXT)!.html)).not.toContain('derivation');
+  });
 });
 
 // ── Exhibit D-1 ──────────────────────────────────────────────────────────────

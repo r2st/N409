@@ -77,6 +77,16 @@ export function engineParams(p: ValuationParamsRow): Record<string, unknown> {
     weight_income: num(p.weight_income),
     weight_market: num(p.weight_market),
     dloc: num(p.dloc),
+    // How the DLOC is derived, and the configuration each method reads. Null
+    // method means `dloc` above is applied as a stated figure — the behaviour
+    // of every valuation stored before migration 0132, and the one a rerun of
+    // one of those must reproduce exactly.
+    dloc_method: p.dloc_method,
+    control_premium: num(p.control_premium),
+    dloc_synergy_share: num(p.dloc_synergy_share),
+    dloc_studies: p.dloc_studies,
+    dloc_statistic: p.dloc_statistic,
+    dloc_study_table: p.dloc_study_table,
     dlom: num(p.dlom),
     dlom_method: p.dlom_method,
     // A weighted blend, when one was configured. Null and `dlom_method` set is

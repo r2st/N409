@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
-import { DLOM_METHODS, findParams, patchParams } from '../repos/params.js';
+import { DLOC_METHODS, DLOM_METHODS, findParams, patchParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -48,6 +48,42 @@ export const ParamsPatchBody = z
     weight_income: Weight.nullable(),
     weight_market: Weight.nullable(),
     dloc: Fraction.nullable(),
+    // How the DLOC was derived (migration 0132). Null applies `dloc` as a
+    // stated figure — the behaviour of every row written before it.
+    dloc_method: z.enum(DLOC_METHODS).nullable(),
+    /*
+     * The control premium, as a fraction, for dloc_method = 'control_premium'.
+     *
+     * Not a `Fraction`: a premium is unbounded above, and 100%+ premiums are
+     * observed. Only the sign is constrained, here and by the table CHECK — a
+     * negative premium is a discount paid for control, which is a finding about
+     * that transaction rather than evidence for a DLOC, and the engine's
+     * inversion would silently read it as a premium.
+     */
+    control_premium: z.number().min(0).max(10).nullable(),
+    // The share of an observed acquisition premium attributed to synergies
+    // rather than to control, removed before the inversion. 1.0 excluded: all
+    // of it being synergy says control is worth nothing, which is a conclusion
+    // about that transaction rather than an adjustment to it.
+    dloc_synergy_share: z.number().min(0).max(0.99).nullable(),
+    // Control-premium study configuration. Shape here, membership in the
+    // engine's pre-flight, which owns the table.
+    dloc_studies: z.array(z.string().min(1).max(200)).min(1).max(40).nullable(),
+    dloc_statistic: z.enum(['median', 'mean']).nullable(),
+    dloc_study_table: z
+      .array(
+        z
+          .object({
+            study: z.string().min(1).max(200),
+            premium: z.number().min(0).max(10),
+            period_start: z.number().int().min(1900).max(2200).optional(),
+            period_end: z.number().int().min(1900).max(2200).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(60)
+      .nullable(),
     dlom: Fraction.nullable(),
     dlom_method: z.enum(DLOM_METHODS).nullable(),
     /**

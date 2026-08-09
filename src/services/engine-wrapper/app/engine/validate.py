@@ -31,6 +31,13 @@ from datetime import date
 
 from .anomalies import detect_anomalies
 from .approaches import DCF_TERMINAL_METHODS
+from .dloc import (
+    CONTROL_PREMIUM_STUDIES,
+    DLOC_METHODS,
+    MINORITY_BASIS_WARN_SHARE,
+    dloc_from_control_premium,
+    minority_basis_share,
+)
 from .dlom import (
     DLOM_METHODS,
     DLOM_VOLATILITY_BASES,
@@ -834,7 +841,7 @@ def _check_cap_table(
         )
 
 
-def _check_discounts(c: _Collector, params: dict) -> None:
+def _check_discounts(c: _Collector, params: dict, weights: dict[str, float] | None = None) -> None:
     dloc = _finite(params.get("dloc"))
     if params.get("dloc") is not None and dloc is None:
         c.error("not_a_number", "params.dloc", "dloc must be a finite number")
@@ -848,6 +855,7 @@ def _check_discounts(c: _Collector, params: dict) -> None:
                 f"a {dloc:.1%} discount for lack of control is unusually large",
                 "Support it with the control-premium study you relied on.",
             )
+    _check_dloc_method(c, params, weights)
 
     basis = params.get("dlom_volatility_basis")
     if basis is not None and (
@@ -921,6 +929,219 @@ def _check_discounts(c: _Collector, params: dict) -> None:
                 "Reviewers will expect a model DLOM (Chaffee / Finnerty / Ghaidarov / "
                 "Longstaff) or a cited restricted-stock study.",
             )
+
+
+def _check_dloc_method(c: _Collector, params: dict, weights: dict[str, float] | None) -> None:
+    """Pre-flight for a derived DLOC (`dloc_method`) — engine `dloc.py`.
+
+    Three kinds of finding, in ascending order of how much they matter.
+
+    Legality: an unknown method, a missing premium, a synergy share outside
+    [0, 1), a study name the table does not contain. These are errors; the
+    engine would raise on all of them and a 422 at save time is cheaper than a
+    failed calculation.
+
+    Support: a concluded discount resting on the engine's built-in
+    control-premium table. Those rows are decade summaries, not the extraction
+    an appraiser would cite (see `dloc.CONTROL_PREMIUM_STUDIES`), so a run that
+    concludes on them is warned rather than blocked — the figures are there so
+    a valuation *can* conclude, not to settle what the premium is.
+
+    Level of value: the one that changes a number rather than a disclosure. A
+    DLOC steps control → marketable minority, so it is only meaningful against
+    a value that arrived at a control level. A backsolve inverts the price a
+    minority investor paid and guideline public company multiples are struck on
+    minority trading prices; a discount applied to those discounts a second
+    time for a control the value never included. Warned, not refused — the
+    appraiser may have a reason, and the engine overruling the analysis is
+    worse than the engine pointing at it.
+    """
+    method = params.get("dloc_method")
+    if method is None:
+        # No method is the pre-existing behaviour: `dloc` applied as a stated
+        # figure. Still worth the level-of-value warning, which is about the
+        # discount rather than about how it was derived.
+        _warn_level_of_value(c, params, weights)
+        return
+    if not isinstance(method, str) or method not in DLOC_METHODS:
+        c.error(
+            "invalid_choice",
+            "params.dloc_method",
+            f"dloc_method must be one of {sorted(DLOC_METHODS)} (got {method!r})",
+            "Leave it unset to apply params.dloc as a stated figure.",
+        )
+        return
+
+    share = params.get("dloc_synergy_share")
+    if share is not None:
+        value = _finite(share)
+        if value is None or not 0.0 <= value < 1.0:
+            c.error(
+                "out_of_range",
+                "params.dloc_synergy_share",
+                "dloc_synergy_share must be a fraction in [0, 1)",
+                "It is the share of the observed acquisition premium attributable to "
+                "synergies rather than to control, removed before the premium is inverted.",
+            )
+
+    if method == "control_premium":
+        premium = _finite(params.get("control_premium"))
+        if params.get("control_premium") is None:
+            c.error(
+                "required",
+                "params.control_premium",
+                "the control_premium DLOC method needs params.control_premium",
+                "Set dloc_method to 'qualitative' to state the discount directly instead.",
+            )
+        elif premium is None or premium < 0:
+            c.error(
+                "out_of_range",
+                "params.control_premium",
+                "control_premium must be a non-negative fraction",
+                "A negative premium is a discount paid for control, which is a finding "
+                "about that transaction rather than evidence for a DLOC.",
+            )
+        elif premium > 0:
+            # Stated so nobody reads the premium off as the discount. The two
+            # are the same fact from opposite sides and the conversion is not
+            # symmetric: 25% one way is 20% the other.
+            c.warn(
+                "control_premium_inverted",
+                "params.control_premium",
+                f"a {premium:.1%} control premium implies a "
+                f"{dloc_from_control_premium(premium):.1%} discount for lack of control",
+                "DLOC = 1 − 1/(1 + CP). Subtracting the premium instead overstates the "
+                "discount.",
+            )
+    elif method == "studies":
+        statistic = params.get("dloc_statistic")
+        if statistic is not None and statistic not in ("median", "mean"):
+            c.error(
+                "invalid_choice",
+                "params.dloc_statistic",
+                f"dloc_statistic must be 'median' or 'mean' (got {statistic!r})",
+            )
+        _check_dloc_studies(c, params)
+    elif method == "qualitative" and params.get("dloc") is None:
+        c.error(
+            "required",
+            "params.dloc",
+            "the qualitative DLOC method needs params.dloc",
+        )
+
+    _warn_level_of_value(c, params, weights)
+
+
+def _check_dloc_studies(c: _Collector, params: dict) -> None:
+    """The selected control-premium studies, against the table they name.
+
+    A firm-supplied `dloc_study_table` replaces the built-ins wholesale, so the
+    names are checked against whichever table the run will actually read — the
+    alternative is rejecting a firm's own study names for not being ours.
+    """
+    table = params.get("dloc_study_table")
+    if table is not None and (not isinstance(table, list) or not table):
+        c.error(
+            "invalid_shape",
+            "params.dloc_study_table",
+            "dloc_study_table must be a non-empty list of {study, premium} rows",
+            "Leave it unset to use the engine's built-in table.",
+        )
+        return
+
+    if isinstance(table, list):
+        available = set()
+        for i, row in enumerate(table):
+            if not isinstance(row, dict) or not isinstance(row.get("study"), str):
+                c.error(
+                    "invalid_shape",
+                    f"params.dloc_study_table[{i}].study",
+                    "each control-premium row needs a study name",
+                )
+                continue
+            premium = _finite(row.get("premium"))
+            if premium is None or premium < 0:
+                c.error(
+                    "out_of_range",
+                    f"params.dloc_study_table[{i}].premium",
+                    "each control-premium row needs a non-negative premium",
+                )
+            available.add(row["study"])
+    else:
+        available = {row["study"] for row in CONTROL_PREMIUM_STUDIES}
+
+    selected = params.get("dloc_studies")
+    if selected is None:
+        if not isinstance(table, list):
+            # Concluding on the engine's own decade summaries. Legal, and the
+            # thing a reviewer will ask about first.
+            c.warn(
+                "indicative_control_premiums",
+                "params.dloc_studies",
+                "the discount will rest on the engine's built-in control-premium table, "
+                "which holds decade summaries rather than an extraction for this company",
+                "Supply the FactSet Mergerstat / BVR rows for the subject's own industry "
+                "and period through dloc_study_table. The dispersion across industries is "
+                "wider than the dispersion across decades.",
+            )
+        return
+    if not isinstance(selected, list) or not selected:
+        c.error(
+            "invalid_shape",
+            "params.dloc_studies",
+            "dloc_studies must be a non-empty list of study names",
+            "Leave it unset (null) to use the engine's default set.",
+        )
+        return
+    unknown = sorted({s for s in selected if s not in available})
+    if unknown:
+        c.error(
+            "unknown_study",
+            "params.dloc_studies",
+            f"unknown control-premium studies {unknown}",
+            f"Available: {sorted(available)}.",
+        )
+    elif not isinstance(table, list):
+        c.warn(
+            "indicative_control_premiums",
+            "params.dloc_studies",
+            "the selected control-premium studies are the engine's built-in decade "
+            "summaries rather than an extraction for this company",
+            "Supply the FactSet Mergerstat / BVR rows for the subject's own industry "
+            "and period through dloc_study_table.",
+        )
+
+
+def _warn_level_of_value(c: _Collector, params: dict, weights: dict[str, float] | None) -> None:
+    """A DLOC struck on a value that was already at a minority level.
+
+    The check the engine could not previously make, because a DLOC was a bare
+    number with no idea what it was being applied to. See
+    `dloc.LEVEL_OF_VALUE_BY_APPROACH` for why each approach lands where it does.
+    """
+    dloc = _finite(params.get("dloc"))
+    derived = params.get("dloc_method") in ("control_premium", "studies")
+    # A `studies` or `control_premium` run has no `params.dloc` yet — the
+    # figure only exists after compute — but it is certainly non-zero, so the
+    # warning applies. A stated `dloc` of zero cannot double-count anything.
+    if not derived and (dloc is None or dloc <= 0):
+        return
+    if not weights:
+        return
+    share = minority_basis_share({WEIGHT_TO_APPROACH[k]: v for k, v in weights.items() if k in WEIGHT_TO_APPROACH})
+    if share is None or share <= MINORITY_BASIS_WARN_SHARE:
+        return
+    c.warn(
+        "dloc_on_minority_basis",
+        "params.dloc",
+        f"{share:.0%} of the weighted equity value comes from approaches that already "
+        "produce a marketable minority value, and a discount for lack of control is "
+        "being applied on top of it",
+        "A backsolve inverts the price a minority investor paid, and guideline public "
+        "company multiples are struck on minority trading prices — neither includes a "
+        "control element to discount. Weight the income or asset approach, or conclude "
+        "the DLOC at zero.",
+    )
 
 
 def _check_dlom_blend(c: _Collector, params: dict) -> None:
@@ -1447,7 +1668,10 @@ def validate_payload(
         allocation_method = "opm"
 
     # PWERM derives equity value from its scenarios, so the weighted-approach
-    # inputs are irrelevant on that path (compute skips them entirely).
+    # inputs are irrelevant on that path (compute skips them entirely) — and
+    # with no approach mix there is no level of value to read off it either,
+    # which is why `weights` stays None rather than becoming an empty dict.
+    weights: dict[str, float] | None = None
     if allocation_method != "pwerm":
         weights = _check_weights(c, params)
         for weight_key, approach in WEIGHT_TO_APPROACH.items():
@@ -1487,7 +1711,7 @@ def validate_payload(
         allocation_method=allocation_method,
         auto_volatility=auto_volatility,
     )
-    _check_discounts(c, params)
+    _check_discounts(c, params, weights)
     _check_dates(c, params, inputs)
 
     # Consistency *between* the figures, after every check on their individual
