@@ -1,5 +1,13 @@
 fastapi>=0.115
 uvicorn>=0.32
-# Optional: live market-data feed (app.engine.market_feed). Imported lazily and
-# degrades to a fallback when absent — uncomment to enable live yfinance fetches.
-# yfinance>=0.2
+# The live market-data feed. Optional to *import* — `market_feed` loads it
+# lazily and `market_universe` degrades to the curated snapshot when it is
+# absent — but not optional to install here any more: the comparable screen
+# resolves its universe through the feed, so without this every screen in the
+# deployment silently ranks snapshot figures of unknown vintage, which is the
+# state this dependency was uncommented to end.
+#
+# To pin the snapshot in a deployment, set ENGINE_LIVE_UNIVERSE=off rather than
+# removing this. The switch is read per call, so it takes effect on a restart
+# with no rebuild, and it leaves the /market-feed route working.
+yfinance>=0.2
