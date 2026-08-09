@@ -240,6 +240,8 @@ export interface ValuationParams {
   exit_timeline: string | null;
   business_overview: string | null;
   revenue_status: 'pre_revenue' | 'post_revenue' | null;
+  /** AICPA stage of enterprise development, 1-6. Null until concluded. */
+  development_stage: number | null;
   last_round_date: string | null;
   last_year_revenue_cents: number | string | null;
   ytd_revenue_cents: number | string | null;

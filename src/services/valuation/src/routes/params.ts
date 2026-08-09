@@ -36,6 +36,9 @@ export const ParamsPatchBody = z
     exit_timeline: DateStr.nullable(),
     business_overview: z.string().max(20000).nullable(),
     revenue_status: z.enum(['pre_revenue', 'post_revenue']).nullable(),
+    // AICPA stage of enterprise development — a judgement, so it is entered
+    // rather than inferred (domain/developmentStage.ts).
+    development_stage: z.number().int().min(1).max(6).nullable(),
     last_round_date: DateStr.nullable(),
     last_year_revenue_cents: Cents.nullable(),
     ytd_revenue_cents: Cents.nullable(),

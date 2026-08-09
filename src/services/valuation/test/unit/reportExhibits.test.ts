@@ -11,6 +11,7 @@ import {
   marketExhibit,
   peerSetExhibit,
   pwermExhibit,
+  waccExhibit,
 } from '../../src/domain/reportExhibits.js';
 import { ALLOWED_TAGS, sanitizeHtml } from '../../src/domain/report.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
@@ -892,5 +893,111 @@ describe('the per-class value table in Exhibit H', () => {
     expect(text).not.toContain('Value per share — marketable');
     // The common chain above it still renders — that is the exhibit's job.
     expect(text).toContain('Concluded fair market value');
+  });
+});
+
+/**
+ * Appendix I — where the discount rate came from.
+ *
+ * Exhibit C states the rate and discounts the flows with it. A reviewer asked
+ * to accept 28% cannot check a bare percentage; the build-up is the argument.
+ */
+describe('Appendix I — the WACC build-up', () => {
+  const AUTO_WACC = {
+    wacc: 0.2812,
+    cost_of_equity: 0.2954,
+    cost_of_debt: 0.085,
+    after_tax_cost_of_debt: 0.0672,
+    tax_rate: 0.21,
+    target_debt_to_equity: 0.15,
+    weights: { equity: 0.87, debt: 0.13 },
+    capm: {
+      risk_free_rate: 0.0421,
+      beta_unlevered: 1.24,
+      beta_relevered: 1.38,
+      equity_risk_premium: 0.055,
+      size_premium: 0.0389,
+      size_tier: 'Decile 10b',
+      company_specific_premium: 0.06,
+    },
+    comparables: [
+      { ticker: 'ABCD', levered_beta: 1.42, debt_to_equity: 0.21, unlevered_beta: 1.22 },
+      { ticker: 'EFGH', levered_beta: 1.31, debt_to_equity: 0.08, unlevered_beta: 1.25 },
+    ],
+  };
+
+  const withWacc = (over: Record<string, unknown> = {}) => ({
+    equity_value: 42_000_000,
+    fmv_per_share: 1.2345,
+    auto: { wacc: { ...AUTO_WACC, ...over } },
+  });
+
+  const html = (over?: Record<string, unknown>) =>
+    waccExhibit(withWacc(over), { currency: 'USD' })!.html;
+
+  it('states every component of the cost of equity', () => {
+    const out = html();
+    expect(out).toContain('Risk-free rate');
+    expect(out).toContain('4.21%');
+    expect(out).toContain('Equity risk premium');
+    expect(out).toContain('5.50%');
+    expect(out).toContain('Size premium');
+    expect(out).toContain('3.89%');
+    expect(out).toContain('Company-specific risk premium');
+  });
+
+  it('names the size tier the premium was taken from', () => {
+    // "3.89%" is a number; "Decile 10b" is what a reviewer checks it against.
+    expect(html()).toContain('Decile 10b');
+  });
+
+  it('shows the relevering, both betas', () => {
+    const out = html();
+    expect(out).toContain('1.2400'); // unlevered
+    expect(out).toContain('1.3800'); // relevered
+  });
+
+  it('lists the guideline set the beta was computed over', () => {
+    // The one input that is neither published nor a judgement — it is a
+    // calculation over a chosen set, and the set is what gets argued with.
+    const out = html();
+    expect(out).toContain('ABCD');
+    expect(out).toContain('EFGH');
+  });
+
+  it('concludes on the rate Exhibit C actually applies', () => {
+    expect(html()).toContain('28.12%');
+    expect(html()).toContain('Exhibit C discounts the projected cash flows');
+  });
+
+  it('says so when the analyst overrode it', () => {
+    // The build-up still belongs in the report — it is what the override was a
+    // judgement against — but the appendix must not claim it drove the flows.
+    expect(html({ used_manual_override: true })).toContain('superseded by the analyst');
+  });
+
+  it('renders nothing when the rate was typed rather than built', () => {
+    // Inventing a decomposition that sums to the analyst's figure would be the
+    // appendix asserting reasoning nobody did.
+    expect(waccExhibit({ equity_value: 1, fmv_per_share: 1 }, { currency: 'USD' })).toBeNull();
+  });
+
+  it('survives a build-up missing a component', () => {
+    const out = waccExhibit(
+      { auto: { wacc: { wacc: 0.25, capm: {} } } },
+      { currency: 'USD' },
+    );
+    expect(out).not.toBeNull();
+    expect(out!.html).toContain('25.00%');
+  });
+
+  it('is included in the assembled exhibit list', () => {
+    const calc = {
+      status: 'succeeded',
+      inputs: { params: {}, inputs: {} },
+      results: withWacc(),
+    } as unknown as CalculationRow;
+    const headings = buildExhibits(calc, CONTEXT).map((s) => s.heading);
+    expect(headings).toContain('Appendix I — Discount Rate Build-Up (WACC)');
   });
 });

@@ -1,5 +1,6 @@
 import type { ReportPdfSummary, ChartSpec } from '@n409/report/pdf';
 import type { CalculationRow } from '../repos/calculations.js';
+import { stageLabel } from './developmentStage.js';
 
 /**
  * Executive summary + charts for the report PDF, derived from the calculation
@@ -276,6 +277,12 @@ export interface SummaryContext {
    * chart. Omit (or pass fewer than two) and the chart is left out.
    */
   history?: readonly HistoryPoint[];
+  /**
+   * AICPA stage of enterprise development, as the analyst concluded it. Absent
+   * until they have — it is never inferred, so a report with no stage on it is
+   * a report where nobody has said which one applies.
+   */
+  developmentStage?: number | null;
 }
 
 /**
@@ -343,6 +350,26 @@ export function buildReportSummary(
       note: typeof method === 'string' ? (DLOM_LABELS[method] ?? method) : undefined,
     });
   }
+  /*
+   * The premise every other choice in the report rests on.
+   *
+   * The AICPA practice aid frames the valuation around where the company sits
+   * on its six-stage scale: it is what justifies weighting the market approach
+   * over the income approach, reaching for a backsolve rather than a DCF, and
+   * concluding a marketability discount at the top of the supportable range. A
+   * reviewing auditor looks for it stated, and it belongs on the page they read
+   * first rather than three chapters in.
+   */
+  const stage = stageLabel(context.developmentStage);
+  if (stage) {
+    const [heading, detail] = stage.split(' — ');
+    figures.push({
+      label: 'Stage of enterprise development',
+      value: heading!,
+      note: detail,
+    });
+  }
+
   if (volatility !== null || timeToExit !== null) {
     const parts: string[] = [];
     if (volatility !== null) parts.push(`σ ${formatPercent(volatility, 0)}`);

@@ -1157,6 +1157,93 @@ export function dlomDerivationExhibit(
  * successful calculation. A report drafted before the engine has run renders
  * exactly as it did before this module existed.
  */
+// ── Appendix I — the discount rate, built up ─────────────────────────────────
+
+/**
+ * Where the income approach's discount rate came from.
+ *
+ * Exhibit C states the rate and discounts the flows with it. A reviewer asked
+ * to accept 28% cannot check a bare percentage: the build-up *is* the argument,
+ * and it is the appendix the legacy deliverable devotes a page to. Every
+ * component below is what `engine/wacc.py` actually computed and
+ * `results.auto.wacc` recorded, so this is transcription rather than
+ * re-derivation — the appendix cannot state a premium the calculation did not
+ * use.
+ *
+ * Null unless the run built the rate. An analyst who typed a discount rate in
+ * has no build-up to disclose, and inventing a decomposition that sums to their
+ * figure would be the appendix asserting reasoning nobody did.
+ */
+export function waccExhibit(
+  results: Record<string, unknown>,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const wacc = record(record(results.auto)?.wacc);
+  if (!wacc) return null;
+  const capm = record(wacc.capm) ?? {};
+  const weights = record(wacc.weights) ?? {};
+
+  const pct = (v: unknown, dp = 2) => (num(v) === null ? '—' : formatPercent(num(v) as number, dp));
+  const dec = (v: unknown, dp = 4) => (num(v) === null ? '—' : (num(v) as number).toFixed(dp));
+
+  const equity: string[][] = [
+    ['Risk-free rate', pct(capm.risk_free_rate), 'Treasury yield at the valuation date, matched to the forecast horizon'],
+    ['Equity risk premium', pct(capm.equity_risk_premium), 'Expected return on equities over the risk-free rate'],
+    ['Unlevered beta', dec(capm.beta_unlevered), 'Median of the guideline set, stripped of their capital structures'],
+    ['Relevered beta', dec(capm.beta_relevered), 'Re-levered to the subject’s target debt-to-equity'],
+    ['Size premium', pct(capm.size_premium), text(capm.size_tier) ? `Size tier: ${esc(text(capm.size_tier) as string)}` : 'Excess return of small capitalisations'],
+    ['Company-specific risk premium', pct(capm.company_specific_premium), 'Risk of this company not captured by beta or size'],
+  ];
+
+  const blend: string[][] = [
+    ['Cost of equity', pct(wacc.cost_of_equity), 'Modified CAPM — the build-up above'],
+    ['Cost of debt (pre-tax)', pct(wacc.cost_of_debt), ''],
+    ['Cost of debt (after tax)', pct(wacc.after_tax_cost_of_debt), `Tax rate ${pct(wacc.tax_rate, 1)}`],
+    ['Weight — equity', pct(weights.equity, 1), `Target debt-to-equity ${dec(wacc.target_debt_to_equity, 2)}`],
+    ['Weight — debt', pct(weights.debt, 1), ''],
+  ];
+
+  /*
+   * The guideline betas, where the relevering came from. A beta is the one
+   * input in the build-up that is not a published figure or a judgement — it is
+   * a calculation over a chosen set of companies, and the set is the part a
+   * reviewer argues with.
+   */
+  const comps = list(wacc.comparables)
+    .map(record)
+    .filter((c): c is Record<string, unknown> => c !== null);
+  const compTable =
+    comps.length > 0
+      ? table({
+          head: ['Guideline company', 'Levered beta', 'Debt/equity', 'Unlevered beta'],
+          rows: comps.map((c) => [
+            esc(text(c.ticker) ?? text(c.name) ?? '—'),
+            dec(c.levered_beta ?? c.beta, 3),
+            dec(c.debt_to_equity, 3),
+            dec(c.unlevered_beta, 3),
+          ]),
+        })
+      : null;
+
+  return section('Appendix I — Discount Rate Build-Up (WACC)', [
+    P(
+      'The discount rate applied in the income approach is the weighted average cost of capital. The ' +
+        'cost of equity is built up under the modified capital asset pricing model and blended with the ' +
+        'after-tax cost of debt at the subject’s target capital structure. The components below are the ' +
+        'figures the calculation used, not a reconstruction of them.',
+    ),
+    table({ head: ['Cost of equity component', 'Rate', 'Basis'], rows: equity }),
+    table({ head: ['Weighted average cost of capital', 'Value', 'Basis'], rows: blend }),
+    compTable,
+    P(
+      `<strong>Concluded weighted average cost of capital: ${pct(wacc.wacc)}</strong>` +
+        (wacc.used_manual_override === true
+          ? ' — superseded by the analyst’s manual discount rate, which is the figure Exhibit C applies.'
+          : ' — this is the rate Exhibit C discounts the projected cash flows at.'),
+    ),
+  ]);
+}
+
 export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitContext): ReportPdfSection[] {
   if (!calculation || calculation.status !== 'succeeded' || !calculation.results) return [];
   // A specialty run (routes/specialty.ts) records its engine's result under
@@ -1183,5 +1270,8 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     // Immediately after H, because it is H's supporting detail — the same
     // relationship D-1 has with D.
     dlomDerivationExhibit(results, ctx),
+    // Appendices last: they support the exhibits rather than being read in
+    // sequence with them.
+    waccExhibit(results, ctx),
   ].filter((s): s is ReportPdfSection => s !== null);
 }

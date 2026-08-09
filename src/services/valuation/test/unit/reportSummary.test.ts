@@ -396,3 +396,46 @@ describe('buildReportSummary', () => {
     });
   });
 });
+
+/**
+ * Stage of enterprise development.
+ *
+ * The AICPA practice aid frames the whole valuation around where the company
+ * sits on its six-stage scale — it is what justifies weighting the market
+ * approach over the income approach, reaching for a backsolve rather than a
+ * DCF, and concluding a marketability discount at the top of the supportable
+ * range. A reviewing auditor looks for it stated, and it belongs on the page
+ * they read first.
+ */
+describe('the concluded stage of enterprise development', () => {
+  const summaryWith = (developmentStage: number | null) =>
+    buildReportSummary(calculation(), { ...CONTEXT, developmentStage });
+
+  it('states the stage the analyst concluded', () => {
+    const figure = summaryWith(4)!.figures.find((f) => f.label === 'Stage of enterprise development');
+    expect(figure).toBeDefined();
+    expect(figure!.value).toBe('Stage 4');
+  });
+
+  it('carries the practice aid’s description as the note', () => {
+    // The number alone means nothing to a reader who does not have the practice
+    // aid open beside them.
+    const figure = summaryWith(4)!.figures.find((f) => f.label === 'Stage of enterprise development');
+    expect(figure!.note).toMatch(/Product revenue, operating at a loss/i);
+  });
+
+  it('says nothing when nobody has concluded one', () => {
+    // Never inferred: a report with no stage on it is a report where the
+    // analyst has not said which one applies, and printing a guess would be
+    // the platform asserting a judgement on their behalf.
+    expect(
+      summaryWith(null)!.figures.some((f) => f.label === 'Stage of enterprise development'),
+    ).toBe(false);
+  });
+
+  it('ignores a stage outside the scale', () => {
+    expect(
+      summaryWith(9)!.figures.some((f) => f.label === 'Stage of enterprise development'),
+    ).toBe(false);
+  });
+});

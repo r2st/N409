@@ -259,11 +259,16 @@ async function summaryFor(
     score: row.score,
     multiples: impliedMultiples(row),
   }));
+  // The analyst's concluded stage of enterprise development, from the
+  // methodology params. Absent until they have concluded one — it is never
+  // inferred, so a report with no stage on it is one where nobody has said.
+  const paramsRow = await findParams(pool, valuation.id);
   const context = {
     currency: valuation.currency,
     companyName: valuation.company_name,
     valuationDate,
     peers,
+    developmentStage: paramsRow?.development_stage ?? null,
   };
   // UK option-scheme deliverables carry the HMRC agreement request as a final
   // appendix. Null for every other kind, so nothing changes for a 409A.

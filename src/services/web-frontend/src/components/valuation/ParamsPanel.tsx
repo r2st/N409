@@ -5,6 +5,21 @@ import { weightsProblem, type ValuationParams } from '../../lib/pipeline';
 import { Button, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
 import { HelpIcon } from '../HelpIcon';
 
+/**
+ * The AICPA six-stage scale, in the words the report states it in. Duplicated
+ * from the service's `domain/developmentStage.ts` rather than fetched: it is a
+ * published scale that does not change, and a select that cannot render until a
+ * round trip completes is worse than one that cannot drift.
+ */
+const DEVELOPMENT_STAGE_OPTIONS = [
+  { value: '1', label: 'Stage 1 — Seed' },
+  { value: '2', label: 'Stage 2 — Product development' },
+  { value: '3', label: 'Stage 3 — Key milestones met' },
+  { value: '4', label: 'Stage 4 — Product revenue, operating at a loss' },
+  { value: '5', label: 'Stage 5 — Breakeven or positive cash flow' },
+  { value: '6', label: 'Stage 6 — Established operating history' },
+] as const;
+
 interface FormState {
   weight_asset: string;
   weight_opm: string;

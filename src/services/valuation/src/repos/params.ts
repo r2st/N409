@@ -28,6 +28,8 @@ export interface ValuationParamsRow {
   exit_timeline: string | null;
   business_overview: string | null;
   revenue_status: 'pre_revenue' | 'post_revenue' | null;
+  /** AICPA stage 1-6; null until the analyst concludes one. */
+  development_stage: number | null;
   last_round_date: string | null;
   last_year_revenue_cents: string | number | null;
   ytd_revenue_cents: string | number | null;
@@ -63,6 +65,7 @@ export const PARAM_COLUMNS = [
   'exit_timeline',
   'business_overview',
   'revenue_status',
+  'development_stage',
   'last_round_date',
   'last_year_revenue_cents',
   'ytd_revenue_cents',
