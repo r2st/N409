@@ -17,13 +17,6 @@ export type ReviewTaskKind = (typeof REVIEW_TASK_KINDS)[number];
 export const REVIEW_TASK_STATUSES = ['open', 'in_progress', 'blocked', 'done', 'cancelled'] as const;
 export type ReviewTaskStatus = (typeof REVIEW_TASK_STATUSES)[number];
 
-/** Statuses that still count against the SLA clock. */
-export const ACTIVE_TASK_STATUSES: ReadonlySet<ReviewTaskStatus> = new Set([
-  'open',
-  'in_progress',
-  'blocked',
-]);
-
 export const DOCUMENT_KINDS = [
   'cap_table',
   'income_statement',

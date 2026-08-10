@@ -61,14 +61,6 @@ export async function listInvitations(pool: pg.Pool): Promise<InvitationListRow[
   return rows;
 }
 
-export async function findInvitationById(pool: pg.Pool, id: string): Promise<InvitationRow | null> {
-  const { rows } = await pool.query<InvitationRow>(
-    `SELECT ${RETURNING} FROM user_invitations WHERE id = $1`,
-    [id],
-  );
-  return rows[0] ?? null;
-}
-
 /** Pending (unaccepted, unrevoked, unexpired) invitation for a presented token. */
 export async function findPendingInvitationByToken(
   pool: pg.Pool,

@@ -145,10 +145,6 @@ export function namedBucket(key: string): NamedBucketDef | null {
   return BUCKETS_BY_KEY.get(key as NamedBucketKey) ?? null;
 }
 
-export function isNamedBucket(key: string): key is NamedBucketKey {
-  return BUCKETS_BY_KEY.has(key as NamedBucketKey);
-}
-
 /**
  * Which state buckets a state falls into.
  *

@@ -233,14 +233,6 @@ export function useBrandingRefresh(): () => Promise<void> {
   return useContext(BrandingContext).refresh;
 }
 
-/**
- * Document title suffix. A firm's client should see the firm's name in the tab,
- * not ours — so this is what page titles append instead of a hard-coded 'N409'.
- */
-export function useBrandName(): string {
-  return useBranding().name;
-}
-
 /** The logo for a given ground, falling back to the light asset. */
 export function brandLogo(branding: Branding, ground: 'light' | 'dark'): string | null {
   return ground === 'dark' ? (branding.logo_dark_url ?? branding.logo_url) : branding.logo_url;

@@ -69,18 +69,6 @@ export async function listPromptVersions(pool: pg.Pool, promptId: string): Promi
   return rows;
 }
 
-export async function findPromptVersion(
-  pool: pg.Pool,
-  promptId: string,
-  version: number,
-): Promise<AiPromptVersionRow | null> {
-  const { rows } = await pool.query<AiPromptVersionRow>(
-    'SELECT * FROM ai_prompt_versions WHERE prompt_id = $1 AND version = $2',
-    [promptId, version],
-  );
-  return rows[0] ?? null;
-}
-
 async function insertNextVersion(
   client: pg.PoolClient,
   prompt: { id: string; system_prompt: string; model: string | null },

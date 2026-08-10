@@ -138,13 +138,6 @@ export async function findResolutionsByValuationIds(
   return new Map(rows.map((row) => [row.valuation_id, row]));
 }
 
-export async function findResolutionById(pool: pg.Pool, id: string): Promise<BoardResolutionRow | null> {
-  const { rows } = await pool.query<BoardResolutionRow>('SELECT * FROM board_resolutions WHERE id = $1', [
-    id,
-  ]);
-  return rows[0] ?? null;
-}
-
 export async function addBoardMember(
   pool: pg.Pool,
   input: {

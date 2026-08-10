@@ -632,10 +632,6 @@ export const WORKBOOK_TABS: readonly WorkbookTabDef[] = [
   },
 ];
 
-export const WORKBOOK_TABS_BY_KEY: ReadonlyMap<WorkbookTabKey, WorkbookTabDef> = new Map(
-  WORKBOOK_TABS.map((t) => [t.key, t]),
-);
-
 // ── Assembly ──────────────────────────────────────────────────────────────────
 
 export interface TabField {

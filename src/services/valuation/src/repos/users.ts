@@ -143,19 +143,6 @@ export async function createProvisionedUser(
   });
 }
 
-export async function findUserByExternalId(pool: pg.Pool, externalId: string): Promise<UserWithRoles | null> {
-  const { rows } = await pool.query<UserWithRoles>(
-    `SELECT u.*, coalesce(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
-       FROM users u
-       LEFT JOIN user_roles ur ON ur.user_id = u.id
-       LEFT JOIN roles r ON r.id = ur.role_id
-      WHERE u.scim_external_id = $1
-      GROUP BY u.id`,
-    [externalId],
-  );
-  return rows[0] ?? null;
-}
-
 /**
  * Active users holding any of the given roles — the audience for a system
  * alert that has no single owner to send to.

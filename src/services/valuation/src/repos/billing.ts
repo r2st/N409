@@ -37,8 +37,6 @@ export interface SubscriptionRow {
   canceled_at: Date | null;
 }
 
-export const ACTIVE_STATUSES = ['active', 'trialing', 'past_due'] as const;
-
 export async function findActiveSubscription(pool: pg.Pool, userId: string): Promise<SubscriptionRow | null> {
   const { rows } = await pool.query<SubscriptionRow>(
     `SELECT * FROM subscriptions

@@ -32,12 +32,6 @@ export type ComparableSource = (typeof COMPARABLE_SOURCES)[number];
 export const COMPARABLE_FIGURES_SOURCES = ['snapshot', 'live', 'analyst'] as const;
 export type ComparableFiguresSource = (typeof COMPARABLE_FIGURES_SOURCES)[number];
 
-export const FIGURES_SOURCE_LABELS: Record<ComparableFiguresSource, string> = {
-  snapshot: 'Reference snapshot',
-  live: 'Observed market data',
-  analyst: 'Analyst entered',
-};
-
 /**
  * Rows an analyst may delete outright.
  *

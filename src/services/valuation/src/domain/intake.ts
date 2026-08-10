@@ -294,11 +294,6 @@ export const INTAKE_FIELD_KEYS: ReadonlySet<string> = new Set(
   INTAKE_SECTIONS.flatMap((s) => s.fields.map((f) => f.key)),
 );
 
-/** Every field by key — what the narrowing and validation below look a key up in. */
-export const INTAKE_FIELDS_BY_KEY: ReadonlyMap<string, IntakeField> = new Map(
-  INTAKE_SECTIONS.flatMap((s) => s.fields.map((f) => [f.key, f] as const)),
-);
-
 /**
  * Answers narrowed to what the questionnaire can actually hold.
  *

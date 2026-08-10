@@ -16,10 +16,6 @@ export const WEBHOOK_EVENT_TYPES = [
 ] as const;
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 
-export function isWebhookEventType(value: string): value is WebhookEventType {
-  return (WEBHOOK_EVENT_TYPES as readonly string[]).includes(value);
-}
-
 /** An empty subscription list means every event. */
 export function webhookWantsEvent(events: readonly string[], event: WebhookEventType): boolean {
   return events.length === 0 || events.includes(event);

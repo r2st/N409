@@ -154,7 +154,3 @@ export async function isDeviceTrusted(pool: pg.Pool, userId: string, rawToken: s
   );
   return rows.length > 0;
 }
-
-export async function revokeTrustedDevices(pool: pg.Pool, userId: string): Promise<void> {
-  await pool.query('DELETE FROM mfa_trusted_devices WHERE user_id = $1', [userId]);
-}

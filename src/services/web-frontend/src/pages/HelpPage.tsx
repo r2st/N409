@@ -24,17 +24,6 @@ export interface HelpArticle {
   updated_at: string;
 }
 
-export function filterArticles(articles: HelpArticle[], query: string): HelpArticle[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return articles;
-  return articles.filter(
-    (a) =>
-      a.title.toLowerCase().includes(q) ||
-      a.keywords.toLowerCase().includes(q) ||
-      a.body_html.toLowerCase().includes(q),
-  );
-}
-
 /** One article, whether authored in-repo (Markdown) or in the CMS (HTML). */
 interface UnifiedArticle {
   slug: string;

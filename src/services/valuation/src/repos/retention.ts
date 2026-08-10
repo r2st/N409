@@ -56,13 +56,6 @@ export interface LegalHoldRow {
   released_at: Date | null;
 }
 
-export async function listActiveHolds(pool: pg.Pool): Promise<LegalHoldRow[]> {
-  const { rows } = await pool.query<LegalHoldRow>(
-    'SELECT * FROM legal_holds WHERE active = true ORDER BY placed_at DESC',
-  );
-  return rows;
-}
-
 export async function listHolds(pool: pg.Pool): Promise<LegalHoldRow[]> {
   const { rows } = await pool.query<LegalHoldRow>('SELECT * FROM legal_holds ORDER BY placed_at DESC');
   return rows;

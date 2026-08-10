@@ -140,7 +140,3 @@ export async function listActiveEngagements(pool: pg.Pool): Promise<EngagementLi
   return rows;
 }
 
-/** Engagements whose current stage started before `before` (SLA-overdue candidates). */
-export async function overdueCandidates(pool: pg.Pool): Promise<EngagementListRow[]> {
-  return listActiveEngagements(pool);
-}
