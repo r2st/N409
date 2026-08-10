@@ -9,7 +9,11 @@ import { latestSucceededCalculation } from '../repos/calculations.js';
 import { createQaReview, listQaReviews } from '../repos/qaReviews.js';
 import { findReportByValuation, getVersion } from '../repos/reports.js';
 import { reportReadiness } from '../domain/reportReadiness.js';
+import { reviewReport } from '../domain/reportReview.js';
+import { templateForKind } from '../domain/report.js';
+import { summaryFor } from './reports.js';
 import { reportFigures } from '../domain/reportFigures.js';
+import { resolveExhibitReferences } from '../domain/reportExhibitIndex.js';
 import { calculationPayload, runAiPipeline, type AiPipelineDeps } from './ai.js';
 import { InternalServiceError, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -84,13 +88,25 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      */
     const report = await findReportByValuation(deps.pool, valuation.id);
     const reportVersion = report ? await getVersion(deps.pool, report.id, report.current_version) : null;
+    /*
+     * The exhibits this calculation produces, and the body with its index and
+     * its exhibit pointers resolved against them — the same two steps, in the
+     * same order, that `renderVersionPdf` performs.
+     *
+     * Both checks below have to read the *resolved* body or they grade a
+     * document nobody receives: `{{exhibit_index}}` is a render-time marker and
+     * would otherwise be counted as an unfilled hole, and the index's list of
+     * schedules does not exist until it is built from this very array.
+     */
+    const { exhibits } = await summaryFor(deps.pool, valuation);
+    const exhibitHeadings = exhibits.map((s) => s.heading);
+    const reportContent = reportVersion?.content
+      ? resolveExhibitReferences(reportVersion.content, exhibitHeadings)
+      : null;
     // Checked against what this calculation can actually fill in. A computed
     // marker the run supplies is not a hole; one it does not is a set of literal
     // braces on the deliverable, and is graded as such.
-    const readiness = reportReadiness(
-      reportVersion?.content ?? null,
-      reportFigures(calculation, valuation.currency),
-    );
+    const readiness = reportReadiness(reportContent, reportFigures(calculation, valuation.currency));
     deterministic.checks.push({
       key: 'report_placeholders',
       label: 'Report body has no unfilled template placeholders',
@@ -98,6 +114,32 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       detail: readiness.detail,
     });
     deterministic.status = worstStatus([deterministic.status, readiness.status]);
+
+    /*
+     * The document as a reader meets it, rather than as a marker search sees it.
+     *
+     * A chapter can hold no placeholder at all and still send the reader to an
+     * exhibit that was never built, leave a weighted approach unexplained, or
+     * have quietly stopped restating its own conclusion. None of that shows up
+     * in a figure, so none of the checks above can find it.
+     *
+     * Graded against the exhibits *this* calculation actually produces, built
+     * from the same call the renderer makes — so the check reads the report
+     * that would be delivered right now, not a second opinion about it.
+     */
+    const coherence = reviewReport({
+      content: reportContent,
+      exhibitHeadings,
+      approaches: (calculation.results ?? {}).approaches,
+      template: templateForKind(valuation.kind),
+    });
+    deterministic.checks.push({
+      key: 'report_coherence',
+      label: 'Report body agrees with its schedules and the calculation',
+      status: coherence.status,
+      detail: coherence.detail,
+    });
+    deterministic.status = worstStatus([deterministic.status, coherence.status]);
 
     let aiFindings: Record<string, unknown> | null = null;
     let aiModel: string | null = null;
