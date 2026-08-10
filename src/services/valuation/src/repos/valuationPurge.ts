@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { invalidateValuation } from './valuations.js';
 
 /**
  * Retire valuations that should not appear in the product, by explicit id.
@@ -72,6 +73,14 @@ export async function retireValuations(pool: pg.Pool, ids: readonly string[]): P
       );
     }
     await client.query('COMMIT');
+    // This is the ninth writer to `valuations`, and the read-through cache in
+    // `repos/valuations.ts` is only correct because every one of them drops the
+    // row afterwards. Today the seeder runs out-of-process so the API's cache is
+    // not this process's, and the drop is a no-op; the moment anything in the
+    // service retires a valuation, the absence of this line is `state` and
+    // `archived_at` served stale for a full TTL. After the COMMIT, not inside
+    // it, for the reason `invalidateValuationAfter` documents.
+    for (const id of toRetire) invalidateValuation(id);
     return {
       retired: toRetire,
       missing: wanted.filter((id) => !found.includes(id)),

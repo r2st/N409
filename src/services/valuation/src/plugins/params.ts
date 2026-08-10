@@ -31,26 +31,72 @@ export const UlidParam = z
  * on a `*id` suffix, because that would also catch parameters that are legally
  * not ULIDs and 404 every request to them.
  *
- * Deliberately excluded, all of which are real route parameters:
- *   :provider, :role, :slug, :key, :field_key, :dataType, :pipeline — lookup
- *   keys, not ids; :version — an integer report-version number; :n, :problem —
- *   test/diagnostic routes.
+ * An id-shaped parameter missing from this set is the exact failure the hook
+ * was written to end — it falls back to whatever guard its handler happens to
+ * carry, which is the arrangement that left most handlers without one. So the
+ * set is not merely a list to extend by hand: `NON_ID_PARAM_NAMES` below names
+ * every parameter that is deliberately *not* an id, and the two together must
+ * cover every parameter the app registers. `routeParamNames` and the security
+ * regression test over it are what hold that.
  */
 export const ID_PARAM_NAMES: ReadonlySet<string> = new Set([
   'id',
   'pid', // fund position id
   'accessId',
+  'calculationId',
   'commentId',
   'compareId',
+  // Partner API. Its path is written `{deliveryId}` in the OpenAPI table and
+  // converted to `:deliveryId` at registration, so it is invisible to a grep
+  // for route literals — which is how it stayed off this list.
+  'deliveryId',
   'documentId',
+  'estimateId', // volatility estimate
   'grantId',
+  'itemId', // comparable item / network item
   'memberId',
   'partnerId',
+  'paymentId',
+  'projectionId',
   'roundId',
   'scenarioId',
   'transactionId',
   'valuationId',
 ]);
+
+/**
+ * Parameters that are legitimately not ULIDs, with what each one is.
+ *
+ * Exists so the partition can be asserted: a new route parameter has to be
+ * classified as one or the other, and cannot arrive as an unguarded id by
+ * being neither.
+ */
+export const NON_ID_PARAM_NAMES: ReadonlySet<string> = new Set([
+  'provider', // accounting / cap-table / HRIS provider key
+  'role', // role key
+  'slug', // blog post slug
+  'key', // partner or branding lookup key
+  'field_key', // override cell key
+  'dataType', // retention data type
+  'pipeline', // pipeline name
+  'kind', // valuation kind
+  'source', // lead/traffic source
+  'version', // integer report-version number
+  'n', // diagnostic routes
+  'problem', // diagnostic routes
+]);
+
+/**
+ * The distinct `:name` parameters in a set of route patterns
+ * (`app.routeAudit.all()` supplies the real ones).
+ */
+export function routeParamNames(routes: readonly string[]): string[] {
+  const names = new Set<string>();
+  for (const route of routes) {
+    for (const match of route.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)/g)) names.add(match[1]!);
+  }
+  return [...names].sort();
+}
 
 /** Offending parameter names, empty when everything id-shaped is a valid ULID. */
 export function invalidIdParams(

@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { buildPoolConfig, resolvePoolTuning } from '../../src/db/pool.js';
+import { EventEmitter } from 'node:events';
+import type pg from 'pg';
+import { describe, expect, it, vi } from 'vitest';
+import { attachPoolErrorHandler, buildPoolConfig, resolvePoolTuning } from '../../src/db/pool.js';
 
 const URL = 'postgres://n409:pw@db.internal:5432/n409';
 
@@ -66,5 +68,66 @@ describe('buildPoolConfig', () => {
     expect(buildPoolConfig(URL, resolvePoolTuning(URL, { DB_SSL: 'no-verify' })).ssl).toEqual({
       rejectUnauthorized: false,
     });
+  });
+});
+
+describe('attachPoolErrorHandler', () => {
+  /** A pool is an EventEmitter as far as the `error` event is concerned. */
+  const fakePool = () => new EventEmitter() as unknown as pg.Pool;
+
+  it('swallows an idle-client error that would otherwise be unhandled', () => {
+    const bare = fakePool();
+    // Without a listener EventEmitter rethrows — this is the crash being fixed.
+    expect(() => bare.emit('error', Object.assign(new Error('terminating connection'), { code: '57P01' }))).toThrow(
+      /terminating connection/,
+    );
+
+    const pool = fakePool();
+    attachPoolErrorHandler(pool);
+    expect(() =>
+      pool.emit('error', Object.assign(new Error('terminating connection'), { code: '57P01' })),
+    ).not.toThrow();
+  });
+
+  it('logs the error and its SQLSTATE when given a log', () => {
+    const log = { error: vi.fn() };
+    const pool = fakePool();
+    attachPoolErrorHandler(pool, log);
+
+    const err = Object.assign(new Error('terminating connection due to administrator command'), {
+      code: '57P01',
+    });
+    pool.emit('error', err);
+
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.error.mock.calls[0]![0]).toMatchObject({ err, code: '57P01' });
+    expect(log.error.mock.calls[0]![1]).toMatch(/idle database client error/);
+  });
+
+  it('replaces its own listener rather than stacking them', () => {
+    const first = { error: vi.fn() };
+    const second = { error: vi.fn() };
+    const pool = fakePool();
+
+    attachPoolErrorHandler(pool, first);
+    attachPoolErrorHandler(pool, second);
+    expect((pool as unknown as EventEmitter).listenerCount('error')).toBe(1);
+
+    pool.emit('error', new Error('boom'));
+    expect(first.error).not.toHaveBeenCalled();
+    expect(second.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('upgrades the bootstrap listener createPool leaves behind', () => {
+    // createPool attaches a logger-less handler so the pool is never
+    // listener-less; index.ts attaches a logging one once app.log exists.
+    const pool = fakePool();
+    attachPoolErrorHandler(pool);
+    const log = { error: vi.fn() };
+    attachPoolErrorHandler(pool, log);
+
+    pool.emit('error', new Error('boom'));
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect((pool as unknown as EventEmitter).listenerCount('error')).toBe(1);
   });
 });

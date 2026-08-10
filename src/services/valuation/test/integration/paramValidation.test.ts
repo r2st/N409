@@ -1,4 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  ID_PARAM_NAMES,
+  NON_ID_PARAM_NAMES,
+  routeParamNames,
+} from '../../src/plugins/params.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -96,5 +101,60 @@ describe.skipIf(!dbUp)('route id parameter validation', () => {
     });
     expect(res.statusCode).toBe(404); // no such partner, but it got that far
     expect(res.json().title).not.toBe(undefined);
+  });
+});
+
+/**
+ * Every route parameter the app registers is classified.
+ *
+ * `plugins/params.ts` exists because ~190 handlers each had to remember an
+ * `isUlid` guard and most did not. But the hook only covers the parameter names
+ * it knows about, so a route added with a new id-shaped parameter name silently
+ * reverts to the arrangement the hook replaced — which is what had happened to
+ * :calculationId, :estimateId, :itemId, :paymentId and :projectionId.
+ *
+ * Asserting the partition is what makes the hook self-maintaining: a new
+ * parameter has to be declared an id or declared not one, and cannot arrive
+ * unguarded by being neither.
+ */
+describe.skipIf(!dbUp)('route parameter classification', () => {
+  let ctx: TestApp;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+  });
+  afterAll(() => ctx.teardown());
+
+  it('classifies every registered parameter as an id or explicitly not one', () => {
+    const params = routeParamNames(ctx.app.routeAudit.all());
+    expect(params.length).toBeGreaterThan(10); // the routes really were walked
+
+    const unclassified = params.filter((p) => !ID_PARAM_NAMES.has(p) && !NON_ID_PARAM_NAMES.has(p));
+    expect(unclassified).toEqual([]);
+  });
+
+  it('keeps the two sets disjoint', () => {
+    const both = [...ID_PARAM_NAMES].filter((p) => NON_ID_PARAM_NAMES.has(p));
+    expect(both).toEqual([]);
+  });
+
+  it('has no id parameter listed that no route uses', () => {
+    // A stale entry is harmless but misleading — it reads as coverage.
+    const params = new Set(routeParamNames(ctx.app.routeAudit.all()));
+    expect([...ID_PARAM_NAMES].filter((p) => !params.has(p))).toEqual([]);
+  });
+
+  it.each([
+    ['GET', '/api/v1/valuations/01K0000000000000000000000A/calculations/not-a-ulid'],
+    ['POST', '/api/v1/valuations/01K0000000000000000000000A/volatility/not-a-ulid/apply'],
+    ['PATCH', '/api/v1/valuations/01K0000000000000000000000A/comparables/not-a-ulid'],
+    ['GET', '/api/v1/valuations/01K0000000000000000000000A/network-items/not-a-ulid'],
+    ['GET', '/api/v1/valuations/01K0000000000000000000000A/payments/not-a-ulid/receipt.pdf'],
+    ['POST', '/api/v1/valuations/01K0000000000000000000000A/projection/not-a-ulid/apply'],
+  ])('turns away a malformed nested id at %s %s without authenticating', async (method, url) => {
+    // No credentials: these now fail at preValidation, ahead of the route's own
+    // preHandler, so the answer is 404 rather than 401.
+    const res = await ctx.app.inject({ method: method as 'GET', url });
+    expect(res.statusCode).toBe(404);
   });
 });

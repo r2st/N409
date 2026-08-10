@@ -12,7 +12,7 @@ import {
 const telemetry = startTelemetry('valuation');
 
 const { loadConfig } = await import('./config.js');
-const { createPool } = await import('./db/pool.js');
+const { createPool, attachPoolErrorHandler } = await import('./db/pool.js');
 const { migrate } = await import('./db/migrate.js');
 const { instrumentPool, QueryStats } = await import('./db/queryStats.js');
 const { buildApp, buildEmailTransports } = await import('./app.js');
@@ -35,6 +35,9 @@ const pool = createPool(config.DATABASE_URL);
 const queryStats = new QueryStats();
 const app = buildApp({ config, pool, queryStats });
 instrumentPool(pool, { slowMs: config.DB_SLOW_QUERY_MS, log: app.log, stats: queryStats });
+// `createPool` already left a listener on `error` so the pool is never
+// listener-less; now that there is a log, swap it for one that says so.
+attachPoolErrorHandler(pool, app.log);
 
 // A stray rejection in any of the background timers below (auto-emails, the
 // pipeline reaper, the cap-table/HRIS scans, retention, job alerts) would otherwise kill the

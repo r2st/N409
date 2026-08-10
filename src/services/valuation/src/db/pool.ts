@@ -87,8 +87,51 @@ export function buildPoolConfig(databaseUrl: string, tuning: PoolTuning): pg.Poo
   };
 }
 
+/** The listener this module installs, tracked so a second call replaces it. */
+const POOL_ERROR_HANDLER = Symbol('n409.pool.errorHandler');
+
+type PoolErrorLog = { error: (obj: Record<string, unknown>, msg: string) => void };
+
+/**
+ * Makes a pool survive an idle client dying under it.
+ *
+ * pg raises `error` on the *pool* — not on any query — when a client sitting
+ * idle in it loses its connection: a database restart or failover, a reaper on
+ * the far side of a connection proxy, a `DROP DATABASE ... WITH (FORCE)` landing
+ * on sockets that are still closing (57P01 `admin_shutdown`, which is how this
+ * reaches the integration suite at teardown). By then pg has already removed the
+ * client, and no statement was in flight, so there is nothing for the
+ * application to fail — the next checkout simply dials a fresh connection.
+ *
+ * But `EventEmitter` throws an unhandled `error`, and every pool in this service
+ * was built without a listener. So the routine reconnect became an
+ * `uncaughtException`, and `installCrashHandlers` turns that into a process
+ * exit that takes every in-flight request with it — the service killing itself
+ * over an event whose only correct response is to note it and carry on.
+ *
+ * Called from `createPool` with no logger so a pool is never listener-less
+ * between construction and the point the app log exists; call it again with the
+ * log once it does.
+ */
+export function attachPoolErrorHandler(pool: pg.Pool, log?: PoolErrorLog): void {
+  const tracked = pool as pg.Pool & { [POOL_ERROR_HANDLER]?: (err: Error) => void };
+  const previous = tracked[POOL_ERROR_HANDLER];
+  if (previous) pool.removeListener('error', previous);
+
+  const handler = (err: Error): void => {
+    log?.error(
+      { err, code: (err as { code?: string }).code },
+      'idle database client error — client dropped, pool will reconnect',
+    );
+  };
+  tracked[POOL_ERROR_HANDLER] = handler;
+  pool.on('error', handler);
+}
+
 export function createPool(databaseUrl: string, env: NodeJS.ProcessEnv = process.env): pg.Pool {
-  return new pg.Pool(buildPoolConfig(databaseUrl, resolvePoolTuning(databaseUrl, env)));
+  const pool = new pg.Pool(buildPoolConfig(databaseUrl, resolvePoolTuning(databaseUrl, env)));
+  attachPoolErrorHandler(pool);
+  return pool;
 }
 
 /**

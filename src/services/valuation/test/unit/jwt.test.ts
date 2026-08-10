@@ -44,17 +44,20 @@ describe('session JWTs (issue #3)', () => {
     expect((await verifySession(token, cfg)).session_epoch).toBe(7);
   });
 
-  it('reads a token minted before the epoch claim existed as epoch 0', async () => {
-    // Matches the column default, so deploying the claim doesn't sign everyone
-    // out of their existing sessions.
-    const legacy = await new SignJWT({ roles: ['admin'], partner_id: null })
+  it('reads a token carrying no epoch claim as epoch 0', async () => {
+    // 0 matches the column default, so a token that predates the claim is
+    // treated as never revoked rather than as revoked. Unlike `purpose` and
+    // `aud`, a missing epoch grants nothing on its own — it is a comparison
+    // against `users.session_epoch`, not a gate — so the lenient reading stays.
+    const noEpoch = await new SignJWT({ purpose: 'session', roles: ['admin'], partner_id: null })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject('01ABC')
       .setIssuer(cfg.issuer)
+      .setAudience('n409-valuation')
       .setIssuedAt()
       .setExpirationTime('1h')
       .sign(new TextEncoder().encode(cfg.secret));
-    expect((await verifySession(legacy, cfg)).session_epoch).toBe(0);
+    expect((await verifySession(noEpoch, cfg)).session_epoch).toBe(0);
   });
 
   it('rejects a tampered token', async () => {
@@ -115,16 +118,50 @@ describe('session JWT purpose claim (token confusion prevention)', () => {
     await expect(verifySession(acctToken, cfg)).rejects.toThrow('wrong token purpose');
   });
 
-  it('still accepts legacy tokens without a purpose claim (backward compat)', async () => {
-    const legacy = await new SignJWT({ roles: ['admin'], partner_id: null })
+  it('rejects a token carrying no purpose claim at all', async () => {
+    // This used to be accepted, to spare existing sessions the deploy that
+    // introduced `purpose`. Combined with the matching `aud` allowance it left
+    // one shape — no purpose, no audience — that satisfied both checks by
+    // answering neither, which is the whole confusion defence undone.
+    const noPurpose = await new SignJWT({ roles: ['admin'], partner_id: null })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject('01ABC')
       .setIssuer(cfg.issuer)
       .setIssuedAt()
       .setExpirationTime('1h')
       .sign(new TextEncoder().encode(cfg.secret));
-    const result = await verifySession(legacy, cfg);
-    expect(result.sub).toBe('01ABC');
+    await expect(verifySession(noPurpose, cfg)).rejects.toThrow('wrong token purpose');
+  });
+
+  it('rejects a token carrying no audience', async () => {
+    const noAud = await new SignJWT({ purpose: 'session', roles: [], partner_id: null, session_epoch: 0 })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('01ABC')
+      .setIssuer(cfg.issuer)
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(new TextEncoder().encode(cfg.secret));
+    await expect(verifySession(noAud, cfg)).rejects.toThrow('wrong audience');
+  });
+
+  it('rejects the token that answered neither check', async () => {
+    const neither = await new SignJWT({ roles: ['admin'], partner_id: null })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('01ABC')
+      .setIssuer(cfg.issuer)
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .sign(new TextEncoder().encode(cfg.secret));
+    await expect(verifySession(neither, cfg)).rejects.toThrow();
+  });
+
+  it('still accepts the token signSession actually mints', async () => {
+    // The tightening must not have made the live shape unverifiable.
+    const token = await signSession(
+      { sub: '01ABC', roles: ['admin'], partner_id: null, session_epoch: 3 },
+      cfg,
+    );
+    expect(await verifySession(token, cfg)).toMatchObject({ sub: '01ABC', session_epoch: 3 });
   });
 
   it('rejects a token minted for a different audience', async () => {

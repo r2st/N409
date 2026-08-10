@@ -2,6 +2,7 @@ import pg from 'pg';
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { migrate } from '../../src/db/migrate.js';
+import { attachPoolErrorHandler } from '../../src/db/pool.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { createUser } from '../../src/repos/users.js';
@@ -31,6 +32,31 @@ export interface TestDb {
   teardown: () => Promise<void>;
 }
 
+/**
+ * Waits for the throwaway database's backends to actually go away.
+ *
+ * `pool.end()` resolves once every client has been *asked* to close: pg drops
+ * each one from its list synchronously and fires the end callback from there,
+ * while the sockets are still unwinding. So the `DROP DATABASE ... WITH (FORCE)`
+ * that follows can still find a live backend, terminate it, and hand the
+ * closing client a fatal 57P01 — which pg raises on the pool, not on any query.
+ *
+ * Polling until `pg_stat_activity` is clear means FORCE has nothing left to
+ * kill in the ordinary case. Bounded, because a genuinely leaked connection
+ * must not hang the suite; FORCE is still there to deal with one.
+ */
+async function waitForBackendsToExit(admin: pg.Client, dbName: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { rows } = await admin.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+      [dbName],
+    );
+    if ((rows[0]?.n ?? 0) === 0 || Date.now() >= deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 /** Creates a throwaway database, migrates it, and drops it on teardown. */
 export async function setupTestDb(): Promise<TestDb> {
   const dbName = `n409_test_${randomBytes(6).toString('hex')}`;
@@ -42,6 +68,9 @@ export async function setupTestDb(): Promise<TestDb> {
   const url = new URL(BASE_URL);
   url.pathname = `/${dbName}`;
   const pool = new pg.Pool({ connectionString: url.toString(), max: 5 });
+  // Same reason as production (db/pool.ts): an idle client that dies raises
+  // `error` on the pool, and an unhandled one takes the worker down with it.
+  attachPoolErrorHandler(pool);
   await migrate(pool);
 
   return {
@@ -50,8 +79,12 @@ export async function setupTestDb(): Promise<TestDb> {
       await pool.end();
       const drop = new pg.Client({ connectionString: BASE_URL });
       await drop.connect();
-      await drop.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-      await drop.end();
+      try {
+        await waitForBackendsToExit(drop, dbName);
+        await drop.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      } finally {
+        await drop.end();
+      }
     },
   };
 }

@@ -245,18 +245,41 @@ describe.skipIf(!dbUp)('account settings', () => {
       expect((await me(user.token)).statusCode).toBe(401);
     });
 
-    it('a session token minted before the epoch claim existed still works', async () => {
-      // Guards the deploy: old JWTs carry no session_epoch and must read as 0.
+    it('a session token carrying no epoch claim reads as epoch 0, not as revoked', async () => {
+      // A missing epoch grants nothing by itself — it is compared against
+      // `users.session_epoch`, and 0 matches the column default — so it stays
+      // the lenient reading. `purpose` and `aud` are gates and are not.
       const user = await seedUser(ctx, { roles: ['valuation_user'] });
       const { SignJWT } = await import('jose');
-      const legacy = await new SignJWT({ roles: ['valuation_user'], partner_id: null })
+      const noEpoch = await new SignJWT({
+        purpose: 'session',
+        roles: ['valuation_user'],
+        partner_id: null,
+      })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setSubject(user.id)
+        .setIssuer('n409')
+        .setAudience('n409-valuation')
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(new TextEncoder().encode('integration-test-secret-0123456789abcdef'));
+      expect((await me(noEpoch)).statusCode).toBe(200);
+    });
+
+    it('refuses a token that carries neither a purpose nor an audience', async () => {
+      // Both allowances existed only to spare live sessions the deploy that
+      // added each claim. Together they left one shape that answered neither
+      // check — a forged or cross-flow token naming any `sub` it liked.
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      const { SignJWT } = await import('jose');
+      const unpurposed = await new SignJWT({ roles: ['admin'], partner_id: null })
         .setProtectedHeader({ alg: 'HS256' })
         .setSubject(user.id)
         .setIssuer('n409')
         .setIssuedAt()
         .setExpirationTime('1h')
         .sign(new TextEncoder().encode('integration-test-secret-0123456789abcdef'));
-      expect((await me(legacy)).statusCode).toBe(200);
+      expect((await me(unpurposed)).statusCode).toBe(401);
     });
   });
 

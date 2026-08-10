@@ -40,15 +40,27 @@ export async function signSession(claims: SessionClaims, cfg: JwtConfig): Promis
     .sign(key(cfg.secret));
 }
 
+/**
+ * Turns a signed token back into a session, or refuses.
+ *
+ * `purpose` and `aud` are both required, and neither was always. Each was added
+ * with an `=== undefined` escape so that deploying it did not sign out every
+ * session minted by the previous build — a window one `JWT_TTL_SECONDS` wide,
+ * which those deploys closed long ago.
+ *
+ * Left in place, the two escapes compose into something worse than either: a
+ * token carrying neither claim is accepted as a session for whatever `sub` it
+ * names. Every token this service mints has carried a `purpose` since
+ * `signSession`, `signMfaChallenge`, `signOidcState` and `signIntegrationState`
+ * were written — that is what makes the purpose check able to keep the four
+ * flows apart — so nothing legitimate relies on either escape, and what they
+ * actually hold open is the one shape that would defeat both checks at once.
+ */
 export async function verifySession(token: string, cfg: JwtConfig): Promise<SessionClaims> {
   const { payload } = await jwtVerify(token, key(cfg.secret), { issuer: cfg.issuer });
   if (typeof payload.sub !== 'string') throw new Error('missing sub');
-  if (payload.purpose !== 'session' && payload.purpose !== undefined) throw new Error('wrong token purpose');
-  // Reject tokens minted for a different audience; accept legacy tokens
-  // (aud === undefined) so the deploy doesn't sign everyone out.
-  if (payload.aud !== undefined && payload.aud !== 'n409-valuation') {
-    throw new Error('wrong audience');
-  }
+  if (payload.purpose !== 'session') throw new Error('wrong token purpose');
+  if (payload.aud !== 'n409-valuation') throw new Error('wrong audience');
   return {
     sub: payload.sub,
     roles: (payload.roles as RoleKey[]) ?? [],
