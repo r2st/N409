@@ -339,6 +339,14 @@ export function exerciseScenarios(
 }
 
 /** Default what-if ladder: 1×, 2×, 5×, 10× the current 409A FMV. */
+/**
+ * How many what-if FMVs one grant panel may be asked for. The default ladder
+ * below is four; twenty is well past any ladder a person reads, and keeps a
+ * comma-separated query parameter from turning a short request into a long
+ * response.
+ */
+export const MAX_SCENARIO_FMVS = 20;
+
 export function defaultScenarioFmvs(currentFmv: number): number[] {
   return [1, 2, 5, 10].map((mult) => Math.round(currentFmv * mult * 10000) / 10000);
 }

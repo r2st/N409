@@ -22,6 +22,7 @@ import {
   FREQUENCY_MONTHS_MAX,
   isIssuableTemplate,
   ISSUABLE_TEMPLATE_KEYS,
+  MAX_SCENARIO_FMVS,
   templateByKey,
   toIsoDate,
   vestingStatus,
@@ -207,6 +208,13 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     const latest = await latestSucceededCalculation(deps.pool, id);
     const baseFmv = latest?.fmv_per_share ? Number(latest.fmv_per_share) : currentFmv;
     const q = (req.query as { fmvs?: string }).fmvs;
+    // Bounded like `sort` is (MAX_SORT_TERMS, repos/valuations): the ladder is a
+    // handful of what-if prices for one panel — the default is four — and every
+    // term costs a scenario object in the response. Rejected rather than
+    // truncated, so a client asking for more never quietly gets fewer.
+    if (q !== undefined && q.split(',').length > MAX_SCENARIO_FMVS) {
+      throw problems.badRequest(`At most ${MAX_SCENARIO_FMVS} what-if FMVs may be requested`);
+    }
     const fmvs = q
       ? q
           .split(',')

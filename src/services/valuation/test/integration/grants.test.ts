@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { createCalculation } from '../../src/repos/calculations.js';
+import { MAX_SCENARIO_FMVS } from '../../src/domain/vesting.js';
 
 const dbUp = await isDbAvailable();
 
@@ -177,6 +178,47 @@ describe.skipIf(!dbUp)('feature 6 — grant management', () => {
     expect(body.scenarios).toHaveLength(2);
     // At FMV 25 with a 2.5 strike: spread 22.5 * 48000 = 1,080,000
     expect(body.scenarios[1]).toMatchObject({ fmv: 25, spreadPerShare: 22.5, grossValue: 1_080_000 });
+  });
+
+  /**
+   * `fmvs` is a comma-separated list read straight off the query string, and
+   * every term costs a scenario object in the response — so an unbounded list
+   * let a short request ask for an arbitrarily long one. Bounded like `sort`
+   * is, and rejected rather than truncated so a caller asking for more never
+   * quietly gets fewer.
+   */
+  it('refuses more what-if FMVs than a ladder can hold, and serves the cap itself', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/grants`,
+      headers: authHeader(ops.token),
+      payload: { grantee_name: 'Ladder', grant_date: '2024-01-01', options_count: 1000 },
+    });
+    const grantId = created.json().grant.id;
+    const detail = (fmvs: string) =>
+      app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/grants/${grantId}?fmvs=${fmvs}`,
+        headers: authHeader(ops.token),
+      });
+
+    const over = await detail(Array.from({ length: MAX_SCENARIO_FMVS + 1 }, (_, i) => i + 1).join(','));
+    expect(over.statusCode).toBe(400);
+
+    // The boundary itself is still served — an off-by-one here would silently
+    // shorten the ladder the UI already asks for.
+    const at = await detail(Array.from({ length: MAX_SCENARIO_FMVS }, (_, i) => i + 1).join(','));
+    expect(at.statusCode).toBe(200);
+    expect(at.json().scenarios).toHaveLength(MAX_SCENARIO_FMVS);
+
+    // No `fmvs` at all still falls back to the default ladder.
+    const none = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${valuationId}/grants/${grantId}`,
+      headers: authHeader(ops.token),
+    });
+    expect(none.statusCode).toBe(200);
+    expect(none.json().scenarios).toHaveLength(4);
   });
 
   it('lists grants for the owning client but not other clients', async () => {
