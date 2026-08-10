@@ -4,6 +4,7 @@ import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { formatDate } from '../../lib/format';
+import { sanitizeHtml } from '../../lib/m2';
 import { Seo } from '../../components/Seo';
 import { ErrorNote, Spinner } from '../../components/ui';
 import { articleJsonLd, breadcrumbJsonLd, websiteJsonLd } from '../../lib/seo';
@@ -251,8 +252,11 @@ export function BlogPostPage() {
       {post.excerpt && <p className="mt-4 text-lg leading-relaxed text-ink-600">{post.excerpt}</p>}
       <div
         className="prose-n409 mt-10 space-y-5 text-[0.95rem] leading-relaxed text-ink-700"
-        // Sanitised server-side on write, with the report content policy.
-        dangerouslySetInnerHTML={{ __html: post.body_html }}
+        // Sanitised server-side on write with the report content policy, and
+        // again here with the identical allowlist — idempotent on anything
+        // written through the API, and still a guard on a row that reached the
+        // table another way. This one is public and unauthenticated.
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(post.body_html) }}
       />
     </article>
   );

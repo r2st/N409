@@ -87,6 +87,19 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * `If-Match` headers for a write guarded by an optimistic-lock version.
+ *
+ * Returns nothing when the version is absent so the call site can spread this
+ * unconditionally: a resource whose payload predates the version column (a list
+ * projection, a cached shape) simply falls back to the old last-write-wins
+ * behaviour rather than sending `If-Match: "undefined"`, which the server would
+ * — correctly — reject as malformed.
+ */
+export function ifMatch(version: number | undefined): Record<string, string> | undefined {
+  return version === undefined ? undefined : { 'if-match': `"${version}"` };
+}
+
 export async function api<T>(
   path: string,
   init: Omit<RequestInit, 'body'> & { body?: unknown } = {},

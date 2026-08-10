@@ -113,6 +113,8 @@ import { registerWaccRoutes } from './routes/wacc.js';
 import { registerProjectionRoutes } from './routes/projections.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
+import type { QueryStats } from './db/queryStats.js';
+import { clamdScanner, type ScanPolicy } from './documents/virusScan.js';
 import { probeReady, setNetworkSink } from './clients/internal.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
 
@@ -147,6 +149,9 @@ export interface AppDeps {
   hub?: ValuationHub;
   /** injectable for tests — /ready probes against the AI + engine services */
   readinessFetch?: FetchFn;
+  /** Per-statement timing aggregate, surfaced at /api/v1/admin/db/slow-queries.
+   *  Wired in index.ts; absent in tests, which the route reports rather than 500s on. */
+  queryStats?: QueryStats;
 }
 
 /**
@@ -365,7 +370,11 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     enabled: config.AUTO_PIPELINE === 'on',
     log: app.log,
   };
-  registerDocumentRoutes(app, { pool, documentsDir: config.DOCUMENTS_DIR, autoPipeline });
+  // Antivirus policy for both upload paths (documents/virusScan.ts). Built
+  // once here so the session route and the partner API cannot end up scanning
+  // to different policies.
+  const scan = resolveScanPolicy(config, app.log);
+  registerDocumentRoutes(app, { pool, documentsDir: config.DOCUMENTS_DIR, autoPipeline, scan });
   registerPipelineRoutes(app, { pool, autoPipeline });
   registerParamsRoutes(app, { pool });
   registerEngineInputsRoutes(app, { pool });
@@ -441,7 +450,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerNetworkItemRoutes(app, { pool });
   registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerApiTokenRoutes(app, { pool });
-  registerOperationsRoutes(app, { pool });
+  registerOperationsRoutes(app, { pool, queryStats: deps.queryStats });
   // M4 — operations polish
   registerWorkflowRoutes(app, { pool, transport });
   // P1 #6 — review queue + approve/request-changes decisions
@@ -493,6 +502,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     pool,
     documentsDir: config.DOCUMENTS_DIR,
     limiter: deps.partnerApiLimiter,
+    scan,
   });
   // P0 — outside-world integrations (remaining-gaps §6): Stripe + signatures
   registerPaymentRoutes(app, {
@@ -553,6 +563,35 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   assertRoutesGuarded(app, routeAudit);
 
   return app;
+}
+
+/**
+ * Upload antivirus policy from env (documents/virusScan.ts).
+ *
+ * No `CLAMAV_HOST` means no scanner, which is the pre-existing behaviour and
+ * the default: standing up clamd is a deployment decision, and a service that
+ * refused to boot without one would make this change a breaking one. The
+ * absence is logged at info so "did the scan run?" has an answer in the log
+ * rather than only in the environment.
+ */
+export function resolveScanPolicy(config: Config, log: FastifyBaseLogger): ScanPolicy {
+  if (!config.CLAMAV_HOST) {
+    log.info('CLAMAV_HOST unset — uploaded documents are not virus scanned');
+    return { failClosed: false };
+  }
+  log.info(
+    { host: config.CLAMAV_HOST, port: config.CLAMAV_PORT, failClosed: config.VIRUS_SCAN_FAIL_CLOSED },
+    'upload virus scanning enabled',
+  );
+  return {
+    scanner: clamdScanner({
+      host: config.CLAMAV_HOST,
+      port: config.CLAMAV_PORT,
+      timeoutMs: config.CLAMAV_TIMEOUT_MS,
+    }),
+    failClosed: config.VIRUS_SCAN_FAIL_CLOSED,
+    log,
+  };
 }
 
 /** Cap-table sync provider OAuth credentials from env (feature 4). */

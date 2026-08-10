@@ -27,6 +27,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { maybeStartAutoPipeline, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
 import { checkUploadType } from '../documents/fileType.js';
+import { scanUpload, UploadRejected, type ScanPolicy } from '../documents/virusScan.js';
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
@@ -107,6 +108,27 @@ export function contentDisposition(
 }
 
 /**
+ * Turns a virus-scan rejection into the same 422 an upload gets for failing the
+ * type check — it is the caller's file that is the problem, not the server's
+ * state. Shared by both upload routes so the two report identically.
+ *
+ * The signature is deliberately included: it tells an analyst whose own file
+ * was flagged that the answer is "clean your machine", not "retry", and it is
+ * the scanner's public name for a public sample, not a detail about us.
+ */
+export function rethrowRejectedUpload(filename: string) {
+  return (err: unknown): never => {
+    if (err instanceof UploadRejected) {
+      throw problems.unprocessable(`Rejected upload: ${err.reason}`, {
+        filename,
+        scan: err.verdict.status,
+      });
+    }
+    throw err;
+  };
+}
+
+/**
  * Writes the blob to disk and records the document row + event. Shared by the
  * session upload route below and the partner API (improvement 6).
  */
@@ -124,8 +146,16 @@ export async function storeDocument(
   },
   actor: EventActor,
   uploadedBy: string,
+  options: { scan?: ScanPolicy } = {},
 ): Promise<DocumentRow> {
   const filename = safeFilename(input.filename);
+
+  // Before anything touches disk. Placed here rather than in the two upload
+  // routes so a third way to upload a file cannot skip it — see virusScan.ts.
+  // `UploadRejected` is translated to a 422 by the callers; a scan that simply
+  // is not configured returns clean and costs nothing.
+  if (options.scan) await scanUpload(input.buffer, options.scan, { filename });
+
   const sha256 = createHash('sha256').update(input.buffer).digest('hex');
   const dir = path.join(documentsDir, valuation.id);
   await mkdir(dir, { recursive: true });
@@ -156,7 +186,7 @@ export async function storeDocument(
 
 export function registerDocumentRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; documentsDir: string; autoPipeline?: AutoPipelineDeps },
+  deps: { pool: pg.Pool; documentsDir: string; autoPipeline?: AutoPipelineDeps; scan?: ScanPolicy },
 ): void {
   app.post('/api/v1/valuations/:id/documents', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
@@ -207,7 +237,8 @@ export function registerDocumentRoutes(
       { kind, category, filename: file.filename, contentType: file.mimetype, buffer },
       actorFor(principal),
       principal.id,
-    );
+      { scan: deps.scan },
+    ).catch(rethrowRejectedUpload(file.filename));
 
     // Improvement 2 — auto-pipeline: an extractable upload kicks off
     // extraction → param fill → draft calculation without blocking the

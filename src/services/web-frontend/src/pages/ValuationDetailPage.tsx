@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, apiDownload, ApiError } from '../lib/api';
+import { api, apiDownload, ApiError, ifMatch } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { editableFields, isOps } from '../lib/rbac';
 import { eventLabel, formatDate, formatDateTime, STATE_LABELS } from '../lib/format';
@@ -78,12 +78,31 @@ export function ValuationDetailPage() {
     if (editable.has('state') && form.state !== valuation.state) patch.state = form.state;
     try {
       if (Object.keys(patch).length > 0) {
-        await api(`/valuations/${valuation.id}`, { method: 'PATCH', body: patch });
+        await api(`/valuations/${valuation.id}`, {
+          method: 'PATCH',
+          body: patch,
+          // The version this form was rendered from. The server refuses the
+          // write with a 409 if anyone saved since, rather than letting this
+          // form's copy of the untouched fields overwrite their edit — the
+          // workspace is shared between the analyst, the reviewer and ops, so
+          // two people on one valuation is routine (migration 0137).
+          headers: ifMatch(valuation.version),
+        });
         await refresh();
       }
       setSaved(true);
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : 'Could not save changes.');
+      // A conflict is not a failed save so much as an out-of-date page: reload
+      // so the user is looking at what actually landed before they retype.
+      if (err instanceof ApiError && err.status === 409) {
+        await refresh();
+        setSaveError(
+          err.problem.detail ??
+            'Someone else changed this valuation while you were editing. It has been reloaded — please reapply your changes.',
+        );
+      } else {
+        setSaveError(err instanceof ApiError ? err.message : 'Could not save changes.');
+      }
     } finally {
       setBusy(false);
     }

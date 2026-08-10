@@ -1,0 +1,29 @@
+-- The edit two analysts made at once, of which only one survived.
+--
+-- `patchValuation` reads the row, computes a diff against the fields the caller
+-- sent, and writes the changed columns back. Between the read and the write
+-- there is nothing: no lock, no version check, no condition on the UPDATE. Two
+-- people editing the same valuation in the same minute is not a rare event on
+-- this platform — the workspace is shared between the analyst preparing the
+-- report, the reviewer working the review queue, and ops changing state from
+-- the operations console — and each of those three paths calls patchValuation.
+--
+-- The failure is silent, which is what makes it worth a migration. Analyst A
+-- opens the valuation, sets `delivery_days`; analyst B opens the same page a
+-- moment earlier and saves `company_name`. B's PATCH carries the whole form as
+-- B loaded it, so it writes back the *old* delivery_days over A's. Nothing
+-- errors, both requests return 200, both users see their own change land, and
+-- the audit trail records two `updated` events neither of which says a value
+-- was lost. The only trace is that A's edit is simply gone next time the page
+-- is loaded.
+--
+-- `version` is the fix's anchor: monotonically incremented on every write, and
+-- the UPDATE carries `WHERE version = <the version the caller read>`. A write
+-- built on a stale read matches no row and is turned away with a 409 rather
+-- than overwriting. See repos/valuations.ts for the read-modify-write, and
+-- routes/valuations.ts for the If-Match header that carries it over HTTP.
+--
+-- Existing rows start at 1 rather than 0 so "no version" and "version zero"
+-- cannot be confused by a client that omits the header.
+ALTER TABLE valuations
+  ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;

@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/format';
 import { Markdown } from '../lib/markdown';
+import { sanitizeHtml } from '../lib/m2';
 import { HELP_ARTICLES, HELP_CATEGORIES, type HelpArticleContent } from '../data/helpContent';
 import { EmptyState, ErrorNote, Spinner, TextInput } from '../components/ui';
 
@@ -206,8 +207,12 @@ export function HelpPage() {
           ) : (
             <div
               className="prose-help space-y-4 text-[0.95rem] leading-relaxed text-ink-700"
-              // Sanitized server-side with the report-content policy.
-              dangerouslySetInnerHTML={{ __html: article.bodyHtml ?? '' }}
+              // Sanitized server-side with the report-content policy, and again
+              // here with the identical allowlist — so the pass is idempotent
+              // on anything written through the API, and still a guard on a row
+              // that reached the table another way (a fixture, a migration, a
+              // future importer).
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(article.bodyHtml ?? '') }}
             />
           )}
         </div>

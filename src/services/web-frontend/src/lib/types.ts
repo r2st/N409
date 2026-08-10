@@ -111,6 +111,13 @@ export interface Valuation {
   qsbs_attestation: boolean | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Optimistic-lock counter (migration 0137). Echoed back as `If-Match` on a
+   * PATCH so a save built on a stale copy is refused rather than overwriting
+   * whoever saved in between. Optional because the list projections and the
+   * older cached shapes do not carry it.
+   */
+  version?: number;
   /** Computed per-viewer on the list (gap 4): conversation moved since last opened. */
   unread?: boolean;
 }

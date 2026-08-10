@@ -16,6 +16,7 @@ import {
   slaBreaches,
 } from '../repos/valuations.js';
 import { NAMED_BUCKETS, type NamedBucketKey } from '../domain/workflow.js';
+import type { QueryStats } from '../db/queryStats.js';
 import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { VALUATION_KINDS } from '../domain/valuation.js';
@@ -76,7 +77,10 @@ async function loadBands(pool: pg.Pool, scope: ReturnType<typeof valuationScope>
  * M3 operations surface: tab counts (feature 15), CSV export (16), dashboard
  * analytics (17), clone / roll-forward (18).
  */
-export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
+export function registerOperationsRoutes(
+  app: FastifyInstance,
+  deps: { pool: pg.Pool; queryStats?: QueryStats },
+): void {
   const countsCache = new TtlCache<Record<StateGroup | 'all', number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const namedCountsCache = new TtlCache<Record<NamedBucketKey, number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const dashboardCache = new TtlCache<Awaited<ReturnType<typeof dashboardStats>>>({
@@ -214,5 +218,31 @@ export function registerOperationsRoutes(app: FastifyInstance, deps: { pool: pg.
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden();
     return retryDueDeliveries({ pool: deps.pool, log: req.log });
+  });
+
+  /**
+   * The slowest statements this process has run, worst-first by total time
+   * (db/queryStats.ts).
+   *
+   * Process-local and reset on deploy, which is the right scope for the
+   * question it answers — "what is slow in the build that is running now" —
+   * and avoids a metrics backend being a prerequisite for the answer. The
+   * per-statement `warn` lines cover the same ground for a single request; this
+   * is the view that ranks them.
+   *
+   * Ops-only: a fingerprint names tables and columns, which is more of the
+   * schema than a client has any reason to see.
+   */
+  app.get('/api/v1/admin/db/slow-queries', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    const stats = deps.queryStats;
+    // Instrumentation is wired in index.ts, so a test app or a future entry
+    // point can legitimately have none. Report that rather than 500.
+    if (!stats) return { instrumented: false, tracked: 0, queries: [] };
+    const { limit } = req.query as { limit?: string };
+    const parsed = Number(limit);
+    const top = Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 200) : 20;
+    return { instrumented: true, tracked: stats.size, queries: stats.top(top) };
   });
 }

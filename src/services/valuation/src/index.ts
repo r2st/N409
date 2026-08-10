@@ -14,6 +14,7 @@ const telemetry = startTelemetry('valuation');
 const { loadConfig } = await import('./config.js');
 const { createPool } = await import('./db/pool.js');
 const { migrate } = await import('./db/migrate.js');
+const { instrumentPool, QueryStats } = await import('./db/queryStats.js');
 const { buildApp, buildEmailTransports } = await import('./app.js');
 const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { retryFailedEmails } = await import('./hooks/emailRetry.js');
@@ -27,7 +28,13 @@ const { autoPipelineConcurrency } = await import('./pipeline/autoPipeline.js');
 
 const config = loadConfig();
 const pool = createPool(config.DATABASE_URL);
-const app = buildApp({ config, pool });
+// Statement timing (db/queryStats.ts). Constructed before buildApp so the ops
+// route and the instrumentation share one table, and instrumented immediately
+// after so the migrations below — the first queries this process runs — are
+// already covered.
+const queryStats = new QueryStats();
+const app = buildApp({ config, pool, queryStats });
+instrumentPool(pool, { slowMs: config.DB_SLOW_QUERY_MS, log: app.log, stats: queryStats });
 
 // A stray rejection in any of the background timers below (auto-emails, the
 // pipeline reaper, the cap-table/HRIS scans, retention, job alerts) would otherwise kill the
@@ -66,6 +73,12 @@ registerGauge(
   'db.pool.connections.waiting',
   'requests waiting for a pg client',
   () => pool.waitingCount,
+);
+// Slow statements since boot. A counter would be better shaped, but the table
+// is already the source of truth and a gauge over it needs no second tally that
+// could disagree with the endpoint ops actually read.
+registerGauge('valuation', 'db.query.slow.total', 'statements over the slow-query threshold', () =>
+  queryStats.top(Number.MAX_SAFE_INTEGER).reduce((n, s) => n + s.slowCount, 0),
 );
 registerGauge(
   'valuation',

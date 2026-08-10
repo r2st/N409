@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
@@ -130,6 +130,43 @@ function xlsxCell(value: unknown, format: XlsxColumn['format']): XlsxValue {
   return String(value);
 }
 
+/**
+ * Whether the row cap cut the export short, and the rows to actually emit.
+ *
+ * The cap has always been here; what was missing is any way for the reader to
+ * know it applied. An export of the valuation list is an audit deliverable —
+ * somebody hands it to a reviewer as "our engagements" — and a file that stops
+ * at ten thousand rows while looking complete is worse than one that refuses:
+ * the reviewer reconciles against it and the missing rows are, by construction,
+ * the ones nobody looks for.
+ *
+ * Detected by asking for one row more than we will send. A cheaper `count(*)`
+ * would need the same WHERE built twice and could disagree with the page under
+ * concurrent writes; the extra row cannot.
+ */
+export function truncationOf<T>(fetched: T[]): { rows: T[]; truncated: boolean } {
+  return fetched.length > MAX_EXPORT_ROWS
+    ? { rows: fetched.slice(0, MAX_EXPORT_ROWS), truncated: true }
+    : { rows: fetched, truncated: false };
+}
+
+/** The human-facing notice, for formats with somewhere to put one. */
+export function truncationNotice(emitted: number): string {
+  return `TRUNCATED: only the first ${emitted.toLocaleString('en-US')} rows are included. Narrow the filters to export the rest.`;
+}
+
+/**
+ * Machine-facing truncation signal, on every format including the ones with no
+ * room for a visible notice. A client fetching an export to re-import it has no
+ * business parsing a title line, and the header is the only marker CSV can
+ * carry at all.
+ */
+function sendExport(reply: FastifyReply, truncated: boolean): FastifyReply {
+  return reply
+    .header('x-export-truncated', truncated ? 'true' : 'false')
+    .header('x-export-row-limit', String(MAX_EXPORT_ROWS));
+}
+
 export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   app.get('/api/v1/valuations/export', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
@@ -144,14 +181,20 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const generatedAt = new Date();
     const stamp = generatedAt.toISOString().slice(0, 10);
     if (format === 'csv' || format === 'xlsx') {
-      const rows = await exportValuations(
+      // One more row than we will emit — see truncationOf. The extra row is
+      // dropped, never rendered.
+      const fetched = await exportValuations(
         deps.pool,
         valuationScope(principal),
         { ...filters, sort },
-        MAX_EXPORT_ROWS,
+        MAX_EXPORT_ROWS + 1,
       );
+      const { rows, truncated } = truncationOf(fetched);
       if (format === 'csv') {
-        return reply
+        // CSV gets the headers but no in-band marker: there is no comment
+        // syntax a spreadsheet honours, and a trailing note row would be
+        // indistinguishable from data to anything parsing the file.
+        return sendExport(reply, truncated)
           .header('content-type', 'text/csv; charset=utf-8')
           .header('content-disposition', `attachment; filename="valuations-${stamp}.csv"`)
           .send(recordsToCsv(CSV_COLUMNS, rows));
@@ -162,28 +205,34 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
             name: 'Valuations',
             columns: XLSX_LIST_COLUMNS,
             rows: rows.map((row) => XLSX_LIST_COLUMNS.map((c) => xlsxCell(row[c.key], c.format))),
+            // Above the header, where a reader cannot miss it and no column
+            // parser will read it as data.
+            titleLines: truncated ? [truncationNotice(rows.length)] : undefined,
           },
         ],
         { mtime: generatedAt },
       );
-      return reply
+      return sendExport(reply, truncated)
         .header('content-type', XLSX_CONTENT_TYPE)
         .header('content-disposition', `attachment; filename="valuations-${stamp}.xlsx"`)
         .send(xlsx);
     }
 
-    const { items } = await listValuations(deps.pool, valuationScope(principal), {
+    const { items: fetchedItems } = await listValuations(deps.pool, valuationScope(principal), {
       ...filters,
       sort,
       page: 1,
-      perPage: MAX_EXPORT_ROWS,
+      perPage: MAX_EXPORT_ROWS + 1,
     });
+    const { rows: items, truncated } = truncationOf(fetchedItems);
     const pdf = tablePdf(
-      `Valuations — exported ${stamp}`,
+      truncated
+        ? `Valuations — exported ${stamp} — ${truncationNotice(items.length)}`
+        : `Valuations — exported ${stamp}`,
       PDF_COLUMNS,
       items.map((v) => pdfRowValues(v).map((c) => (c === null || c === undefined ? '' : String(c)))),
     );
-    return reply
+    return sendExport(reply, truncated)
       .header('content-type', 'application/pdf')
       .header('content-disposition', `attachment; filename="valuations-${stamp}.pdf"`)
       .send(pdf);

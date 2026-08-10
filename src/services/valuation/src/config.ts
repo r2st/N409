@@ -136,6 +136,27 @@ const Env = z.object({
   // jobs). Roughly: 20 PDF renders, 8 evidence bundles or 8 AI jobs a minute.
   // 0 disables. Production-only, like the counters above.
   HEAVY_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(0).default(200),
+  // A statement at or over this many ms gets its own `slow query` warn line
+  // (db/queryStats.ts). 200ms is well under the 15s statement_timeout and above
+  // where a healthy indexed query on this schema lands, so the log names
+  // regressions rather than narrating normal traffic. The aggregate at
+  // /api/v1/admin/db/slow-queries counts every statement regardless — this
+  // threshold only governs the per-statement line. 0 logs everything.
+  DB_SLOW_QUERY_MS: z.coerce.number().int().min(0).default(200),
+  // Antivirus for uploaded documents (documents/virusScan.ts). Unset means no
+  // scanning, which is the status quo — a scan nobody has deployed clamd for
+  // must not stop the service booting.
+  CLAMAV_HOST: z.string().optional(),
+  CLAMAV_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+  CLAMAV_TIMEOUT_MS: z.coerce.number().int().min(1).default(30_000),
+  // What an unreachable scanner means once one *is* configured. Fail-closed by
+  // default: a control that silently stops working is worse than no control,
+  // because the uploads that arrive while it is down are the ones nobody will
+  // go back and re-check. Set 'false' where upload availability outranks it.
+  VIRUS_SCAN_FAIL_CLOSED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 export type Config = z.infer<typeof Env>;

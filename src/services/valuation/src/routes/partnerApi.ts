@@ -36,7 +36,8 @@ import {
 import { listDocuments } from '../repos/documents.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findReportByValuation, getVersion, listVersions } from '../repos/reports.js';
-import { MAX_DOCUMENT_BYTES, storeDocument } from './documents.js';
+import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './documents.js';
+import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
@@ -135,7 +136,12 @@ function partnerCanReadReport(principal: Principal, v: ValuationRow): boolean {
 
 export function registerPartnerApiRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; documentsDir: string; limiter?: FixedWindowRateLimiter },
+  deps: {
+    pool: pg.Pool;
+    documentsDir: string;
+    limiter?: FixedWindowRateLimiter;
+    scan?: ScanPolicy;
+  },
 ): void {
   const limiter =
     deps.limiter ?? new FixedWindowRateLimiter(PARTNER_API_RATE_LIMIT, PARTNER_API_RATE_WINDOW_MS);
@@ -418,7 +424,8 @@ export function registerPartnerApiRoutes(
         },
         actorFor(principal),
         principal.id,
-      );
+        { scan: deps.scan },
+      ).catch(rethrowRejectedUpload(parsed.data.filename));
       return reply.status(201).send({
         document: {
           id: document.id,

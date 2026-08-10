@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
 import { formatDateTime } from '../lib/format';
+import { sanitizeHtml } from '../lib/m2';
 import type { Valuation } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from './ui';
 
@@ -216,8 +217,13 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
               </summary>
               <div
                 className="prose-resolution mt-3 max-h-72 overflow-y-auto rounded border border-paper-200 bg-surface p-4 text-sm text-ink-800 [&_h1]:mb-2 [&_h1]:font-display [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1 [&_h2]:font-semibold [&_p]:mb-2"
-                // Body is analyst-authored and HTML-escaped server-side.
-                dangerouslySetInnerHTML={{ __html: resolution.body_html }}
+                // Body is rendered and HTML-escaped server-side
+                // (domain/boardResolution.ts), and sanitized again here. The
+                // second pass is not redundancy for its own sake: the escaping
+                // lives in a template a future field could be added to without
+                // it, and this is the render that a board member — not an
+                // employee — ends up looking at.
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(resolution.body_html) }}
               />
             </details>
             {resolution.status !== 'approved' && (

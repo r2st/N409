@@ -12,6 +12,7 @@ import {
 } from '../auth/rbac.js';
 import { VALUATION_KINDS, VALUATION_SOURCES, VALUATION_STATES } from '../domain/valuation.js';
 import { CurrencyCode } from '../domain/currency.js';
+import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { listEvents } from '../events/record.js';
@@ -233,10 +234,14 @@ export function registerValuationRoutes(
     return { valuations: items, page, per_page, total };
   });
 
-  app.get('/api/v1/valuations/:id', { preHandler: app.authenticate }, async (req) => {
+  app.get('/api/v1/valuations/:id', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorized(deps.pool, principal, id);
+    // The validator a PATCH sends back as If-Match. Set here rather than left
+    // to the client to read out of the body, so the round trip is the ordinary
+    // HTTP one and an intermediary cannot serve a body whose version has moved.
+    reply.header('ETag', versionEtag(valuation.version));
     // Opening a valuation clears its unread marker for the viewer's side
     // (gap 4). Ops read the admin marker; the owner reads the user marker.
     if (isOps(principal)) await markValuationRead(deps.pool, valuation.id, 'admin');
@@ -262,10 +267,20 @@ export function registerValuationRoutes(
     return { valuation, counters };
   });
 
-  app.patch('/api/v1/valuations/:id', { preHandler: app.authenticate }, async (req) => {
+  app.patch('/api/v1/valuations/:id', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorized(deps.pool, principal, id);
+
+    // Opt-in concurrency check: a client that echoes the ETag it read gets its
+    // write refused if somebody else has saved since (migration 0137). Parsed
+    // before the body so a malformed header fails the same way whatever the
+    // patch contains.
+    const ifMatch = parseIfMatch(req.headers['if-match']);
+    if (ifMatch.kind === 'invalid') {
+      throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+    }
+    const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid patch', { errors: parsed.error.issues });
@@ -276,7 +291,10 @@ export function registerValuationRoutes(
     if (denied.length > 0) {
       throw problems.forbidden(`Not allowed to update: ${denied.join(', ')}`);
     }
-    if (requested.length === 0) return { valuation };
+    if (requested.length === 0) {
+      reply.header('ETag', versionEtag(valuation.version));
+      return { valuation };
+    }
 
     if (parsed.data.state && parsed.data.state !== valuation.state) {
       await assertPublishGate(deps.pool, valuation.id, parsed.data.state);
@@ -286,7 +304,9 @@ export function registerValuationRoutes(
       valuation,
       parsed.data as Record<string, unknown>,
       actorFor(principal),
+      { expectedVersion },
     );
+    reply.header('ETag', versionEtag(updated.version));
     // M4: state changes fire the auto email workflows + in-app notifications.
     if (parsed.data.state && parsed.data.state !== valuation.state) {
       await onStateChanged(

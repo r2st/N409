@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
+import { sanitizeHtml } from '../lib/m2';
 import { Wordmark } from '../components/Logo';
 import { Button, ErrorNote, Field } from '../components/ui';
 
@@ -128,7 +129,10 @@ export function BoardSignPage() {
       </p>
       <div
         className="prose-resolution max-h-[50vh] overflow-y-auto rounded-lg border border-paper-300 bg-surface p-6 text-sm text-ink-800 shadow-card [&_h1]:mb-2 [&_h1]:font-display [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mt-4 [&_h2]:mb-1 [&_h2]:font-semibold [&_p]:mb-3"
-        dangerouslySetInnerHTML={{ __html: view.resolution.body_html }}
+        // Escaped server-side when rendered, sanitized again here. This page is
+        // reached with a signing token by someone outside the org, so it is the
+        // one render where a lapse upstream would land on an outsider.
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(view.resolution.body_html) }}
       />
       {error && (
         <div className="mt-4">

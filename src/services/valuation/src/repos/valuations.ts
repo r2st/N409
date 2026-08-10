@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { isUlid, newUlid, TtlCache } from '@n409/shared';
+import { isUlid, newUlid, problems, TtlCache } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { likeContains } from '../db/like.js';
 import { diffRecords } from '../domain/auditTrail.js';
@@ -37,6 +37,8 @@ export interface ValuationRow {
   assigned_reviewer_id: string | null;
   /** Per-valuation auto-pipeline opt-out (migration 0049). */
   auto_pipeline: boolean;
+  /** Optimistic-lock counter, bumped by every write (migration 0137). */
+  version: number;
   created_at: Date;
   due_date: Date | null;
   published_at: Date | null;
@@ -927,17 +929,62 @@ const TIMESTAMP_ON_STATE: Partial<Record<ValuationState, string>> = {
 };
 
 /**
+ * The 409 a stale write is refused with.
+ *
+ * `current` is reported so the client can tell "somebody else saved" from "my
+ * own retry raced itself" without a second round trip, and so the UI can offer
+ * a reload rather than only an error. It is optional because the row may have
+ * been deleted between the read and the write, in which case there is no
+ * version to name.
+ */
+function staleWrite(current: number | undefined, expected: number): never {
+  throw problems.conflict(
+    `This valuation was changed by someone else (expected version ${expected}, ` +
+      `now ${current ?? 'unknown'}). Reload and reapply your changes.`,
+  );
+}
+
+export interface PatchOptions {
+  /**
+   * The `version` the caller's copy of the row was read at. When given, the
+   * write is conditional on the row still being at that version and a stale
+   * write is refused (409) rather than silently overwriting a concurrent edit.
+   *
+   * Omitted by the internal callers that are not applying a user's form —
+   * workflow transitions, review decisions and the Stripe webhook each move one
+   * column from a value they just computed, so there is no stale read to guard.
+   */
+  expectedVersion?: number;
+}
+
+/**
  * Applies a field-level patch and writes `valuation_updated` (plus
  * `state_changed` when state moves) in the same transaction.
+ *
+ * `version` is bumped on every write and, when `expectedVersion` is supplied,
+ * is also the UPDATE's condition — see migration 0137 for the lost-update this
+ * closes. The check is made twice deliberately: once here against the row the
+ * caller already read, which catches the ordinary "your tab is stale" case
+ * before a transaction is opened, and once in the UPDATE's WHERE, which is the
+ * only one that can catch a writer landing between that read and this write.
  */
 export async function patchValuation(
   pool: pg.Pool,
   current: ValuationRow,
   fields: Record<string, unknown>,
   actor: EventActor,
+  options: PatchOptions = {},
 ): Promise<ValuationRow> {
+  const { expectedVersion } = options;
+  if (expectedVersion !== undefined && expectedVersion !== current.version) {
+    throw staleWrite(current.version, expectedVersion);
+  }
+
   const changes = diffRecords(current, fields, Object.keys(fields));
   const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
+  // Nothing to write, so nothing to lose: the caller's values already match the
+  // row. Returning before the transaction keeps a no-op PATCH from burning a
+  // version and spuriously conflicting with a concurrent editor.
   if (entries.length === 0) return current;
 
   return invalidateValuationAfter(current.id, () =>
@@ -955,11 +1002,30 @@ export async function patchValuation(
         if (tsColumn) sets.push(`${tsColumn} = now()`);
       }
 
+      // Every write moves the version, whether or not this caller asked for the
+      // check — a reader that did ask must see a concurrent write it did not.
+      sets.push('version = version + 1');
+
       params.push(current.id);
+      let where = `id = $${params.length}`;
+      if (expectedVersion !== undefined) {
+        params.push(expectedVersion);
+        where += ` AND version = $${params.length}`;
+      }
       const { rows } = await client.query<ValuationRow>(
-        `UPDATE valuations SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+        `UPDATE valuations SET ${sets.join(', ')} WHERE ${where} RETURNING *`,
         params,
       );
+      // Zero rows is only reachable under a version condition — without one the
+      // WHERE is the primary key of a row loaded and authorized moments ago. So
+      // somebody committed between this caller's read and this UPDATE.
+      if (rows.length === 0 && expectedVersion !== undefined) {
+        const { rows: live } = await client.query<{ version: number }>(
+          'SELECT version FROM valuations WHERE id = $1',
+          [current.id],
+        );
+        staleWrite(live[0]?.version, expectedVersion);
+      }
 
       await recordEvent(client, {
         valuationId: current.id,
