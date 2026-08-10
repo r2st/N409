@@ -525,7 +525,7 @@ const TEMPLATE_409A: ReportTemplate = {
           'The income approach measures value as the present worth of the future economic benefits of the business. We applied the discounted cash flow method: management’s projected free cash flows over the explicit forecast period are discounted to present value at a rate reflecting the risk of achieving them, and a terminal value representing the cash flows beyond that period is discounted alongside them.',
         ) +
         P(
-          'State the source and reliability of the projections, the derivation of the discount rate, and the basis for the terminal growth rate. The forecast, the discount factors and the bridge from enterprise to equity value are set out in <strong>Exhibit C</strong>.',
+          'State the source and reliability of the projections, the derivation of the discount rate, and the basis for the terminal growth rate. The forecast, the discount factors and the bridge from enterprise to equity value are set out in <strong>Exhibit C</strong>; where the cash flows were built from a revenue and margin forecast rather than supplied as a stream, the assumptions behind them are set out in <strong>Exhibit C-1</strong>.',
         ),
     },
     {
@@ -753,6 +753,7 @@ const TEMPLATE_409A: ReportTemplate = {
         '<li>Exhibit A — Capitalization Table</li>' +
         '<li>Exhibit B — Reconciliation of Valuation Approaches</li>' +
         '<li>Exhibit C — Income Approach (Discounted Cash Flow)</li>' +
+        '<li>Exhibit C-1 — Basis of the Cash-Flow Forecast</li>' +
         '<li>Exhibit D — Market Approach (Guideline Multiples)</li>' +
         // D-1 has been rendered since the peer set was first stored and was
         // never listed here; an index that omits an exhibit the report

@@ -43,6 +43,7 @@ import { loadDebtReport, loadFundReport } from '../repos/measurementReport.js';
 import { buildDebtExhibits, buildFundExhibits } from '../domain/navExhibits.js';
 import { findParams } from '../repos/params.js';
 import { findCurrentVolatilityEstimate } from '../repos/volatilityEstimates.js';
+import { findCurrentProjection } from '../repos/projections.js';
 import { sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
@@ -289,6 +290,11 @@ async function summaryFor(
   // on; null for every engagement whose analyst selected sigma by judgement,
   // and the exhibit is then not rendered.
   const volatility = await findCurrentVolatilityEstimate(pool, valuation.id);
+  // Where the DCF's cash flows came from (migration 0136). The *adopted* run
+  // where there is one, so Exhibit C-1 describes the forecast the income
+  // approach actually ran on; null for every engagement whose stream was
+  // entered by hand, and the exhibit is then not rendered.
+  const projection = await findCurrentProjection(pool, valuation.id);
   const context = {
     currency: valuation.currency,
     companyName: valuation.company_name,
@@ -300,6 +306,7 @@ async function summaryFor(
     // built-in literature ranges otherwise (Appendix III).
     requiredReturnTable: paramsRow?.required_return_table ?? null,
     volatility,
+    projection,
   };
   // UK option-scheme deliverables carry the HMRC agreement request as a final
   // appendix. Null for every other kind, so nothing changes for a 409A.

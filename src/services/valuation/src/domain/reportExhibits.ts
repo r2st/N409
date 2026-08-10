@@ -8,6 +8,7 @@ import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './w
 import { requiredReturnRows } from './requiredReturns.js';
 import { VOLATILITY_CONFIDENCE_NOTES, VOLATILITY_METHOD_LABELS } from './volatility.js';
 import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
+import type { ProjectionRow, ProjectionYear } from '../repos/projections.js';
 
 /**
  * The supporting exhibits of the deliverable — the schedules a reviewer checks
@@ -73,6 +74,12 @@ export interface ExhibitContext {
    * before the derivation existed.
    */
   volatility?: VolatilityEstimateRow | null;
+  /**
+   * Where the DCF's cash flows came from (migration 0136), when they were
+   * projected rather than typed. Absent for every engagement whose analyst
+   * entered the stream by hand, and Exhibit C-1 is then not rendered.
+   */
+  projection?: ProjectionRow | null;
 }
 
 /** One row of the peer set, as Exhibit D-1 prints it. */
@@ -524,6 +531,184 @@ export function incomeExhibit(
         '',
       ],
     }),
+  ]);
+}
+
+// ── Exhibit C-1 — basis of the cash-flow forecast ────────────────────────────
+
+/**
+ * What produced the cash flows Exhibit C discounts.
+ *
+ * Exhibit C prints the stream, the discount factors and the present values —
+ * everything the calculation did *with* the forecast, and nothing about where
+ * the forecast came from. Until the projection was recorded (migration 0136)
+ * there was nothing to print: the free cash flows were figures typed into a
+ * form, and the honest answer to "what revenue, at what margin" was that the
+ * report could not say. Appendix II states this in terms — management's
+ * forecast "is set out where it is applied in Exhibit C" — and Exhibit C could
+ * only ever set out the total.
+ *
+ * The relationship to Exhibit C is the one D-1 has with D and F-1 with F: the
+ * supporting detail, immediately after the schedule it supports.
+ *
+ * The build is printed in the shape a financial statement is printed in — one
+ * row per line, one column per year — because that is how a reader checks it,
+ * and because the same convention already governs Appendix II. The arithmetic
+ * is left visible rather than summarised: EBITDA to EBIT to NOPAT, then the two
+ * deductions, so a reviewer can follow the fall to free cash flow without
+ * recomputing it.
+ *
+ * Printed only where a projection was run. An engagement whose analyst entered
+ * the stream by hand gets no exhibit rather than a schedule of assumptions
+ * nobody made — and the report reads exactly as it did before.
+ */
+
+/** A forecast wider than this is squeezed past readability by the renderer. */
+const MAX_FORECAST_COLUMNS = 12;
+
+const PROJECTION_LINES: Array<[string, keyof ProjectionYear]> = [
+  ['Revenue', 'revenue'],
+  ['Cost of goods sold', 'cogs'],
+  ['Operating expense', 'opex'],
+  ['EBITDA', 'ebitda'],
+  ['Depreciation and amortisation', 'da'],
+  ['EBIT', 'ebit'],
+  ['NOPAT', 'nopat'],
+  ['Add back: depreciation and amortisation', 'da'],
+  ['Less: capital expenditure', 'capex'],
+  ['Less: increase in net working capital', 'delta_nwc'],
+];
+
+/** The label a stored ratio assumption prints under, in the order they read. */
+const PROJECTION_RATIOS: Array<[string, string]> = [
+  ['cogs_pct', 'Cost of goods sold'],
+  ['opex_pct', 'Operating expense'],
+  ['da_pct', 'Depreciation and amortisation'],
+  ['capex_pct', 'Capital expenditure'],
+  ['nwc_pct', 'Net working capital held'],
+];
+
+/**
+ * A rate assumption as the run stored it — one figure, or one per year.
+ *
+ * A per-year vector is stated as its range rather than listed: the years are
+ * the columns of the schedule below, and repeating them in the assumption table
+ * would be the same forecast twice at different precisions.
+ */
+function rateAssumption(value: unknown): string | null {
+  const single = num(value);
+  if (single !== null) return formatPercent(single, 1);
+  const vector = list(value)
+    .map(num)
+    .filter((v): v is number => v !== null);
+  if (vector.length === 0) return null;
+  const lo = Math.min(...vector);
+  const hi = Math.max(...vector);
+  return lo === hi
+    ? formatPercent(lo, 1)
+    : `${formatPercent(lo, 1)} to ${formatPercent(hi, 1)}, by year`;
+}
+
+export function projectionExhibit(
+  inputs: Record<string, unknown>,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const row = ctx.projection;
+  if (!row || row.projections.length === 0) return null;
+  const { currency } = ctx;
+  const assumed = record(row.inputs) ?? {};
+
+  const years = row.projections.slice(0, MAX_FORECAST_COLUMNS);
+  const money = (v: number) => formatCurrency(v, currency, 0);
+
+  const basis: string[][] = [
+    [
+      'Forecast method',
+      row.method === 'driver'
+        ? 'Bottom-up — each line forecast by year'
+        : 'Top-down — revenue grown from a base, expenses as a share of it',
+    ],
+    ['Explicit forecast period', `${row.years} ${row.years === 1 ? 'year' : 'years'}`],
+  ];
+  if (row.method === 'growth') {
+    const base = num(assumed.base_revenue);
+    if (base !== null) basis.push(['Base revenue', money(base)]);
+    const growth = rateAssumption(assumed.revenue_growth);
+    if (growth !== null) basis.push(['Revenue growth', growth]);
+    for (const [key, label] of PROJECTION_RATIOS) {
+      const rate = rateAssumption(assumed[key]);
+      if (rate !== null) basis.push([`${label}, as a share of revenue`, rate]);
+    }
+  }
+  basis.push(['Tax rate applied to EBIT', formatPercent(row.tax_rate, 1)]);
+
+  const buildRows = PROJECTION_LINES.map(([label, key]) => [
+    esc(label),
+    ...years.map((p) => money(p[key])),
+  ]);
+
+  /*
+   * Whether the forecast below is the one the calculation ran on.
+   *
+   * Read off the calculation's own inputs rather than off `applied_at`: a run
+   * can be adopted and then superseded by a hand edit to the financial model,
+   * and the adoption flag would still say it was adopted. The stream Exhibit C
+   * discounts is the fact, and this exhibit sits under it.
+   */
+  const discounted = list(record(inputs.income)?.free_cash_flows)
+    .map(num)
+    .filter((v): v is number => v !== null);
+  const same =
+    discounted.length === row.free_cash_flows.length &&
+    discounted.every((v, i) => Math.abs(v - (row.free_cash_flows[i] ?? 0)) < 1e-6);
+
+  const adoption = same
+    ? null
+    : row.applied_at === null
+      ? P(
+          'This forecast has <strong>not been adopted</strong> as the valuation’s cash flows. The income ' +
+            'approach was run on the stream set out in <strong>Exhibit C</strong>, and the build below is ' +
+            'presented as corroboration rather than as the source of those figures.',
+        )
+      : P(
+          'The cash flows discounted in <strong>Exhibit C</strong> differ from this forecast: the financial ' +
+            'model was amended after the forecast was adopted. Exhibit C states the stream the conclusion ' +
+            'rests on; the build below is the forecast as it was projected.',
+        );
+
+  const truncated =
+    row.projections.length > years.length
+      ? P(
+          `The forecast runs to ${row.projections.length} years. The first ${years.length} are set out ` +
+            'above; the full stream is discounted in <strong>Exhibit C</strong>.',
+        )
+      : null;
+
+  return section('Exhibit C-1 — Basis of the Cash-Flow Forecast', [
+    P(
+      'The free cash flows discounted in <strong>Exhibit C</strong> are not an assumption in themselves. ' +
+        'They are derived from a forecast of revenue and of the costs, capital expenditure and working ' +
+        'capital required to earn it, on the assumptions set out below. Free cash flow to the firm is ' +
+        'unlevered — it is struck before financing, so the capital structure enters the analysis through ' +
+        'the discount rate rather than through the cash flows.',
+    ),
+    table({ head: ['Forecast assumption', 'Value'], rows: basis }),
+    table({
+      head: ['', ...years.map((p) => `Year ${p.year}`)],
+      rows: buildRows,
+      foot: ['Free cash flow to the firm', ...years.map((p) => money(p.fcff))],
+    }),
+    truncated,
+    row.terminal_value !== null
+      ? P(
+          `A ${row.terminal_method === 'exit_multiple' ? 'terminal value struck on an exit multiple' : 'Gordon growth terminal value'} ` +
+            `of ${money(row.terminal_value)} was computed with this forecast. It is stated here for ` +
+            'completeness and is <strong>not</strong> the terminal value in the conclusion: the income ' +
+            'approach strikes its own from the terminal method and growth rate in <strong>Exhibit C</strong>, ' +
+            'and counting both would carry the terminal value into the valuation twice.',
+        )
+      : null,
+    adoption,
   ]);
 }
 
@@ -2086,6 +2271,9 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     capitalizationExhibit(inputs, ctx),
     approachExhibit(results, ctx),
     incomeExhibit(inputs, results, ctx),
+    // Immediately after C, because it is C's supporting detail — the same
+    // relationship D-1 has with D and F-1 with F.
+    projectionExhibit(inputs, ctx),
     marketExhibit(inputs, results, ctx),
     // Immediately after D, because it is D's supporting detail.
     peerSetExhibit(ctx.peers, results),
