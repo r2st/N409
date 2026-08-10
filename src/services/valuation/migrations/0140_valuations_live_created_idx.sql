@@ -1,0 +1,44 @@
+-- Retention sweep: give the candidate scan an index that matches its predicate.
+--
+-- `findArchivableValuations` (repos/retention.ts) is the sweep's first
+-- statement, and every pass runs it:
+--
+--   SELECT ... FROM valuations v
+--    WHERE v.archived_at IS NULL
+--      AND v.created_at < now() - ($1 || ' days')::interval
+--    ORDER BY v.created_at ASC
+--    LIMIT 500
+--
+-- The only index it could use was `valuations_created_idx` from 0056, which is
+-- `(created_at DESC)` and knows nothing about `archived_at`. So the planner
+-- walked that index from the oldest row forward and heap-fetched every entry to
+-- find out whether the row was already archived — and the oldest rows are
+-- precisely the ones a previous pass has already archived. Once the sweep has
+-- run for a while the whole leading edge of the index is settled rows, and the
+-- scan has to walk past all of them to reach 500 live ones. At 156k rows that
+-- is the entire table read, per pass, to archive at most 500 records; on a
+-- table that only grows, the work each pass does grows with it.
+--
+-- The partial index holds only the rows the predicate keeps, in the order the
+-- ORDER BY asks for, so the scan starts at the oldest live row and stops after
+-- LIMIT entries. Archiving a row removes it from the index, which is what makes
+-- the next pass start where this one finished rather than in front of it.
+--
+-- Single-column and ascending: Postgres reads a b-tree in either direction, so
+-- this one index serves both the sweep's `ORDER BY created_at ASC` and the
+-- default engagement list's `created_at DESC` — `listValuations` applies the
+-- same `archived_at IS NULL` unconditionally (repos/valuations.ts), so the
+-- product's most-run list read matches this predicate too.
+--
+-- Complements rather than duplicates `valuations_archived_idx` from 0083, which
+-- is partial on `archived_at IS NOT NULL` — the opposite set, and no help to a
+-- reader looking for live rows.
+--
+-- Not CONCURRENTLY: db/migrate.ts wraps each file in BEGIN/COMMIT and
+-- CREATE INDEX CONCURRENTLY cannot run inside a transaction block. The plain
+-- form takes a SHARE lock, which blocks writes to `valuations` while it builds
+-- but leaves reads alone; on a table this size that is well under a second, and
+-- it is the same trade every index in 0056 already made.
+CREATE INDEX valuations_live_created_idx
+    ON valuations (created_at)
+ WHERE archived_at IS NULL;
