@@ -1,7 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { fillFigures, reportFigures } from '../../src/domain/reportFigures.js';
 import { instantiateTemplate, templateForKind } from '../../src/domain/report.js';
+import { resolveExhibitReferences } from '../../src/domain/reportExhibitIndex.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
+
+/**
+ * The schedules a fully-populated 409A run produces, titled as the builders
+ * title them (`domain/reportExhibits.ts`). The body's exhibit pointers and its
+ * index are resolved against this list, so a heading that drifts from the
+ * builder's drops the pointer that names it — which is the behaviour under test.
+ */
+const EXHIBITS_BUILT = [
+  'Exhibit A — Capitalization Table',
+  'Exhibit B — Reconciliation of Valuation Approaches',
+  'Exhibit C — Income Approach (Discounted Cash Flow)',
+  'Exhibit C-1 — Basis of the Cash-Flow Forecast',
+  'Exhibit D — Market Approach (Guideline Multiples)',
+  'Exhibit D-1 — Guideline Company Set',
+  'Exhibit E — Asset Approach',
+  'Exhibit F — Allocation of Equity Value',
+  'Exhibit F-1 — Selected Volatility',
+  'Exhibit G — Probability-Weighted Expected Return Scenarios',
+  'Exhibit H — Discounts and Concluded Value',
+  'Exhibit H-1 — Marketability Discount: Derivation',
+  'Appendix I — Discount Rate Build-Up (WACC)',
+  'Appendix II — Historical Financial Statements',
+];
 
 /**
  * The defect these cover shipped on every 409A this platform produced: the
@@ -192,14 +216,43 @@ describe('the 409A skeleton and the figures it names', () => {
   });
 
   it('leaves no ellipsis where a computed figure belongs', () => {
-    const body = fillFigures(instantiateTemplate(template, vars), reportFigures(calculation(), 'USD'));
+    /*
+     * Both render steps, in the order `renderVersionPdf` performs them: the
+     * exhibit index and the conditional pointers are resolved against the
+     * schedules built for this run, then the figures are filled. Asserting on
+     * `fillFigures` alone would read `{{exhibit_index}}` as an unfilled hole —
+     * it is a marker for the other step, not for this one — and, worse, would
+     * pass a body in which a `{{#exhibit:…}}` block had gone unresolved and
+     * shipped its own braces to the reader.
+     */
+    const body = fillFigures(
+      resolveExhibitReferences(instantiateTemplate(template, vars), EXHIBITS_BUILT),
+      reportFigures(calculation(), 'USD'),
+    );
     // The ASC 718 rows that belong to the *grants* keep their ellipsis — they
     // are measured against the awards on file, not by this valuation — but
-    // every row the 409A supplies is filled, and no `{{…}}` survives anywhere.
+    // every row the 409A supplies is filled, and no marker of either form
+    // survives anywhere.
     const all = body.sections.map((s) => s.html).join('');
-    expect(all).not.toMatch(/\{\{\w+\}\}/);
+    expect(all).not.toMatch(/\{\{/);
     const asc718 = body.sections.find((s) => s.key === 'asc718')!;
     expect(asc718.html).toContain('$1.4947');
     expect(asc718.html).toContain('62.0%');
+  });
+
+  it('drops the pointer to a schedule this calculation did not produce', () => {
+    // The asset approach carried no weight, so no Exhibit E was built. The
+    // chapter explaining the approach stays — saying an approach was considered
+    // and given no weight is the point of it — but it must not then send the
+    // reader to a schedule that is not in the file.
+    const body = resolveExhibitReferences(
+      instantiateTemplate(template, vars),
+      EXHIBITS_BUILT.filter((h) => !h.startsWith('Exhibit E ')),
+    );
+    const asset = body.sections.find((s) => s.key === 'asset_approach')!;
+    expect(asset.html).toContain('The asset approach measures value');
+    expect(asset.html).not.toContain('Exhibit E');
+    // And the index of exhibits does not list it either.
+    expect(body.sections.find((s) => s.key === 'exhibit_index')!.html).not.toContain('Exhibit E —');
   });
 });

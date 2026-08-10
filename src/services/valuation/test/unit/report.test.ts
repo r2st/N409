@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  EXHIBIT_INDEX_MARKER,
   fillTemplateVars,
   instantiateTemplate,
   REPORT_TEMPLATES,
@@ -150,13 +151,13 @@ describe('sanitizeHtml, continued', () => {
 });
 
 describe('report templates', () => {
-  it('registers the 409a.v58 and generic templates', () => {
-    expect(REPORT_TEMPLATES.has('409a.v58')).toBe(true);
+  it('registers the 409a.v59 and generic templates', () => {
+    expect(REPORT_TEMPLATES.has('409a.v59')).toBe(true);
     expect(REPORT_TEMPLATES.has('generic.v2')).toBe(true);
   });
 
-  it('selects 409a.v58 for 409a and a measurement skeleton for fund and debt', () => {
-    expect(templateForKind('409a').version).toBe('409a.v58');
+  it('selects 409a.v59 for 409a and a measurement skeleton for fund and debt', () => {
+    expect(templateForKind('409a').version).toBe('409a.v59');
     // Both were on generic.v2 until 0109 connected an engagement to the
     // portfolio / instrument its figures live in — see domain/navExhibits.ts.
     expect(templateForKind('fund').version).toBe('fund.v1');
@@ -303,12 +304,17 @@ describe('report templates', () => {
 
   it('leaves a template that authored its own closing section alone', () => {
     // The shared block is a floor, not an override: 409A keeps its
-    // §409A-specific certification and its enumerated Exhibit A–H index.
+    // §409A-specific certification and its own index chapter.
     const a409 = templateForKind('409a');
     expect(a409.sections.find((s) => s.key === 'certification')!.html).toContain(
       'No one provided significant professional assistance',
     );
-    expect(a409.sections.find((s) => s.key === 'exhibit_index')!.html).toContain('Exhibit A');
+    // The index used to enumerate Exhibits A–H here, in the skeleton, which is
+    // the one place that cannot know which of them the calculation produced.
+    // What the authored chapter keeps is the marker; the list itself is built
+    // at render from the schedules that follow — see the round trip in
+    // reportExhibitIndex.test.ts and domain/reportExhibitIndex.ts.
+    expect(a409.sections.find((s) => s.key === 'exhibit_index')!.html).toContain(EXHIBIT_INDEX_MARKER);
     // A template that got the shared index instead does not claim exhibits it
     // may not have — the specialty schedules vary by engine and by run.
     expect(templateForKind('qsbs').sections.find((s) => s.key === 'exhibit_index')!.html).not.toContain(

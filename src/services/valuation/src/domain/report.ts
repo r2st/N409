@@ -323,6 +323,29 @@ export interface ReportTemplate {
 const P = (text: string) => `<p>${text}</p>`;
 
 /**
+ * Where the Index of Exhibits chapter gets its list, at render time.
+ *
+ * Declared here because the skeletons below write it, and consumed by
+ * `domain/reportExhibitIndex.ts`, which resolves it against the schedules
+ * `buildExhibits` produced. Never resolved at instantiation: which exhibits a
+ * report contains is a fact about the calculation, not about the draft.
+ */
+export const EXHIBIT_INDEX_MARKER = '{{exhibit_index}}';
+const INDEX_MARKER = EXHIBIT_INDEX_MARKER;
+
+/**
+ * A pointer that only makes sense when the schedule it names is printed.
+ *
+ * `EXHIBIT_IF('E', '…set out in <strong>Exhibit E</strong>.')` survives the
+ * render when Exhibit E is among the exhibits built and is dropped whole when it
+ * is not. The asset approach chapter is the motivating case: it is good practice
+ * to keep a chapter explaining an approach that was considered and given no
+ * weight, and that chapter must not then send the reader to a schedule which,
+ * precisely because the approach carried no weight, was never built.
+ */
+const EXHIBIT_IF = (id: string, html: string) => `{{#exhibit:${id}}}${html}{{/exhibit:${id}}}`;
+
+/**
  * The 409A deliverable skeleton, modelled on the production 409a layout.
  * v54 adds the sections a reviewing auditor expects to find and the earlier
  * skeleton omitted: standard/premise of value, sources of information, the
@@ -386,7 +409,7 @@ const P = (text: string) => `<p>${text}</p>`;
  *     it.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v58',
+  version: '409a.v59',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -525,7 +548,12 @@ const TEMPLATE_409A: ReportTemplate = {
           'The income approach measures value as the present worth of the future economic benefits of the business. We applied the discounted cash flow method: management’s projected free cash flows over the explicit forecast period are discounted to present value at a rate reflecting the risk of achieving them, and a terminal value representing the cash flows beyond that period is discounted alongside them.',
         ) +
         P(
-          'State the source and reliability of the projections, the derivation of the discount rate, and the basis for the terminal growth rate. The forecast, the discount factors and the bridge from enterprise to equity value are set out in <strong>Exhibit C</strong>; where the cash flows were built from a revenue and margin forecast rather than supplied as a stream, the assumptions behind them are set out in <strong>Exhibit C-1</strong>.',
+          'State the source and reliability of the projections, the derivation of the discount rate, and the basis for the terminal growth rate. The forecast, the discount factors and the bridge from enterprise to equity value are set out in <strong>Exhibit C</strong>.' +
+            // Only where the stream was built rather than supplied by hand.
+            EXHIBIT_IF(
+              'C-1',
+              ' The cash flows were built from a revenue and margin forecast rather than supplied as a stream; the assumptions behind them are set out in <strong>Exhibit C-1</strong>.',
+            ),
         ),
     },
     {
@@ -543,7 +571,11 @@ const TEMPLATE_409A: ReportTemplate = {
       key: 'asset_approach',
       heading: 'Asset Approach',
       html: P(
-        'The asset approach measures value as the value of the underlying assets net of liabilities, on either a net-asset-value or a cost-to-replicate basis. State whether the approach was applied and the weight assigned to it; for a going concern whose value rests on intangible assets and future earnings rather than tangible net assets, explain the reason for a low weight or for excluding it. The computation, where applied, is set out in <strong>Exhibit E</strong>.',
+        'The asset approach measures value as the value of the underlying assets net of liabilities, on either a net-asset-value or a cost-to-replicate basis. State whether the approach was applied and the weight assigned to it; for a going concern whose value rests on intangible assets and future earnings rather than tangible net assets, explain the reason for a low weight or for excluding it.' +
+          // Dropped where the approach carried no weight and no schedule was
+          // built — which is the ordinary case for a going concern, and exactly
+          // when this chapter is still worth keeping to say so.
+          EXHIBIT_IF('E', ' The computation is set out in <strong>Exhibit E</strong>.'),
       ),
     },
     {
@@ -610,10 +642,17 @@ const TEMPLATE_409A: ReportTemplate = {
           'The common stock of {{company_name}} is not publicly traded, so it has no observable return volatility of its own. The expected volatility applied in the allocation is therefore estimated from the observed returns of the guideline public companies identified in the market approach, measured over a defined window and taken at the median, which is robust to a single outlier peer.',
         ) +
         P(
-          'The estimator, the observation window, each guideline company’s measured volatility and the peers considered but not measured are set out in <strong>Exhibit F-1</strong>. State whether the window was matched to the expected time to a liquidity event, and the basis for any departure from the derived figure.',
+          // Dropped where sigma was selected by the analyst's judgement rather
+          // than measured from a peer set, in which case no F-1 is built.
+          EXHIBIT_IF(
+            'F-1',
+            'The estimator, the observation window, each guideline company’s measured volatility and the peers considered but not measured are set out in <strong>Exhibit F-1</strong>. ',
+          ) +
+            'State whether the window was matched to the expected time to a liquidity event, and the basis for any departure from the derived figure.',
         ) +
         P(
-          'The volatility of the enterprise is not the volatility of a share class. Each class is a levered claim on the enterprise — under the breakpoint method, a spread of call options — and common, ranking behind the preference stack, is the most geared. Where an option-based marketability discount is struck on common, it takes common’s own volatility; the class volatilities are set out in <strong>Exhibit H-1</strong>.',
+          'The volatility of the enterprise is not the volatility of a share class. Each class is a levered claim on the enterprise — under the breakpoint method, a spread of call options — and common, ranking behind the preference stack, is the most geared. Where an option-based marketability discount is struck on common, it takes common’s own volatility.' +
+            EXHIBIT_IF('H-1', ' The class volatilities are set out in <strong>Exhibit H-1</strong>.'),
         ),
     },
     {
@@ -639,11 +678,17 @@ const TEMPLATE_409A: ReportTemplate = {
         ) +
         '<ul>' +
         '<li><strong>Quantitative — restricted stock studies.</strong> Where the conclusion rests on empirical studies of private placements of registered but unregistered-for-resale stock, name the studies relied on and note that observations predating the 1997 and 2008 amendments to Rule 144 measured a longer restriction than applies today.</li>' +
-        '<li><strong>Quantitative — option-based models.</strong> Chaffee prices a protective put over the holding period; Finnerty and Ghaidarov price the average-strike put — the value of giving up the choice of when to sell. State the volatility and the holding period assumed, and note that the volatility of the <em>subject class</em> is not the volatility of the enterprise: common is a levered claim behind the preference stack, and <strong>Exhibit H-1</strong> sets out the class volatilities.</li>' +
+        '<li><strong>Quantitative — option-based models.</strong> Chaffee prices a protective put over the holding period; Finnerty and Ghaidarov price the average-strike put — the value of giving up the choice of when to sell. State the volatility and the holding period assumed, and note that the volatility of the <em>subject class</em> is not the volatility of the enterprise: common is a levered claim behind the preference stack.' +
+        EXHIBIT_IF('H-1', ' <strong>Exhibit H-1</strong> sets out the class volatilities.') +
+        '</li>' +
         '<li><strong>Qualitative.</strong> Where judgement adjusts a modelled figure, identify the factors weighed — distribution history, transfer restrictions, the pool of likely buyers, the expected time to liquidity — and the direction and size of the adjustment.</li>' +
         '</ul>' +
         P(
-          'The concluded discount is <strong>{{dlom}}</strong>. Its derivation is set out in <strong>Exhibit H-1</strong> and its application in <strong>Exhibit H</strong>.',
+          // Exhibit H is unconditional — a valuation that concluded a discount
+          // always prints the schedule applying it — so only the derivation,
+          // which is H-1's and may not be built, is made conditional.
+          'The concluded discount is <strong>{{dlom}}</strong>, applied as set out in <strong>Exhibit H</strong>.' +
+            EXHIBIT_IF('H-1', ' Its derivation is set out in <strong>Exhibit H-1</strong>.'),
         ),
     },
     {
@@ -749,26 +794,15 @@ const TEMPLATE_409A: ReportTemplate = {
       heading: 'Index of Exhibits',
       html:
         P('The exhibits that follow are generated from the valuation model supporting this report.') +
-        '<ul>' +
-        '<li>Exhibit A — Capitalization Table</li>' +
-        '<li>Exhibit B — Reconciliation of Valuation Approaches</li>' +
-        '<li>Exhibit C — Income Approach (Discounted Cash Flow)</li>' +
-        '<li>Exhibit C-1 — Basis of the Cash-Flow Forecast</li>' +
-        '<li>Exhibit D — Market Approach (Guideline Multiples)</li>' +
-        // D-1 has been rendered since the peer set was first stored and was
-        // never listed here; an index that omits an exhibit the report
-        // contains is the one thing an index must not do.
-        '<li>Exhibit D-1 — Guideline Company Set</li>' +
-        '<li>Exhibit E — Asset Approach</li>' +
-        '<li>Exhibit F — Allocation of Equity Value</li>' +
-        '<li>Exhibit F-1 — Selected Volatility</li>' +
-        '<li>Exhibit G — Probability-Weighted Expected Return Scenarios</li>' +
-        '<li>Exhibit H — Discounts and Concluded Value</li>' +
-        '<li>Exhibit H-1 — Marketability Discount: Derivation</li>' +
-        '<li>Appendix I — Discount Rate Build-Up (WACC)</li>' +
-        '<li>Appendix II — Historical Financial Statements</li>' +
-        '<li>Appendix III — Required Rates of Return by Stage of Development</li>' +
-        '</ul>' +
+        /*
+         * Resolved at render time against the schedules this calculation
+         * actually produced — see domain/reportExhibitIndex.ts. It used to be a
+         * static list of all fifteen, under the caveat below, which made it an
+         * index that listed what was not there and apologised for it in
+         * advance. An exhibit is omitted when its analysis was not applied, so
+         * the only correct list is the one built from the exhibits themselves.
+         */
+        INDEX_MARKER +
         P(
           'An exhibit is included only where the corresponding analysis was applied in this valuation; exhibits for approaches and methods not used are omitted.',
         ),
@@ -1787,6 +1821,30 @@ export function templateForKind(kind: ValuationKind): ReportTemplate {
  * matches the names on `Object.prototype`, so `{{constructor}}` in a report
  * template rendered as `function Object() { [native code] }`.
  */
+/**
+ * The marker names resolved when a template is *instantiated*, as against those
+ * resolved when a report is *rendered*.
+ *
+ * Both are spelled `{{name}}` and they behave completely differently. These
+ * five are the keys of {@link ReportTemplateVars}: `instantiateTemplate` fills
+ * them once, at draft time, and they are gone from the stored body from then
+ * on. Everything else — `{{fmv_per_share}}`, `{{dlom}}` — is filled at render
+ * from the calculation, and its presence in the stored body is what lets a
+ * recalculation restate the prose.
+ *
+ * Exported because a checker that cannot tell the two apart reads every
+ * correctly-instantiated chapter as one that lost its figures
+ * (`domain/reportReview.ts`). Kept beside the type it mirrors so the two are
+ * changed together.
+ */
+export const TEMPLATE_VAR_NAMES: ReadonlySet<string> = new Set<keyof ReportTemplateVars>([
+  'company_name',
+  'kind',
+  'valuation_ref',
+  'date',
+  'currency',
+]);
+
 export function fillTemplateVars(text: string, vars: object): string {
   return text.replace(/\{\{(\w+)\}\}(\.(?!\.))?/g, (m, key: string, stop: string | undefined) => {
     if (!Object.hasOwn(vars, key)) return m;

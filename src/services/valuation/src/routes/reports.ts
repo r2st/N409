@@ -41,6 +41,7 @@ import { hmrcFormExhibit } from '../domain/specialtyExhibits.js';
 import { loadHmrcForm } from '../repos/hmrcForms.js';
 import { loadDebtReport, loadFundReport } from '../repos/measurementReport.js';
 import { buildDebtExhibits, buildFundExhibits } from '../domain/navExhibits.js';
+import { resolveExhibitReferences } from '../domain/reportExhibitIndex.js';
 import { findParams } from '../repos/params.js';
 import { findCurrentVolatilityEstimate } from '../repos/volatilityEstimates.js';
 import { findCurrentProjection } from '../repos/projections.js';
@@ -239,7 +240,7 @@ async function historyFor(
  * Executive summary for this valuation, from its latest successful engine run.
  * A report drafted before the engine has produced a value renders without one.
  */
-async function summaryFor(
+export async function summaryFor(
   pool: pg.Pool,
   valuation: ValuationRow,
 ): Promise<{
@@ -358,7 +359,17 @@ async function renderVersionPdf(
   // stored version keeps its placeholders, so a re-render after a recalculation
   // restates the prose instead of leaving a stale number in it. See
   // domain/reportFigures.ts.
-  const body = fillFigures(content, figures);
+  // Which exhibits this report contains is a fact about the calculation, so the
+  // index of them and the body's pointers into them are resolved here, from the
+  // very list about to be rendered — never written back, exactly as the figures
+  // below are. See domain/reportExhibitIndex.ts.
+  const body = fillFigures(
+    resolveExhibitReferences(
+      content,
+      exhibits.map((s) => s.heading),
+    ),
+    figures,
+  );
   const pdf = await renderReportPdf({
     title: body.title,
     company_name: valuation.company_name,
