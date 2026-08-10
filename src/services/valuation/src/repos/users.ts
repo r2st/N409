@@ -177,15 +177,21 @@ export async function setUserActive(pool: pg.Pool, id: string, active: boolean):
   await pool.query(`UPDATE users SET deleted_at = ${active ? 'NULL' : 'now()'} WHERE id = $1`, [id]);
 }
 
+/**
+ * Grant a set of roles, in one statement rather than one per role.
+ *
+ * `key = ANY($2)` matches the whole set at once. A role key with no `roles` row
+ * inserts nothing, which is what the per-role loop did too — the set is
+ * validated where it is chosen, not here.
+ */
 export async function assignRoles(client: pg.PoolClient, userId: string, roles: RoleKey[]): Promise<void> {
-  for (const role of roles) {
-    await client.query(
-      `INSERT INTO user_roles (user_id, role_id)
-       SELECT $1, id FROM roles WHERE key = $2
-       ON CONFLICT DO NOTHING`,
-      [userId, role],
-    );
-  }
+  if (roles.length === 0) return;
+  await client.query(
+    `INSERT INTO user_roles (user_id, role_id)
+     SELECT $1, id FROM roles WHERE key = ANY($2::text[])
+     ON CONFLICT DO NOTHING`,
+    [userId, roles as readonly string[]],
+  );
 }
 
 /** First Google sign-in creates the account; later sign-ins link/refresh it. */

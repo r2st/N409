@@ -209,6 +209,95 @@ describe.skipIf(!dbUp)('gap sweep', () => {
     expect(cells.rows).toEqual([{ sheet: 'income', row_key: 'revenue', value: '4200000' }]);
   });
 
+  /**
+   * The copy above carries one row per table, which is the one shape that
+   * cannot tell a correct batch from a broken one. The clone mints its new ids
+   * in JS and pairs them to their sources through `unnest(...) JOIN ... ON
+   * src_id = id`; a join written without the `ON` copies every source row once
+   * per new id, and one written against the wrong column pairs a document's id
+   * with another document's bytes. Both produce a plausible clone from a
+   * single-row fixture and a wrong one from any real engagement.
+   *
+   * A soft-deleted document is in the fixture because the batch's `WHERE
+   * deleted_at IS NULL` is now part of the same statement as the copy.
+   */
+  it('clone copies every document and round exactly once, pairing each with its own values', async () => {
+    const id = await createValuation('CloneWide Co');
+    const docs = [
+      { filename: 'cap.xlsx', sha256: 'sha-cap', kind: 'cap_table' },
+      { filename: 'pnl.pdf', sha256: 'sha-pnl', kind: 'income_statement' },
+      { filename: 'bs.pdf', sha256: 'sha-bs', kind: 'balance_sheet' },
+    ];
+    for (const doc of docs) {
+      await pool.query(
+        `INSERT INTO documents (id, valuation_id, kind, filename, content_type, size_bytes, sha256, storage_path, uploaded_by)
+         VALUES ($1, $2, $3, $4, 'application/pdf', 10, $5, $6, $7)`,
+        [
+          newUlid(),
+          id,
+          doc.kind,
+          doc.filename,
+          doc.sha256,
+          `${id}/${doc.sha256}__${doc.filename}`,
+          client.id,
+        ],
+      );
+    }
+    // Deleted before the roll-forward, so it is not last year's data.
+    await pool.query(
+      `INSERT INTO documents (id, valuation_id, kind, filename, content_type, size_bytes, sha256, storage_path, uploaded_by, deleted_at)
+       VALUES ($1, $2, 'other', 'superseded.pdf', 'application/pdf', 10, 'sha-gone', $3, $4, now())`,
+      [newUlid(), id, `${id}/sha-gone__superseded.pdf`, client.id],
+    );
+
+    const rounds = [
+      { name: 'Seed', cents: 100000000 },
+      { name: 'Series A', cents: 500000000 },
+      { name: 'Series B', cents: 1200000000 },
+    ];
+    for (const round of rounds) {
+      await pool.query(
+        `INSERT INTO funding_rounds (id, valuation_id, name, amount_raised_cents) VALUES ($1, $2, $3, $4)`,
+        [newUlid(), id, round.name, round.cents],
+      );
+    }
+
+    const cloned = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/clone`,
+      headers: authHeader(ops.token),
+      payload: { roll_forward: true },
+    });
+    expect(cloned.statusCode).toBe(201);
+    const cloneId = cloned.json().valuation.id as string;
+
+    const copiedDocs = await pool.query<{ filename: string; sha256: string; kind: string; id: string }>(
+      'SELECT id, filename, sha256, kind FROM documents WHERE valuation_id = $1 ORDER BY filename',
+      [cloneId],
+    );
+    // Three rows, not nine: each source is copied once, not once per new id.
+    expect(copiedDocs.rows).toHaveLength(3);
+    // Each filename still carries its own sha and kind — a mispaired join
+    // would move one document's bytes under another's name.
+    expect(copiedDocs.rows.map(({ filename, sha256, kind }) => ({ filename, sha256, kind }))).toEqual([
+      { filename: 'bs.pdf', sha256: 'sha-bs', kind: 'balance_sheet' },
+      { filename: 'cap.xlsx', sha256: 'sha-cap', kind: 'cap_table' },
+      { filename: 'pnl.pdf', sha256: 'sha-pnl', kind: 'income_statement' },
+    ]);
+    // Fresh ids, and distinct ones.
+    expect(new Set(copiedDocs.rows.map((r) => r.id)).size).toBe(3);
+
+    const copiedRounds = await pool.query<{ name: string; amount_raised_cents: string }>(
+      'SELECT name, amount_raised_cents FROM funding_rounds WHERE valuation_id = $1 ORDER BY amount_raised_cents',
+      [cloneId],
+    );
+    expect(copiedRounds.rows).toEqual([
+      { name: 'Seed', amount_raised_cents: '100000000' },
+      { name: 'Series A', amount_raised_cents: '500000000' },
+      { name: 'Series B', amount_raised_cents: '1200000000' },
+    ]);
+  });
+
   it('new reports merge the active managed template body (gap 6)', async () => {
     // author + activate a managed 409a template
     const created = await app.inject({

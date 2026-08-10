@@ -887,32 +887,42 @@ export async function cloneValuation(
     // cells so a roll-forward starts from last year's data, not a blank
     // engagement. Document rows are duplicated but point at the same
     // content-addressed blob (sha-prefixed storage path), so no file copying.
+    //
+    // Both copies are one statement, not one per row: the new ids are minted
+    // here and paired to their sources through unnest(), the same batching
+    // `insertRecoveryCodes` uses. A roll-forward of an engagement carrying a
+    // year of diligence ran a round trip per document inside the clone's
+    // transaction, so the wall time — and the time the row locks were
+    // held — grew with the size of the engagement being copied.
     const { rows: sourceDocs } = await client.query<{ id: string }>(
       `SELECT id FROM documents WHERE valuation_id = $1 AND deleted_at IS NULL`,
       [source.id],
     );
-    for (const doc of sourceDocs) {
+    if (sourceDocs.length > 0) {
       await client.query(
         `INSERT INTO documents
            (id, valuation_id, kind, filename, content_type, size_bytes, sha256, storage_path, uploaded_by)
-         SELECT $1, $2, kind, filename, content_type, size_bytes, sha256, storage_path, uploaded_by
-         FROM documents WHERE id = $3`,
-        [newUlid(), id, doc.id],
+         SELECT n.new_id, $1, d.kind, d.filename, d.content_type, d.size_bytes,
+                d.sha256, d.storage_path, d.uploaded_by
+           FROM documents d
+           JOIN unnest($2::ulid[], $3::ulid[]) AS n(src_id, new_id) ON n.src_id = d.id`,
+        [id, sourceDocs.map((d) => d.id), sourceDocs.map(() => newUlid())],
       );
     }
     const { rows: sourceRounds } = await client.query<{ id: string }>(
       `SELECT id FROM funding_rounds WHERE valuation_id = $1`,
       [source.id],
     );
-    for (const round of sourceRounds) {
+    if (sourceRounds.length > 0) {
       await client.query(
         `INSERT INTO funding_rounds
            (id, valuation_id, name, security_type, closed_on, amount_raised_cents,
             pre_money_cents, post_money_cents, shares_issued, notes, created_by)
-         SELECT $1, $2, name, security_type, closed_on, amount_raised_cents,
-                pre_money_cents, post_money_cents, shares_issued, notes, created_by
-         FROM funding_rounds WHERE id = $3`,
-        [newUlid(), id, round.id],
+         SELECT n.new_id, $1, r.name, r.security_type, r.closed_on, r.amount_raised_cents,
+                r.pre_money_cents, r.post_money_cents, r.shares_issued, r.notes, r.created_by
+           FROM funding_rounds r
+           JOIN unnest($2::ulid[], $3::ulid[]) AS n(src_id, new_id) ON n.src_id = r.id`,
+        [id, sourceRounds.map((r) => r.id), sourceRounds.map(() => newUlid())],
       );
     }
     const { rowCount: cellCount } = await client.query(

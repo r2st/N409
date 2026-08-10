@@ -84,6 +84,27 @@ describe.skipIf(!dbUp)('notification preferences save atomically', () => {
     expect(find(await matrix(), 'draft_ready')).toMatchObject({ in_app: true, email: true });
   });
 
+  /**
+   * The batch is one multi-row upsert now, and `ON CONFLICT DO UPDATE` refuses
+   * to touch the same row twice in a single statement — a submitted matrix
+   * carrying an event type twice would come back as a cardinality error rather
+   * than a save. The loop it replaced simply upserted the duplicate again, so
+   * the last entry won; that is the behaviour kept here.
+   */
+  it('collapses a duplicated event type, keeping the last entry', async () => {
+    await replacePreferences(ctx.pool, user.id, [
+      { event_type: 'draft_ready', in_app: false, email: false },
+      { event_type: 'draft_ready', in_app: true, email: false },
+    ]);
+    expect(find(await matrix(), 'draft_ready')).toMatchObject({ in_app: true, email: false });
+  });
+
+  it('writes nothing, and does not fail, for an empty batch', async () => {
+    const before = await matrix();
+    await expect(replacePreferences(ctx.pool, user.id, [])).resolves.toBeUndefined();
+    expect(await matrix()).toEqual(before);
+  });
+
   it('rejects an unknown event type at the route boundary', async () => {
     const res = await ctx.app.inject({
       method: 'PUT',

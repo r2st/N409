@@ -50,38 +50,42 @@ export async function upsertPreference(
 }
 
 /**
- * Replaces a batch of preferences in one transaction.
+ * Replaces a batch of preferences in one statement.
  *
- * The settings screen submits the whole matrix as a unit, and the route used
- * to apply it with a loop of independent upserts. Any failure part-way — a
+ * The settings screen submits the whole matrix as a unit, and the route once
+ * applied it with a loop of independent upserts. Any failure part-way — a
  * dropped connection, a statement timeout — left the user with some switches
  * moved and some not, and returned an error suggesting *nothing* had been
  * saved. The screen then re-read a matrix that matched neither what was on it
  * before nor what was submitted, and the only way to find out which half had
  * landed was to read the rows. A partial save of a settings form is worse than
  * no save, because the user has no reason to look.
+ *
+ * A transaction around the loop fixed that; a single multi-row upsert makes it
+ * structural. One statement is atomic on its own, so there is no BEGIN to
+ * forget, no connection checked out of the pool for the length of the write,
+ * and one round trip instead of one per row in the matrix.
  */
 export async function replacePreferences(
   pool: pg.Pool,
   userId: string,
   prefs: Array<{ event_type: NotificationEventType } & ChannelPreference>,
 ): Promise<void> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const pref of prefs) {
-      await upsertPreference(client, userId, pref.event_type, {
-        in_app: pref.in_app,
-        email: pref.email,
-      });
-    }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
+  if (prefs.length === 0) return;
+  // Last write wins per event type. `ON CONFLICT DO UPDATE` refuses to touch a
+  // row twice in one statement, and the loop this replaces would simply have
+  // upserted the duplicate again — so the duplicate is collapsed rather than
+  // turned into an error the screen never used to get.
+  const byType = new Map(prefs.map((p) => [p.event_type, p]));
+  const rows = [...byType.values()];
+  await pool.query(
+    `INSERT INTO notification_preferences (user_id, event_type, in_app, email)
+     SELECT $1, t.event_type, t.in_app, t.email
+       FROM unnest($2::text[], $3::boolean[], $4::boolean[]) AS t(event_type, in_app, email)
+     ON CONFLICT (user_id, event_type)
+     DO UPDATE SET in_app = EXCLUDED.in_app, email = EXCLUDED.email, updated_at = now()`,
+    [userId, rows.map((p) => p.event_type), rows.map((p) => p.in_app), rows.map((p) => p.email)],
+  );
 }
 
 /**
