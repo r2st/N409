@@ -127,8 +127,8 @@ async function postDelivery(
   if (!(allowPrivateTargets ?? webhookTargetPolicyAllowsPrivate())) {
     const blocked = await blockedTargetReason(target.url, lookupFn);
     // Permanent: every remaining attempt would resolve the same way, and the
-    // partner needs to see the reason in their delivery log rather than four
-    // identical timeouts.
+    // partner needs to see the reason in their delivery log rather than a
+    // column of identical timeouts.
     if (blocked) return { ok: false, error: blocked, permanent: true };
   }
   const body = JSON.stringify(payload);
@@ -165,9 +165,7 @@ async function postDelivery(
       // would let any misbehaving receiver push its own row to the back of
       // the queue.
       retryAfterSeconds:
-        res.status === 429 || res.status === 503
-          ? parseRetryAfter(res.headers.get('retry-after'))
-          : null,
+        res.status === 429 || res.status === 503 ? parseRetryAfter(res.headers.get('retry-after')) : null,
     };
   } catch (err) {
     // A timeout, a refused connection, DNS — the transient class this whole

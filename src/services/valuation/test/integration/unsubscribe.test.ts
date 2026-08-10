@@ -36,8 +36,7 @@ describe.skipIf(!dbUp)('one-click unsubscribe', () => {
   const marketingPref = async (userId: string) =>
     (await getPreferenceMatrix(ctx.pool, userId)).find((p) => p.event_type === 'marketing')!;
 
-  const tokenFor = (userId: string) =>
-    createUnsubscribeToken({ userId, scope: 'marketing' }, SECRET);
+  const tokenFor = (userId: string) => createUnsubscribeToken({ userId, scope: 'marketing' }, SECRET);
 
   it('turns marketing email off from the POST a mailbox provider makes', async () => {
     const user = await seedUser(ctx, { roles: ['client'] });
@@ -113,7 +112,11 @@ describe.skipIf(!dbUp)('one-click unsubscribe', () => {
   });
 
   it('answers a missing or malformed token without erroring', async () => {
-    for (const url of ['/api/v1/unsubscribe', '/api/v1/unsubscribe?token=', '/api/v1/unsubscribe?token=junk']) {
+    for (const url of [
+      '/api/v1/unsubscribe',
+      '/api/v1/unsubscribe?token=',
+      '/api/v1/unsubscribe?token=junk',
+    ]) {
       const res = await app.inject({ method: 'GET', url });
       expect(res.statusCode).toBe(200);
     }

@@ -164,15 +164,9 @@ describe('webhook delivery retries', () => {
     const now = new Date('2026-08-07T12:00:00Z');
     // random() = 1 is the top of the jitter range, i.e. the unjittered step.
     const top = { random: () => 1 };
-    expect(nextAttemptAt(1, WEBHOOK_MAX_ATTEMPTS, now, top)?.toISOString()).toBe(
-      '2026-08-07T12:01:00.000Z',
-    );
-    expect(nextAttemptAt(2, WEBHOOK_MAX_ATTEMPTS, now, top)?.toISOString()).toBe(
-      '2026-08-07T12:05:00.000Z',
-    );
-    expect(nextAttemptAt(3, WEBHOOK_MAX_ATTEMPTS, now, top)?.toISOString()).toBe(
-      '2026-08-07T12:30:00.000Z',
-    );
+    expect(nextAttemptAt(1, WEBHOOK_MAX_ATTEMPTS, now, top)?.toISOString()).toBe('2026-08-07T12:01:00.000Z');
+    expect(nextAttemptAt(2, WEBHOOK_MAX_ATTEMPTS, now, top)?.toISOString()).toBe('2026-08-07T12:05:00.000Z');
+    expect(nextAttemptAt(3, WEBHOOK_MAX_ATTEMPTS, now, top)?.toISOString()).toBe('2026-08-07T12:30:00.000Z');
     expect(nextAttemptAt(WEBHOOK_MAX_ATTEMPTS, WEBHOOK_MAX_ATTEMPTS, now, top)).toBeNull();
   });
 
@@ -205,13 +199,12 @@ describe('webhook delivery retries', () => {
     // A 429 carrying Retry-After is the receiver stating when it will be
     // ready. Retrying at the ladder's 1 minute gets rate-limited again and
     // burns an attempt on a request we were told would fail.
-    expect(
-      nextAttemptAt(1, WEBHOOK_MAX_ATTEMPTS, now, { retryAfterSeconds: 900 })?.toISOString(),
-    ).toBe('2026-08-07T12:15:00.000Z');
+    expect(nextAttemptAt(1, WEBHOOK_MAX_ATTEMPTS, now, { retryAfterSeconds: 900 })?.toISOString()).toBe(
+      '2026-08-07T12:15:00.000Z',
+    );
     // Not jittered: the receiver chose the time.
     expect(
-      nextAttemptAt(1, WEBHOOK_MAX_ATTEMPTS, now, { retryAfterSeconds: 900, random: () => 0 })
-        ?.toISOString(),
+      nextAttemptAt(1, WEBHOOK_MAX_ATTEMPTS, now, { retryAfterSeconds: 900, random: () => 0 })?.toISOString(),
     ).toBe('2026-08-07T12:15:00.000Z');
   });
 

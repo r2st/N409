@@ -166,7 +166,8 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
   {
     method: 'POST',
     url: '/api/v1/unsubscribe',
-    reason: "one-click unsubscribe POSTed by the recipient's mailbox provider; authenticated by a signed token",
+    reason:
+      "one-click unsubscribe POSTed by the recipient's mailbox provider; authenticated by a signed token",
   },
   {
     method: 'GET',
