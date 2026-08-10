@@ -210,3 +210,255 @@ describe('runHealthChecks', () => {
     });
   });
 });
+
+/**
+ * The rules above are exercised through a fully-populated fixture, which means
+ * every `??` fallback and every "the other side supplied it" path was carrying
+ * a valuation nobody had graded. These build the argument from the bottom up
+ * instead, one sparse shape per rule.
+ */
+describe('runHealthChecks on sparse and degenerate inputs', () => {
+  const run = (args: {
+    params?: Record<string, unknown>;
+    inputs?: Record<string, unknown>;
+    engineParams?: Record<string, unknown>;
+    results?: Record<string, unknown> | null;
+    equity?: string | number | null;
+    fmv?: string | number | null;
+    createdAt?: Date | string;
+  }) =>
+    runHealthChecks({
+      calculation: {
+        inputs: { params: args.engineParams ?? {}, inputs: args.inputs ?? {} },
+        results: args.results === undefined ? {} : args.results,
+        equity_value: args.equity === undefined ? 1_000_000 : args.equity,
+        fmv_per_share: args.fmv === undefined ? 1 : args.fmv,
+        created_at: args.createdAt ?? '2026-07-01T00:00:00Z',
+      },
+      params: args.params ?? null,
+    });
+
+  it('grades a calculation with no params row at all', () => {
+    const report = run({ engineParams: { weight_opm: 1 }, inputs: { volatility: 0.5 } });
+    // Defaults to OPM allocation, so it is the OPM rule that gets asked.
+    expect(byKey(report, 'opm_volatility_present')?.severity).toBe('ok');
+    expect(byKey(report, 'pwerm_scenarios_present')).toBeUndefined();
+    // No params row means no staleness signal — the check is skipped, not failed.
+    expect(byKey(report, 'params_freshness')).toBeUndefined();
+  });
+
+  it('takes the allocation method from the params row over the stored engine payload', () => {
+    const report = run({
+      params: { allocation_method: 'pwerm' },
+      engineParams: { allocation_method: 'opm', weight_opm: 1 },
+      inputs: { pwerm: { scenarios: [{ exit_value: 5e7, probability: 1 }] } },
+    });
+    expect(byKey(report, 'pwerm_scenarios_present')?.severity).toBe('ok');
+    expect(byKey(report, 'pwerm_scenarios_present')?.detail).toContain('1 exit scenarios');
+  });
+
+  it('does not ask the OPM for a volatility it is not weighted for', () => {
+    const report = run({ engineParams: { weight_asset: 1 }, inputs: {} });
+    expect(byKey(report, 'opm_volatility_present')).toBeUndefined();
+  });
+
+  it('errors when the market approach is weighted with no comparables', () => {
+    const report = run({ engineParams: { weight_market: 1 }, inputs: { market: {} } });
+    const check = byKey(report, 'market_comparables_present');
+    expect(check?.severity).toBe('error');
+    expect(check?.detail).toContain('no comparable multiples');
+    expect(report.blocking).toBe(true);
+  });
+
+  it('errors when the income approach is weighted with no projection', () => {
+    const report = run({ engineParams: { weight_income: 1 }, inputs: { income: {} } });
+    const check = byKey(report, 'income_projections_present');
+    expect(check?.severity).toBe('error');
+    expect(check?.detail).toContain('no free-cash-flow projection');
+  });
+
+  it('takes the DLOM method from the params row when the payload predates it', () => {
+    // A model DLOM with no volatility contributes silently nothing to the
+    // concluded discount, so the failure looks like a plausible number.
+    const report = run({ params: { dlom_method: 'chaffee' }, engineParams: {}, inputs: {} });
+    const check = byKey(report, 'dlom_model_needs_volatility');
+    expect(check?.severity).toBe('error');
+    expect(check?.detail).toContain('needs a volatility input');
+  });
+
+  it('reads a weighted DLOM blend off the params row', () => {
+    const report = run({
+      params: { dlom_methods: [{ method: 'finnerty', weight: 1 }] },
+      inputs: { volatility: 0.55 },
+    });
+    expect(byKey(report, 'dlom_model_needs_volatility')?.severity).toBe('ok');
+  });
+
+  describe('assumption benchmarks', () => {
+    it('errors on a non-positive volatility and warns outside the observed band', () => {
+      expect(byKey(run({ inputs: { volatility: 0 } }), 'volatility_benchmarked')?.severity).toBe('error');
+      expect(byKey(run({ inputs: { volatility: 0.05 } }), 'volatility_benchmarked')?.severity).toBe(
+        'warning',
+      );
+      expect(byKey(run({ inputs: { volatility: 1.8 } }), 'volatility_benchmarked')?.severity).toBe('warning');
+      const outlier = byKey(run({ inputs: { volatility: 1.8 } }), 'volatility_benchmarked');
+      expect(outlier?.detail).toContain('180.0%');
+      expect(outlier?.detail).toContain('outlier');
+    });
+
+    it('warns on a discount rate outside venture norms and passes one inside', () => {
+      const low = byKey(run({ inputs: { income: { discount_rate: 0.05 } } }), 'discount_rate_range');
+      expect(low?.severity).toBe('warning');
+      expect(low?.detail).toContain('outside');
+      expect(
+        byKey(run({ inputs: { income: { discount_rate: 0.75 } } }), 'discount_rate_range')?.severity,
+      ).toBe('warning');
+      expect(
+        byKey(run({ inputs: { income: { discount_rate: 0.3 } } }), 'discount_rate_range')?.severity,
+      ).toBe('ok');
+    });
+
+    it('warns on a terminal growth rate outside the long-run norm', () => {
+      expect(
+        byKey(run({ inputs: { income: { terminal_growth: 0.09 } } }), 'terminal_growth_range')?.severity,
+      ).toBe('warning');
+      expect(
+        byKey(run({ inputs: { income: { terminal_growth: -0.01 } } }), 'terminal_growth_range')?.severity,
+      ).toBe('warning');
+      expect(
+        byKey(run({ inputs: { income: { terminal_growth: 0.025 } } }), 'terminal_growth_range')?.severity,
+      ).toBe('ok');
+    });
+
+    it('reads the DLOM off the params row when the stored payload has none', () => {
+      const check = byKey(run({ params: { dlom: 0.5 }, engineParams: {} }), 'dlom_range');
+      expect(check?.severity).toBe('warning');
+      expect(check?.detail).toContain('50.0%');
+    });
+
+    it('says nothing about an assumption that was never set', () => {
+      const report = run({});
+      for (const key of [
+        'volatility_benchmarked',
+        'discount_rate_range',
+        'dlom_range',
+        'terminal_growth_range',
+      ])
+        expect(byKey(report, key)).toBeUndefined();
+    });
+  });
+
+  it('errors when no approach weight is set at all', () => {
+    const report = run({ engineParams: {} });
+    expect(byKey(report, 'weights_present')?.severity).toBe('error');
+    expect(byKey(report, 'weights_present')?.detail).toBe('No approach weights are set');
+    // With no weights there is nothing to sum, so that rule is skipped rather
+    // than reported as summing to 0%.
+    expect(byKey(report, 'weights_sum')).toBeUndefined();
+  });
+
+  it('errors on a non-positive equity value and FMV', () => {
+    const report = run({ equity: 0, fmv: -0.5 });
+    expect(byKey(report, 'equity_positive')?.severity).toBe('error');
+    expect(byKey(report, 'equity_positive')?.detail).toContain('is not positive');
+    expect(byKey(report, 'fmv_positive')?.severity).toBe('error');
+    // The cross-check between the two is meaningless once either is invalid.
+    expect(byKey(report, 'fmv_below_equity')).toBeUndefined();
+  });
+
+  it('skips the arithmetic checks when the figures are not numbers at all', () => {
+    const report = run({ equity: 'unavailable', fmv: null });
+    expect(byKey(report, 'equity_positive')).toBeUndefined();
+    expect(byKey(report, 'fmv_positive')).toBeUndefined();
+  });
+
+  it('reconciles against common alone when no options are recorded', () => {
+    const report = run({
+      inputs: { shares_outstanding_common: 8_000_000 },
+      results: { fully_diluted_common: 8_000_000 },
+    });
+    expect(byKey(report, 'share_counts_match')?.severity).toBe('ok');
+  });
+
+  it('counts a cap-table class that states no share count as zero', () => {
+    const report = run({
+      inputs: {
+        shares_outstanding_common: 8_000_000,
+        share_classes: [
+          { kind: 'common', name: 'Common' },
+          { kind: 'common', shares: 8_000_000 },
+        ],
+      },
+      results: { fully_diluted_common: 8_000_000, fully_diluted_basis: 'cap_table_common' },
+    });
+    expect(byKey(report, 'cap_table_reconciles')?.severity).toBe('ok');
+    expect(byKey(report, 'share_counts_match')?.severity).toBe('ok');
+  });
+
+  it('skips the share-count check when the engine reported no basis count', () => {
+    const report = run({ inputs: { shares_outstanding_common: 8_000_000 }, results: {} });
+    expect(byKey(report, 'share_counts_match')).toBeUndefined();
+  });
+
+  it('grades a calculation whose engine results are absent entirely', () => {
+    const report = run({ results: null, inputs: { shares_outstanding_common: 1000 } });
+    expect(byKey(report, 'share_counts_match')).toBeUndefined();
+    expect(byKey(report, 'common_shares_present')?.severity).toBe('ok');
+  });
+
+  describe('temporal ordering', () => {
+    it('warns when the financials or the last round postdate the valuation date', () => {
+      const report = run({
+        inputs: { valuation_date: '2026-06-30' },
+        params: { fiscal_year_end: '2026-12-31', last_round_date: '2026-09-01' },
+      });
+      expect(byKey(report, 'fiscal_before_valuation')?.severity).toBe('warning');
+      expect(byKey(report, 'fiscal_before_valuation')?.detail).toContain('forward of the measurement date');
+      expect(byKey(report, 'last_round_before_valuation')?.severity).toBe('warning');
+    });
+
+    it('accepts a valuation date that arrives from pg as a Date', () => {
+      const report = run({
+        inputs: { valuation_date: new Date('2026-06-30T00:00:00Z') },
+        params: { fiscal_year_end: '2025-12-31', exit_timeline: '2029-06-30' },
+      });
+      expect(byKey(report, 'fiscal_before_valuation')?.severity).toBe('ok');
+      expect(byKey(report, 'exit_after_valuation')?.severity).toBe('ok');
+    });
+
+    it('skips every ordering rule when the valuation date is missing or unparseable', () => {
+      for (const valuation_date of [undefined, '', 'not a date']) {
+        const report = run({
+          inputs: { valuation_date },
+          params: {
+            fiscal_year_end: '2026-12-31',
+            last_round_date: '2026-09-01',
+            exit_timeline: '2020-01-01',
+          },
+        });
+        expect(byKey(report, 'fiscal_before_valuation')).toBeUndefined();
+        expect(byKey(report, 'last_round_before_valuation')).toBeUndefined();
+        expect(byKey(report, 'exit_after_valuation')).toBeUndefined();
+      }
+    });
+
+    it('confirms freshness when the params predate the calculation', () => {
+      const report = run({
+        params: { updated_at: new Date('2026-06-01T00:00:00Z') },
+        createdAt: new Date('2026-07-01T00:00:00Z'),
+      });
+      const check = byKey(report, 'params_freshness');
+      expect(check?.severity).toBe('ok');
+      expect(check?.detail).toContain('No parameter changes');
+    });
+  });
+
+  it('counts every severity it emitted', () => {
+    const report = run({ engineParams: { weight_market: 1 }, inputs: { market: {} }, equity: -1 });
+    const counted = report.counts.ok + report.counts.info + report.counts.warning + report.counts.error;
+    expect(counted).toBe(report.checks.length);
+    expect(report.counts.error).toBeGreaterThan(0);
+    expect(report.severity).toBe('error');
+    expect(report.blocking).toBe(true);
+  });
+});

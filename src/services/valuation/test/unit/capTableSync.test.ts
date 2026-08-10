@@ -1,7 +1,35 @@
 import { describe, it, expect } from 'vitest';
-import { mapCarta, mapPulley } from '../../src/clients/capTableSync.js';
+import {
+  authorizeUrl,
+  exchangeCode,
+  fetchCapTable,
+  mapCarta,
+  mapPulley,
+  CAP_TABLE_PROVIDERS,
+  CAP_TABLE_PROVIDER_LABELS,
+  type CapTableProvider,
+  type FetchFn,
+} from '../../src/clients/capTableSync.js';
 import { diffCapTables } from '../../src/domain/capTableSync.js';
 import type { CapTableEntry } from '../../src/domain/capTable.js';
+
+const creds = { clientId: 'client-abc', clientSecret: 'secret-xyz' };
+
+/** A fetch double that records its call and answers with a canned Response. */
+function stubFetch(make: (url: string, init?: RequestInit) => Response | Promise<Response>): {
+  fn: FetchFn;
+  calls: Array<{ url: string; init?: RequestInit }>;
+} {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return make(String(input), init);
+  }) as FetchFn;
+  return { fn, calls };
+}
+
+const json = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 describe('provider cap-table mapping', () => {
   it('maps a Carta payload including options, warrants and convertibles', () => {
@@ -57,6 +85,348 @@ describe('provider cap-table mapping', () => {
     expect(byName['ESOP']!.class_type).toBe('option');
     expect(byName['Note 2024']!.class_type).toBe('preferred');
   });
+
+  /*
+   * Every field above is read through a `??` chain because the two providers
+   * spell the same figure differently across API versions — Carta's
+   * `outstandingShares` is `shares` on an older payload, `issuePrice` is
+   * `pricePerShare`. The first spelling was the only one under test, so the
+   * fallback arm of each chain was carrying a cap table nobody had ever mapped.
+   */
+  it('reads the alternate Carta spelling of every field', () => {
+    const [common, series] = mapCarta({
+      shareClasses: [
+        { className: 'Common', classType: 'common', shares: 6_000_000, pricePerShare: 0.002 },
+        {
+          className: 'Series Seed',
+          classType: 'preferred',
+          shares: 1_000_000,
+          pricePerShare: 2,
+          invested: 2_000_000,
+          liquidationMultiple: 1.5,
+        },
+      ],
+    });
+    expect(common!.security_class).toBe('Common');
+    expect(common!.shares).toBe(6_000_000);
+    expect(common!.price_per_share).toBe(0.002);
+    expect(series!.invested_amount).toBe(2_000_000);
+    expect(series!.liquidation_multiple).toBe(1.5);
+  });
+
+  it('skips a Carta share class with no name rather than emitting a blank row', () => {
+    // A blank security_class would collide with every other blank one in the
+    // diff, which keys on the trimmed name.
+    const entries = mapCarta({
+      shareClasses: [{ name: '   ', shares: 1000 }, { name: 'Common', shares: 2000 }, { shares: 3000 }],
+    });
+    expect(entries.map((e) => e.security_class)).toEqual(['Common']);
+  });
+
+  it('names an unnamed Carta pool, warrant and convertible', () => {
+    const entries = mapCarta({
+      optionPools: [{ reservedShares: 900_000, exercisePrice: 0.25 }],
+      warrants: [{ outstandingShares: 50_000, exercisePrice: 1.25 }],
+      convertibles: [{ amount: 400_000 }],
+    });
+    expect(entries.map((e) => e.security_class)).toEqual(['Option Pool', 'Warrants', 'Convertible Note']);
+    expect(entries[0]!.shares).toBe(900_000);
+    expect(entries[0]!.price_per_share).toBe(0.25);
+    expect(entries[1]!.shares).toBe(50_000);
+    expect(entries[1]!.price_per_share).toBe(1.25);
+    expect(entries[2]!.invested_amount).toBe(400_000);
+    // A note with no stated multiple still sits in the preference stack at 1×.
+    expect(entries[2]!.liquidation_multiple).toBe(1);
+  });
+
+  it('defaults every absent Carta quantity to zero rather than NaN', () => {
+    const entries = mapCarta({
+      shareClasses: [{ name: 'Common' }],
+      optionPools: [{}],
+      warrants: [{}],
+      convertibles: [{}],
+    });
+    expect(entries.map((e) => e.shares)).toEqual([0, 0, 0, 0]);
+    expect(entries[0]!.price_per_share).toBeNull();
+  });
+
+  it('maps an empty Carta payload to no entries', () => {
+    expect(mapCarta({})).toEqual([]);
+  });
+
+  it('reads the alternate Pulley spelling of every field', () => {
+    const [row] = mapPulley({
+      securities: [
+        {
+          name: 'Series A',
+          type: 'preferred',
+          shares: 2_000_000,
+          issuePrice: 1.75,
+          invested: 3_500_000,
+          liquidationPreference: 2,
+          seniority: 1,
+          conversionRatio: 1,
+        },
+      ],
+    });
+    expect(row!.security_class).toBe('Series A');
+    expect(row!.shares).toBe(2_000_000);
+    expect(row!.price_per_share).toBe(1.75);
+    expect(row!.invested_amount).toBe(3_500_000);
+    expect(row!.liquidation_multiple).toBe(2);
+  });
+
+  it('falls back to the Pulley strike price for an option grant', () => {
+    const [row] = mapPulley({ securities: [{ name: 'ESOP', type: 'option', strikePrice: 0.4 }] });
+    expect(row!.price_per_share).toBe(0.4);
+  });
+
+  it('skips a Pulley security with no class name', () => {
+    const entries = mapPulley({ securities: [{ shares: 100 }, { shareClass: 'Common', shares: 200 }] });
+    expect(entries.map((e) => e.security_class)).toEqual(['Common']);
+  });
+
+  it('names an unnamed Pulley convertible and defaults its multiple', () => {
+    const [row] = mapPulley({ convertibles: [{ amount: 150_000 }] });
+    expect(row!.security_class).toBe('Convertible');
+    expect(row!.liquidation_multiple).toBe(1);
+    expect(row!.shares).toBe(0);
+  });
+
+  it('maps an empty Pulley payload to no entries', () => {
+    expect(mapPulley({})).toEqual([]);
+  });
+
+  /*
+   * `class_type` drives the waterfall: an option pool graded as common is paid
+   * as common, and a note graded as common loses its preference entirely. The
+   * classifier reads the declared type first and the class name second, which
+   * is what makes a provider's free-text label survivable.
+   */
+  describe('security type classification', () => {
+    const typed = (securityType: unknown, name = 'Whatever') =>
+      mapPulley({ securities: [{ shareClass: name, securityType }] })[0]!.class_type;
+
+    it('takes a declared canonical type verbatim', () => {
+      expect(typed('common')).toBe('common');
+      expect(typed('preferred')).toBe('preferred');
+      expect(typed('option')).toBe('option');
+      expect(typed('warrant')).toBe('warrant');
+      expect(typed('PREFERRED')).toBe('preferred'); // case-insensitive
+    });
+
+    it('reads an option out of the type or, failing that, the class name', () => {
+      expect(typed('ISO')).toBe('option');
+      expect(typed('nso')).toBe('option');
+      expect(typed('equity', 'Employee Option Pool 2024')).toBe('option');
+    });
+
+    it('grades a warrant-ish type as a warrant and a note-ish one as preferred', () => {
+      expect(typed('warrant_coverage')).toBe('warrant');
+      expect(typed('convertible_note', 'Bridge')).toBe('preferred');
+      expect(typed('equity', 'SAFE 2025')).toBe('preferred');
+    });
+
+    it('reads a priced round out of the class name alone', () => {
+      expect(typed('equity', 'Series B')).toBe('preferred');
+      expect(typed('equity', 'Seed Round')).toBe('preferred');
+    });
+
+    it('falls back to common for an unrecognised or absent type', () => {
+      expect(typed('restricted', 'RSU Grant')).toBe('common');
+      expect(typed(undefined, 'Founders')).toBe('common');
+      expect(typed(null, 'Founders')).toBe('common');
+    });
+  });
+
+  /*
+   * Providers send money as formatted strings at least as often as numbers —
+   * `"$1,250,000"` in a CSV-backed export. Number("$1,250,000") is NaN, and a
+   * NaN invested_amount silently zeroes a preference in the waterfall.
+   */
+  it('parses a currency-formatted string amount', () => {
+    const [row] = mapPulley({
+      securities: [{ shareClass: 'Series A', sharesOutstanding: '2,000,000', totalInvested: '$3,500,000 ' }],
+    });
+    expect(row!.shares).toBe(2_000_000);
+    expect(row!.invested_amount).toBe(3_500_000);
+  });
+
+  it('nulls a non-numeric value instead of propagating NaN', () => {
+    const [row] = mapPulley({
+      securities: [
+        { shareClass: 'Common', sharesOutstanding: 'unknown', pricePerShare: true, seniority: {} },
+      ],
+    });
+    expect(row!.shares).toBe(0);
+    expect(row!.price_per_share).toBeNull();
+    expect(row!.seniority).toBeNull();
+  });
+});
+
+describe('provider OAuth', () => {
+  it('exposes a label for every provider', () => {
+    expect(CAP_TABLE_PROVIDERS).toEqual(['carta', 'pulley']);
+    for (const p of CAP_TABLE_PROVIDERS) expect(CAP_TABLE_PROVIDER_LABELS[p]).toBeTruthy();
+  });
+
+  it.each<[CapTableProvider, string]>([
+    ['carta', 'https://login.carta.com/oauth/authorize'],
+    ['pulley', 'https://app.pulley.com/oauth/authorize'],
+  ])('builds the %s authorize URL with the state and offline scope', (provider, base) => {
+    const url = new URL(authorizeUrl(provider, creds, 'https://app.n409.test/cb', 'state-123'));
+    expect(`${url.origin}${url.pathname}`).toBe(base);
+    expect(url.searchParams.get('client_id')).toBe('client-abc');
+    expect(url.searchParams.get('response_type')).toBe('code');
+    expect(url.searchParams.get('redirect_uri')).toBe('https://app.n409.test/cb');
+    expect(url.searchParams.get('state')).toBe('state-123');
+    // Without offline_access the refresh token never arrives and the
+    // connection dies silently at the first token expiry.
+    expect(url.searchParams.get('scope')).toContain('offline_access');
+  });
+
+  it('exchanges a code for a full token set', async () => {
+    const { fn, calls } = stubFetch(() =>
+      json({
+        access_token: 'at-1',
+        refresh_token: 'rt-1',
+        expires_in: 3600,
+        company_id: 'co-1',
+        company_name: 'Northwind Robotics',
+      }),
+    );
+    const before = Date.now();
+    const tokens = await exchangeCode('carta', creds, 'https://app.n409.test/cb', 'code-1', fn);
+    expect(tokens.accessToken).toBe('at-1');
+    expect(tokens.refreshToken).toBe('rt-1');
+    expect(tokens.externalCompanyId).toBe('co-1');
+    expect(tokens.externalCompanyName).toBe('Northwind Robotics');
+    expect(tokens.expiresAt!.getTime()).toBeGreaterThanOrEqual(before + 3600 * 1000);
+
+    expect(calls[0]!.url).toBe('https://login.carta.com/oauth/token');
+    const body = new URLSearchParams(String(calls[0]!.init!.body));
+    expect(body.get('grant_type')).toBe('authorization_code');
+    expect(body.get('code')).toBe('code-1');
+    expect(body.get('client_secret')).toBe('secret-xyz');
+    expect(calls[0]!.init!.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('leaves the optional token fields null when the provider omits them', async () => {
+    const { fn } = stubFetch(() => json({ access_token: 'at-2' }));
+    const tokens = await exchangeCode('pulley', creds, 'https://app.n409.test/cb', 'code-2', fn);
+    expect(tokens).toEqual({
+      accessToken: 'at-2',
+      refreshToken: null,
+      expiresAt: null,
+      externalCompanyId: null,
+      externalCompanyName: null,
+    });
+  });
+
+  it('names the provider when the token exchange is rejected', async () => {
+    const { fn } = stubFetch(() => json({ error: 'invalid_grant' }, 400));
+    await expect(exchangeCode('carta', creds, 'cb', 'bad', fn)).rejects.toThrow(
+      'Carta token exchange failed (400)',
+    );
+  });
+
+  it('rejects a 200 that carries no access token', async () => {
+    const { fn } = stubFetch(() => json({ token_type: 'bearer' }));
+    await expect(exchangeCode('pulley', creds, 'cb', 'code', fn)).rejects.toThrow(
+      'Pulley returned no access token',
+    );
+  });
+
+  it('names the provider when a 200 is not JSON at all', async () => {
+    // A gateway serving an HTML error page under a 200 — the parser's own
+    // wording would reach the analyst otherwise.
+    const { fn } = stubFetch(() => new Response('<html>502</html>', { status: 200 }));
+    await expect(exchangeCode('carta', creds, 'cb', 'code', fn)).rejects.toThrow(
+      'Carta returned a non-JSON response',
+    );
+  });
+});
+
+describe('provider cap-table pull', () => {
+  const tokens = { accessToken: 'at-1', externalCompanyId: 'co-1', externalCompanyName: 'On File Inc' };
+
+  it('pulls and maps a Carta capitalization', async () => {
+    const { fn, calls } = stubFetch(() =>
+      json({
+        companyName: 'Northwind Robotics',
+        asOf: '2026-06-30',
+        shareClasses: [{ name: 'Common', type: 'common', outstandingShares: 8_000_000 }],
+      }),
+    );
+    const pulled = await fetchCapTable('carta', tokens, fn);
+    expect(calls[0]!.url).toBe('https://api.carta.com/v1/companies/co-1/capitalization');
+    expect((calls[0]!.init!.headers as Record<string, string>).authorization).toBe('Bearer at-1');
+    expect(pulled.provider).toBe('carta');
+    expect(pulled.external_company_name).toBe('Northwind Robotics');
+    expect(pulled.as_of).toBe('2026-06-30');
+    expect(pulled.entries).toHaveLength(1);
+  });
+
+  it('pulls the Pulley cap-table endpoint and accepts its snake_case as_of', async () => {
+    const { fn, calls } = stubFetch(() =>
+      json({ as_of: '2026-03-31', securities: [{ shareClass: 'Common', sharesOutstanding: 100 }] }),
+    );
+    const pulled = await fetchCapTable('pulley', tokens, fn);
+    expect(calls[0]!.url).toBe('https://api.pulley.com/v1/companies/co-1/cap-table');
+    expect(pulled.as_of).toBe('2026-03-31');
+    expect(pulled.entries[0]!.shares).toBe(100);
+  });
+
+  it('keeps the name from the connection when the payload states none', async () => {
+    const { fn } = stubFetch(() => json({ shareClasses: [] }));
+    const pulled = await fetchCapTable('carta', tokens, fn);
+    expect(pulled.external_company_name).toBe('On File Inc');
+    expect(pulled.as_of).toBeNull();
+  });
+
+  it('reports no company name when neither the payload nor the connection has one', async () => {
+    const { fn } = stubFetch(() => json({}));
+    const pulled = await fetchCapTable(
+      'pulley',
+      { accessToken: 'at', externalCompanyId: 'co', externalCompanyName: null },
+      fn,
+    );
+    expect(pulled.external_company_name).toBeNull();
+    expect(pulled.entries).toEqual([]);
+  });
+
+  it('percent-encodes an external company id into the path', async () => {
+    const { fn, calls } = stubFetch(() => json({}));
+    await fetchCapTable('carta', { ...tokens, externalCompanyId: 'co/1 2' }, fn);
+    expect(calls[0]!.url).toBe('https://api.carta.com/v1/companies/co%2F1%202/capitalization');
+  });
+
+  it('still calls the endpoint when no company id was recorded', async () => {
+    const { fn, calls } = stubFetch(() => json({}));
+    await fetchCapTable('carta', { ...tokens, externalCompanyId: null }, fn);
+    expect(calls[0]!.url).toBe('https://api.carta.com/v1/companies//capitalization');
+  });
+
+  it('names the provider when the pull is rejected', async () => {
+    const { fn } = stubFetch(() => json({ error: 'forbidden' }, 403));
+    await expect(fetchCapTable('pulley', tokens, fn)).rejects.toThrow('Pulley cap-table fetch failed (403)');
+  });
+
+  it('rejects a payload that is a bare array rather than an object', async () => {
+    // `as` casts are compile-time only; an array here would reach
+    // `payload.companyName` as undefined and map to a silently empty table.
+    const { fn } = stubFetch(() => json([{ name: 'Common' }]));
+    await expect(fetchCapTable('carta', tokens, fn)).rejects.toThrow(
+      'Carta returned an unexpected response body',
+    );
+  });
+
+  it('names the provider when the pull stalls past its deadline', async () => {
+    const { fn } = stubFetch(() => {
+      throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+    });
+    await expect(fetchCapTable('carta', tokens, fn)).rejects.toThrow('Carta did not respond within 30s');
+  });
 });
 
 const entry = (over: Partial<CapTableEntry> & { security_class: string }): CapTableEntry => ({
@@ -102,5 +472,55 @@ describe('cap-table diff', () => {
       [entry({ security_class: 'Common', shares: 1000 })],
     );
     expect(diff.has_conflicts).toBe(false);
+  });
+
+  /*
+   * Most of the numeric fields are null on a hand-entered table and populated
+   * by the pull (or the reverse). "Both unset" and "one unset" are the two
+   * cases the analyst actually meets, and they must not read the same.
+   */
+  it('treats a field unset on both sides as unchanged', () => {
+    const diff = diffCapTables(
+      [entry({ security_class: 'Common', shares: 1000 })],
+      [entry({ security_class: 'Common', shares: 1000 })],
+    );
+    expect(diff.conflicts).toEqual([]);
+  });
+
+  it('reports a field that gained or lost a value', () => {
+    const diff = diffCapTables(
+      [entry({ security_class: 'Series A', shares: 500, price_per_share: null, seniority: 1 })],
+      [entry({ security_class: 'Series A', shares: 500, price_per_share: 1.5, seniority: null })],
+    );
+    const changed = diff.conflicts[0]!;
+    expect(changed.status).toBe('changed');
+    expect(changed.changes).toContainEqual({ field: 'price_per_share', from: null, to: 1.5 });
+    expect(changed.changes).toContainEqual({ field: 'seniority', from: 1, to: null });
+  });
+
+  it('ignores a difference below the rounding tolerance', () => {
+    const diff = diffCapTables(
+      [entry({ security_class: 'Common', shares: 1000 })],
+      [entry({ security_class: 'Common', shares: 1000.0000001 })],
+    );
+    expect(diff.has_conflicts).toBe(false);
+  });
+
+  it('reports a reclassified security even when every number matches', () => {
+    const diff = diffCapTables(
+      [entry({ security_class: 'Bridge', class_type: 'common', shares: 100 })],
+      [entry({ security_class: 'Bridge', class_type: 'preferred', shares: 100 })],
+    );
+    expect(diff.conflicts[0]!.changes).toEqual([{ field: 'class_type', from: 'common', to: 'preferred' }]);
+  });
+
+  it('reports two empty tables as no conflict at all', () => {
+    expect(diffCapTables([], [])).toEqual({
+      conflicts: [],
+      has_conflicts: false,
+      added: 0,
+      removed: 0,
+      changed: 0,
+    });
   });
 });

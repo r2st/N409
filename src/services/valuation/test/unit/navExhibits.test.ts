@@ -193,6 +193,100 @@ describe('fund NAV exhibits', () => {
     expect(out).toContain('Series A &amp; B &lt;old&gt;');
     expect(out).not.toContain('<old>');
   });
+
+  /*
+   * Every numeric column arrives as a `numeric` string from pg, and a nullable
+   * one arrives empty. Reading that as NaN puts "$NaN" in a signed opinion, so
+   * each of these reads as zero (a quantity) or as "—" (an amount nobody
+   * stated) — never as arithmetic on a non-number.
+   */
+  it('reads an unstated cost basis and quantity as zero', () => {
+    const data: FundReportData = {
+      fund,
+      positions: [
+        {
+          position: position({ id: 'p1', company_name: 'Unpriced Co', cost_basis: '', quantity: '' }),
+          mark: mark({ position_id: 'p1', fair_value: '250000', level: 2 }),
+        },
+      ],
+      lpTerms: null,
+    };
+    const out = html(buildFundExhibits(data, ctx));
+    expect(out).toContain('<td>$0</td>'); // cost basis
+    expect(out).toContain('$250,000'); // fair value, and so the whole gain
+    expect(out).toContain('Level 2');
+  });
+
+  it('carries a position whose mark states no fair value at its cost', () => {
+    // A mark row exists — so the holding is "marked" and keeps the level the
+    // engine assigned — but the amount is absent. Cost is the only defensible
+    // carrying value; zero would understate the NAV.
+    const data: FundReportData = {
+      fund,
+      positions: [
+        {
+          position: position({ id: 'p1', cost_basis: '500000' }),
+          mark: mark({ position_id: 'p1', fair_value: '', level: 2 }),
+        },
+      ],
+      lpTerms: null,
+    };
+    const out = html(buildFundExhibits(data, ctx));
+    expect(out).toContain('$500,000');
+    // Marked, so it must not be reported as an unmarked holding.
+    expect(out).not.toContain('carry no mark');
+  });
+
+  it('humanizes a mark method the label table does not name', () => {
+    // The DB column can hold a method added by a later migration; an exhibit
+    // must print it rather than "undefined".
+    const data: FundReportData = {
+      fund,
+      positions: [
+        {
+          position: position({ id: 'p1' }),
+          mark: mark({ position_id: 'p1', method: 'secondary_transaction' as FundMarkRow['method'] }),
+        },
+      ],
+      lpTerms: null,
+    };
+    expect(html(buildFundExhibits(data, ctx))).toContain('Secondary transaction');
+  });
+
+  it('humanizes a security type the same way', () => {
+    const data: FundReportData = {
+      fund,
+      positions: [{ position: position({ id: 'p1', security_type: 'safe' }), mark: null }],
+      lpTerms: null,
+    };
+    expect(html(buildFundExhibits(data, ctx))).toContain('<td>Safe</td>');
+  });
+
+  it('states an unfunded commitment of zero rather than a negative one', () => {
+    // Contributed above committed is a recording error, not a negative
+    // commitment the LP can be called on.
+    const terms: LpTermsRow = { ...lpTerms, committed_capital: '', contributed_capital: '1000000' };
+    const out = html(buildFundExhibits({ fund, positions: [], lpTerms: terms }, ctx));
+    expect(out).toContain('<td>Unfunded commitment</td><td>$0</td>');
+  });
+
+  it('leaves an unrecorded LP term blank instead of printing a zero', () => {
+    const terms: LpTermsRow = {
+      ...lpTerms,
+      contributed_capital: '',
+      carry_pct: '',
+      management_fee_pct: '',
+      management_fees_paid: '',
+      gp_catch_up: false,
+    };
+    const out = html(buildFundExhibits({ fund, positions: [], lpTerms: terms }, ctx));
+    // Nothing drawn down yet — the whole commitment is unfunded.
+    expect(out).toContain('<td>Contributed capital</td><td>$0</td>');
+    expect(out).toContain('<td>Unfunded commitment</td><td>$50,000,000</td>');
+    expect(out).toContain('<td>Carried interest</td><td>—</td>');
+    expect(out).toContain('<td>Management fees paid to date</td><td>—</td>');
+    expect(out).toContain('<td>GP catch-up</td><td>No</td>');
+  });
 });
 
 // ── Debt fixtures ────────────────────────────────────────────────────────────
@@ -374,5 +468,201 @@ describe('debt instrument exhibits', () => {
     const out = html(buildDebtExhibits(data, ctx));
     expect(out).toContain('Note &lt;A&gt; &amp; &lt;B&gt;');
     expect(out).not.toContain('<A>');
+  });
+
+  describe('instrument terms', () => {
+    it('prints a flag as Yes/No and a free-text param as itself', () => {
+      const data = debtData({
+        instrument: {
+          ...instrument,
+          params: { callable: true, amortizing: false, structure: 'bullet', face: 1_000_000 },
+        },
+        valuation: null,
+        history: [],
+      });
+      const out = html(buildDebtExhibits(data, ctx));
+      expect(out).toContain('<td>Callable</td><td>Yes</td>');
+      expect(out).toContain('<td>Amortizing</td><td>No</td>');
+      // Not money, not a rate — printing "$0.00" or "0.0%" here would be a lie.
+      expect(out).toContain('<td>Structure</td><td>bullet</td>');
+    });
+
+    it('drops a param the record left unset rather than printing a blank row', () => {
+      const data = debtData({
+        instrument: { ...instrument, params: { face: 1_000_000, call_price: null, put_price: undefined } },
+        valuation: null,
+        history: [],
+      });
+      const out = html(buildDebtExhibits(data, ctx));
+      expect(out).toContain('<td>Face</td>');
+      expect(out).not.toContain('Call price');
+      expect(out).not.toContain('Put price');
+    });
+
+    it('omits the terms exhibit entirely for an instrument with no params', () => {
+      const empty = buildDebtExhibits(
+        debtData({ instrument: { ...instrument, params: {} }, valuation: null, history: [] }),
+        ctx,
+      );
+      expect(headings(empty)).toEqual(['Exhibit — Credit Terms & Discount Rate']);
+
+      // The column is NOT NULL, but a row written before it was is still on
+      // file — reading it must drop the exhibit, not throw inside a render.
+      const nulled = buildDebtExhibits(
+        debtData({
+          instrument: { ...instrument, params: null as unknown as DebtInstrumentRow['params'] },
+          valuation: null,
+          history: [],
+        }),
+        ctx,
+      );
+      expect(headings(nulled)).toEqual(['Exhibit — Credit Terms & Discount Rate']);
+    });
+
+    it('names an instrument type the label table does not carry', () => {
+      const data = debtData({
+        instrument: {
+          ...instrument,
+          instrument_type: 'revolving_credit' as DebtInstrumentRow['instrument_type'],
+        },
+      });
+      expect(html(buildDebtExhibits(data, ctx))).toContain('a revolving_credit');
+    });
+
+    it('ignores per-run inputs that are not a params object', () => {
+      const data = debtData();
+      data.valuation!.inputs = { instrument_type: 'bond', params: [1, 2, 3] };
+      // Falls back to the stored record rather than mapping an array's indices.
+      expect(html(buildDebtExhibits(data, ctx))).toContain('<td>Coupon rate</td><td>8.500%</td>');
+    });
+  });
+
+  describe('credit terms', () => {
+    it('omits the whole exhibit when nothing about the credit is recorded', () => {
+      const out = buildDebtExhibits(debtData({ creditTerms: null, valuation: null, history: [] }), ctx);
+      expect(headings(out)).toEqual(['Exhibit — Instrument Terms']);
+    });
+
+    it('skips an unrated instrument, humanizes an unknown seniority and states unsecured', () => {
+      const data = debtData({
+        creditTerms: {
+          ...creditTerms,
+          rating: null,
+          seniority: 'second_lien' as CreditTermsRow['seniority'],
+          secured: false,
+        },
+      });
+      const out = html(buildDebtExhibits(data, ctx));
+      expect(out).not.toContain('Credit rating');
+      expect(out).toContain('<td>Seniority</td><td>Second lien</td>');
+      expect(out).toContain('<td>Secured</td><td>No</td>');
+    });
+
+    it('prefers the yield the run actually discounted at over the stored terms', () => {
+      const data = debtData();
+      data.valuation!.result = { ...data.valuation!.result, benchmark_yield: 0.05, credit_spread: 0.07 };
+      const out = html(buildDebtExhibits(data, ctx));
+      expect(out).toContain('5.000%');
+      expect(out).toContain('7.000%');
+      expect(out).not.toContain('4.200%'); // the stored 0.042 is not what priced it
+    });
+
+    it('states the market yield as the all-in yield when the run reported no build-up', () => {
+      // The bond path returns market_yield and nothing else; that IS the rate
+      // the cash flows were discounted at.
+      expect(html(buildDebtExhibits(debtData(), ctx))).toContain(
+        '<td>All-in discount yield</td><td>9.500%</td>',
+      );
+    });
+  });
+
+  describe('valuation result', () => {
+    it('skips a measure the engine reported as unusable', () => {
+      const data = debtData({
+        valuation: debtValuation({ result: { fair_value: 'n/a', clean_price: 946_182.11 } }),
+        history: [],
+      });
+      const out = html(buildDebtExhibits(data, ctx));
+      expect(out).toContain('<td>Clean price</td>');
+      expect(out).not.toContain('<td>Fair value</td>');
+    });
+
+    it('omits the exhibit when the result carries no recognised measure', () => {
+      const out = buildDebtExhibits(
+        debtData({
+          valuation: debtValuation({ result: { engine_version: '2.1', schedule: [] } }),
+          history: [],
+        }),
+        ctx,
+      );
+      expect(headings(out)).not.toContain('Exhibit — Valuation Result');
+      expect(headings(out)).not.toContain('Exhibit — Contractual Cash Flows');
+    });
+
+    it('humanizes an amortization structure', () => {
+      const data = debtData({
+        valuation: debtValuation({ result: { fair_value: 1000, structure: 'straight_line' } }),
+        history: [],
+      });
+      expect(html(buildDebtExhibits(data, ctx))).toContain(
+        '<td>Amortization structure</td><td>Straight line</td>',
+      );
+    });
+  });
+
+  describe('contractual cash flows', () => {
+    it('leaves a period and term blank when the row does not state them', () => {
+      const data = debtData({
+        valuation: debtValuation({
+          result: { fair_value: 1000, schedule: [{ interest: 500, principal: 0, amount: 500 }] },
+        }),
+        history: [],
+      });
+      const out = html(buildDebtExhibits(data, ctx));
+      expect(out).toContain('<td></td><td>—</td>'); // period, then years
+      expect(out).toContain('$500.00');
+    });
+
+    it('totals only the payments that stated an amount', () => {
+      const data = debtData({
+        valuation: debtValuation({
+          result: {
+            fair_value: 1000,
+            schedule: [
+              { period: 1, t_years: 0.5, amount: 42_500 },
+              { period: 2, t_years: 1 }, // no amount recorded
+            ],
+          },
+        }),
+        history: [],
+      });
+      // The second row contributes nothing rather than NaN-ing the total.
+      expect(html(buildDebtExhibits(data, ctx))).toContain('<td><strong>$42,500.00</strong></td>');
+    });
+
+    it('drops a schedule whose every row is unusable', () => {
+      const data = debtData({
+        valuation: debtValuation({
+          result: { fair_value: 1000, schedule: [null, [1, 2], 'row'] },
+        }),
+        history: [],
+      });
+      expect(headings(buildDebtExhibits(data, ctx))).not.toContain('Exhibit — Contractual Cash Flows');
+    });
+  });
+
+  it('leaves an unpriced prior measurement blank in the history', () => {
+    const out = html(
+      buildDebtExhibits(
+        debtData({
+          history: [
+            debtValuation(),
+            debtValuation({ id: 'v0', valuation_date: '2026-03-31', fair_value: null }),
+          ],
+        }),
+        ctx,
+      ),
+    );
+    expect(out).toContain('<td>2026-03-31</td><td>—</td>');
   });
 });
