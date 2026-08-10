@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { WEBHOOK_MAX_ATTEMPTS } from '../domain/partnerWebhooks.js';
 
 export interface PartnerWebhookRow {
   id: string;
@@ -108,14 +109,19 @@ export async function recordDelivery(
   const { rows } = await pool.query<WebhookDeliveryRow>(
     `INSERT INTO partner_webhook_deliveries
        (id, webhook_id, event_type, valuation_id, payload, attempts, claimed_at, max_attempts)
-     VALUES ($1, $2, $3, $4, $5, 1, now(), coalesce($6, 4)) RETURNING *`,
+     VALUES ($1, $2, $3, $4, $5, 1, now(), $6) RETURNING *`,
     [
       newUlid(),
       args.webhookId,
       args.eventType,
       args.valuationId ?? null,
       JSON.stringify(args.payload),
-      args.maxAttempts ?? null,
+      // From the domain constant, not a literal. This read `coalesce($6, 4)`,
+      // which was a second copy of the ceiling in a place no migration could
+      // reach: extending the backoff ladder and raising the column default did
+      // nothing at all, because every row inserted here already carried the 4
+      // and `retryDelayMinutes` stops at the row's own max_attempts.
+      args.maxAttempts ?? WEBHOOK_MAX_ATTEMPTS,
     ],
   );
   return rows[0]!;

@@ -1,7 +1,12 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
-import { verifyWebhookSignature } from '../../src/domain/partnerWebhooks.js';
+import {
+  verifyWebhookSignature,
+  WEBHOOK_JITTER_FLOOR,
+  WEBHOOK_MAX_ATTEMPTS,
+  WEBHOOK_RETRY_BACKOFF_MINUTES,
+} from '../../src/domain/partnerWebhooks.js';
 import { retryDueDeliveries } from '../../src/hooks/partnerWebhooks.js';
 import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
@@ -199,11 +204,16 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
     expect(pending).toBeTruthy();
     expect(pending.last_error).toContain('500');
     expect(pending.attempts).toBe(1);
-    expect(pending.max_attempts).toBe(4);
-    // One minute out — invisible to the sweep until then.
+    expect(pending.max_attempts).toBe(WEBHOOK_MAX_ATTEMPTS);
+    // About a minute out — invisible to the sweep until then. The first step is
+    // jittered into its top half, so this is a window rather than a point: an
+    // outage fails every delivery in flight at once, and identical
+    // next_attempt_at values would serve the receiver the whole backlog the
+    // instant it came back.
+    const step = WEBHOOK_RETRY_BACKOFF_MINUTES[0]! * 60_000;
     const delayMs = new Date(pending.next_attempt_at).getTime() - Date.parse(pending.created_at);
-    expect(delayMs).toBeGreaterThanOrEqual(55_000);
-    expect(delayMs).toBeLessThanOrEqual(70_000);
+    expect(delayMs).toBeGreaterThanOrEqual(step * WEBHOOK_JITTER_FLOOR - 5_000);
+    expect(delayMs).toBeLessThanOrEqual(step + 10_000);
     expect(log.json().deliveries.some((d: any) => d.status === 'delivered')).toBe(true);
     pendingDeliveryId = pending.id;
   });
@@ -242,8 +252,8 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
       headers: keyHeader(apiKey),
     });
 
-    // Three sweeps = the three backoff steps. Each one is due immediately.
-    for (let i = 0; i < 3; i += 1) {
+    // One sweep per backoff step. Each one is due immediately.
+    for (let i = 0; i < WEBHOOK_RETRY_BACKOFF_MINUTES.length; i += 1) {
       await ctx.pool.query(
         "UPDATE partner_webhook_deliveries SET next_attempt_at = now() - interval '1 second' WHERE status = 'pending'",
       );
@@ -258,10 +268,10 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
     });
     const dead = log.json().deliveries.find((d: any) => d.status === 'failed');
     expect(dead).toBeTruthy();
-    expect(dead.attempts).toBe(4);
+    expect(dead.attempts).toBe(WEBHOOK_MAX_ATTEMPTS);
     expect(dead.last_error).toContain('503');
 
-    // A fourth sweep must not touch it: terminal means terminal.
+    // One more sweep must not touch it: terminal means terminal.
     await ctx.pool.query(
       "UPDATE partner_webhook_deliveries SET next_attempt_at = now() - interval '1 second' WHERE status = 'failed'",
     );

@@ -77,16 +77,26 @@ export function buildWebhookPayload(
 
 /**
  * Backoff between retries, in minutes, indexed by the number of attempts
- * already made. Three steps, so a delivery is tried at most four times: the
- * immediate attempt, then +1 min, +5 min, +30 min.
+ * already made. Five steps, so a delivery is tried at most six times: the
+ * immediate attempt, then +1 min, +5 min, +30 min, +2 h, +6 h.
  *
  * The spread is chosen against what actually takes a receiver down. A minute
  * covers a rolling restart or a momentary connection reset; five covers a
  * deploy; thirty covers an incident someone has to be paged for. Doubling from
- * a one-minute base would spend all four attempts inside the first quarter of
+ * a one-minute base would spend all the attempts inside the first quarter of
  * an hour and land the whole set inside a single outage.
+ *
+ * The two long steps are what make that argument finish. Stopping at thirty
+ * gave the ladder a 36-minute reach, so *every* incident longer than half an
+ * hour — the ordinary kind, where the page fires at 02:00 and the fix lands at
+ * 04:30 — dropped the partner's events permanently while the receiver was
+ * merely down, which is the one outcome the retry mechanism exists to prevent.
+ * Reaching ~8.5 hours spans an overnight incident and a business day's
+ * response, and it is still bounded: a receiver that is genuinely gone settles
+ * to 'failed' and stops, rather than being retried forever behind an
+ * ever-growing counter.
  */
-export const WEBHOOK_RETRY_BACKOFF_MINUTES: readonly number[] = [1, 5, 30];
+export const WEBHOOK_RETRY_BACKOFF_MINUTES: readonly number[] = [1, 5, 30, 120, 360];
 
 /** The initial attempt plus one per backoff step. */
 export const WEBHOOK_MAX_ATTEMPTS = WEBHOOK_RETRY_BACKOFF_MINUTES.length + 1;
@@ -98,6 +108,9 @@ export const WEBHOOK_MAX_ATTEMPTS = WEBHOOK_RETRY_BACKOFF_MINUTES.length + 1;
  * `attemptsMade` is the count *including* the one that just failed, which is
  * how the row reads after a claim (the claim increments). So a first failure
  * asks for BACKOFF[0].
+ *
+ * This is the *base* step. The scheduled time adds jitter — see `nextAttemptAt`
+ * — so this stays the pure, testable statement of the ladder's shape.
  */
 export function retryDelayMinutes(attemptsMade: number, maxAttempts = WEBHOOK_MAX_ATTEMPTS): number | null {
   if (attemptsMade >= maxAttempts) return null;
@@ -108,14 +121,97 @@ export function retryDelayMinutes(attemptsMade: number, maxAttempts = WEBHOOK_MA
   return step ?? WEBHOOK_RETRY_BACKOFF_MINUTES.at(-1) ?? 30;
 }
 
-/** The absolute time of the next attempt, or null when the row is exhausted. */
+/**
+ * The smallest share of a backoff step that may actually be waited.
+ *
+ * "Equal jitter": the delay lands uniformly in [50%, 100%] of the step. The
+ * problem being solved is that an outage fails every delivery in flight at
+ * roughly the same moment, and a fixed ladder then gives all of them the *same*
+ * next-attempt time — so the whole backlog comes due in one instant and the
+ * sweep serves the receiver its entire outage the second it comes back. A
+ * receiver that has just restarted is precisely the one that cannot take that,
+ * which turns one outage into two.
+ *
+ * Half a step rather than full jitter (uniform in [0, step]) because the ladder's
+ * steps mean something: full jitter would retry a 30-minute step after 40
+ * seconds, undoing the reasoning above about what each step covers. Halving
+ * decorrelates the backlog — which is all that is needed — while keeping every
+ * attempt inside the order of magnitude it was chosen for.
+ */
+export const WEBHOOK_JITTER_FLOOR = 0.5;
+
+/** `Math.random`, injectable so the tests can pin both ends of the range. */
+export type RandomFn = () => number;
+
+export interface NextAttemptOptions {
+  random?: RandomFn;
+  /**
+   * Seconds the receiver asked for via `Retry-After`, if it sent a usable one.
+   * Overrides the ladder for this attempt — see `parseRetryAfter`.
+   */
+  retryAfterSeconds?: number | null;
+}
+
+/**
+ * The longest `Retry-After` that will be honoured, in seconds.
+ *
+ * A receiver asking for more than the ladder's own reach is either
+ * misconfigured or telling us to hold an event past the point where it is still
+ * worth delivering, and an unbounded value read off a remote header is a
+ * remote party choosing how long our row occupies the queue.
+ */
+export const MAX_RETRY_AFTER_SECONDS = 6 * 60 * 60;
+
+/**
+ * `Retry-After` as seconds from `now`, or null when it is absent or unusable.
+ *
+ * Both RFC 9110 forms: delta-seconds, and an HTTP-date. A date in the past
+ * reads as 0 (retry now) rather than a negative delay; anything unparseable is
+ * null so the caller falls back to the ladder rather than to a NaN.
+ */
+export function parseRetryAfter(value: string | null | undefined, now: Date = new Date()): number | null {
+  if (value == null) return null;
+  const text = value.trim();
+  if (text === '') return null;
+  if (/^\d+$/.test(text)) {
+    const seconds = Number(text);
+    return Number.isFinite(seconds) ? Math.min(seconds, MAX_RETRY_AFTER_SECONDS) : null;
+  }
+  const at = Date.parse(text);
+  if (Number.isNaN(at)) return null;
+  const seconds = Math.ceil((at - now.getTime()) / 1000);
+  return Math.min(Math.max(seconds, 0), MAX_RETRY_AFTER_SECONDS);
+}
+
+/**
+ * The absolute time of the next attempt, or null when the row is exhausted.
+ *
+ * `Retry-After` wins over the ladder when the receiver sent one: a 429 or a 503
+ * carrying it is the receiver stating when it will be ready, and retrying
+ * earlier gets us rate-limited again and burns an attempt on a request we were
+ * told would fail. It is *not* jittered — the whole point is that the receiver
+ * chose the time — but it is clamped by `parseRetryAfter`.
+ */
 export function nextAttemptAt(
   attemptsMade: number,
   maxAttempts = WEBHOOK_MAX_ATTEMPTS,
   now: Date = new Date(),
+  options: NextAttemptOptions = {},
 ): Date | null {
   const minutes = retryDelayMinutes(attemptsMade, maxAttempts);
-  return minutes === null ? null : new Date(now.getTime() + minutes * 60_000);
+  // Checked before `Retry-After` is read: a row out of attempts is terminal
+  // whatever the receiver asks for, or a receiver could keep itself in the
+  // queue indefinitely by answering 429 with a header every time.
+  if (minutes === null) return null;
+
+  const asked = options.retryAfterSeconds;
+  if (asked != null && Number.isFinite(asked) && asked >= 0) {
+    return new Date(now.getTime() + asked * 1000);
+  }
+
+  const random = options.random ?? Math.random;
+  const factor = WEBHOOK_JITTER_FLOOR + (1 - WEBHOOK_JITTER_FLOOR) * random();
+  return new Date(now.getTime() + Math.round(minutes * 60_000 * factor));
 }
 
 /**

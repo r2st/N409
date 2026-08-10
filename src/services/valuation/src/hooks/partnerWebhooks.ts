@@ -9,6 +9,7 @@ import {
   isPrivateAddress,
   isPublicWebhookHost,
   nextAttemptAt,
+  parseRetryAfter,
   SIGNATURE_HEADER,
   signWebhookBody,
   webhookTargetPolicyAllowsPrivate,
@@ -101,7 +102,18 @@ async function blockedTargetReason(url: string, lookupFn: LookupFn): Promise<str
 }
 
 /** The outcome of one POST, before it is written back to the row. */
-type AttemptResult = { ok: true } | { ok: false; error: string; permanent: boolean };
+type AttemptResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      permanent: boolean;
+      /**
+       * Seconds the receiver asked us to wait, when it sent a usable
+       * `Retry-After`. Overrides the backoff ladder for this attempt.
+       */
+      retryAfterSeconds?: number | null;
+    };
 
 /** POST one signed payload. Never throws: a transport error is an outcome. */
 async function postDelivery(
@@ -114,7 +126,7 @@ async function postDelivery(
 ): Promise<AttemptResult> {
   if (!(allowPrivateTargets ?? webhookTargetPolicyAllowsPrivate())) {
     const blocked = await blockedTargetReason(target.url, lookupFn);
-    // Permanent: the next four attempts would resolve the same way, and the
+    // Permanent: every remaining attempt would resolve the same way, and the
     // partner needs to see the reason in their delivery log rather than four
     // identical timeouts.
     if (blocked) return { ok: false, error: blocked, permanent: true };
@@ -148,6 +160,14 @@ async function postDelivery(
       ok: false,
       error: `receiver responded ${res.status}`,
       permanent: isPermanentDeliveryFailure(res.status),
+      // Only read off the statuses that define it. A `Retry-After` on some
+      // other 5xx is not a scheduling instruction, and honouring it there
+      // would let any misbehaving receiver push its own row to the back of
+      // the queue.
+      retryAfterSeconds:
+        res.status === 429 || res.status === 503
+          ? parseRetryAfter(res.headers.get('retry-after'))
+          : null,
     };
   } catch (err) {
     // A timeout, a refused connection, DNS — the transient class this whole
@@ -166,7 +186,11 @@ async function settle(
     await settleDelivery(deps.pool, delivery.id, { status: 'delivered' });
     return 'delivered';
   }
-  const next = result.permanent ? null : nextAttemptAt(delivery.attempts, delivery.max_attempts);
+  const next = result.permanent
+    ? null
+    : nextAttemptAt(delivery.attempts, delivery.max_attempts, new Date(), {
+        retryAfterSeconds: result.retryAfterSeconds,
+      });
   await settleDelivery(deps.pool, delivery.id, {
     status: 'failed',
     error: result.error,
