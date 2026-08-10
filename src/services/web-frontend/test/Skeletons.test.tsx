@@ -269,7 +269,11 @@ describe('dashboard analytics loading state', () => {
     await waitFor(() => expect(screen.getByText('Loading analytics…')).toBeInTheDocument());
 
     release!();
-    await waitFor(() => expect(screen.getByRole('table', { name: /Valuations by product and workflow stage/ })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByRole('table', { name: /Valuations by product and workflow stage/ }),
+      ).toBeInTheDocument(),
+    );
     expect(screen.queryByText('Loading analytics…')).toBeNull();
   });
 
@@ -298,11 +302,17 @@ describe('dashboard analytics loading state', () => {
         <DashboardPage />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByRole('table', { name: /Valuations by product and workflow stage/ })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByRole('table', { name: /Valuations by product and workflow stage/ }),
+      ).toBeInTheDocument(),
+    );
 
     fireEvent.change(screen.getByLabelText('Analytics from'), { target: { value: '2026-01-01' } });
 
-    expect(screen.getByRole('table', { name: /Valuations by product and workflow stage/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('table', { name: /Valuations by product and workflow stage/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('Loading analytics…')).toBeNull();
   });
 });

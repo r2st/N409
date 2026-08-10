@@ -30,7 +30,7 @@ describe.skipIf(!dbUp)('one-click unsubscribe', () => {
   });
 
   afterAll(async () => {
-    await ctx.close();
+    await ctx?.teardown();
   });
 
   const marketingPref = async (userId: string) =>

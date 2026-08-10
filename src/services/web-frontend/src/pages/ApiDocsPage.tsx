@@ -86,11 +86,11 @@ export function ApiDocsPage() {
       {docs && (
         <>
           {/*
-            * The spec, first and above the prose. A partner's first move is to
-            * generate a client, not to read fourteen endpoint cards — and a
-            * reference that buries the machine-readable version at the bottom
-            * gets hand-written HTTP clients built against it instead.
-            */}
+           * The spec, first and above the prose. A partner's first move is to
+           * generate a client, not to read fourteen endpoint cards — and a
+           * reference that buries the machine-readable version at the bottom
+           * gets hand-written HTTP clients built against it instead.
+           */}
           {docs.openapi_url && (
             <section className="mt-8 rounded-lg border border-bond-200 bg-bond-50 p-5">
               <h2 className="overline mb-1.5 text-ink-500">Machine-readable spec</h2>

@@ -365,9 +365,7 @@ describe('ValuationComparePage', () => {
       await waitFor(() => expect(click).toHaveBeenCalled());
       // Asked the server for the file rather than serialising the filtered
       // rows the page happens to be showing.
-      expect(urls.some((u) => u.includes('format=csv') && u.includes(VAL_A) && u.includes(VAL_B))).toBe(
-        true,
-      );
+      expect(urls.some((u) => u.includes('format=csv') && u.includes(VAL_A) && u.includes(VAL_B))).toBe(true);
     });
   });
 });

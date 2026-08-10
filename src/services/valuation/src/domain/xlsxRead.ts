@@ -23,6 +23,14 @@ export interface XlsxSheetData {
   rows: Record<string, string>[];
   /** Header row in source order, for the column-mapping UI. */
   headers: string[];
+  /**
+   * Worksheet row number each entry of `rows` came from, 1-based as Excel shows
+   * it. Parallel to `rows`, and the reason a validation issue can name the line
+   * the reader has open: the preamble, the header and every blank spacer are
+   * gone from `rows`, so its indices stopped tracking the sheet long before the
+   * first data row.
+   */
+  lines: number[];
 }
 
 /** Excel's day 0. 1899-12-30 absorbs the legacy 1900-is-a-leap-year bug. */
@@ -342,11 +350,13 @@ function parseSheetGrid(
   shared: string[],
   dateStyles: boolean[],
   budget: { remaining: number },
-): string[][] {
+): { grid: string[][]; rowNumbers: number[] } {
   const sheetData = pairedInner(xml, 'sheetData') ?? '';
   const grid: string[][] = [];
+  /** The `r` of each `<row>`, so a sheet that omits rows entirely keeps its numbering. */
+  const rowNumbers: number[] = [];
 
-  for (const { inner: rowXml } of elements(sheetData, 'row')) {
+  for (const { tag: rowTag, inner: rowXml } of elements(sheetData, 'row')) {
     // A row is an allocation before any cell is, and `<row/>` is six bytes that
     // pads no columns — so a budget counting only cells counts it free, and 17 MB
     // of them (26 KB on the wire) took 132 MB of heap having spent nothing. The
@@ -390,8 +400,15 @@ function parseSheetGrid(
       nextColumn = column + 1;
     }
     grid.push(cells);
+    // `<row>` is sparse the same way `<c>` is: a sheet with nothing on rows
+    // 5-8 simply has no elements for them, so counting positions would report
+    // every row after a gap several lines too early. The `r` attribute is the
+    // sheet's own numbering; falling back to the position keeps a file that
+    // omits it readable.
+    const declared = Number(attr(rowTag, 'r'));
+    rowNumbers.push(Number.isInteger(declared) && declared > 0 ? declared : grid.length);
   }
-  return grid;
+  return { grid, rowNumbers };
 }
 
 /** Count of cells in a row that hold something other than whitespace. */
@@ -410,22 +427,30 @@ function populatedCells(row: string[]): number {
  * falls back to the first populated row. Rows where every cell is blank are
  * dropped, matching `parseCsv`.
  */
-export function gridToRows(grid: string[][]): { headers: string[]; rows: Record<string, string>[] } {
+export function gridToRows(
+  grid: string[][],
+  rowNumbers?: readonly number[],
+): { headers: string[]; rows: Record<string, string>[]; lines: number[] } {
   const multiCell = grid.findIndex((row) => populatedCells(row) >= 2);
   const headerIndex = multiCell === -1 ? grid.findIndex((row) => populatedCells(row) > 0) : multiCell;
-  if (headerIndex === -1) return { headers: [], rows: [] };
+  if (headerIndex === -1) return { headers: [], rows: [], lines: [] };
 
   const headers = grid[headerIndex]!.map((h) => h.trim());
   const rows: Record<string, string>[] = [];
-  for (const row of grid.slice(headerIndex + 1)) {
+  const lines: number[] = [];
+  for (const [offset, row] of grid.slice(headerIndex + 1).entries()) {
     if (!row.some((cell) => cell.trim() !== '')) continue;
     const obj: Record<string, string> = {};
     headers.forEach((header, i) => {
       if (header !== '') obj[header] = (row[i] ?? '').trim();
     });
     rows.push(obj);
+    const index = headerIndex + 1 + offset;
+    // Without the sheet's own numbering the grid position is all there is, and
+    // it is right for every sheet that declares no gaps.
+    lines.push(rowNumbers?.[index] ?? index + 1);
   }
-  return { headers: headers.filter((h) => h !== ''), rows };
+  return { headers: headers.filter((h) => h !== ''), rows, lines };
 }
 
 /**
@@ -447,9 +472,14 @@ export function readXlsx(buf: Buffer): XlsxSheetData[] {
 
   const budget = { remaining: MAX_GRID_CELLS };
   return parseSheetIndex(parts).map(({ name, path }) => {
-    const grid = parseSheetGrid(parts.get(path)!.toString('utf8'), shared, dateStyles, budget);
-    const { headers, rows } = gridToRows(grid);
-    return { name, headers, rows };
+    const { grid, rowNumbers } = parseSheetGrid(
+      parts.get(path)!.toString('utf8'),
+      shared,
+      dateStyles,
+      budget,
+    );
+    const { headers, rows, lines } = gridToRows(grid, rowNumbers);
+    return { name, headers, rows, lines };
   });
 }
 

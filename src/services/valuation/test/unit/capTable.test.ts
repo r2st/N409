@@ -109,8 +109,8 @@ describe('capTable', () => {
     });
 
     it('has nothing to say about an empty file', () => {
-      expect(parseCsvSheet('')).toEqual({ headers: [], rows: [] });
-      expect(parseCsvSheet('\n\n')).toEqual({ headers: [], rows: [] });
+      expect(parseCsvSheet('')).toEqual({ headers: [], rows: [], lines: [] });
+      expect(parseCsvSheet('\n\n')).toEqual({ headers: [], rows: [], lines: [] });
     });
   });
 
@@ -174,6 +174,67 @@ describe('capTable', () => {
         { class: 'Total', shares: '' },
       ];
       expect(parseCapTable(rows, presetByKey('generic')!.mapping)).toHaveLength(1);
+    });
+
+    it('numbers each entry with its line in the sheet, not its place in the output', () => {
+      // The two are not the same once anything is skipped, and every real
+      // export has a totals row. An issue reported against "the third entry"
+      // points at the wrong line the moment one row above it is dropped.
+      // Through the CSV parser, because that is where the numbering is decided:
+      // it drops blank lines, so by the third entry the array index and the
+      // file line have diverged by two.
+      const sheet = parseCsvSheet(
+        ['class,shares', 'Common Stock,8000000', '', 'Series A,2000000', '', 'Options,1000000'].join('\n'),
+      );
+      const entries = parseCapTable(sheet.rows, presetByKey('generic')!.mapping, sheet.lines);
+      expect(entries).toHaveLength(3);
+      // Header is line 1. The blank lines are gone from `rows`, and the
+      // numbering still tracks the file rather than the array.
+      expect(entries.map((e) => e.source_row)).toEqual([2, 4, 6]);
+    });
+
+    it('points a validation error at the spreadsheet row the reader can open', () => {
+      const sheet = parseCsvSheet(['class,shares', 'Common Stock,8000000', '', 'Series A,n/a'].join('\n'));
+      const entries = parseCapTable(sheet.rows, presetByKey('generic')!.mapping, sheet.lines);
+      const v = validateCapTable(entries);
+      // Series A is the fourth line of the file and the second surviving entry;
+      // reporting "3" would send the reader to the blank line above it.
+      const bad = v.issues.find((i) => i.security_class === 'Series A');
+      expect(bad?.row).toBe(4);
+      expect(bad?.message).toContain('Row 4');
+    });
+
+    it('identifies a nameless row, which previously identified nothing at all', () => {
+      // `missing_class` is the one issue with no class name to quote, so
+      // without the row it read "A row is missing a security class name" and
+      // left the reader to find which of 300 it meant.
+      const sheet = parseCsvSheet(['class,shares', 'Common Stock,8000000', ',250000'].join('\n'));
+      const v = validateCapTable(parseCapTable(sheet.rows, presetByKey('generic')!.mapping, sheet.lines));
+      const missing = v.issues.find((i) => i.code === 'missing_class');
+      expect(missing?.row).toBe(3);
+      expect(missing?.message).toContain('Row 3');
+    });
+
+    it('omits the row when no source lines were supplied, rather than inventing one', () => {
+      // Rows can arrive without any file behind them, and the array index only
+      // equals the file line for a sheet with no blank lines — which no real
+      // export is. A confident wrong number sends someone to the wrong line.
+      const v = validateCapTable([
+        {
+          security_class: 'Common',
+          class_type: 'common',
+          shares: -1,
+          price_per_share: null,
+          invested_amount: null,
+          liquidation_multiple: null,
+          seniority: null,
+          conversion_ratio: null,
+        },
+      ]);
+      const bad = v.issues.find((i) => i.code === 'bad_shares');
+      expect(bad?.row).toBeUndefined();
+      expect(bad?.message).not.toContain('Row');
+      expect(bad?.security_class).toBe('Common');
     });
 
     it('flags a parenthesised share count instead of inflating the table', () => {

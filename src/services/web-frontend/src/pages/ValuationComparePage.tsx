@@ -105,7 +105,10 @@ function DeltaDirection({ row }: { row: CompareRow }) {
       <span aria-hidden="true" className="mr-1">
         {up ? '▲' : '▼'}
       </span>
-      <span className="sr-only">{up ? 'increased' : 'decreased'}{sentiment}: </span>
+      <span className="sr-only">
+        {up ? 'increased' : 'decreased'}
+        {sentiment}:{' '}
+      </span>
     </>
   );
 }
@@ -288,12 +291,12 @@ export function ValuationComparePage() {
                 {onlyChanged ? 'Show all metrics' : 'Show only changes'}
               </Button>
               {/*
-                * The board pack is assembled in a spreadsheet, and the only way
-                * to get these figures into one was to retype them off the
-                * screen. Exports the full comparison, not the filtered view —
-                * the file is evidence, and evidence should not depend on which
-                * toggle happened to be set when it was taken.
-                */}
+               * The board pack is assembled in a spreadsheet, and the only way
+               * to get these figures into one was to retype them off the
+               * screen. Exports the full comparison, not the filtered view —
+               * the file is evidence, and evidence should not depend on which
+               * toggle happened to be set when it was taken.
+               */}
               <Button variant="secondary" disabled={exporting} onClick={() => void exportCsv()}>
                 {exporting ? 'Preparing…' : 'Export CSV'}
               </Button>

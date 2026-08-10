@@ -350,15 +350,15 @@ export function DashboardPage() {
                     <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                       <table className="w-full min-w-[560px] text-sm">
                         {/*
-                          * A caption rather than `aria-label`: it is the element
-                          * the spec gives a table for naming itself, it survives
-                          * being copied into another document, and it is what a
-                          * screen reader's table list shows. Every header cell
-                          * carries a `scope` so a cell read in isolation is
-                          * announced with the product and column it belongs to —
-                          * without it, "3" is all a user navigating by cell hears
-                          * (WCAG 1.3.1).
-                          */}
+                         * A caption rather than `aria-label`: it is the element
+                         * the spec gives a table for naming itself, it survives
+                         * being copied into another document, and it is what a
+                         * screen reader's table list shows. Every header cell
+                         * carries a `scope` so a cell read in isolation is
+                         * announced with the product and column it belongs to —
+                         * without it, "3" is all a user navigating by cell hears
+                         * (WCAG 1.3.1).
+                         */}
                         <caption className="sr-only">
                           Valuations by product and workflow stage. Each figure links to the matching
                           worklist.

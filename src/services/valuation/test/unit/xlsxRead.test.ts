@@ -156,6 +156,38 @@ describe('xlsxRead', () => {
     });
   });
 
+  describe('source line numbering', () => {
+    it('numbers rows past a preamble by their line in the sheet', () => {
+      // A real export: a title line, a blank, then the header. `rows` starts at
+      // the first data row, so its indices are three short of the sheet from
+      // the outset — before any blank row inside the data widens the gap.
+      const { rows, lines } = gridToRows([
+        ['Acme Inc — capitalization'],
+        [''],
+        ['class', 'shares'],
+        ['Common', '10'],
+        ['', ''],
+        ['Series A', '20'],
+      ]);
+      expect(rows).toHaveLength(2);
+      expect(lines).toEqual([4, 6]);
+    });
+
+    it('prefers the sheet\u2019s own row numbers when it declares them', () => {
+      // `<row r="...">` is sparse: a sheet with nothing on rows 5-8 has no
+      // elements for them, so counting positions reports everything after a
+      // gap several lines early.
+      const grid = [
+        ['class', 'shares'],
+        ['Common', '10'],
+        ['Series A', '20'],
+      ];
+      expect(gridToRows(grid, [1, 2, 40]).lines).toEqual([2, 40]);
+      // Falls back to the position when the file declares none.
+      expect(gridToRows(grid).lines).toEqual([2, 3]);
+    });
+  });
+
   describe('gridToRows', () => {
     it('skips leading blank rows and keys by the first populated row', () => {
       const { headers, rows } = gridToRows([[], ['', ''], ['class', 'shares'], ['Common', '10']]);
@@ -191,8 +223,8 @@ describe('xlsxRead', () => {
     });
 
     it('returns nothing for an empty grid', () => {
-      expect(gridToRows([])).toEqual({ headers: [], rows: [] });
-      expect(gridToRows([[''], ['']])).toEqual({ headers: [], rows: [] });
+      expect(gridToRows([])).toEqual({ headers: [], rows: [], lines: [] });
+      expect(gridToRows([[''], ['']])).toEqual({ headers: [], rows: [], lines: [] });
     });
   });
 
@@ -255,7 +287,7 @@ describe('xlsxRead', () => {
           sheets: [{ name: 'Blank', data: '<?xml version="1.0"?><worksheet><sheetData/></worksheet>' }],
         }),
       );
-      expect(sheets).toEqual([{ name: 'Blank', headers: [], rows: [] }]);
+      expect(sheets).toEqual([{ name: 'Blank', headers: [], rows: [], lines: [] }]);
     });
 
     it('reads back a workbook written by the exporter', () => {

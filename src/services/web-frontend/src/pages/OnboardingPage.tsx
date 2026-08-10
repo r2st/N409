@@ -78,7 +78,12 @@ export function OnboardingPage() {
   });
 
   /** Persist after every step that changes something worth coming back to. */
-  const remember = (next: { step: number; valuation: Valuation; uploaded?: Record<string, string[]>; paymentNote?: string | null }) => {
+  const remember = (next: {
+    step: number;
+    valuation: Valuation;
+    uploaded?: Record<string, string[]>;
+    paymentNote?: string | null;
+  }) => {
     saveDraft({
       step: next.step,
       valuation: next.valuation,
@@ -367,11 +372,11 @@ export function OnboardingPage() {
           </p>
           <div className="flex justify-center gap-3">
             {/*
-              * The draft is dropped when the client leaves the funnel, not on
-              * reaching this screen: they may still refresh it, and "your
-              * request is in" with no valuation to open would be the same
-              * amnesia one screen later.
-              */}
+             * The draft is dropped when the client leaves the funnel, not on
+             * reaching this screen: they may still refresh it, and "your
+             * request is in" with no valuation to open would be the same
+             * amnesia one screen later.
+             */}
             <Button
               onClick={() => {
                 clearDraft();

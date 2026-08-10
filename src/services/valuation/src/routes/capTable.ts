@@ -9,7 +9,6 @@ import {
   CAP_TABLE_FIELDS,
   FORMAT_PRESETS,
   parseCapTable,
-  parseCsv,
   parseCsvSheet,
   presetByKey,
   toWaterfallInputs,
@@ -41,6 +40,19 @@ const ImportBody = z.object({
   /** Raw CSV text, OR pre-parsed rows from a client-side parser. */
   csv: z.string().max(2_000_000).optional(),
   rows: z.array(z.record(z.string(), z.unknown())).max(2000).optional(),
+  /**
+   * Source line of each entry of `rows`, as the upload endpoint reported it.
+   *
+   * Only meaningful with `rows`: the `csv` path parses the file here and knows
+   * the lines first-hand. It is what lets a validation error name the row of
+   * the spreadsheet for an .xlsx import, where the client picked a sheet from
+   * /upload and sent its rows back — by then the preamble, header and blank
+   * spacers are gone and the array positions no longer track the sheet.
+   *
+   * Untrusted like any other body field, and only ever used to label a message,
+   * so a client that sends nonsense mislabels its own errors and nothing else.
+   */
+  source_lines: z.array(z.number().int().min(1)).max(2000).optional(),
   /** field → source column overrides on top of the format preset. */
   mapping: z.record(z.string(), z.string()).optional(),
 });
@@ -71,13 +83,32 @@ function resolveMapping(format: string, overrides?: Record<string, string>): Col
   return mapping;
 }
 
-/** Parse the body into rows (from raw CSV or supplied rows) + resolved mapping. */
+/**
+ * Parse the body into rows + resolved mapping + the source line of each row.
+ *
+ * The lines come from whichever half supplied the rows: parsed here for raw
+ * CSV, echoed by the client for rows that came from /upload. When neither
+ * offers them the entries carry no line, which is the honest outcome — see
+ * `parseCapTable`.
+ */
 function parseInput(body: z.infer<typeof ImportBody>): {
   rows: Record<string, unknown>[];
   mapping: ColumnMapping;
+  sourceLines?: number[];
 } {
-  const rows = body.rows ?? (body.csv ? parseCsv(body.csv) : []);
-  return { rows, mapping: resolveMapping(body.format, body.mapping) };
+  const mapping = resolveMapping(body.format, body.mapping);
+  if (body.rows) {
+    // Only when it actually lines up. A mismatched length means the client
+    // built the two arrays from different things, and labelling row 12's error
+    // with row 40's number is worse than labelling it with nothing.
+    const sourceLines = body.source_lines?.length === body.rows.length ? body.source_lines : undefined;
+    return { rows: body.rows, mapping, sourceLines };
+  }
+  if (body.csv) {
+    const sheet = parseCsvSheet(body.csv);
+    return { rows: sheet.rows, mapping, sourceLines: sheet.lines };
+  }
+  return { rows: [], mapping };
 }
 
 export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
@@ -119,7 +150,13 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (buffer.length === 0) throw problems.unprocessable('Uploaded file is empty');
 
     const filename = file.filename ?? 'upload';
-    let sheets: Array<{ name: string; headers: string[]; rows: Record<string, string>[] }>;
+    let sheets: Array<{
+      name: string;
+      headers: string[];
+      rows: Record<string, string>[];
+      /** Source line of each row — echoed back on import so errors can cite it. */
+      lines: number[];
+    }>;
 
     if (looksLikeXlsx(buffer)) {
       try {
@@ -150,7 +187,13 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
       filename,
       source: looksLikeXlsx(buffer) ? 'xlsx' : 'csv',
       truncated,
-      sheets: sheets.map((s) => ({ ...s, rows: s.rows.slice(0, MAX_UPLOAD_ROWS) })),
+      sheets: sheets.map((s) => ({
+        ...s,
+        rows: s.rows.slice(0, MAX_UPLOAD_ROWS),
+        // Truncated in step with `rows`, so the two stay parallel — the import
+        // path drops them entirely if they ever disagree.
+        lines: s.lines.slice(0, MAX_UPLOAD_ROWS),
+      })),
     };
   });
 
@@ -163,8 +206,8 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
       throw problems.forbidden('Only the client or ops can import a cap table');
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
-    const { rows, mapping } = parseInput(parsed.data);
-    const entries = parseCapTable(rows, mapping);
+    const { rows, mapping, sourceLines } = parseInput(parsed.data);
+    const entries = parseCapTable(rows, mapping, sourceLines);
     return { entries, validation: validateCapTable(entries), mapping };
   });
 
@@ -178,8 +221,8 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
 
-    const { rows, mapping } = parseInput(parsed.data);
-    const entries = parseCapTable(rows, mapping);
+    const { rows, mapping, sourceLines } = parseInput(parsed.data);
+    const entries = parseCapTable(rows, mapping, sourceLines);
     const validation = validateCapTable(entries);
     if (!validation.valid) {
       throw problems.unprocessable('Cap table has validation errors', { validation });

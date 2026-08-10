@@ -164,7 +164,9 @@ describe('DashboardPage', () => {
     expect(await screen.findByText('Recent valuations')).toBeInTheDocument();
     // …but the analytics block is gone.
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
-    expect(screen.queryByRole('table', { name: /Valuations by product and workflow stage/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('table', { name: /Valuations by product and workflow stage/ }),
+    ).not.toBeInTheDocument();
     expect(fetchSpy.mock.calls.every(([url]) => !String(url).includes('/stats/dashboard'))).toBe(true);
   });
 
@@ -220,9 +222,7 @@ describe('DashboardPage', () => {
       renderPage();
       await screen.findByText('Incomplete');
       // Not "Incomplete 3 2 unread" — three numbers and no sentence.
-      expect(
-        screen.getByRole('link', { name: 'Incomplete: 3 valuations, 2 unread' }),
-      ).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Incomplete: 3 valuations, 2 unread' })).toBeInTheDocument();
       expect(screen.getByRole('link', { name: /^Published: \d+ valuations$/ })).toBeInTheDocument();
     });
 

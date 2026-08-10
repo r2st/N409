@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 
 /**
  * Zod → JSON Schema, for the subset the partner API validates with.

@@ -228,6 +228,96 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
       expect(res.json().entries.map((e: any) => e.class_type)).toEqual(['common', 'preferred', 'option']);
     });
 
+    it('reports a rejected import against the row of the file it came from', async () => {
+      // The end-to-end shape of the error-reporting change: a CSV with a blank
+      // line and a bad cell, saved rather than previewed, so the 422 the
+      // importer actually sees is the thing under test. Before this the reader
+      // got a class name and was left to find it in the sheet.
+      const csv = [
+        'class,shares,price,invested',
+        'Common Stock,8000000,0.10,',
+        '',
+        'Series A Preferred,2000000,1.00,(2000000)',
+      ].join('\n');
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${valuationId}/cap-table`,
+        headers: authHeader(client.token),
+        payload: { format: 'generic', csv },
+      });
+      expect(res.statusCode).toBe(422);
+      const issues = res.json().validation.issues as Array<{
+        code: string;
+        row?: number;
+        message: string;
+        security_class?: string;
+      }>;
+      const negative = issues.find((i) => i.code === 'negative_investment');
+      // Series A is the fourth line of the file; it is the second surviving
+      // entry, so an index-based number would have said 3 and sent the reader
+      // to the blank line.
+      expect(negative?.row).toBe(4);
+      expect(negative?.message).toContain('Row 4');
+      expect(negative?.security_class).toBe('Series A Preferred');
+    });
+
+    it('carries workbook row numbers through upload, echo and validation', async () => {
+      // The .xlsx wizard path end to end: /upload reports the line each row
+      // came from, the client sends them back with the rows, and the error
+      // names the row of the workbook. Without the echo an .xlsx import gets no
+      // row at all, because by then the preamble and header are gone.
+      const uploaded = await uploadFile(app, uploadUrl(), client.token, {
+        filename: 'captable.xlsx',
+        content: capTableWorkbook(),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const sheet = uploaded.json().sheets[1];
+      // The 'Cap Table' sheet carries a title line above the header, so the
+      // first data row is line 3 of the worksheet, not line 1 of `rows`.
+      expect(sheet.lines).toHaveLength(sheet.rows.length);
+      expect(sheet.lines[0]).toBeGreaterThan(1);
+
+      // Break one row so validation has something to point at.
+      const rows = sheet.rows.map((r: Record<string, string>, i: number) =>
+        i === 1 ? { ...r, shares: '0' } : r,
+      );
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/cap-table/preview`,
+        headers: authHeader(client.token),
+        payload: { format: 'generic', rows, source_lines: sheet.lines, mapping: {} },
+      });
+      expect(res.statusCode).toBe(200);
+      const zero = res.json().validation.issues.find((i: { code: string }) => i.code === 'zero_shares');
+      expect(zero.row).toBe(sheet.lines[1]);
+      expect(zero.message).toContain(`Row ${sheet.lines[1]}`);
+    });
+
+    it('drops the row numbers rather than mislabelling when they do not line up', async () => {
+      // A client that builds the two arrays from different things would
+      // otherwise put row 40's number on row 12's error, which is worse than
+      // no number: it sends the reader to a line that is fine.
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${valuationId}/cap-table/preview`,
+        headers: authHeader(client.token),
+        payload: {
+          format: 'generic',
+          rows: [
+            { class: 'Common Stock', shares: '8000000' },
+            { class: 'Series A', shares: '0' },
+          ],
+          source_lines: [7],
+          mapping: {},
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const zero = res.json().validation.issues.find((i: { code: string }) => i.code === 'zero_shares');
+      expect(zero.row).toBeUndefined();
+      expect(zero.message).not.toContain('Row');
+    });
+
     it('accepts a CSV upload through the same endpoint', async () => {
       const res = await uploadFile(app, uploadUrl(), client.token, {
         filename: 'captable.csv',

@@ -42,6 +42,9 @@ interface Issue {
   severity: 'error' | 'warning';
   code: string;
   message: string;
+  /** Line in the uploaded sheet, header counted. Absent on table-level issues. */
+  row?: number;
+  security_class?: string;
 }
 interface Validation {
   valid: boolean;
@@ -72,6 +75,13 @@ interface UploadedSheet {
   name: string;
   headers: string[];
   rows: Record<string, string>[];
+  /**
+   * Source line of each row in the sheet. Echoed back on import so a validation
+   * error can cite the row of the workbook: by the time the rows reach here the
+   * preamble, header and blank spacers are gone, so their positions no longer
+   * track what the reader sees in Excel.
+   */
+  lines: number[];
 }
 interface Upload {
   filename: string;
@@ -122,6 +132,23 @@ const TYPE_TONE: Record<string, string> = {
   warrant: 'text-sky-700',
 };
 
+/**
+ * File order within a severity.
+ *
+ * The validator emits issues per entry and per check, so a table with three bad
+ * rows lists them grouped by check rather than by row, and a reader reconciling
+ * the list against the open spreadsheet jumps up and down it. Table-level
+ * issues (`empty`, `no_option_pool`) have no row and sort last, where they read
+ * as a summary rather than as something to go and find.
+ *
+ * Applied to errors and warnings separately, not to the concatenation: errors
+ * are what block the save, so they stay together at the top rather than being
+ * interleaved with warnings that happen to sit on earlier rows.
+ */
+function byRow(a: Issue, b: Issue): number {
+  return (a.row ?? Number.POSITIVE_INFINITY) - (b.row ?? Number.POSITIVE_INFINITY);
+}
+
 function ValidationBanner({ validation }: { validation: Validation }) {
   const errors = validation.issues.filter((i) => i.severity === 'error');
   const warnings = validation.issues.filter((i) => i.severity === 'warning');
@@ -139,9 +166,23 @@ function ValidationBanner({ validation }: { validation: Validation }) {
       </p>
       {(errors.length > 0 || warnings.length > 0) && (
         <ul className="mt-2 space-y-1">
-          {[...errors, ...warnings].map((i, idx) => (
-            <li key={idx} className={i.severity === 'error' ? 'text-red-700' : 'text-amber-700'}>
-              • {i.message}
+          {[...errors.sort(byRow), ...warnings.sort(byRow)].map((i, idx) => (
+            <li
+              key={idx}
+              className={`flex gap-2 ${i.severity === 'error' ? 'text-red-700' : 'text-amber-700'}`}
+            >
+              {i.row === undefined ? (
+                <span aria-hidden="true">•</span>
+              ) : (
+                // The row as its own element, not only inside the prose: this
+                // list is read while scrolling a spreadsheet alongside it, and
+                // a column of line numbers is scannable in a way a sentence is
+                // not.
+                <span className="shrink-0 font-mono text-xs tabular-nums" aria-label={`Row ${i.row}`}>
+                  {i.row}
+                </span>
+              )}
+              <span>{i.message}</span>
             </li>
           ))}
         </ul>
@@ -235,7 +276,12 @@ export function CapTableTab() {
   const hasInput = sheet ? sheet.rows.length > 0 : csv.trim() !== '';
 
   /** Preview and save send parsed rows for an upload, raw text for a paste. */
-  const importBody = () => (sheet ? { format, rows: sheet.rows, mapping } : { format, csv, mapping });
+  const importBody = () =>
+    sheet
+      ? { format, rows: sheet.rows, source_lines: sheet.lines, mapping }
+      : // The raw-text path needs none: the server parses the file and so knows
+        // the lines first-hand.
+        { format, csv, mapping };
 
   const resetImport = () => {
     setUpload(null);

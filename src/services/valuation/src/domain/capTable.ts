@@ -11,6 +11,22 @@ export const CAP_TABLE_EVENT_TYPES = {
 export type CapTableClassType = 'common' | 'preferred' | 'option' | 'warrant';
 
 export interface CapTableEntry {
+  /**
+   * The line this entry came from in the uploaded sheet, 1-based and counting
+   * the header — so it is the row number the importer sees in Excel, not an
+   * index into `entries`.
+   *
+   * Those are not the same number and that is the whole reason this field
+   * exists: `parseCapTable` drops blank and totals rows, so by the time an
+   * issue is raised the position in `entries` has already slipped past the
+   * source. A validation message that said "the third row" would point at the
+   * wrong line on any real export.
+   *
+   * Optional because not every entry has one: the hand-entry path builds
+   * entries from a form, where "which row of the file" is not a question with
+   * an answer. Issues on those keep their class name and no row.
+   */
+  source_row?: number;
   security_class: string;
   class_type: CapTableClassType;
   shares: number;
@@ -218,12 +234,26 @@ function nameColumns(cells: string[]): Array<string | null> {
  * Returns the header row alongside the data so the mapping UI can list columns
  * even when the file has none of the latter, and so it lists them in source
  * order rather than in whatever order the first row's keys happen to enumerate.
+ *
+ * `lines` is the 1-based line of the file each data row came from. It exists
+ * because this parser drops wholly blank lines, so the position of a row in
+ * `rows` stops tracking the file at the first one — and a validation issue
+ * reported against a position is then pointing at the wrong line of the sheet
+ * the reader has open. Every real export has blank spacer lines, so this is the
+ * common case rather than an edge.
  */
-export function parseCsvSheet(text: string): { headers: string[]; rows: Record<string, string>[] } {
+export function parseCsvSheet(text: string): {
+  headers: string[];
+  rows: Record<string, string>[];
+  lines: number[];
+} {
   const body = text.replace(/^\uFEFF/, '');
   const delimiter = sniffDelimiter(body);
 
   const grid: string[][] = [];
+  /** Source line of each kept row, parallel to `grid`. */
+  const gridLines: number[] = [];
+  let line = 1;
   let field = '';
   let row: string[] = [];
   let inQuotes = false;
@@ -245,15 +275,24 @@ export function parseCsvSheet(text: string): { headers: string[]; rows: Record<s
       if (c === '\r' && body[i + 1] === '\n') i++;
       row.push(field);
       field = '';
-      if (row.some((f) => f.trim() !== '')) grid.push(row);
+      if (row.some((f) => f.trim() !== '')) {
+        grid.push(row);
+        gridLines.push(line);
+      }
       row = [];
+      // A newline inside a quoted field never reaches here, so this counts
+      // lines of the file rather than of the logical records.
+      line += 1;
     } else field += c;
   }
   if (field !== '' || row.length > 0) {
     row.push(field);
-    if (row.some((f) => f.trim() !== '')) grid.push(row);
+    if (row.some((f) => f.trim() !== '')) {
+      grid.push(row);
+      gridLines.push(line);
+    }
   }
-  if (grid.length === 0) return { headers: [], rows: [] };
+  if (grid.length === 0) return { headers: [], rows: [], lines: [] };
 
   const columns = nameColumns(grid[0]!);
   const headers = columns.filter((c): c is string => c !== null);
@@ -264,7 +303,7 @@ export function parseCsvSheet(text: string): { headers: string[]; rows: Record<s
     });
     return obj;
   });
-  return { headers, rows };
+  return { headers, rows, lines: gridLines.slice(1) };
 }
 
 /** Header-keyed rows only — the shape most callers want. */
@@ -283,10 +322,27 @@ function readCell(row: Record<string, unknown>, header: string | undefined): unk
   return undefined;
 }
 
-/** Map raw rows to canonical cap-table entries using the column mapping. */
-export function parseCapTable(rows: Record<string, unknown>[], mapping: ColumnMapping): CapTableEntry[] {
+/**
+ * Map raw rows to canonical cap-table entries using the column mapping.
+ *
+ * `sourceLines[i]` is the line of the uploaded file that `rows[i]` came from,
+ * as `parseCsvSheet` and `readXlsx` report it. Supply it and every entry — and
+ * so every validation issue — can name the row the reader has open.
+ *
+ * Deliberately not derived from the array index when it is absent. The index
+ * only equals the file line for a sheet with no blank or skipped lines, which
+ * no real export is; deriving it would put a confident, wrong line number on
+ * the error, and sending someone to line 3 to fix a problem on line 7 is worse
+ * than telling them the class name and letting them search. Entries with no
+ * known line simply carry none.
+ */
+export function parseCapTable(
+  rows: Record<string, unknown>[],
+  mapping: ColumnMapping,
+  sourceLines?: readonly number[],
+): CapTableEntry[] {
   const entries: CapTableEntry[] = [];
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     const name = String(readCell(row, mapping.security_class) ?? '').trim();
     const sharesRaw = parseNumericCell(readCell(row, mapping.shares));
     // Skip blank rows / totals rows with no class and no shares.
@@ -299,6 +355,7 @@ export function parseCapTable(rows: Record<string, unknown>[], mapping: ColumnMa
         ? (typeCell as CapTableClassType)
         : inferClassType(name);
     entries.push({
+      source_row: sourceLines?.[index],
       security_class: name,
       class_type: classType,
       shares: sharesRaw ?? 0,
@@ -317,6 +374,16 @@ export interface CapTableIssue {
   code: string;
   message: string;
   security_class?: string;
+  /**
+   * The line in the uploaded sheet this issue is about — see
+   * `CapTableEntry.source_row`. Absent on table-level issues (`empty`,
+   * `no_option_pool`) and on entries that never came from a file.
+   *
+   * Carried structurally as well as inside `message` so the import screen can
+   * link to the row rather than making the reader search a 300-line
+   * spreadsheet for the class name quoted at them.
+   */
+  row?: number;
 }
 
 export interface CapTableSummary {
@@ -360,28 +427,38 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
 
   const seen = new Set<string>();
   for (const e of entries) {
+    // Every per-entry issue carries where it came from, structurally and in the
+    // prose. Naming only the security class was fine for a ten-row table and
+    // useless for the exports this importer actually receives: "Row 147" is
+    // something the reader can act on, a quoted class name in a 300-line sheet
+    // is something they have to go and search for — and `missing_class`, the
+    // one issue whose row has no name to quote, identified nothing whatsoever.
+    const where = { security_class: e.security_class, row: e.source_row };
+    const at = e.source_row === undefined ? '' : `Row ${e.source_row}: `;
+
     if (e.security_class === '') {
       issues.push({
+        ...where,
         severity: 'error',
         code: 'missing_class',
-        message: 'A row is missing a security class name.',
+        message: `${at}this row is missing a security class name.`,
       });
     } else if (seen.has(e.security_class.toLowerCase())) {
       issues.push({
+        ...where,
         severity: 'warning',
         code: 'duplicate_class',
-        message: `Duplicate security class "${e.security_class}".`,
-        security_class: e.security_class,
+        message: `${at}duplicate security class "${e.security_class}".`,
       });
     }
     seen.add(e.security_class.toLowerCase());
 
     if (!Number.isFinite(e.shares) || e.shares < 0) {
       issues.push({
+        ...where,
         severity: 'error',
         code: 'bad_shares',
-        message: `"${e.security_class}" has an invalid share count.`,
-        security_class: e.security_class,
+        message: `${at}"${e.security_class}" has an invalid share count.`,
       });
     } else if (e.shares === 0) {
       // A warning rather than an error, unlike the negative money below: zero
@@ -392,10 +469,10 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
       // that turns the allocation into a 422 — and the importer is the only
       // place that still knows which row it was.
       issues.push({
+        ...where,
         severity: 'warning',
         code: 'zero_shares',
-        message: `"${e.security_class}" has no shares outstanding — the waterfall allocation will refuse this row.`,
-        security_class: e.security_class,
+        message: `${at}"${e.security_class}" has no shares outstanding — the waterfall allocation will refuse this row.`,
       });
     }
     summary.total_shares += Math.max(0, e.shares);
@@ -408,26 +485,26 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
       const mult = e.liquidation_multiple ?? 1;
       if (e.liquidation_multiple === null) {
         issues.push({
+          ...where,
           severity: 'warning',
           code: 'default_liq_pref',
-          message: `"${e.security_class}" has no liquidation preference — defaulting to 1×.`,
-          security_class: e.security_class,
+          message: `${at}"${e.security_class}" has no liquidation preference — defaulting to 1×.`,
         });
       }
       if (mult < 0) {
         issues.push({
+          ...where,
           severity: 'error',
           code: 'bad_liq_pref',
-          message: `"${e.security_class}" has a negative liquidation preference.`,
-          security_class: e.security_class,
+          message: `${at}"${e.security_class}" has a negative liquidation preference.`,
         });
       }
       if (e.conversion_ratio !== null && e.conversion_ratio <= 0) {
         issues.push({
+          ...where,
           severity: 'error',
           code: 'bad_conversion',
-          message: `"${e.security_class}" has a non-positive conversion ratio.`,
-          security_class: e.security_class,
+          message: `${at}"${e.security_class}" has a non-positive conversion ratio.`,
         });
       }
       // Seniority was the one preferred field nothing here checked, and it is
@@ -446,10 +523,10 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
       // engine, stated where the import can still say which row is wrong.
       if (e.seniority !== null && (!Number.isInteger(e.seniority) || e.seniority < 1)) {
         issues.push({
+          ...where,
           severity: 'error',
           code: 'bad_seniority',
-          message: `"${e.security_class}" has a seniority of ${e.seniority} — it must be a whole number of 1 or more (1 is the most senior).`,
-          security_class: e.security_class,
+          message: `${at}"${e.security_class}" has a seniority of ${e.seniority} — it must be a whole number of 1 or more (1 is the most senior).`,
         });
       }
       // Preference stack: invested × multiple, else shares × price × multiple.
@@ -476,26 +553,26 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
       // has been making this exact check on the multiple all along.
       if (e.invested_amount !== null && e.invested_amount < 0) {
         issues.push({
+          ...where,
           severity: 'error',
           code: 'negative_investment',
-          message: `"${e.security_class}" has a negative invested amount (${e.invested_amount}) — a liquidation preference cannot be negative.`,
-          security_class: e.security_class,
+          message: `${at}"${e.security_class}" has a negative invested amount (${e.invested_amount}) — a liquidation preference cannot be negative.`,
         });
       }
       if (e.price_per_share !== null && e.price_per_share < 0) {
         issues.push({
+          ...where,
           severity: 'error',
           code: 'negative_price',
-          message: `"${e.security_class}" has a negative price per share (${e.price_per_share}).`,
-          security_class: e.security_class,
+          message: `${at}"${e.security_class}" has a negative price per share (${e.price_per_share}).`,
         });
       }
       if (invested === 0) {
         issues.push({
+          ...where,
           severity: 'warning',
           code: 'no_investment',
-          message: `"${e.security_class}" has no invested amount or price — preference stack may be understated.`,
-          security_class: e.security_class,
+          message: `${at}"${e.security_class}" has no invested amount or price — preference stack may be understated.`,
         });
       }
       summary.total_preference_stack += invested * mult;
