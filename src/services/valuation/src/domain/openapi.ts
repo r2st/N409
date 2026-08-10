@@ -37,6 +37,26 @@ export interface OpenApiEndpoint {
 export interface OpenApiSchemas {
   body?: z.ZodTypeAny;
   query?: z.ZodTypeAny;
+  /**
+   * The shape of the success body, as a zod schema over the *serialized* JSON —
+   * so a `Date` column is `z.string()` here, because that is what the partner
+   * receives.
+   *
+   * Request bodies were typed from the validator and responses were not, which
+   * left every operation declaring `schema: { type: 'object' }`. That is a
+   * well-formed spec and a useless one: a generated client types every call as
+   * returning `any`, so the one thing the partner wanted the spec for — knowing
+   * that `fmv_per_share` is a decimal *string* and `published_at` may be null
+   * before they write code against it — was the one thing it did not say.
+   *
+   * There is no validator to derive this from, because a response is built, not
+   * parsed. So it is written by hand, and `partnerApiContract.test.ts` runs real
+   * responses through these schemas to keep the hand-written half honest. The
+   * schemas are `.strict()` for exactly that reason: adding a field to a
+   * response without documenting it fails that test rather than shipping a spec
+   * that quietly under-reports the payload.
+   */
+  response?: z.ZodTypeAny;
 }
 
 export interface OpenApiInput {
@@ -141,6 +161,38 @@ export function successStatus(response: string): string {
   return match ? match[1]! : '200';
 }
 
+/**
+ * A response schema with every `additionalProperties: false` dropped.
+ *
+ * The converter closes objects because that is right for a *request*: the
+ * validator rejects unknown fields, and saying so lets a generator catch a typo
+ * at compile time instead of at the 422. A response is the opposite contract.
+ * Closing it publishes "these fields and never any others", which makes the day
+ * this API adds a field to `publicValuation` the day every strictly-generated
+ * client starts rejecting valid payloads — the API would be unable to grow
+ * without a breaking release.
+ *
+ * The strictness is not lost, only moved to where it belongs: the zod schemas
+ * are `.strict()`, so the contract test still fails on an undocumented field.
+ * The spec stays additive-safe; the test stays exact.
+ */
+export function responseSchema(schema: z.ZodTypeAny): JsonSchema {
+  return openObjects(jsonSchemaFromZod(schema));
+}
+
+function openObjects(schema: JsonSchema): JsonSchema {
+  const out: JsonSchema = { ...schema };
+  delete out.additionalProperties;
+  if (out.properties) {
+    out.properties = Object.fromEntries(
+      Object.entries(out.properties).map(([key, value]) => [key, openObjects(value)]),
+    );
+  }
+  if (out.items) out.items = openObjects(out.items);
+  if (out.anyOf) out.anyOf = out.anyOf.map(openObjects);
+  return out;
+}
+
 export function buildOpenApiDocument(input: OpenApiInput): Record<string, unknown> {
   const paths: Record<string, Record<string, unknown>> = {};
 
@@ -199,7 +251,14 @@ export function buildOpenApiDocument(input: OpenApiInput): Record<string, unknow
             // a PDF as an object.
             ...(endpoint.path.endsWith('.pdf')
               ? { 'application/pdf': { schema: { type: 'string', format: 'binary' } } }
-              : { 'application/json': { schema: { type: 'object' } } }),
+              : {
+                  'application/json': {
+                    // An endpoint with no declared response schema degrades to
+                    // the open object rather than blocking registration — same
+                    // rule the request half already follows.
+                    schema: schemas?.response ? responseSchema(schemas.response) : { type: 'object' },
+                  },
+                }),
           },
         },
         ...(authenticated

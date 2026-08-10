@@ -42,6 +42,19 @@ import { checkUploadType } from '../documents/fileType.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
 import { buildOpenApiDocument, schemaKey, type OpenApiSchemas } from '../domain/openapi.js';
+import {
+  CreateValuationResponse,
+  CreateWebhookResponse,
+  DeleteWebhookResponse,
+  GetValuationResponse,
+  ListDeliveriesResponse,
+  ListValuationsResponse,
+  ListWebhooksResponse,
+  ResultsResponse,
+  RetryDeliveryResponse,
+  TestWebhookResponse,
+  UploadDocumentResponse,
+} from '../domain/partnerApiContract.js';
 
 /**
  * Partner API (improvement 6): a stable, versioned surface for programmatic
@@ -373,7 +386,7 @@ export function registerPartnerApiRoutes(
         return { status: 201, body: { valuation: publicValuation(valuation) } };
       });
     },
-    { schemas: { body: CreateBody } },
+    { schemas: { body: CreateBody, response: CreateValuationResponse } },
   );
 
   define(
@@ -405,7 +418,7 @@ export function registerPartnerApiRoutes(
         total,
       };
     },
-    { schemas: { query: ListQuery } },
+    { schemas: { query: ListQuery, response: ListValuationsResponse } },
   );
 
   define(
@@ -421,6 +434,7 @@ export function registerPartnerApiRoutes(
       const { id } = req.params as { id: string };
       return { valuation: publicValuation(await loadScoped(token, id)) };
     },
+    { schemas: { response: GetValuationResponse } },
   );
 
   define(
@@ -490,7 +504,10 @@ export function registerPartnerApiRoutes(
       });
     },
     // base64 inflates ~4/3 over the raw 25 MB cap, plus JSON envelope headroom
-    { bodyLimit: Math.ceil((MAX_DOCUMENT_BYTES * 4) / 3) + 64 * 1024, schemas: { body: UploadBody } },
+    {
+      bodyLimit: Math.ceil((MAX_DOCUMENT_BYTES * 4) / 3) + 64 * 1024,
+      schemas: { body: UploadBody, response: UploadDocumentResponse },
+    },
   );
 
   define(
@@ -534,6 +551,7 @@ export function registerPartnerApiRoutes(
         report: { available: Boolean(rendered), version: rendered?.version ?? null },
       };
     },
+    { schemas: { response: ResultsResponse } },
   );
 
   define(
@@ -621,7 +639,7 @@ export function registerPartnerApiRoutes(
       });
       return reply.status(201).send({ webhook: publicWebhook(webhook, true) });
     },
-    { schemas: { body: WebhookBody } },
+    { schemas: { body: WebhookBody, response: CreateWebhookResponse } },
   );
 
   define(
@@ -636,6 +654,7 @@ export function registerPartnerApiRoutes(
       const { token } = requireToken(req);
       return { webhooks: (await listWebhooks(deps.pool, token.partnerId)).map((w) => publicWebhook(w)) };
     },
+    { schemas: { response: ListWebhooksResponse } },
   );
 
   define(
@@ -654,6 +673,7 @@ export function registerPartnerApiRoutes(
       }
       return { deleted: true };
     },
+    { schemas: { response: DeleteWebhookResponse } },
   );
 
   define(
@@ -690,6 +710,7 @@ export function registerPartnerApiRoutes(
         })),
       };
     },
+    { schemas: { response: ListDeliveriesResponse } },
   );
 
   define(
@@ -723,6 +744,7 @@ export function registerPartnerApiRoutes(
         },
       };
     },
+    { schemas: { response: RetryDeliveryResponse } },
   );
 
   define(
@@ -748,5 +770,6 @@ export function registerPartnerApiRoutes(
       );
       return { delivered: outcome === 'delivered' };
     },
+    { schemas: { response: TestWebhookResponse } },
   );
 }
