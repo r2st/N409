@@ -47,13 +47,28 @@ export interface ProjectionRow {
   created_at: Date;
 }
 
-function hydrate(row: Record<string, unknown>): ProjectionRow {
-  const out = { ...row } as Record<string, unknown>;
-  out.tax_rate = Number(out.tax_rate);
-  out.years = Number(out.years);
-  out.terminal_value =
-    out.terminal_value === null || out.terminal_value === undefined ? null : Number(out.terminal_value);
-  return out as unknown as ProjectionRow;
+/**
+ * A row as the pg driver actually hands it back: `tax_rate` and
+ * `terminal_value` are `numeric` and arrive as strings, `years` is int4 and
+ * arrives as a number.
+ *
+ * Naming that difference lets `hydrate` return a `ProjectionRow` without an
+ * assertion, so a column added to the interface and not converted here is a
+ * compile error rather than a string that reaches the DCF as a discount rate.
+ */
+type RawProjectionRow = Omit<ProjectionRow, 'tax_rate' | 'years' | 'terminal_value'> & {
+  tax_rate: string | number;
+  years: string | number;
+  terminal_value: string | number | null;
+};
+
+function hydrate(row: RawProjectionRow): ProjectionRow {
+  return {
+    ...row,
+    tax_rate: Number(row.tax_rate),
+    years: Number(row.years),
+    terminal_value: row.terminal_value === null ? null : Number(row.terminal_value),
+  };
 }
 
 /** Every run for one engagement, newest first — the order the panel reads in. */
@@ -62,7 +77,7 @@ export async function listProjections(
   valuationId: string,
   limit = 20,
 ): Promise<ProjectionRow[]> {
-  const { rows } = await pool.query<Record<string, unknown>>(
+  const { rows } = await pool.query<RawProjectionRow>(
     `SELECT * FROM valuation_projections
       WHERE valuation_id = $1
       ORDER BY created_at DESC, id DESC
@@ -85,7 +100,7 @@ export async function findCurrentProjection(
   pool: pg.Pool,
   valuationId: string,
 ): Promise<ProjectionRow | null> {
-  const { rows } = await pool.query<Record<string, unknown>>(
+  const { rows } = await pool.query<RawProjectionRow>(
     `SELECT * FROM valuation_projections
       WHERE valuation_id = $1
       ORDER BY (applied_at IS NOT NULL) DESC, created_at DESC, id DESC
@@ -100,7 +115,7 @@ export async function findProjection(
   valuationId: string,
   id: string,
 ): Promise<ProjectionRow | null> {
-  const { rows } = await pool.query<Record<string, unknown>>(
+  const { rows } = await pool.query<RawProjectionRow>(
     'SELECT * FROM valuation_projections WHERE valuation_id = $1 AND id = $2',
     [valuationId, id],
   );
@@ -121,7 +136,7 @@ export interface NewProjection {
 }
 
 export async function insertProjection(pool: pg.Pool, args: NewProjection): Promise<ProjectionRow> {
-  const { rows } = await pool.query<Record<string, unknown>>(
+  const { rows } = await pool.query<RawProjectionRow>(
     `INSERT INTO valuation_projections (
        id, valuation_id, method, years, tax_rate, inputs, projections,
        free_cash_flows, terminal_method, terminal_value, created_by

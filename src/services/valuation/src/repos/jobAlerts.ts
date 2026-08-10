@@ -20,12 +20,25 @@ export interface JobAlertRow {
   resolved_at: Date | null;
 }
 
-function hydrate(row: Record<string, unknown>): JobAlertRow {
+/**
+ * A row as the pg driver actually hands it back: `observed` and `threshold` are
+ * `numeric` and arrive as strings.
+ *
+ * Naming that difference lets `hydrate` return a `JobAlertRow` without an
+ * assertion — the cast it replaces would have typed a forgotten column as a
+ * number, and an alert compares `observed` against `threshold`.
+ */
+type RawJobAlertRow = Omit<JobAlertRow, 'observed' | 'threshold'> & {
+  observed: string | number;
+  threshold: string | number;
+};
+
+function hydrate(row: RawJobAlertRow): JobAlertRow {
   return {
     ...row,
     observed: Number(row.observed),
     threshold: Number(row.threshold),
-  } as unknown as JobAlertRow;
+  };
 }
 
 export async function listJobAlertRules(pool: pg.Pool | pg.PoolClient): Promise<JobAlertRule[]> {

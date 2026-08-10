@@ -54,27 +54,45 @@ export interface VolatilityEstimateRow {
   created_at: Date;
 }
 
-const NUMERIC_COLUMNS = [
-  'time_to_exit_years',
-  'recommended',
-  'median_vol',
-  'mean_vol',
-  'min_vol',
-  'max_vol',
-  'coefficient_of_variation',
-  'manual_override',
-] as const;
+/** The nullable `numeric` columns — the ones the driver hands back as strings. */
+type NumericColumn =
+  | 'time_to_exit_years'
+  | 'median_vol'
+  | 'mean_vol'
+  | 'min_vol'
+  | 'max_vol'
+  | 'coefficient_of_variation'
+  | 'manual_override';
 
-function hydrate(row: Record<string, unknown>): VolatilityEstimateRow {
-  const out = { ...row } as Record<string, unknown>;
-  for (const column of NUMERIC_COLUMNS) {
-    const value = out[column];
-    out[column] = value === null || value === undefined ? null : Number(value);
-  }
-  // periods_per_year is int4 and already a number; recommended is NOT NULL, so
-  // the loop above cannot have left it null however the driver typed it.
-  out.periods_per_year = Number(out.periods_per_year);
-  return out as unknown as VolatilityEstimateRow;
+/**
+ * A row as the pg driver actually hands it back: `numeric` arrives as a string,
+ * and `periods_per_year` is int4, which arrives as a number already.
+ * `recommended` is the one NOT NULL numeric, so it is never null on the way in.
+ *
+ * Stating that difference is what lets `hydrate` return a
+ * `VolatilityEstimateRow` without an assertion. The previous version converted
+ * columns inside a `Record<string, unknown>` and cast the result, so a column
+ * added to the interface and forgotten in the loop would still have compiled —
+ * and a volatility left as `'0.62'` reaches the OPM as a string.
+ */
+type RawVolatilityEstimateRow = Omit<VolatilityEstimateRow, NumericColumn | 'recommended'> &
+  Record<NumericColumn, string | number | null> & { recommended: string | number };
+
+const num = (value: string | number | null): number | null => (value === null ? null : Number(value));
+
+function hydrate(row: RawVolatilityEstimateRow): VolatilityEstimateRow {
+  return {
+    ...row,
+    recommended: Number(row.recommended),
+    time_to_exit_years: num(row.time_to_exit_years),
+    median_vol: num(row.median_vol),
+    mean_vol: num(row.mean_vol),
+    min_vol: num(row.min_vol),
+    max_vol: num(row.max_vol),
+    coefficient_of_variation: num(row.coefficient_of_variation),
+    manual_override: num(row.manual_override),
+    periods_per_year: Number(row.periods_per_year),
+  };
 }
 
 /** Every run for one engagement, newest first — the order the panel reads in. */
@@ -83,7 +101,7 @@ export async function listVolatilityEstimates(
   valuationId: string,
   limit = 20,
 ): Promise<VolatilityEstimateRow[]> {
-  const { rows } = await pool.query<Record<string, unknown>>(
+  const { rows } = await pool.query<RawVolatilityEstimateRow>(
     `SELECT * FROM volatility_estimates
       WHERE valuation_id = $1
       ORDER BY created_at DESC, id DESC
@@ -106,7 +124,7 @@ export async function findCurrentVolatilityEstimate(
   pool: pg.Pool,
   valuationId: string,
 ): Promise<VolatilityEstimateRow | null> {
-  const { rows } = await pool.query<Record<string, unknown>>(
+  const { rows } = await pool.query<RawVolatilityEstimateRow>(
     `SELECT * FROM volatility_estimates
       WHERE valuation_id = $1
       ORDER BY (applied_at IS NOT NULL) DESC, created_at DESC, id DESC
@@ -121,7 +139,7 @@ export async function findVolatilityEstimate(
   valuationId: string,
   id: string,
 ): Promise<VolatilityEstimateRow | null> {
-  const { rows } = await pool.query<Record<string, unknown>>(
+  const { rows } = await pool.query<RawVolatilityEstimateRow>(
     'SELECT * FROM volatility_estimates WHERE valuation_id = $1 AND id = $2',
     [valuationId, id],
   );
@@ -152,7 +170,7 @@ export async function insertVolatilityEstimate(
   pool: pg.Pool,
   args: NewVolatilityEstimate,
 ): Promise<VolatilityEstimateRow> {
-  const { rows } = await pool.query<Record<string, unknown>>(
+  const { rows } = await pool.query<RawVolatilityEstimateRow>(
     `INSERT INTO volatility_estimates (
        id, valuation_id, method, periods_per_year, window_start, window_end,
        time_to_exit_years, recommended, median_vol, mean_vol, min_vol, max_vol,

@@ -42,15 +42,35 @@ export interface ComparableItemRow {
   updated_at: Date;
 }
 
-const NUMERIC_COLUMNS = ['revenue_ltm', 'revenue_ntm', 'ebitda_ltm', 'ebitda_ntm', 'ev', 'score'] as const;
+/** The `numeric` columns — the ones the driver hands back as strings. */
+type NumericColumn = 'revenue_ltm' | 'revenue_ntm' | 'ebitda_ltm' | 'ebitda_ntm' | 'ev' | 'score';
 
-function hydrate(row: Record<string, unknown>): ComparableItemRow {
-  const out = { ...row } as Record<string, unknown>;
-  for (const column of NUMERIC_COLUMNS) {
-    const value = out[column];
-    out[column] = value === null || value === undefined ? null : Number(value);
-  }
-  return out as unknown as ComparableItemRow;
+/**
+ * A row as the pg driver actually hands it back, rather than as the reader ends
+ * up seeing it: the `numeric` columns arrive as strings.
+ *
+ * Naming that difference is what lets `hydrate` return `ComparableItemRow`
+ * without an assertion. It used to take a `Record<string, unknown>`, convert
+ * columns in place and launder the result through `as unknown as` — which types
+ * a forgotten column, or one added to the interface later, as a number when it
+ * is really an untouched string. `'12.00' / '3.00'` is the NaN this module's
+ * header warns about; the cast was the thing that let it compile.
+ */
+type RawComparableItemRow = Omit<ComparableItemRow, NumericColumn> &
+  Record<NumericColumn, string | number | null>;
+
+const num = (value: string | number | null): number | null => (value === null ? null : Number(value));
+
+function hydrate(row: RawComparableItemRow): ComparableItemRow {
+  return {
+    ...row,
+    revenue_ltm: num(row.revenue_ltm),
+    revenue_ntm: num(row.revenue_ntm),
+    ebitda_ltm: num(row.ebitda_ltm),
+    ebitda_ntm: num(row.ebitda_ntm),
+    ev: num(row.ev),
+    score: num(row.score),
+  };
 }
 
 /**
@@ -65,7 +85,7 @@ export async function listComparableItems(
   pool: pg.Pool | pg.PoolClient,
   valuationId: string,
 ): Promise<ComparableItemRow[]> {
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<RawComparableItemRow>(
     `SELECT * FROM comparable_items
       WHERE valuation_id = $1
       ORDER BY included DESC, score DESC NULLS LAST, name ASC`,
@@ -79,10 +99,10 @@ export async function findComparableItem(
   valuationId: string,
   itemId: string,
 ): Promise<ComparableItemRow | null> {
-  const { rows } = await pool.query(`SELECT * FROM comparable_items WHERE id = $1 AND valuation_id = $2`, [
-    itemId,
-    valuationId,
-  ]);
+  const { rows } = await pool.query<RawComparableItemRow>(
+    `SELECT * FROM comparable_items WHERE id = $1 AND valuation_id = $2`,
+    [itemId, valuationId],
+  );
   return rows[0] ? hydrate(rows[0]) : null;
 }
 
@@ -147,7 +167,7 @@ export async function insertComparableItem(
   pool: pg.Pool | pg.PoolClient,
   input: ComparableItemInput,
 ): Promise<ComparableItemRow> {
-  const { rows } = await pool.query(`${INSERT_SQL} RETURNING *`, insertParams(input));
+  const { rows } = await pool.query<RawComparableItemRow>(`${INSERT_SQL} RETURNING *`, insertParams(input));
   return hydrate(rows[0]!);
 }
 
@@ -197,7 +217,7 @@ export async function updateComparableItem(
   }
   if (sets.length === 0) return findComparableItem(pool, valuationId, itemId);
   params.push(itemId, valuationId);
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<RawComparableItemRow>(
     `UPDATE comparable_items SET ${sets.join(', ')}, updated_at = now()
       WHERE id = $${params.length - 1} AND valuation_id = $${params.length}
       RETURNING *`,
@@ -270,7 +290,7 @@ export async function replaceMachineComparables(
     for (const item of items) {
       if (item.ticker && taken.has(item.ticker)) continue;
       const decision = item.ticker ? decisions.get(item.ticker) : undefined;
-      const { rows } = await tx.query(
+      const { rows } = await tx.query<RawComparableItemRow>(
         `${INSERT_SQL} RETURNING *`,
         insertParams({
           ...item,

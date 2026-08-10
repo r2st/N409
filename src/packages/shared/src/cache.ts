@@ -7,11 +7,24 @@
  * with multiple replicas should only cache data where brief staleness is
  * acceptable.
  */
-/** A load in progress, and whether an invalidation has overtaken it. */
-interface InflightLoad<T> {
-  promise: Promise<T>;
+/**
+ * A load in progress, and whether an invalidation has overtaken it.
+ *
+ * A class rather than an object literal because the loader's continuations
+ * need the record itself — to check `stale` and to prove the record still owns
+ * the slot — while the record needs the promise those continuations produce.
+ * Building it in a constructor breaks that cycle with `this`; the literal it
+ * replaces had to open with `undefined as unknown as Promise<T>`, which is a
+ * type saying "always a promise" over a field that briefly is not one.
+ */
+class InflightLoad<T> {
+  readonly promise: Promise<T>;
   /** Set when delete()/clear() lands while this load is still running. */
-  stale: boolean;
+  stale = false;
+
+  constructor(start: (self: InflightLoad<T>) => Promise<T>) {
+    this.promise = start(this);
+  }
 }
 
 export class TtlCache<T> {
@@ -91,21 +104,22 @@ export class TtlCache<T> {
     const pending = this.inflight.get(key);
     if (pending && !pending.stale) return pending.promise;
 
-    const record: InflightLoad<T> = { promise: undefined as unknown as Promise<T>, stale: false };
-    this.inflight.set(key, record);
-    record.promise = loader().then(
-      (value) => {
-        // Only the load that still owns the slot may clear it; a stale load
-        // finishing late must not evict the fresh one that replaced it.
-        if (this.inflight.get(key) === record) this.inflight.delete(key);
-        if (!record.stale) this.set(key, value);
-        return value;
-      },
-      (err: unknown) => {
-        if (this.inflight.get(key) === record) this.inflight.delete(key);
-        throw err;
-      },
+    const record = new InflightLoad<T>((self) =>
+      loader().then(
+        (value) => {
+          // Only the load that still owns the slot may clear it; a stale load
+          // finishing late must not evict the fresh one that replaced it.
+          if (this.inflight.get(key) === self) this.inflight.delete(key);
+          if (!self.stale) this.set(key, value);
+          return value;
+        },
+        (err: unknown) => {
+          if (this.inflight.get(key) === self) this.inflight.delete(key);
+          throw err;
+        },
+      ),
     );
+    this.inflight.set(key, record);
     return record.promise;
   }
 }
