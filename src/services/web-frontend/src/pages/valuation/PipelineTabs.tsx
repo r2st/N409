@@ -6,6 +6,7 @@ import { AccountingConnect } from '../../components/valuation/AccountingConnect'
 import { ParamsPanel } from '../../components/valuation/ParamsPanel';
 import { WaccPanel } from '../../components/valuation/WaccPanel';
 import { FinancialModelPanel } from '../../components/valuation/FinancialModelPanel';
+import { ProjectionPanel } from '../../components/valuation/ProjectionPanel';
 import { AiPanel } from '../../components/valuation/AiPanel';
 import { TasksPanel } from '../../components/valuation/TasksPanel';
 import { CalculationPanel } from '../../components/valuation/CalculationPanel';
@@ -44,7 +45,19 @@ export function ParamsTab() {
 export function FinancialModelTab() {
   const { valuation } = useWorkspace();
   const { user } = useAuth();
-  return <FinancialModelPanel valuationId={valuation.id} readOnly={!isOps(user)} />;
+  return (
+    <div className="space-y-6">
+      <FinancialModelPanel valuationId={valuation.id} readOnly={!isOps(user)} />
+      {/* Below the model rather than beside it: the panel builds the free-cash-
+          flow column the form above types by hand, and adopting a forecast
+          rewrites that column — so it reads in the order the two are used. */}
+      <ProjectionPanel
+        valuationId={valuation.id}
+        currency={valuation.currency ?? 'USD'}
+        readOnly={!isOps(user)}
+      />
+    </div>
+  );
 }
 
 export function AiTab() {
