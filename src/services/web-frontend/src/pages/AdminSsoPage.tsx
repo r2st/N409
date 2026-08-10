@@ -104,9 +104,18 @@ export function AdminSsoPage() {
     }
   };
 
+  // A rejection here used to escape as an unhandled promise, so a revoke the
+  // server refused left the token listed as Active with nothing said. A
+  // credential believed revoked and still live is the failure this screen
+  // exists to prevent.
   const revokeToken = async (id: string) => {
-    await api(`/admin/sso/scim-tokens/${id}`, { method: 'DELETE' });
-    await load();
+    setError(null);
+    try {
+      await api(`/admin/sso/scim-tokens/${id}`, { method: 'DELETE' });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not revoke the SCIM token.');
+    }
   };
 
   return (
