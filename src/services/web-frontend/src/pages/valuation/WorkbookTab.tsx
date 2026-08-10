@@ -1,11 +1,100 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, apiDownload, ApiError } from '../../lib/api';
-import { formatWorkbookValue, type WorkbookSheet } from '../../lib/m2';
+import {
+  formatWorkbookValue,
+  type AnomalySeverity,
+  type FinancialAnomaly,
+  type FinancialAnomalyReport,
+  type WorkbookSheet,
+} from '../../lib/m2';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, ErrorNote, Spinner } from '../../components/ui';
 
 type CellKey = `${string}|${string}|${string}`;
 const cellKey = (sheet: string, row: string, col: string): CellKey => `${sheet}|${row}|${col}`;
+
+type WorkbookResponse = { sheets: WorkbookSheet[]; anomalies: FinancialAnomalyReport };
+
+const SEVERITY_STYLE: Record<AnomalySeverity, { row: string; chip: string; label: string }> = {
+  error: {
+    row: 'border-red-200 bg-red-50/60',
+    chip: 'bg-red-100 text-red-800',
+    label: 'Error',
+  },
+  warning: {
+    row: 'border-amber-200 bg-amber-50/60',
+    chip: 'bg-amber-100 text-amber-800',
+    label: 'Check',
+  },
+  info: {
+    row: 'border-paper-300 bg-paper-50',
+    chip: 'bg-paper-200 text-ink-600',
+    label: 'Note',
+  },
+};
+
+/**
+ * Findings against the entered statements.
+ *
+ * Deliberately not a gate: the panel says what it found and leaves the analyst
+ * to decide, because most of these are legitimate under an explanation and an
+ * engine that refused them would be wrong more often than the person it
+ * overruled. Errors are the exception worth reading first — a cost entered
+ * negative is added back into every margin below it — so they sort to the top
+ * and are the only ones coloured as a fault.
+ */
+function AnomalyPanel({
+  report,
+  onJump,
+}: {
+  report: FinancialAnomalyReport;
+  onJump: (a: FinancialAnomaly) => void;
+}) {
+  if (report.empty || report.anomalies.length === 0) return null;
+
+  const { error, warning, info } = report.counts;
+  const parts = [
+    error > 0 ? `${error} ${error === 1 ? 'error' : 'errors'}` : null,
+    warning > 0 ? `${warning} to check` : null,
+    info > 0 ? `${info} noted` : null,
+  ].filter(Boolean);
+
+  return (
+    <section className="rounded-lg border border-paper-300 bg-surface shadow-card">
+      <header className="flex items-baseline justify-between gap-3 border-b border-paper-200 px-4 py-3">
+        <h3 className="text-sm font-semibold text-ink-800">Statement review</h3>
+        <span className="text-xs text-ink-400">{parts.join(' · ')}</span>
+      </header>
+      <ul className="divide-y divide-paper-200">
+        {report.anomalies.map((a, i) => {
+          const style = SEVERITY_STYLE[a.severity];
+          return (
+            <li key={`${a.check}-${a.sheet}-${a.row_key ?? ''}-${a.column_key ?? ''}-${i}`}>
+              <button
+                type="button"
+                onClick={() => onJump(a)}
+                className={`flex w-full cursor-pointer gap-3 border-l-4 px-4 py-3 text-left transition-colors hover:bg-paper-100 ${style.row}`}
+              >
+                <span
+                  className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase ${style.chip}`}
+                >
+                  {style.label}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-ink-800">{a.summary}</span>
+                  <span className="mt-0.5 block text-xs leading-relaxed text-ink-500">{a.detail}</span>
+                  <span className="mt-1 block text-[0.7rem] text-ink-400">
+                    {[a.sheet_label, a.row_label, a.column_label].filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 
 /**
  * The working model: spreadsheet-style grid per sheet. Input rows are
@@ -15,7 +104,9 @@ const cellKey = (sheet: string, row: string, col: string): CellKey => `${sheet}|
 export function WorkbookTab() {
   const { valuation } = useWorkspace();
   const [sheets, setSheets] = useState<WorkbookSheet[] | null>(null);
+  const [anomalies, setAnomalies] = useState<FinancialAnomalyReport | null>(null);
   const [activeSheet, setActiveSheet] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState<CellKey | null>(null);
   const [drafts, setDrafts] = useState<Map<CellKey, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,8 +115,9 @@ export function WorkbookTab() {
 
   const load = useCallback(async () => {
     try {
-      const { sheets: s } = await api<{ sheets: WorkbookSheet[] }>(`/valuations/${valuation.id}/workbook`);
+      const { sheets: s, anomalies: a } = await api<WorkbookResponse>(`/valuations/${valuation.id}/workbook`);
       setSheets(s);
+      setAnomalies(a);
       setActiveSheet((cur) => cur ?? s[0]?.key ?? null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the workbook.');
@@ -96,11 +188,14 @@ export function WorkbookTab() {
       return;
     }
     try {
-      const { sheets: s } = await api<{ sheets: WorkbookSheet[] }>(`/valuations/${valuation.id}/workbook`, {
-        method: 'PATCH',
-        body: { cells },
-      });
+      const { sheets: s, anomalies: a } = await api<WorkbookResponse>(
+        `/valuations/${valuation.id}/workbook`,
+        { method: 'PATCH', body: { cells } },
+      );
       setSheets(s);
+      // Re-checked against what was just saved, so correcting the cell that
+      // raised a finding clears it without a reload.
+      setAnomalies(a);
       setDrafts(new Map());
       setSavedAt(Date.now());
     } catch (err) {
@@ -108,6 +203,18 @@ export function WorkbookTab() {
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * Open the sheet a finding is about and mark the cell it names.
+   *
+   * A finding that spans lines (a missing period, an absent balance sheet) has
+   * no single cell to mark, so it only switches sheets — better than marking an
+   * arbitrary row and implying that is the one at fault.
+   */
+  const jumpTo = (a: FinancialAnomaly) => {
+    setActiveSheet(a.sheet);
+    setHighlight(a.row_key && a.column_key ? cellKey(a.sheet, a.row_key, a.column_key) : null);
   };
 
   return (
@@ -151,6 +258,7 @@ export function WorkbookTab() {
       </div>
 
       {error && <ErrorNote>{error}</ErrorNote>}
+      {anomalies && <AnomalyPanel report={anomalies} onJump={jumpTo} />}
       <p className="text-sm text-ink-400">{sheet.description}</p>
 
       <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
@@ -208,10 +316,13 @@ export function WorkbookTab() {
                         aria-label={`${row.label} ${cell.column_key}`}
                         value={display}
                         onChange={(e) => setDraft(key, e.target.value, cell.value)}
+                        onFocus={() => setHighlight(null)}
                         className={`tnum w-full rounded border px-2 py-1.5 text-right text-sm focus:border-bond-600 focus:ring-1 focus:ring-bond-600/30 focus:outline-none ${
                           draft !== undefined
                             ? 'border-amber-300 bg-amber-50'
-                            : 'border-transparent bg-transparent hover:border-ink-200'
+                            : highlight === key
+                              ? 'border-red-400 bg-red-50 ring-1 ring-red-400/30'
+                              : 'border-transparent bg-transparent hover:border-ink-200'
                         }`}
                       />
                     </td>

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canEditWorkingData, canReadValuation } from '../auth/rbac.js';
 import { computeWorkbook, validateCellRef } from '../domain/workbook.js';
+import { detectFinancialAnomalies } from '../domain/financialAnomalies.js';
 import {
   buildWorkbookTabs,
   type TabCompanyProfile,
@@ -56,7 +57,8 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const { id } = req.params as { id: string };
     await authorize(deps.pool, principal, id);
     const cells = await listWorkbookCells(deps.pool, id);
-    return { sheets: computeWorkbook(cells) };
+    const sheets = computeWorkbook(cells);
+    return { sheets, anomalies: detectFinancialAnomalies(sheets) };
   });
 
   /**
@@ -124,6 +126,13 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
       source: 'api',
     });
     const cells = await listWorkbookCells(deps.pool, id);
-    return { sheets: computeWorkbook(cells) };
+    /*
+     * Re-checked on save rather than only on load, so the panel answers the
+     * edit that was just made. A sign error is corrected in the cell that
+     * raised it, and a finding that survives the save is one the analyst
+     * chose to leave.
+     */
+    const sheets = computeWorkbook(cells);
+    return { sheets, anomalies: detectFinancialAnomalies(sheets) };
   });
 }

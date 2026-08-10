@@ -65,6 +65,37 @@ export interface WorkbookSheet {
   }>;
 }
 
+export type AnomalySeverity = 'error' | 'warning' | 'info';
+
+/**
+ * A finding against the entered financial statements
+ * (valuation service, `domain/financialAnomalies.ts`).
+ *
+ * The workbook's own arithmetic cannot be wrong — subtotals are derived — so
+ * every one of these is about an input the arithmetic accepts and shouldn't:
+ * a cost entered negative, a period in the wrong units, a forecast the record
+ * does not support. None of them block anything.
+ */
+export interface FinancialAnomaly {
+  check: string;
+  severity: AnomalySeverity;
+  sheet: string;
+  sheet_label: string;
+  column_key: string | null;
+  column_label: string | null;
+  row_key: string | null;
+  row_label: string | null;
+  summary: string;
+  detail: string;
+  value: number | null;
+}
+
+export interface FinancialAnomalyReport {
+  anomalies: FinancialAnomaly[];
+  counts: Record<AnomalySeverity, number>;
+  empty: boolean;
+}
+
 export function formatWorkbookValue(value: number | null, format: WorkbookFormat): string {
   if (value === null) return '—';
   switch (format) {
