@@ -190,6 +190,211 @@ describe('buildSpecialtyExhibits', () => {
     expect(emi!.html).toContain('does not qualify');
   });
 
+  it('renders the CSOP scheme against Schedule 4 rather than Schedule 5', () => {
+    const [csop] = buildSpecialtyExhibits(
+      calc('csop', {
+        pro_rata_per_share: 4,
+        umv_per_share: 3.6,
+        amv_per_share: 3.6,
+        qualification: {
+          scheme: 'csop',
+          qualifies: true,
+          checks: { share_class: { passed: true, detail: 'ordinary, non-redeemable' } },
+        },
+      }),
+      ctx,
+    );
+    expect(csop!.html).toContain('Schedule 4');
+    expect(csop!.html).not.toContain('Schedule 5');
+    expect(csop!.html).toContain('qualifies');
+  });
+
+  it('renders the single-intangible exhibit with only the measures that were supplied', () => {
+    const [full] = buildSpecialtyExhibits(
+      calc('ip', {
+        fair_value: 4_200_000,
+        pv_before_tab: 3_600_000,
+        tab: 600_000,
+        discount_rate: 0.18,
+        royalty_rate: 0.05,
+        tax_rate: 0.21,
+      }),
+      ctx,
+    );
+    expect(full!.heading).toContain('Intangible Asset');
+    expect(full!.html).toContain('Tax amortization benefit');
+    expect(full!.html).toContain('18.0%');
+    expect(full!.html).toContain('$4,200,000');
+
+    // `pv` is the fallback name for the same figure, and a run that supplied
+    // neither a rate nor a TAB should print a shorter table, not empty rows.
+    const [sparse] = buildSpecialtyExhibits(calc('ip', { fair_value: 1_000, pv: 900 }), ctx);
+    expect(sparse!.html).toContain('Present value before TAB');
+    expect(sparse!.html).not.toContain('Discount rate');
+    expect(sparse!.html).not.toContain('Royalty rate');
+
+    // Nothing but the conclusion: the measures table is dropped rather than
+    // printed as a header with no rows under it.
+    const [bare] = buildSpecialtyExhibits(calc('ip', { fair_value: 500 }), ctx);
+    expect(bare!.html).not.toContain('<table');
+    expect(bare!.html).toContain('Concluded fair value');
+  });
+
+  /**
+   * The degradation half of this module's contract — "an absent, partial or
+   * unfamiliar shape drops the exhibit rather than throwing inside a render".
+   *
+   * These are report exhibits: a run that returned half a result must produce
+   * an em-dash, not a cell reading `undefined`, `NaN` or `[object Object]`.
+   * That is the difference between a schedule that says a figure was not
+   * computed and one that tells a client's board something untrue about its
+   * own valuation.
+   */
+  describe('partial and hostile shapes', () => {
+    /** Each kind, paired with the least it needs before it renders at all. */
+    const GATES: Array<[string, Record<string, unknown>]> = [
+      ['qsbs', { tests: {} }],
+      ['ppa', { consideration_transferred: 1_000_000 }],
+      ['goodwill', { standard: 'ASC 350-20', carrying_amount: 100 }],
+      ['esop', { levels: {} }],
+      ['fmv', { methods: {} }],
+      ['emi', { umv_per_share: 1 }],
+      ['csop', { umv_per_share: 1 }],
+      ['ip', { fair_value: 1 }],
+    ];
+
+    /** Anything that would tell a reader a number exists when none does. */
+    const leaks = (html: string): string[] =>
+      ['undefined', 'NaN', '[object Object]', '>null<', '$null'].filter((bad) => html.includes(bad));
+
+    it.each(GATES)('renders %s from its gate field alone without leaking placeholders', (kind, gate) => {
+      const sections = buildSpecialtyExhibits(calc(kind, gate), ctx);
+      expect(sections).toHaveLength(1);
+      expect(leaks(sections[0]!.html)).toEqual([]);
+    });
+
+    it.each(GATES)('drops the %s exhibit when its gate field is the wrong type', (kind, gate) => {
+      for (const key of Object.keys(gate)) {
+        const broken = { ...gate, [key]: ['not', 'a', 'value'] };
+        expect(buildSpecialtyExhibits(calc(kind, broken), ctx)).toEqual([]);
+      }
+    });
+
+    /**
+     * The shape an engine change or a hand-edited result actually produces:
+     * the right keys carrying the wrong types. Every one of these reaches a
+     * `num()`/`record()` guard, and none may throw or print through.
+     */
+    it.each(GATES)('survives %s with every optional field the wrong type', (kind, gate) => {
+      const hostile = {
+        ...gate,
+        // Records where records are expected.
+        holding_period: 'not a record',
+        cap_components: [],
+        qualification: 42,
+        sde_normalization: 'nope',
+        repurchase_obligation: [1, 2, 3],
+        weights: 'weights',
+        // Values where numbers are expected.
+        gain_exclusion_cap: {},
+        exclusion_percentage: 'lots',
+        total_intangible_value: {},
+        tangible_net_assets: 'some',
+        identifiable_net_assets: null,
+        goodwill: undefined,
+        bargain_purchase_gain: 'positive',
+        fair_value: kind === 'ip' ? 1 : {},
+        headroom: [],
+        impairment_loss: 'big',
+        fmv_per_share: {},
+        esop_stake_value: 'lots',
+        dloc: [],
+        dlom: {},
+        equity_value: 'some',
+        amv_per_share: {},
+        pro_rata_per_share: [],
+        minority_discount: 'ten percent',
+        restriction_discount: {},
+        discount_rate: [],
+        royalty_rate: {},
+        tax_rate: 'twenty one',
+        tab: [],
+        // Lists where lists are expected.
+        intangibles: 'not a list',
+      };
+      const sections = buildSpecialtyExhibits(calc(kind, hostile), ctx);
+      expect(sections).toHaveLength(1);
+      expect(leaks(sections[0]!.html)).toEqual([]);
+    });
+
+    /**
+     * A row inside a list can be as broken as the container. The engine emits
+     * these as arrays, and one bad element must not take the schedule with it.
+     */
+    it('keeps a schedule whose rows are individually unusable', () => {
+      const [ppa] = buildSpecialtyExhibits(
+        calc('ppa', {
+          consideration_transferred: 1_000_000,
+          intangibles: ['a string', null, 7, { name: 'Trade name' }],
+        }),
+        ctx,
+      );
+      expect(ppa!.html).toContain('Trade name');
+      expect(leaks(ppa!.html)).toEqual([]);
+
+      const [esop] = buildSpecialtyExhibits(
+        calc('esop', {
+          levels: { control: 10 },
+          repurchase_obligation: { schedule: ['x', null, { year: 2 }] },
+        }),
+        ctx,
+      );
+      expect(esop!.html).toContain('Total obligation');
+      expect(leaks(esop!.html)).toEqual([]);
+    });
+
+    /** A cell's text comes from the engagement, so it has to survive markup. */
+    it('escapes engine-supplied text in every cell it reaches', () => {
+      const [ppa] = buildSpecialtyExhibits(
+        calc('ppa', {
+          consideration_transferred: 1,
+          intangibles: [{ name: 'Series A & B <old>', method: '<em>rfr</em>', fair_value: 1 }],
+        }),
+        ctx,
+      );
+      expect(ppa!.html).toContain('Series A &amp; B &lt;old&gt;');
+      expect(ppa!.html).toContain('&lt;em&gt;rfr&lt;/em&gt;');
+
+      const [goodwill] = buildSpecialtyExhibits(
+        calc('goodwill', {
+          standard: 'ASC <350>',
+          carrying_amount: 1,
+          reporting_unit: 'Unit & Co <1>',
+        }),
+        ctx,
+      );
+      expect(goodwill!.heading).toContain('ASC &lt;350&gt;');
+      expect(goodwill!.html).toContain('Unit &amp; Co &lt;1&gt;');
+    });
+
+    /** A calculation that did not succeed has no figures to schedule. */
+    it('renders nothing for a failed or empty calculation', () => {
+      const failed = { ...calc('qsbs', { tests: {} }), status: 'failed' as const };
+      expect(buildSpecialtyExhibits(failed, ctx)).toEqual([]);
+
+      const noResults = { ...calc('qsbs', { tests: {} }), results: null };
+      expect(buildSpecialtyExhibits(noResults, ctx)).toEqual([]);
+
+      const noKind = calc('qsbs', { tests: {} });
+      noKind.results = { specialty: { tests: {} } };
+      expect(buildSpecialtyExhibits(noKind, ctx)).toEqual([]);
+
+      const listSpecialty = calc('qsbs', {});
+      listSpecialty.results = { kind: 'qsbs', specialty: [] };
+      expect(buildSpecialtyExhibits(listSpecialty, ctx)).toEqual([]);
+    });
+  });
+
   it('routes specialty results through buildExhibits and drops unfamiliar shapes', () => {
     const viaMain = buildExhibits(calc('esop', { levels: { control: 1 } }), ctx);
     expect(viaMain).toHaveLength(1);

@@ -1825,3 +1825,184 @@ describe('Appendix III in the assembled exhibit list', () => {
     expect(all[all.length - 1]).toBe(APPENDIX_III);
   });
 });
+
+// ── degradation ──────────────────────────────────────────────────────────────
+
+/**
+ * The rule every exhibit in this module states and none of the tests above
+ * check: "an absent, partial or unfamiliar shape drops the exhibit rather than
+ * throwing inside a render".
+ *
+ * It matters more than the phrasing suggests. These schedules are the
+ * client-facing half of a 409A report, assembled at render time from whatever
+ * the engine last wrote. An engine change, a hand-edited result or a partially
+ * failed run reaches them as the right keys carrying the wrong types — and the
+ * two ways that can go wrong are both invisible to a happy-path test. A throw
+ * kills the render of an otherwise finished report. A leak prints `NaN` or
+ * `undefined` into a table a board reads as a statement about what the company
+ * is worth.
+ *
+ * So: walk every leaf of a known-good payload, corrupt one at a time, and
+ * require that the whole assembly survives and says nothing it cannot support.
+ */
+describe('exhibit degradation under partial and hostile results', () => {
+  /** Anything that would present absence as a figure. */
+  const LEAKS = ['undefined', 'NaN', '[object Object]', '>null<', '$null', 'Infinity'];
+
+  function leaksIn(sections: ReturnType<typeof buildExhibits>): string[] {
+    const found = new Set<string>();
+    for (const s of sections) {
+      for (const bad of LEAKS) {
+        if (s.html.includes(bad) || s.heading.includes(bad)) found.add(`${s.heading} :: ${bad}`);
+      }
+    }
+    return [...found];
+  }
+
+  /** Dotted paths to every leaf of a payload, `a.b[0].c` style. */
+  function leafPaths(value: unknown, prefix = ''): string[] {
+    if (Array.isArray(value)) return value.flatMap((v, i) => leafPaths(v, `${prefix}[${i}]`));
+    if (value !== null && typeof value === 'object') {
+      return Object.entries(value).flatMap(([k, v]) => leafPaths(v, prefix ? `${prefix}.${k}` : k));
+    }
+    return [prefix];
+  }
+
+  /** A deep copy of `root` with the value at `path` replaced. */
+  function withPath<T>(root: T, path: string, replacement: unknown): T {
+    const copy = structuredClone(root) as Record<string, unknown>;
+    const steps = path.split(/\.|(?=\[)/).filter(Boolean);
+    let node: Record<string, unknown> = copy;
+    for (let i = 0; i < steps.length - 1; i += 1) {
+      const key = steps[i]!.replace(/^\[|\]$/g, '');
+      node = node[key] as Record<string, unknown>;
+    }
+    node[steps[steps.length - 1]!.replace(/^\[|\]$/g, '')] = replacement;
+    return copy as T;
+  }
+
+  /** The shapes a wrong type actually arrives as. */
+  const HOSTILE: Array<[string, unknown]> = [
+    ['null', null],
+    ['undefined', undefined],
+    ['a string', 'not a number'],
+    ['an empty string', ''],
+    ['an object', { unexpected: true }],
+    ['an array', [1, 2]],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ];
+
+  const RESULT_PATHS = leafPaths(RESULTS);
+  const INPUT_PATHS = leafPaths(INPUTS);
+
+  it('has a payload broad enough for this to mean something', () => {
+    // A guard on the guard: if a refactor shrinks the fixtures, the sweep below
+    // would quietly stop covering anything and still pass.
+    expect(RESULT_PATHS.length).toBeGreaterThan(40);
+    expect(INPUT_PATHS.length).toBeGreaterThan(20);
+  });
+
+  it('survives every single-leaf corruption of the engine results', () => {
+    const failures: string[] = [];
+    for (const path of RESULT_PATHS) {
+      for (const [name, replacement] of HOSTILE) {
+        const results = withPath(RESULTS, path, replacement);
+        let sections: ReturnType<typeof buildExhibits>;
+        try {
+          sections = buildExhibits(calculation({ results }), CONTEXT);
+        } catch (err) {
+          failures.push(`threw on results.${path} = ${name}: ${(err as Error).message}`);
+          continue;
+        }
+        for (const leak of leaksIn(sections)) failures.push(`results.${path} = ${name} → ${leak}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('survives every single-leaf corruption of the engine inputs', () => {
+    const failures: string[] = [];
+    for (const path of INPUT_PATHS) {
+      for (const [name, replacement] of HOSTILE) {
+        const inputs = { params: {}, inputs: withPath(INPUTS, path, replacement) };
+        let sections: ReturnType<typeof buildExhibits>;
+        try {
+          sections = buildExhibits(calculation({ inputs }), CONTEXT);
+        } catch (err) {
+          failures.push(`threw on inputs.${path} = ${name}: ${(err as Error).message}`);
+          continue;
+        }
+        for (const leak of leaksIn(sections)) failures.push(`inputs.${path} = ${name} → ${leak}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  /**
+   * Whole branches of the payload going missing, which is what a partially
+   * failed run looks like — the engine writes the approaches it finished and
+   * nothing for the ones it did not reach.
+   */
+  it('drops the schedules a truncated result cannot support, and keeps the rest', () => {
+    for (const key of Object.keys(RESULTS)) {
+      const results = { ...RESULTS } as Record<string, unknown>;
+      delete results[key];
+      const sections = buildExhibits(calculation({ results }), CONTEXT);
+      expect(leaksIn(sections)).toEqual([]);
+    }
+
+    // The floor: a run that concluded a value and recorded nothing else still
+    // produces a report, just a short one.
+    const bare = buildExhibits(
+      calculation({ results: { equity_value: 1, fmv_per_share: 1 }, inputs: { params: {}, inputs: {} } }),
+      CONTEXT,
+    );
+    expect(leaksIn(bare)).toEqual([]);
+    expect(bare.every((s) => s.html.length > 0)).toBe(true);
+  });
+
+  /** The context is assembled by the caller and is as corruptible as the results. */
+  it('survives a context whose optional halves are the wrong shape', () => {
+    const hostile: Array<Partial<ExhibitContext>> = [
+      { peers: 'not a list' as unknown as ExhibitContext['peers'] },
+      { peers: [null, 7, {}] as unknown as ExhibitContext['peers'] },
+      { financials: 'nope' as unknown as ExhibitContext['financials'] },
+      { financials: [{}] as unknown as ExhibitContext['financials'] },
+      { volatility: {} as unknown as ExhibitContext['volatility'] },
+      { projection: {} as unknown as ExhibitContext['projection'] },
+      { requiredReturnTable: 'a table', developmentStage: 3 },
+      { requiredReturnTable: [{}, null], developmentStage: 3 },
+      { developmentStage: Number.NaN },
+      { currency: 'NOT-A-CODE' },
+      { valuationDate: null, companyName: '' },
+    ];
+    for (const over of hostile) {
+      const sections = buildExhibits(calculation(), { ...CONTEXT, ...over });
+      expect(leaksIn(sections)).toEqual([]);
+    }
+  });
+
+  /**
+   * Company and class names come from the engagement, so every cell that
+   * prints one has to survive a name that looks like markup. `Series A & B
+   * <old>` is a real class name shape, not a contrived one.
+   */
+  it('escapes engagement-supplied names wherever they reach a cell', () => {
+    const nasty = 'Series A & B <old>';
+    const results = structuredClone(RESULTS) as Record<string, unknown>;
+    const allocation = results.allocation as Record<string, unknown>;
+    allocation.classes = { [nasty]: { kind: 'preferred', shares: 1, value: 1, per_share: 1 } };
+    allocation.breakpoints = [{ from: 0, to: 1, participants: { [nasty]: 1 }, value: 1 }];
+    const inputs = structuredClone(INPUTS) as Record<string, unknown>;
+    (inputs.share_classes as Array<Record<string, unknown>>)[0]!.name = nasty;
+
+    const sections = buildExhibits(calculation({ results, inputs: { params: {}, inputs } }), {
+      ...CONTEXT,
+      companyName: nasty,
+    });
+    const html = sections.map((s) => s.html).join('');
+    expect(html).toContain('Series A &amp; B &lt;old&gt;');
+    expect(html).not.toContain('<old>');
+  });
+});

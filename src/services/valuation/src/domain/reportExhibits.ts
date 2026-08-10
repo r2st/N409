@@ -137,6 +137,13 @@ function text(value: unknown): string | null {
 
 // ── Exhibit A — capitalization ───────────────────────────────────────────────
 
+/** Seniority as the cap table prints it: absent means rank 1, unusable means unknown. */
+function seniorityCell(value: unknown): string {
+  if (value === null || value === undefined) return '1';
+  const rank = num(value);
+  return rank === null ? '—' : String(rank);
+}
+
 /**
  * The cap table the allocation actually ran on.
  *
@@ -178,7 +185,12 @@ export function capitalizationExhibit(
           : preference === null
             ? '—'
             : formatCurrency(preference, currency, 0),
-        kind === 'preferred' ? String(c.seniority ?? 1) : '—',
+        // The only cell here that used to print its value with a bare
+        // `String()`. An absent seniority is the engine's default rank of 1
+        // and the prose above says so; a *present* one that is not a finite
+        // number is a rank nobody supplied, and printing `[object Object]`,
+        // `NaN` or `Infinity` into a cap table is worse than an em-dash.
+        kind === 'preferred' ? seniorityCell(c.seniority) : '—',
         participation,
       ];
     });
@@ -612,7 +624,10 @@ export function projectionExhibit(
   ctx: ExhibitContext,
 ): ReportPdfSection | null {
   const row = ctx.projection;
-  if (!row || row.projections.length === 0) return null;
+  // As in F-1: a shape this exhibit cannot read drops C-1, rather than
+  // throwing out of a render that had a finished report in it.
+  if (!row || !Array.isArray(row.projections) || !Array.isArray(row.free_cash_flows)) return null;
+  if (row.projections.length === 0) return null;
   const { currency } = ctx;
   const assumed = record(row.inputs) ?? {};
 
@@ -785,18 +800,54 @@ export function marketExhibit(
  * to insert a schedule would make every one of those citations point one
  * exhibit to the left.
  */
+/**
+ * The peer rows reduced to what this exhibit can print.
+ *
+ * Every other schedule in this module reads its payload through `record`,
+ * `num` and `text` and degrades to an em-dash; this one indexed and called
+ * straight into `peers`, so a `peers` that was not an array — or a row missing
+ * its `multiples` — did not drop Exhibit D-1, it threw out of the render and
+ * took the whole report with it. The peer set is loaded from the database
+ * (migration 0119) so the shape is ordinarily right; the cost of it being
+ * wrong was the entire deliverable, which is the wrong price for one bad row.
+ */
+function usablePeers(peers: unknown): ExhibitPeer[] {
+  return list(peers)
+    .map(record)
+    .filter((p): p is Record<string, unknown> => p !== null)
+    .map((p) => {
+      const multiples: Partial<Record<MultipleKey, number | null>> = {};
+      const raw = record(p.multiples) ?? {};
+      for (const key of Object.keys(MULTIPLE_LABELS) as MultipleKey[]) {
+        multiples[key] = num(raw[key]);
+      }
+      return {
+        ticker: text(p.ticker),
+        name: text(p.name) ?? '—',
+        included: p.included === true,
+        exclude_reason: text(p.exclude_reason),
+        source: text(p.source) ?? '',
+        score: num(p.score),
+        multiples,
+        figures_source: text(p.figures_source),
+        figures_as_of: text(p.figures_as_of) ?? (p.figures_as_of instanceof Date ? p.figures_as_of : null),
+      };
+    });
+}
+
 export function peerSetExhibit(
   peers: readonly ExhibitPeer[] | undefined,
   results: Record<string, unknown>,
 ): ReportPdfSection | null {
-  if (!peers || peers.length === 0) return null;
+  const usable = usablePeers(peers);
+  if (usable.length === 0) return null;
   // No market approach in the run means no schedule: a peer set an analyst
   // screened but did not weight into the conclusion is working material, and
   // printing it as a supporting exhibit overstates its role in the opinion.
   if (!record(record(results.approaches)?.market)) return null;
 
-  const included = peers.filter((p) => p.included);
-  const excluded = peers.filter((p) => !p.included);
+  const included = usable.filter((p) => p.included);
+  const excluded = usable.filter((p) => !p.included);
   // Which of the four quotients to print: whichever the included set actually
   // has. A column of dashes tells a reader nothing about the comps.
   const columns = (Object.keys(MULTIPLE_LABELS) as MultipleKey[]).filter((key) =>
@@ -1103,7 +1154,19 @@ export function volatilityExhibit(
   results: Record<string, unknown>,
 ): ReportPdfSection | null {
   const row = ctx.volatility;
-  if (!row) return null;
+  // The derivation is a database row, so the shape is ordinarily whatever the
+  // repo selected — but this exhibit indexes straight into its arrays and
+  // dates, and the cost of being wrong about that is the whole report render,
+  // not this one schedule. Drop F-1 instead, which is what every other exhibit
+  // here does with a shape it does not recognise.
+  if (
+    !row ||
+    !Array.isArray(row.companies) ||
+    !(row.window_start instanceof Date) ||
+    !(row.window_end instanceof Date)
+  ) {
+    return null;
+  }
 
   const applied = num(record(record(results.allocation)?.assumptions)?.volatility);
   const measured = row.companies.filter((c) => c.used);
@@ -2061,32 +2124,42 @@ export function financialsExhibit(
   sheets: readonly ComputedSheet[] | undefined,
   ctx: ExhibitContext,
 ): ReportPdfSection | null {
-  if (!sheets || sheets.length === 0) return null;
+  // Same defence as `usablePeers`, for the same reason: this appendix indexed
+  // straight into a workbook the caller resolved, so a `financials` that was
+  // not an array — or a sheet without its `rows` — threw out of the render
+  // instead of dropping the appendix, losing a finished report over a section
+  // the report is perfectly readable without.
+  const usable = list(sheets).filter((s): s is ComputedSheet => {
+    const sheet = record(s);
+    return sheet !== null && Array.isArray(sheet.columns) && Array.isArray(sheet.rows);
+  });
+  if (usable.length === 0) return null;
 
   const blocks: string[] = [];
   for (const key of FINANCIAL_SHEET_KEYS) {
-    const sheet = sheets.find((s) => s.key === key);
+    const sheet = usable.find((s) => s.key === key);
     if (!sheet) continue;
 
-    const columns = sheet.columns.filter((c) => !isProjectionColumn(c.key));
+    const columns = sheet.columns.filter((c) => record(c) !== null && !isProjectionColumn(c.key));
     if (columns.length === 0) continue;
     const keep = new Set(columns.map((c) => c.key));
 
     const rows = sheet.rows
+      .filter((row) => record(row) !== null && Array.isArray(row.cells))
       .map((row) => ({
         row,
-        cells: row.cells.filter((c) => keep.has(c.column_key)),
+        cells: row.cells.filter((c) => record(c) !== null && keep.has(c.column_key)),
       }))
       .filter(({ cells }) => cells.some((c) => c.value !== null))
       .map(({ row, cells }) => [
-        esc(row.label),
-        ...cells.map((c) => financialCell(c.value, row.format, ctx.currency)),
+        esc(text(row.label) ?? '—'),
+        ...cells.map((c) => financialCell(num(c.value), row.format, ctx.currency)),
       ]);
     if (rows.length === 0) continue;
 
     blocks.push(
-      `<h3>${esc(sheet.label)}</h3>`,
-      table({ head: ['', ...columns.map((c) => esc(c.label))], rows }),
+      `<h3>${esc(text(sheet.label) ?? '—')}</h3>`,
+      table({ head: ['', ...columns.map((c) => esc(text(c.label) ?? '—'))], rows }),
     );
   }
 
