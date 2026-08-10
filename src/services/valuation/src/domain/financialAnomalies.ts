@@ -28,6 +28,20 @@ import { isProjectionColumn, type ComputedSheet } from './workbook.js';
  *
  * ## What this is not
  *
+ * It is not the engine's anomaly pass, and neither replaces the other. The
+ * engine's (`engine-wrapper/app/engine/anomalies.py`, reported through
+ * `validate.py` as preflight warnings) reads the *extracted payload* on its way
+ * to a calculation, and catches what extraction gets wrong — a figure read off
+ * a table denominated in thousands, a projection filled down a merged cell, an
+ * EBITDA larger than its own revenue. This one reads the *entered workbook*,
+ * which is a different artifact with different failure modes: it is the grid an
+ * analyst types into and the one Appendix II prints, and half the findings here
+ * are about lines the engine payload does not carry at all. A workbook can pass
+ * every check below and still produce a payload the engine questions, and the
+ * reverse. Where the two do look at one thing — a period-over-period step no
+ * business explains — they are deliberately allowed to say so twice, on the two
+ * surfaces where the person who can fix it is actually looking.
+ *
  * It is not a gate and it does not correct anything. Several findings below are
  * ordinary for an early-stage company — negative gross profit, negative book
  * equity, a year of steep decline — and an engine that refused them would be
