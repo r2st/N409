@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAmount, formatMoney, formatNumber, moneyFormatter } from '../src/lib/format';
+import { formatAmount, formatMoney, formatNumber, moneyFormatter, ordinal } from '../src/lib/format';
 
 describe('money & number formatting (M4)', () => {
   it('formats integer cents as currency', () => {
@@ -68,5 +68,34 @@ describe('a currency code Intl will not accept', () => {
   it('falls back to USD for an empty code rather than printing a blank prefix', () => {
     expect(formatMoney(100, '')).toBe('$1.00');
     expect(moneyFormatter(undefined)(1)).toBe('$1.00');
+  });
+});
+
+describe('ordinal', () => {
+  it('uses the suffix that matches the last digit', () => {
+    expect(ordinal(1)).toBe('1st');
+    expect(ordinal(2)).toBe('2nd');
+    expect(ordinal(3)).toBe('3rd');
+    expect(ordinal(4)).toBe('4th');
+    expect(ordinal(62)).toBe('62nd');
+    expect(ordinal(101)).toBe('101st');
+  });
+
+  it('gives the teens "th" regardless of their last digit', () => {
+    // The rule the hardcoded "th" got right by accident and everything else wrong.
+    expect(ordinal(11)).toBe('11th');
+    expect(ordinal(12)).toBe('12th');
+    expect(ordinal(13)).toBe('13th');
+    expect(ordinal(111)).toBe('111th');
+    expect(ordinal(112)).toBe('112th');
+  });
+
+  it('handles zero and negatives without inventing a suffix', () => {
+    expect(ordinal(0)).toBe('0th');
+    expect(ordinal(-1)).toBe('-1st');
+  });
+
+  it('truncates toward zero rather than rendering a fraction', () => {
+    expect(ordinal(2.7)).toBe('2nd');
   });
 });

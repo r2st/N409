@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
+import { ordinal } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { LineChart } from '../../components/charts';
 import { EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
@@ -142,7 +143,8 @@ export function AnalyticsTab() {
                 {benchmark.percentile !== null && (
                   <>
                     {' '}
-                    sits at the <strong>{Math.round(benchmark.percentile * 100)}th percentile</strong> of the{' '}
+                    sits at the <strong>{ordinal(Math.round(benchmark.percentile * 100))} percentile</strong>{' '}
+                    of the{' '}
                     {benchmark.count} comparables.
                   </>
                 )}

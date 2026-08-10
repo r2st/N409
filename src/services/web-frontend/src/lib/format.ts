@@ -181,6 +181,24 @@ export function formatNumber(value: string | number | null | undefined): string 
   return Number.isFinite(n) ? new Intl.NumberFormat().format(n) : '—';
 }
 
+/**
+ * English ordinal for a whole number — "1st", "22nd", "63rd", "11th".
+ *
+ * The analytics benchmark used to hardcode "th", which rendered a company at
+ * the 62nd percentile as sitting at the "62th". That sentence gets read aloud
+ * in board meetings and pasted into decks, so the suffix is worth deriving:
+ * 11–13 take "th" regardless of their last digit, everything else follows it.
+ */
+export function ordinal(n: number): string {
+  const i = Math.trunc(n);
+  const abs = Math.abs(i);
+  const suffix =
+    abs % 100 >= 11 && abs % 100 <= 13
+      ? 'th'
+      : ({ 1: 'st', 2: 'nd', 3: 'rd' }[abs % 10] ?? 'th');
+  return `${i}${suffix}`;
+}
+
 export function displayName(u: {
   first_name: string | null;
   last_name: string | null;
