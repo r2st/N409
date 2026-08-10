@@ -116,6 +116,36 @@ export interface CheckoutSession {
   [key: string]: unknown;
 }
 
+/**
+ * Check that a 2xx Checkout body is actually a Checkout Session before the
+ * caller treats it as one.
+ *
+ * Both creators used to assert the parsed JSON into this type and return it.
+ * The two fields that matter are `id` — which is what the valuation row stores
+ * to reconcile the webhook against — and `url`, which is where the browser is
+ * sent. A 2xx whose body is not what we expect is rare but not impossible
+ * (a proxy or WAF between us and Stripe answering with its own JSON is the
+ * realistic one), and the asserted version turned that into a redirect to the
+ * string `"undefined"` and a valuation holding a session id of `undefined`,
+ * with nothing on either side saying the call had failed. Failing here makes
+ * it the same handled error as an HTTP failure.
+ */
+function asCheckoutSession(json: Record<string, unknown>, status: number): CheckoutSession {
+  const { id, url } = json;
+  if (typeof id !== 'string' || id === '' || typeof url !== 'string' || url === '') {
+    throw new StripeApiError('Stripe returned a Checkout Session without an id and url', status);
+  }
+  const amount = json.amount_total;
+  const intent = json.payment_intent;
+  return {
+    ...json,
+    id,
+    url,
+    amount_total: typeof amount === 'number' ? amount : null,
+    payment_intent: typeof intent === 'string' ? intent : null,
+  };
+}
+
 export async function createCheckoutSession(
   secretKey: string,
   args: {
@@ -160,7 +190,7 @@ export async function createCheckoutSession(
     const err = (json.error ?? {}) as Record<string, unknown>;
     throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
   }
-  return json as unknown as CheckoutSession;
+  return asCheckoutSession(json, res.status);
 }
 
 /**
@@ -216,7 +246,7 @@ export async function createSubscriptionCheckoutSession(
     const err = (json.error ?? {}) as Record<string, unknown>;
     throw new StripeApiError(String(err.message ?? `Stripe HTTP ${res.status}`), res.status);
   }
-  return json as unknown as CheckoutSession;
+  return asCheckoutSession(json, res.status);
 }
 
 /**

@@ -92,9 +92,7 @@ export function registerScimRoutes(
     const filter = parseUserNameFilter((req.query as { filter?: string }).filter);
     if (filter) {
       const user = await findUserByEmail(deps.pool, filter);
-      return reply
-        .header('content-type', CT)
-        .send(scimList(user ? [toScimUser(user as unknown as ScimUserRow)] : []));
+      return reply.header('content-type', CT).send(scimList(user ? [toScimUser(user)] : []));
     }
     const { rows } = await deps.pool.query<ScimUserRow>(
       `SELECT id, email, first_name, last_name, scim_external_id, deleted_at, created_at
@@ -108,7 +106,7 @@ export function registerScimRoutes(
     const { id } = req.params as { id: string };
     const user = await findUserById(deps.pool, id);
     if (!user) return reply.status(404).header('content-type', CT).send(scimError(404, 'User not found'));
-    return reply.header('content-type', CT).send(toScimUser(user as unknown as ScimUserRow));
+    return reply.header('content-type', CT).send(toScimUser(user));
   });
 
   app.post('/scim/v2/Users', limited, async (req, reply) => {
@@ -136,9 +134,7 @@ export function registerScimRoutes(
     return reply
       .status(201)
       .header('content-type', CT)
-      .send(
-        toScimUser({ ...(user as unknown as ScimUserRow), deleted_at: parsed.active ? null : new Date() }),
-      );
+      .send(toScimUser({ ...user, deleted_at: parsed.active ? null : new Date() }));
   });
 
   // PATCH — the common path is toggling `active` (deprovision / reactivate).
@@ -149,8 +145,15 @@ export function registerScimRoutes(
     if (!user) return reply.status(404).header('content-type', CT).send(scimError(404, 'User not found'));
     const active = activeFromPatch(req.body);
     if (active !== undefined) await setUserActive(deps.pool, id, active);
+    // The re-read can come back empty — a hard delete between the two lookups,
+    // or a `users` row removed by a retention purge mid-request. The cast this
+    // line used to carry declared that away, and `toScimUser(null)` throws
+    // inside the handler, which an IdP sees as a 500 on a deprovision it will
+    // then retry forever. 404 is the SCIM answer to "that user is gone".
     const refreshed = await findUserById(deps.pool, id);
-    return reply.header('content-type', CT).send(toScimUser(refreshed as unknown as ScimUserRow));
+    if (!refreshed)
+      return reply.status(404).header('content-type', CT).send(scimError(404, 'User not found'));
+    return reply.header('content-type', CT).send(toScimUser(refreshed));
   });
 
   // DELETE — SCIM deprovision. Soft delete so history + audit trail survive.
