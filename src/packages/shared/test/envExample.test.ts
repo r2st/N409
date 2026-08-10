@@ -77,8 +77,20 @@ function used(): Map<string, string[]> {
       note(m[1]!, rel);
     }
     // The valuation service's Zod env schema: `  FOO: z.…`
+    //
+    // Matches `z` as a word rather than `z.` because prettier breaks a long
+    // declaration after the `z`, putting the first call on the next line:
+    //
+    //     VIRUS_SCAN_FAIL_CLOSED: z
+    //       .enum(['true', 'false'])
+    //
+    // Requiring the dot therefore made this check blind to exactly the
+    // variables with the most configuration behind them — the long ones. Two
+    // had already slipped through when this was widened, one of them
+    // undocumented. `\b` still refuses `zip`/`zod`, which is the reason it is
+    // not just `z`.
     if (file.endsWith('config.ts')) {
-      for (const m of text.matchAll(/^\s{2}([A-Z][A-Z0-9_]{2,}):\s*z\./gm)) note(m[1]!, rel);
+      for (const m of text.matchAll(/^\s{2}([A-Z][A-Z0-9_]{2,}):\s*z\b/gm)) note(m[1]!, rel);
     }
   }
   return found;
@@ -106,6 +118,10 @@ describe('.env.example is the deployment contract', () => {
     expect(names.has('STRIPE_WEBHOOK_SECRET')).toBe(true); // Zod schema
     expect(names.has('OPENROUTER_MODEL')).toBe(true); // Python os.environ
     expect(names.has('OTEL_METRICS_ENABLED')).toBe(true); // TS process.env
+    // A Zod declaration prettier wrapped after the `z`. Named explicitly
+    // because the one-line form of this regex missed the whole idiom, and the
+    // count assertion below is far too coarse to notice two absentees.
+    expect(names.has('VIRUS_SCAN_FAIL_CLOSED')).toBe(true);
     expect(names.size).toBeGreaterThan(50);
   });
 
