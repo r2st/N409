@@ -397,6 +397,63 @@ describe.skipIf(!dbUp)('comparable items', () => {
     });
 
     /**
+     * Every ticker the screen returns is already an analyst's, so the batch
+     * admits nothing. The set is written in one statement now, and a statement
+     * with no rows is not a statement — the write has to be skipped rather than
+     * issued with an empty VALUES list, and the analyst's rows have to survive
+     * the delete-then-insert either way.
+     */
+    it('writes nothing when the analyst already holds every screened ticker', async () => {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(ops.token),
+        payload: { kind: '409a', company_name: 'AllMineCo' },
+      });
+      const id = created.json().valuation.id as string;
+      for (const [key, value] of [
+        ['industry_id', 7372],
+        ['ltm_revenue', 4_000_000],
+        ['ltm_ebitda', 800_000],
+      ] as const) {
+        await app.inject({
+          method: 'PUT',
+          url: `/api/v1/valuations/${id}/overwrites/${key}`,
+          headers: authHeader(ops.token),
+          payload: { value, reason: 'test fixture' },
+        });
+      }
+      // The three tickers the default screen fixture returns.
+      for (const ticker of ['AAA', 'BBB', 'ZZZ']) {
+        const added = await app.inject({
+          method: 'POST',
+          url: `/api/v1/valuations/${id}/comparables`,
+          headers: authHeader(ops.token),
+          payload: { ticker, name: `Hand-picked ${ticker}`, ev: 500, revenue_ltm: 50 },
+        });
+        expect(added.statusCode).toBe(201);
+      }
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/comparables/screen`,
+        headers: authHeader(ops.token),
+        payload: {},
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().screened).toBe(0);
+
+      const rows = res.json().comparables as Array<{ ticker: string; source: string; name: string }>;
+      expect(rows).toHaveLength(3);
+      expect(rows.every((r) => r.source === 'analyst')).toBe(true);
+      expect(rows.map((r) => r.name).sort()).toEqual([
+        'Hand-picked AAA',
+        'Hand-picked BBB',
+        'Hand-picked ZZZ',
+      ]);
+    });
+
+    /**
      * The engine screens against observed market data where its feed answered
      * and the curated snapshot where it did not, so a single screen can return
      * both. This route used to hard-code `snapshot` for every row, which was

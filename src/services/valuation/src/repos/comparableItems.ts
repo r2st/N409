@@ -127,11 +127,21 @@ export interface ComparableItemInput {
   createdBy?: string | null;
 }
 
-const INSERT_SQL = `
+/**
+ * The target and its column order, shared by the single-row insert and the
+ * batch in `replaceMachineComparables` — stated once so the two cannot drift
+ * apart from each other or from `insertParams`, which supplies both.
+ */
+const INSERT_COLUMNS = `
   INSERT INTO comparable_items
     (id, valuation_id, ticker, name, sic, source, included, exclude_reason,
      revenue_ltm, revenue_ntm, ebitda_ltm, ebitda_ntm, ev, score, score_breakdown,
-     figures_source, figures_as_of, created_by)
+     figures_source, figures_as_of, created_by)`;
+
+/** `score_breakdown`, the one parameter that needs a cast. Index into `insertParams`. */
+const JSONB_PARAM_INDEX = 14;
+
+const INSERT_SQL = `${INSERT_COLUMNS}
   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18)`;
 
 function insertParams(input: ComparableItemInput): unknown[] {
@@ -286,23 +296,39 @@ export async function replaceMachineComparables(
     );
     const taken = new Set(kept.map((r) => r.ticker!));
 
-    const written: ComparableItemRow[] = [];
+    // Decide the whole set first, then write it in one statement. A screen
+    // returns tens of peers and this used to be one round trip each, inside
+    // the transaction holding the delete above.
+    const admitted: ComparableItemInput[] = [];
     for (const item of items) {
       if (item.ticker && taken.has(item.ticker)) continue;
       const decision = item.ticker ? decisions.get(item.ticker) : undefined;
-      const { rows } = await tx.query<RawComparableItemRow>(
-        `${INSERT_SQL} RETURNING *`,
-        insertParams({
-          ...item,
-          valuationId,
-          source,
-          included: decision ? decision.included : (item.included ?? true),
-          excludeReason: decision ? decision.excludeReason : (item.excludeReason ?? null),
-        }),
-      );
-      written.push(hydrate(rows[0]!));
+      admitted.push({
+        ...item,
+        valuationId,
+        source,
+        included: decision ? decision.included : (item.included ?? true),
+        excludeReason: decision ? decision.excludeReason : (item.excludeReason ?? null),
+      });
+      // A ticker repeated inside one screen is admitted once — the unique
+      // index would reject the second, and the loop this replaces skipped it.
       if (item.ticker) taken.add(item.ticker);
     }
-    return written;
+    if (admitted.length === 0) return [];
+
+    // Tuples are built from `insertParams`, so the batch cannot drift from the
+    // single-row INSERT's column order: both read the same function.
+    const params: unknown[] = [];
+    const tuples = admitted.map((item) => {
+      const values = insertParams(item);
+      const base = params.length;
+      params.push(...values);
+      return `(${values.map((_, i) => `$${base + i + 1}${i === JSONB_PARAM_INDEX ? '::jsonb' : ''}`).join(', ')})`;
+    });
+    const { rows } = await tx.query<RawComparableItemRow>(
+      `${INSERT_COLUMNS} VALUES ${tuples.join(', ')} RETURNING *`,
+      params,
+    );
+    return rows.map(hydrate);
   });
 }
