@@ -12,9 +12,9 @@ import {
   listActions,
   listHolds,
   listPolicies,
-  markValuationArchived,
+  markValuationsArchived,
   placeHold,
-  recordAction,
+  recordActions,
   releaseHold,
   upsertPolicy,
 } from '../repos/retention.js';
@@ -85,21 +85,37 @@ export async function runRetentionSweep(pool: pg.Pool, opts: { limit?: number } 
   if (!valPolicy || !valPolicy.enabled || valPolicy.archive_after_days === null) return result;
 
   const candidates = await findArchivableValuations(pool, valPolicy.archive_after_days, opts.limit ?? 500);
-  for (const c of candidates) {
-    if (c.frozen) {
-      await recordAction(pool, { dataType: 'valuation', action: 'skipped_hold', referenceId: c.id });
-      result.skipped_hold++;
-      continue;
-    }
-    await markValuationArchived(pool, c.id);
-    await recordAction(pool, {
+  const frozen = candidates.filter((c) => c.frozen);
+
+  // Two statements for the whole pass, not two per candidate. `findArchivable
+  // Valuations` returns up to 500 rows with the hold flag already computed, and
+  // the old loop spent an UPDATE and an INSERT on each of them in turn — a
+  // sweep that archived a full batch cost around a thousand sequential round
+  // trips, all of them to say the same two things.
+  const archived = await markValuationsArchived(
+    pool,
+    candidates.filter((c) => !c.frozen).map((c) => c.id),
+  );
+
+  // Logged after the archival rather than beside it, so the log records what
+  // the UPDATE actually did. A candidate a concurrent sweep archived first is
+  // absent from `archived` and therefore neither counted nor logged here.
+  await recordActions(pool, [
+    ...frozen.map((c) => ({
       dataType: 'valuation',
-      action: 'archived',
+      action: 'skipped_hold' as const,
       referenceId: c.id,
+    })),
+    ...archived.map((id) => ({
+      dataType: 'valuation',
+      action: 'archived' as const,
+      referenceId: id,
       detail: { archive_after_days: valPolicy.archive_after_days },
-    });
-    result.archived++;
-  }
+    })),
+  ]);
+
+  result.archived = archived.length;
+  result.skipped_hold = frozen.length;
   return result;
 }
 

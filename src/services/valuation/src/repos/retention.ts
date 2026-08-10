@@ -98,19 +98,46 @@ export interface RetentionActionRow {
   created_at: Date;
 }
 
-export async function recordAction(
+export interface RetentionActionInput {
+  dataType: string;
+  action: 'archived' | 'skipped_hold' | 'purge_eligible';
+  referenceId: string | null;
+  detail?: Record<string, unknown>;
+}
+
+/**
+ * Append to the decision log, however many decisions the pass made.
+ *
+ * Batched rather than one insert per decision: the sweep logs a row for every
+ * candidate it looks at, and `findArchivableValuations` hands it up to 500 of
+ * them. One INSERT per decision meant the log — which is pure audit bookkeeping
+ * and nothing waits on it — cost more round trips than the archival it was
+ * describing.
+ *
+ * A no-op on an empty batch: a loop that writes nothing is fine, a statement
+ * with an empty VALUES list is a syntax error.
+ */
+export async function recordActions(
   client: pg.Pool | pg.PoolClient,
-  input: {
-    dataType: string;
-    action: 'archived' | 'skipped_hold' | 'purge_eligible';
-    referenceId: string | null;
-    detail?: Record<string, unknown>;
-  },
+  inputs: readonly RetentionActionInput[],
 ): Promise<void> {
+  if (inputs.length === 0) return;
+  const params: unknown[] = [];
+  const tuples = inputs.map((input) => {
+    params.push(
+      newUlid(),
+      input.dataType,
+      input.action,
+      input.referenceId,
+      JSON.stringify(input.detail ?? {}),
+    );
+    const n = params.length;
+    return `($${n - 4}, $${n - 3}, $${n - 2}, $${n - 1}, $${n})`;
+  });
   await client.query(
     `INSERT INTO retention_actions (id, data_type, action, reference_id, detail)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [newUlid(), input.dataType, input.action, input.referenceId, JSON.stringify(input.detail ?? {})],
+     VALUES ${tuples.join(', ')}`,
+    params,
   );
 }
 
@@ -151,7 +178,24 @@ export async function findArchivableValuations(
   return rows;
 }
 
-export async function markValuationArchived(pool: pg.Pool, id: string): Promise<void> {
-  await pool.query('UPDATE valuations SET archived_at = now() WHERE id = $1 AND archived_at IS NULL', [id]);
-  invalidateValuation(id);
+/**
+ * Archive a whole batch in one statement, and report which rows it actually
+ * took — `RETURNING id` and not the input list, because `archived_at IS NULL`
+ * can already have stopped being true for a candidate between the SELECT that
+ * found it and this UPDATE. The sweep counts and logs what came back, so a row
+ * archived by a concurrent pass is not counted twice.
+ *
+ * The cache is invalidated per returned id for the same reason: entries are
+ * keyed by valuation, and a row this call did not change has not gone stale.
+ */
+export async function markValuationsArchived(pool: pg.Pool, ids: readonly string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const { rows } = await pool.query<{ id: string }>(
+    `UPDATE valuations SET archived_at = now()
+      WHERE id = ANY($1) AND archived_at IS NULL
+      RETURNING id`,
+    [[...new Set(ids)]],
+  );
+  for (const row of rows) invalidateValuation(row.id);
+  return rows.map((row) => row.id);
 }

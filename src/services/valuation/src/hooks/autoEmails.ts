@@ -9,7 +9,7 @@ import {
 } from '../domain/communications.js';
 import {
   dueCandidates,
-  findTemplateByKey,
+  findTemplatesByKeys,
   listAutoEmails,
   recordAutoEmailSend,
 } from '../repos/communications.js';
@@ -121,8 +121,15 @@ async function scan(
   const settingsUrl = deps.publicBaseUrl ? `${deps.publicBaseUrl.replace(/\/$/, '')}/settings` : null;
 
   const campaigns = (await listAutoEmails(db)).filter((c) => c.enabled);
+  // One read for every campaign's template rather than one per campaign. The
+  // keys repeat across campaigns — a renewal template serves several cadences —
+  // so the per-campaign lookup was re-fetching the same rows within one pass.
+  const templates = await findTemplatesByKeys(
+    db,
+    campaigns.map((c) => c.template_key),
+  );
   for (const campaign of campaigns) {
-    const template = await findTemplateByKey(db, campaign.template_key);
+    const template = templates.get(campaign.template_key);
     if (!template?.enabled) {
       deps.log?.warn(
         { campaign: campaign.name, template: campaign.template_key },

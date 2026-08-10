@@ -49,6 +49,26 @@ export async function findTemplateById(pool: pg.Pool, id: string): Promise<Commu
   return rows[0] ?? null;
 }
 
+/**
+ * Whole template rows for a set of keys, keyed by key.
+ *
+ * Separate from `templateOverrides` despite the near-identical query, because
+ * the two answer different questions about a missing row: there it means "no
+ * override recorded, use the built-in workflow template", here it means "this
+ * campaign names a template that does not exist and must not send".
+ */
+export async function findTemplatesByKeys(
+  db: pg.Pool | pg.PoolClient,
+  keys: readonly string[],
+): Promise<Map<string, CommunicationTemplateRow>> {
+  if (keys.length === 0) return new Map();
+  const { rows } = await db.query<CommunicationTemplateRow>(
+    'SELECT * FROM communication_templates WHERE key = ANY($1)',
+    [[...new Set(keys)]],
+  );
+  return new Map(rows.map((r) => [r.key, r]));
+}
+
 /** Enabled+disabled override rows for a set of workflow template keys. */
 export async function templateOverrides(
   db: pg.Pool | pg.PoolClient,
