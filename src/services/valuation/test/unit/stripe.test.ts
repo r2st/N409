@@ -279,6 +279,61 @@ describe('checkout sessions', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('<html>502</html>', { status: 502 }));
     await expect(createCheckoutSession('sk_test', args)).rejects.toThrow(StripeApiError);
   });
+
+  /**
+   * A 200 whose body is not a Checkout Session.
+   *
+   * This is the failure a proxy or WAF between us and Stripe produces: a
+   * well-formed JSON body, an ok status, and none of the fields the caller is
+   * about to use. The session used to be returned as-is, which meant the
+   * browser was redirected to the string `undefined` and the valuation stored
+   * an id of `undefined` for the webhook to reconcile against — with nothing on
+   * either side recording that the call had failed.
+   */
+  it('refuses a 200 that carries no session id or URL', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(portalResponse({ object: 'error' }));
+    await expect(createCheckoutSession('sk_test', args)).rejects.toThrow(/without an id and url/);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(portalResponse({ id: 'cs_1', url: '' }));
+    await expect(createCheckoutSession('sk_test', args)).rejects.toThrow(StripeApiError);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(portalResponse({ id: '', url: 'https://x' }));
+    await expect(
+      createSubscriptionCheckoutSession('sk_test', {
+        userId: '01HYYYYYYYYYYYYYYYYYYYYYYY',
+        planTier: 'annual_retainer',
+        planName: 'Annual retainer',
+        amountCents: 2_000_000,
+        currency: 'usd',
+        interval: 'month',
+        successUrl: 'https://x/ok',
+        cancelUrl: 'https://x/no',
+      }),
+    ).rejects.toThrow(StripeApiError);
+  });
+
+  it('normalises the two optional fields rather than passing them through', async () => {
+    // `amount_total` is nullable on a Stripe session and `payment_intent` is
+    // absent on a subscription; both are declared non-optional on the type, so
+    // a caller reading them is entitled to a number-or-null rather than to
+    // whatever the JSON happened to hold.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      portalResponse({
+        id: 'cs_9',
+        url: 'https://checkout.stripe.com/c/9',
+        amount_total: '119000',
+        payment_intent: { id: 'pi_expanded' },
+        livemode: false,
+      }),
+    );
+    const session = await createCheckoutSession('sk_test', args);
+    expect(session.amount_total).toBeNull();
+    expect(session.payment_intent).toBeNull();
+    // Everything else Stripe sent survives — the type carries an index
+    // signature precisely so a caller can reach a field this code has no
+    // opinion about.
+    expect(session.livemode).toBe(false);
+  });
 });
 
 /**

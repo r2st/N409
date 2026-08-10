@@ -238,3 +238,108 @@ describe('volatilityExhibit', () => {
     expect(s?.html).not.toContain('<b>X</b>');
   });
 });
+
+/**
+ * The shapes the market feed and the estimator actually return when something
+ * upstream has gone wrong — as opposed to the well-formed ones the rest of this
+ * file exercises.
+ *
+ * Every branch below is a coercion this module performs on data it does not
+ * control: `engine/v1/market-feed` bars and the `engine/v1/volatility`
+ * response. They are the boundary, so a shape it does not recognise has to
+ * become a dropped peer or a documented default rather than a `NaN` in a
+ * signed report or a throw inside a route.
+ */
+describe('volatility on inputs from outside this service', () => {
+  it('anchors the window on today when the valuation date is unparseable', () => {
+    const w = resolveWindow('not-a-date', 365, NOW);
+    expect(w.end).toBe('2026-08-09');
+    expect(w.start).toBe('2025-08-09');
+  });
+
+  it('skips a bar that is not an object at all', () => {
+    const series = seriesFromBars('AAA', [null, 'x', 7, bar(10), bar(11)], 'historical');
+    expect(series?.prices).toEqual([10, 11]);
+  });
+
+  it('refuses a Parkinson series whose highs and lows do not line up', () => {
+    // A bar carrying a close and a high but no low passes the close filter for
+    // the historical estimator and leaves the three legs ragged. The range
+    // estimator reads them positionally, so a ragged set is refused outright
+    // rather than measured against mismatched days.
+    const bars = [
+      { close: 10, high: 10.1, low: 9.9 },
+      { close: 11, high: 11.1, low: 10.9 },
+    ];
+    expect(seriesFromBars('AAA', bars, 'parkinson')?.highs).toHaveLength(2);
+    expect(seriesFromBars('AAA', [{ close: 10, high: 10.1 }, ...bars], 'parkinson')?.prices).toHaveLength(2);
+  });
+
+  it('defaults an unrecognised method and confidence rather than storing them', () => {
+    // Both columns are enums in Postgres. A value the engine has started
+    // emitting that this service does not know is an insert that fails at the
+    // end of a job, so it is narrowed here to the conservative reading:
+    // the plain estimator, and the lowest confidence.
+    const shaped = shapeEstimate(
+      { recommended_volatility: 0.5, method: 'garch', confidence: 42 },
+      { series: [], feedFailures: [] },
+    );
+    expect(shaped.method).toBe('historical');
+    expect(shaped.confidence).toBe('low');
+  });
+
+  it('drops a measured company with no ticker or no volatility', () => {
+    const shaped = shapeEstimate(
+      {
+        recommended_volatility: 0.5,
+        companies: [
+          { ticker: 'AAA', volatility: 0.5 },
+          { ticker: null, volatility: 0.6 },
+          { ticker: 'BBB', volatility: 'n/a' },
+        ],
+      },
+      { series: [], feedFailures: [] },
+    );
+    expect(shaped.companies.map((c) => c.ticker)).toEqual(['AAA']);
+    // No series was sent for AAA, so no observation count is grafted on — the
+    // exhibit prints a dash rather than claiming a sample size.
+    expect(shaped.companies[0]).not.toHaveProperty('observations');
+  });
+
+  it('treats a non-list of companies or exclusions as an empty one', () => {
+    const shaped = shapeEstimate(
+      { recommended_volatility: 0.5, companies: 'x', excluded_companies: 3 },
+      { series: [], feedFailures: [{ ticker: 'ZZZ', reason: 'feed timeout' }] },
+    );
+    expect(shaped.companies).toEqual([]);
+    expect(shaped.excluded).toEqual([{ ticker: 'ZZZ', reason: 'feed timeout' }]);
+  });
+
+  it('gives an exclusion with no stated reason the estimator default', () => {
+    const shaped = shapeEstimate(
+      {
+        recommended_volatility: 0.5,
+        excluded_companies: [{ ticker: 'AAA' }, { ticker: 'BBB', reason: '   ' }, { reason: 'orphan' }],
+      },
+      { series: [], feedFailures: [] },
+    );
+    expect(shaped.excluded).toEqual([
+      { ticker: 'AAA', reason: 'excluded by the estimator' },
+      { ticker: 'BBB', reason: 'excluded by the estimator' },
+    ]);
+  });
+
+  it('says an analyst selected the figure when the method is manual', () => {
+    const text = volatilityNarrative(estimate({ method: 'manual' }), 0.6412);
+    expect(text).toContain('selected by the analyst');
+    expect(text).not.toContain('median of');
+  });
+
+  it('counts a single measured peer in the singular', () => {
+    const text = volatilityNarrative(
+      estimate({ companies: [{ ticker: 'AAA', volatility: 0.6412, used: true }] }),
+      0.6412,
+    );
+    expect(text).toContain('median of 1 guideline company measured');
+  });
+});
