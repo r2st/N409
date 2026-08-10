@@ -49,7 +49,7 @@ import { sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { findPartnerById } from '../repos/adminUsers.js';
-import { fetchPartnerLogo } from '../clients/partnerLogo.js';
+import { fetchPartnerLogoCached } from '../clients/partnerLogoCache.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { contentDisposition } from './documents.js';
@@ -193,7 +193,10 @@ async function brandingFor(
   return {
     partner_name: partner.name,
     brand_color: partner.brand_color,
-    logo: await fetchPartnerLogo(partner.logo_url),
+    // Cached for a beat: the logo is the same bytes on every render, and
+    // fetching it is a DNS lookup plus an HTTP GET on the render's critical
+    // path. See clients/partnerLogoCache.ts.
+    logo: await fetchPartnerLogoCached(partner.logo_url),
   };
 }
 
@@ -254,14 +257,74 @@ export async function summaryFor(
    */
   figures: ReportFigures;
 }> {
+  /*
+   * Every loader below reads a different table keyed on the same valuation, and
+   * not one of them takes an argument the others produce — yet they used to run
+   * strictly one after another, so rendering a report cost nine sequential
+   * round trips to Postgres before the first byte of PDF existed. Only the
+   * price-history query genuinely depends on anything: it is cut off at the
+   * adopted calculation's timestamp, so it has to see that row first.
+   *
+   * So: one wave for the calculation, then one wave for everything else. The
+   * loaders are unchanged and so is the order the exhibits are assembled in
+   * below — this is purely about not waiting for a query to answer a question
+   * the next query never asks.
+   */
   const calculation = await latestSucceededCalculation(pool, valuation.id);
   const payload = calculation?.inputs as { inputs?: { valuation_date?: unknown } } | undefined;
   const rawDate = payload?.inputs?.valuation_date;
   const valuationDate = typeof rawDate === 'string' && rawDate ? rawDate.slice(0, 10) : null;
-  const history = calculation ? await historyFor(pool, valuation, calculation.created_at) : [];
-  // The peer set behind the market approach (design §4.5). Empty for every
-  // engagement nobody has screened, and Exhibit D-1 then does not render.
-  const peerRows = await listComparableItems(pool, valuation.id);
+  const [
+    history,
+    peerRows,
+    paramsRow,
+    workbookCells,
+    volatility,
+    projection,
+    hmrcForm,
+    fundReport,
+    debtReport,
+    research,
+  ] = await Promise.all([
+    calculation ? historyFor(pool, valuation, calculation.created_at) : Promise.resolve([]),
+    // The peer set behind the market approach (design §4.5). Empty for every
+    // engagement nobody has screened, and Exhibit D-1 then does not render.
+    listComparableItems(pool, valuation.id),
+    // The analyst's concluded stage of enterprise development, from the
+    // methodology params. Absent until they have concluded one — it is never
+    // inferred, so a report with no stage on it is one where nobody has said.
+    findParams(pool, valuation.id),
+    // The reported financial statements behind the Financial Analysis chapter
+    // (Appendix II). Resolved rather than read below: the derived rows —
+    // margins, subtotals, growth — are recomputed exactly as the workbook UI
+    // computes them, so the appendix cannot print a margin the workbook
+    // disagrees with. Empty for an engagement whose financials nobody has
+    // entered, and the appendix is then not rendered.
+    listWorkbookCells(pool, valuation.id),
+    // Where sigma came from (migration 0134). The *adopted* run where there is
+    // one, so Exhibit F-1 describes the derivation the allocation actually ran
+    // on; null for every engagement whose analyst selected sigma by judgement,
+    // and the exhibit is then not rendered.
+    findCurrentVolatilityEstimate(pool, valuation.id),
+    // Where the DCF's cash flows came from (migration 0136). The *adopted* run
+    // where there is one, so Exhibit C-1 describes the forecast the income
+    // approach actually ran on; null for every engagement whose stream was
+    // entered by hand, and the exhibit is then not rendered.
+    findCurrentProjection(pool, valuation.id),
+    // UK option-scheme deliverables carry the HMRC agreement request as a final
+    // appendix. Null for every other kind, so nothing changes for a 409A.
+    loadHmrcForm(pool, valuation),
+    // The two measurement kinds keep their figures outside `calculations` — a
+    // fund in its marks, an instrument in its valuation history — so their
+    // schedules are loaded rather than derived from the run above. Both return
+    // null for every other kind.
+    loadFundReport(pool, valuation),
+    loadDebtReport(pool, valuation),
+    // The public sources behind the market discussion (migration 0116). Live
+    // rows only: a superseded answer is not what this report was drafted from.
+    listMarketResearch(pool, valuation.id),
+  ]);
+  const financials = computeWorkbook(workbookCells);
   const peers = peerRows.map((row) => ({
     ticker: row.ticker,
     name: row.name,
@@ -275,27 +338,6 @@ export async function summaryFor(
     figures_source: row.figures_source,
     figures_as_of: row.figures_as_of,
   }));
-  // The analyst's concluded stage of enterprise development, from the
-  // methodology params. Absent until they have concluded one — it is never
-  // inferred, so a report with no stage on it is one where nobody has said.
-  const paramsRow = await findParams(pool, valuation.id);
-  // The reported financial statements behind the Financial Analysis chapter
-  // (Appendix II). Resolved rather than read: the derived rows — margins,
-  // subtotals, growth — are recomputed here exactly as the workbook UI computes
-  // them, so the appendix cannot print a margin the workbook disagrees with.
-  // Empty for an engagement whose financials nobody has entered, and the
-  // appendix is then not rendered.
-  const financials = computeWorkbook(await listWorkbookCells(pool, valuation.id));
-  // Where sigma came from (migration 0134). The *adopted* run where there is
-  // one, so Exhibit F-1 describes the derivation the allocation actually ran
-  // on; null for every engagement whose analyst selected sigma by judgement,
-  // and the exhibit is then not rendered.
-  const volatility = await findCurrentVolatilityEstimate(pool, valuation.id);
-  // Where the DCF's cash flows came from (migration 0136). The *adopted* run
-  // where there is one, so Exhibit C-1 describes the forecast the income
-  // approach actually ran on; null for every engagement whose stream was
-  // entered by hand, and the exhibit is then not rendered.
-  const projection = await findCurrentProjection(pool, valuation.id);
   const context = {
     currency: valuation.currency,
     companyName: valuation.company_name,
@@ -309,20 +351,6 @@ export async function summaryFor(
     volatility,
     projection,
   };
-  // UK option-scheme deliverables carry the HMRC agreement request as a final
-  // appendix. Null for every other kind, so nothing changes for a 409A.
-  const hmrcForm = await loadHmrcForm(pool, valuation);
-  // The two measurement kinds keep their figures outside `calculations` — a
-  // fund in its marks, an instrument in its valuation history — so their
-  // schedules are loaded rather than derived from the run above. Both return
-  // null for every other kind.
-  const [fundReport, debtReport, research] = await Promise.all([
-    loadFundReport(pool, valuation),
-    loadDebtReport(pool, valuation),
-    // The public sources behind the market discussion (migration 0116). Live
-    // rows only: a superseded answer is not what this report was drafted from.
-    listMarketResearch(pool, valuation.id),
-  ]);
   return {
     summary: buildReportSummary(calculation, { ...context, history }) ?? undefined,
     // Built from the same calculation the summary is, so a figure on the
@@ -353,7 +381,13 @@ async function renderVersionPdf(
   // One instant for both the cover's "Rendered" line and the PDF's own
   // CreationDate, so a reader comparing the two never sees them disagree.
   const renderedAt = new Date();
-  const { summary, exhibits, valuationDate, figures } = await summaryFor(pool, valuation);
+  // Branding is a partner lookup plus, on a white-labelled engagement, a logo
+  // fetch over the network. It has nothing to say about the figures, so it has
+  // no reason to wait behind them.
+  const [{ summary, exhibits, valuationDate, figures }, branding] = await Promise.all([
+    summaryFor(pool, valuation),
+    brandingFor(pool, valuation),
+  ]);
   // The authored body states the conclusion, and only the calculation knows it.
   // Resolved here rather than at instantiation, and never written back: the
   // stored version keeps its placeholders, so a re-render after a recalculation
@@ -393,7 +427,7 @@ async function renderVersionPdf(
     // bookmarks and the running heads are all derived from this list.
     sections: [...visibleSections(body).map((s) => ({ heading: s.heading, html: s.html })), ...exhibits],
     summary,
-    branding: await brandingFor(pool, valuation),
+    branding,
     generated_at: renderedAt,
     keywords: [valuation.company_name, valuation.kind, 'valuation', `v${version}`],
   });

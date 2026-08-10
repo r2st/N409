@@ -33,15 +33,23 @@ export async function writeSettings(
   patch: Partial<SystemSettings>,
   updatedBy: string,
 ): Promise<void> {
-  for (const [key, value] of Object.entries(patch)) {
-    await pool.query(
-      `INSERT INTO system_settings (key, value, updated_by)
-       VALUES ($1, $2::jsonb, $3)
-       ON CONFLICT (key) DO UPDATE
-         SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-      [key, JSON.stringify(value), updatedBy],
-    );
-  }
+  const entries = Object.entries(patch);
+  if (entries.length === 0) return;
+  // One statement, not one per key. The round trips were the smaller problem:
+  // a per-key loop also meant a save that failed halfway left the console
+  // showing some of the operator's changes applied and the rest not, with no
+  // indication of which. A single multi-row upsert is atomic without needing a
+  // transaction around it.
+  const values = entries
+    .map((_, i) => `($${i * 2 + 2}, $${i * 2 + 3}::jsonb, $1)`)
+    .join(', ');
+  await pool.query(
+    `INSERT INTO system_settings (key, value, updated_by)
+     VALUES ${values}
+     ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+    [updatedBy, ...entries.flatMap(([key, value]) => [key, JSON.stringify(value)])],
+  );
 }
 
 /**

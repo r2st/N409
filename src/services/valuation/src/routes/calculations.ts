@@ -152,7 +152,15 @@ export async function buildCalculationInputs(
   explicit: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   let inputs: Record<string, unknown> = {};
-  const extractJob = await latestSucceededJob(pool, valuationId, 'extract');
+  // The extraction job and the screened peer set live in different tables and
+  // neither is derived from the other, so they are fetched together. The
+  // *comparables* job below stays behind the peer set on purpose — it is the
+  // fallback for an unscreened engagement, and fetching it eagerly would query
+  // for an answer most engagements throw away.
+  const [extractJob, peers] = await Promise.all([
+    latestSucceededJob(pool, valuationId, 'extract'),
+    listComparableItems(pool, valuationId),
+  ]);
   const extracted = extractJob?.result?.engine_inputs;
   if (extracted && typeof extracted === 'object') {
     inputs = deepMerge(inputs, extracted as Record<string, unknown>);
@@ -167,7 +175,6 @@ export async function buildCalculationInputs(
   // for every engagement nobody has screened, which is the behaviour that
   // existed before `comparable_items` did — a new empty table must not change
   // what an untouched valuation computes.
-  const peers = await listComparableItems(pool, valuationId);
   const peerMultiples = marketMultiples(peers, paramsRow.market_method, paramsRow.market_horizon);
   if (peerMultiples.length > 0) {
     inputs = deepMerge(inputs, { market: { multiples: peerMultiples } });
@@ -302,12 +309,27 @@ export function registerCalculationRoutes(
     return valuation;
   };
 
+  /**
+   * The valuation and its methodology params, together. Both are keyed on the
+   * same id and neither is derived from the other, so the compute and validate
+   * routes fetch them in one wave rather than two. The id is checked first —
+   * a malformed one must be a 404 rather than a query.
+   */
+  const loadValuationAndParams = async (id: string) => {
+    if (!isUlid(id)) throw problems.notFound();
+    const [valuation, paramsRow] = await Promise.all([
+      findValuationById(deps.pool, id),
+      findParams(deps.pool, id),
+    ]);
+    if (!valuation) throw problems.notFound();
+    return { valuation, paramsRow };
+  };
+
   app.post('/api/v1/valuations/:id/calculations', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
     const { id } = req.params as { id: string };
-    const valuation = await loadValuation(id);
-    const paramsRow = await findParams(deps.pool, id);
+    const { valuation, paramsRow } = await loadValuationAndParams(id);
     if (!paramsRow) throw problems.notFound();
 
     const parsed = ComputeBody.safeParse(req.body ?? {});
@@ -370,8 +392,7 @@ export function registerCalculationRoutes(
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('Calculations are operations-only');
     const { id } = req.params as { id: string };
-    await loadValuation(id);
-    const paramsRow = await findParams(deps.pool, id);
+    const { paramsRow } = await loadValuationAndParams(id);
     if (!paramsRow) throw problems.notFound();
 
     const parsed = ComputeBody.safeParse(req.body ?? {});
