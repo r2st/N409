@@ -1711,3 +1711,182 @@ export const PRICING_FAQ: FaqEntry[] = [
     a: 'Take our 30-second “Which valuation?” quiz, or book a call with our team. We’ll point you to the right product before you pay for anything.',
   },
 ];
+
+// ── Educational guides (409.ai parity: guide / when / cost) ───────────────────
+
+/**
+ * Content for the three long-form educational pages.
+ *
+ * These exist because a founder searching "how much does a 409A cost" is
+ * pre-purchase and will not find the answer on /pricing, which is a
+ * configurator rather than an explanation. 409.ai ranks on exactly these three
+ * queries; we had the product pages and none of the teaching.
+ *
+ * Kept as data rather than JSX for the same reason `PRODUCTS` is: the pages
+ * render it, `pageMeta` derives FAQ structured data from it, and the tests
+ * assert on it without mounting a component. Every *price* referenced here is
+ * derived from the constants above at render time — never a literal — so a
+ * pricing change cannot leave a stale number in the prose.
+ */
+export interface GuideSection {
+  heading: string;
+  body: string;
+  bullets?: string[];
+}
+
+/** `/409a-valuation-guide` — the long-form explainer. */
+export const GUIDE_SECTIONS: GuideSection[] = [
+  {
+    heading: 'What a 409A valuation actually is',
+    body: 'A 409A valuation is an independent appraisal of the fair market value of a private company’s common stock. Section 409A of the Internal Revenue Code governs deferred compensation, and a stock option granted with a strike price below fair market value is deferred compensation in the eyes of the IRS. The valuation is what establishes that your strike price was set correctly on the day you granted.',
+  },
+  {
+    heading: 'Why the safe harbor is the whole point',
+    body: 'The statute does not require a valuation — it requires that your strike price be reasonable. What an independent appraisal buys you is the safe harbor: a presumption of reasonableness that shifts the burden of proof onto the IRS. Without it, you carry the burden of showing your number was defensible, years later, with the company’s records as they exist then.',
+    bullets: [
+      'Independent appraisal performed no more than 12 months before the grant',
+      'No material event since the valuation date',
+      'Reasonable application of a reasonable valuation method',
+    ],
+  },
+  {
+    heading: 'How the value is actually derived',
+    body: 'Three approaches are recognised, and a defensible report does not simply pick one. The enterprise value is established, then allocated across the capital structure, then discounted for the fact that common stock in a private company cannot readily be sold.',
+    bullets: [
+      'Market approach — guideline public companies and comparable transactions',
+      'Income approach — discounted cash flow, with a WACC built from observable inputs',
+      'Asset approach — net asset value, used where earnings do not yet carry the business',
+      'Allocation — OPM, backsolve to the latest priced round, PWERM or a hybrid',
+      'DLOM — a discount for lack of marketability, supported by put-option models (Chaffee, Finnerty)',
+    ],
+  },
+  {
+    heading: 'What you need to hand over',
+    body: 'The inputs are ordinary company records. The work of a valuation is in the judgment applied to them, not in the difficulty of collecting them, and a good provider does most of the assembly for you.',
+    bullets: [
+      'Capitalisation table, including all option grants and any convertible instruments',
+      'Historical financial statements and a forward forecast',
+      'The most recent priced-round documents and term sheet',
+      'Any material events since — a new round, an acquisition offer, a pivot, a large customer loss',
+    ],
+  },
+  {
+    heading: 'How long it lasts',
+    body: 'A valuation supports grants for 12 months, or until a material event, whichever comes first. The 12-month rule is the one founders remember; the material-event rule is the one that catches them out, because closing a priced round invalidates the valuation immediately and every option granted after it is exposed until a new one is in place.',
+  },
+  {
+    heading: 'What a finished report contains',
+    body: 'A report that will survive an audit shows its work. Ours runs to a full methodology appendix with the exhibits that let a reviewer reconstruct the conclusion rather than take it on faith — the cap-table detail, the approach weighting, the DCF and its WACC build-up, the guideline company set, and the allocation waterfall.',
+  },
+];
+
+/** `/when-do-you-need-a-409a` — the trigger list. */
+export interface ValuationTrigger {
+  title: string;
+  body: string;
+  /** 'required' triggers leave you exposed if ignored; 'recommended' are hygiene. */
+  urgency: 'required' | 'recommended';
+}
+
+export const VALUATION_TRIGGERS: ValuationTrigger[] = [
+  {
+    title: 'Before you grant your first stock option',
+    body: 'The first grant is the first moment a strike price exists, and it needs support on the day it is set — not retroactively once someone asks. This is the single most common gap: an early team is granted options on a number chosen at a board meeting, and the valuation is commissioned a year later.',
+    urgency: 'required',
+  },
+  {
+    title: 'Every 12 months, without exception',
+    body: 'The safe harbor requires the appraisal be no more than 12 months old at the date of grant. A valuation that has aged past its window supports nothing, even if nothing about the business has changed.',
+    urgency: 'required',
+  },
+  {
+    title: 'After closing a priced round',
+    body: 'A priced round is the clearest material event there is — the market has just told you what your preferred stock is worth. Any valuation predating the close is invalid from the moment it closes, and grants made in the gap are the ones that surface in diligence.',
+    urgency: 'required',
+  },
+  {
+    title: 'After any other material event',
+    body: 'An acquisition offer, a significant pivot, the loss or win of a business-defining customer, a secondary transaction in your own stock, or a substantial miss against the forecast the last valuation relied on. The test is whether the event would change what a buyer would pay.',
+    urgency: 'required',
+  },
+  {
+    title: 'Before a fundraise or an exit process',
+    body: 'Not a statutory trigger, but a practical one. Diligence will examine your grant history, and a clean, unbroken run of valuations covering every grant date is far cheaper to produce now than to reconstruct under a deal timeline.',
+    urgency: 'recommended',
+  },
+  {
+    title: 'Before an audit or a QSBS claim',
+    body: 'Your auditor will test stock-based compensation expense against the valuation, and a Section 1202 QSBS position rests on facts a valuation is well placed to evidence. Both go more smoothly when the supporting work already exists.',
+    urgency: 'recommended',
+  },
+];
+
+/**
+ * What non-compliance actually costs the *employee* — which is the part
+ * founders consistently underestimate, because the penalty does not land on
+ * the company that set the price.
+ */
+export const NONCOMPLIANCE_CONSEQUENCES: string[] = [
+  'The discount is taxed as ordinary income as it vests — not at exercise, and not at sale',
+  'A 20% additional federal tax on top of the ordinary income tax, levied on the option holder',
+  'Premium interest charges accruing from the year of vesting',
+  'Possible state-level additional tax on the same amount, depending on jurisdiction',
+  'The company carries withholding and reporting exposure for the same grants',
+];
+
+/** `/how-much-does-a-409a-cost` — what moves the number. */
+export interface CostDriver {
+  factor: string;
+  effect: string;
+}
+
+export const COST_DRIVERS: CostDriver[] = [
+  {
+    factor: 'Stage and capital raised',
+    effect:
+      'The dominant driver. A pre-seed company with one class of stock is a fundamentally smaller job than a Series D with participating preferred, multiple option pools and a secondary history.',
+  },
+  {
+    factor: 'Capital structure complexity',
+    effect:
+      'Every additional preferred series, warrant, SAFE, convertible note and liquidation preference is another branch in the allocation waterfall.',
+  },
+  {
+    factor: 'Turnaround time',
+    effect:
+      'Expedited delivery carries a premium almost everywhere, because it displaces other scheduled work.',
+  },
+  {
+    factor: 'Audit support',
+    effect:
+      'The rate charged when your auditor has questions — often billed separately, and often the largest single line nobody budgeted for.',
+  },
+  {
+    factor: 'Bundling and lock-in',
+    effect:
+      'A valuation included with a cap-table platform is rarely free; it is priced into a subscription you keep paying, and it ties your valuation history to that vendor.',
+  },
+];
+
+/**
+ * Observed market bands for a standalone 409A, for orientation. Deliberately
+ * ranges rather than competitor-specific figures: published prices move, and a
+ * page that names a rival's number is out of date the week they change it.
+ */
+export const MARKET_PRICE_BANDS: Array<{ tier: string; range: string; note: string }> = [
+  {
+    tier: 'Cap-table platform, bundled',
+    range: '$0 – $3,000',
+    note: 'Nominally included, recovered through the platform subscription and a multi-year commitment.',
+  },
+  {
+    tier: 'Specialist valuation firm',
+    range: '$1,000 – $5,000',
+    note: 'Standalone and portable. The band is wide because stage and structure drive it.',
+  },
+  {
+    tier: 'Accounting or advisory firm',
+    range: '$5,000 – $15,000+',
+    note: 'Typically the most thorough and the slowest, with audit support at partner rates.',
+  },
+];

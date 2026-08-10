@@ -266,6 +266,15 @@ export function MarketingFooter() {
             <Link to="/tools/409a-valuation-calculator" className="hover:text-chrome-fg">
               409A calculator
             </Link>
+            <Link to="/409a-valuation-guide" className="hover:text-chrome-fg">
+              409A guide
+            </Link>
+            <Link to="/when-do-you-need-a-409a" className="hover:text-chrome-fg">
+              When do you need one?
+            </Link>
+            <Link to="/how-much-does-a-409a-cost" className="hover:text-chrome-fg">
+              What does it cost?
+            </Link>
             <Link to="/pricing" className="hover:text-chrome-fg">
               Pricing
             </Link>

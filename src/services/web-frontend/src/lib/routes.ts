@@ -20,6 +20,11 @@ export function marketingRoutes(): SitemapRoute[] {
     { path: '/pricing', changefreq: 'weekly', priority: 0.9 },
     { path: '/which-valuation', changefreq: 'monthly', priority: 0.7 },
     { path: '/tools/409a-valuation-calculator', changefreq: 'monthly', priority: 0.8 },
+    // The three educational pages. High priority because they are the top of
+    // the funnel — a founder reads these before they know what to buy.
+    { path: '/409a-valuation-guide', changefreq: 'monthly', priority: 0.8 },
+    { path: '/when-do-you-need-a-409a', changefreq: 'monthly', priority: 0.7 },
+    { path: '/how-much-does-a-409a-cost', changefreq: 'monthly', priority: 0.7 },
     { path: '/sample-report', changefreq: 'monthly', priority: 0.8 },
     { path: '/compare/409a-valuation-providers', changefreq: 'monthly', priority: 0.7 },
     // The blog index only. Individual posts live in the database and are

@@ -3,6 +3,7 @@ import {
   MIN_PRODUCT_PRICE_CENTS,
   PRICING_FAQ,
   PRODUCTS,
+  VALUATION_TRIGGERS,
   comparisonBySlug,
   formatUsd,
   productBySlug,
@@ -40,6 +41,16 @@ const HOME_CRUMB = { name: 'Home', path: '/' };
 const COMPARE_HUB_PATH = '/compare/409a-valuation-providers';
 const COMPARE_HUB_TITLE = '409A valuation providers compared';
 
+/**
+ * The 409A's own list price, for the cost page's description.
+ *
+ * Not `MIN_PRODUCT_PRICE_CENTS` — that is the cheapest product across the whole
+ * catalogue, and a page titled "how much does a 409A cost" answering with the
+ * SMB price would be wrong in the search result itself. Derived rather than
+ * written so it tracks the product registry.
+ */
+const NINE_A_PRICE_CENTS = productBySlug('409a-valuation')!.priceCents;
+
 /** Static (non-parameterised) marketing routes. */
 function staticPages(): HeadInput[] {
   return [
@@ -60,6 +71,27 @@ function staticPages(): HeadInput[] {
       title: 'Which valuation do you need?',
       description:
         "Answer a couple of quick questions and we'll point you at the right valuation report for your situation.",
+    },
+    {
+      path: '/409a-valuation-guide',
+      title: 'The 409A valuation guide',
+      description:
+        'What a 409A valuation is, why the IRS safe harbor matters more than the number itself, how the value is derived across the market, income and asset approaches, and what a defensible report shows.',
+    },
+    {
+      path: '/when-do-you-need-a-409a',
+      title: 'When do you need a 409A valuation?',
+      description:
+        'Four events require a 409A valuation: the first option grant, the 12-month expiry, a priced round, and any other material event — plus what a discounted strike price costs the option holder.',
+      // The trigger list is a genuine question-and-answer pair per entry, which
+      // is what `faqJsonLd` is for — the timing question is the one that gets
+      // asked as a question, so it is the one worth marking up.
+      jsonLd: faqJsonLd(VALUATION_TRIGGERS.map((t) => ({ q: t.title, a: t.body }))),
+    },
+    {
+      path: '/how-much-does-a-409a-cost',
+      title: 'How much does a 409A valuation cost?',
+      description: `What a 409A valuation costs and what drives the price — market bands from bundled cap-table platforms to advisory firms, N409 from ${formatUsd(NINE_A_PRICE_CENTS)}, and the audit-support rate that is not on the quote.`,
     },
     {
       path: '/tools/409a-valuation-calculator',
