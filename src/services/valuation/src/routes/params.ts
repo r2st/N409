@@ -160,6 +160,58 @@ export const ParamsPatchBody = z
       .min(1)
       .max(20)
       .nullable(),
+    /*
+     * The CAPM/WACC build-up behind the DCF discount rate (migration 0135).
+     *
+     * Keyed exactly as `engine/wacc.py compute_wacc` takes them, and `.strict()`
+     * so an unknown key is a 422 here rather than a 422 from the engine's
+     * pre-flight halfway through a calculation. Every premium and rate is a
+     * *fraction*: the engine's overflow guard exists because 5 for 5% reaches
+     * it, and the bands below are the cheap half of the same defence.
+     *
+     * `comparable_betas` carries the guideline set the unlevered beta is the
+     * median of — stored, not just the median, for the reason `comparable_items`
+     * stores the peers rather than the multiple: a median cannot be re-struck
+     * on a corrected input or checked against a source.
+     */
+    wacc_inputs: z
+      .object({
+        comparable_betas: z
+          .array(
+            z
+              .object({
+                ticker: z.string().trim().min(1).max(12).optional(),
+                name: z.string().trim().min(1).max(200).optional(),
+                beta: z.number().min(-5).max(10),
+                debt_to_equity: z.number().min(0).max(20).optional(),
+                tax_rate: Fraction.optional(),
+              })
+              .strict(),
+          )
+          .min(1)
+          .max(40)
+          .optional(),
+        unlevered_beta_input: z.number().min(-5).max(10).optional(),
+        target_debt_to_equity: z.number().min(0).max(20).optional(),
+        market_cap: z.number().min(0).max(1e15).optional(),
+        tax_rate: Fraction.optional(),
+        equity_risk_premium: z.number().min(0).max(1).optional(),
+        forecast_horizon_years: z.number().gt(0).max(50).optional(),
+        risk_free_rate_override: z.number().min(0).max(1).optional(),
+        // { "5": 0.042 } — maturity in years to yield. The engine reads the
+        // keys as numbers whether they arrive as strings or not.
+        treasury_curve: z.record(z.number().min(0).max(1)).optional(),
+        company_specific_premium: z.number().min(-1).max(1).optional(),
+        size_premium_override: z.number().min(-1).max(1).optional(),
+        cost_of_debt: z.number().min(0).max(1).optional(),
+        debt_weight: Fraction.optional(),
+      })
+      .strict()
+      .nullable(),
+    // Whether the build-up drives the discount rate. Separate from the presence
+    // of `wacc_inputs`, so an analyst can hold a build-up on the engagement
+    // while deciding whether to adopt it.
+    auto_wacc: z.boolean(),
     market_method: z.enum(['revenue', 'ebitda']).nullable(),
     market_horizon: z.enum(['ltm', 'ntm']).nullable(),
     market_custom_ranges: z.record(z.unknown()).nullable(),
@@ -255,6 +307,50 @@ export function validateDlomMethods(
   return { ok: true };
 }
 
+/**
+ * Validates the merged WACC build-up (current row + patch).
+ *
+ * Two states are refused, both because they read as configured and do nothing:
+ *
+ *   * `auto_wacc` on with no build-up to run — the engine's `auto_wacc` branch
+ *     skips a missing or empty `inputs.wacc` in silence, so the switch would
+ *     sit on with no effect and Appendix I would still not render;
+ *   * a build-up with neither a beta set nor an unlevered beta — the engine
+ *     raises "provide comparable_betas or unlevered_beta_input", and catching
+ *     it here names the field while the analyst is still on the form rather
+ *     than at the end of a calculation.
+ */
+export function validateWaccBuildUp(
+  current: Record<string, unknown>,
+  patch: ParamsPatch,
+): { ok: true } | { ok: false; detail: string } {
+  const inputs = ('wacc_inputs' in patch ? patch.wacc_inputs : current.wacc_inputs) as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const on = 'auto_wacc' in patch ? patch.auto_wacc : current.auto_wacc === true;
+  const present =
+    inputs !== null && inputs !== undefined && typeof inputs === 'object' && Object.keys(inputs).length > 0;
+
+  if (on && !present) {
+    return {
+      ok: false,
+      detail: 'Enter the WACC build-up before switching it on — an empty build-up would leave the discount rate as it is',
+    };
+  }
+  if (present) {
+    const betas = inputs.comparable_betas;
+    const hasSet = Array.isArray(betas) && betas.length > 0;
+    if (!hasSet && inputs.unlevered_beta_input === undefined) {
+      return {
+        ok: false,
+        detail: 'A WACC build-up needs either a guideline beta set or an unlevered beta to relever',
+      };
+    }
+  }
+  return { ok: true };
+}
+
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
 }
@@ -306,6 +402,9 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
 
     const blend = validateDlomMethods(current, parsed.data);
     if (!blend.ok) throw problems.unprocessable(blend.detail);
+
+    const wacc = validateWaccBuildUp(current, parsed.data);
+    if (!wacc.ok) throw problems.unprocessable(wacc.detail);
 
     const updated = await patchParams(
       deps.pool,

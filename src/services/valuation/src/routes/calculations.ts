@@ -207,9 +207,34 @@ export async function runCalculation(
     actor: EventActor;
   },
 ): Promise<CalculationRow> {
+  /*
+   * The CAPM/WACC build-up (migration 0135).
+   *
+   * `engine/wacc.py` and the `auto_wacc` branch of `compute.py` have been
+   * complete since they were written, and nothing here ever set the flag — so
+   * `results.auto.wacc` was never populated and Appendix I, which reads it and
+   * is named in the report's index of exhibits, could not render on any
+   * engagement on the platform.
+   *
+   * Sent only when the analyst has both entered a build-up and switched it on.
+   * The two conditions are separate on purpose: a build-up recorded but not
+   * adopted must not move a discount rate somebody has already reviewed. The
+   * engine's own rule is the other half — a hand-entered
+   * `income.discount_rate` still wins, and the build-up is recorded beside it
+   * so Appendix I can print the derived figure against the applied one.
+   */
+  const waccInputs = args.paramsRow.wacc_inputs;
+  const autoWacc =
+    args.paramsRow.auto_wacc === true &&
+    waccInputs !== null &&
+    typeof waccInputs === 'object' &&
+    !Array.isArray(waccInputs) &&
+    Object.keys(waccInputs).length > 0;
+
   const payload = {
     params: engineParams(args.paramsRow),
-    inputs: args.inputs,
+    inputs: autoWacc ? { ...args.inputs, wacc: waccInputs } : args.inputs,
+    ...(autoWacc ? { auto_wacc: true } : {}),
     ...(args.recompute ? { recompute: args.recompute, prior_approaches: args.priorApproaches } : {}),
     // Every run, not on request. The run worth inspecting is always one that
     // already happened, so a trace you have to ask for in advance is one you

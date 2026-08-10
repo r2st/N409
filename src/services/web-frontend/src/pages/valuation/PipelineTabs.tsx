@@ -4,6 +4,7 @@ import { useWorkspace } from './ValuationWorkspace';
 import { DocumentsPanel } from '../../components/valuation/DocumentsPanel';
 import { AccountingConnect } from '../../components/valuation/AccountingConnect';
 import { ParamsPanel } from '../../components/valuation/ParamsPanel';
+import { WaccPanel } from '../../components/valuation/WaccPanel';
 import { FinancialModelPanel } from '../../components/valuation/FinancialModelPanel';
 import { AiPanel } from '../../components/valuation/AiPanel';
 import { TasksPanel } from '../../components/valuation/TasksPanel';
@@ -29,7 +30,15 @@ export function DocumentsTab() {
 export function ParamsTab() {
   const { valuation } = useWorkspace();
   const { user } = useAuth();
-  return <ParamsPanel valuationId={valuation.id} readOnly={!isOps(user)} />;
+  return (
+    <div className="space-y-6">
+      <ParamsPanel valuationId={valuation.id} readOnly={!isOps(user)} />
+      {/* Its own panel rather than another section of the methodology form: the
+          beta set is a table, and it saves and previews on its own without
+          carrying the whole form's validation with it. */}
+      <WaccPanel valuationId={valuation.id} readOnly={!isOps(user)} />
+    </div>
+  );
 }
 
 export function FinancialModelTab() {

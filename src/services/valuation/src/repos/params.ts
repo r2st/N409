@@ -95,6 +95,11 @@ export interface ValuationParamsRow {
   /** A firm's own required-return ladder by stage (migration 0130). NULL means
    * the built-in literature ranges. */
   required_return_table: unknown;
+  /** The CAPM/WACC build-up inputs (migration 0135), keyed as the engine takes
+   * them. NULL until an analyst has entered one. */
+  wacc_inputs: unknown;
+  /** Whether the build-up drives the DCF discount rate. */
+  auto_wacc: boolean;
   market_method: 'revenue' | 'ebitda' | null;
   market_horizon: 'ltm' | 'ntm' | null;
   market_custom_ranges: unknown;
@@ -139,6 +144,8 @@ export const PARAM_COLUMNS = [
   'dlom_pre_ipo_studies',
   'dlom_pre_ipo_table',
   'required_return_table',
+  'wacc_inputs',
+  'auto_wacc',
   'market_method',
   'market_horizon',
   'market_custom_ranges',
@@ -175,6 +182,7 @@ export const JSONB_PARAM_COLUMNS: ReadonlySet<(typeof PARAM_COLUMNS)[number]> = 
   'dlom_study_table',
   'dlom_pre_ipo_table',
   'required_return_table',
+  'wacc_inputs',
   'market_custom_ranges',
 ]);
 
