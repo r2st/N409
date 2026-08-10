@@ -88,6 +88,66 @@ describe.skipIf(!dbUp)('gap sweep', () => {
     expect(unreadAfter.json().valuations.some((v: { id: string }) => v.id === id)).toBe(false);
   });
 
+  /**
+   * The read marker is only ever compared against `last_comment_at`, so
+   * re-stamping an already-read valuation cannot change any answer — and
+   * `GET /api/v1/valuations/:id` is the most-hit route in the workspace, so an
+   * unconditional stamp meant every open wrote a row on the busiest table and
+   * evicted the read cache entry the same request had just filled.
+   *
+   * What must still hold: the marker moves when there is something new to
+   * acknowledge, and only then.
+   */
+  it('opening an already-read valuation writes nothing, and a new comment makes it write again', async () => {
+    const id = await createValuation('Idempotent Read Co');
+    const marker = async (): Promise<string | null> => {
+      const { rows } = await pool.query<{ admin_read_at: Date | null }>(
+        'SELECT admin_read_at FROM valuations WHERE id = $1',
+        [id],
+      );
+      return rows[0]!.admin_read_at?.toISOString() ?? null;
+    };
+    const open = async (): Promise<void> => {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${id}`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+    };
+
+    // Nothing has been said yet, so there is nothing to mark read.
+    await open();
+    expect(await marker()).toBeNull();
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/comments`,
+      headers: authHeader(client.token),
+      payload: { kind: 'chat', body: 'First question' },
+    });
+    await open();
+    const first = await marker();
+    expect(first).not.toBeNull();
+
+    // Second open: already read, so the marker must not move.
+    await open();
+    await open();
+    expect(await marker()).toBe(first);
+
+    // A new comment is new information, so the next open does write.
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${id}/comments`,
+      headers: authHeader(client.token),
+      payload: { kind: 'chat', body: 'Second question' },
+    });
+    await open();
+    const second = await marker();
+    expect(second).not.toBe(first);
+    expect(new Date(second!).getTime()).toBeGreaterThan(new Date(first!).getTime());
+  });
+
   it('requester search matches name and email (gap 7)', async () => {
     const id = await createValuation('Searchable Co');
     for (const q of ['jane.requester@client.example', 'Jane Requester', 'jane']) {

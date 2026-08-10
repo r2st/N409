@@ -474,11 +474,39 @@ export async function listValuations(
   return { items: pageResult.rows, total: Number(countResult.rows[0]!.count) };
 }
 
-/** Stamp the side's read marker; called when a valuation is opened (gap 4). */
-export async function markValuationRead(pool: pg.Pool, id: string, side: 'admin' | 'user'): Promise<void> {
+/**
+ * Stamp the side's read marker; called when a valuation is opened (gap 4).
+ *
+ * Guarded so that a read only writes when the write would change an answer.
+ * The marker is never read as a timestamp — every consumer compares it to
+ * `last_comment_at` and to nothing else (`buildValuationWhere`'s `unreadFor`,
+ * the per-row `unread` flag, the bucket tallies) — so re-stamping a valuation
+ * that is already read is invisible by construction. Unguarded it was not free:
+ * `GET /api/v1/valuations/:id` is the most-hit route in the workspace, every
+ * open wrote a row on the busiest table in the schema, and the profiling
+ * harness ranked this the most expensive statement per call in the read path
+ * at 1.9ms — dead tuples and index maintenance on `valuations_created_idx` for
+ * a value that already said what it says.
+ *
+ * The cache drop moved under the same condition. Before, opening a valuation
+ * invalidated the entry the same request had just filled, so the 5s read cache
+ * could never serve the detail route it exists for: every GET evicted itself.
+ *
+ * Returns whether the marker moved, which is also how the tests tell a skipped
+ * write from a performed one.
+ */
+export async function markValuationRead(pool: pg.Pool, id: string, side: 'admin' | 'user'): Promise<boolean> {
   const column = side === 'admin' ? 'admin_read_at' : 'user_read_at';
-  await pool.query(`UPDATE valuations SET ${column} = now() WHERE id = $1`, [id]);
-  invalidateValuation(id);
+  const { rowCount } = await pool.query(
+    `UPDATE valuations SET ${column} = now()
+     WHERE id = $1
+       AND last_comment_at IS NOT NULL
+       AND (${column} IS NULL OR last_comment_at > ${column})`,
+    [id],
+  );
+  const wrote = (rowCount ?? 0) > 0;
+  if (wrote) invalidateValuation(id);
+  return wrote;
 }
 
 /** Live counts per tab (state group), honouring scope + every non-tab filter. */
