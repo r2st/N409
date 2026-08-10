@@ -50,9 +50,14 @@ function pct(value: unknown, digits = 1): string {
   return n === null ? '—' : formatPercent(n, digits);
 }
 
-function quantity(value: unknown): string {
-  const n = num(value);
-  return n === null ? '—' : INT.format(Math.round(n));
+/**
+ * Share counts for a table cell. Takes a `number` rather than `unknown`: every
+ * caller reads `MarkedPosition.quantity`, which `markedPositions` has already
+ * coerced through `num(...) ?? 0`, so a non-finite value cannot arrive here and
+ * the `—` fallback the other cell helpers carry would be unreachable.
+ */
+function quantity(value: number): string {
+  return INT.format(Math.round(value));
 }
 
 /** Humanize a snake_case key for a table cell. */

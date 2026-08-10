@@ -41,6 +41,19 @@ function money(value: unknown, ctx: ExhibitContext, digits = 0): string | null {
   return n === null ? null : formatCurrency(n, ctx.currency, digits);
 }
 
+/**
+ * `money` for a figure already narrowed to a number — the one an exhibit's
+ * entry guard checked before deciding to render at all.
+ *
+ * Kept distinct from `money` because the difference is not cosmetic: writing
+ * `money(x, ctx) ?? '—'` for a field the function returns early without is an
+ * em-dash that can never print, and four of those had accumulated. Taking a
+ * `number` makes the guarded case say so in its type.
+ */
+function shown(value: number, ctx: ExhibitContext, digits = 0): string {
+  return formatCurrency(value, ctx.currency, digits);
+}
+
 function pct(value: unknown, digits = 1): string | null {
   const n = num(value);
   return n === null ? null : formatPercent(n, digits);
@@ -91,7 +104,9 @@ function qsbsExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): R
 // ── PPA / goodwill residual ──────────────────────────────────────────────────
 
 function ppaExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
-  if (num(specialty.consideration_transferred) === null) return null;
+  const consideration = num(specialty.consideration_transferred);
+  if (consideration === null) return null;
+  const bargainGain = num(specialty.bargain_purchase_gain);
   const intangibles = list(specialty.intangibles)
     .map(record)
     .filter((r): r is Record<string, unknown> => r !== null);
@@ -110,14 +125,14 @@ function ppaExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
     table({
       head: ['Allocation', 'Amount'],
       rows: [
-        ['Consideration transferred', money(specialty.consideration_transferred, ctx) ?? '—'],
+        ['Consideration transferred', shown(consideration, ctx)],
         ['Tangible net assets', money(specialty.tangible_net_assets, ctx) ?? '—'],
         ['Identifiable intangibles', money(specialty.total_intangible_value, ctx) ?? '—'],
         ['Identifiable net assets', money(specialty.identifiable_net_assets, ctx) ?? '—'],
       ],
       foot:
-        (num(specialty.bargain_purchase_gain) ?? 0) > 0
-          ? ['Bargain purchase gain', money(specialty.bargain_purchase_gain, ctx) ?? '—']
+        bargainGain !== null && bargainGain > 0
+          ? ['Bargain purchase gain', shown(bargainGain, ctx)]
           : ['Goodwill (residual)', money(specialty.goodwill, ctx) ?? '—'],
     }),
   ]);
@@ -126,8 +141,9 @@ function ppaExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
 // ── Impairment ───────────────────────────────────────────────────────────────
 
 function impairmentExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
-  if (typeof specialty.standard !== 'string' || num(specialty.carrying_amount) === null) return null;
-  const rows: string[][] = [['Carrying amount', money(specialty.carrying_amount, ctx) ?? '—']];
+  const carrying = num(specialty.carrying_amount);
+  if (typeof specialty.standard !== 'string' || carrying === null) return null;
+  const rows: string[][] = [['Carrying amount', shown(carrying, ctx)]];
   const put = (name: string, value: string | null) => {
     if (value !== null) rows.push([name, value]);
   };
@@ -246,7 +262,8 @@ function smbExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): Re
 // ── EMI / CSOP ───────────────────────────────────────────────────────────────
 
 function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
-  if (num(specialty.umv_per_share) === null) return null;
+  const umv = num(specialty.umv_per_share);
+  if (umv === null) return null;
   const qualification = record(specialty.qualification);
   const checks = qualification ? (record(qualification.checks) ?? {}) : {};
   const scheme = qualification && typeof qualification.scheme === 'string' ? qualification.scheme : null;
@@ -257,7 +274,7 @@ function emiCsopExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext)
         ['Pro-rata value per share', money(specialty.pro_rata_per_share, ctx, 4) ?? '—'],
         [`Minority discount`, pct(specialty.minority_discount) ?? '—'],
         [`Restriction discount`, pct(specialty.restriction_discount) ?? '—'],
-        ['Unrestricted market value (UMV) per share', money(specialty.umv_per_share, ctx, 4) ?? '—'],
+        ['Unrestricted market value (UMV) per share', shown(umv, ctx, 4)],
       ],
       foot: ['Actual market value (AMV) per share', money(specialty.amv_per_share, ctx, 4) ?? '—'],
     }),
@@ -340,7 +357,8 @@ export function hmrcFormExhibit(form: HmrcForm): ReportPdfSection {
 // ── IP (single intangible) ───────────────────────────────────────────────────
 
 function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
-  if (num(specialty.fair_value) === null) return null;
+  const fairValue = num(specialty.fair_value);
+  if (fairValue === null) return null;
   const rows: string[][] = [];
   const put = (name: string, value: string | null) => {
     if (value !== null) rows.push([name, value]);
@@ -352,7 +370,7 @@ function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
   put('Tax rate', pct(specialty.tax_rate, 0));
   return section('Exhibit — Intangible Asset Valuation', [
     rows.length > 0 ? table({ head: ['Measure', 'Value'], rows }) : null,
-    P(`Concluded fair value: <strong>${money(specialty.fair_value, ctx) ?? '—'}</strong>.`),
+    P(`Concluded fair value: <strong>${shown(fairValue, ctx)}</strong>.`),
   ]);
 }
 

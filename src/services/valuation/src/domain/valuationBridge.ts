@@ -58,9 +58,14 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-/** Logarithmic mean L(a,b) = (a−b)/ln(a/b); L(a,a)=a. Requires a,b > 0. */
+/**
+ * Logarithmic mean L(a,b) = (a−b)/ln(a/b); L(a,a)=a.
+ *
+ * Precondition: a, b > 0. The single call site is inside the `allPositive`
+ * arm, which has already established `fromFmv > 0 && toFmv > 0`, so a guard
+ * against non-positive inputs here would be dead code rather than defence.
+ */
 function logMean(a: number, b: number): number {
-  if (a <= 0 || b <= 0) return 0;
   if (a === b) return a;
   return (a - b) / Math.log(a / b);
 }

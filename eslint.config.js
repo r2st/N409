@@ -10,6 +10,11 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       '**/.venv/**',
+      // Gitignored (.gitignore:38) throwaway probes — `npm run lint` was
+      // reporting 33 no-undef/no-console errors against files that are not
+      // part of the build and are never committed, which is enough noise to
+      // train a reader to skip the lint output entirely.
+      '**/scratchpad/**',
       '.claude/**',
       'infra/**',
       'src/services/ai/**',
