@@ -72,13 +72,56 @@ export function registerStreamRoutes(
       return;
     }
 
-    const heartbeat = setInterval(() => {
-      reply.raw.write(': ping\n\n');
-    }, heartbeatMs);
-
-    req.raw.on('close', () => {
-      clearInterval(heartbeat);
-      leave();
+    const stop = startHeartbeat({
+      intervalMs: heartbeatMs,
+      write: () => reply.raw.write(': ping\n\n'),
+      onDead: (err) => req.log.debug({ err }, 'realtime heartbeat write failed; closing stream'),
+      leave: () => leave(),
     });
+
+    req.raw.on('close', stop);
   });
+}
+
+/**
+ * The keep-alive ping, and the teardown it shares with the client disconnect.
+ *
+ * `write` is guarded because the `close` handler is not guaranteed to have run
+ * before the next tick: a write to a socket that has already gone away emits
+ * `error` on the response, and an `error` with no listener is thrown — from a
+ * timer callback, so it lands as an uncaughtException and `installCrashHandlers`
+ * takes the whole service down with it. `ValuationHub.broadcast` already wraps
+ * exactly this call for exactly this reason; the heartbeat was the one writer
+ * that did not.
+ *
+ * Tearing down on the first failed ping, rather than pinging on into a dead
+ * socket, also releases the room entry — which is what the presence badges and
+ * the per-user stream cap are counted from.
+ *
+ * The returned stop is idempotent, so the close handler and a failed ping can
+ * both run without double-counting the departure: `clearInterval` on a cleared
+ * timer is a no-op, and `leave` returns early on a second call (see hub.join).
+ */
+export function startHeartbeat(opts: {
+  intervalMs: number;
+  write: () => void;
+  onDead: (err: unknown) => void;
+  leave: () => void;
+}): () => void {
+  const stop = () => {
+    clearInterval(timer);
+    opts.leave();
+  };
+  const timer = setInterval(() => {
+    try {
+      opts.write();
+    } catch (err) {
+      opts.onDead(err);
+      stop();
+    }
+  }, opts.intervalMs);
+  // Node keeps the process alive for a pending timer; a keep-alive ping on a
+  // connection nobody is waiting for should not be what holds a shutdown open.
+  timer.unref?.();
+  return stop;
 }
