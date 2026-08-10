@@ -167,11 +167,13 @@ export default defineConfig({
       // Enforced coverage floor (audit P2-2). Set at the current measured level
       // (a point or two below) so CI can't silently regress — the TS analogue of
       // the Python services' `--cov-fail-under=80`. Ratchet upward over time.
+      // Ratcheted with the round-12 push: measured 80.33 lines/statements,
+      // 83.37 branches, 67.00 functions.
       thresholds: {
-        lines: 65,
-        statements: 65,
-        functions: 52,
-        branches: 77,
+        lines: 79,
+        statements: 79,
+        functions: 65,
+        branches: 82,
       },
     },
   },
