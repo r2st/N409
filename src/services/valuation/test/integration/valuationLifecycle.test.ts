@@ -430,27 +430,27 @@ describe.skipIf(!dbUp)('the valuation lifecycle, end to end', () => {
     });
     expect(signed.statusCode).toBe(200);
     expect(signed.json().signoff.status).toBe('signed');
-    expect(signed.json().resolution_status).toBe('approved');
+    // One director signing is not the board adopting: Robin has not answered, so
+    // the resolution is still open. A resolution that flipped to approved here
+    // would let a single member carry the board.
+    expect(signed.json().resolution_status).toBe('pending');
   });
 
-  it('refuses a second decision on the same token', async () => {
-    const added = await asOps('POST', `/api/v1/valuations/${valuationId}/board/members`, {
-      name: 'Robin Rep',
-      email: 'robin@board.example',
-    });
-    const token = added.json().sign_token as string;
-
+  it('approves the resolution once the last member signs, and refuses a second decision', async () => {
+    // Robin's token was minted alongside Dana's; a member gets one and only one.
     const first = await app.inject({
       method: 'POST',
       url: '/api/v1/board/sign',
-      payload: { token, decision: 'signed' },
+      payload: { token: robinToken, decision: 'signed' },
     });
     expect(first.statusCode).toBe(200);
+    // Last outstanding member — the board has now adopted the resolution.
+    expect(first.json().resolution_status).toBe('approved');
 
     const second = await app.inject({
       method: 'POST',
       url: '/api/v1/board/sign',
-      payload: { token, decision: 'rejected' },
+      payload: { token: robinToken, decision: 'rejected' },
     });
     expect(second.statusCode).toBe(409);
   });
@@ -500,11 +500,35 @@ describe.skipIf(!dbUp)('the valuation lifecycle, end to end', () => {
   it('leaves the whole engagement on the audit spine', async () => {
     const res = await asOps('GET', `/api/v1/valuations/${valuationId}/events`);
     expect(res.statusCode).toBe(200);
-    const types = new Set((res.json().events as Array<{ type: string }>).map((e) => e.type));
+    const events = res.json().events as Array<{ type: string }>;
+    const types = new Set(events.map((e) => e.type));
     // A 409A that cannot show its own history is not defensible, whatever the
-    // number on the cover says.
-    for (const required of ['intake_submitted', 'calculation_created', 'state_changed']) {
+    // number on the cover says. Every stage this test walked through has to have
+    // left a mark — one missing link and the trail no longer explains the number.
+    for (const required of [
+      'valuation_created',
+      'intake_submitted',
+      'params_updated',
+      'calculation_completed',
+      'state_changed',
+      'review_decision',
+      'report_saved',
+      'report_rendered',
+      'board_resolution_generated',
+      'board_member_added',
+      'board_signoff_recorded',
+      'board_resolution_approved',
+      'qa_review_completed',
+    ]) {
       expect(types).toContain(required);
     }
+
+    // The spine is ordered, not just present: the engine cannot have run before
+    // the client submitted, and the board cannot have adopted a report that was
+    // not yet rendered.
+    const firstAt = (type: string) => events.findIndex((e) => e.type === type);
+    expect(firstAt('intake_submitted')).toBeLessThan(firstAt('calculation_completed'));
+    expect(firstAt('calculation_completed')).toBeLessThan(firstAt('report_rendered'));
+    expect(firstAt('report_rendered')).toBeLessThan(firstAt('board_resolution_approved'));
   });
 });
