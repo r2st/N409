@@ -102,6 +102,52 @@ export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells
 // ledger palette: bond green, brass, ink tones
 const PALETTE = ['#2f7d5b', '#b98d4f', '#3b5b7d', '#8d5a7d', '#5b8d8a', '#7d6e3b', '#a05252', '#6b7280'];
 
+/**
+ * The numbers behind a chart, as a table only assistive technology reads.
+ *
+ * An `<svg role="img" aria-label="Published per week">` announces its label and
+ * *nothing else*: `role="img"` makes the element a leaf, so the `<text>` labels
+ * drawn inside it and the `<title>` on each data point are not exposed. A
+ * screen-reader user was told a chart existed and given no way to learn a single
+ * figure from it — which for the throughput trend on the operations dashboard is
+ * the whole content of the panel (WCAG 1.1.1).
+ *
+ * A table rather than a prose summary: the data is tabular, tables are
+ * navigable cell by cell, and it stays correct as the series grows. Visually
+ * hidden rather than `aria-label`-stuffed, so it is also available to anyone
+ * who finds the chart easier to read as numbers — including in the printed
+ * board pack, where `sr-only` is simply invisible and the chart is the copy.
+ */
+export function ChartDataTable({
+  caption,
+  columns,
+  rows,
+}: {
+  caption: string;
+  columns: [string, string];
+  rows: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <table className="sr-only">
+      <caption>{caption}</caption>
+      <thead>
+        <tr>
+          <th scope="col">{columns[0]}</th>
+          <th scope="col">{columns[1]}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr key={`${row.label}-${i}`}>
+            <th scope="row">{row.label}</th>
+            <td>{row.value}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export interface WaterfallStep {
   label: string;
   /** Signed contribution (an intermediate delta). */
@@ -158,13 +204,9 @@ export function WaterfallChart({
   return (
     <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
       <div className="overline text-ink-400">{title}</div>
-      <svg
-        viewBox="0 0 100 118"
-        className="mt-4 w-full"
-        role="img"
-        aria-label={title}
-        preserveAspectRatio="none"
-      >
+      {/* The picture is decoration once the table below carries the numbers;
+          leaving it as role="img" would announce the title twice. */}
+      <svg viewBox="0 0 100 118" className="mt-4 w-full" aria-hidden="true" preserveAspectRatio="none">
         {/* zero baseline */}
         <line x1="0" x2="100" y1={y(0)} y2={y(0)} stroke="var(--color-paper-300)" strokeWidth="0.4" />
         {bars.map((b, i) => {
@@ -199,6 +241,16 @@ export function WaterfallChart({
           );
         })}
       </svg>
+      <ChartDataTable
+        caption={title}
+        columns={['Step', 'Value']}
+        rows={bars.map((b) => ({
+          label: b.label,
+          // The bridge's meaning is in the signs: a reader hearing "5,000,000"
+          // three times cannot tell a contribution from a running total.
+          value: b.kind === 'total' ? format(b.value) : `${b.value >= 0 ? '+' : ''}${format(b.value)}`,
+        }))}
+      />
     </div>
   );
 }
@@ -259,13 +311,7 @@ export function LineChart({
       {!hasData ? (
         <p className="mt-4 text-sm text-ink-400">Not enough data yet.</p>
       ) : (
-        <svg
-          viewBox="0 0 100 66"
-          className="mt-3 w-full"
-          role="img"
-          aria-label={title}
-          preserveAspectRatio="none"
-        >
+        <svg viewBox="0 0 100 66" className="mt-3 w-full" aria-hidden="true" preserveAspectRatio="none">
           <line x1="0" x2="100" y1={y(lo)} y2={y(lo)} stroke="var(--color-paper-300)" strokeWidth="0.3" />
           {segments.map((pts, i) => (
             <polyline
@@ -285,6 +331,18 @@ export function LineChart({
             ),
           )}
         </svg>
+      )}
+      {hasData && (
+        <ChartDataTable
+          caption={title}
+          columns={['Period', 'Value']}
+          rows={points.map((p) => ({
+            label: p.label,
+            // A gap in the series is a real state — "no data" reads correctly
+            // where a zero would be a claim nothing happened.
+            value: p.value === null ? 'no data' : format(p.value),
+          }))}
+        />
       )}
     </div>
   );

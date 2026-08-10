@@ -130,50 +130,146 @@ export function inferClassType(name: string): CapTableClassType {
   return 'common';
 }
 
+/** Delimiters worth guessing between, in tie-break order. */
+const DELIMITERS = [',', ';', '\t'] as const;
+
+/**
+ * Guess the field separator from the header line.
+ *
+ * Excel writes the *locale's* list separator, not a comma: in most of
+ * continental Europe "Save as CSV" produces semicolon-delimited text, and a
+ * copy-paste out of a spreadsheet is tab-delimited. Parsing either as
+ * comma-separated does not fail — it yields one column whose name is the whole
+ * header line, so the mapping matches nothing, `parseCapTable` returns zero
+ * entries, and the importer reports an empty cap table for a file that plainly
+ * has one. Guessing wrong is no worse than the single-column result assuming
+ * always-comma already gives.
+ *
+ * Only the first line is inspected, and only separators outside quotes count,
+ * so a quoted company name with a comma in it does not vote.
+ */
+export function sniffDelimiter(text: string): string {
+  const end = text.search(/[\r\n]/);
+  const header = end === -1 ? text : text.slice(0, end);
+
+  let best: string = DELIMITERS[0];
+  let bestCount = 0;
+  for (const delimiter of DELIMITERS) {
+    let count = 0;
+    let inQuotes = false;
+    for (let i = 0; i < header.length; i++) {
+      const c = header[i];
+      if (c === '"') {
+        // A doubled quote is an escaped quote, not a state change.
+        if (inQuotes && header[i + 1] === '"') i++;
+        else inQuotes = !inQuotes;
+      } else if (!inQuotes && c === delimiter) count++;
+    }
+    if (count > bestCount) {
+      best = delimiter;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * Name the columns, given the raw header cells.
+ *
+ * Two things real exports do that the naive `headers[i]` mapping got wrong:
+ *
+ *  - **Blank headers.** A trailing comma, or a spacer column between two
+ *    blocks, produces an unnamed column. Keying them all on `''` meant the
+ *    last such column silently overwrote the others, and `''` then appeared in
+ *    the mapping UI as a selectable source. They are dropped instead, matching
+ *    what the `.xlsx` reader already does with the same shape.
+ *  - **Duplicate headers.** Carta exports both a granted and an outstanding
+ *    "Shares" column; a fund administrator's sheet repeats "Price". Last-wins
+ *    meant the mapping silently read a column the operator did not pick, and
+ *    the preview gave no hint which. Suffixing keeps every column reachable
+ *    and visibly distinct.
+ *
+ * `null` marks a dropped column so the caller can keep header positions
+ * aligned with row cells.
+ */
+function nameColumns(cells: string[]): Array<string | null> {
+  const seen = new Map<string, number>();
+  return cells.map((cell) => {
+    const name = cell.trim();
+    if (name === '') return null;
+    const priorUses = seen.get(name) ?? 0;
+    seen.set(name, priorUses + 1);
+    return priorUses === 0 ? name : `${name} (${priorUses + 1})`;
+  });
+}
+
 /**
  * Minimal RFC-4180-ish CSV parser: handles quoted fields, escaped quotes and
- * CRLF. Returns an array of row objects keyed by the header row.
+ * CRLF, sniffs the delimiter, and strips a leading BOM.
+ *
+ * The BOM is stripped here rather than only at the upload route because every
+ * entry point has the problem, not just the one that was noticed: the API's
+ * pasted-`csv` body and any future caller get the same file out of the same
+ * "Save as CSV UTF-8" that put the BOM there. Left in place it becomes part of
+ * the first header name — `U+FEFF` + `Security Class` matches neither the exact
+ * nor the case-insensitive lookup in `readCell` — so the first column, which is
+ * almost always the security class, silently maps to nothing.
+ *
+ * Returns the header row alongside the data so the mapping UI can list columns
+ * even when the file has none of the latter, and so it lists them in source
+ * order rather than in whatever order the first row's keys happen to enumerate.
  */
-export function parseCsv(text: string): Record<string, string>[] {
-  const rows: string[][] = [];
+export function parseCsvSheet(text: string): { headers: string[]; rows: Record<string, string>[] } {
+  const body = text.replace(/^\uFEFF/, '');
+  const delimiter = sniffDelimiter(body);
+
+  const grid: string[][] = [];
   let field = '';
   let row: string[] = [];
   let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
     if (inQuotes) {
       if (c === '"') {
-        if (text[i + 1] === '"') {
+        if (body[i + 1] === '"') {
           field += '"';
           i++;
         } else inQuotes = false;
       } else field += c;
     } else if (c === '"') {
       inQuotes = true;
-    } else if (c === ',') {
+    } else if (c === delimiter) {
       row.push(field);
       field = '';
     } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
+      if (c === '\r' && body[i + 1] === '\n') i++;
       row.push(field);
       field = '';
-      if (row.some((f) => f.trim() !== '')) rows.push(row);
+      if (row.some((f) => f.trim() !== '')) grid.push(row);
       row = [];
     } else field += c;
   }
   if (field !== '' || row.length > 0) {
     row.push(field);
-    if (row.some((f) => f.trim() !== '')) rows.push(row);
+    if (row.some((f) => f.trim() !== '')) grid.push(row);
   }
-  if (rows.length === 0) return [];
-  const headers = rows[0]!.map((h) => h.trim());
-  return rows.slice(1).map((r) => {
+  if (grid.length === 0) return { headers: [], rows: [] };
+
+  const columns = nameColumns(grid[0]!);
+  const headers = columns.filter((c): c is string => c !== null);
+  const rows = grid.slice(1).map((cells) => {
     const obj: Record<string, string> = {};
-    headers.forEach((h, i) => {
-      obj[h] = (r[i] ?? '').trim();
+    columns.forEach((name, i) => {
+      if (name !== null) obj[name] = (cells[i] ?? '').trim();
     });
     return obj;
   });
+  return { headers, rows };
+}
+
+/** Header-keyed rows only — the shape most callers want. */
+export function parseCsv(text: string): Record<string, string>[] {
+  return parseCsvSheet(text).rows;
 }
 
 /** Case-insensitive lookup of a source column in a row. */

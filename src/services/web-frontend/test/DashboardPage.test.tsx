@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { DashboardPage } from '../src/pages/DashboardPage';
 import type { DashboardAnalytics, User, Valuation } from '../src/lib/types';
@@ -107,7 +107,7 @@ describe('DashboardPage', () => {
     mockApi();
     renderPage();
 
-    const pivot = await screen.findByRole('table', { name: 'Product pivot' });
+    const pivot = await screen.findByRole('table', { name: /Valuations by product and workflow stage/ });
     expect(pivot).toBeInTheDocument();
 
     // Cell: 409a × open = 2 → /valuations?kind=409a&group=open
@@ -127,7 +127,7 @@ describe('DashboardPage', () => {
     mockApi();
     renderPage();
 
-    const detail = await screen.findByRole('table', { name: 'State detail' });
+    const detail = await screen.findByRole('table', { name: /Valuations by workflow state/ });
     expect(detail).toBeInTheDocument();
     const links = screen.getAllByRole('link');
     const started = links.find((l) => l.getAttribute('href') === '/valuations?state=started');
@@ -138,7 +138,7 @@ describe('DashboardPage', () => {
   it('keeps drill-through links consistent with the date range', async () => {
     mockApi();
     renderPage();
-    await screen.findByRole('table', { name: 'Product pivot' });
+    await screen.findByRole('table', { name: /Valuations by product and workflow stage/ });
 
     const from = screen.getByLabelText('Analytics from') as HTMLInputElement;
     // fireEvent-style change via userEvent is overkill for a date input
@@ -164,7 +164,7 @@ describe('DashboardPage', () => {
     expect(await screen.findByText('Recent valuations')).toBeInTheDocument();
     // …but the analytics block is gone.
     expect(screen.queryByText('Analytics')).not.toBeInTheDocument();
-    expect(screen.queryByRole('table', { name: 'Product pivot' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: /Valuations by product and workflow stage/ })).not.toBeInTheDocument();
     expect(fetchSpy.mock.calls.every(([url]) => !String(url).includes('/stats/dashboard'))).toBe(true);
   });
 
@@ -186,6 +186,54 @@ describe('DashboardPage', () => {
     expect(published!.textContent).not.toContain('unread');
   });
 
+  /**
+   * The dashboard is a wall of numbers in tables and charts, which is exactly
+   * the content that disappears when the markup is only visual.
+   */
+  describe('accessibility', () => {
+    it('names the pivot with a caption and scopes every header cell', async () => {
+      mockApi();
+      renderPage();
+      const pivot = await screen.findByRole('table', { name: /Valuations by product and workflow stage/ });
+
+      // Column headers, so a figure read in isolation is announced with the
+      // stage it belongs to.
+      expect(within(pivot).getAllByRole('columnheader').length).toBeGreaterThan(1);
+      expect(within(pivot).getByRole('columnheader', { name: 'Product' })).toBeInTheDocument();
+      // And a row header per product plus the totals row, so it is announced
+      // with the product too — "3" alone is not an answer to anything.
+      const rowHeaders = within(pivot).getAllByRole('rowheader');
+      expect(rowHeaders.length).toBeGreaterThan(1);
+      expect(rowHeaders.some((h) => /total/i.test(h.textContent ?? ''))).toBe(true);
+    });
+
+    it('gives the state detail table a caption and row headers', async () => {
+      mockApi();
+      renderPage();
+      const detail = await screen.findByRole('table', { name: /Valuations by workflow state/ });
+      expect(within(detail).getByRole('columnheader', { name: 'State' })).toBeInTheDocument();
+      expect(within(detail).getAllByRole('rowheader').length).toBeGreaterThan(0);
+    });
+
+    it('names each bucket link with what following it does', async () => {
+      mockApi();
+      renderPage();
+      await screen.findByText('Incomplete');
+      // Not "Incomplete 3 2 unread" — three numbers and no sentence.
+      expect(
+        screen.getByRole('link', { name: 'Incomplete: 3 valuations, 2 unread' }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /^Published: \d+ valuations$/ })).toBeInTheDocument();
+    });
+
+    it('groups the analytics date inputs so their two labels have a subject', async () => {
+      mockApi();
+      renderPage();
+      await screen.findByLabelText('Analytics from');
+      expect(screen.getByRole('group', { name: 'Analytics date range' })).toBeInTheDocument();
+    });
+  });
+
   it('states both SLA figures, and what the waiting one means', async () => {
     mockApi();
     renderPage();
@@ -197,7 +245,9 @@ describe('DashboardPage', () => {
   it('draws the throughput series', async () => {
     mockApi();
     renderPage();
-    expect(await screen.findByRole('img', { name: /Published per week/ })).toBeInTheDocument();
+    // The SVG is decorative; the series is published as a table so a screen
+    // reader can read the figures rather than only the chart's name.
+    expect(await screen.findByRole('table', { name: /Published per week/ })).toBeInTheDocument();
   });
 
   it('lists recent activity against the engagement it happened on', async () => {

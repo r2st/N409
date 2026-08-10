@@ -1,4 +1,5 @@
 import { APPROACH_LABELS, formatCurrency, formatPercent, num } from './reportSummary.js';
+import { toCsv } from './csv.js';
 
 /**
  * Side-by-side comparison of two valuations.
@@ -338,6 +339,95 @@ function isRow(r: CompareRow | null): r is CompareRow {
 /** Rows that actually moved, across every group — the "what changed" summary. */
 export function changedRows(groups: readonly CompareGroup[]): CompareRow[] {
   return groups.flatMap((g) => g.rows).filter((r) => r.changed);
+}
+
+/**
+ * Which way a metric moved, as a word rather than a colour.
+ *
+ * The screen colours the delta green or red, which is unreadable to the ~8% of
+ * men with a red-green deficiency and carries nothing at all into a CSV. This
+ * is the same judgement stated in text, and it is the same judgement: up is not
+ * good and down is not bad — a rising DLOM pushes the FMV *down*, so discounts
+ * read the other way round. Metrics we have not reasoned about get 'changed',
+ * not a guess.
+ */
+export const INVERTED_METRICS: ReadonlySet<string> = new Set(['dloc', 'dlom']);
+
+export type CompareDirection = 'up' | 'down' | 'changed' | 'unchanged';
+
+export function direction(row: Pick<CompareRow, 'key' | 'delta' | 'changed'>): CompareDirection {
+  if (!row.changed) return 'unchanged';
+  if (row.delta === null || row.delta === 0) return 'changed';
+  return row.delta > 0 ? 'up' : 'down';
+}
+
+/** Whether a move in this direction is favourable to the concluded value. */
+export function isFavourable(row: Pick<CompareRow, 'key' | 'delta' | 'changed'>): boolean | null {
+  const dir = direction(row);
+  if (dir === 'up' || dir === 'down') {
+    return INVERTED_METRICS.has(row.key) ? dir === 'down' : dir === 'up';
+  }
+  return null;
+}
+
+/**
+ * The comparison as a CSV.
+ *
+ * The board pack is built in a spreadsheet, and until now the only way to get
+ * these numbers into one was to retype them off the screen — which is how a
+ * transposed digit reaches a board. Every column the page shows is here,
+ * including the raw values beside the formatted ones: the formatted column is
+ * what a reader checks against the report, the raw one is what a formula can
+ * actually compute on.
+ *
+ * Direction travels as a word rather than as the screen's colour, because a CSV
+ * has no colour and a reader with a red-green deficiency never had it either.
+ */
+export function comparisonCsv(
+  a: Pick<CompareSide, 'company_name' | 'valuation_date'>,
+  b: Pick<CompareSide, 'company_name' | 'valuation_date'>,
+  groups: readonly CompareGroup[],
+): string {
+  const sideLabel = (side: Pick<CompareSide, 'company_name' | 'valuation_date'>): string =>
+    side.valuation_date ? `${side.company_name} (${side.valuation_date})` : side.company_name;
+
+  return toCsv(
+    [
+      'group',
+      'metric',
+      'a_label',
+      'a_value',
+      'a_raw',
+      'b_label',
+      'b_value',
+      'b_raw',
+      'change',
+      'change_raw',
+      'percent_change',
+      'direction',
+      'changed',
+    ],
+    groups.flatMap((group) =>
+      group.rows.map((row) => ({
+        group: group.title,
+        metric: row.label,
+        a_label: sideLabel(a),
+        a_value: row.a_display ?? '',
+        a_raw: row.a ?? '',
+        b_label: sideLabel(b),
+        b_value: row.b_display ?? '',
+        b_raw: row.b ?? '',
+        change: row.delta_display ?? '',
+        change_raw: row.delta ?? '',
+        // Written as a proportion, not a pre-multiplied percentage: the header
+        // says percent_change and a spreadsheet's own percent format multiplies
+        // by 100, so shipping 12.5 for a 12.5% move renders as 1250%.
+        percent_change: row.pct_change ?? '',
+        direction: direction(row),
+        changed: row.changed ? 'yes' : 'no',
+      })),
+    ),
+  );
 }
 
 /**

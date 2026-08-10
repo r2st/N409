@@ -50,10 +50,44 @@ export interface BulkInput {
   reviewer_id?: string | null;
 }
 
+/**
+ * Ids to act on, each exactly once, in the order the caller sent them.
+ *
+ * A bulk action is not idempotent per id, and the executor loops over the list
+ * verbatim — so a repeated id was applied twice. For `advance` that is the
+ * sharpest form of the bug: the same valuation takes *two* steps through the
+ * workflow from one click, `pending → started → review`, and both are recorded
+ * as ordinary transitions with their own emails to the client. `set_state`
+ * reported the second attempt as an illegal-transition failure, so an operator
+ * saw "1 succeeded, 1 failed" on a selection of one and had no way to tell that
+ * from a real conflict. `assign_reviewer` wrote the same value twice and left
+ * two audit events for one decision.
+ *
+ * Duplicates arrive more easily than they look. The worklist's own selection is
+ * a Set, but the export-and-re-import round trip an operator does with a
+ * spreadsheet is not, the API is public to partners, and a retried request that
+ * concatenates rather than replaces produces exactly this list.
+ *
+ * Case-folding is part of it: ULIDs are case-insensitive and `findValuationById`
+ * accepts either, so `01ARZ…` and `01arz…` are one valuation to the database and
+ * were two to this loop.
+ */
+export function dedupeIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    const key = id.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(id);
+  }
+  return out;
+}
+
 /** Maps the bulk-action contract onto the executor's input. Pure — unit tested. */
 export function toBulkInput(body: z.infer<typeof BulkActionBody>): BulkInput {
   return {
-    ids: body.valuation_ids,
+    ids: dedupeIds(body.valuation_ids),
     action: body.action,
     state: body.params?.state,
     reviewer_id: body.params?.reviewer_id,
@@ -141,7 +175,10 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
   });
 
   const executeBulk = async (principal: Principal, input: BulkInput) => {
-    const { ids, action, state, reviewer_id } = input;
+    // Both entry points normalize, but the guarantee belongs to the executor:
+    // it is the loop whose body is not idempotent. See `dedupeIds`.
+    const ids = dedupeIds(input.ids);
+    const { action, state, reviewer_id } = input;
 
     if (action === 'set_state' && !state) {
       throw problems.unprocessable('state is required for set_state');
@@ -212,7 +249,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     requireOps(principal);
     const parsed = BulkBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid bulk action', { errors: parsed.error.issues });
-    return executeBulk(principal, parsed.data);
+    return executeBulk(principal, { ...parsed.data, ids: dedupeIds(parsed.data.ids) });
   });
 
   app.post('/api/v1/valuations/bulk-action', { preHandler: app.authenticate }, async (req) => {

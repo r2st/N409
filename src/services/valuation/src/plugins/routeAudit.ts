@@ -155,6 +155,26 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
   { method: 'GET', url: '/api/partner/v1/docs', reason: 'self-describing partner API documentation' },
   {
     method: 'GET',
+    url: '/api/partner/v1/openapi.json',
+    reason: 'the same documentation as an OpenAPI 3.1 spec; a spec behind a key cannot bootstrap a client',
+  },
+
+  // One-click unsubscribe (RFC 8058). Both verbs are authenticated by the
+  // signed, scoped, expiring token in the query string — they have to be, since
+  // the POST is issued by the mailbox provider with no session and no user
+  // present. See domain/unsubscribeToken and routes/unsubscribe.
+  {
+    method: 'POST',
+    url: '/api/v1/unsubscribe',
+    reason: "one-click unsubscribe POSTed by the recipient's mailbox provider; authenticated by a signed token",
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/unsubscribe',
+    reason: 'unsubscribe link in an email footer; authenticated by a signed token',
+  },
+  {
+    method: 'GET',
     url: '/api/v1/blog/posts',
     reason: 'published marketing articles; a blog index a crawler cannot read is not a blog',
   },

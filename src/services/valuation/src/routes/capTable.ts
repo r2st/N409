@@ -10,6 +10,7 @@ import {
   FORMAT_PRESETS,
   parseCapTable,
   parseCsv,
+  parseCsvSheet,
   presetByKey,
   toWaterfallInputs,
   validateCapTable,
@@ -135,11 +136,13 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
         { filename },
       );
     } else {
-      // Anything else is read as delimited text. A stray BOM would otherwise
-      // become part of the first header name and break the column mapping.
-      const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
-      const rows = parseCsv(text);
-      sheets = [{ name: filename, headers: Object.keys(rows[0] ?? {}), rows }];
+      // Anything else is read as delimited text. The parser strips the BOM and
+      // sniffs the delimiter, and reports the header row itself: deriving the
+      // columns from `Object.keys(rows[0])` lost them entirely for a file with
+      // headers and no data rows, and put them in enumeration rather than
+      // source order for every other file.
+      const sheet = parseCsvSheet(buffer.toString('utf8'));
+      sheets = [{ name: filename, ...sheet }];
     }
 
     const truncated = sheets.some((s) => s.rows.length > MAX_UPLOAD_ROWS);

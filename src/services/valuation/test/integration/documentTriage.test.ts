@@ -221,6 +221,53 @@ describe.skipIf(!dbUp)('document triage queue', () => {
     expect(res.json()).toMatchObject({ succeeded: 1, failed: 1 });
   });
 
+  /**
+   * The batch is now fetched with one `= ANY($1)` rather than a lookup per
+   * assignment, so an id that is well-formed but matches nothing reaches the
+   * query and comes back simply absent — a different path from the malformed
+   * id above, which never reaches the database at all.
+   */
+  it('reports a well-formed id that matches no document, and files the rest', async () => {
+    const doc = await upload('real-one.pdf');
+    const res = await file([
+      { document_id: '01N409DOC0000000000000001A', category: 'corporate_documents' },
+      { document_id: doc.id, category: 'corporate_documents' },
+    ]);
+    const body = res.json() as {
+      succeeded: number;
+      failed: number;
+      results: Array<{ document_id: string; ok: boolean; error?: string }>;
+    };
+    expect(body).toMatchObject({ succeeded: 1, failed: 1 });
+    expect(body.results.find((r) => !r.ok)!.error).toMatch(/unknown document/i);
+  });
+
+  /**
+   * The batch is read once, so a document named twice in the same list is the
+   * case where a snapshot could disagree with the database. The second
+   * assignment must see what the first one did — otherwise it silently files
+   * the document a second time, into a different bucket, and reports success
+   * for both, which is exactly the double-filing the "already filed" guard
+   * exists to refuse.
+   */
+  it('refuses the second of two assignments naming the same document', async () => {
+    const doc = await upload('listed-twice.pdf');
+    const res = await file([
+      { document_id: doc.id, category: 'corporate_documents' },
+      { document_id: doc.id, category: 'intellectual_property' },
+    ]);
+    const body = res.json() as {
+      succeeded: number;
+      failed: number;
+      results: Array<{ ok: boolean; error?: string }>;
+    };
+    expect(body).toMatchObject({ succeeded: 1, failed: 1 });
+    expect(body.results[1]!.error).toMatch(/already filed/i);
+
+    const { rows } = await ctx.pool.query('SELECT category FROM documents WHERE id = $1', [doc.id]);
+    expect(rows[0].category).toBe('corporate_documents');
+  });
+
   it('is operations-only', async () => {
     expect((await queue(client.token)).statusCode).toBe(403);
     const doc = await upload('client-cannot-file.pdf');

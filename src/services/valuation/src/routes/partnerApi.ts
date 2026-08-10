@@ -41,6 +41,7 @@ import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
+import { buildOpenApiDocument, schemaKey, type OpenApiSchemas } from '../domain/openapi.js';
 
 /**
  * Partner API (improvement 6): a stable, versioned surface for programmatic
@@ -76,6 +77,18 @@ export interface PartnerEndpointDoc {
 
 /** Registry the routes are registered from — GET /docs serializes exactly this. */
 export const PARTNER_API_ENDPOINTS: PartnerEndpointDoc[] = [];
+
+/**
+ * The zod schemas each endpoint validates with, keyed by `METHOD /path`.
+ *
+ * Kept beside `PARTNER_API_ENDPOINTS` rather than inside it because that array
+ * is serialized straight to JSON by `GET /docs`, and a zod schema serializes to
+ * an empty object — the docs response would gain a field that says nothing.
+ * `GET /openapi.json` joins the two: prose from the registry, types from the
+ * validator. An endpoint absent from this map is still documented, just with a
+ * looser body schema, so registering a route is never blocked on adding one.
+ */
+export const PARTNER_API_SCHEMAS = new Map<string, OpenApiSchemas>();
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
@@ -190,14 +203,16 @@ export function registerPartnerApiRoutes(
 
   // Reset the registry if the app is rebuilt in-process (tests build many apps).
   PARTNER_API_ENDPOINTS.length = 0;
+  PARTNER_API_SCHEMAS.clear();
 
   /** Registers the route AND its documentation entry in one step. */
   const define = (
     doc: PartnerEndpointDoc,
     handler: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
-    opts: { bodyLimit?: number } = {},
+    opts: { bodyLimit?: number; schemas?: OpenApiSchemas } = {},
   ): void => {
     PARTNER_API_ENDPOINTS.push(doc);
+    if (opts.schemas) PARTNER_API_SCHEMAS.set(schemaKey(doc.method, doc.path), opts.schemas);
     const url = PARTNER_API_PREFIX + doc.path.replace(/\{(\w+)\}/g, ':$1');
     const routeOpts = {
       ...(doc.auth === 'api_key' ? { preHandler: [app.authenticate, apiKeyGuard] } : {}),
@@ -279,7 +294,41 @@ export function registerPartnerApiRoutes(
         headers: ['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'],
       },
       endpoints: PARTNER_API_ENDPOINTS,
+      openapi_url: `${PARTNER_API_PREFIX}/openapi.json`,
     }),
+  );
+
+  define(
+    {
+      method: 'GET',
+      path: '/openapi.json',
+      summary:
+        'OpenAPI 3.1 specification for this API — import it into Postman, generate a typed client, ' +
+        'or run it against a mock server.',
+      auth: 'none',
+      response: 'An OpenAPI 3.1 document describing every endpoint above.',
+    },
+    async (_req, reply) => {
+      // Rebuilt per request rather than memoised: the registry is populated at
+      // route-registration time, this endpoint is cold, and a cached document
+      // is one more thing that can be stale after a hot reload. It is a pure
+      // function of two in-memory structures.
+      const document = buildOpenApiDocument({
+        endpoints: PARTNER_API_ENDPOINTS,
+        schemas: PARTNER_API_SCHEMAS,
+        title: 'N409 Partner API',
+        version: '1.0.0',
+        serverUrl: PARTNER_API_PREFIX,
+        rateLimit: {
+          limit: PARTNER_API_RATE_LIMIT,
+          windowSeconds: PARTNER_API_RATE_WINDOW_MS / 1000,
+        },
+      });
+      // The registered media type for an OpenAPI document. Tools content-sniff
+      // on it, and `application/json` makes some of them ask the user what the
+      // file is.
+      return reply.header('content-type', 'application/openapi+json; charset=utf-8').send(document);
+    },
   );
 
   define(
@@ -324,6 +373,7 @@ export function registerPartnerApiRoutes(
         return { status: 201, body: { valuation: publicValuation(valuation) } };
       });
     },
+    { schemas: { body: CreateBody } },
   );
 
   define(
@@ -355,6 +405,7 @@ export function registerPartnerApiRoutes(
         total,
       };
     },
+    { schemas: { query: ListQuery } },
   );
 
   define(
@@ -439,7 +490,7 @@ export function registerPartnerApiRoutes(
       });
     },
     // base64 inflates ~4/3 over the raw 25 MB cap, plus JSON envelope headroom
-    { bodyLimit: Math.ceil((MAX_DOCUMENT_BYTES * 4) / 3) + 64 * 1024 },
+    { bodyLimit: Math.ceil((MAX_DOCUMENT_BYTES * 4) / 3) + 64 * 1024, schemas: { body: UploadBody } },
   );
 
   define(
@@ -570,6 +621,7 @@ export function registerPartnerApiRoutes(
       });
       return reply.status(201).send({ webhook: publicWebhook(webhook, true) });
     },
+    { schemas: { body: WebhookBody } },
   );
 
   define(

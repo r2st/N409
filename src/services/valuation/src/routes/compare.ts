@@ -8,6 +8,7 @@ import { latestSucceededCalculation, type CalculationRow } from '../repos/calcul
 import {
   changedRows,
   compareValuations,
+  comparisonCsv,
   headlineSummary,
   type CompareSide,
 } from '../domain/valuationCompare.js';
@@ -31,6 +32,8 @@ import { requirePrincipal } from '../plugins/auth.js';
 const Query = z.object({
   a: z.string(),
   b: z.string(),
+  /** `csv` downloads the same comparison for the board pack's spreadsheet. */
+  format: z.enum(['json', 'csv']).default('json'),
 });
 
 function sideFor(valuation: ValuationRow, calculation: CalculationRow | null): CompareSide {
@@ -63,7 +66,7 @@ export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     return valuation;
   };
 
-  app.get('/api/v1/valuations/compare', { preHandler: app.authenticate }, async (req) => {
+  app.get('/api/v1/valuations/compare', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const query = Query.safeParse(req.query);
     if (!query.success) {
@@ -91,6 +94,25 @@ export function registerCompareRoutes(app: FastifyInstance, deps: { pool: pg.Poo
     const a = sideFor(left, calcA);
     const b = sideFor(right, calcB);
     const groups = compareValuations(a, b);
+
+    if (query.data.format === 'csv') {
+      // Named from the two engagements rather than a timestamp: this file ends
+      // up attached to a board pack, and "compare-2026-08-10.csv" tells the
+      // person who opens it in six months nothing about what is being compared.
+      const slug = (value: string) =>
+        value
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '')
+          .slice(0, 40) || 'valuation';
+      return reply
+        .header('content-type', 'text/csv; charset=utf-8')
+        .header(
+          'content-disposition',
+          `attachment; filename="compare-${slug(a.company_name)}-vs-${slug(b.company_name)}.csv"`,
+        )
+        .send(comparisonCsv(a, b, groups));
+    }
 
     return {
       a,

@@ -28,11 +28,17 @@ describe('MIME message builder', () => {
     expect(msg).not.toContain('X-Injected');
   });
 
-  it('encodes non-ASCII subjects (RFC 2047) and dot-stuffs the body', () => {
+  it('encodes non-ASCII subjects (RFC 2047) and keeps leading dots out of the DATA stream', () => {
     const msg = buildMimeMessage({ from: 'a@b.c', to: 'x@y.z', subject: 'héllo', body: '.hidden\n..more' });
     expect(msg).toMatch(/Subject: =\?utf-8\?B\?[A-Za-z0-9+/=]+\?=/);
-    expect(msg).toContain('\r\n..hidden');
-    expect(msg).toContain('\r\n...more');
+    // Quoted-printable encodes the leading '.' as =2E, so dot-stuffing has
+    // nothing left to do — the guarantee it provided is now provided earlier
+    // and without altering the bytes the recipient decodes. See email/mime.
+    expect(msg).toContain('=2Ehidden');
+    expect(msg).toContain('=2E.more');
+    for (const line of msg.split('\r\n')) {
+      expect(line.startsWith('.') && !line.startsWith('..')).toBe(false);
+    }
   });
 
   it('extracts the bare address from a display-name form', () => {

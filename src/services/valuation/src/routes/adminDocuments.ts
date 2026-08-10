@@ -12,7 +12,7 @@ import {
 import { refileTarget, suggestCategory } from '../domain/documentTriage.js';
 import {
   countUnfiledDocuments,
-  findDocumentById,
+  findDocumentsByIds,
   listUnfiledDocuments,
   refileDocument,
 } from '../repos/documents.js';
@@ -134,6 +134,16 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
       error?: string;
     }> = [];
 
+    // One query for the whole batch instead of one per assignment. The queue
+    // page has a "select all", so a 200-row batch is the ordinary case and 200
+    // sequential round trips were the cost of it before any write happened.
+    // Ids that fail the ULID check are left out — they cannot match a row, and
+    // passing them would only widen the `ANY` array.
+    const documents = await findDocumentsByIds(
+      deps.pool,
+      parsed.data.assignments.map((a) => a.document_id.toUpperCase()).filter((id) => isUlid(id)),
+    );
+
     for (const assignment of parsed.data.assignments) {
       const id = assignment.document_id.toUpperCase();
       // `uploads` is the bucket being emptied. Accepting it would let a bulk
@@ -150,7 +160,7 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
         results.push({ document_id: assignment.document_id, ok: false, error: 'Unknown document' });
         continue;
       }
-      const doc = await findDocumentById(deps.pool, id);
+      const doc = documents.get(id);
       if (!doc) {
         results.push({ document_id: id, ok: false, error: 'Unknown document' });
         continue;
@@ -164,7 +174,14 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
         continue;
       }
       const target = refileTarget(doc.kind, assignment.category);
-      await refileDocument(deps.pool, doc, target, actorFor(principal));
+      const moved = await refileDocument(deps.pool, doc, target, actorFor(principal));
+      // Write the moved row back over the snapshot. The batch is read once, so
+      // without this a list that names the same document twice would file it
+      // twice — both assignments reading the pre-batch `uploads` state, the
+      // second silently overwriting the first's bucket. Re-reading per row is
+      // what used to prevent that; keeping the map current does the same
+      // without giving back the query.
+      documents.set(id, moved);
       results.push({ document_id: id, ok: true, category: target.category });
     }
 

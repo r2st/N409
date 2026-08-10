@@ -1,0 +1,26 @@
+-- The unsubscribe button the mailbox provider never showed.
+--
+-- Since 2024 Gmail and Yahoo require bulk senders to offer one-click
+-- unsubscribe: a `List-Unsubscribe` header plus `List-Unsubscribe-Post`, which
+-- the provider itself POSTs on the recipient's behalf. A footer link in the
+-- body does not satisfy it. Without the header the provider shows no
+-- unsubscribe control at all, so a recipient who wants the marketing mail to
+-- stop has exactly one button in front of them — "report spam" — and every
+-- press of it is scored against the sending domain that also carries the
+-- transactional mail. The renewal campaign was quietly costing the draft-ready
+-- notifications their inbox placement.
+--
+-- The header can only go on mail that is genuinely a mailing list. A client who
+-- one-click-unsubscribes from a marketing campaign must not thereby stop being
+-- told their own 409A is ready — that is a service failure, not a preference —
+-- and a header on transactional mail invites exactly that. `auto_emails` has
+-- carried a `promotional` flag since 0118 for this same distinction, but the
+-- outbox row did not record which kind it came from, so by the time the
+-- transport had the row the answer was gone.
+--
+-- Default false: every existing row, and every send that does not say
+-- otherwise, is treated as transactional and goes without the header. The
+-- failure mode of guessing wrong in that direction is a missing unsubscribe
+-- button; in the other, it is a silenced valuation notification.
+ALTER TABLE email_outbox
+  ADD COLUMN IF NOT EXISTS promotional boolean NOT NULL DEFAULT false;

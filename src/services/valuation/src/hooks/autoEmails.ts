@@ -167,6 +167,10 @@ async function scan(
           subject: renderTemplate(template.subject, vars),
           // Footer on promotional sends only — see applyPromotionalFooter.
           body: applyPromotionalFooter(renderTemplate(template.body, vars), campaign, settingsUrl),
+          // Carried onto the row so the transport can attach `List-Unsubscribe`
+          // to this send and to nothing else (migration 0138). The campaign
+          // knows; by delivery time only the row is left to ask.
+          promotional: campaign.promotional,
         });
         await recordAutoEmailSend(tx, {
           autoEmailId: campaign.id,

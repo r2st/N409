@@ -3,8 +3,10 @@ import {
   inferClassType,
   parseCapTable,
   parseCsv,
+  parseCsvSheet,
   parseNumericCell,
   presetByKey,
+  sniffDelimiter,
   toWaterfallInputs,
   validateCapTable,
   type CapTableEntry,
@@ -58,6 +60,83 @@ describe('capTable', () => {
 
     it('skips blank lines', () => {
       expect(parseCsv('a,b\n\n1,2\n')).toHaveLength(1);
+    });
+
+    it('strips the BOM "Save as CSV UTF-8" writes', () => {
+      // Left in place it becomes part of the first header name, and the first
+      // column of a cap table is the one that matters most.
+      const rows = parseCsv('﻿class,shares\nCommon,100\n');
+      expect(Object.keys(rows[0]!)).toEqual(['class', 'shares']);
+    });
+
+    it('reads semicolon-delimited CSV, which is what Excel writes in most of Europe', () => {
+      const rows = parseCsv('class;shares;price\nCommon;8000000;0.10\n');
+      expect(rows[0]).toEqual({ class: 'Common', shares: '8000000', price: '0.10' });
+    });
+
+    it('reads tab-delimited text, which is what a spreadsheet paste produces', () => {
+      const rows = parseCsv('class\tshares\nCommon\t8000000\n');
+      expect(rows[0]).toEqual({ class: 'Common', shares: '8000000' });
+    });
+
+    it('does not let a comma inside a quoted header outvote the real delimiter', () => {
+      const rows = parseCsv('"Acme, Inc";shares\nCommon;100\n');
+      expect(rows[0]).toEqual({ 'Acme, Inc': 'Common', shares: '100' });
+    });
+
+    it('keeps duplicate columns distinct instead of letting the last one win', () => {
+      // Carta exports granted and outstanding shares under the same label.
+      const { headers, rows } = parseCsvSheet('class,shares,shares\nCommon,100,90\n');
+      expect(headers).toEqual(['class', 'shares', 'shares (2)']);
+      expect(rows[0]).toEqual({ class: 'Common', shares: '100', 'shares (2)': '90' });
+    });
+
+    it('drops unnamed columns rather than collapsing them onto one key', () => {
+      // A trailing separator and a spacer column both produce these.
+      const { headers, rows } = parseCsvSheet('class,,shares,\nCommon,x,100,y\n');
+      expect(headers).toEqual(['class', 'shares']);
+      expect(rows[0]).toEqual({ class: 'Common', shares: '100' });
+    });
+
+    it('reports the header row for a file that has no data rows', () => {
+      // The mapping UI needs the columns before a single row exists; deriving
+      // them from the first row's keys gave it nothing to show.
+      expect(parseCsvSheet('class,shares,price\n').headers).toEqual(['class', 'shares', 'price']);
+    });
+
+    it('reports headers in source order', () => {
+      expect(parseCsvSheet('zeta,alpha,middle\n1,2,3\n').headers).toEqual(['zeta', 'alpha', 'middle']);
+    });
+
+    it('has nothing to say about an empty file', () => {
+      expect(parseCsvSheet('')).toEqual({ headers: [], rows: [] });
+      expect(parseCsvSheet('\n\n')).toEqual({ headers: [], rows: [] });
+    });
+  });
+
+  describe('sniffDelimiter', () => {
+    it('defaults to a comma when the header has no separator at all', () => {
+      expect(sniffDelimiter('class\nCommon\n')).toBe(',');
+    });
+
+    it('picks the separator that appears most often in the header', () => {
+      expect(sniffDelimiter('a,b,c\n')).toBe(',');
+      expect(sniffDelimiter('a;b;c\n')).toBe(';');
+      expect(sniffDelimiter('a\tb\tc\n')).toBe('\t');
+    });
+
+    it('reads only the header line, not the data below it', () => {
+      // A data row full of semicolons inside quoted prose must not re-decide
+      // the delimiter for a file whose header is plainly comma-separated.
+      expect(sniffDelimiter('class,note\nCommon,"a; b; c; d"\n')).toBe(',');
+    });
+
+    it('ignores separators inside quotes', () => {
+      expect(sniffDelimiter('"a,b,c,d";x\n')).toBe(';');
+    });
+
+    it('handles a header with no trailing newline', () => {
+      expect(sniffDelimiter('a;b')).toBe(';');
     });
   });
 

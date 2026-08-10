@@ -29,6 +29,7 @@ function renderPage() {
 describe('OnboardingPage (guided client funnel)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    sessionStorage.clear();
   });
 
   it('walks company → payment → uploads → done, skipping payment when Stripe is unconfigured', async () => {
@@ -93,6 +94,133 @@ describe('OnboardingPage (guided client funnel)', () => {
     expect(screen.getByText(/upload what you have/i)).toBeInTheDocument();
     // The engagement checklist is shown (kinds also appear in the type picker).
     expect(screen.getAllByText(/articles of incorporation/i).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The Stripe step leaves the page. Everything below is about what the client
+   * finds when they come back — the failure being prevented is a second
+   * valuation created because the first was forgotten.
+   */
+  describe('progress persistence', () => {
+    const stubQuote = () =>
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith('/valuations') && init?.method === 'POST') {
+          return jsonResponse({ valuation: VALUATION }, 201);
+        }
+        if (url.includes('/payments/quote')) {
+          return jsonResponse({
+            quote: { amount_cents: 119_000, currency: 'USD', kind: '409a', configured: true },
+          });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      });
+
+    it('resumes the same request after a remount instead of asking for the company again', async () => {
+      const user = userEvent.setup();
+      stubQuote();
+
+      const first = renderPage();
+      await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /with card/i })).toBeInTheDocument());
+      first.unmount();
+
+      // A refresh, a restored tab, or the return leg of the Stripe redirect.
+      renderPage();
+      expect(screen.getByTestId('onboarding-resumed')).toHaveTextContent('Acme Robotics, Inc.');
+      expect(screen.getByRole('button', { name: /with card/i })).toBeInTheDocument();
+      expect(screen.queryByPlaceholderText('Acme Robotics, Inc.')).not.toBeInTheDocument();
+    });
+
+    it('parks on the uploads step before handing the browser to Stripe', async () => {
+      const user = userEvent.setup();
+      const assign = vi.fn();
+      vi.spyOn(window, 'location', 'get').mockReturnValue({
+        ...window.location,
+        assign,
+      } as unknown as Location);
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith('/valuations') && init?.method === 'POST') {
+          return jsonResponse({ valuation: VALUATION }, 201);
+        }
+        if (url.includes('/payments/quote')) {
+          return jsonResponse({ quote: { amount_cents: 119_000, currency: 'USD', kind: '409a' } });
+        }
+        if (url.includes('/payments/checkout')) {
+          return jsonResponse({ checkout_url: 'https://checkout.stripe.test/session' });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      });
+
+      const first = renderPage();
+      await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await waitFor(() => screen.getByRole('button', { name: /with card/i }));
+      await user.click(screen.getByRole('button', { name: /with card/i }));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('https://checkout.stripe.test/session'));
+      first.unmount();
+
+      // Coming back — paid or cancelled — lands on uploads, not on step one.
+      renderPage();
+      expect(screen.getByText(/upload what you have/i)).toBeInTheDocument();
+      expect(screen.getByTestId('onboarding-resumed')).toBeInTheDocument();
+    });
+
+    it('re-fetches the price on resume rather than showing a cached one', async () => {
+      const user = userEvent.setup();
+      const fetchMock = stubQuote();
+
+      const first = renderPage();
+      await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await waitFor(() => expect(screen.getByTestId('onboarding-quote')).toHaveTextContent('$1,190.00'));
+      first.unmount();
+
+      fetchMock.mockImplementation(async (input) => {
+        if (String(input).includes('/payments/quote')) {
+          return jsonResponse({
+            quote: { amount_cents: 129_000, currency: 'USD', kind: '409a', configured: true },
+          });
+        }
+        throw new Error(`unexpected fetch ${String(input)}`);
+      });
+      renderPage();
+      await waitFor(() => expect(screen.getByTestId('onboarding-quote')).toHaveTextContent('$1,290.00'));
+    });
+
+    it('forgets the request once the client leaves the finished funnel', async () => {
+      const user = userEvent.setup();
+      stubQuote();
+
+      const first = renderPage();
+      await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+      await waitFor(() => screen.getByRole('button', { name: /skip for now/i }));
+      await user.click(screen.getByRole('button', { name: /skip for now/i }));
+      await user.click(screen.getByRole('button', { name: /skip uploads for now/i }));
+      expect(screen.getByText(/your request is in/i)).toBeInTheDocument();
+
+      // Still resumable while they are looking at the confirmation…
+      first.unmount();
+      renderPage();
+      expect(screen.getByText(/your request is in/i)).toBeInTheDocument();
+
+      // …and gone once they leave it.
+      await user.click(screen.getByRole('button', { name: /open my valuation/i }));
+      renderPage();
+      expect(screen.getByPlaceholderText('Acme Robotics, Inc.')).toBeInTheDocument();
+      expect(screen.queryByTestId('onboarding-resumed')).not.toBeInTheDocument();
+    });
+
+    it('starts clean rather than breaking when the stored draft is junk', () => {
+      sessionStorage.setItem('n409.onboarding.draft', '{"version":1,"step":9,"valuation":null}');
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ valuations: [] }));
+      renderPage();
+      expect(screen.getByPlaceholderText('Acme Robotics, Inc.')).toBeInTheDocument();
+      expect(screen.queryByTestId('onboarding-resumed')).not.toBeInTheDocument();
+    });
   });
 
   it('surfaces creation errors instead of advancing', async () => {

@@ -93,6 +93,28 @@ export async function findDocumentById(pool: pg.Pool, id: string): Promise<Docum
 }
 
 /**
+ * Batch counterpart to findDocumentById, keyed by id for O(1) lookup.
+ *
+ * The bulk re-filing action fetched one document per assignment, so clearing a
+ * triage queue of 200 files cost 200 sequential round trips before the first
+ * write — the queue page offers "select all", so the large batch is the normal
+ * one, not the edge case. `= ANY($1)` collapses that to a single query.
+ *
+ * Ids that are missing, deleted, or simply not documents are absent from the
+ * map rather than being an error: the caller reports per-item outcomes and
+ * already has to say "unknown document" for a row someone else removed while
+ * the queue was on screen.
+ */
+export async function findDocumentsByIds(pool: pg.Pool, ids: string[]): Promise<Map<string, DocumentRow>> {
+  if (ids.length === 0) return new Map();
+  const { rows } = await pool.query<DocumentRow>(
+    'SELECT * FROM documents WHERE id = ANY($1) AND deleted_at IS NULL',
+    [[...new Set(ids)]],
+  );
+  return new Map(rows.map((row) => [row.id, row]));
+}
+
+/**
  * The engagement's live files, grouped by bucket.
  *
  * `ORDER BY category` is the enum's order and therefore roughly the checklist's

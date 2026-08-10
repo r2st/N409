@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BulkActionBody, toBulkInput } from '../../src/routes/workflow.js';
+import { BulkActionBody, dedupeIds, toBulkInput } from '../../src/routes/workflow.js';
 import { ValuationFilterQuery, toRepoFilters } from '../../src/routes/valuations.js';
 import { buildValuationWhere } from '../../src/repos/valuations.js';
 
@@ -57,6 +57,31 @@ describe('BulkActionBody', () => {
     expect(
       BulkActionBody.safeParse({ action: 'advance', valuation_ids: Array(201).fill(ID_A) }).success,
     ).toBe(false);
+  });
+});
+
+describe('dedupeIds (a bulk action is not idempotent per id)', () => {
+  it('keeps the first occurrence and drops repeats, preserving order', () => {
+    expect(dedupeIds([ID_A, ID_B, ID_A])).toEqual([ID_A, ID_B]);
+  });
+
+  it('treats a differently-cased ULID as the same valuation, because the database does', () => {
+    expect(dedupeIds([ID_A, ID_A.toLowerCase()])).toEqual([ID_A]);
+  });
+
+  it('leaves a list with no repeats untouched', () => {
+    expect(dedupeIds([ID_A, ID_B])).toEqual([ID_A, ID_B]);
+    expect(dedupeIds([])).toEqual([]);
+  });
+
+  it('normalizes at the contract boundary, so `advance` cannot take two steps at once', () => {
+    // Twice through the executor is `pending → started → review` from one
+    // click, with a client email for each — see dedupeIds.
+    const parsed = BulkActionBody.parse({
+      action: 'advance',
+      valuation_ids: [ID_A, ID_A.toLowerCase(), ID_B],
+    });
+    expect(toBulkInput(parsed).ids).toEqual([ID_A, ID_B]);
   });
 });
 

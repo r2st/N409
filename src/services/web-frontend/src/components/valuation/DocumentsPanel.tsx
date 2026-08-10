@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
-import { api, apiUpload, ApiError, getToken } from '../../lib/api';
+import { api, apiDownload, apiUpload, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import {
   DOCUMENT_KIND_LABELS,
@@ -10,6 +10,25 @@ import {
   type ValuationDocument,
 } from '../../lib/pipeline';
 import { Button, EmptyState, ErrorNote, LoadingBlock, Select, Skeleton, SkeletonDividedList } from '../ui';
+
+/**
+ * Mirrors MAX_DOCUMENT_BYTES on the upload route.
+ *
+ * Checked here as well as there because the server can only refuse a file it
+ * has already received: a client on a slow uplink otherwise spends minutes
+ * pushing a file that was never going to be accepted, and the batch it was part
+ * of is held up behind it. The server remains the authority — this only saves
+ * the round trip.
+ */
+export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+
+/** A file that never left the browser, phrased like the server's own refusal. */
+function localRejection(file: File): string | null {
+  if (file.size === 0) return 'the file is empty';
+  if (file.size > MAX_DOCUMENT_BYTES)
+    return `it is ${formatBytes(file.size)}, over the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB limit`;
+  return null;
+}
 
 /** Per-valuation document intake: drag-and-drop upload, list by kind, download, delete. */
 export function DocumentsPanel({
@@ -25,10 +44,14 @@ export function DocumentsPanel({
 }) {
   const [documents, setDocuments] = useState<ValuationDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** One line per file that did not upload, so a batch names its own failures. */
+  const [rejected, setRejected] = useState<string[]>([]);
   const [kind, setKind] = useState<DocumentKind>('other');
-  const [busy, setBusy] = useState(false);
+  /** Which file of how many is in flight, or null when nothing is uploading. */
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string } | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const busy = progress !== null;
 
   const load = useCallback(async () => {
     try {
@@ -45,28 +68,58 @@ export function DocumentsPanel({
     void load();
   }, [load]);
 
+  /**
+   * Upload a batch, one file at a time, finishing the batch whatever happens.
+   *
+   * The loop used to abort on the first rejection and report "Upload failed."
+   * — so dragging in a folder of eight files where the second was over the
+   * limit uploaded one, silently skipped six, and named none of them. Dropping
+   * a batch is the normal way to use this panel, and one bad file in it is the
+   * normal reason a batch goes wrong, so a failure has to say which file and
+   * leave the others alone.
+   */
   const upload = async (files: FileList | File[]) => {
+    const batch = Array.from(files);
+    if (batch.length === 0) return;
     setError(null);
-    setBusy(true);
-    try {
-      for (const file of Array.from(files)) {
+    setRejected([]);
+
+    const failures: string[] = [];
+    let uploaded = 0;
+    for (const [index, file] of batch.entries()) {
+      setProgress({ done: index, total: batch.length, name: file.name });
+
+      const localReason = localRejection(file);
+      if (localReason !== null) {
+        failures.push(`${file.name} — ${localReason}`);
+        continue;
+      }
+      try {
         const form = new FormData();
         form.append('kind', kind);
         form.append('file', file);
         await apiUpload(`/valuations/${valuationId}/documents`, form);
+        uploaded += 1;
+      } catch (err) {
+        failures.push(`${file.name} — ${err instanceof ApiError ? err.message : 'upload failed'}`);
       }
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Upload failed.');
-    } finally {
-      setBusy(false);
     }
+    setProgress(null);
+    setRejected(failures);
+    // Only re-read when something actually landed: a batch that failed outright
+    // has not changed the list, and refetching it just makes the failure blink.
+    if (uploaded > 0) await load();
   };
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
     if (e.dataTransfer.files.length > 0) void upload(e.dataTransfer.files);
+    else {
+      // Dropping a folder, a URL or a selection yields no files. Saying so
+      // beats the silence that used to look like the drop simply not landing.
+      setRejected(['Nothing to upload — drop files rather than a folder.']);
+    }
   };
 
   const remove = async (doc: ValuationDocument) => {
@@ -103,23 +156,16 @@ export function DocumentsPanel({
   };
 
   const download = async (doc: ValuationDocument) => {
-    // fetch → blob URL; a plain <a href> can't carry auth. The httpOnly session
-    // cookie authenticates same-origin; add the bearer only when a token is in
-    // memory this tab (audit F-2).
+    // fetch → blob URL via apiDownload; a plain <a href> can't carry auth. The
+    // httpOnly session cookie authenticates same-origin and apiDownload adds
+    // the bearer when a token is in memory this tab (audit F-2). This used to
+    // be a hand-rolled copy that skipped appending the anchor to the document
+    // before clicking it — which Firefox ignores — and revoked the blob URL in
+    // the same tick, racing the download it had just started.
     try {
-      const token = getToken();
-      const res = await fetch(`/api/v1/valuations/${valuationId}/documents/${doc.id}/download`, {
-        headers: token ? { authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = doc.filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setError('Download failed.');
+      await apiDownload(`/valuations/${valuationId}/documents/${doc.id}/download`, doc.filename);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Download failed.');
     }
   };
 
@@ -140,10 +186,33 @@ export function DocumentsPanel({
     <div className="space-y-5">
       {error && <ErrorNote>{error}</ErrorNote>}
 
+      {/* Named per file, because "some of that batch did not upload" is only
+          actionable if you know which and why. */}
+      {rejected.length > 0 && (
+        <ErrorNote>
+          <span className="font-semibold">
+            {rejected.length === 1 ? '1 file was not uploaded' : `${rejected.length} files were not uploaded`}
+          </span>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {/* Index-keyed: a batch can hold two files of the same name from
+                different folders, so the line is not a unique key. The list is
+                replaced wholesale per batch, never reordered. */}
+            {rejected.map((line, i) => (
+              <li key={`${i}:${line}`}>{line}</li>
+            ))}
+          </ul>
+        </ErrorNote>
+      )}
+
       <div className="flex flex-wrap items-end gap-3">
         <label className="block">
           <span className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">Document type</span>
-          <Select value={kind} onChange={(e) => setKind(e.target.value as DocumentKind)} className="w-56">
+          <Select
+            value={kind}
+            disabled={busy}
+            onChange={(e) => setKind(e.target.value as DocumentKind)}
+            className="w-56"
+          >
             {DOCUMENT_KINDS.map((k) => (
               <option key={k} value={k}>
                 {DOCUMENT_KIND_LABELS[k]}
@@ -160,7 +229,15 @@ export function DocumentsPanel({
           multiple
           hidden
           data-testid="file-input"
-          onChange={(e) => e.target.files && void upload(e.target.files)}
+          onChange={(e) => {
+            const picked = e.target.files;
+            // Clearing the input is what lets the same file be picked twice.
+            // A file rejected for its size is exactly the one a user fixes and
+            // re-selects, and without this the second attempt fires no change
+            // event at all — the panel simply ignores the click.
+            e.target.value = '';
+            if (picked) void upload(picked);
+          }}
         />
       </div>
 
@@ -171,12 +248,25 @@ export function DocumentsPanel({
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
+        aria-busy={busy}
         className={`rounded-lg border-2 border-dashed px-6 py-8 text-center text-sm transition-colors ${
           dragging ? 'border-bond-500 bg-bond-50 text-bond-700' : 'border-ink-200 bg-paper-50 text-ink-400'
         }`}
       >
-        Drag &amp; drop files here — they upload as{' '}
-        <span className="font-semibold">{DOCUMENT_KIND_LABELS[kind]}</span> (max 25 MB each)
+        {progress ? (
+          // Which file, and how far through — a batch of large files otherwise
+          // shows one unchanging "Uploading…" for minutes and reads as hung.
+          <span role="status">
+            Uploading {progress.done + 1} of {progress.total} —{' '}
+            <span className="font-semibold">{progress.name}</span>
+          </span>
+        ) : (
+          <>
+            Drag &amp; drop files here — they upload as{' '}
+            <span className="font-semibold">{DOCUMENT_KIND_LABELS[kind]}</span> (max{' '}
+            {MAX_DOCUMENT_BYTES / (1024 * 1024)} MB each)
+          </>
+        )}
       </div>
 
       {documents && documents.length === 0 && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { DonutChart, WaterfallChart, LineChart, Heatmap } from '../src/components/charts';
 
 describe('DonutChart', () => {
@@ -40,11 +40,36 @@ describe('WaterfallChart', () => {
         format={(v) => `$${v.toFixed(2)}`}
       />,
     );
-    expect(screen.getByText('FMV bridge')).toBeInTheDocument();
-    // Start total, step deltas (with sign), and the computed end total.
-    expect(screen.getByText('$2.00')).toBeInTheDocument();
-    expect(screen.getByText('+$1.20')).toBeInTheDocument();
-    expect(screen.getByText('$3.50')).toBeInTheDocument(); // 2 + 1.2 + 0.3
+    // Twice: the visible heading, and the caption of the screen-reader table.
+    expect(screen.getAllByText('FMV bridge')).toHaveLength(2);
+    // Start total, step deltas (with sign), and the computed end total — each
+    // drawn in the SVG and repeated in the data table.
+    for (const value of ['$2.00', '+$1.20', '$3.50']) {
+      expect(screen.getAllByText(value).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('exposes the bridge as a table, since the SVG itself is hidden from AT', () => {
+    render(
+      <WaterfallChart
+        title="FMV bridge"
+        start={{ label: 'Prior', value: 2 }}
+        steps={[
+          { label: 'Growth', value: 1.2 },
+          { label: 'Discount', value: -0.4 },
+        ]}
+        format={(v) => `$${v.toFixed(2)}`}
+      />,
+    );
+    const table = screen.getByRole('table', { name: 'FMV bridge' });
+    // A running total and a contribution are different claims — the sign is
+    // what tells them apart once the colour is gone.
+    expect(within(table).getByRole('rowheader', { name: 'Prior' })).toBeInTheDocument();
+    expect(within(table).getByText('$2.00')).toBeInTheDocument();
+    expect(within(table).getByText('+$1.20')).toBeInTheDocument();
+    // Formatted exactly as the SVG draws it — the sign comes from the
+    // formatter for a negative, and the '+' is added only for a positive.
+    expect(within(table).getByText('$-0.40')).toBeInTheDocument();
   });
 });
 
@@ -60,11 +85,30 @@ describe('LineChart', () => {
         format={(v) => `$${v.toFixed(2)}`}
       />,
     );
-    expect(screen.getByText('FMV')).toBeInTheDocument();
-    expect(screen.getByText('$3.00')).toBeInTheDocument(); // latest
+    expect(screen.getAllByText('FMV').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('$3.00').length).toBeGreaterThan(0); // latest
 
     rerender(<LineChart title="FMV" points={[{ label: 'A', value: null }]} format={(v) => `${v}`} />);
     expect(screen.getByText('Not enough data yet.')).toBeInTheDocument();
+  });
+
+  it('publishes the series as a table — an aria-labelled SVG announces nothing else', () => {
+    render(
+      <LineChart
+        title="Published per week"
+        points={[
+          { label: 'Week 1', value: 2 },
+          { label: 'Week 2', value: null },
+          { label: 'Week 3', value: 5 },
+        ]}
+        format={(v) => String(v)}
+      />,
+    );
+    const table = screen.getByRole('table', { name: 'Published per week' });
+    expect(within(table).getByRole('rowheader', { name: 'Week 1' })).toBeInTheDocument();
+    expect(within(table).getByText('5')).toBeInTheDocument();
+    // A gap is a real state; a zero here would claim nothing was published.
+    expect(within(table).getByText('no data')).toBeInTheDocument();
   });
 });
 

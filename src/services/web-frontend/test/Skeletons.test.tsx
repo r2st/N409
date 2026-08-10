@@ -269,7 +269,7 @@ describe('dashboard analytics loading state', () => {
     await waitFor(() => expect(screen.getByText('Loading analytics…')).toBeInTheDocument());
 
     release!();
-    await waitFor(() => expect(screen.getByLabelText('Product pivot')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('table', { name: /Valuations by product and workflow stage/ })).toBeInTheDocument());
     expect(screen.queryByText('Loading analytics…')).toBeNull();
   });
 
@@ -286,7 +286,7 @@ describe('dashboard analytics loading state', () => {
     await waitFor(() => expect(screen.getByText('Total')).toBeInTheDocument());
     // … and the analytics placeholder does not outlive the failed request.
     await waitFor(() => expect(screen.queryByText('Loading analytics…')).toBeNull());
-    expect(screen.queryByLabelText('Product pivot')).toBeNull();
+    expect(screen.queryByRole('table', { name: /Valuations by product and workflow stage/ })).toBeNull();
   });
 
   it('keeps the loaded pivot on screen while a date-range change refetches', async () => {
@@ -298,11 +298,11 @@ describe('dashboard analytics loading state', () => {
         <DashboardPage />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByLabelText('Product pivot')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('table', { name: /Valuations by product and workflow stage/ })).toBeInTheDocument());
 
     fireEvent.change(screen.getByLabelText('Analytics from'), { target: { value: '2026-01-01' } });
 
-    expect(screen.getByLabelText('Product pivot')).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: /Valuations by product and workflow stage/ })).toBeInTheDocument();
     expect(screen.queryByText('Loading analytics…')).toBeNull();
   });
 });

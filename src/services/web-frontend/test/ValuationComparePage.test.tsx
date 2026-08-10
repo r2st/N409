@@ -312,4 +312,62 @@ describe('ValuationComparePage', () => {
     expect(await screen.findByText('No completed calculation yet')).toBeInTheDocument();
     expect(screen.getByText('changed')).toBeInTheDocument();
   });
+
+  /**
+   * Colour is the only thing that told a reader whether a move was good, and
+   * roughly one man in twelve cannot read the green/red pair (WCAG 1.4.1).
+   */
+  describe('direction without colour', () => {
+    it('names the direction and the verdict in text beside the delta', async () => {
+      mockApi();
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      const fmv = (await screen.findByText('FMV per common share')).closest('tr')!;
+      expect(within(fmv).getByText(/increased, favourable/)).toBeInTheDocument();
+      // The arrow is decoration on top of the words, not a substitute for them.
+      expect(fmv.textContent).toContain('▲');
+    });
+
+    it('reads a falling discount as favourable and a falling value as not', async () => {
+      mockApi();
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      const dlom = (await screen.findByText('Discount for lack of marketability')).closest('tr')!;
+      expect(within(dlom).getByText(/decreased, favourable/)).toBeInTheDocument();
+      expect(dlom.textContent).toContain('▼');
+    });
+
+    it('says nothing about direction where a metric held still', async () => {
+      mockApi();
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      await screen.findByText('FMV per common share');
+      await userEvent.click(screen.getByRole('button', { name: /show all metrics/i }));
+      const flat = screen.getByText('Fully diluted common').closest('tr')!;
+      expect(flat.textContent).not.toContain('▲');
+      expect(flat.textContent).not.toContain('▼');
+      expect(within(flat).queryByText(/increased|decreased/)).toBeNull();
+    });
+  });
+
+  describe('CSV export', () => {
+    it('downloads the comparison from the server, unfiltered by the view toggle', async () => {
+      const urls = mockApi();
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+      // jsdom implements neither of these; the download helper uses both.
+      URL.createObjectURL = vi.fn(() => 'blob:comparison');
+      URL.revokeObjectURL = vi.fn();
+      renderAt(`?a=${VAL_A}&b=${VAL_B}`);
+
+      await screen.findByRole('button', { name: /export csv/i });
+      await userEvent.click(screen.getByRole('button', { name: /export csv/i }));
+
+      await waitFor(() => expect(click).toHaveBeenCalled());
+      // Asked the server for the file rather than serialising the filtered
+      // rows the page happens to be showing.
+      expect(urls.some((u) => u.includes('format=csv') && u.includes(VAL_A) && u.includes(VAL_B))).toBe(
+        true,
+      );
+    });
+  });
 });

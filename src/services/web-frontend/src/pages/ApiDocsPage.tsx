@@ -24,6 +24,8 @@ interface ApiDocs {
   authentication: { scheme: string; header: string; note: string };
   rate_limit: { limit: number; window_seconds: number; headers: string[] };
   endpoints: EndpointDoc[];
+  /** Where the OpenAPI 3.1 document lives. Absent on older deployments. */
+  openapi_url?: string;
 }
 
 function MethodChip({ method }: { method: EndpointDoc['method'] }) {
@@ -83,6 +85,31 @@ export function ApiDocsPage() {
 
       {docs && (
         <>
+          {/*
+            * The spec, first and above the prose. A partner's first move is to
+            * generate a client, not to read fourteen endpoint cards — and a
+            * reference that buries the machine-readable version at the bottom
+            * gets hand-written HTTP clients built against it instead.
+            */}
+          {docs.openapi_url && (
+            <section className="mt-8 rounded-lg border border-bond-200 bg-bond-50 p-5">
+              <h2 className="overline mb-1.5 text-ink-500">Machine-readable spec</h2>
+              <p className="text-sm text-ink-700">
+                Everything below is also published as an{' '}
+                <a
+                  href={docs.openapi_url}
+                  className="font-semibold text-bond-700 underline underline-offset-2 hover:text-bond-800"
+                >
+                  OpenAPI 3.1 document
+                </a>
+                . Import it into Postman or Insomnia, or point a client generator at it:
+              </p>
+              <pre className="mt-3 overflow-x-auto rounded bg-ink-900 px-3.5 py-2.5 font-mono text-xs text-paper-50">
+                <code>{`npx @openapitools/openapi-generator-cli generate \\\n  -i ${docs.openapi_url} -g typescript-fetch -o ./n409-client`}</code>
+              </pre>
+            </section>
+          )}
+
           <section className="mt-8 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <h2 className="overline mb-2 text-ink-400">Authentication</h2>
             <p className="text-sm text-ink-600">

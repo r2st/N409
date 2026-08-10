@@ -51,6 +51,25 @@ export const COST_RULES: readonly CostRule[] = [
   { pattern: /\/admin\/prompts\/[^/]+\/test$/, methods: ['POST'], cost: 25 },
   { pattern: /\/qa$/, methods: ['POST'], cost: 20 },
 
+  // Ingest — the other direction, and the one the table used to miss entirely.
+  //
+  // Every other rule here prices work the *server* initiates on request. These
+  // two price work the *caller* hands it, which is cheaper to ask for and no
+  // cheaper to do: a cap-table upload inflates a ZIP and parses its XML in
+  // process, and a document upload buffers up to 25 MB, sniffs it, hashes it,
+  // encrypts it and writes it to disk. Both were free, so the budget that
+  // throttles a 10-unit PDF download let the same user replay 25 MB uploads
+  // without limit.
+  //
+  // The document rule matters twice over, because an extractable upload starts
+  // the auto-pipeline (extract → param fill → draft calculation). That is the
+  // same LLM work `POST /ai/:pipeline` is charged 25 for; reaching it by
+  // uploading a file instead charged nothing. The cost sits below a direct AI
+  // call because the pipeline is conditional — it only fires for kinds the
+  // extractor handles, and only when AUTO_PIPELINE is on.
+  { pattern: /\/cap-table\/upload$/, methods: ['POST'], cost: 12 },
+  { pattern: /\/documents$/, methods: ['POST'], cost: 15 },
+
   // Document/report rendering and bundling — CPU plus large buffers.
   { pattern: /\/evidence-bundle$/, methods: ['POST'], cost: 30 },
   { pattern: /\/export$/, methods: ['GET'], cost: 15 },

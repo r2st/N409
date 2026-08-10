@@ -183,6 +183,12 @@ export function DashboardPage() {
                   <Link
                     key={key}
                     to={`/valuations?bucket=${key}`}
+                    // Concatenating the children gives "Incomplete 12 3 unread",
+                    // which in a screen reader's link list is three numbers and
+                    // no sentence. Naming the link says what following it does.
+                    aria-label={`${label}: ${tally?.total ?? 0} valuations${
+                      (tally?.unread ?? 0) > 0 ? `, ${tally!.unread} unread` : ''
+                    }`}
                     className="rounded-lg border border-paper-300 bg-surface px-4 py-3 shadow-card transition-shadow hover:shadow-lift"
                   >
                     {/* Seven cards across a desktop row leaves ~120px each, and
@@ -251,7 +257,7 @@ export function DashboardPage() {
             <>
               <div className="mt-10 flex flex-wrap items-end justify-between gap-4">
                 <h2 className="overline text-ink-400">Analytics</h2>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5" role="group" aria-label="Analytics date range">
                   <TextInput
                     type="date"
                     aria-label="Analytics from"
@@ -342,19 +348,39 @@ export function DashboardPage() {
 
                   {analytics.by_kind.length > 0 && (
                     <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
-                      <table className="w-full min-w-[560px] text-sm" aria-label="Product pivot">
+                      <table className="w-full min-w-[560px] text-sm">
+                        {/*
+                          * A caption rather than `aria-label`: it is the element
+                          * the spec gives a table for naming itself, it survives
+                          * being copied into another document, and it is what a
+                          * screen reader's table list shows. Every header cell
+                          * carries a `scope` so a cell read in isolation is
+                          * announced with the product and column it belongs to —
+                          * without it, "3" is all a user navigating by cell hears
+                          * (WCAG 1.3.1).
+                          */}
+                        <caption className="sr-only">
+                          Valuations by product and workflow stage. Each figure links to the matching
+                          worklist.
+                        </caption>
                         <thead>
                           <tr className="border-b border-paper-300 text-left">
-                            <th className="overline px-5 py-3 font-semibold text-ink-400">Product</th>
+                            <th scope="col" className="overline px-5 py-3 font-semibold text-ink-400">
+                              Product
+                            </th>
                             {PIVOT_GROUPS.map((g) => (
                               <th
                                 key={g}
+                                scope="col"
                                 className="overline px-4 py-3 text-right font-semibold text-ink-400"
                               >
                                 {GROUP_LABELS[g]}
                               </th>
                             ))}
-                            <th className="overline px-5 py-3 text-right font-semibold text-ink-400">
+                            <th
+                              scope="col"
+                              className="overline px-5 py-3 text-right font-semibold text-ink-400"
+                            >
                               Total
                             </th>
                           </tr>
@@ -362,9 +388,9 @@ export function DashboardPage() {
                         <tbody>
                           {analytics.by_kind.map((row) => (
                             <tr key={row.kind} className="border-b border-paper-200 last:border-0">
-                              <td className="px-5 py-3">
+                              <th scope="row" className="px-5 py-3 text-left font-normal">
                                 <KindBadge kind={row.kind} />
-                              </td>
+                              </th>
                               {PIVOT_GROUPS.map((g) => (
                                 <td key={g} className="tnum px-4 py-3 text-right text-ink-600">
                                   {row[g] ? (
@@ -387,7 +413,12 @@ export function DashboardPage() {
                             </tr>
                           ))}
                           <tr className="bg-paper-50">
-                            <td className="px-5 py-3 text-xs font-semibold text-ink-400 uppercase">Total</td>
+                            <th
+                              scope="row"
+                              className="px-5 py-3 text-left text-xs font-semibold text-ink-400 uppercase"
+                            >
+                              Total
+                            </th>
                             {PIVOT_GROUPS.map((g) => {
                               const sum = analytics.by_kind.reduce((acc, row) => acc + row[g], 0);
                               return (
@@ -416,11 +447,19 @@ export function DashboardPage() {
                   {/* Per-state detail — surfaces the states the grouped pivot hides. */}
                   {Object.keys(analytics.by_state).length > 0 && (
                     <div className="mt-4 overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
-                      <table className="w-full min-w-[360px] text-sm" aria-label="State detail">
+                      <table className="w-full min-w-[360px] text-sm">
+                        <caption className="sr-only">
+                          Valuations by workflow state — the detail the grouped pivot above collapses.
+                        </caption>
                         <thead>
                           <tr className="border-b border-paper-300 text-left">
-                            <th className="overline px-5 py-3 font-semibold text-ink-400">State</th>
-                            <th className="overline px-5 py-3 text-right font-semibold text-ink-400">
+                            <th scope="col" className="overline px-5 py-3 font-semibold text-ink-400">
+                              State
+                            </th>
+                            <th
+                              scope="col"
+                              className="overline px-5 py-3 text-right font-semibold text-ink-400"
+                            >
                               Valuations
                             </th>
                           </tr>
@@ -428,7 +467,9 @@ export function DashboardPage() {
                         <tbody>
                           {VALUATION_STATES.filter((s) => analytics.by_state[s]).map((s) => (
                             <tr key={s} className="border-b border-paper-200 last:border-0">
-                              <td className="px-5 py-3">{STATE_LABELS[s] ?? s}</td>
+                              <th scope="row" className="px-5 py-3 text-left font-normal">
+                                {STATE_LABELS[s] ?? s}
+                              </th>
                               <td className="tnum px-5 py-3 text-right">
                                 <Link to={drillTo({ state: s })} className={drillLinkClass}>
                                   {analytics.by_state[s]}

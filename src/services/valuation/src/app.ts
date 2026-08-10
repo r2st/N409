@@ -29,6 +29,7 @@ import { registerWorkflowRoutes } from './routes/workflow.js';
 import { registerReviewRoutes } from './routes/reviews.js';
 import { registerTemplateRoutes } from './routes/templates.js';
 import { registerNotificationRoutes } from './routes/notifications.js';
+import { registerUnsubscribeRoutes } from './routes/unsubscribe.js';
 import { registerTransactionRoutes } from './routes/transactions.js';
 import { registerSearchRoutes } from './routes/search.js';
 import { registerSavedViewRoutes } from './routes/savedViews.js';
@@ -175,6 +176,13 @@ export function buildEmailTransports(
         user: config.SMTP_USER,
         pass: config.SMTP_PASS,
         from: config.SMTP_FROM,
+        // Deliverability extras: the HTML alternative's footer and the
+        // one-click unsubscribe link both need an absolute URL, and the token
+        // needs a signing key. Reusing JWT_SECRET keeps the deployment to the
+        // keys it already rotates; the token's scope is what limits it, not a
+        // separate secret.
+        publicBaseUrl: config.PUBLIC_BASE_URL,
+        unsubscribeSecret: config.JWT_SECRET,
       },
       log,
     );
@@ -457,6 +465,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerReviewRoutes(app, { pool, transport });
   registerTemplateRoutes(app, { pool });
   registerNotificationRoutes(app, { pool });
+  registerUnsubscribeRoutes(app, { pool, secret: config.JWT_SECRET });
   registerTransactionRoutes(app, { pool });
   registerSearchRoutes(app, { pool });
   registerSavedViewRoutes(app, { pool });

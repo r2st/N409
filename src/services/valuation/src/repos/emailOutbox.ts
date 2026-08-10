@@ -13,6 +13,11 @@ export interface EmailOutboxRow {
   template_key: string;
   subject: string;
   body: string;
+  /**
+   * Marketing rather than transactional (migration 0138). Decides whether the
+   * transport attaches `List-Unsubscribe`; see `email/mime`.
+   */
+  promotional: boolean;
   status: EmailStatus;
   error: string | null;
   attempts: number;
@@ -32,11 +37,13 @@ export async function enqueueEmail(
     templateKey: string;
     subject: string;
     body: string;
+    /** Marketing send. Defaults to transactional — see migration 0138. */
+    promotional?: boolean;
   },
 ): Promise<EmailOutboxRow> {
   const { rows } = await db.query<EmailOutboxRow>(
-    `INSERT INTO email_outbox (id, valuation_id, to_user_id, to_email, channel, template_key, subject, body)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO email_outbox (id, valuation_id, to_user_id, to_email, channel, template_key, subject, body, promotional)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
     [
       newUlid(),
@@ -47,6 +54,7 @@ export async function enqueueEmail(
       input.templateKey,
       input.subject,
       input.body,
+      input.promotional ?? false,
     ],
   );
   return rows[0]!;

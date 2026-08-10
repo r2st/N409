@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, apiDownload, ApiError } from '../lib/api';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
 import { KIND_LABELS, formatDate } from '../lib/format';
@@ -63,7 +63,7 @@ interface Comparison {
 }
 
 /**
- * Direction colouring, and the one metric where it inverts.
+ * Direction, and the one family of metrics where it inverts.
  *
  * Up is not good and down is not bad — a rising DLOM pushes the FMV *down*,
  * which is why discounts are read the other way round. Anything we have not
@@ -71,11 +71,43 @@ interface Comparison {
  */
 const INVERTED = new Set(['dloc', 'dlom']);
 
-function deltaTone(row: CompareRow): string {
-  if (row.delta === null || row.delta === 0) return 'text-ink-400';
+function favourable(row: CompareRow): boolean | null {
+  if (row.delta === null || row.delta === 0) return null;
   const up = row.delta > 0;
-  const good = INVERTED.has(row.key) ? !up : up;
+  return INVERTED.has(row.key) ? !up : up;
+}
+
+function deltaTone(row: CompareRow): string {
+  const good = favourable(row);
+  if (good === null) return 'text-ink-400';
   return good ? 'text-emerald-700' : 'text-red-700';
+}
+
+/**
+ * The same judgement the colour carries, in a form that survives without it.
+ *
+ * Green-vs-red is the only thing that distinguished "the FMV rose" from "the
+ * FMV fell" once the reader had the two numbers, and roughly one man in twelve
+ * cannot tell those two hues apart — nor can anyone reading this through a
+ * screen reader, in a printed board pack, or in high-contrast mode. The arrow
+ * is redundant to the sign for a sighted reader and load-bearing for everyone
+ * else (WCAG 1.4.1, "Use of Color").
+ */
+function DeltaDirection({ row }: { row: CompareRow }) {
+  // A non-numeric move already renders the literal word "changed" in the cell;
+  // there is no direction to add and nothing to restate.
+  if (row.delta === null || row.delta === 0) return null;
+  const up = row.delta > 0;
+  const good = favourable(row);
+  const sentiment = good === null ? '' : good ? ', favourable' : ', unfavourable';
+  return (
+    <>
+      <span aria-hidden="true" className="mr-1">
+        {up ? '▲' : '▼'}
+      </span>
+      <span className="sr-only">{up ? 'increased' : 'decreased'}{sentiment}: </span>
+    </>
+  );
 }
 
 function optionLabel(v: Valuation): string {
@@ -117,6 +149,22 @@ export function ValuationComparePage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(true);
+  const [exporting, setExporting] = useState(false);
+
+  const exportCsv = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      await apiDownload(
+        `/valuations/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&format=csv`,
+        'comparison.csv',
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not export the comparison.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     void api<{ valuations: Valuation[] }>('/valuations?per_page=100')
@@ -233,11 +281,23 @@ export function ValuationComparePage() {
             </p>
           </section>
 
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="overline text-ink-400">Metrics</h2>
-            <Button variant="ghost" onClick={() => setOnlyChanged((v) => !v)}>
-              {onlyChanged ? 'Show all metrics' : 'Show only changes'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={() => setOnlyChanged((v) => !v)}>
+                {onlyChanged ? 'Show all metrics' : 'Show only changes'}
+              </Button>
+              {/*
+                * The board pack is assembled in a spreadsheet, and the only way
+                * to get these figures into one was to retype them off the
+                * screen. Exports the full comparison, not the filtered view —
+                * the file is evidence, and evidence should not depend on which
+                * toggle happened to be set when it was taken.
+                */}
+              <Button variant="secondary" disabled={exporting} onClick={() => void exportCsv()}>
+                {exporting ? 'Preparing…' : 'Export CSV'}
+              </Button>
+            </div>
           </div>
 
           {groups.length === 0 ? (
@@ -289,6 +349,7 @@ export function ValuationComparePage() {
                             {r.b_display ?? '—'}
                           </td>
                           <td className={`px-5 py-2.5 text-right tabular-nums ${deltaTone(r)}`}>
+                            <DeltaDirection row={r} />
                             {r.delta_display ?? (r.changed ? 'changed' : '—')}
                             {r.pct_change !== null && r.delta !== 0 && (
                               <span className="ml-1.5 text-xs text-ink-400">

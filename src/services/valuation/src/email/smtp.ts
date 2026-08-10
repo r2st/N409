@@ -3,6 +3,8 @@ import tls from 'node:tls';
 import type { FastifyBaseLogger } from 'fastify';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import type { EmailOutboxRow } from '../repos/emailOutbox.js';
+import { buildMimeMessage, renderHtmlEmail, type ListUnsubscribe } from './mime.js';
+import { createUnsubscribeToken, unsubscribeUrl } from '../domain/unsubscribeToken.js';
 
 /**
  * Minimal SMTP transport (remaining-gaps §6 P0 #1 — real email delivery).
@@ -10,6 +12,9 @@ import type { EmailOutboxRow } from '../repos/emailOutbox.js';
  * Deliberately dependency-free: EHLO → STARTTLS (or implicit TLS on 465) →
  * AUTH LOGIN → MAIL FROM/RCPT TO/DATA. The outbox keeps delivery state, so a
  * thrown error here just leaves the row 'failed' for a later retry.
+ *
+ * Message *construction* lives in `./mime` — this file is the conversation with
+ * the server, and that one is what the server is handed.
  */
 
 export interface SmtpOptions {
@@ -22,33 +27,7 @@ export interface SmtpOptions {
   timeoutMs?: number;
 }
 
-/** RFC 5322 message with a text body; keeps headers injection-safe. */
-export function buildMimeMessage(args: {
-  from: string;
-  to: string;
-  subject: string;
-  body: string;
-  date?: Date;
-}): string {
-  // Header values end at the first CR/LF — anything after is an injection.
-  const clean = (v: string) => (v.split(/[\r\n]/, 1)[0] ?? '').trim();
-  // Non-ASCII subjects go out RFC 2047 base64-encoded.
-  const subject = /^[\x20-\x7e]*$/.test(args.subject)
-    ? clean(args.subject)
-    : `=?utf-8?B?${Buffer.from(args.subject, 'utf8').toString('base64')}?=`;
-  const headers = [
-    `From: ${clean(args.from)}`,
-    `To: ${clean(args.to)}`,
-    `Subject: ${subject}`,
-    `Date: ${(args.date ?? new Date()).toUTCString()}`,
-    'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=utf-8',
-    'Content-Transfer-Encoding: 8bit',
-  ];
-  // Dot-stuff body lines starting with '.' (RFC 5321 §4.5.2).
-  const body = args.body.replace(/\r?\n/g, '\r\n').replace(/(^|\r\n)\./g, '$1..');
-  return `${headers.join('\r\n')}\r\n\r\n${body}\r\n`;
-}
+export { buildMimeMessage } from './mime.js';
 
 /** Bare address out of "Display Name <user@host>". */
 export function bareAddress(from: string): string {
@@ -145,7 +124,13 @@ async function expect(dialogue: Dialogue, line: string | null, codes: string[]):
 
 export async function sendSmtp(
   opts: SmtpOptions,
-  email: { to: string; subject: string; body: string },
+  email: {
+    to: string;
+    subject: string;
+    body: string;
+    html?: string;
+    listUnsubscribe?: ListUnsubscribe;
+  },
 ): Promise<void> {
   const dialogue = await openSocket(opts);
   try {
@@ -168,6 +153,11 @@ export async function sendSmtp(
       to: email.to,
       subject: email.subject,
       body: email.body,
+      html: email.html,
+      listUnsubscribe: email.listUnsubscribe,
+      // Nothing this transport sends was typed by a person into a reply box —
+      // it is all generated from a template or a workflow transition.
+      autoSubmitted: 'auto-generated',
     });
     await expect(dialogue, `${message}.`, ['250']);
     await dialogue.send('QUIT').catch(() => undefined);
@@ -176,11 +166,64 @@ export async function sendSmtp(
   }
 }
 
+export interface SmtpTransportOptions extends SmtpOptions {
+  /** Absolute app URL; enables the unsubscribe link and preferences footer. */
+  publicBaseUrl?: string;
+  /** Signs one-click unsubscribe tokens. Without it, no header is attached. */
+  unsubscribeSecret?: string;
+  /** White-label sender name shown in the HTML header. */
+  brandName?: string;
+}
+
+/**
+ * `List-Unsubscribe` for a row, or undefined.
+ *
+ * Three conditions, all required, and each of them is a way to get this wrong:
+ * the row has to be a marketing send (migration 0138), it has to name a user
+ * the token can be minted for, and the deployment has to have both a public URL
+ * for the link to point at and a secret to sign it with. A header pointing at a
+ * URL that 404s is worse than no header — the provider records a failed
+ * unsubscribe against the domain.
+ */
+export function unsubscribeFor(
+  email: Pick<EmailOutboxRow, 'promotional' | 'to_user_id' | 'channel'>,
+  opts: Pick<SmtpTransportOptions, 'publicBaseUrl' | 'unsubscribeSecret' | 'from'>,
+): ListUnsubscribe | undefined {
+  if (!email.promotional || email.channel !== 'email') return undefined;
+  if (!email.to_user_id || !opts.publicBaseUrl || !opts.unsubscribeSecret) return undefined;
+  const token = createUnsubscribeToken(
+    { userId: email.to_user_id, scope: 'marketing' },
+    opts.unsubscribeSecret,
+  );
+  return {
+    url: unsubscribeUrl(opts.publicBaseUrl, token),
+    mailto: `mailto:${bareAddress(opts.from)}?subject=unsubscribe`,
+    oneClick: true,
+  };
+}
+
 /** EmailTransport over SMTP — plugs into the existing outbox hook. */
-export function smtpTransport(opts: SmtpOptions, log?: FastifyBaseLogger): EmailTransport {
+export function smtpTransport(opts: SmtpTransportOptions, log?: FastifyBaseLogger): EmailTransport {
   return {
     async send(email: EmailOutboxRow): Promise<void> {
-      await sendSmtp(opts, { to: email.to_email, subject: email.subject, body: email.body });
+      const listUnsubscribe = unsubscribeFor(email, opts);
+      await sendSmtp(opts, {
+        to: email.to_email,
+        subject: email.subject,
+        body: email.body,
+        // The outbox keeps one plain-text body and stays the record of what was
+        // sent; the HTML alternative is derived from it here rather than stored,
+        // so the two halves of a message can never disagree about its content.
+        html: renderHtmlEmail({
+          subject: email.subject,
+          body: email.body,
+          brandName: opts.brandName,
+          preferencesUrl: opts.publicBaseUrl
+            ? `${opts.publicBaseUrl.replace(/\/+$/, '')}/settings`
+            : undefined,
+        }),
+        listUnsubscribe,
+      });
       log?.info({ to: email.to_email, subject: email.subject }, 'email delivered (smtp)');
     },
   };

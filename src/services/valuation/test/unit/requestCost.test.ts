@@ -1,3 +1,6 @@
+import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import pg from 'pg';
 import {
@@ -25,6 +28,43 @@ function testConfig() {
     JWT_SECRET: 'z'.repeat(48),
     LOG_LEVEL: 'silent',
   } as NodeJS.ProcessEnv);
+}
+
+const ROUTES_DIR = path.join(fileURLToPath(new URL('.', import.meta.url)), '../../src/routes');
+
+/** Consuming a multipart body — any of the three ways @fastify/multipart offers. */
+const CONSUMES_UPLOAD = /\breq\.(file|files|parts|saveRequestFiles)\s*\(/g;
+/** `app.post('/path'` / `app.put(\n  '/path'` — the registration the upload sits inside. */
+const REGISTRATION = /\bapp\.(post|put|patch)\(\s*\n?\s*'([^']+)'/g;
+
+/**
+ * Every route in `src/routes` that reads a multipart body, as
+ * `{ method, path }` pairs taken from the registration it sits inside.
+ *
+ * Source scanning rather than route introspection because Fastify cannot say
+ * which handlers consume a body — and "which routes accept an upload" is
+ * exactly the set that must never grow a free member.
+ */
+async function uploadRoutes(): Promise<Array<{ method: string; path: string; file: string }>> {
+  const found: Array<{ method: string; path: string; file: string }> = [];
+  for (const entry of await readdir(ROUTES_DIR)) {
+    if (!entry.endsWith('.ts')) continue;
+    const source = await readFile(path.join(ROUTES_DIR, entry), 'utf8');
+
+    const registrations = [...source.matchAll(REGISTRATION)].map((m) => ({
+      at: m.index ?? 0,
+      method: m[1]!.toUpperCase(),
+      path: m[2]!,
+    }));
+    for (const consume of source.matchAll(CONSUMES_UPLOAD)) {
+      // The registration this consumption sits inside is the last one opened
+      // before it. Handlers are registered in source order and never nested,
+      // so "nearest preceding" is exact rather than a heuristic.
+      const owner = registrations.filter((r) => r.at < (consume.index ?? 0)).at(-1);
+      if (owner) found.push({ method: owner.method, path: owner.path, file: entry });
+    }
+  }
+  return found;
 }
 
 /** `METHOD /url` with every `:param` filled in, as a request would arrive. */
@@ -122,6 +162,11 @@ describe('COST_RULES', () => {
         ['GET', '/api/v1/valuations/export'],
         ['GET', '/api/v1/users/export'],
         ['GET', '/api/v1/valuations/:id/documents/:documentId/download'],
+        // Ingest. Cheap to ask for, expensive to serve — and the document
+        // upload can start the auto-pipeline, which is the same LLM work the
+        // `/ai/:pipeline` rule prices at 25.
+        ['POST', '/api/v1/valuations/:id/documents'],
+        ['POST', '/api/v1/valuations/:id/cap-table/upload'],
       ];
       for (const [method, url] of mustCost) {
         // Guards the list itself: a renamed route must fail here, not silently
@@ -133,6 +178,26 @@ describe('COST_RULES', () => {
       await app.close();
       await pool.end();
     }
+  });
+
+  /**
+   * The ingress counterpart to the dead-rule test above.
+   *
+   * `mustCost` is a hand-kept list, so it only guards the uploads someone
+   * remembered to add. This one derives the set from the source: a new route
+   * that reads a multipart body and forgets a cost rule fails here without
+   * anyone having to notice. Cheap to ask for and expensive to serve is the
+   * profile the budget exists for, and it is the profile uploads have.
+   */
+  it('charges every route that accepts an upload', async () => {
+    const uploads = await uploadRoutes();
+    // The scan finding nothing would make this test vacuously green.
+    expect(uploads.length).toBeGreaterThan(0);
+
+    const free = uploads
+      .filter((r) => costOfRequest(r.method, r.path.replace(/:[^/]+/g, 'x')) <= 0)
+      .map((r) => `${r.method} ${r.path} (${r.file})`);
+    expect(free).toEqual([]);
   });
 });
 
@@ -172,6 +237,32 @@ describe('costOfRequest', () => {
     for (const pipeline of ['extract', 'summarize', 'comparables', 'missing_data', 'explain']) {
       expect(costOfRequest('POST', `${VAL}/ai/${pipeline}`), pipeline).toBe(ai);
     }
+  });
+
+  it('charges uploads, which cost the server more than the caller', () => {
+    expect(costOfRequest('POST', `${VAL}/documents`)).toBeGreaterThan(0);
+    expect(costOfRequest('POST', `${VAL}/cap-table/upload`)).toBeGreaterThan(0);
+  });
+
+  it('leaves listing and reading documents cheap — only the upload is charged', () => {
+    // `/documents$` has to be POST-only: the panel lists documents on every
+    // render of a valuation, and charging that would exhaust the budget just
+    // by browsing.
+    expect(costOfRequest('GET', `${VAL}/documents`)).toBe(DEFAULT_COST);
+    expect(costOfRequest('DELETE', `${VAL}/documents/01JZZZ`)).toBe(DEFAULT_COST);
+    expect(costOfRequest('GET', `${VAL}/cap-table`)).toBe(DEFAULT_COST);
+    // The `/documents$` rule anchors on the slash, so the route that merely
+    // sends a chasing email about documents is not charged as an upload.
+    expect(costOfRequest('POST', `${VAL}/remind-documents`)).toBe(DEFAULT_COST);
+  });
+
+  it('prices an upload below a direct AI call, since the pipeline is conditional', () => {
+    // An extractable upload starts extract → param fill → draft calculation,
+    // so it must not be free; but it only fires for kinds the extractor
+    // handles and only when AUTO_PIPELINE is on, so it is not a full AI call.
+    const upload = costOfRequest('POST', `${VAL}/documents`);
+    expect(upload).toBeGreaterThan(0);
+    expect(upload).toBeLessThan(costOfRequest('POST', `${VAL}/ai/extract`));
   });
 
   it('leaves the apply step cheap — it re-reads a stored job, it does not run one', () => {

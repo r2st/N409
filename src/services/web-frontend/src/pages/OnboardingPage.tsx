@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, apiUpload, ApiError } from '../lib/api';
 import { formatMoney, KIND_LABELS } from '../lib/format';
 import { DOCUMENT_KIND_LABELS, type DocumentKind } from '../lib/pipeline';
+import { clearDraft, loadDraft, saveDraft } from '../lib/onboardingDraft';
 import { VALUATION_KINDS, type PaymentQuote, type Valuation, type ValuationKind } from '../lib/types';
 import { Button, ErrorNote, Field, Select, TextInput } from '../components/ui';
 
@@ -11,6 +12,10 @@ import { Button, ErrorNote, Field, Select, TextInput } from '../components/ui';
  * Client onboarding funnel (remaining-gaps §3 #2 / §6 P0 #3) — the guided
  * request → pay → upload → track flow, built on the existing valuation,
  * payment and document APIs. Deliberately linear: one decision per screen.
+ *
+ * Progress is persisted per step (see `lib/onboardingDraft`), because one of
+ * the steps navigates the browser to Stripe and the client has to come back to
+ * the funnel they were in rather than to an empty first screen.
  */
 
 const STEPS = ['Your company', 'Payment', 'Documents', 'All set'] as const;
@@ -53,20 +58,47 @@ function Stepper({ current }: { current: number }) {
 
 export function OnboardingPage() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(0);
+  // Read once, synchronously, during the first render. An effect would paint
+  // the empty first screen before restoring, which is the flash of "we lost
+  // your request" this exists to prevent.
+  const [restored] = useState(() => loadDraft());
+  const [step, setStep] = useState(restored?.step ?? 0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [valuation, setValuation] = useState<Valuation | null>(null);
+  const [valuation, setValuation] = useState<Valuation | null>(restored?.valuation ?? null);
   const [quote, setQuote] = useState<PaymentQuote | null>(null);
-  const [paymentNote, setPaymentNote] = useState<string | null>(null);
-  const [uploaded, setUploaded] = useState<Record<string, string[]>>({});
+  const [paymentNote, setPaymentNote] = useState<string | null>(restored?.paymentNote ?? null);
+  const [uploaded, setUploaded] = useState<Record<string, string[]>>(restored?.uploaded ?? {});
   const [docKind, setDocKind] = useState<DocumentKind>('cap_table');
 
   const [form, setForm] = useState({
-    company_name: '',
-    kind: '409a' as ValuationKind,
-    currency: 'USD',
+    company_name: restored?.valuation.company_name ?? '',
+    kind: (restored?.valuation.kind as ValuationKind | undefined) ?? '409a',
+    currency: restored?.valuation.currency ?? 'USD',
   });
+
+  /** Persist after every step that changes something worth coming back to. */
+  const remember = (next: { step: number; valuation: Valuation; uploaded?: Record<string, string[]>; paymentNote?: string | null }) => {
+    saveDraft({
+      step: next.step,
+      valuation: next.valuation,
+      uploaded: next.uploaded ?? uploaded,
+      paymentNote: next.paymentNote ?? paymentNote,
+    });
+  };
+
+  // The quote is not part of the draft — it is a live price, and a resumed
+  // wizard must show today's, not the one cached before the tab was closed.
+  useEffect(() => {
+    if (!valuation || step !== 1) return;
+    let live = true;
+    void api<{ quote: PaymentQuote }>(`/valuations/${valuation.id}/payments/quote`)
+      .then(({ quote: q }) => live && setQuote(q))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [valuation, step]);
 
   // ── Step 1: create the engagement ────────────────────────────────────────
   const createValuation = async (e: FormEvent) => {
@@ -84,10 +116,10 @@ export function OnboardingPage() {
       });
       setValuation(res.valuation);
       setStep(1);
-      // Price transparency on the payment step — best effort, never blocks.
-      void api<{ quote: PaymentQuote }>(`/valuations/${res.valuation.id}/payments/quote`)
-        .then(({ quote: q }) => setQuote(q))
-        .catch(() => {});
+      // Written before anything else can go wrong: the valuation now exists
+      // server-side, and from here on losing track of it means the client
+      // creates a duplicate.
+      remember({ step: 1, valuation: res.valuation });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the valuation request.');
     } finally {
@@ -105,11 +137,17 @@ export function OnboardingPage() {
         `/valuations/${valuation.id}/payments/checkout`,
         { method: 'POST', body: {} },
       );
+      // Save before leaving, not after: the assign never returns, so anything
+      // written below it never runs. Parked on the uploads step, which is where
+      // a client who has just paid — or just cancelled — should land.
+      remember({ step: 2, valuation });
       window.location.assign(checkout_url);
     } catch (err) {
       if (err instanceof ApiError && err.status === 503) {
-        setPaymentNote('Online payment is not available yet — we will send an invoice instead.');
+        const note = 'Online payment is not available yet — we will send an invoice instead.';
+        setPaymentNote(note);
         setStep(2);
+        remember({ step: 2, valuation, paymentNote: note });
       } else {
         setError(err instanceof ApiError ? err.message : 'Could not start the checkout.');
       }
@@ -129,10 +167,16 @@ export function OnboardingPage() {
         data.append('file', file);
         await apiUpload(`/valuations/${valuation.id}/documents`, data);
       }
-      setUploaded((u) => ({
-        ...u,
-        [docKind]: [...(u[docKind] ?? []), ...Array.from(files).map((f) => f.name)],
-      }));
+      setUploaded((u) => {
+        const next = {
+          ...u,
+          [docKind]: [...(u[docKind] ?? []), ...Array.from(files).map((f) => f.name)],
+        };
+        // The files are on the server either way; the ticks are what a resumed
+        // wizard needs so the client does not upload the same cap table twice.
+        remember({ step: 2, valuation, uploaded: next });
+        return next;
+      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Upload failed.');
     } finally {
@@ -149,6 +193,21 @@ export function OnboardingPage() {
         Let's get your valuation started
       </h1>
       <Stepper current={step} />
+      {/*
+       * Say so when the wizard has picked a request back up. Silently landing
+       * on step 3 with someone else's company name in the header reads as a
+       * bug; naming it turns the same screen into a reassurance — and tells a
+       * client returning from a cancelled checkout that nothing was lost.
+       */}
+      {restored && (
+        <p
+          data-testid="onboarding-resumed"
+          className="mt-5 rounded-md border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-sm text-sky-900"
+        >
+          Picking up where you left off — your request for{' '}
+          <span className="font-semibold">{restored.valuation.company_name}</span> is saved.
+        </p>
+      )}
       {error && (
         <div className="mt-5">
           <ErrorNote>{error}</ErrorNote>
@@ -220,7 +279,14 @@ export function OnboardingPage() {
                   ? `Pay ${formatMoney(quote.amount_cents, quote.currency)} with card`
                   : 'Pay now with card'}
             </Button>
-            <Button variant="secondary" disabled={busy} onClick={() => setStep(2)}>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => {
+                setStep(2);
+                remember({ step: 2, valuation });
+              }}
+            >
               Skip for now →
             </Button>
           </div>
@@ -275,7 +341,13 @@ export function OnboardingPage() {
             </label>
           </div>
           <div className="flex justify-end">
-            <Button disabled={busy} onClick={() => setStep(3)}>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setStep(3);
+                remember({ step: 3, valuation });
+              }}
+            >
               {uploadedCount > 0 ? 'Finish →' : 'Skip uploads for now →'}
             </Button>
           </div>
@@ -294,9 +366,23 @@ export function OnboardingPage() {
             progress or chat with us any time from your workspace.
           </p>
           <div className="flex justify-center gap-3">
-            <Button onClick={() => navigate(`/valuations/${valuation.id}`)}>Open my valuation</Button>
+            {/*
+              * The draft is dropped when the client leaves the funnel, not on
+              * reaching this screen: they may still refresh it, and "your
+              * request is in" with no valuation to open would be the same
+              * amnesia one screen later.
+              */}
+            <Button
+              onClick={() => {
+                clearDraft();
+                navigate(`/valuations/${valuation.id}`);
+              }}
+            >
+              Open my valuation
+            </Button>
             <Link
               to="/dashboard"
+              onClick={() => clearDraft()}
               className="inline-flex items-center rounded-md px-4 py-2 text-sm font-semibold text-ink-600 hover:text-ink-900"
             >
               Go to dashboard
