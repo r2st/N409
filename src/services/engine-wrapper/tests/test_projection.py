@@ -167,3 +167,131 @@ def test_oversized_projection_answers_422_over_http():
     )
     assert res.status_code == 422
     assert "years must be <=" in res.json()["detail"]
+
+
+# ── Which figure the exit multiple is struck on ──────────────────────────────
+#
+# `exit_metric` picked EBITDA on an exact string match and fell through to
+# revenue for everything else, so the one thing a caller could not do was ask
+# for a metric and be told it was not understood.
+
+
+_EXIT_BASE: dict = dict(
+    method="growth",
+    years=2,
+    base_revenue=1000.0,
+    revenue_growth=0.1,
+    cogs_pct=0.4,
+    opex_pct=0.3,
+    da_pct=0.05,
+    terminal_method="exit_multiple",
+    exit_multiple=8.0,
+)
+
+
+@pytest.mark.parametrize("metric", ["EBITDA", "Ebitda", "ebit", "eBiTdA", "", "net_income"])
+def test_unrecognised_exit_metric_is_refused_not_read_as_revenue(metric):
+    # The specific case this was found on: `"EBITDA"` differs from `"ebitda"` by
+    # capitalisation alone and struck the multiple on revenue — 8 x 1,210 rather
+    # than 8 x 363, a terminal value 3.3x too high, reported without complaint.
+    with pytest.raises(EngineInputError) as exc:
+        project_financials(**_EXIT_BASE, exit_metric=metric)
+    assert "exit_metric" in str(exc.value)
+
+
+def test_the_two_recognised_exit_metrics_strike_the_figure_they_name():
+    ebitda = project_financials(**_EXIT_BASE, exit_metric="ebitda")
+    revenue = project_financials(**_EXIT_BASE, exit_metric="revenue")
+    last = ebitda["projections"][-1]
+    assert ebitda["terminal_value"] == pytest.approx(last["ebitda"] * 8.0)
+    assert revenue["terminal_value"] == pytest.approx(last["revenue"] * 8.0)
+    # And they are genuinely different figures, so a test that confused them
+    # could not pass by coincidence.
+    assert ebitda["terminal_value"] != revenue["terminal_value"]
+
+
+def test_the_default_exit_metric_is_ebitda():
+    out = project_financials(**_EXIT_BASE)
+    assert out["terminal_value"] == pytest.approx(out["projections"][-1]["ebitda"] * 8.0)
+
+
+def test_unrecognised_exit_metric_answers_422_over_http():
+    res = client.post(
+        "/engine/v1/projection",
+        json={"inputs": {**_EXIT_BASE, "exit_metric": "EBITDA"}},
+    )
+    assert res.status_code == 422
+    assert "exit_metric" in res.json()["detail"]
+
+
+# ── A terminal metric a multiple cannot be struck against ────────────────────
+
+
+def test_negative_terminal_metric_is_refused_here_as_income_dcf_refuses_it():
+    # A terminal year that loses money returned a *negative* terminal value,
+    # which `approaches.income_dcf` then refuses outright — so the endpoint
+    # handed the analyst figures the calculation would not accept.
+    with pytest.raises(EngineInputError) as exc:
+        project_financials(
+            method="growth",
+            years=1,
+            base_revenue=1000.0,
+            revenue_growth=0.0,
+            cogs_pct=0.7,
+            opex_pct=0.6,
+            terminal_method="exit_multiple",
+            exit_multiple=8.0,
+        )
+    assert "positive" in str(exc.value)
+
+
+def test_exit_multiple_helper_refuses_a_non_positive_metric():
+    assert terminal_value_exit_multiple(500.0, 8.0) == 4000.0
+    for metric in (0.0, -1.0, -500.0):
+        with pytest.raises(EngineInputError):
+            terminal_value_exit_multiple(metric, 8.0)
+
+
+# ── Driver lines that are not lines ──────────────────────────────────────────
+
+
+@pytest.mark.parametrize("line", ["cogs", "opex", "da", "capex", "nwc"])
+def test_a_scalar_driver_line_names_the_field(line):
+    # `len(5)` was a bare `TypeError: object of type 'int' has no len()` —
+    # a 422, but with no field in the detail for the caller to act on.
+    with pytest.raises(EngineInputError) as exc:
+        project_financials(method="driver", revenue=[100.0, 200.0], **{line: 5})
+    assert line in str(exc.value)
+
+
+@pytest.mark.parametrize("revenue", [123, 4.5, {"2026": 100}, None])
+def test_a_driver_revenue_that_is_not_a_list_names_the_field(revenue):
+    with pytest.raises(EngineInputError) as exc:
+        project_financials(method="driver", revenue=revenue)
+    assert "revenue" in str(exc.value)
+
+
+def test_a_string_driver_line_is_not_iterated_over_its_characters():
+    # `"100"` is iterable, so it used to reach `_num` three times and produce a
+    # three-year forecast of 1, 0 and 0 from what was plainly a typo.
+    with pytest.raises(EngineInputError) as exc:
+        project_financials(method="driver", revenue="100")
+    assert "must be a list" in str(exc.value)
+
+
+def test_a_scalar_driver_line_answers_422_with_the_field_named():
+    res = client.post(
+        "/engine/v1/projection",
+        json={"inputs": {"method": "driver", "revenue": [100, 200], "cogs": 5}},
+    )
+    assert res.status_code == 422
+    assert "cogs" in res.json()["detail"]
+
+
+def test_driver_lines_that_are_lists_still_project():
+    out = project_financials(
+        method="driver",
+        revenue=[100.0, 200.0],
+        cogs=(40.0, 80.0),  # a tuple is a per-year line too
+    )
+    assert [p["cogs"] for p in out["projections"]] == pytest.approx([40.0, 80.0])

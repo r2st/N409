@@ -120,9 +120,36 @@ interface ProjectionEngineResponse {
   terminal_value?: unknown;
 }
 
+/**
+ * A finite figure, or null for anything that is not one.
+ *
+ * The guard used to be `Number(v)` filtered through `Number.isFinite`, and
+ * `Number(null)` is `0`. So every absent figure read as a present zero, in
+ * three places that each meant something different by it:
+ *
+ *   * `terminal_value` is null on a run struck with no terminal method — the
+ *     `terminal_method: 'none'` case the body explicitly offers. It was stored
+ *     as 0.00 and presented as a terminal value of zero, which is a claim
+ *     about the horizon rather than the absence of one.
+ *   * `num(result.years) ?? flows.length` never reached its fallback, because
+ *     a null `years` produced 0 rather than null; 0 then fails the table's
+ *     `years >= 1` check as a 500 instead of falling back to the stream length.
+ *   * `sameNumber` compared an absent `terminal_metric` (undefined → null)
+ *     against a cleared one (null → 0) and called them different, so
+ *     `recalculation_required` came back true for an adoption that moved
+ *     nothing.
+ *
+ * Only numbers and numeric strings count — `numeric` arrives from pg as a
+ * string, which is the one non-number worth reading. `true`, `''` and `[]` are
+ * all `Number`-coercible to a figure nobody wrote, and are absent here.
+ */
 const num = (v: unknown): number | null => {
-  const n = typeof v === 'number' ? v : Number(v);
-  return Number.isFinite(n) ? n : null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 };
 
 function present(row: ProjectionRow) {
@@ -148,19 +175,73 @@ function present(row: ProjectionRow) {
 
 /** The DCF's cash flows as the calculation would read them today. */
 function appliedFlows(engineInputs: unknown): number[] | null {
-  if (!engineInputs || typeof engineInputs !== 'object') return null;
-  const income = (engineInputs as Record<string, unknown>).income;
-  if (!income || typeof income !== 'object') return null;
-  const flows = (income as Record<string, unknown>).free_cash_flows;
-  if (!Array.isArray(flows)) return null;
-  const out = flows.map(num);
-  return out.every((n): n is number => n !== null) ? out : null;
+  return adoptedIncome(engineInputs).flows;
 }
 
 /** Two streams agree when they are the same length and figure for figure equal. */
 function sameFlows(a: number[] | null, b: number[]): boolean {
   if (a === null || a.length !== b.length) return false;
   return a.every((v, i) => Math.abs(v - (b[i] ?? 0)) < 1e-6);
+}
+
+/** One figure against another, either of which may be absent. */
+function sameNumber(a: unknown, b: unknown): boolean {
+  const x = num(a);
+  const y = num(b);
+  if (x === null || y === null) return x === y;
+  return Math.abs(x - y) < 1e-6;
+}
+
+/**
+ * The three fields adoption writes, as the calculation would read them.
+ *
+ * Adoption writes `free_cash_flows`, `revenues` and `terminal_metric` (with its
+ * basis), and `recalculation_required` compared only the first of them. So
+ * adopting a run onto an engagement already carrying that exact cash-flow
+ * column — the ordinary case, because the column was usually typed *from* the
+ * run — answered "the calculation already ran on these cash flows" while
+ * `terminal_metric` had just been written for the first time. That figure is
+ * what an exit-multiple terminal value is struck on (`approaches.income_dcf`
+ * falls back to the final free cash flow and records the basis as `fcff`
+ * without it), so the concluded value had moved and the panel said it had not.
+ */
+interface AdoptedIncome {
+  flows: number[] | null;
+  revenues: number[] | null;
+  terminalMetric: unknown;
+  terminalMetricBasis: unknown;
+}
+
+function adoptedIncome(engineInputs: unknown): AdoptedIncome {
+  const income =
+    engineInputs && typeof engineInputs === 'object'
+      ? (engineInputs as Record<string, unknown>).income
+      : null;
+  const section = income && typeof income === 'object' ? (income as Record<string, unknown>) : {};
+  return {
+    flows: numberList(section.free_cash_flows),
+    revenues: numberList(section.revenues),
+    terminalMetric: section.terminal_metric,
+    terminalMetricBasis: section.terminal_metric_basis,
+  };
+}
+
+function numberList(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const out = value.map(num);
+  return out.every((n): n is number => n !== null) ? out : null;
+}
+
+/** Would the calculation read different figures than it did before adoption? */
+function movedTheInputs(before: AdoptedIncome, after: AdoptedIncome): boolean {
+  const listsAgree = (a: number[] | null, b: number[] | null) =>
+    a === null || b === null ? a === b : sameFlows(a, b);
+  return !(
+    listsAgree(before.flows, after.flows) &&
+    listsAgree(before.revenues, after.revenues) &&
+    sameNumber(before.terminalMetric, after.terminalMetric) &&
+    (before.terminalMetricBasis ?? null) === (after.terminalMetricBasis ?? null)
+  );
 }
 
 export function registerProjectionRoutes(
@@ -344,7 +425,8 @@ export function registerProjectionRoutes(
 
       const params = await findParams(deps.pool, valuation.id);
       if (!params) throw problems.notFound();
-      const before = appliedFlows(params.engine_inputs);
+      const beforeIncome = adoptedIncome(params.engine_inputs);
+      const before = beforeIncome.flows;
 
       const engineInputs = (params.engine_inputs ?? {}) as Record<string, unknown>;
       const income =
@@ -357,10 +439,27 @@ export function registerProjectionRoutes(
 
       income.free_cash_flows = run.free_cash_flows;
       if (revenues.length === run.free_cash_flows.length) income.revenues = revenues;
-      if (terminalEbitda !== null) {
-        income.terminal_metric = terminalEbitda;
-        income.terminal_metric_basis = 'ebitda';
-      }
+
+      /*
+       * A terminal-year EBITDA of zero or less is not a figure an exit multiple
+       * can be struck against, and both of the other writers of this document
+       * say so: `PATCH /engine-inputs` refuses to store it, and
+       * `approaches.income_dcf` refuses to price against it. Adoption wrote it
+       * anyway, so a loss-making forecast could put a value into `engine_inputs`
+       * by the one path that did not check it — and the 422 then arrived on
+       * whoever next pressed Calculate, naming a field they had not touched.
+       *
+       * Leaving the previous run's metric in place instead would be worse: the
+       * multiple would be struck on the terminal year of a forecast this
+       * engagement no longer uses, which computes cleanly and is wrong. So it is
+       * cleared, and `terminal_metric` on the response says what was adopted —
+       * null meaning the DCF will fall back to the final free cash flow and
+       * record the basis as `fcff`, which is at least a denominator it names.
+       */
+      const adoptedMetric = terminalEbitda !== null && terminalEbitda > 0 ? terminalEbitda : null;
+      income.terminal_metric = adoptedMetric;
+      income.terminal_metric_basis = adoptedMetric === null ? null : 'ebitda';
+      const afterIncome = adoptedIncome({ income });
 
       await applyEngineInputs(
         deps.pool,
@@ -379,10 +478,25 @@ export function registerProjectionRoutes(
       return {
         projection: present(applied ?? run),
         applied_free_cash_flows: run.free_cash_flows,
+        // What an exit-multiple terminal value will now be struck on, and null
+        // when this forecast offers nothing to strike one against. Reported
+        // rather than left for the caller to infer, because the alternative is
+        // discovering it on the next Calculate.
+        adopted_terminal_metric: adoptedMetric,
+        terminal_metric_warning:
+          adoptedMetric === null && terminalEbitda !== null
+            ? `The terminal year's EBITDA is ${terminalEbitda}, which an exit multiple cannot be struck against. ` +
+              `Any previously adopted terminal metric has been cleared; a Gordon terminal value is the method this forecast supports.`
+            : null,
         // The engagement's figures are now stale against its inputs. Saying so
         // is the route's job; recalculating on its own would be a second,
         // unasked-for change to a valuation somebody may be mid-review on.
-        recalculation_required: !sameFlows(before, run.free_cash_flows),
+        //
+        // Every field adoption wrote is compared, not just the cash flows —
+        // see `movedTheInputs`. A run whose terminal-year EBITDA differs from
+        // what the engagement carried moves the exit-multiple terminal value,
+        // and so the concluded value, with the cash-flow column untouched.
+        recalculation_required: movedTheInputs(beforeIncome, afterIncome),
       };
     },
   );

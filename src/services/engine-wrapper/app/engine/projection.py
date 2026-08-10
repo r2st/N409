@@ -95,6 +95,20 @@ def _rate_vector(rate, years: int, name: str) -> list[float]:
     return [_num(rate, name)] * years
 
 
+def _sequence(vals, name: str) -> list:
+    """A per-year line, as a list, or an error naming the field that isn't one.
+
+    ``len(vals)`` and ``for x in vals`` were reached directly, so ``cogs: 5``
+    left as a bare ``TypeError: object of type 'int' has no len()``. That is a
+    422 either way — ``main.py`` maps ``TypeError`` — but the detail an analyst
+    saw was a Python internal with no field in it, and a dict or a string got
+    silently iterated over its keys or its characters instead.
+    """
+    if isinstance(vals, (str, bytes)) or not isinstance(vals, (list, tuple)):
+        raise EngineInputError(f"{name} must be a list of one figure per forecast year")
+    return list(vals)
+
+
 def terminal_value_gordon(
     final_fcf: float,
     discount_rate: float,
@@ -107,9 +121,21 @@ def terminal_value_gordon(
 
 
 def terminal_value_exit_multiple(metric: float, multiple: float) -> float:
-    """Exit-multiple terminal value: terminal metric (e.g. EBITDA) × multiple."""
+    """Exit-multiple terminal value: terminal metric (e.g. EBITDA) × multiple.
+
+    The metric must be positive, which is the same rule ``approaches.income_dcf``
+    applies to ``income.terminal_metric``. Without it a forecast whose terminal
+    year loses money returned a *negative* terminal value here, an analyst
+    adopted it as the engagement's cash flows, and the calculation then refused
+    the very figures this endpoint had just handed them.
+    """
     if multiple <= 0:
         raise EngineInputError("exit multiple must be positive")
+    if metric <= 0:
+        raise EngineInputError(
+            f"the terminal-year metric must be positive to strike an exit multiple "
+            f"against it (got {metric:g}) — use the Gordon terminal value instead"
+        )
     return metric * multiple
 
 
@@ -185,7 +211,7 @@ def project_financials(
     elif method == "driver":
         if revenue is None:
             raise EngineInputError("driver method needs an explicit revenue list")
-        rev_series = [_num(x, "revenue[]") for x in revenue]
+        rev_series = [_num(x, "revenue[]") for x in _sequence(revenue, "revenue")]
         n = len(rev_series)
         if n < 1:
             raise EngineInputError("revenue list must be non-empty")
@@ -194,9 +220,10 @@ def project_financials(
         def _line(vals, name: str) -> list[float]:
             if vals is None:
                 return [0.0] * n
-            if len(vals) != n:
+            items = _sequence(vals, name)
+            if len(items) != n:
                 raise EngineInputError(f"{name} must have {n} entries to match revenue")
-            return [_num(x, f"{name}[]") for x in vals]
+            return [_num(x, f"{name}[]") for x in items]
 
         cogs_series = _line(cogs, "cogs")
         opex_series = _line(opex, "opex")
@@ -245,6 +272,14 @@ def project_financials(
     elif terminal_method == "exit_multiple":
         if exit_multiple is None:
             raise EngineInputError("exit_multiple terminal value needs exit_multiple")
+        # Anything that was not the string "ebitda" fell through to revenue.
+        # `exit_metric: "EBITDA"` therefore struck the multiple on the terminal
+        # year's revenue and reported it as an EBITDA exit — on the sample
+        # forecast, 8 x 1,210 where 8 x 363 was asked for, a terminal value
+        # 3.3x too high with nothing in the response saying so. The set is
+        # closed and small, so an unrecognised member is an error.
+        if exit_metric not in ("ebitda", "revenue"):
+            raise EngineInputError(f"exit_metric must be 'ebitda' or 'revenue'; got {exit_metric!r}")
         metric_val = projections[-1]["ebitda"] if exit_metric == "ebitda" else projections[-1]["revenue"]
         terminal_value = round(terminal_value_exit_multiple(metric_val, _num(exit_multiple, "exit_multiple")), 2)
     elif terminal_method not in (None, "none"):
