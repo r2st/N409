@@ -121,7 +121,7 @@ describe('app data tables stay within a 375px viewport', () => {
     ['pages/SettingsPage.tsx:462', 228], // personal API tokens
     ['pages/FundPortfolioPage.tsx:525', 292], // position mark history
     ['pages/AdminSsoPage.tsx:211', 261], // SCIM tokens — label · created · state · revoke
-    ['pages/AdminRetentionPage.tsx:240', 284], // legal holds — scope · reason · state · release
+    ['pages/AdminRetentionPage.tsx:255', 284], // legal holds — scope · reason · state · release
   ]);
 
   it('gives every table of four or more columns somewhere to scroll', () => {

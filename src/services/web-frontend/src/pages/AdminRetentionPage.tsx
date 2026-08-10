@@ -98,19 +98,34 @@ export function AdminRetentionPage() {
     }
   };
 
+  // Both of these used to let a rejection escape as an unhandled promise: the
+  // click did nothing visible, the hold stayed in place (or the sweep never
+  // ran), and the only evidence was in the browser console. On a screen whose
+  // whole job is the legal-hold audit trail, a write that silently fails is
+  // the one outcome that must never be indistinguishable from success.
   const releaseHold = async (id: string) => {
-    await api(`/admin/retention/holds/${id}/release`, { method: 'POST' });
-    await load();
+    setError(null);
+    try {
+      await api(`/admin/retention/holds/${id}/release`, { method: 'POST' });
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not release the hold.');
+    }
   };
 
   const runSweep = async () => {
     setNote(null);
-    const { result } = await api<{ result: { archived: number; skipped_hold: number } }>(
-      '/admin/retention/run',
-      { method: 'POST' },
-    );
-    setNote(`Sweep complete: ${result.archived} archived, ${result.skipped_hold} held.`);
-    await load();
+    setError(null);
+    try {
+      const { result } = await api<{ result: { archived: number; skipped_hold: number } }>(
+        '/admin/retention/run',
+        { method: 'POST' },
+      );
+      setNote(`Sweep complete: ${result.archived} archived, ${result.skipped_hold} held.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not run the archival sweep.');
+    }
   };
 
   return (
