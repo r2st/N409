@@ -162,6 +162,13 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
     url: '/api/v1/sample-report',
     reason: "the deliverable's own chapter outline; a sample behind a login shows a prospect nothing",
   },
+  {
+    method: 'GET',
+    url: '/api/v1/sample-report/pdf',
+    reason:
+      'the same outline rendered as the document itself, on a fictitious company; every page is ' +
+      'marked as not a valuation opinion, and no engagement data is reachable from it',
+  },
   { method: 'GET', url: '/api/partner/v1/docs', reason: 'self-describing partner API documentation' },
   {
     method: 'GET',

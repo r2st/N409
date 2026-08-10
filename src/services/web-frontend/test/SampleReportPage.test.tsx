@@ -31,6 +31,11 @@ const OUTLINE = {
       { id: 'C', title: 'Income Approach', description: 'The cash-flow stream.', always: false },
     ],
   },
+  figures: [
+    { label: 'Equity value', value: '$31,910,519', note: 'Weighted across three approaches' },
+    { label: 'FMV / share', value: '$4.10', note: 'Common stock' },
+  ],
+  pdf: { available: true },
 };
 
 const renderPage = () =>
@@ -83,6 +88,40 @@ describe('SampleReportPage', () => {
     const income = cards.find((c) => c.textContent?.includes('Income Approach'))!;
     expect(capTable.textContent).not.toMatch(/as applicable/i);
     expect(income.textContent).toMatch(/as applicable/i);
+  });
+
+  it('offers the rendered PDF as an ungated download', async () => {
+    renderPage();
+    const link = (await screen.findByTestId('sample-report-download')) as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe('/api/v1/sample-report/pdf');
+    // Without `download` the browser opens the PDF in a tab; the CTA says
+    // "Download" and has to do that.
+    expect(link.getAttribute('download')).toBe('n409-sample-409a-report.pdf');
+    expect(screen.getByText(/no email required/i)).toBeTruthy();
+  });
+
+  it('prints the worked example the endpoint serves, not its own copy of it', async () => {
+    renderPage();
+    const strip = await screen.findByTestId('sample-report-figures');
+    // The figures are the PDF's conclusions. A page that hard-codes them is a
+    // page that contradicts the document it is advertising the first time an
+    // input to the sample changes.
+    expect(strip.textContent).toMatch(/\$31,910,519/);
+    expect(strip.textContent).toMatch(/\$4\.10/);
+    expect(strip.textContent).toMatch(/Weighted across three approaches/);
+  });
+
+  it('hides the download for a kind that publishes no sample PDF', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => jsonResponse({ ...OUTLINE, pdf: { available: false } })),
+    );
+    renderPage();
+    await screen.findByTestId('sample-report-sections');
+    expect(screen.queryByTestId('sample-report-download')).toBeNull();
+    // …and the primary CTA has to survive losing it, rather than leaving the
+    // page with no button on it at all.
+    expect(screen.getAllByText(/Start my valuation/i).length).toBeGreaterThan(0);
   });
 
   it('degrades to a message rather than an empty page when the outline fails', async () => {

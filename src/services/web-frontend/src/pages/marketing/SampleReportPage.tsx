@@ -22,23 +22,40 @@ interface Outline {
   exhibits: { id: string; title: string; description: string; always: boolean }[];
 }
 
-/** The headline figures of the worked example, as the report concludes them. */
-const WORKED_EXAMPLE = [
-  { label: 'Equity value', value: '$32.0M' },
-  { label: 'Preferred', value: '−$12.4M' },
-  { label: 'Option pool', value: '−$5.5M' },
-  { label: 'Common', value: '$14.1M' },
-  { label: 'DLOM', value: '−27.5%' },
-  { label: 'FMV / share', value: '$4.12' },
-];
+interface Figure {
+  label: string;
+  value: string;
+  note?: string;
+}
+
+interface SampleResponse {
+  outline: Outline;
+  /**
+   * The worked example, as the downloadable PDF concludes it. Fetched rather
+   * than written here for the same reason the chapter list is: this page and
+   * the document have to agree about what the sample says, and two copies of
+   * six numbers agree only until one of them is edited.
+   */
+  figures: Figure[];
+  pdf: { available: boolean };
+}
+
+/** Where the rendered sample lives. Same origin; the web service proxies /api. */
+const PDF_URL = '/api/v1/sample-report/pdf';
 
 export function SampleReportPage() {
   const [outline, setOutline] = useState<Outline | null>(null);
+  const [figures, setFigures] = useState<Figure[]>([]);
+  const [pdfAvailable, setPdfAvailable] = useState(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    api<{ outline: Outline }>('/sample-report')
-      .then((r) => setOutline(r.outline))
+    api<SampleResponse>('/sample-report')
+      .then((r) => {
+        setOutline(r.outline);
+        setFigures(r.figures ?? []);
+        setPdfAvailable(r.pdf?.available ?? false);
+      })
       .catch(() => setFailed(true));
   }, []);
 
@@ -55,11 +72,28 @@ export function SampleReportPage() {
       </p>
 
       <div className="mt-8 flex flex-wrap items-center gap-4">
+        {pdfAvailable && (
+          // A plain link, not a fetch-and-blob: the browser streams the file,
+          // "save link as" works, and a prospect with a slow connection gets
+          // the download indicator they expect instead of a dead button.
+          <a
+            href={PDF_URL}
+            download="n409-sample-409a-report.pdf"
+            data-testid="sample-report-download"
+            className="rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700"
+          >
+            Download the sample report (PDF)
+          </a>
+        )}
         <Link
           to="/register"
-          className="rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700"
+          className={
+            pdfAvailable
+              ? 'text-sm font-semibold text-bond-600 hover:text-bond-700'
+              : 'rounded-md bg-bond-600 px-5 py-2.5 text-sm font-semibold text-bond-fg shadow-card transition-colors hover:bg-bond-700'
+          }
         >
-          Start my valuation
+          Start my valuation{pdfAvailable ? ' →' : ''}
         </Link>
         <Link
           to="/tools/409a-valuation-calculator"
@@ -68,22 +102,32 @@ export function SampleReportPage() {
           Estimate your range first →
         </Link>
       </div>
-
-      <section className="mt-12 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
-        <div className="overline text-bond-700">Report summary</div>
-        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
-          {WORKED_EXAMPLE.map((f) => (
-            <div key={f.label}>
-              <div className="tnum font-display text-2xl font-semibold text-ink-900">{f.value}</div>
-              <div className="overline mt-0.5 text-ink-400">{f.label}</div>
-            </div>
-          ))}
-        </div>
-        <p className="mt-5 border-t border-paper-200 pt-4 text-xs leading-relaxed text-ink-500">
-          A worked Series B example: an OPM backsolve calibrated to the last priced round, a Finnerty
-          marketability discount, and the per-share conclusion the board resolution references.
+      {pdfAvailable && (
+        <p className="mt-3 text-xs text-ink-500">
+          No email required. The sample is a fictitious company and every page is marked as such — it is
+          published to show the structure, not to be relied on.
         </p>
-      </section>
+      )}
+
+      {figures.length > 0 && (
+        <section className="mt-12 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+          <div className="overline text-bond-700">Report summary</div>
+          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3" data-testid="sample-report-figures">
+            {figures.map((f) => (
+              <div key={f.label}>
+                <div className="tnum font-display text-2xl font-semibold text-ink-900">{f.value}</div>
+                <div className="overline mt-0.5 text-ink-400">{f.label}</div>
+                {f.note && <div className="mt-0.5 text-xs text-ink-500">{f.note}</div>}
+              </div>
+            ))}
+          </div>
+          <p className="mt-5 border-t border-paper-200 pt-4 text-xs leading-relaxed text-ink-500">
+            A worked Series B example: an OPM backsolve calibrated to the last priced round, a Finnerty
+            marketability discount, and the per-share conclusion the board resolution references. Every figure
+            above is derived in the exhibits of the PDF.
+          </p>
+        </section>
+      )}
 
       <section className="mt-14">
         <div className="overline text-ink-400">What&rsquo;s inside</div>

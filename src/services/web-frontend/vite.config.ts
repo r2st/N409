@@ -155,6 +155,14 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['test/**/*.test.{ts,tsx}'],
     setupFiles: ['test/setup.ts'],
+    // Vitest's 5s default is enough for a plain run and not enough under v8
+    // instrumentation: the two `ContactForm` cases drive `userEvent`, which
+    // types a character at a time through a jsdom tree, and coverage roughly
+    // triples the per-keystroke cost. They passed bare and timed out under
+    // `--coverage` — so the one command that measures whether this package is
+    // tested was the one command that could not complete. A timeout that only
+    // fires when the harness is instrumented is measuring the harness.
+    testTimeout: 30000,
     coverage: {
       // Enforced coverage floor (audit P2-2). Set at the current measured level
       // (a point or two below) so CI can't silently regress — the TS analogue of

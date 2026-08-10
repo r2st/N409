@@ -37,6 +37,43 @@ describe.skipIf(!dbUp)('public sample report outline', () => {
     expect(bad.statusCode).toBe(400);
   });
 
+  it('serves the worked example and the availability of the PDF alongside it', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/sample-report' });
+    const { figures, pdf, notice } = res.json();
+    expect(pdf).toEqual({ available: true });
+    expect(notice).toMatch(/not a valuation opinion/i);
+    expect(figures.map((f: { label: string }) => f.label)).toContain('FMV / share');
+
+    // A specialty kind has no rendered sample, and has to say so rather than
+    // offering a download that 400s.
+    const emi = await ctx.app.inject({ method: 'GET', url: '/api/v1/sample-report?kind=emi' });
+    expect(emi.json().pdf).toEqual({ available: false });
+  });
+
+  it('renders the sample PDF to anyone, as an attachment', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/sample-report/pdf' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/pdf/);
+    expect(res.headers['content-disposition']).toMatch(/attachment; filename="n409-sample-409a-report\.pdf"/);
+    expect(res.headers['cache-control']).toMatch(/max-age=\d+/);
+    expect(res.rawPayload.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(res.rawPayload.length).toBeGreaterThan(20_000);
+  }, 60_000);
+
+  it('refuses a kind it publishes no sample for, rather than rendering an empty one', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/sample-report/pdf?kind=emi' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().detail ?? res.json().title).toMatch(/no sample is published/i);
+  });
+
+  it('is byte-identical across requests, so the download can be cached', async () => {
+    const [a, b] = await Promise.all([
+      ctx.app.inject({ method: 'GET', url: '/api/v1/sample-report/pdf' }),
+      ctx.app.inject({ method: 'GET', url: '/api/v1/sample-report/pdf' }),
+    ]);
+    expect(a.rawPayload.equals(b.rawPayload)).toBe(true);
+  }, 60_000);
+
   it('leaks no client data — the outline is template copy only', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/sample-report' });
     const body = res.payload;
