@@ -204,13 +204,24 @@ export function GrantsTab() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const { grants: g } = await api<{ grants: Grant[] }>(`/valuations/${valuation.id}/grants`);
       setGrants(g);
-    } catch {
+      setLoadFailed(false);
+    } catch (err) {
+      // A failed load is reported, not swallowed into an empty list. Rendering
+      // "No grants issued yet — once the board approves, issue option grants
+      // here" on a valuation that may already be full of them is how a
+      // duplicate grant gets issued. The list is still emptied so the page can
+      // render at all; the empty state below defers to the error instead.
       setGrants([]);
+      setLoadFailed(true);
+      setError(
+        err instanceof ApiError ? err.message : 'Could not load the grants for this valuation.',
+      );
     }
   }, [valuation.id]);
 
@@ -368,11 +379,15 @@ export function GrantsTab() {
       )}
 
       {grants.length === 0 ? (
-        <EmptyState title="No grants issued yet">
-          {ops
-            ? 'Once the board approves the 409A, issue option grants here.'
-            : 'Option grants issued against this valuation will appear here.'}
-        </EmptyState>
+        // Silent when the load failed: the error above is the honest answer,
+        // and "no grants yet" alongside it would contradict it.
+        loadFailed ? null : (
+          <EmptyState title="No grants issued yet">
+            {ops
+              ? 'Once the board approves the 409A, issue option grants here.'
+              : 'Option grants issued against this valuation will appear here.'}
+          </EmptyState>
+        )
       ) : (
         <ul className="space-y-3">
           {grants.map((g) => (
