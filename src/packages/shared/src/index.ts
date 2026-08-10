@@ -36,3 +36,4 @@ export {
   type RequestContext,
 } from './requestContext.js';
 export { TtlCache } from './cache.js';
+export { conditionalJson, etagFor, matchesIfNoneMatch, type ConditionalOptions } from './httpCache.js';

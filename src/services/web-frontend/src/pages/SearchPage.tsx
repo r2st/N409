@@ -4,10 +4,15 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
+import { formatBytes } from '../lib/pipeline';
 import type { SearchResults } from '../lib/types';
 import { EmptyState, ErrorNote, KindBadge, Spinner, StateBadge, TextInput } from '../components/ui';
 
-/** Global search (M4) — one box across valuations and, for ops, users. */
+/**
+ * Global search (M4) — one box across valuations, documents and, for ops,
+ * users. Document hits carry their owning valuation because a filename alone
+ * does not identify an engagement.
+ */
 export function SearchPage() {
   const { user } = useAuth();
   const ops = isOps(user);
@@ -53,6 +58,19 @@ export function SearchPage() {
     return () => clearTimeout(timer);
   }, [q]);
 
+  /**
+   * The three collections, each defaulted to empty.
+   *
+   * The frontend and the API deploy separately, so during a rollout this page
+   * can be the new build reading an old reply — one that has no `documents`
+   * key at all. Reaching straight into `results.documents.length` turns that
+   * window into a blank page with a render error, which is a far worse outcome
+   * than briefly showing no document hits.
+   */
+  const valuationHits = results?.valuations ?? [];
+  const documentHits = results?.documents ?? [];
+  const userHits = results?.users ?? [];
+
   return (
     <div>
       <div className="overline text-ink-400">Everywhere</div>
@@ -73,7 +91,9 @@ export function SearchPage() {
             setParams(e.target.value.trim() ? { q: e.target.value.trim() } : {}, { replace: true });
           }}
           placeholder={
-            ops ? 'Company, valuation number or id, user name or email…' : 'Company, valuation number…'
+            ops
+              ? 'Company, valuation number or id, filename, user name or email…'
+              : 'Company, valuation number, filename…'
           }
           aria-label="Search"
         />
@@ -89,14 +109,14 @@ export function SearchPage() {
       {!busy && q.trim().length >= 2 && results && (
         <div className="mt-8 space-y-10">
           <section>
-            <h2 className="overline mb-3 text-ink-400">Valuations ({results.valuations.length})</h2>
-            {results.valuations.length === 0 ? (
+            <h2 className="overline mb-3 text-ink-400">Valuations ({valuationHits.length})</h2>
+            {valuationHits.length === 0 ? (
               <p className="text-sm text-ink-400">No matching valuations.</p>
             ) : (
               <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                 <table className="w-full min-w-[560px] text-sm">
                   <tbody>
-                    {results.valuations.map((v) => (
+                    {valuationHits.map((v) => (
                       <tr key={v.id} className="border-b border-paper-200 last:border-0 hover:bg-paper-50">
                         <td className="px-5 py-3">
                           <Link
@@ -122,16 +142,52 @@ export function SearchPage() {
             )}
           </section>
 
+          <section>
+            <h2 className="overline mb-3 text-ink-400">Documents ({documentHits.length})</h2>
+            {documentHits.length === 0 ? (
+              <p className="text-sm text-ink-400">No matching documents.</p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
+                <table className="w-full min-w-[560px] text-sm">
+                  <tbody>
+                    {documentHits.map((d) => (
+                      <tr key={d.id} className="border-b border-paper-200 last:border-0 hover:bg-paper-50">
+                        <td className="px-5 py-3">
+                          {/* A filename on its own does not say which engagement
+                              it belongs to, and the same file name recurs across
+                              deals — so the link goes to the documents tab of the
+                              owning valuation, and the company is shown beside it. */}
+                          <Link
+                            to={`/valuations/${d.valuation_id}/documents`}
+                            className="font-semibold text-ink-900 hover:text-bond-700"
+                          >
+                            {d.filename}
+                          </Link>
+                          <div className="mt-0.5 text-xs text-ink-400">
+                            {d.company_name}
+                            <span className="tnum ml-1">#{d.valuation_number}</span>
+                          </div>
+                        </td>
+                        <td className="tnum px-5 py-3 text-ink-600">{formatBytes(d.size_bytes)}</td>
+                        <td className="tnum px-5 py-3 text-ink-600">{formatDate(d.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
           {ops && (
             <section>
-              <h2 className="overline mb-3 text-ink-400">Users ({results.users.length})</h2>
-              {results.users.length === 0 ? (
+              <h2 className="overline mb-3 text-ink-400">Users ({userHits.length})</h2>
+              {userHits.length === 0 ? (
                 <p className="text-sm text-ink-400">No matching users.</p>
               ) : (
                 <div className="overflow-x-auto rounded-lg border border-paper-300 bg-surface shadow-card">
                   <table className="w-full min-w-[480px] text-sm">
                     <tbody>
-                      {results.users.map((u) => (
+                      {userHits.map((u) => (
                         <tr key={u.id} className="border-b border-paper-200 last:border-0">
                           <td className="px-5 py-3 font-semibold text-ink-900">{displayName(u)}</td>
                           <td className="px-5 py-3 text-ink-600">{u.email}</td>

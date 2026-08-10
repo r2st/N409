@@ -5,7 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { NOTIFICATION_EVENT_TYPES } from '../domain/emailWorkflows.js';
 import { listNotifications, markAllRead, markRead, unreadCount } from '../repos/notifications.js';
-import { getPreferenceMatrix, upsertPreference } from '../repos/notificationPreferences.js';
+import { getPreferenceMatrix, replacePreferences } from '../repos/notificationPreferences.js';
 import { listOutbox } from '../repos/emailOutbox.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -84,12 +84,7 @@ export function registerNotificationRoutes(app: FastifyInstance, deps: { pool: p
     const principal = requirePrincipal(req);
     const parsed = PreferencesBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid preferences', { errors: parsed.error.issues });
-    for (const pref of parsed.data.preferences) {
-      await upsertPreference(deps.pool, principal.id, pref.event_type, {
-        in_app: pref.in_app,
-        email: pref.email,
-      });
-    }
+    await replacePreferences(deps.pool, principal.id, parsed.data.preferences);
     return { preferences: await getPreferenceMatrix(deps.pool, principal.id) };
   });
 

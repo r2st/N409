@@ -516,6 +516,18 @@ export interface SearchResults {
     service_name: string | null;
     created_at: string;
   }>;
+  documents: Array<{
+    id: string;
+    valuation_id: string;
+    filename: string;
+    kind: string;
+    category: string | null;
+    content_type: string;
+    size_bytes: string;
+    created_at: string;
+    company_name: string;
+    valuation_number: string;
+  }>;
   users: Array<{
     id: string;
     email: string;

@@ -46,6 +46,45 @@ export interface UserSearchHit {
   partner_id: string | null;
 }
 
+export interface DocumentSearchHit {
+  id: string;
+  valuation_id: string;
+  filename: string;
+  kind: string;
+  category: string | null;
+  content_type: string;
+  size_bytes: string;
+  created_at: Date;
+  /** Denormalized so a hit is identifiable without a second round trip. */
+  company_name: string;
+  valuation_number: string;
+}
+
+/**
+ * The scope predicate every search shares, as SQL against a `valuations` row.
+ *
+ * `searchValuations` builds this inline against the table's own columns;
+ * document search needs the same rule applied to the *joined* valuation, so
+ * the clause is written once here and qualified with the caller's alias.
+ * Keeping one source for the rule is what stops the two endpoints drifting
+ * into different answers about who can see what.
+ */
+function scopeClause(
+  scope: Exclude<ValuationScope, { kind: 'none' }>,
+  alias: string,
+  params: unknown[],
+): string | null {
+  if (scope.kind === 'partner') {
+    params.push(scope.partnerId);
+    return `${alias}.partner_id = $${params.length}`;
+  }
+  if (scope.kind === 'own') {
+    params.push(scope.userId);
+    return `${alias}.user_id = $${params.length}`;
+  }
+  return null;
+}
+
 export async function searchValuations(
   pool: pg.Pool,
   scope: ValuationScope,
@@ -56,12 +95,8 @@ export async function searchValuations(
 
   const where: string[] = [];
   const params: unknown[] = [];
-  const add = (clause: string, value: unknown) => {
-    params.push(value);
-    where.push(clause.replace('?', `$${params.length}`));
-  };
-  if (scope.kind === 'partner') add('partner_id = ?', scope.partnerId);
-  if (scope.kind === 'own') add('user_id = ?', scope.userId);
+  const scoped = scopeClause(scope, 'valuations', params);
+  if (scoped) where.push(scoped);
 
   const matches: string[] = [];
   const contains = likeContains(q);
@@ -84,6 +119,62 @@ export async function searchValuations(
   const { rows } = await pool.query<ValuationRow>(
     `SELECT * FROM valuations WHERE ${where.join(' AND ')}
      ORDER BY created_at DESC LIMIT $${params.length}`,
+    params,
+  );
+  return rows;
+}
+
+/**
+ * Documents by filename, or by exact document id.
+ *
+ * Uploads were the one thing the search box could not find. A 409A engagement
+ * accumulates dozens of them — cap tables, option ledgers, board consents,
+ * audited financials — and the only way to reach one was to remember which
+ * valuation it hung off and page through that valuation's documents tab. The
+ * filename is what anybody actually remembers, so it is what this matches.
+ *
+ * Scope is enforced on the *joined valuation*, not on the document: documents
+ * carry no owner of their own, so the row's visibility is entirely inherited
+ * from the valuation it belongs to. Doing the join in SQL rather than
+ * filtering in JS is what keeps a partner from seeing another partner's
+ * filenames, which leak deal names even when the bytes stay unreachable.
+ *
+ * Soft-deleted rows are excluded — a deleted upload is deleted, and the
+ * partial index on `documents (valuation_id) WHERE deleted_at IS NULL` already
+ * reflects that this is the only interesting slice.
+ */
+export async function searchDocuments(
+  pool: pg.Pool,
+  scope: ValuationScope,
+  q: string,
+  limit = 10,
+): Promise<DocumentSearchHit[]> {
+  if (scope.kind === 'none') return [];
+
+  const params: unknown[] = [];
+  const where: string[] = ['d.deleted_at IS NULL'];
+  const scoped = scopeClause(scope, 'v', params);
+  if (scoped) where.push(scoped);
+
+  const matches: string[] = [];
+  params.push(likeContains(q));
+  matches.push(`d.filename ILIKE $${params.length}`);
+  if (isUlid(q.toUpperCase())) {
+    params.push(q.toUpperCase());
+    matches.push(`d.id = $${params.length}`);
+  }
+  where.push(`(${matches.join(' OR ')})`);
+
+  params.push(limit);
+  const { rows } = await pool.query<DocumentSearchHit>(
+    `SELECT d.id, d.valuation_id, d.filename, d.kind::text AS kind, d.category::text AS category,
+            d.content_type, d.size_bytes::text AS size_bytes, d.created_at,
+            v.company_name, v.number::text AS valuation_number
+       FROM documents d
+       JOIN valuations v ON v.id = d.valuation_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY d.created_at DESC
+      LIMIT $${params.length}`,
     params,
   );
   return rows;

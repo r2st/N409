@@ -35,7 +35,7 @@ export async function getPreferenceMatrix(
 }
 
 export async function upsertPreference(
-  pool: pg.Pool,
+  pool: pg.Pool | pg.PoolClient,
   userId: string,
   eventType: NotificationEventType,
   pref: ChannelPreference,
@@ -47,6 +47,41 @@ export async function upsertPreference(
      DO UPDATE SET in_app = $3, email = $4, updated_at = now()`,
     [userId, eventType, pref.in_app, pref.email],
   );
+}
+
+/**
+ * Replaces a batch of preferences in one transaction.
+ *
+ * The settings screen submits the whole matrix as a unit, and the route used
+ * to apply it with a loop of independent upserts. Any failure part-way — a
+ * dropped connection, a statement timeout — left the user with some switches
+ * moved and some not, and returned an error suggesting *nothing* had been
+ * saved. The screen then re-read a matrix that matched neither what was on it
+ * before nor what was submitted, and the only way to find out which half had
+ * landed was to read the rows. A partial save of a settings form is worse than
+ * no save, because the user has no reason to look.
+ */
+export async function replacePreferences(
+  pool: pg.Pool,
+  userId: string,
+  prefs: Array<{ event_type: NotificationEventType } & ChannelPreference>,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const pref of prefs) {
+      await upsertPreference(client, userId, pref.event_type, {
+        in_app: pref.in_app,
+        email: pref.email,
+      });
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**

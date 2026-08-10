@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems, TtlCache } from '@n409/shared';
+import { conditionalJson, isUlid, problems, TtlCache } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { sanitizeHtml } from '../domain/report.js';
 import {
@@ -102,14 +102,20 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
 
   // ── Public reading (no auth) ─────────────────────────────────────────────
 
-  app.get('/api/v1/blog/posts', async () => {
+  // Anonymous, identical for every caller, so a shared cache may hold it —
+  // hence `public` rather than the `private` default. Still `no-cache`: an
+  // author who publishes a correction expects it live on the next request,
+  // and revalidation costs one conditional round trip, not a re-download.
+  const PUBLIC_REVALIDATE = { cacheControl: 'public, no-cache' };
+
+  app.get('/api/v1/blog/posts', async (req, reply) => {
     const posts = (await cache.getOrLoad('list:published', () =>
       listPosts(deps.pool, { includeDrafts: false }),
     )) as BlogPostRow[];
-    return { posts: posts.map(toSummary) };
+    return conditionalJson(req, reply, { posts: posts.map(toSummary) }, PUBLIC_REVALIDATE);
   });
 
-  app.get('/api/v1/blog/posts/:slug', async (req) => {
+  app.get('/api/v1/blog/posts/:slug', async (req, reply) => {
     const { slug } = req.params as { slug: string };
     const post = (await cache.getOrLoad(
       `slug:${slug}`,
@@ -122,7 +128,7 @@ export function registerBlogRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       },
     )) as BlogPostRow | null;
     if (!post) throw problems.notFound();
-    return { post: toPublic(post) };
+    return conditionalJson(req, reply, { post: toPublic(post) }, PUBLIC_REVALIDATE);
   });
 
   // ── Authoring (ops-only, audited) ────────────────────────────────────────

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isUlid, problems, TtlCache } from '@n409/shared';
+import { conditionalJson, isUlid, problems, TtlCache } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { sanitizeHtml } from '../domain/report.js';
 import {
@@ -50,13 +50,14 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
 
   // ── Reading (all authenticated users; drafts stay ops-only) ───────────────
 
-  app.get('/api/v1/help/articles', { preHandler: app.authenticate }, async (req) => {
+  app.get('/api/v1/help/articles', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const ops = isOps(principal);
     const articles = await cache.getOrLoad(`list:${ops ? 'all' : 'published'}`, () =>
       listArticles(deps.pool, { includeUnpublished: ops }),
     );
-    return { articles };
+    // The widget refetches this on every page mount; 304 keeps that free.
+    return conditionalJson(req, reply, { articles });
   });
 
   app.get('/api/v1/help/articles/:slug', { preHandler: app.authenticate }, async (req) => {

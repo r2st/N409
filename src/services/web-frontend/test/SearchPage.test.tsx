@@ -26,7 +26,20 @@ const hit = (name: string) => ({
   created_at: '2026-01-01T00:00:00.000Z',
 });
 
-const results = (name: string) => ({ valuations: [hit(name)], users: [] });
+const results = (name: string) => ({ valuations: [hit(name)], documents: [], users: [] });
+
+const documentHit = (filename: string, company = 'Acme Robotics') => ({
+  id: '01N409DOC00000000000000AA',
+  valuation_id: '01N409VAL00000000000000AA',
+  filename,
+  kind: 'other',
+  category: null,
+  content_type: 'application/pdf',
+  size_bytes: '2048',
+  created_at: '2026-02-03T00:00:00.000Z',
+  company_name: company,
+  valuation_number: '42',
+});
 
 /** The search box is debounced, not serialized — replies can cross. */
 describe('SearchPage', () => {
@@ -104,5 +117,68 @@ describe('SearchPage', () => {
 
     expect(await screen.findByText('Type at least two characters to search')).toBeInTheDocument();
     expect(screen.queryByText('Acme Robotics')).not.toBeInTheDocument();
+  });
+
+  describe('document hits', () => {
+    const withDocuments = (docs: ReturnType<typeof documentHit>[]) => ({
+      valuations: [],
+      documents: docs,
+      users: [],
+    });
+
+    it('lists a matching filename', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        jsonResponse(withDocuments([documentHit('cap-table-2026.xlsx')])),
+      );
+      renderAt('/search?q=cap-table');
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(await screen.findByText('cap-table-2026.xlsx')).toBeInTheDocument();
+      expect(screen.getByText('Documents (1)')).toBeInTheDocument();
+    });
+
+    it('links a hit to the documents tab of the valuation that owns it', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        jsonResponse(withDocuments([documentHit('board-consent.pdf')])),
+      );
+      renderAt('/search?q=board');
+      await vi.advanceTimersByTimeAsync(300);
+
+      const link = await screen.findByRole('link', { name: 'board-consent.pdf' });
+      expect(link).toHaveAttribute('href', '/valuations/01N409VAL00000000000000AA/documents');
+    });
+
+    it('shows the owning company, since a filename alone names no engagement', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        jsonResponse(withDocuments([documentHit('cap-table.xlsx', 'Beta Biosciences')])),
+      );
+      renderAt('/search?q=cap-table');
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(await screen.findByText(/Beta Biosciences/)).toBeInTheDocument();
+      expect(screen.getByText('#42')).toBeInTheDocument();
+    });
+
+    it('says so when nothing matched, rather than showing an empty table', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => jsonResponse(withDocuments([])));
+      renderAt('/search?q=nothing');
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(await screen.findByText('No matching documents.')).toBeInTheDocument();
+    });
+
+    it('renders an API reply that predates document search instead of crashing', async () => {
+      // The frontend and API deploy separately: mid-rollout this build can
+      // read a reply with no `documents` key at all. That must degrade to
+      // "no documents", not to a blank page.
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        jsonResponse({ valuations: [hit('Acme Robotics')], users: [] }),
+      );
+      renderAt('/search?q=acme');
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(await screen.findByText('Acme Robotics')).toBeInTheDocument();
+      expect(screen.getByText('Documents (0)')).toBeInTheDocument();
+    });
   });
 });
