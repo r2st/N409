@@ -5,12 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canEditWorkingData, canReadValuation } from '../auth/rbac.js';
 import { computeWorkbook, validateCellRef } from '../domain/workbook.js';
 import { detectFinancialAnomalies } from '../domain/financialAnomalies.js';
-import {
-  buildWorkbookTabs,
-  type TabCompanyProfile,
-  type TabParams,
-  type TabValuation,
-} from '../domain/workbookTabs.js';
+import { buildWorkbookTabs } from '../domain/workbookTabs.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findCompanyProfile } from '../repos/companyProfiles.js';
 import { findParams } from '../repos/params.js';
@@ -89,9 +84,9 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!valuation) throw problems.notFound();
 
     const tabs = buildWorkbookTabs({
-      valuation: valuation as unknown as TabValuation,
-      profile: profile as TabCompanyProfile | null,
-      params: params as unknown as TabParams | null,
+      valuation,
+      profile,
+      params,
       capTable: capTable?.entries ?? [],
       sheets: computeWorkbook(cells),
       overwrites: new Map(overwrites.map((o) => [o.field_key, o.value])),

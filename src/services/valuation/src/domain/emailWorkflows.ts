@@ -196,11 +196,17 @@ export type PartnerEmailTemplates = Partial<
   Record<(typeof PARTNER_EMAIL_TEMPLATE_KEYS)[number], { subject: string; body: string }>
 >;
 
-export interface EmailTemplateVars {
+/**
+ * A `type` rather than an `interface`, for the reason `ReportTemplateVars`
+ * carries: only an object type alias gets TypeScript's implicit index
+ * signature, and without one a `{{placeholder}}` lookup cannot read this shape
+ * without being laundered through `as unknown as`.
+ */
+export type EmailTemplateVars = {
   company_name: string;
   kind: string;
   partner_name: string;
-}
+};
 
 /**
  * {{placeholder}} substitution; unknown placeholders survive verbatim.
@@ -211,9 +217,10 @@ export interface EmailTemplateVars {
  * email template rendered as `function Object() { [native code] }`.
  */
 export function renderEmailTemplate(text: string, vars: EmailTemplateVars): string {
+  const lookup: Readonly<Record<string, unknown>> = vars;
   return text.replace(/\{\{(\w+)\}\}/g, (m, key: string) => {
     if (!Object.hasOwn(vars, key)) return m;
-    const v = (vars as unknown as Record<string, unknown>)[key];
+    const v = lookup[key];
     return v === undefined || v === null ? m : String(v);
   });
 }

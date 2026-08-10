@@ -300,13 +300,19 @@ export function visibleSections(content: ReportContent): ReportSection[] {
 
 // ── Templates ─────────────────────────────────────────────────────────────────
 
-export interface ReportTemplateVars {
+/**
+ * A `type` rather than an `interface` on purpose: TypeScript gives object type
+ * aliases an implicit index signature and interfaces none, so only this form is
+ * assignable to the `Record<string, unknown>` `fillTemplateVars` takes. Declared
+ * as an interface, every call site had to launder it through `as unknown as`.
+ */
+export type ReportTemplateVars = {
   company_name: string;
   kind: ValuationKind;
   valuation_ref: string;
   date: string; // YYYY-MM-DD
   currency: string;
-}
+};
 
 interface TemplateSectionDef {
   key: string;
@@ -1845,10 +1851,10 @@ export const TEMPLATE_VAR_NAMES: ReadonlySet<string> = new Set<keyof ReportTempl
   'currency',
 ]);
 
-export function fillTemplateVars(text: string, vars: object): string {
+export function fillTemplateVars(text: string, vars: Readonly<Record<string, unknown>>): string {
   return text.replace(/\{\{(\w+)\}\}(\.(?!\.))?/g, (m, key: string, stop: string | undefined) => {
     if (!Object.hasOwn(vars, key)) return m;
-    const v = (vars as unknown as Record<string, unknown>)[key];
+    const v = vars[key];
     if (v === undefined || v === null) return m;
     const filled = String(v);
     /*

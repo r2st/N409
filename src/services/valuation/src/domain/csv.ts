@@ -41,7 +41,22 @@ export function csvEscape(value: unknown): string {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export function toCsv(columns: string[], rows: Array<Record<string, unknown>>): string {
+/**
+ * Generic over the row so a caller can pass the rows it already has.
+ *
+ * `Array<Record<string, unknown>>` looked like the permissive choice and was
+ * the opposite: a TypeScript *interface* has no index signature, so every row
+ * type declared as one — which is all of the repo row types — had to be
+ * laundered through `as unknown as` to be passed here, and that assertion also
+ * erased any check that the column names exist on the row. Constraining the
+ * columns to `keyof T` restores it: a column renamed in the row type but not
+ * in the export list is now a compile error rather than a silently empty
+ * column in a file someone opens in Excel.
+ */
+export function toCsv<T extends object>(
+  columns: ReadonlyArray<Extract<keyof T, string>>,
+  rows: readonly T[],
+): string {
   const header = columns.map(csvEscape).join(',');
   const lines = rows.map((row) => columns.map((c) => csvEscape(row[c])).join(','));
   return [header, ...lines].join('\r\n') + '\r\n';

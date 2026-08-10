@@ -276,6 +276,8 @@ export function registerAdminUserRoutes(
       page: 1,
       perPage: 10_000,
     });
+    // `as const` so the names are checked against the row type rather than
+    // widened to `string[]` — see the note on `toCsv`.
     const columns = [
       'id',
       'email',
@@ -290,8 +292,8 @@ export function registerAdminUserRoutes(
       'sso_provider',
       'created_at',
       'deleted_at',
-    ];
-    const csv = toCsv(columns, items as unknown as Array<Record<string, unknown>>);
+    ] as const;
+    const csv = toCsv(columns, items);
     return reply
       .header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', 'attachment; filename="users.csv"')

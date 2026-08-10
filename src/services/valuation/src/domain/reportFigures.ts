@@ -171,11 +171,11 @@ export function reportFigures(calculation: CalculationRow | null, currency: stri
 export function fillFigures(content: ReportContent, figures: ReportFigures): ReportContent {
   if (Object.keys(figures).length === 0) return content;
   return {
-    title: fillTemplateVars(content.title, figures as unknown as never),
+    title: fillTemplateVars(content.title, figures),
     sections: content.sections.map((s) => ({
       ...s,
-      heading: fillTemplateVars(s.heading, figures as unknown as never),
-      html: fillTemplateVars(s.html, figures as unknown as never),
+      heading: fillTemplateVars(s.heading, figures),
+      html: fillTemplateVars(s.html, figures),
     })),
   };
 }

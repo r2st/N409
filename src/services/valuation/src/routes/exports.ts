@@ -61,7 +61,7 @@ const CSV_COLUMNS = [
   'created_at',
   'due_date',
   'published_at',
-];
+] as const;
 
 /** PDF: a narrower projection that fits a printable table. */
 function pdfRowValues(v: ValuationRow): unknown[] {
