@@ -165,11 +165,20 @@ export interface InstrumentOptions {
 /** Marker so a client is never wrapped twice, whatever else touches the pool. */
 const WRAPPED = Symbol('n409.queryStats.wrapped');
 
-/** The SQL text out of pg's several `query` call shapes. */
+/**
+ * The SQL text out of pg's several `query` call shapes.
+ *
+ * Returns null for a `Submittable` — a cursor or a streaming query, which pg
+ * detects by a `submit` method. Those return the object itself rather than a
+ * promise and finish long after the call returns, so there is no honest
+ * duration to take; recording one would fill the table with 0ms rows that look
+ * like the fastest queries in the service.
+ */
 function sqlTextOf(args: unknown[]): string | null {
   const first = args[0];
   if (typeof first === 'string') return first;
   if (first !== null && typeof first === 'object' && 'text' in first) {
+    if (typeof (first as { submit?: unknown }).submit === 'function') return null;
     const text = (first as { text: unknown }).text;
     if (typeof text === 'string') return text;
   }
@@ -199,15 +208,15 @@ export function instrumentPool(pool: pg.Pool, opts: InstrumentOptions): QuerySta
 
     (client as { query: unknown }).query = function query(...args: unknown[]) {
       const text = sqlTextOf(args);
-      // The callback form does not return a promise to hang timing off. It is
-      // unused in this service, so pass it through rather than grow a second
-      // timing path that nothing exercises.
-      if (text === null || typeof args[args.length - 1] === 'function') {
-        return original(...args);
-      }
+      if (text === null) return original(...args);
 
       const started = now();
+      let settled = false;
       const finish = () => {
+        // The callback form can only settle once, but a promise that also
+        // carries a callback would settle twice; one guard covers both.
+        if (settled) return;
+        settled = true;
         const durationMs = now() - started;
         const fingerprint = fingerprintSql(text);
         const slow = durationMs >= opts.slowMs;
@@ -221,6 +230,33 @@ export function instrumentPool(pool: pg.Pool, opts: InstrumentOptions): QuerySta
           );
         }
       };
+
+      // The callback form, timed by wrapping the callback.
+      //
+      // This is not the exotic path it looks like: `pool.query` is implemented
+      // as `pool.connect()` then `client.query(text, values, cb)`, so *every*
+      // statement outside a `withTransaction` arrives here. Passing it through
+      // untimed — which this did until the aggregate was found empty on a busy
+      // process — left the promise form of `client.query` as the only thing
+      // instrumented, i.e. transactions and nothing else.
+      const last = args.length - 1;
+      const callback = args[last];
+      if (typeof callback === 'function') {
+        const cb = callback as (this: unknown, ...cbArgs: unknown[]) => unknown;
+        const timedArgs = args.slice();
+        timedArgs[last] = function timed(this: unknown, ...cbArgs: unknown[]) {
+          // Before the callback, so the caller's own work is not charged to the
+          // statement — and so a throwing callback still leaves a record.
+          finish();
+          return cb.apply(this, cbArgs);
+        };
+        try {
+          return original(...timedArgs);
+        } catch (err) {
+          finish();
+          throw err;
+        }
+      }
 
       let result: unknown;
       try {

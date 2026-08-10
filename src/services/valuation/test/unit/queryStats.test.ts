@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import type pg from 'pg';
+import pg from 'pg';
 import { fingerprintSql, instrumentPool, QueryStats } from '../../src/db/queryStats.js';
 
 describe('fingerprintSql', () => {
@@ -206,15 +206,113 @@ describe('instrumentPool', () => {
     expect(stats.top()[0]!.count).toBe(1);
   });
 
-  /** No promise to hang timing off, and nothing in this service uses it. */
-  it('passes the callback form straight through', () => {
+  /**
+   * The callback form is not an exotic path: `pool.query` dispatches through it
+   * (`client.query(text, values, cb)` in pg-pool), so skipping it once meant
+   * every statement outside a transaction went untimed. See the real-pool test
+   * at the bottom of this file, which is the one that would have caught it.
+   */
+  it('times the callback form and calls back once', () => {
+    const emitter = new EventEmitter();
+    const pool = emitter as unknown as pg.Pool;
+    const result = { rows: [{ n: 1 }], rowCount: 1 };
+    const inner = vi.fn((_sql: string, _values: unknown, cb: (e: unknown, r: unknown) => void) => {
+      cb(null, result);
+    });
+    const client = { query: inner } as unknown as pg.PoolClient;
+    const stats = instrumentPool(pool, { slowMs: 10, log: fakeLog(), now: steppedClock(7) });
+    emitter.emit('connect', client);
+
+    const seen: unknown[] = [];
+    (client.query as unknown as (sql: string, values: unknown, cb: (e: unknown, r: unknown) => void) => void)(
+      'SELECT * FROM valuations WHERE id = $1',
+      ['x'],
+      (err, res) => seen.push([err, res]),
+    );
+
+    expect(seen).toEqual([[null, result]]);
+    expect(stats.top()[0]).toMatchObject({
+      fingerprint: 'SELECT * FROM valuations WHERE id = ?',
+      count: 1,
+      totalMs: 7,
+    });
+  });
+
+  /** A failed callback-form statement is still time somebody spent waiting. */
+  it('records a callback-form failure without swallowing the error', () => {
+    const emitter = new EventEmitter();
+    const pool = emitter as unknown as pg.Pool;
+    const boom = new Error('syntax error at or near "SELCT"');
+    const client = {
+      query: vi.fn((_sql: string, cb: (e: unknown) => void) => cb(boom)),
+    } as unknown as pg.PoolClient;
+    const stats = instrumentPool(pool, { slowMs: 10, log: fakeLog(), now: steppedClock(60) });
+    emitter.emit('connect', client);
+
+    let caught: unknown;
+    (client.query as unknown as (sql: string, cb: (e: unknown) => void) => void)('SELCT 1', (err) => {
+      caught = err;
+    });
+    expect(caught).toBe(boom);
+    expect(stats.top()[0]).toMatchObject({ count: 1, totalMs: 60, slowCount: 1 });
+  });
+
+  /**
+   * A `Submittable` (cursor, streaming query) returns the object itself and
+   * finishes long after the call, so there is no honest duration to record.
+   * Better no row than a row claiming every cursor takes 0ms.
+   */
+  it('leaves a submittable alone rather than recording a fictional 0ms', () => {
+    const emitter = new EventEmitter();
+    const pool = emitter as unknown as pg.Pool;
+    const submittable = { text: 'SELECT * FROM valuations', submit: () => {} };
+    const client = { query: vi.fn((q: unknown) => q) } as unknown as pg.PoolClient;
+    const stats = instrumentPool(pool, { slowMs: 10, log: fakeLog(), now: steppedClock(5) });
+    emitter.emit('connect', client);
+
+    const returned = (client.query as unknown as (q: unknown) => unknown)(submittable);
+    expect(returned).toBe(submittable);
+    expect(stats.size).toBe(0);
+  });
+
+  it('ignores a query it cannot read the SQL out of', async () => {
     const { pool, client, inner, connect } = fakePool();
-    const stats = instrumentPool(pool, { slowMs: 10, log: fakeLog() });
+    const stats = instrumentPool(pool, { slowMs: 10, log: fakeLog(), now: steppedClock(5) });
     connect();
 
-    (client.query as unknown as (sql: string, cb: () => void) => void)('SELECT 1', () => {});
+    await (client.query as unknown as (c: { text: number }) => Promise<unknown>)({ text: 42 });
     expect(inner).toHaveBeenCalledTimes(1);
     expect(stats.size).toBe(0);
+  });
+
+  /** A synchronous throw still consumed time somebody may be looking for. */
+  it('records a synchronous throw and rethrows it', () => {
+    const emitter = new EventEmitter();
+    const pool = emitter as unknown as pg.Pool;
+    const boom = new Error('client has been closed');
+    const client = {
+      query: vi.fn(() => {
+        throw boom;
+      }),
+    } as unknown as pg.PoolClient;
+    const stats = instrumentPool(pool, { slowMs: 10, log: fakeLog(), now: steppedClock(3) });
+    emitter.emit('connect', client);
+
+    expect(() => client.query('SELECT 1')).toThrow(boom);
+    expect(stats.top()[0]).toMatchObject({ count: 1, totalMs: 3 });
+  });
+
+  it('records a non-promise return once, not twice', () => {
+    const emitter = new EventEmitter();
+    const pool = emitter as unknown as pg.Pool;
+    const client = {
+      query: vi.fn(() => ({ rows: [], rowCount: 0 })),
+    } as unknown as pg.PoolClient;
+    const stats = instrumentPool(pool, { slowMs: 10, log: fakeLog(), now: steppedClock(4) });
+    emitter.emit('connect', client);
+
+    client.query('SELECT 1');
+    expect(stats.top()[0]).toMatchObject({ count: 1, totalMs: 4 });
   });
 
   it('reads the config-object call shape as well as the string one', async () => {
@@ -227,5 +325,121 @@ describe('instrumentPool', () => {
       values: ['x'],
     });
     expect(stats.top()[0]!.fingerprint).toBe('SELECT * FROM documents WHERE valuation_id = ?');
+  });
+});
+
+// ── instrumentPool over a real pg.Pool ────────────────────────────────────────
+
+/**
+ * The tests above hand-fire the `connect` event and call the wrapped client
+ * directly, which is why they all passed while the instrumentation recorded
+ * nothing in production: they never went through `pg.Pool` itself.
+ *
+ * `pg.Pool` takes a `Client` constructor, so the dispatch path — `pool.query`
+ * → `pool.connect` → `emit('connect')` → `client.query(text, values, cb)` —
+ * can be exercised for real with no database behind it. That path is the one
+ * 81 of this service's call sites take.
+ */
+class StubClient extends EventEmitter {
+  _queryable = true;
+  _ending = false;
+  release?: (err?: unknown) => void;
+  readonly seen: string[] = [];
+
+  connect(cb: (err?: Error) => void): void {
+    setImmediate(() => cb());
+  }
+
+  /** Both shapes pg exposes, since the pool uses one and callers use the other. */
+  query(text: string, ...rest: unknown[]): Promise<unknown> | void {
+    this.seen.push(text);
+    const result = { rows: [], rowCount: 0, command: 'SELECT' };
+    const cb = rest[rest.length - 1];
+    if (typeof cb === 'function') {
+      setImmediate(() => (cb as (e: unknown, r: unknown) => void)(null, result));
+      return;
+    }
+    return new Promise((resolve) => setImmediate(() => resolve(result)));
+  }
+
+  end(cb?: () => void): void {
+    this._ending = true;
+    if (cb) setImmediate(cb);
+  }
+}
+
+describe('instrumentPool over a real pg.Pool', () => {
+  /** A clock that advances a fixed step per read, so durations are exact. */
+  function pool(step: number) {
+    const p = new pg.Pool({ Client: StubClient as unknown as typeof pg.Client, max: 2 });
+    const log = fakeLog();
+    const stats = instrumentPool(p, { slowMs: 25, log, now: steppedClock(step) });
+    return { p, log, stats };
+  }
+
+  /**
+   * The regression this file exists for. `pool.query` is the majority call
+   * shape in this service, and it dispatches through the callback form; before
+   * the fix this recorded nothing and the ops endpoint reported an empty table
+   * on a busy process.
+   */
+  it('records a statement issued through pool.query', async () => {
+    const { p, stats } = pool(5);
+    await p.query('SELECT * FROM valuations WHERE id = $1', ['x']);
+
+    expect(stats.size).toBe(1);
+    expect(stats.top()[0]).toMatchObject({
+      fingerprint: 'SELECT * FROM valuations WHERE id = ?',
+      count: 1,
+      totalMs: 5,
+    });
+    await p.end();
+  });
+
+  it('logs a slow pool.query at the threshold', async () => {
+    const { p, log, stats } = pool(300);
+    await p.query('SELECT * FROM documents WHERE valuation_id = $1', ['v']);
+
+    expect(log.lines).toHaveLength(1);
+    expect(log.lines[0]!.obj).toMatchObject({
+      sql: 'SELECT * FROM documents WHERE valuation_id = ?',
+      durationMs: 300,
+      slowMs: 25,
+    });
+    expect(stats.top()[0]!.slowCount).toBe(1);
+    await p.end();
+  });
+
+  /** Both halves of the promise the module header makes: pool *and* transaction. */
+  it('records statements inside a checked-out client, sharing one table', async () => {
+    const { p, stats } = pool(5);
+    await p.query('SELECT ? FROM boot');
+
+    const client = await p.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('UPDATE valuations SET state = $1 WHERE id = $2', ['final', 'x']);
+      await client.query('COMMIT');
+    } finally {
+      client.release();
+    }
+
+    const kept = stats.top().map((s) => s.fingerprint);
+    expect(kept).toContain('SELECT ? FROM boot');
+    expect(kept).toContain('BEGIN');
+    expect(kept).toContain('UPDATE valuations SET state = ? WHERE id = ?');
+    await p.end();
+  });
+
+  /** One physical connection reused across checkouts is still wrapped once. */
+  it('counts a reused connection once per statement, not once per checkout', async () => {
+    const { p, stats } = pool(5);
+    await p.query('SELECT 1');
+    await p.query('SELECT 1');
+    await p.query('SELECT 1');
+
+    expect(stats.size).toBe(1);
+    expect(stats.top()[0]).toMatchObject({ fingerprint: 'SELECT ?', count: 3 });
+    await p.end();
   });
 });
