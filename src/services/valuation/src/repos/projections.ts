@@ -51,9 +51,8 @@ function hydrate(row: Record<string, unknown>): ProjectionRow {
   const out = { ...row } as Record<string, unknown>;
   out.tax_rate = Number(out.tax_rate);
   out.years = Number(out.years);
-  out.terminal_value = out.terminal_value === null || out.terminal_value === undefined
-    ? null
-    : Number(out.terminal_value);
+  out.terminal_value =
+    out.terminal_value === null || out.terminal_value === undefined ? null : Number(out.terminal_value);
   return out as unknown as ProjectionRow;
 }
 

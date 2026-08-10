@@ -40,19 +40,55 @@ export interface StudyRow {
  * rejects at pre-flight.
  */
 export const RESTRICTED_STOCK_STUDIES: readonly StudyRow[] = [
-  { study: 'SEC Institutional Investor Study', period_start: 1966, period_end: 1969, discount: 0.258, statistic: 'mean' },
+  {
+    study: 'SEC Institutional Investor Study',
+    period_start: 1966,
+    period_end: 1969,
+    discount: 0.258,
+    statistic: 'mean',
+  },
   { study: 'Gelman', period_start: 1968, period_end: 1970, discount: 0.33, statistic: 'median' },
   { study: 'Moroney', period_start: 1969, period_end: 1972, discount: 0.335, statistic: 'median' },
   { study: 'Maher', period_start: 1969, period_end: 1973, discount: 0.333, statistic: 'median' },
   { study: 'Trout', period_start: 1968, period_end: 1972, discount: 0.335, statistic: 'mean' },
-  { study: 'Standard Research Consultants', period_start: 1978, period_end: 1982, discount: 0.45, statistic: 'median' },
-  { study: 'Willamette Management Associates', period_start: 1981, period_end: 1984, discount: 0.312, statistic: 'median' },
+  {
+    study: 'Standard Research Consultants',
+    period_start: 1978,
+    period_end: 1982,
+    discount: 0.45,
+    statistic: 'median',
+  },
+  {
+    study: 'Willamette Management Associates',
+    period_start: 1981,
+    period_end: 1984,
+    discount: 0.312,
+    statistic: 'median',
+  },
   { study: 'Silber', period_start: 1981, period_end: 1988, discount: 0.338, statistic: 'mean' },
   { study: 'FMV Opinions', period_start: 1979, period_end: 1992, discount: 0.23, statistic: 'mean' },
-  { study: 'Management Planning Inc.', period_start: 1980, period_end: 1996, discount: 0.277, statistic: 'mean' },
+  {
+    study: 'Management Planning Inc.',
+    period_start: 1980,
+    period_end: 1996,
+    discount: 0.277,
+    statistic: 'mean',
+  },
   { study: 'Johnson', period_start: 1991, period_end: 1995, discount: 0.2, statistic: 'mean' },
-  { study: 'Columbia Financial Advisors (pre-amendment)', period_start: 1996, period_end: 1997, discount: 0.21, statistic: 'mean' },
-  { study: 'Columbia Financial Advisors (post-amendment)', period_start: 1997, period_end: 1998, discount: 0.13, statistic: 'mean' },
+  {
+    study: 'Columbia Financial Advisors (pre-amendment)',
+    period_start: 1996,
+    period_end: 1997,
+    discount: 0.21,
+    statistic: 'mean',
+  },
+  {
+    study: 'Columbia Financial Advisors (post-amendment)',
+    period_start: 1997,
+    period_end: 1998,
+    discount: 0.13,
+    statistic: 'mean',
+  },
 ];
 
 /** The year Rule 144's holding period dropped from two years to one. */
@@ -82,13 +118,55 @@ export const PRE_IPO_STUDIES: readonly StudyRow[] = [
   { study: 'Emory 1994-1995', period_start: 1994, period_end: 1995, discount: 0.45, statistic: 'mean' },
   { study: 'Emory 1995-1997', period_start: 1995, period_end: 1997, discount: 0.43, statistic: 'mean' },
   { study: 'Emory 1997-2000', period_start: 1997, period_end: 2000, discount: 0.5, statistic: 'mean' },
-  { study: 'Emory 1980-2000 (combined)', period_start: 1980, period_end: 2000, discount: 0.46, statistic: 'mean' },
-  { study: 'Willamette 1975-1978', period_start: 1975, period_end: 1978, discount: 0.547, statistic: 'median' },
-  { study: 'Willamette 1980-1982', period_start: 1980, period_end: 1982, discount: 0.555, statistic: 'median' },
-  { study: 'Willamette 1985-1987', period_start: 1985, period_end: 1987, discount: 0.451, statistic: 'median' },
-  { study: 'Willamette 1988-1990', period_start: 1988, period_end: 1990, discount: 0.502, statistic: 'median' },
-  { study: 'Willamette 1991-1993', period_start: 1991, period_end: 1993, discount: 0.456, statistic: 'median' },
-  { study: 'Willamette 1994-1996', period_start: 1994, period_end: 1996, discount: 0.483, statistic: 'median' },
+  {
+    study: 'Emory 1980-2000 (combined)',
+    period_start: 1980,
+    period_end: 2000,
+    discount: 0.46,
+    statistic: 'mean',
+  },
+  {
+    study: 'Willamette 1975-1978',
+    period_start: 1975,
+    period_end: 1978,
+    discount: 0.547,
+    statistic: 'median',
+  },
+  {
+    study: 'Willamette 1980-1982',
+    period_start: 1980,
+    period_end: 1982,
+    discount: 0.555,
+    statistic: 'median',
+  },
+  {
+    study: 'Willamette 1985-1987',
+    period_start: 1985,
+    period_end: 1987,
+    discount: 0.451,
+    statistic: 'median',
+  },
+  {
+    study: 'Willamette 1988-1990',
+    period_start: 1988,
+    period_end: 1990,
+    discount: 0.502,
+    statistic: 'median',
+  },
+  {
+    study: 'Willamette 1991-1993',
+    period_start: 1991,
+    period_end: 1993,
+    discount: 0.456,
+    statistic: 'median',
+  },
+  {
+    study: 'Willamette 1994-1996',
+    period_start: 1994,
+    period_end: 1996,
+    discount: 0.483,
+    statistic: 'median',
+  },
   { study: 'Willamette 1997', period_start: 1997, period_end: 1997, discount: 0.352, statistic: 'median' },
 ];
 
@@ -211,10 +289,7 @@ export function tableForApi(
  * constrained, because a negative one is a discount paid for control and the
  * engine's inversion would read it as a premium.
  */
-export function studyTableProblem(
-  table: CustomStudyRow[] | null,
-  valueKey: StudyValueKey,
-): string | null {
+export function studyTableProblem(table: CustomStudyRow[] | null, valueKey: StudyValueKey): string | null {
   if (table === null) return null;
   const named = table.filter((r) => r.study.trim() !== '');
   if (named.length === 0) return 'A custom table needs at least one named study.';
@@ -347,9 +422,7 @@ export function StudySelector({
             // it: the built-in and a firm's own rows share no names by
             // assumption, so anything that survived would be a coincidence.
             onChange(
-              e.target.checked
-                ? { studies: [], table: [emptyCustomRow()] }
-                : { studies: [], table: null },
+              e.target.checked ? { studies: [], table: [emptyCustomRow()] } : { studies: [], table: null },
             )
           }
           className="h-4 w-4 accent-bond-600"
@@ -358,8 +431,8 @@ export function StudySelector({
         Supply our own study rows
       </label>
       <p className="mt-1 text-xs text-ink-500">
-        The built-in table holds published summary figures. A firm with subscription data (Stout/FMV
-        and successors, BVR) supplies its own rows here, and the report prints whichever was used.
+        The built-in table holds published summary figures. A firm with subscription data (Stout/FMV and
+        successors, BVR) supplies its own rows here, and the report prints whichever was used.
       </p>
 
       {value.table !== null && (
@@ -442,9 +515,7 @@ export function StudySelector({
                     type="button"
                     variant="ghost"
                     className="mb-1"
-                    onClick={() =>
-                      emit({ ...value, table: (value.table ?? []).filter((_, j) => j !== i) })
-                    }
+                    onClick={() => emit({ ...value, table: (value.table ?? []).filter((_, j) => j !== i) })}
                   >
                     Remove
                   </Button>
@@ -529,8 +600,8 @@ export function StudySelector({
 
       {!usingDefault && value.studies.length < THIN_STUDY_SET && (
         <p className="mt-2 text-sm text-amber-700" data-testid={`${testId}-thin`}>
-          A set this narrow is a thin basis to conclude on — the engine flags it on the calculation
-          and the report discloses it.
+          A set this narrow is a thin basis to conclude on — the engine flags it on the calculation and the
+          report discloses it.
         </p>
       )}
       {caveat && (
@@ -568,9 +639,7 @@ export function preIpoNote(selected: StudyRow[]): string | null {
 
 /** The control-premium family's: every built-in row is a decade summary. */
 export function indicativeNote(selected: StudyRow[]): string | null {
-  const indicative = selected.filter((r) =>
-    CONTROL_PREMIUM_STUDIES.some((b) => b.study === r.study),
-  );
+  const indicative = selected.filter((r) => CONTROL_PREMIUM_STUDIES.some((b) => b.study === r.study));
   return indicative.length > 0
     ? 'The built-in rows are indicative decade medians, not the year-and-industry extraction an appraiser would cite. The engine marks any conclusion resting on them, and the pre-flight raises it.'
     : null;

@@ -158,9 +158,7 @@ describe('workbook statement review', () => {
     renderTab();
     expect(await screen.findByText('Statement review')).toBeInTheDocument();
     expect(screen.getByText('Cost of goods sold is negative in FY (current).')).toBeInTheDocument();
-    expect(
-      screen.getByText('Income statement · Cost of goods sold · FY (current)'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Income statement · Cost of goods sold · FY (current)')).toBeInTheDocument();
   });
 
   it('separates a fault from a note, so the one that changes a number reads first', async () => {

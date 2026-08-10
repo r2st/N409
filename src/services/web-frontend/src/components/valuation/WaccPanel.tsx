@@ -138,10 +138,8 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
           : [{ ...EMPTY_BETA }],
       );
       setForm({
-        unlevered_beta_input:
-          w.unlevered_beta_input === undefined ? '' : String(w.unlevered_beta_input),
-        target_debt_to_equity:
-          w.target_debt_to_equity === undefined ? '' : String(w.target_debt_to_equity),
+        unlevered_beta_input: w.unlevered_beta_input === undefined ? '' : String(w.unlevered_beta_input),
+        target_debt_to_equity: w.target_debt_to_equity === undefined ? '' : String(w.target_debt_to_equity),
         market_cap: w.market_cap === undefined ? '' : String(w.market_cap),
         tax_rate: asPercentField(w.tax_rate),
         equity_risk_premium: asPercentField(w.equity_risk_premium),
@@ -332,7 +330,9 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
                     <Button
                       variant="ghost"
                       type="button"
-                      onClick={() => setBetas((b) => (b.length === 1 ? [{ ...EMPTY_BETA }] : b.filter((_, j) => j !== i)))}
+                      onClick={() =>
+                        setBetas((b) => (b.length === 1 ? [{ ...EMPTY_BETA }] : b.filter((_, j) => j !== i)))
+                      }
                     >
                       Remove
                     </Button>
@@ -464,9 +464,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
         <div className="mt-6 rounded-lg border border-paper-300 bg-paper-50 p-5">
           <div className="flex flex-wrap items-baseline gap-3">
             <span className="overline text-ink-400">Weighted average cost of capital</span>
-            <span className="tnum font-display text-2xl font-semibold text-ink-900">
-              {pct(preview.wacc)}
-            </span>
+            <span className="tnum font-display text-2xl font-semibold text-ink-900">{pct(preview.wacc)}</span>
             {!appliedOnNextRun && (
               <span className="text-xs text-ink-400">
                 — not switched on, so this will not reach the discount rate

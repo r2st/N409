@@ -59,9 +59,7 @@ describe('wacc_inputs shape', () => {
   });
 
   it('accepts a build-up off a published unlevered beta instead', () => {
-    expect(
-      ok({ wacc_inputs: { unlevered_beta_input: 1.1, target_debt_to_equity: 0.2 } }).success,
-    ).toBe(true);
+    expect(ok({ wacc_inputs: { unlevered_beta_input: 1.1, target_debt_to_equity: 0.2 } }).success).toBe(true);
   });
 
   it('accepts null (no build-up on the engagement)', () => {
@@ -123,9 +121,9 @@ describe('wacc_inputs shape', () => {
   });
 
   it('refuses an unknown key inside a beta row', () => {
-    expect(
-      ok({ wacc_inputs: { comparable_betas: [{ beta: 1.1, sector: 'software' }] } }).success,
-    ).toBe(false);
+    expect(ok({ wacc_inputs: { comparable_betas: [{ beta: 1.1, sector: 'software' }] } }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -162,9 +160,7 @@ describe('validateWaccBuildUp', () => {
   });
 
   it('sees a build-up already on the row when the patch only flips the switch', () => {
-    expect(validateWaccBuildUp({ wacc_inputs: GOOD, auto_wacc: false }, { auto_wacc: true }).ok).toBe(
-      true,
-    );
+    expect(validateWaccBuildUp({ wacc_inputs: GOOD, auto_wacc: false }, { auto_wacc: true }).ok).toBe(true);
   });
 
   it('refuses a build-up with no beta on either route into it', () => {

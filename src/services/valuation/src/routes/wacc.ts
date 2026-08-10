@@ -29,10 +29,7 @@ import { findParams } from '../repos/params.js';
 /** Wall clock for one build-up. In-process arithmetic; generous. */
 const WACC_TIMEOUT_MS = 15_000;
 
-export function registerWaccRoutes(
-  app: FastifyInstance,
-  deps: { pool: pg.Pool; engineUrl: string },
-): void {
+export function registerWaccRoutes(app: FastifyInstance, deps: { pool: pg.Pool; engineUrl: string }): void {
   app.post('/api/v1/valuations/:id/wacc/preview', { preHandler: app.authenticate }, async (req) => {
     const principal: Principal = requirePrincipal(req);
     const { id } = req.params as { id: string };

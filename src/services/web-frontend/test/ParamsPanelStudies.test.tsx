@@ -264,7 +264,13 @@ describe('ParamsPanel — custom study tables', () => {
     mockApi({
       dlom_method: 'restricted_stock',
       dlom_study_table: [
-        { study: 'Stout 2020-2024', discount: 0.185, period_start: 2020, period_end: 2024, statistic: 'median' },
+        {
+          study: 'Stout 2020-2024',
+          discount: 0.185,
+          period_start: 2020,
+          period_end: 2024,
+          statistic: 'median',
+        },
       ],
       dlom_studies: ['Stout 2020-2024'],
     });
@@ -274,9 +280,9 @@ describe('ParamsPanel — custom study tables', () => {
       'Stout 2020-2024',
     );
     expect((screen.getByTestId('dlom-studies-row-0-value') as HTMLInputElement).value).toBe('0.185');
-    expect(
-      (screen.getByRole('checkbox', { name: /Stout 2020-2024/ }) as HTMLInputElement).checked,
-    ).toBe(true);
+    expect((screen.getByRole('checkbox', { name: /Stout 2020-2024/ }) as HTMLInputElement).checked).toBe(
+      true,
+    );
   });
 
   it('drops a selection whose row is renamed out from under it', async () => {
@@ -334,9 +340,7 @@ describe('ParamsPanel — DLOC study selection', () => {
     await userEvent.type(screen.getByTestId('dloc-studies-row-0-value'), '0.28');
     await userEvent.click(saveButton());
     await waitFor(() => expect(patched).toHaveLength(1));
-    expect(onlyPatch(patched).dloc_study_table).toEqual([
-      { study: 'BVR SIC 7372, 2024', premium: 0.28 },
-    ]);
+    expect(onlyPatch(patched).dloc_study_table).toEqual([{ study: 'BVR SIC 7372, 2024', premium: 0.28 }]);
   });
 
   it('refuses a negative premium — a discount paid for control is not evidence for a DLOC', async () => {

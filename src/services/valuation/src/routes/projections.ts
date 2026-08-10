@@ -237,81 +237,77 @@ export function registerProjectionRoutes(
    * what it was struck on, so a stored run is always reproducible from its own
    * row.
    */
-  app.post(
-    '/api/v1/valuations/:id/projection/run',
-    { preHandler: app.authenticate },
-    async (req, reply) => {
-      const principal = requirePrincipal(req);
-      const { id } = req.params as { id: string };
-      const valuation = await loadOps(id, principal);
+  app.post('/api/v1/valuations/:id/projection/run', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadOps(id, principal);
 
-      const parsed = ProjectionRunBody.safeParse(req.body ?? {});
-      if (!parsed.success) {
-        throw problems.unprocessable('Invalid projection assumptions', {
-          errors: parsed.error.issues,
-        });
-      }
-      // `none` is the engine's way of asking for no terminal value, and it
-      // reads it as the absence of one; sending the string through keeps the
-      // stored inputs an exact record of what was asked for.
-      const inputs = parsed.data as Record<string, unknown>;
-
-      let result: ProjectionEngineResponse;
-      try {
-        result = await postJson<ProjectionEngineResponse>(
-          'engine',
-          `${deps.engineUrl}/engine/v1/projection`,
-          { inputs },
-          {
-            timeoutMs: PROJECTION_TIMEOUT_MS,
-            record: { valuationId: valuation.id, name: 'engine projection' },
-          },
-        );
-      } catch (err) {
-        if (err instanceof InternalServiceError) {
-          req.log.warn({ err }, 'projection failed');
-          throw toProblem(err);
-        }
-        throw err;
-      }
-
-      const flows = Array.isArray(result.free_cash_flows)
-        ? result.free_cash_flows.map(num).filter((n): n is number => n !== null)
-        : [];
-      if (flows.length === 0) {
-        // The engine raises on every input it cannot project, so an empty
-        // stream means it answered with something this route does not
-        // understand. Storing it would put a run with no cash flows in front
-        // of an analyst as though it were a forecast.
-        throw problems.unprocessable('The projection produced no cash flows');
-      }
-
-      const rows = Array.isArray(result.projections) ? (result.projections as ProjectionYear[]) : [];
-      const terminalMethod = result.terminal_method;
-      const run = await insertProjection(deps.pool, {
-        valuationId: valuation.id,
-        method: result.method === 'driver' ? 'driver' : 'growth',
-        years: num(result.years) ?? flows.length,
-        taxRate: num(result.tax_rate) ?? 0,
-        inputs,
-        projections: rows,
-        freeCashFlows: flows,
-        terminalMethod:
-          terminalMethod === 'gordon' || terminalMethod === 'exit_multiple' ? terminalMethod : null,
-        terminalValue: num(result.terminal_value),
-        createdBy: principal.id,
+    const parsed = ProjectionRunBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw problems.unprocessable('Invalid projection assumptions', {
+        errors: parsed.error.issues,
       });
+    }
+    // `none` is the engine's way of asking for no terminal value, and it
+    // reads it as the absence of one; sending the string through keeps the
+    // stored inputs an exact record of what was asked for.
+    const inputs = parsed.data as Record<string, unknown>;
 
-      await audit(valuation, principal, 'projection_run', {
-        projection_id: run.id,
-        method: run.method,
-        years: run.years,
-      });
+    let result: ProjectionEngineResponse;
+    try {
+      result = await postJson<ProjectionEngineResponse>(
+        'engine',
+        `${deps.engineUrl}/engine/v1/projection`,
+        { inputs },
+        {
+          timeoutMs: PROJECTION_TIMEOUT_MS,
+          record: { valuationId: valuation.id, name: 'engine projection' },
+        },
+      );
+    } catch (err) {
+      if (err instanceof InternalServiceError) {
+        req.log.warn({ err }, 'projection failed');
+        throw toProblem(err);
+      }
+      throw err;
+    }
 
-      reply.code(201);
-      return { projection: present(run) };
-    },
-  );
+    const flows = Array.isArray(result.free_cash_flows)
+      ? result.free_cash_flows.map(num).filter((n): n is number => n !== null)
+      : [];
+    if (flows.length === 0) {
+      // The engine raises on every input it cannot project, so an empty
+      // stream means it answered with something this route does not
+      // understand. Storing it would put a run with no cash flows in front
+      // of an analyst as though it were a forecast.
+      throw problems.unprocessable('The projection produced no cash flows');
+    }
+
+    const rows = Array.isArray(result.projections) ? (result.projections as ProjectionYear[]) : [];
+    const terminalMethod = result.terminal_method;
+    const run = await insertProjection(deps.pool, {
+      valuationId: valuation.id,
+      method: result.method === 'driver' ? 'driver' : 'growth',
+      years: num(result.years) ?? flows.length,
+      taxRate: num(result.tax_rate) ?? 0,
+      inputs,
+      projections: rows,
+      freeCashFlows: flows,
+      terminalMethod:
+        terminalMethod === 'gordon' || terminalMethod === 'exit_multiple' ? terminalMethod : null,
+      terminalValue: num(result.terminal_value),
+      createdBy: principal.id,
+    });
+
+    await audit(valuation, principal, 'projection_run', {
+      projection_id: run.id,
+      method: run.method,
+      years: run.years,
+    });
+
+    reply.code(201);
+    return { projection: present(run) };
+  });
 
   /**
    * Adopt a run's cash flows as the engagement's forecast.

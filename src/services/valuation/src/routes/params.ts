@@ -325,9 +325,7 @@ export function validateWaccBuildUp(
   patch: ParamsPatch,
 ): { ok: true } | { ok: false; detail: string } {
   const inputs = ('wacc_inputs' in patch ? patch.wacc_inputs : current.wacc_inputs) as
-    | Record<string, unknown>
-    | null
-    | undefined;
+    Record<string, unknown> | null | undefined;
   const on = 'auto_wacc' in patch ? patch.auto_wacc : current.auto_wacc === true;
   const present =
     inputs !== null && inputs !== undefined && typeof inputs === 'object' && Object.keys(inputs).length > 0;
@@ -335,7 +333,8 @@ export function validateWaccBuildUp(
   if (on && !present) {
     return {
       ok: false,
-      detail: 'Enter the WACC build-up before switching it on — an empty build-up would leave the discount rate as it is',
+      detail:
+        'Enter the WACC build-up before switching it on — an empty build-up would leave the discount rate as it is',
     };
   }
   if (present) {
