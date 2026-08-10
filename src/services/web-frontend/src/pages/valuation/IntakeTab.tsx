@@ -141,6 +141,10 @@ export function IntakeTab() {
   const issuesFor = useMemo(() => issuesByField(issues), [issues]);
   const blocked = hasBlockingIssues(issues);
 
+  // Ahead of the spinner: `load` records the failure in `error`, but `data`
+  // stays null on a failed load, so returning the spinner first left the tab
+  // spinning forever on a 403 or a 503 with the explanation already in hand.
+  if (error && !data) return <ErrorNote>{error}</ErrorNote>;
   if (!schema || !data) return <Spinner />;
 
   const canEdit = data.can_edit;
