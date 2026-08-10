@@ -1617,8 +1617,15 @@ def _check_hybrid(c: _Collector, inputs: dict) -> None:
             "inputs.hybrid must be an object with opm_weight / pwerm_weight",
         )
         return
-    opm = _finite(raw.get("opm_weight", 0.5))
-    pwerm = _finite(raw.get("pwerm_weight", 0.5))
+    # An explicitly null weight is an unset one, exactly as an absent key is —
+    # `EngineInputsBody` marks both `nullable()`, so clearing the field stores
+    # null. `_finite(None)` is None, so the pre-flight used to fail a cleared
+    # weight with "hybrid weights must be finite numbers" while `{}` defaulted
+    # to an even split. `hybrid.resolve_hybrid_weights` reads it the same way.
+    opm_raw = raw.get("opm_weight")
+    pwerm_raw = raw.get("pwerm_weight")
+    opm = 0.5 if opm_raw is None else _finite(opm_raw)
+    pwerm = 0.5 if pwerm_raw is None else _finite(pwerm_raw)
     if opm is None or pwerm is None:
         c.error("not_a_number", "inputs.hybrid", "hybrid weights must be finite numbers")
         return

@@ -33,6 +33,26 @@ def _num(value, name: str) -> float:
     return out
 
 
+def _weight(raw: dict, key: str) -> float:
+    """One weight, or the even split when the caller did not set it.
+
+    ``raw.get(key, 0.5)`` only reaches its default for a key that is *absent*,
+    and returns ``None`` for one that is present and null. Null is how this
+    document says "not set" — ``EngineInputsBody`` marks both weights
+    ``nullable()``, so clearing the field in the financial-model form stores
+    exactly that, and the AI extraction path writes it the same way.
+
+    So the two spellings of an unset weight disagreed: ``{}`` was an even split
+    and ``{"opm_weight": null, "pwerm_weight": null}`` was
+    ``hybrid.opm_weight must be a number`` — raised on Calculate, against a
+    document into which nobody had typed a bad weight, and naming a field the
+    analyst had just cleared. Null is absent here, as it is everywhere else in
+    the document.
+    """
+    value = raw.get(key)
+    return 0.5 if value is None else _num(value, f"hybrid.{key}")
+
+
 def resolve_hybrid_weights(inputs: dict) -> dict[str, float]:
     """Parse and validate ``inputs.hybrid`` weights (default 50/50)."""
     raw = inputs.get("hybrid")
@@ -40,8 +60,8 @@ def resolve_hybrid_weights(inputs: dict) -> dict[str, float]:
         return {"opm": 0.5, "pwerm": 0.5}
     if not isinstance(raw, dict):
         raise EngineInputError("inputs.hybrid must be an object with opm_weight / pwerm_weight")
-    opm_w = _num(raw.get("opm_weight", 0.5), "hybrid.opm_weight")
-    pwerm_w = _num(raw.get("pwerm_weight", 0.5), "hybrid.pwerm_weight")
+    opm_w = _weight(raw, "opm_weight")
+    pwerm_w = _weight(raw, "pwerm_weight")
     if opm_w < 0 or pwerm_w < 0:
         raise EngineInputError("hybrid weights must be non-negative")
     total = opm_w + pwerm_w

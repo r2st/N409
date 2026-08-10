@@ -287,4 +287,27 @@ describe('EngineInputsBody', () => {
     const res = EngineInputsBody.safeParse({ hybrid: { opm_weight: 0.5, bogus: 1 } });
     expect(res.success).toBe(false);
   });
+
+  /**
+   * Both weights are `nullable()`, so clearing the field in the form stores an
+   * explicit null rather than dropping the key — and the engine has to read
+   * that as an unset weight, not as a figure it cannot parse. It did not:
+   * `resolve_hybrid_weights` reached its 50/50 default only for an *absent*
+   * key and answered "hybrid.opm_weight must be a number" for a cleared one,
+   * so a document this schema accepts failed on the next Calculate.
+   *
+   * This test is the half of that contract that lives here. The engine's
+   * `TestPreflightAgreesWithTheAllocator` is the other half; neither is
+   * meaningful alone.
+   */
+  it('accepts a cleared hybrid weight, which the engine reads as unset', () => {
+    for (const hybrid of [
+      { opm_weight: null, pwerm_weight: null },
+      { opm_weight: null },
+      { pwerm_weight: null },
+      {},
+    ]) {
+      expect(EngineInputsBody.safeParse({ hybrid }).success).toBe(true);
+    }
+  });
 });
