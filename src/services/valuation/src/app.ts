@@ -110,6 +110,7 @@ import { registerAdminDocumentRoutes } from './routes/adminDocuments.js';
 import { registerComparableRoutes } from './routes/comparables.js';
 import { registerVolatilityRoutes } from './routes/volatility.js';
 import { registerWaccRoutes } from './routes/wacc.js';
+import { registerProjectionRoutes } from './routes/projections.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
 import { probeReady, setNetworkSink } from './clients/internal.js';
@@ -389,6 +390,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerComparableRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerVolatilityRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerWaccRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  registerProjectionRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerBridgeRoutes(app, { pool });
   registerAnalyticsRoutes(app, { pool });
   registerCompareRoutes(app, { pool });
