@@ -1567,11 +1567,10 @@ def _compute_hybrid(
             "time_to_exit_years": t,
             "allocation": opm_alloc["allocation"],
         },
-        {
-            "equity_value": pwerm_allocation["equity_value"],
-            "common_per_share": pwerm_allocation["common_per_share"],
-            "expected_time_to_exit_years": pwerm_allocation["expected_time_to_exit_years"],
-        },
+        # The whole leg, not a three-field summary of it. `blend_hybrid` picks
+        # what it reports; trimming here dropped the scenarios and the per-class
+        # split before it could, which is why a hybrid printed no Exhibit G.
+        pwerm_allocation,
         weights,
     )
 

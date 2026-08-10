@@ -153,6 +153,33 @@ def test_blend_hybrid_convex_combination():
     assert blend["blended_time_to_exit_years"] == pytest.approx(0.25 * 3.0 + 0.75 * 1.0)
 
 
+def test_hybrid_results_carry_the_pwerm_scenarios():
+    """A hybrid run reports the scenarios it weighted, through ``compute``.
+
+    ``_compute_hybrid`` used to hand ``blend_hybrid`` a three-field summary of
+    the PWERM allocation instead of the allocation, so the scenarios were gone
+    before the blend could decide whether to report them. The report's Exhibit
+    G is built from ``allocation.pwerm.scenarios``, so a hybrid rendered
+    without the schedule its own Allocation chapter points the reader to.
+
+    Asserted end to end rather than on ``blend_hybrid`` alone: the two halves
+    of this defect were in different modules and each looked correct on its
+    own.
+    """
+    out = compute(
+        {**BASE_PARAMS, "allocation_method": "hybrid"},
+        {**BASE_INPUTS, "hybrid": {"opm_weight": 0.35, "pwerm_weight": 0.65}},
+    )["results"]
+    scenarios = out["allocation"]["pwerm"]["scenarios"]
+    assert scenarios, "a weighted PWERM leg reported no scenarios"
+    assert sum(s["probability"] for s in scenarios) == pytest.approx(1.0)
+    for s in scenarios:
+        assert "exit_equity_value" in s and "common_present_value" in s
+    # The per-class split survives too — it is what the OPM leg keeps as
+    # ``allocation``, and the PWERM leg has no reason to keep less.
+    assert out["allocation"]["pwerm"]["classes"]
+
+
 # ── Dispatch guard ───────────────────────────────────────────────────────────
 
 

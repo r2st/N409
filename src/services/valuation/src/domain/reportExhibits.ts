@@ -604,9 +604,7 @@ function rateAssumption(value: unknown): string | null {
   if (vector.length === 0) return null;
   const lo = Math.min(...vector);
   const hi = Math.max(...vector);
-  return lo === hi
-    ? formatPercent(lo, 1)
-    : `${formatPercent(lo, 1)} to ${formatPercent(hi, 1)}, by year`;
+  return lo === hi ? formatPercent(lo, 1) : `${formatPercent(lo, 1)} to ${formatPercent(hi, 1)}, by year`;
 }
 
 export function projectionExhibit(
@@ -642,10 +640,7 @@ export function projectionExhibit(
   }
   basis.push(['Tax rate applied to EBIT', formatPercent(row.tax_rate, 1)]);
 
-  const buildRows = PROJECTION_LINES.map(([label, key]) => [
-    esc(label),
-    ...years.map((p) => money(p[key])),
-  ]);
+  const buildRows = PROJECTION_LINES.map(([label, key]) => [esc(label), ...years.map((p) => money(p[key]))]);
 
   /*
    * Whether the forecast below is the one the calculation ran on.
@@ -1220,7 +1215,22 @@ export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitConte
    */
   const methodKey = String(results.allocation_method ?? allocation?.method ?? '').toLowerCase();
   if (methodKey === 'monte_carlo') return null;
-  const scenarios = list(allocation?.scenarios)
+  /*
+   * A hybrid reports its two legs nested — `allocation.opm` and
+   * `allocation.pwerm` — so its scenarios are one level down. Reading only the
+   * flat key meant the exhibit was silently absent from exactly the reports
+   * that most need it: on a hybrid, PWERM often carries the majority of the
+   * weight, and the body's Allocation chapter sends the reader to Exhibit G.
+   */
+  const scenarios = list(
+    allocation?.scenarios ??
+      record(allocation?.pwerm)?.scenarios ??
+      // Where a hybrid also reports its PWERM leg at the top level. Read last
+      // and deliberately: it makes the exhibit appear for hybrid valuations
+      // already stored, which would otherwise need re-running the engine to
+      // gain a schedule their own body already refers them to.
+      record(results.pwerm_allocation)?.scenarios,
+  )
     .map(record)
     .filter((s): s is Record<string, unknown> => s !== null);
   if (scenarios.length === 0) return null;
@@ -1243,6 +1253,21 @@ export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitConte
         (num(s.time_to_exit_years) ?? 0).toFixed(2),
         formatCurrency(num(s.common_present_value) ?? 0, currency, 0),
       ]),
+      /*
+       * Totalled from the rows above rather than from the concluded results.
+       *
+       * The footer used to print `results.equity_value` and
+       * `results.common_equity_value` — the equity concluded across *all*
+       * approaches and the common value after the full weighting. Neither is the
+       * total of the column it sat under, so a reviewer adding up the exhibit
+       * got a different number from the one printed on it. On a hybrid the
+       * discrepancy is structural: these rows are the PWERM leg alone, and the
+       * concluded figures include the OPM leg and every other approach.
+       *
+       * Each column is weighted by the probability in its own row, which is what
+       * "probability-weighted" means and what the scenario values are built to
+       * be summed as (`weighted_value` / `weighted_time` in engine/pwerm.py).
+       */
       foot: [
         'Probability-weighted',
         '',
@@ -1250,9 +1275,22 @@ export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitConte
           scenarios.reduce((sum, s) => sum + (num(s.probability) ?? 0), 0),
           0,
         ),
-        formatCurrency(num(results.equity_value) ?? 0, currency, 0),
-        `${num(record(results.assumptions)?.expected_time_to_exit_years)?.toFixed(2) ?? '—'}`,
-        formatCurrency(num(results.common_equity_value) ?? 0, currency, 0),
+        formatCurrency(
+          scenarios.reduce((sum, s) => sum + (num(s.probability) ?? 0) * (num(s.exit_equity_value) ?? 0), 0),
+          currency,
+          0,
+        ),
+        scenarios
+          .reduce((sum, s) => sum + (num(s.probability) ?? 0) * (num(s.time_to_exit_years) ?? 0), 0)
+          .toFixed(2),
+        formatCurrency(
+          scenarios.reduce(
+            (sum, s) => sum + (num(s.probability) ?? 0) * (num(s.common_present_value) ?? 0),
+            0,
+          ),
+          currency,
+          0,
+        ),
       ],
     }),
   ]);

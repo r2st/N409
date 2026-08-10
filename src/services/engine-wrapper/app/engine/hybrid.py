@@ -85,5 +85,15 @@ def blend_hybrid(
             "equity_value": round(pwerm_leg["equity_value"], 2),
             "common_per_share": round(pwerm_leg["common_per_share"], 6),
             "expected_time_to_exit_years": pwerm_leg["expected_time_to_exit_years"],
+            # The scenarios and the per-class split are the PWERM leg's whole
+            # substance — which exits were modelled, at what value, with what
+            # probability. They used to be dropped here while the OPM leg kept
+            # its full ``allocation``, so a hybrid that put 65% of the weight on
+            # PWERM reported three summary numbers for it and nothing else, and
+            # Exhibit G (which reads ``scenarios``) could not be built at all.
+            # A report that weights a scenario analysis and then cannot show the
+            # scenarios is not reviewable, so both are carried through.
+            "scenarios": pwerm_leg.get("scenarios"),
+            "classes": pwerm_leg.get("classes"),
         },
     }

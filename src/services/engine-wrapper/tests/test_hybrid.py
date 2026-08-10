@@ -61,6 +61,25 @@ class TestBlendHybrid:
             "equity_value": 12_000_000,
             "common_per_share": 6.0,
             "expected_time_to_exit_years": 2.0,
+            # The substance of a PWERM: which exits were modelled, at what value,
+            # with what probability, and how each split across the stack.
+            "scenarios": [
+                {
+                    "name": "IPO",
+                    "probability": 0.3,
+                    "exit_equity_value": 30_000_000,
+                    "time_to_exit_years": 3.0,
+                    "common_present_value": 9_000_000,
+                },
+                {
+                    "name": "Acquisition",
+                    "probability": 0.7,
+                    "exit_equity_value": 4_285_714,
+                    "time_to_exit_years": 1.57,
+                    "common_present_value": 1_714_286,
+                },
+            ],
+            "classes": {"Common": {"value": 6_000_000}},
         }
 
     def test_equal_weights(self, opm_leg, pwerm_leg):
@@ -85,3 +104,34 @@ class TestBlendHybrid:
         assert result["opm"]["equity_value"] == 10_000_000.0
         assert result["pwerm"]["equity_value"] == 12_000_000.0
         assert result["weights"] == {"opm": 0.6, "pwerm": 0.4}
+
+    def test_carries_the_pwerm_scenarios_through(self, opm_leg, pwerm_leg):
+        """The blend used to report three summary numbers for the PWERM leg.
+
+        The OPM leg kept its full ``allocation`` while the PWERM leg was cut
+        down to equity value, per-share and expected time — so a hybrid that
+        put the majority of its weight on a scenario analysis could not show
+        the scenarios. Exhibit G reads ``scenarios`` and could not be built at
+        all, on precisely the reports whose body sends the reader to it.
+        """
+        result = blend_hybrid(opm_leg, pwerm_leg, {"opm": 0.35, "pwerm": 0.65})
+        scenarios = result["pwerm"]["scenarios"]
+        assert [s["name"] for s in scenarios] == ["IPO", "Acquisition"]
+        assert sum(s["probability"] for s in scenarios) == pytest.approx(1.0)
+        assert result["pwerm"]["classes"] == {"Common": {"value": 6_000_000}}
+
+    def test_reports_a_pwerm_leg_that_carried_no_scenarios(self, opm_leg):
+        """A leg with nothing to carry reports the keys, not a KeyError.
+
+        ``blend_hybrid`` is called with whatever the PWERM allocator produced;
+        a leg without scenarios is a degenerate input, not a crash, and the
+        exhibit builder already treats an absent list as "no Exhibit G".
+        """
+        bare = {
+            "equity_value": 12_000_000,
+            "common_per_share": 6.0,
+            "expected_time_to_exit_years": 2.0,
+        }
+        result = blend_hybrid(opm_leg, bare, {"opm": 0.5, "pwerm": 0.5})
+        assert result["pwerm"]["scenarios"] is None
+        assert result["pwerm"]["classes"] is None

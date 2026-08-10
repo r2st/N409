@@ -526,6 +526,78 @@ describe('PWERM scenario exhibit', () => {
   it('is absent on a run with no scenarios', () => {
     expect(pwermExhibit(RESULTS, CONTEXT)).toBeNull();
   });
+
+  it('totals the columns it printed, not the figures concluded elsewhere', () => {
+    /*
+     * The footer used to print `equity_value` and `common_equity_value` — the
+     * equity concluded across *all* approaches, and the common value after the
+     * full weighting — and the expected time from `assumptions`. None is the
+     * total of the column it sat under, so a reviewer adding up the exhibit got
+     * a different number from the one printed on it. On a hybrid the
+     * discrepancy is structural: the rows are the PWERM leg alone.
+     *
+     * The concluded figures here are set well away from the row totals, so a
+     * footer that read them fails on every column.
+     */
+    const seen = plain(
+      pwermExhibit({ ...results, equity_value: 30_000_000, common_equity_value: 9_100_000 }, CONTEXT)!.html,
+    );
+    expect(seen).toContain('100%');
+    // 0.3 × 90m + 0.5 × 40m + 0.2 × 2m
+    expect(seen).toContain('$47,400,000');
+    // 0.3 × 25m + 0.5 × 9m + 0.2 × 0
+    expect(seen).toContain('$12,000,000');
+    // 0.3 × 4 + 0.5 × 3 + 0.2 × 1.5 — not the 3.1 in `assumptions`
+    expect(seen).toContain('3.00');
+    expect(seen).not.toContain('3.10');
+    expect(seen).not.toContain('$30,000,000');
+    expect(seen).not.toContain('$9,100,000');
+  });
+
+  it('finds the scenarios on the PWERM leg of a hybrid', () => {
+    /*
+     * A hybrid reports its two legs nested, so the scenarios sit one level
+     * down. Reading only the flat key meant Exhibit G was silently absent from
+     * exactly the reports that most need it: on a hybrid, PWERM often carries
+     * the majority of the weight, and the body's Allocation chapter sends the
+     * reader to the schedule regardless.
+     */
+    const hybrid = {
+      ...results,
+      allocation_method: 'hybrid',
+      allocation: {
+        method: 'hybrid',
+        weights: { opm: 0.35, pwerm: 0.65 },
+        opm: { equity_value: 28_000_000, allocation: {} },
+        pwerm: { equity_value: 32_000_000, scenarios: results.allocation.scenarios },
+      },
+    };
+    const seen = plain(pwermExhibit(hybrid, CONTEXT)!.html);
+    expect(seen).toContain('IPO');
+    expect(seen).toContain('100%');
+  });
+
+  it('finds them on a hybrid that reported its PWERM leg at the top level', () => {
+    // Read last and deliberately: it makes the exhibit appear for hybrid
+    // valuations already stored, which would otherwise need re-running the
+    // engine to gain a schedule their own body already refers them to.
+    const stored = {
+      ...results,
+      allocation_method: 'hybrid',
+      allocation: { method: 'hybrid', weights: { opm: 0.5, pwerm: 0.5 } },
+      pwerm_allocation: { scenarios: results.allocation.scenarios },
+    };
+    expect(plain(pwermExhibit(stored, CONTEXT)!.html)).toContain('Acquisition');
+  });
+
+  it('stays absent on a hybrid whose PWERM leg carried no scenarios', () => {
+    const empty = {
+      ...results,
+      allocation_method: 'hybrid',
+      allocation: { method: 'hybrid', pwerm: { equity_value: 32_000_000, scenarios: null } },
+    };
+    expect(pwermExhibit(empty, CONTEXT)).toBeNull();
+  });
 });
 
 // ── Exhibit H ────────────────────────────────────────────────────────────────
