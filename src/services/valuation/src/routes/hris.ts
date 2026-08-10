@@ -65,6 +65,22 @@ const providerUnavailable = (provider: HrisProvider) =>
 
 const FrequencyBody = z.object({ frequency: z.enum(['manual', 'daily', 'weekly']) });
 
+/**
+ * Query string of the OAuth callback. Unknown keys are stripped rather than
+ * rejected — providers append their own (`scope`, `session_state`) and a strict
+ * schema would fail real callbacks. What this does buy is a bound on every
+ * field we go on to use: `state` and `code` before they are verified and spent,
+ * and `company_id` before it is written to
+ * `hris_connections.external_company_id`. A repeated parameter arrives from
+ * Fastify as an array, which the string schema refuses outright.
+ */
+const CallbackQuery = z.object({
+  state: z.string().max(4096).optional(),
+  code: z.string().max(4096).optional(),
+  error: z.string().max(256).optional(),
+  company_id: z.string().max(128).optional(),
+});
+
 export interface HrisSyncOutcome {
   roster_count: number;
   grants_found: number;
@@ -234,7 +250,13 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
   });
 
   app.get('/api/v1/hris/callback', async (req, reply) => {
-    const q = req.query as { state?: string; code?: string; error?: string; company_id?: string };
+    const parsedQuery = CallbackQuery.safeParse(req.query);
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid callback parameters', {
+        errors: parsedQuery.error.issues,
+      });
+    }
+    const q = parsedQuery.data;
     if (!q.state) throw problems.unprocessable('Missing state');
     let state;
     try {
