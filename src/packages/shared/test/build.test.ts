@@ -1,8 +1,8 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { readBuildInfo, UNKNOWN_BUILD } from '../src/build.js';
+import { afterEach, describe, expect, it } from 'vitest';
+import { buildInfo, readBuildInfo, resetBuildInfoCache, UNKNOWN_BUILD } from '../src/build.js';
 
 /**
  * Build provenance. `dist/` is gitignored and built on the server, so without a
@@ -79,5 +79,41 @@ describe('readBuildInfo', () => {
     expect(readBuildInfo({ BUILD_SHA: '../../etc/passwd' }, { defaultFile: undefined })).toEqual(
       UNKNOWN_BUILD,
     );
+  });
+});
+
+describe('buildInfo', () => {
+  afterEach(() => {
+    resetBuildInfoCache();
+    delete process.env.BUILD_SHA;
+  });
+
+  it('reads the environment on the first call', () => {
+    resetBuildInfoCache();
+    process.env.BUILD_SHA = SHA;
+    expect(buildInfo()).toEqual({ sha: SHA, source: 'env' });
+  });
+
+  it('answers from memory afterwards, so /health never touches the disk twice', () => {
+    // The uptime checker polls /health every few seconds for the life of the
+    // process, and every one of those would otherwise be a stat and a read.
+    // The running build cannot change without a restart, so one read is all
+    // that is ever correct.
+    resetBuildInfoCache();
+    process.env.BUILD_SHA = SHA;
+    const first = buildInfo();
+    process.env.BUILD_SHA = 'a'.repeat(40);
+    expect(buildInfo()).toBe(first);
+  });
+
+  it('re-reads once the cache is dropped, which is what makes it a test seam', () => {
+    resetBuildInfoCache();
+    process.env.BUILD_SHA = SHA;
+    const first = buildInfo();
+    resetBuildInfoCache();
+    const rotated = 'a'.repeat(40);
+    process.env.BUILD_SHA = rotated;
+    expect(buildInfo()).not.toBe(first);
+    expect(buildInfo().sha).toBe(rotated);
   });
 });

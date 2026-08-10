@@ -166,4 +166,62 @@ describe('registerInternalAuth', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatch(/INTERNAL_SERVICE_TOKEN is not set/);
   });
+
+  it('refuses a duplicated token header rather than finding the good value in it', async () => {
+    // Header smuggling shape: send a junk value and the real secret, and hope
+    // the reader searches for one that works. Node joins repeated headers into
+    // a single comma-separated string before Fastify ever sees them, so what
+    // arrives is `"wrong,<secret>"` — one value, containing the secret and not
+    // equal to it. The constant-time compare is whole-string, so it fails on
+    // length and never gets as far as looking inside.
+    app = buildStub({ INTERNAL_SERVICE_TOKEN: SECRET });
+    for (const headers of [
+      { [INTERNAL_TOKEN_HEADER]: ['wrong', SECRET] },
+      { [INTERNAL_TOKEN_HEADER]: [SECRET, 'wrong'] },
+      { [INTERNAL_TOKEN_HEADER]: [SECRET, SECRET] },
+    ]) {
+      const res = await app.inject({ method: 'POST', url: '/render/v1/pdf', headers });
+      expect(res.statusCode, JSON.stringify(headers)).toBe(401);
+    }
+  });
+
+  describe('with no options passed', () => {
+    // The whole point of the defaults is that a service can call
+    // `registerInternalAuth(app)` and be guarded; nothing exercised that path,
+    // so a broken `process.env` fallback would have looked exactly like a
+    // service that had simply not been configured yet.
+    const saved = process.env.INTERNAL_SERVICE_TOKEN;
+    afterEach(() => {
+      if (saved === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
+      else process.env.INTERNAL_SERVICE_TOKEN = saved;
+    });
+
+    it('reads the secret from process.env and enforces it', async () => {
+      process.env.INTERNAL_SERVICE_TOKEN = SECRET;
+      app = Fastify({ logger: false });
+      registerProblemHandler(app);
+      registerInternalAuth(app);
+      app.post('/render/v1/pdf', async () => ({ rendered: true }));
+
+      const denied = await app.inject({ method: 'POST', url: '/render/v1/pdf' });
+      expect(denied.statusCode).toBe(401);
+      const allowed = await app.inject({
+        method: 'POST',
+        url: '/render/v1/pdf',
+        headers: { [INTERNAL_TOKEN_HEADER]: SECRET },
+      });
+      expect(allowed.statusCode).toBe(200);
+    });
+
+    it('warns through the app logger when process.env has no secret', async () => {
+      delete process.env.INTERNAL_SERVICE_TOKEN;
+      const warnings: string[] = [];
+      app = Fastify({ logger: false });
+      // The fallback is `app.log`, which is what a service that passes no
+      // logger actually gets.
+      app.log.warn = ((_obj: unknown, msg: string) => warnings.push(msg)) as typeof app.log.warn;
+      registerInternalAuth(app);
+      expect(warnings[0]).toMatch(/INTERNAL_SERVICE_TOKEN is not set/);
+    });
+  });
 });

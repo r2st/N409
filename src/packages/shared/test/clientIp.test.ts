@@ -221,4 +221,84 @@ describe('trustedProxies', () => {
     expect(() => trustedProxies({ TRUSTED_PROXIES: ',' })).toThrow(/names no hops/);
     expect(() => trustedProxies({ TRUSTED_PROXIES: ' , , ' })).toThrow(/names no hops/);
   });
+
+  // The breadth check only runs on entries this file can parse into a range;
+  // anything it cannot parse is handed to proxy-addr as if it were a preset
+  // name. That fallback is correct for `loopback`, and it is a hole for
+  // everything else — an address proxy-addr understands and this parser does
+  // not is a wide block that reaches production unmeasured. So the spellings
+  // below are not parser trivia: each is a way of writing a block that must be
+  // refused, and the test is that the spelling does not change the answer.
+  describe('breadth is measured however the address is spelled', () => {
+    it('reads a fully-written IPv6 block the same as its compressed form', () => {
+      // `::ffff:0.0.0.0/96` is already refused. Written out, it is the same
+      // block and the same grant of all IPv4 — the `::` is a convenience, not
+      // the thing that makes it wide.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '0:0:0:0:0:ffff:0:0/96' })).toThrow(/spans/);
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '0000:0000:0000:0000:0000:ffff:0:0/96' })).toThrow(
+        /spans/,
+      );
+    });
+
+    it('expands :: with groups on both sides of it', () => {
+      // left = 2000, right = 1, six groups elided between them.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '2000::1/3' })).toThrow(/spans/);
+      // left only, right empty.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '2000::/3' })).toThrow(/spans/);
+      // right only, left empty — the leading-:: form.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '::1/0' })).toThrow(/spans/);
+    });
+
+    it('reads hex groups in either case', () => {
+      // An operator pasting from a log gets whichever case that log used.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '2A00::/3' })).toThrow(/spans/);
+      expect(trustedProxies({ TRUSTED_PROXIES: '2A00:CB00::/32' })).toEqual(['2A00:CB00::/32']);
+    });
+
+    it('reads a trailing dotted quad, which is how a dual-stack peer is logged', () => {
+      // ::ffff:203.0.113.9 is a single host and fine; the /97 around it is half
+      // of IPv4 and is not.
+      expect(trustedProxies({ TRUSTED_PROXIES: '::ffff:203.0.113.9' })).toEqual(['::ffff:203.0.113.9']);
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '::ffff:0.0.0.0/97' })).toThrow(/of IPv4/);
+    });
+
+    it('does not mistake a v4 block for a v6 one, or the reverse', () => {
+      // `contains` compares families before ranges: 10.0.0.0/8 must not exempt
+      // an IPv6 block that happens to share its numeric start.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: '::a00:0/24' })).toThrow(/spans/);
+    });
+  });
+
+  // These are the inputs the parser gives up on. Giving up is the documented
+  // behaviour — proxy-addr is the validator, and it rejects them at boot — so
+  // what is pinned here is that `trustedProxies` passes them through rather
+  // than throwing its own confusing error or, worse, coercing them into a
+  // range it then measures wrongly.
+  describe('unparseable entries are left for proxy-addr to reject', () => {
+    const unparseable = [
+      '256.0.0.0/1', // octet out of range
+      '10.0.0/1', // three octets
+      '10.0.0.0/abc', // non-numeric prefix
+      '10.0.0.0/33', // prefix wider than the family
+      '::/129', // prefix wider than the family, v6
+      'gggg::/1', // not hex
+      '1:2:3/1', // too few groups, and no :: to stand in for the rest
+      '1:2:3:4:5:6:7:8:9/1', // too many groups
+      '1:2:3:4:5:6:7:8::9/1', // :: with no room left to expand into
+      '::1::2/1', // two ::
+      '::ffff:999.0.0.1/96', // dotted quad that is not an address
+      'not-an-address',
+    ];
+
+    for (const entry of unparseable) {
+      it(`passes "${entry}" through untouched`, () => {
+        expect(trustedProxies({ TRUSTED_PROXIES: entry })).toEqual([entry]);
+      });
+    }
+
+    it('still refuses a real wide block sitting beside one of them', () => {
+      // The unmeasurable entry must not short-circuit the rest of the list.
+      expect(() => trustedProxies({ TRUSTED_PROXIES: 'not-an-address, 0.0.0.0/1' })).toThrow(/spans/);
+    });
+  });
 });

@@ -183,4 +183,54 @@ describe('probeReady', () => {
     await probeReady('engine', 'http://engine:3003', { fetchFn: spy, path: '/engine/v1/health' });
     expect(seen).toEqual(['http://engine:3003/engine/v1/health']);
   });
+
+  it('sends no headers by default rather than undefined', async () => {
+    let init: RequestInit | undefined;
+    const spy = (async (_url: unknown, opts?: RequestInit) => {
+      init = opts;
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+    await probeReady('ai', 'http://ai:3002', { fetchFn: spy });
+    expect(init?.headers).toEqual({});
+  });
+
+  it('aborts rather than hanging, so /ready cannot be held open by an upstream', async () => {
+    let init: RequestInit | undefined;
+    const spy = (async (_url: unknown, opts?: RequestInit) => {
+      init = opts;
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+    await probeReady('ai', 'http://ai:3002', { fetchFn: spy });
+    // A readiness probe with no deadline turns one slow upstream into a
+    // service that never answers its own probe, which is how a single
+    // degraded dependency takes a whole tier out of the load balancer.
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('names the service when the failure is not an Error at all', async () => {
+    // fetch is not the only thing that can reject here — a mocked or patched
+    // global can throw a string, and `err.message` on it is undefined. The
+    // message still has to say which upstream, because that is the entire
+    // diagnostic value of the /ready body.
+    const odd = (async () => {
+      throw 'socket hang up';
+    }) as typeof fetch;
+    await expect(probeReady('report', 'http://report:3004', { fetchFn: odd })).rejects.toThrow(
+      /report unreachable at http:\/\/report:3004\/ready: unreachable/,
+    );
+  });
+});
+
+describe('/ready with no checks registered', () => {
+  it('is ready, rather than treating "no dependencies" as "nothing verified"', async () => {
+    // The report service has no upstreams of its own. If an empty check set
+    // read as not-ready it would never join the load balancer; if it 200'd
+    // with no `checks` key the deploy verifier's shape assertions would break.
+    const app = Fastify({ logger: false });
+    registerHealth(app, { service: 'report' });
+    const res = await app.inject({ method: 'GET', url: '/ready' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: 'ready', checks: {} });
+    await app.close();
+  });
 });
