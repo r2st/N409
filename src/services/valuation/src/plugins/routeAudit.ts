@@ -152,6 +152,16 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
     url: '/api/v1/valuation-selector',
     reason: 'public "which valuation?" quiz; pure computation, no data touched',
   },
+  {
+    method: 'POST',
+    url: '/api/v1/fmv-estimator',
+    reason: 'free no-signup 409A estimator; pure computation, no data touched or stored',
+  },
+  {
+    method: 'GET',
+    url: '/api/v1/sample-report',
+    reason: "the deliverable's own chapter outline; a sample behind a login shows a prospect nothing",
+  },
   { method: 'GET', url: '/api/partner/v1/docs', reason: 'self-describing partner API documentation' },
   {
     method: 'GET',

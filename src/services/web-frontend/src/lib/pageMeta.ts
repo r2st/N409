@@ -62,6 +62,18 @@ function staticPages(): HeadInput[] {
         "Answer a couple of quick questions and we'll point you at the right valuation report for your situation.",
     },
     {
+      path: '/tools/409a-valuation-calculator',
+      title: '409A valuation calculator',
+      description:
+        'Free 409A valuation calculator — estimate a range for your common stock from a priced round, capital raised, revenue or profit. No signup, no email required.',
+    },
+    {
+      path: '/sample-report',
+      title: 'Sample 409A valuation report',
+      description:
+        'See what a defensible 409A valuation report contains — every chapter of the deliverable and the exhibits behind each figure, prepared for IRS safe-harbor reliance.',
+    },
+    {
       path: COMPARE_HUB_PATH,
       title: COMPARE_HUB_TITLE,
       description:

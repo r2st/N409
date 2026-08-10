@@ -111,6 +111,12 @@ export function MarketingHeader() {
           >
             Which valuation?
           </Link>
+          <Link
+            to="/sample-report"
+            className="rounded-md px-3 py-2 text-sm font-semibold text-ink-700 hover:text-ink-900"
+          >
+            Sample report
+          </Link>
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
@@ -167,6 +173,20 @@ export function MarketingHeader() {
               className="text-sm font-semibold text-ink-700"
             >
               Which valuation?
+            </Link>
+            <Link
+              to="/sample-report"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-semibold text-ink-700"
+            >
+              Sample report
+            </Link>
+            <Link
+              to="/tools/409a-valuation-calculator"
+              onClick={() => setMobileOpen(false)}
+              className="text-sm font-semibold text-ink-700"
+            >
+              409A calculator
             </Link>
             <Link
               to="/login"
@@ -239,6 +259,12 @@ export function MarketingFooter() {
             </Link>
             <Link to="/which-valuation" className="hover:text-chrome-fg">
               Which valuation?
+            </Link>
+            <Link to="/sample-report" className="hover:text-chrome-fg">
+              Sample report
+            </Link>
+            <Link to="/tools/409a-valuation-calculator" className="hover:text-chrome-fg">
+              409A calculator
             </Link>
             <Link to="/pricing" className="hover:text-chrome-fg">
               Pricing

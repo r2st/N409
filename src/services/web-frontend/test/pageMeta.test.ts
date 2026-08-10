@@ -28,10 +28,11 @@ describe('page metadata registry (§24)', () => {
   });
 
   it('covers all products and comparisons', () => {
-    // Nine static pages: home, pricing, which-valuation, the compare hub,
-    // blog, about, contact, terms, privacy. Individual blog posts are database
-    // rows and are deliberately absent — this registry is build-time data.
-    expect(allPageMeta()).toHaveLength(9 + PRODUCTS.length + COMPARISONS.length);
+    // Eleven static pages: home, pricing, which-valuation, the 409A
+    // calculator, the sample report, the compare hub, blog, about, contact,
+    // terms, privacy. Individual blog posts are database rows and are
+    // deliberately absent — this registry is build-time data.
+    expect(allPageMeta()).toHaveLength(11 + PRODUCTS.length + COMPARISONS.length);
     for (const product of PRODUCTS) {
       expect(productPageMeta(product.slug)?.path).toBe(`/products/${product.slug}`);
     }

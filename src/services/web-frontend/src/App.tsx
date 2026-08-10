@@ -36,6 +36,8 @@ const named = <T extends string>(
 const PricingPage = named(() => import('./pages/marketing/PricingPage'), 'PricingPage');
 const ProductPage = named(() => import('./pages/marketing/ProductPage'), 'ProductPage');
 const WhichValuationPage = named(() => import('./pages/marketing/WhichValuationPage'), 'WhichValuationPage');
+const CalculatorPage = named(() => import('./pages/marketing/CalculatorPage'), 'CalculatorPage');
+const SampleReportPage = named(() => import('./pages/marketing/SampleReportPage'), 'SampleReportPage');
 const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
 const CompareHubPage = named(() => import('./pages/marketing/CompareHubPage'), 'CompareHubPage');
 const BlogIndexPage = named(() => import('./pages/marketing/BlogPages'), 'BlogIndexPage');
@@ -195,6 +197,8 @@ export default function App() {
         <Route element={<MarketingLayout />}>
           <Route path="/pricing" element={<PricingPage />} />
           <Route path="/which-valuation" element={<WhichValuationPage />} />
+          <Route path="/tools/409a-valuation-calculator" element={<CalculatorPage />} />
+          <Route path="/sample-report" element={<SampleReportPage />} />
           <Route path="/products/:slug" element={<ProductPage />} />
           {/* Hub route must precede the :slug catch-all (gap #30) */}
           <Route path="/compare/409a-valuation-providers" element={<CompareHubPage />} />

@@ -113,6 +113,8 @@ import { registerVolatilityRoutes } from './routes/volatility.js';
 import { registerWaccRoutes } from './routes/wacc.js';
 import { registerProjectionRoutes } from './routes/projections.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
+import { registerFmvEstimatorRoutes } from './routes/fmvEstimator.js';
+import { registerSampleReportRoutes } from './routes/sampleReport.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
 import type { QueryStats } from './db/queryStats.js';
 import { clamdScanner, type ScanPolicy } from './documents/virusScan.js';
@@ -491,6 +493,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerContactRoutes(app, { pool });
   // Remaining-gaps §selector — public "which valuation do I need?" quiz
   registerValuationSelectorRoutes(app);
+  // Public, no-signup common-stock FMV estimator behind the marketing calculator
+  registerFmvEstimatorRoutes(app);
+  // Public "see a sample report" outline, read off the real report templates
+  registerSampleReportRoutes(app);
   // P2 #12 — global activity audit viewer
   registerAdminEventRoutes(app, { pool });
   // P2 #10 — help / knowledge base

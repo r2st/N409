@@ -19,6 +19,8 @@ export function marketingRoutes(): SitemapRoute[] {
     { path: '/', changefreq: 'weekly', priority: 1.0 },
     { path: '/pricing', changefreq: 'weekly', priority: 0.9 },
     { path: '/which-valuation', changefreq: 'monthly', priority: 0.7 },
+    { path: '/tools/409a-valuation-calculator', changefreq: 'monthly', priority: 0.8 },
+    { path: '/sample-report', changefreq: 'monthly', priority: 0.8 },
     { path: '/compare/409a-valuation-providers', changefreq: 'monthly', priority: 0.7 },
     // The blog index only. Individual posts live in the database and are
     // authored after this file is built, so listing them here would either be

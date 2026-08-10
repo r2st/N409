@@ -15,10 +15,11 @@
       "runtimeExecutable": "env",
       "runtimeArgs": [
         "JWT_SECRET=dev-only-secret-change-me-0123456789abcdef",
+        "PORT=3021",
         "node",
         "src/services/valuation/dist/index.js"
       ],
-      "port": 3001
+      "port": 3021
     },
     {
       "name": "n409-frontend",
