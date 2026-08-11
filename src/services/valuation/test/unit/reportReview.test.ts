@@ -301,6 +301,122 @@ describe('reviewing the drafted report', () => {
     });
   });
 
+  describe('chapters that ship the skeleton’s instructions', () => {
+    const template = templateForKind('409a');
+    const pristine = () =>
+      instantiateTemplate(template, {
+        company_name: 'Northwind Robotics, Inc.',
+        kind: '409a',
+        valuation_ref: 'N-1001',
+        date: '2026-06-30',
+        currency: 'USD',
+      });
+
+    const guidanceFindings = (content: ReportContent) =>
+      reviewReport({ content, exhibitHeadings: EXHIBITS, template }).findings.filter(
+        (f) => f.check === 'unedited_template_guidance',
+      );
+
+    it('fails a chapter still carrying the template’s instructions to the analyst', () => {
+      const found = guidanceFindings(pristine()).find((f) => f.section_key === 'industry_market');
+      expect(found?.severity).toBe('fail');
+      expect(found?.heading).toBe('Industry & Market Analysis');
+      expect(found?.summary).toMatch(/instructions to the analyst/);
+    });
+
+    /**
+     * The list is a judgement about which skeleton text is a to-do item and
+     * which is the report, and it is pinned here so that adding a chapter of
+     * instructions to the skeleton without flagging it — which is exactly how
+     * these six shipped — fails a test rather than a deliverable.
+     */
+    it('names every unwritten chapter of a pristine 409A, and only those', () => {
+      expect(guidanceFindings(pristine()).map((f) => f.section_key).sort()).toEqual([
+        'company_analysis',
+        'company_overview',
+        'economic_outlook',
+        'financial_analysis',
+        'industry_market',
+        'methodology',
+        'qualifications',
+      ]);
+    });
+
+    it('says nothing about the chapters a skeleton delivers verbatim', () => {
+      // The standard of value, the safe harbor and the certification are
+      // written once and shipped as they are; an unedited one is finished, not
+      // unwritten, and a check that could not tell the difference would refuse
+      // every report ever drafted.
+      const keys = guidanceFindings(pristine()).map((f) => f.section_key);
+      for (const key of ['standard_of_value', 'safe_harbor', 'certification', 'use_and_distribution']) {
+        expect(keys, `${key} is boilerplate, not guidance`).not.toContain(key);
+      }
+    });
+
+    it('passes a chapter the analyst has written', () => {
+      const drafted = pristine();
+      const section = drafted.sections.find((s) => s.key === 'industry_market')!;
+      section.html = '<p>Warehouse automation grew 19% in the year to the valuation date.</p>';
+      expect(guidanceFindings(drafted).some((f) => f.section_key === 'industry_market')).toBe(false);
+    });
+
+    it('fails a chapter that gained prose and kept the instruction under it', () => {
+      // The half-edited chapter is the case an equality test misses, and it
+      // delivers the instruction just as surely as the untouched one.
+      const drafted = pristine();
+      const section = drafted.sections.find((s) => s.key === 'financial_analysis')!;
+      section.html = `<p>Revenue reached $4.1m with 14 months of runway.</p>${section.html}`;
+      expect(guidanceFindings(drafted).some((f) => f.section_key === 'financial_analysis')).toBe(true);
+    });
+
+    it('ignores a chapter the analyst hid', () => {
+      // Hiding is the editor's existing answer to "this engagement has nothing
+      // to say here", and a hidden chapter is not in the deliverable at all.
+      const drafted = pristine();
+      for (const section of drafted.sections) section.hidden = true;
+      expect(guidanceFindings(drafted)).toEqual([]);
+    });
+
+    it('skips the check when there is no skeleton to compare against', () => {
+      const result = reviewReport({
+        content: content([
+          {
+            key: 'industry_market',
+            heading: 'Industry & Market Analysis',
+            html: '<p>Summarize the industry landscape, market size and growth, and competitive positioning.</p>',
+          },
+        ]),
+        exhibitHeadings: [],
+      });
+      expect(result.findings.some((f) => f.check === 'unedited_template_guidance')).toBe(false);
+    });
+
+    /**
+     * The qualifications chapter reaches the other fourteen deliverables from
+     * `CLOSING_SECTIONS`, so the check has to cover them too — an ESOP report
+     * shipping "Name, role and firm" as its analyst credentials is the same
+     * defect as the 409A doing it.
+     */
+    it('covers the qualifications chapter of every report kind', () => {
+      for (const kind of VALUATION_KINDS) {
+        const skeleton = templateForKind(kind);
+        const drafted = instantiateTemplate(skeleton, {
+          company_name: 'Northwind Robotics, Inc.',
+          kind,
+          valuation_ref: 'N-1001',
+          date: '2026-06-30',
+          currency: 'USD',
+        });
+        const result = reviewReport({ content: drafted, exhibitHeadings: [], template: skeleton });
+        const found = result.findings.filter((f) => f.check === 'unedited_template_guidance');
+        expect(
+          found.map((f) => f.section_key),
+          `${kind} did not flag its unwritten qualifications chapter`,
+        ).toContain('qualifications');
+      }
+    });
+  });
+
   it('fails the whole review when any finding is a dead reference', () => {
     const result = reviewReport({
       content: content([{ key: 'asset_approach', heading: 'Asset Approach', html: '<p>See Exhibit E.</p>' }]),

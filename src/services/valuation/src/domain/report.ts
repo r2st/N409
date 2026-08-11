@@ -318,6 +318,30 @@ interface TemplateSectionDef {
   key: string;
   heading: string;
   html: string; // may contain {{placeholders}}
+  /**
+   * The text here is guidance for the analyst, not prose that ships.
+   *
+   * Most of a skeleton is the report: the standard of value, the safe-harbor
+   * statement, the certification are all written once and delivered verbatim,
+   * and a chapter identical to the skeleton is a chapter that is finished. A
+   * handful are the opposite — "Summarize the industry landscape, market size
+   * and growth, and competitive positioning." is an instruction to whoever
+   * writes the report, and delivering it verbatim puts the analyst's to-do list
+   * inside a document a named appraiser signs.
+   *
+   * Nothing could tell the two apart. `reportReadiness` looks for the skeleton's
+   * own fill-me markers, and these chapters have none: they are complete,
+   * well-formed English sentences that simply are not about this company. So
+   * six chapters of the 409A shipped their instructions into signed
+   * deliverables, and every gate the platform has passed them.
+   *
+   * Flagged here rather than detected in the checker, because "is this sentence
+   * an instruction" is a judgement about the words in this file and belongs
+   * beside them, where changing one is changing the other. `reportReview.ts`
+   * reads the flag and refuses to publish a flagged chapter that still carries
+   * the guidance.
+   */
+  authored?: true;
 }
 
 export interface ReportTemplate {
@@ -475,6 +499,7 @@ const TEMPLATE_409A: ReportTemplate = {
     {
       key: 'company_overview',
       heading: 'Company Overview',
+      authored: true,
       html: P(
         'Describe the business of {{company_name}}: products, customers, stage, headcount, and capital raised to date.',
       ),
@@ -482,6 +507,7 @@ const TEMPLATE_409A: ReportTemplate = {
     {
       key: 'company_analysis',
       heading: 'Company Analysis',
+      authored: true,
       html:
         P(
           'Revenue Ruling 59-60 §4.01 sets out the factors to be considered in valuing the stock of a closely held corporation. Each is addressed below; where a factor carries little weight for a company at this stage, say so and why rather than omitting it.',
@@ -521,6 +547,7 @@ const TEMPLATE_409A: ReportTemplate = {
     {
       key: 'economic_outlook',
       heading: 'Economic Outlook',
+      authored: true,
       html: P(
         'Revenue Ruling 59-60 §4.01(b) requires consideration of the economic outlook in general, and the condition and outlook of the specific industry in particular. Summarize the macroeconomic conditions prevailing at the valuation date that bear on this valuation — growth, inflation, the interest-rate environment underlying the risk-free rate applied below, and the state of the private capital markets on which the company depends for funding.',
       ),
@@ -528,11 +555,13 @@ const TEMPLATE_409A: ReportTemplate = {
     {
       key: 'industry_market',
       heading: 'Industry & Market Analysis',
+      authored: true,
       html: P('Summarize the industry landscape, market size and growth, and competitive positioning.'),
     },
     {
       key: 'financial_analysis',
       heading: 'Financial Analysis',
+      authored: true,
       html: P(
         'Summarize historical performance and management projections from the valuation workbook, noting revenue status, burn and runway.',
       ),
@@ -540,6 +569,7 @@ const TEMPLATE_409A: ReportTemplate = {
     {
       key: 'methodology',
       heading: 'Valuation Methodology',
+      authored: true,
       html:
         P(
           'Describe the approaches considered — asset, income, market, and OPM backsolve — and their weights.',
@@ -784,6 +814,7 @@ const TEMPLATE_409A: ReportTemplate = {
     {
       key: 'qualifications',
       heading: 'Qualifications of the Valuation Analyst',
+      authored: true,
       html:
         P(
           'Set out the professional qualifications of the analyst or analysts responsible for this valuation, as required by SSVS-1 and by the independent-appraiser condition of Treasury Regulation §1.409A-1(b)(5)(iv)(B)(1):',
@@ -1746,6 +1777,9 @@ const CLOSING_SECTIONS: TemplateSectionDef[] = [
   {
     key: 'qualifications',
     heading: 'Qualifications of the Valuation Analyst',
+    // The same instruction the 409A carries, and it reaches every other kind
+    // from here — so the check on it covers all fifteen deliverables, not one.
+    authored: true,
     html:
       P(
         'Set out the professional qualifications of the analyst or analysts responsible for this valuation, as required by SSVS-1:',

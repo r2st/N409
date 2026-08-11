@@ -49,11 +49,12 @@ export interface ReportReviewFinding {
   /**
    * `fail` blocks the publish gate; `warn` surfaces for the analyst.
    *
-   * Only the dangling reference fails. It is the one finding that is a defect
-   * on the page under every reading — there is no version of "see Exhibit E"
-   * that is correct when no Exhibit E exists. The others describe a report that
-   * may well be right and is at risk of not staying right, which is a thing to
-   * tell somebody, not a thing to refuse.
+   * Two findings fail, and both for the same reason: they are defects on the
+   * page under every reading. There is no version of "see Exhibit E" that is
+   * correct when no Exhibit E exists, and no version of "Summarize the industry
+   * landscape" that is correct in a document a named appraiser has signed. The
+   * others describe a report that may well be right and is at risk of not
+   * staying right, which is a thing to tell somebody, not a thing to refuse.
    */
   severity: 'fail' | 'warn';
   /** The chapter the finding is about; null where it is about the document. */
@@ -156,11 +157,12 @@ export interface ReportReviewInput {
   /** `results.approaches` from the calculation, when there is one. */
   approaches?: unknown;
   /**
-   * The skeleton this body was drafted from, for the frozen-figure check.
+   * The skeleton this body was drafted from, for the two checks that compare
+   * the stored chapter against the text it started as.
    *
    * Optional because a body drafted from a *managed* (DB-backed) template has
-   * no code skeleton to compare against. That check is then skipped rather than
-   * guessed at — the other three do not depend on it.
+   * no code skeleton to compare against. Those checks are then skipped rather
+   * than guessed at — the others do not depend on it.
    */
   template?: ReportTemplate | null;
 }
@@ -177,6 +179,7 @@ export function reviewReport(input: ReportReviewInput): ReportReviewResult {
   checkExhibitReferences(sections, input.exhibitHeadings, findings);
   checkApproachChapters(input.approaches, shown, findings);
   checkFrozenFigures(sections, input.template ?? null, findings);
+  checkUneditedGuidance(sections, input.template ?? null, findings);
 
   if (findings.length === 0) {
     return {
@@ -192,7 +195,10 @@ export function reviewReport(input: ReportReviewInput): ReportReviewResult {
     return {
       status: 'fail',
       findings,
-      detail: `${plural(failures.length, 'reference points', 'references point')} at a schedule the report does not contain: ${failures
+      // Deliberately not phrased around one check any more: a dead exhibit
+      // reference and an unedited instruction both land here, and a detail line
+      // that named only the first described the wrong defect half the time.
+      detail: `${plural(failures.length, 'finding blocks', 'findings block')} this report: ${failures
         .map((f) => f.summary)
         .join('; ')}`,
     };
@@ -374,6 +380,99 @@ function checkFrozenFigures(
       summary:
         `“${section.heading}” no longer restates its figures from the calculation — a recalculation ` +
         'will leave the numbers in it unchanged',
+    });
+  }
+}
+
+/**
+ * The shortest run of skeleton text worth matching on.
+ *
+ * The comparison below splits the skeleton on its `{{markers}}` and asks
+ * whether the literal text between them survives in the stored chapter. Short
+ * fragments — "  — ", ", and ", the tail of a sentence a marker ended — appear
+ * in any prose at all, so matching on them would report a fully rewritten
+ * chapter as untouched. Long enough to be a clause, short enough that a
+ * skeleton sentence with two markers in it still contributes one.
+ */
+const GUIDANCE_FRAGMENT = 24;
+
+/**
+ * Whether the skeleton's own words are still on the page.
+ *
+ * Not string equality, for two reasons. The stored body has had its
+ * instantiation variables filled — "Describe the business of {{company_name}}"
+ * is "Describe the business of Northwind Robotics, Inc." by the time it is
+ * saved — so the skeleton never equals what it produced. And the case that
+ * matters most is not the untouched chapter but the half-touched one: an
+ * analyst who writes two paragraphs of company description above the
+ * instruction and leaves the instruction under it has a report that still
+ * delivers the instruction, and an equality test would call it edited.
+ *
+ * So the skeleton is split on its markers and each literal run between them
+ * must still be found in the stored text. All of them, not any: a chapter that
+ * has lost part of the guidance is one somebody is working through, and firing
+ * on it would make the finding something analysts learn to ignore.
+ */
+function stillCarriesGuidance(skeletonHtml: string, storedHtml: string): boolean {
+  const fragments = textOf(skeletonHtml)
+    .split(/\{\{[^}]*\}\}/)
+    .map((f) => f.trim())
+    .filter((f) => f.length >= GUIDANCE_FRAGMENT);
+  if (fragments.length === 0) return false;
+  const stored = textOf(storedHtml);
+  return fragments.every((f) => stored.includes(f));
+}
+
+/**
+ * Chapters that ship the skeleton's instructions to the analyst as if they were
+ * the report.
+ *
+ * Most of a skeleton is prose that is *supposed* to be delivered verbatim — the
+ * standard of value, the safe-harbor statement, the certification. A handful of
+ * chapters are the opposite: their text tells whoever writes the report what
+ * belongs there. "Summarize the industry landscape, market size and growth, and
+ * competitive positioning." is a to-do item, and a signed 409A containing it is
+ * a document that tells its reader the analyst did not do that work.
+ *
+ * Nothing caught this. `reportReadiness` searches for the skeleton's fill-me
+ * markers and these chapters have none — every sentence is complete, correctly
+ * punctuated English. Six chapters of the 409A went out this way.
+ *
+ * `fail`, not `warn`. The distinction the rest of this module draws is between
+ * a report that may be right and one that is wrong on the page, and there is no
+ * reading under which an instruction to the analyst is the report. An
+ * engagement that genuinely has nothing to say under a chapter has the answer
+ * the editor already provides: hide it, and it leaves the deliverable and this
+ * check together (`visibleSections`).
+ *
+ * Which chapters are guidance is declared by the skeleton (`authored`) rather
+ * than guessed at here. Detecting an imperative sentence would have caught
+ * these six and also every chapter that carries a substantive paragraph and one
+ * "State the basis for the concluded discount" beside it — which is most of
+ * them, and a gate that refuses every report is one somebody turns off.
+ */
+function checkUneditedGuidance(
+  sections: readonly { key: string; heading: string; html: string }[],
+  template: ReportTemplate | null,
+  findings: ReportReviewFinding[],
+): void {
+  if (!template) return;
+  const guidance = new Map(
+    template.sections.filter((s) => s.authored === true).map((s) => [s.key, s.html]),
+  );
+
+  for (const section of sections) {
+    const original = guidance.get(section.key);
+    if (original === undefined) continue;
+    if (!stillCarriesGuidance(original, section.html)) continue;
+    findings.push({
+      check: 'unedited_template_guidance',
+      severity: 'fail',
+      section_key: section.key,
+      heading: section.heading,
+      summary:
+        `“${section.heading}” still carries the template's instructions to the analyst rather than ` +
+        'prose about this engagement',
     });
   }
 }
