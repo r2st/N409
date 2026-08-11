@@ -131,12 +131,6 @@ export const AI_PIPELINE_META: Record<AiPipeline, { label: string; description: 
   },
 };
 
-/** PII redaction metadata each pipeline run reports back. */
-export interface AnonymizationMeta {
-  applied: boolean;
-  redacted: Record<string, number>;
-}
-
 export interface AiJob {
   id: string;
   valuation_id: string;

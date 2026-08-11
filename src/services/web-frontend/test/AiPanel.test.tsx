@@ -139,7 +139,6 @@ describe('AiPanel', () => {
       });
       const original = globalThis.fetch as typeof fetch;
       vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         if ((init?.method ?? 'GET') === 'POST') {
           await held;
           return json({});

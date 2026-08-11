@@ -128,9 +128,6 @@ export interface IntegrationState {
   userId: string;
 }
 
-/** @deprecated Historical name — `IntegrationState` covers all three flows. */
-export type AccountingState = IntegrationState;
-
 const INTEGRATION_PURPOSES = {
   accounting: 'accounting-state',
   capTable: 'captable-state',

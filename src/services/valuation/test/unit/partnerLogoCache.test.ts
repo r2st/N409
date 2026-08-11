@@ -4,6 +4,10 @@ import {
   fetchPartnerLogoCached,
   partnerLogoCacheSize,
 } from '../../src/clients/partnerLogoCache.js';
+import type { fetchPartnerLogo } from '../../src/clients/partnerLogo.js';
+
+/** The fetcher signature the cache delegates to. */
+type LogoFetcher = typeof fetchPartnerLogo;
 
 /**
  * The logo fetch sits on the critical path of every report render, and it is a
@@ -18,7 +22,7 @@ const URL_B = 'https://cdn.other.example/mark.png';
 
 /** A stub logo fetcher that counts calls, matching fetchPartnerLogo's shape. */
 function stub(result: Buffer | null = PNG) {
-  return vi.fn(async () => result) as unknown as typeof import('../../src/clients/partnerLogo.js').fetchPartnerLogo;
+  return vi.fn(async () => result) as unknown as LogoFetcher;
 }
 
 describe('partner logo cache', () => {
@@ -42,7 +46,7 @@ describe('partner logo cache', () => {
     const other = Buffer.from('\x89PNG\r\n\x1a\nother', 'latin1');
     const fetchLogo = vi.fn(async (url: string | null) =>
       url === URL_A ? PNG : other,
-    ) as unknown as typeof import('../../src/clients/partnerLogo.js').fetchPartnerLogo;
+    ) as unknown as LogoFetcher;
 
     expect(await fetchPartnerLogoCached(URL_A, () => 1_000, fetchLogo)).toEqual(PNG);
     expect(await fetchPartnerLogoCached(URL_B, () => 1_000, fetchLogo)).toEqual(other);

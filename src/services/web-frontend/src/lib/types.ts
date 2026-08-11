@@ -153,8 +153,6 @@ export interface AuthProviders {
 export const STATE_GROUPS = ['open', 'in_review', 'drafted', 'published', 'closed'] as const;
 export type StateGroupKey = (typeof STATE_GROUPS)[number];
 
-export type ValuationCounts = Record<StateGroupKey | 'all', number>;
-
 /**
  * The nine named listing tabs (design §4.2). Defined server-side in
  * `domain/workflow.NAMED_BUCKETS` and served alongside the counts, so this is

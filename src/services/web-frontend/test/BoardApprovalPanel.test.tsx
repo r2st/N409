@@ -26,14 +26,25 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 const VALUATION = { id: 'val-1', company_name: 'Acme' } as Valuation;
 
-const RESOLUTION = {
+interface Resolution {
+  id: string;
+  valuation_date: string;
+  fmv_conclusion: string;
+  currency: string;
+  body_html: string;
+  status: 'pending' | 'approved' | 'rejected';
+  approved_at: string | null;
+  updated_at: string;
+}
+
+const RESOLUTION: Resolution = {
   id: 'res-1',
   valuation_date: '2026-06-30',
   fmv_conclusion: '2.7400',
   currency: 'USD',
   body_html: '<h1>Unanimous Written Consent</h1><p>The Board adopts $2.74 per share.</p>',
-  status: 'pending' as const,
-  approved_at: null as string | null,
+  status: 'pending',
+  approved_at: null,
   updated_at: '2026-08-01T00:00:00.000Z',
 };
 
@@ -69,7 +80,7 @@ interface Call {
 }
 
 function mockApi(
-  state: { resolution?: typeof RESOLUTION | null; members?: Member[] },
+  state: { resolution?: Resolution | null; members?: Member[] },
   opts: { loadStatus?: number; writeStatus?: number; token?: string } = {},
 ) {
   const calls: Call[] = [];

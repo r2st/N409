@@ -387,7 +387,6 @@ describe('ReportTab', () => {
     });
 
     it('names the action when the failure carries no message', async () => {
-      const user = userEvent.setup();
       mockApi();
       vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('offline'));
       renderTab();

@@ -628,8 +628,6 @@ export const OVERWRITE_FIELDS_BY_KEY: ReadonlyMap<string, OverwriteFieldDef> = n
   OVERWRITE_FIELDS.map((def) => [def.key, def]),
 );
 
-export type OverwriteValue = number | string;
-
 /**
  * Validates a candidate value against a field's class (and numeric range).
  * Returns a problem message or null when valid.

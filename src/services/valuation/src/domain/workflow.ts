@@ -164,7 +164,6 @@ export function namedBucketsFor(state: ValuationState): NamedBucketKey[] {
 
 /** Bulk actions (P1 #23) accepted by POST /valuations/bulk. */
 export const BULK_ACTIONS = ['set_state', 'assign_reviewer', 'advance', 'restart'] as const;
-export type BulkAction = (typeof BULK_ACTIONS)[number];
 
 // ── Review decisions (P1 #6) ─────────────────────────────────────────────────
 

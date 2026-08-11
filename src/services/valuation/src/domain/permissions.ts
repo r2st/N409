@@ -135,8 +135,6 @@ export const CAPABILITIES: readonly CapabilityDef[] = [
   },
 ];
 
-export type CapabilityKey = (typeof CAPABILITIES)[number]['key'];
-
 const CAPABILITIES_BY_ROLE: ReadonlyMap<RoleKey, ReadonlySet<string>> = (() => {
   const map = new Map<RoleKey, Set<string>>(ROLE_KEYS.map((r) => [r, new Set<string>()]));
   for (const cap of CAPABILITIES) {

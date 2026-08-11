@@ -1,7 +1,5 @@
 import pg from 'pg';
 
-export type Db = pg.Pool;
-
 export interface PoolTuning {
   /** Hard ceiling on any single statement (ms). A slow query can otherwise pin
    *  a connection indefinitely; with only `max` connections that stalls the

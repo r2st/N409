@@ -10,7 +10,6 @@ export const RETENTION_DATA_TYPES = [
   'email_outbox',
   'audit_event',
 ] as const;
-export type RetentionDataType = (typeof RETENTION_DATA_TYPES)[number];
 
 export interface RetentionPolicy {
   data_type: string;
