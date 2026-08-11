@@ -1669,6 +1669,17 @@ export const TOC_HEADING = 'Table of Contents';
 export const SUMMARY_DESTINATION = 'n409-summary';
 export const sectionDestination = (index: number): string => `n409-section-${index + 1}`;
 
+/**
+ * Leading between the label, value and note of a supporting figure.
+ *
+ * The three runs are stacked by measurement, not at fixed offsets, so this is
+ * the only vertical spacing the block declares. Two points is, to within half a
+ * point, what the old fixed offsets left between the runs of a single-line
+ * figure — 11 points to the value, of which 9.25 was the label's own line — so
+ * a summary whose labels all fit on one line goes on setting as it always has.
+ */
+const FIGURE_RUN_GAP = 2;
+
 function renderSummaryPage(
   doc: PDFKit.PDFDocument,
   summary: ReportPdfSummary,
@@ -1720,7 +1731,7 @@ function renderSummaryPage(
   doc.x = left;
   doc.y = boxTop + boxHeight + 18;
 
-  // Supporting figures, three to a row.
+  // Supporting figures, three to a row. See `FIGURE_RUN_GAP` for the stacking.
   const figures = summary.figures ?? [];
   if (figures.length > 0) {
     const perRow = 3;
@@ -1736,22 +1747,31 @@ function renderSummaryPage(
         // One element per figure fixes the order and keeps each value with the
         // label that names it.
         const bottom = tagged(doc, parent, 'P', { actual: summaryFigureText(figure) }, () => {
-          doc
-            .font(FONTS.regular)
-            .fontSize(8)
-            .fillColor('#888888')
-            .text(figure.label.toUpperCase(), x, rowTop, { width: columnWidth - 12 });
-          doc
-            .font(FONTS.bold)
-            .fontSize(12)
-            .fillColor('#111111')
-            .text(figure.value, x, rowTop + 11, { width: columnWidth - 12 });
-          if (!figure.note) return rowTop + 27;
-          doc
-            .font(FONTS.regular)
-            .fontSize(8)
-            .fillColor('#777777')
-            .text(figure.note, x, rowTop + 27, { width: columnWidth - 12 });
+          const width = columnWidth - 12;
+          // Each run is measured before it is drawn and the next one starts
+          // below where the last one ended. The offsets were previously fixed
+          // — value at rowTop + 11, note at rowTop + 27 — which is the height
+          // of a *one-line* label and no more. "DISCOUNT FOR LACK OF
+          // MARKETABILITY" sets to 161pt in this column's 154.7pt, so it wrapped,
+          // and its second line was drawn straight through the value beneath it:
+          // the two figures a board reads off the summary page overprinted.
+          //
+          // `heightOfString` has to be given the same string `.text()` will
+          // draw. Every draw goes through `fontSafe` (see `renderReportPdf`),
+          // which can change a string's length, so the measurement is taken of
+          // the sanitized form and that same form is handed to `.text()`.
+          const label = fontSafe(figure.label.toUpperCase());
+          doc.font(FONTS.regular).fontSize(8).fillColor('#888888');
+          const valueTop = rowTop + doc.heightOfString(label, { width }) + FIGURE_RUN_GAP;
+          doc.text(label, x, rowTop, { width });
+
+          const value = fontSafe(figure.value);
+          doc.font(FONTS.bold).fontSize(12).fillColor('#111111');
+          const noteTop = valueTop + doc.heightOfString(value, { width }) + FIGURE_RUN_GAP;
+          doc.text(value, x, valueTop, { width });
+
+          if (!figure.note) return noteTop;
+          doc.font(FONTS.regular).fontSize(8).fillColor('#777777').text(figure.note, x, noteTop, { width });
           return doc.y;
         });
         rowHeight = Math.max(rowHeight, bottom - rowTop);
