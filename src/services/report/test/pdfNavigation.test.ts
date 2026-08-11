@@ -8,6 +8,7 @@ import {
   type ReportPdfInput,
   type TocCapacity,
 } from '../src/pdf.js';
+import { extractText, pageTexts } from './support/pdfText.js';
 
 /**
  * Getting around the document.
@@ -18,38 +19,6 @@ import {
  * second, and none of them are visible on any page — which is exactly why they
  * rot silently unless something asserts on them.
  */
-
-function extractText(pdf: Buffer): string {
-  const raw = pdf.toString('latin1');
-  return Array.from(raw.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-}
-
-/**
- * Text of each page, in the order the pages were written.
- *
- * Resolved through each page's `/Contents` reference rather than by taking
- * every `stream` in the file: a page content stream is not the only kind of
- * stream a PDF holds. The document also carries an XMP metadata packet, and
- * treating that as a tenth page had this file's footer assertion reporting a
- * missing footer on a page that does not exist.
- */
-function pageTexts(pdf: Buffer): string[] {
-  const raw = pdf.toString('latin1');
-  const bodies = new Map<string, string>();
-  for (const m of raw.matchAll(/(\d+) 0 obj\n([\s\S]*?)\nendobj/g)) {
-    const stream = /stream\r?\n([\s\S]*?)\r?\nendstream/.exec(m[2]!);
-    if (stream) bodies.set(m[1]!, stream[1]!);
-  }
-  // Page dictionaries are written in page order, so their /Contents references
-  // appear in that order too.
-  return Array.from(raw.matchAll(/\/Contents (\d+) 0 R/g)).map((m) =>
-    Array.from((bodies.get(m[1]!) ?? '').matchAll(/<([0-9a-fA-F]+)>/g))
-      .map((h) => Buffer.from(h[1]!, 'hex').toString('latin1'))
-      .join(''),
-  );
-}
 
 const outlineTitles = (pdf: Buffer): string[] =>
   Array.from(pdf.toString('latin1').matchAll(/\/Title \(([^)]*)\)/g)).map((m) => m[1]!);

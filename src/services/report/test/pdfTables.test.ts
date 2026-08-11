@@ -8,6 +8,7 @@ import {
   runningHeadings,
   type ReportPdfInput,
 } from '../src/pdf.js';
+import { extractText, pageCount } from './support/pdfText.js';
 
 /**
  * Table layout and page furniture.
@@ -18,14 +19,6 @@ import {
  * that breaks across pages still carrying its headings.
  */
 
-function extractText(pdf: Buffer): string {
-  const raw = pdf.toString('latin1');
-  return Array.from(raw.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-}
-
-const pageCount = (pdf: Buffer) => (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
 const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1;
 
 describe('isNumericCell', () => {

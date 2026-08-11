@@ -11,6 +11,7 @@ import {
   type ChartSpec,
   type ReportPdfInput,
 } from '../src/pdf.js';
+import { contentStreams, readPdf, type PdfReader } from './support/pdfText.js';
 
 /**
  * The report as assistive technology receives it.
@@ -108,32 +109,20 @@ function typeOrder(node: StructNode): string[] {
   return [node.type, ...node.children.flatMap(typeOrder)];
 }
 
-/** Page content streams, resolved through each page's /Contents reference. */
-function contentStreams(pdf: Buffer): string[] {
-  const raw = pdf.toString('latin1');
-  const bodies = new Map<string, string>();
-  for (const m of raw.matchAll(/(\d+) 0 obj\n([\s\S]*?)\nendobj/g)) {
-    const stream = /stream\r?\n([\s\S]*?)\r?\nendstream/.exec(m[2]!);
-    if (stream) bodies.set(m[1]!, stream[1]!);
-  }
-  return Array.from(raw.matchAll(/\/Contents (\d+) 0 R/g)).map((m) => bodies.get(m[1]!) ?? '');
-}
-
-const shown = (stream: string): string =>
-  Array.from(stream.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-
 /**
  * Text drawn inside `/Artifact` regions, and text drawn outside them —
  * i.e. what a screen reader skips versus what it reads.
  */
-function partitionByArtifact(stream: string): { artifact: string; content: string } {
+function partitionByArtifact(stream: string, doc: PdfReader): { artifact: string; content: string } {
   let depth = 0;
   let artifactDepth = 0;
+  let font = '';
   const parts = { artifact: '', content: '' };
-  // Operators and hex text runs, in order.
-  for (const token of stream.matchAll(/\/Artifact|(?:^|\s)(BDC|BMC|EMC)(?=\s|$)|<[0-9a-fA-F]+>/gm)) {
+  // Operators, face selections and hex text runs, in order. The face has to be
+  // tracked because the glyph codes in a run are indices into that face's
+  // subset and say nothing on their own.
+  const tokens = /\/Artifact|(?:^|\s)(BDC|BMC|EMC)(?=\s|$)|\/(F\d+) [\d.]+ Tf|<[0-9a-fA-F]+>/gm;
+  for (const token of stream.matchAll(tokens)) {
     const text = token[0]!;
     if (text === '/Artifact') {
       // The tag precedes its BDC, so remember that the region about to open is
@@ -144,8 +133,10 @@ function partitionByArtifact(stream: string): { artifact: string; content: strin
       depth -= 1;
     } else if (token[1]) {
       depth += 1;
+    } else if (token[2]) {
+      font = token[2];
     } else {
-      const decoded = Buffer.from(text.slice(1, -1), 'hex').toString('latin1');
+      const decoded = doc.decode(text, font);
       if (artifactDepth > 0) parts.artifact += decoded;
       else parts.content += decoded;
     }
@@ -700,12 +691,13 @@ describe('page furniture stays out of the reading order', () => {
       },
       { compress: false },
     );
-    const streams = contentStreams(pdf);
+    const doc = readPdf(pdf);
+    const streams = doc.streams;
     // Skip the cover, which carries no running head.
     const bodyPages = streams.slice(1);
     expect(bodyPages.length).toBeGreaterThan(1);
     for (const [i, stream] of bodyPages.entries()) {
-      const { artifact, content } = partitionByArtifact(stream);
+      const { artifact, content } = partitionByArtifact(stream, doc);
       expect(artifact, `page ${i + 2} footer is not an artifact`).toMatch(/Page \d+ of \d+/);
       expect(artifact).toContain('Confidential');
       // Read as content, the company name, the title, "Confidential" and a
@@ -713,7 +705,7 @@ describe('page furniture stays out of the reading order', () => {
       expect(content, `page ${i + 2} reads its footer aloud`).not.toMatch(/Page \d+ of \d+/);
     }
     // The text is still in the file for a sighted reader and for search.
-    expect(shown(streams[1]!)).toMatch(/Page \d+ of \d+/);
+    expect(doc.text(streams[1]!)).toMatch(/Page \d+ of \d+/);
   });
 
   it('leaves the table continuation marker out of the table', async () => {
@@ -739,8 +731,9 @@ describe('page furniture stays out of the reading order', () => {
     expect(cells.every((c) => c.type === 'TH' || c.type === 'TD')).toBe(true);
     expect(cells.filter((c) => c.type === 'TD')).toHaveLength(180);
 
-    const continuation = contentStreams(pdf)
-      .map((s) => partitionByArtifact(s))
+    const marked = readPdf(pdf);
+    const continuation = marked.streams
+      .map((s) => partitionByArtifact(s, marked))
       .filter((p) => p.artifact.includes('Table continued'));
     expect(continuation.length, 'the table never broke, so this proves nothing').toBeGreaterThan(0);
     for (const page of continuation) expect(page.content).not.toContain('Table continued');
@@ -759,7 +752,8 @@ describe('page furniture stays out of the reading order', () => {
     // The firm is named in words on the next line, so a Figure here would only
     // make a reader hear the name twice.
     expect(nodesOfType(structTree(pdf), 'Figure')).toHaveLength(0);
-    expect(shown(contentStreams(pdf)[0]!)).toContain('Bright Line Advisors');
+    const cover = readPdf(pdf);
+    expect(cover.text(cover.streams[0]!)).toContain('Bright Line Advisors');
   });
 });
 
@@ -791,6 +785,7 @@ describe('degenerate documents still produce a usable tree', () => {
     );
     const toc = nodesOfType(structTree(pdf), 'TOC')[0]!;
     expect(toc.children[0]!.type).toBe('H1');
-    expect(shown(contentStreams(pdf)[1]!)).toContain(TOC_HEADING);
+    const doc = readPdf(pdf);
+    expect(doc.text(doc.streams[1]!)).toContain(TOC_HEADING);
   });
 });

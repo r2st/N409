@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderReportPdf, type ReportPdfInput, type ReportPdfSummary } from '../src/pdf.js';
+import { pageLines, type Line } from './support/pdfText.js';
 
 /**
  * Where the executive summary's supporting figures actually land on the page.
@@ -11,7 +12,7 @@ import { renderReportPdf, type ReportPdfInput, type ReportPdfSummary } from '../
  * itself: the label was set with wrapping enabled at the row's top, and the
  * value at a fixed 11 points below that, which is the height of exactly one
  * line of label. A label needing two lines — "DISCOUNT FOR LACK OF
- * MARKETABILITY" is 161pt of Helvetica-8 in a 144pt column — put its second
+ * MARKETABILITY" sets well past the 144pt this column gives it — put its second
  * line through the value beneath it, and the two numbers a board reads off this
  * page overprinted each other.
  *
@@ -19,65 +20,24 @@ import { renderReportPdf, type ReportPdfInput, type ReportPdfSummary } from '../
  * they fail on a collision rather than on a change of wording.
  */
 
-/** Content streams in page order (rendered uncompressed for inspection). */
-function contentStreams(pdf: Buffer): string[] {
-  const streams: string[] = [];
-  let i = 0;
-  for (;;) {
-    const start = pdf.indexOf('stream', i);
-    if (start < 0) break;
-    let from = start + 'stream'.length;
-    if (pdf[from] === 0x0d) from += 1;
-    if (pdf[from] === 0x0a) from += 1;
-    const end = pdf.indexOf('endstream', from);
-    if (end < 0) break;
-    const body = pdf.subarray(from, end).toString('latin1');
-    if (body.includes('Tm')) streams.push(body);
-    i = end + 'endstream'.length;
-  }
-  return streams;
-}
-
-const shown = (hexRun: string): string =>
-  Array.from(hexRun.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-
 /**
- * One laid-out line: where pdfkit put it, how big it is, and what it says.
+ * The embedded face's vertical metrics, as fractions of the point size.
  *
- * PDF y grows upwards from the foot of the page and `Tm` positions the
- * *baseline*, so a line's ink sits between `y - descent` and `y + ascent`.
- * Helvetica's ascender is 718/1000 of the point size and its descender 207.
+ * DejaVu Sans: 2048 units to the em, ascender 1901, descender -483, no line
+ * gap. A line's ink sits between `baseline - DESCENDER * size` and
+ * `baseline + ASCENDER * size`, and consecutive lines are LINE apart.
  */
-interface Line {
-  x: number;
-  baseline: number;
-  size: number;
-  text: string;
-}
-
-function lines(pdf: Buffer): Line[][] {
-  return contentStreams(pdf).map((stream) =>
-    Array.from(
-      stream.matchAll(/1 0 0 1 ([-\d.]+) ([-\d.]+) Tm\s*\/F\d+ ([\d.]+) Tf\s*\[([^\]]*)\]/g),
-      (m) => ({
-        x: Number(m[1]),
-        baseline: Number(m[2]),
-        size: Number(m[3]),
-        text: shown(m[4]!),
-      }),
-    ),
-  );
-}
+const ASCENDER = 1901 / 2048;
+const DESCENDER = 483 / 2048;
+const LINE = (1901 + 483) / 2048;
 
 /** Top and bottom of a line's ink, in PDF coordinates (top > bottom). */
-const top = (line: Line): number => line.baseline + (718 / 1000) * line.size;
-const bottom = (line: Line): number => line.baseline - (207 / 1000) * line.size;
+const top = (line: Line): number => line.baseline + ASCENDER * line.size;
+const bottom = (line: Line): number => line.baseline - DESCENDER * line.size;
 
 /** The page carrying the summary. */
 function summaryLines(pdf: Buffer): Line[] {
-  const page = lines(pdf).find((p) => p.some((l) => l.text.includes('Executive Summary')));
+  const page = pageLines(pdf).find((p) => p.some((l) => l.text.includes('Executive Summary')));
   if (!page) throw new Error('no summary page in the rendered document');
   return page;
 }
@@ -133,22 +93,21 @@ describe('executive summary supporting figures', () => {
   it('pushes the value down by exactly the extra label line', async () => {
     // What "stacked dynamically" means, stated as an equality: a second line of
     // label moves the value one label line-height further down and no further.
-    // Helvetica at 8pt sets on a 9.248pt line (ascender + line gap - descender).
     const one = summaryLines(await render([{ label: 'DLOM', value: '25.0%' }]));
     const two = summaryLines(await render([{ label: 'Discount for lack of marketability', value: '25.0%' }]));
     const drop = find(one, '25.0%').baseline - find(two, '25.0%').baseline;
-    expect(drop).toBeCloseTo(9.248, 2);
+    expect(drop).toBeCloseTo(LINE * 8, 3);
   });
 
   it('leaves a single-line figure within a point of where it was drawn', async () => {
     // The fixed offsets this replaces put the value 11pt below the row top and
     // the note 27pt below it. A summary whose labels all fit on one line — which
     // is every report issued before the fix — has to keep setting the same way,
-    // and it does, to within about half a point: the label measures 9.25pt and
-    // the value 14.28pt (Helvetica-Bold carries a deeper line gap than the
-    // regular face), so the round 2pt gaps put the value at 11.25 and the note
-    // at 27.5. Neither is a visible move, and magic constants chosen to land on
-    // the old numbers exactly would be worse than the drift they remove.
+    // and it does, to within a third of a point: the label measures 9.31pt and
+    // the value 13.97pt, so the round 2pt gaps put the value 11.31 below the row
+    // top and the note 27.28. Neither is a visible move, and magic constants
+    // chosen to land on the old numbers exactly would be worse than the drift
+    // they remove.
     const page = summaryLines(await render([{ label: 'DLOM', value: '25.0%', note: 'Finnerty' }]));
     const label = find(page, 'DLOM');
     // Baseline separations implied by the old constants: the runs started 11 and
@@ -156,8 +115,8 @@ describe('executive summary supporting figures', () => {
     // own run's top.
     const valueDrop = label.baseline - find(page, '25.0%').baseline;
     const noteDrop = label.baseline - find(page, 'Finnerty').baseline;
-    expect(Math.abs(valueDrop - (11 + (718 / 1000) * (12 - 8)))).toBeLessThan(1);
-    expect(Math.abs(noteDrop - 27)).toBeLessThan(1);
+    expect(Math.abs(valueDrop - (11 + ASCENDER * (12 - 8)))).toBeLessThan(0.5);
+    expect(Math.abs(noteDrop - 27)).toBeLessThan(0.5);
   });
 
   it('does not let a wrapped label in one column disturb its neighbours', async () => {

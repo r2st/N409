@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+import * as fontkit from 'fontkit';
 import PDFDocument from 'pdfkit';
 
 /**
@@ -299,8 +301,8 @@ const SOFT_HYPHEN = '­';
  * opportunity that renders *nothing* unless the line actually breaks there, in
  * which case pdfkit draws the hyphen (it special-cases the character in
  * `canFit`). So a run short enough to fit is unchanged on the page, and one
- * that has to be broken is broken the way a typesetter would. It is also
- * WinAnsi 0xAD, so the built-in Helvetica metrics this renderer uses carry it.
+ * that has to be broken is broken the way a typesetter would. The embedded face
+ * carries a glyph for it, which is what makes the drawn form a hyphen.
  *
  * Whitespace-separated text — which is all real prose — comes back untouched.
  */
@@ -315,140 +317,214 @@ export function breakLongRuns(text: string, limit: number = MAX_UNBROKEN_RUN): s
   });
 }
 
-/**
- * Characters the built-in fonts cannot draw, and what to draw instead.
- *
- * This renderer uses pdfkit's standard-14 Helvetica, whose encoding is WinAnsi
- * (CP1252). That covers Latin-1 and the punctuation this domain actually wants
- * — em dash, curly quotes, ·, ×, ±, ², the currency signs. It does not cover
- * Greek, arrows, or the *typographic minus* U+2212, and pdfkit does not fail on
- * a character it cannot encode: it emits a byte anyway. The result is silent
- * mojibake in the finished PDF.
- *
- * That is not a cosmetic bug on this document. The executive summary printed
- * its key assumptions as `<2c"RrT 4.00y` where it meant `σ 62% · r 4.21% ·
- * T 4.00y`, and the value-bridge chart printed `"$0.1410` where it meant
- * `−$0.1410`. Both sit on the page a board reads to adopt a share price.
- *
- * The mapping is transliteration, not deletion: every entry is the closest
- * thing the font can draw, so meaning survives. `σ` becomes `sigma` because a
- * bare `s` beside a percentage would read as a typo rather than as a symbol.
- */
-const GLYPH_SUBSTITUTIONS: ReadonlyArray<readonly [RegExp, string]> = [
-  // The minus sign proper (U+2212) — indistinguishable from a hyphen on the
-  // page, and the reason every negative figure in the value bridge was broken.
-  [/\u2212/g, '-'],
-  // Greek letters used as finance symbols. Spelled out rather than dropped.
-  [/\u03c3/g, 'sigma'],
-  [/\u03bc/g, 'mu'],
-  [/\u03c0/g, 'pi'],
-  [/\u0394/g, 'delta'],
-  [/\u03b2/g, 'beta'],
-  [/\u03b1/g, 'alpha'],
-  // Capital sigma, which is what a summation is written with as often as the
-  // operator below. Only the lowercase form was mapped, so `\u03a3 class values`
-  // reached the page as `? class values`.
-  [/\u03a3/g, 'sum'],
-  // Capital phi \u2014 the standard normal CDF, which is how every DLOM model in
-  // this domain is written down. `2\u03a6(v/2) \u2212 1` reached the page as `2?(v/2)`,
-  // on the exhibit whose entire purpose is to show the formula applied. `N` is
-  // the other conventional name for the same function, so the transliteration
-  // is one a reader of the model recognises rather than a spelled-out word.
-  [/\u03a6/g, 'N'],
-  // Comparison and maths operators outside CP1252.
-  [/\u2264/g, '<='],
-  [/\u2265/g, '>='],
-  [/\u2260/g, '!='],
-  [/\u2248/g, '~='],
-  [/\u221e/g, 'infinity'],
-  [/\u221a/g, 'sqrt'],
-  [/\u2211/g, 'sum'],
-  // The partial-derivative operator. A valuation report reaches for it wherever
-  // it explains a sensitivity \u2014 the class-volatility exhibit states the gearing
-  // as sigma \u00d7 (S/V) \u00d7 \u2202V/\u2202S \u2014 and `d` is how the same quantity is written in
-  // every text that avoids the symbol.
-  [/\u2202/g, 'd'],
-  [/\u222b/g, 'integral'],
-  // Arrows — a rollforward or bridge label reaches for these.
-  [/\u2192/g, '->'],
-  [/\u2190/g, '<-'],
-  [/\u2194/g, '<->'],
-  // Spaces that are not the space character. A non-breaking space IS WinAnsi
-  // 0xA0 and is left alone; these are not.
-  [/[\u2007\u2009\u200a\u202f\u2060]/g, ' '],
-  // Zero-width characters: invisible on the page and not encodable, so they
-  // become nothing rather than a byte. Spelled as an alternation rather than a
-  // character class because U+200D ZERO WIDTH JOINER inside a class is what
-  // `no-misleading-character-class` warns about — a class would also split a
-  // ZWJ emoji sequence, which is moot here since no emoji is WinAnsi-encodable
-  // anyway, but the alternation says what is meant without the warning.
-  [/\u200b|\u200c|\u200d|\ufeff/g, ''],
-  // The quotation marks a word processor produces — ' ' " " ‚ „ — and the
-  // ellipsis are all CP1252 already, so they are deliberately absent from this
-  // list: downgrading them to typewriter quotes would make the typography of a
-  // published deliverable worse in order to fix a problem it does not have.
-  // Only the two reversed forms CP1252 lacks are rewritten.
-  [/\u201b/g, "'"],
-  [/\u201f/g, '"'],
-  // U+2010 HYPHEN and U+2011 NON-BREAKING HYPHEN are not CP1252; the ASCII
-  // hyphen-minus at 0x2D is.
-  [/[\u2010\u2011]/g, '-'],
-];
+// ── typeface ──────────────────────────────────────────────────────────────────
 
 /**
- * The last resort, for a character no substitution names.
+ * The document's typeface, embedded in the file rather than named in it.
  *
- * Report bodies are analyst-authored and can carry anything a keyboard or a
- * paste produces — a CJK company name, an emoji, a mathematical script capital.
- * None of it can be drawn by a standard-14 font. `?` per character is the
- * honest outcome: visibly wrong, so it is noticed and fixed, rather than a
- * plausible-looking wrong glyph that is not.
+ * This renderer used pdfkit's standard-14 Helvetica, which is not really a font
+ * — it is a name and a set of metrics, and the glyphs come from whatever the
+ * viewer has. Its encoding is WinAnsi (CP1252): Latin-1 and a little
+ * punctuation. Everything outside that had to be transliterated or replaced
+ * with `?`, and two of those losses were on pages that decide money. `₹1,20,00,000`
+ * set as `?1,20,00,000` on every report written for an Indian subsidiary, and a
+ * company legally named 中国科技 appeared in the title of its own valuation as
+ * `????`.
  *
- * Anything below 0x100 that is not a C0 control is CP1252-representable, as are
- * the handful of CP1252 extras (0x152 OE, 0x2014 em dash, 0x20AC euro, …). The
- * test is written as "can this round-trip through latin1 or is it a known
- * extra" rather than as a 224-entry table.
+ * DejaVu Sans covers Latin (including Extended-A and -B), Greek, Cyrillic,
+ * Hebrew, Arabic, the currency block — ₹ ₩ ₪ ₫ ₽ ₺ ₴ ฿ — and the mathematical
+ * operators this domain writes its models with. It does not cover CJK; see
+ * `FALLBACK_GLYPHS` for what happens to a character no face can draw. It is
+ * licensed under the Bitstream Vera and Arev licenses, both of which permit
+ * redistribution, and the text of both ships beside the files in
+ * `assets/fonts/LICENSE`.
+ *
+ * Embedding also removes the last thing standing between this document and
+ * PDF/UA-1 — see the structure-tree section, which says why we would not claim
+ * conformance while the faces were the standard 14.
+ *
+ * pdfkit subsets what it embeds, so a report that sets only Latin carries only
+ * the Latin glyphs and the file does not grow.
  */
-const CP1252_EXTRAS = new Set([
-  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0x017d,
-  0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x017e,
-  0x0178,
-]);
+const FACES = {
+  regular: { name: 'N409Sans', file: 'DejaVuSans.ttf' },
+  bold: { name: 'N409Sans-Bold', file: 'DejaVuSans-Bold.ttf' },
+  italic: { name: 'N409Sans-Italic', file: 'DejaVuSans-Oblique.ttf' },
+  boldItalic: { name: 'N409Sans-BoldItalic', file: 'DejaVuSans-BoldOblique.ttf' },
+} as const;
 
-function isDrawable(code: number): boolean {
-  // Tab, newline and carriage return are layout instructions pdfkit handles;
-  // the rest of the C0 range would be drawn as garbage.
-  if (code === 0x09 || code === 0x0a || code === 0x0d) return true;
-  if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return false;
-  if (code <= 0xff) return true;
-  return CP1252_EXTRAS.has(code);
+/** Which of the four faces a run is set in. */
+export type FaceName = keyof typeof FACES;
+
+const FONTS = {
+  regular: FACES.regular.name,
+  bold: FACES.bold.name,
+  italic: FACES.italic.name,
+  boldItalic: FACES.boldItalic.name,
+} as const;
+
+/**
+ * Resolved against this module rather than the process's working directory.
+ *
+ * `src/` and `dist/` are siblings, so `../assets/fonts/` names the same
+ * directory whether this is running from TypeScript under vitest or from the
+ * compiled output under systemd. The Dockerfile copies `assets/` for the same
+ * reason.
+ */
+const FONT_DIR = new URL('../assets/fonts/', import.meta.url);
+
+const fontFile = (face: FaceName): string => fileURLToPath(new URL(FACES[face].file, FONT_DIR));
+
+/**
+ * Opened once per face, on first use, and kept.
+ *
+ * pdfkit loads and parses these itself for every document it renders; this
+ * second copy exists to answer one question — *can this face draw this
+ * character* — before the text reaches pdfkit, because pdfkit's own answer to
+ * a character it has no glyph for is to draw a blank box and say nothing.
+ */
+const openFaces = new Map<FaceName, fontkit.Font>();
+
+function faceMetrics(face: FaceName): fontkit.Font {
+  const open = openFaces.get(face);
+  if (open) return open;
+  const font = fontkit.openSync(fontFile(face)) as fontkit.Font;
+  openFaces.set(face, font);
+  return font;
+}
+
+/** Whether `face` has a glyph for this codepoint. */
+export function faceCovers(face: FaceName, code: number): boolean {
+  return faceMetrics(face).hasGlyphForCodePoint(code);
+}
+
+/** The face a registered font name belongs to, or null if we did not register it. */
+function faceNamed(name: string): FaceName | null {
+  for (const [key, entry] of Object.entries(FACES)) if (entry.name === name) return key as FaceName;
+  return null;
 }
 
 /**
- * Makes a string safe to hand to a standard-14 font.
+ * Registers the four faces on a document and selects the body face.
  *
- * Applied at the one place text reaches pdfkit rather than at the call sites
- * that happen to emit a symbol today (`reportSummary.ts` writes `σ`,
- * `reportExhibits.ts` writes `(σ)`). Fixing those three would leave the next
- * one broken, and — the case that actually matters — would do nothing for
- * *authored* section bodies, which are free text an analyst pastes into a legal
- * deliverable.
+ * pdfkit picks Helvetica in its constructor, before any of this runs; without
+ * the explicit selection a run drawn before the first `.font()` call would be
+ * set in a standard-14 face and quietly reintroduce the encoding this change
+ * exists to remove.
  */
-export function fontSafe(text: string): string {
-  let out = text;
-  for (const [pattern, replacement] of GLYPH_SUBSTITUTIONS) out = out.replace(pattern, replacement);
-  // Fast path: the overwhelming majority of report text is plain Latin-1 after
-  // the substitutions above, and scanning is cheaper than rebuilding.
-  // eslint-disable-next-line no-control-regex
-  if (!/[^\u0000-\u00ff]/.test(out) && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(out)) {
-    return out;
-  }
+function useEmbeddedFonts(doc: PDFKit.PDFDocument): void {
+  for (const [key, entry] of Object.entries(FACES)) doc.registerFont(entry.name, fontFile(key as FaceName));
+  doc.font(FONTS.regular);
+}
+
+/**
+ * What to draw for a character the face has no glyph for.
+ *
+ * The embedded faces draw every entry in this table, so nothing here fires
+ * today. It is kept because the reasoning behind it outlives the font: the
+ * mapping is transliteration, not deletion, so meaning survives a missing
+ * glyph. `σ` becomes `sigma` rather than `s` because a bare `s` beside a
+ * percentage reads as a typo rather than as a symbol.
+ *
+ * A character that is neither drawable nor in this table becomes `?` — which is
+ * what a CJK company name still does, DejaVu having no Han glyphs. That is a
+ * font to add, not a rule to change: the report will set 中国科技 the day a face
+ * that covers it is registered here.
+ */
+const FALLBACK_GLYPHS: ReadonlyMap<number, string> = new Map([
+  // The minus sign proper (U+2212) — indistinguishable from a hyphen on the
+  // page, and the reason every negative figure in the value bridge was broken
+  // in the days when the face could not draw it.
+  [0x2212, '-'],
+  // Greek letters used as finance symbols. Spelled out rather than dropped.
+  [0x03c3, 'sigma'],
+  [0x03bc, 'mu'],
+  [0x03c0, 'pi'],
+  [0x0394, 'delta'],
+  [0x03b2, 'beta'],
+  [0x03b1, 'alpha'],
+  // Capital sigma, which is what a summation is written with as often as the
+  // operator below.
+  [0x03a3, 'sum'],
+  // Capital phi — the standard normal CDF, which is how every DLOM model in
+  // this domain is written down. `N` is the other conventional name for the
+  // same function, so the transliteration is one a reader of the model
+  // recognises rather than a spelled-out word.
+  [0x03a6, 'N'],
+  // Comparison and maths operators.
+  [0x2264, '<='],
+  [0x2265, '>='],
+  [0x2260, '!='],
+  [0x2248, '~='],
+  [0x221e, 'infinity'],
+  [0x221a, 'sqrt'],
+  [0x2211, 'sum'],
+  // The partial-derivative operator. A valuation report reaches for it wherever
+  // it explains a sensitivity — the class-volatility exhibit states the gearing
+  // as sigma × (S/V) × ∂V/∂S — and `d` is how the same quantity is written in
+  // every text that avoids the symbol.
+  [0x2202, 'd'],
+  [0x222b, 'integral'],
+  // Arrows — a rollforward or bridge label reaches for these.
+  [0x2192, '->'],
+  [0x2190, '<-'],
+  [0x2194, '<->'],
+  // Two quotation marks and two hyphens outside Latin-1. The quotes a word
+  // processor actually produces — ‘ ’ “ ” ‚ „ — and the ellipsis are
+  // deliberately absent: downgrading those would make the typography of a
+  // published deliverable worse to fix a problem it does not have.
+  [0x201b, "'"],
+  [0x201f, '"'],
+  [0x2010, '-'],
+  [0x2011, '-'],
+]);
+
+/**
+ * Characters removed or normalised whatever the face can draw.
+ *
+ * Coverage is not the question for these. A zero-width space or a stray BOM in
+ * pasted text does have a glyph in DejaVu — a glyph zero points wide — and
+ * drawing it faithfully means carrying an invisible character into a legal
+ * deliverable, where it breaks search and copy-paste for a reader who cannot
+ * see why. The odd-width spaces are the same judgement: in analyst-pasted prose
+ * they are paste artifacts rather than typography.
+ *
+ * Written as alternations rather than character classes where a class would
+ * trip `no-misleading-character-class` — U+200D ZERO WIDTH JOINER inside a
+ * class is what that rule warns about.
+ */
+const ZERO_WIDTH = /\u200b|\u200c|\u200d|\ufeff/g;
+const ODD_SPACES = /[\u2007\u2009\u200a\u202f\u2060]/g;
+// Tab, newline and carriage return are layout instructions pdfkit handles; the
+// rest of C0, plus DEL and C1, would be drawn as garbage or dropped silently.
+// eslint-disable-next-line no-control-regex
+const CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+
+/**
+ * Makes a string safe to hand to `face`.
+ *
+ * Applied at the one place text reaches pdfkit rather than at the 40-odd
+ * `.text()` call sites. Two reasons, and the second is the one that matters: a
+ * call site added later cannot forget it, and the largest source of unusual
+ * characters is not this file at all — it is the authored section bodies, which
+ * are free text an analyst pastes into a legal deliverable and which reach
+ * pdfkit through the same method.
+ *
+ * With a Unicode face embedded this is now close to a pass-through: a character
+ * is left exactly as it was written unless the face has no glyph for it. Only
+ * then does the transliteration table apply, and only after that a `?`.
+ */
+export function fontSafe(text: string, face: FaceName = 'regular'): string {
+  const out = text.replace(ZERO_WIDTH, '').replace(ODD_SPACES, ' ').replace(CONTROLS, '');
+  // Fast path: the overwhelming majority of report text is ASCII, which every
+  // face covers, and scanning is cheaper than rebuilding.
+  if (!/[^ -~\t\n\r]/.test(out)) return out;
   let safe = '';
   for (const ch of out) {
+    // A codepoint above the BMP arrives as one iteration but two UTF-16 units,
+    // so it is judged — and if need be replaced — as the one character it is.
     const code = ch.codePointAt(0)!;
-    // A codepoint above the BMP arrives as one iteration but two UTF-16 units;
-    // one '?' for the character is right, not one per surrogate.
-    safe += isDrawable(code) ? ch : '?';
+    safe += faceCovers(face, code) ? ch : (FALLBACK_GLYPHS.get(code) ?? '?');
   }
   return safe;
 }
@@ -645,11 +721,13 @@ function trimRuns(runs: Run[]): Run[] {
  * simply absent. The structure tree is also what lets a reader reflow the
  * document on a phone and what a corporate accessibility checker looks for.
  *
- * We stop short of *claiming* PDF/UA-1 conformance in the metadata. pdfkit will
- * stamp that claim on request, but conformance also requires every font to be
- * embedded, and these are the standard-14 faces, which by definition are not. A
- * false conformance claim is worse than none: it tells a procurement reviewer
- * not to check the thing that would have failed.
+ * We stop short of *claiming* PDF/UA-1 conformance in the metadata. Font
+ * embedding — which conformance requires and which the standard-14 faces could
+ * not give us — is now done (see the typeface section), so the remaining
+ * distance is a validator run, not a defect: a claim is a statement about the
+ * whole file, and nothing here has checked the whole file. A false conformance
+ * claim is worse than none, because it tells a procurement reviewer not to
+ * check the thing that would have failed.
  */
 type Struct = PDFKit.PDFStructureElement;
 
@@ -762,13 +840,6 @@ export function headingTag(depth: number): string {
 }
 
 // ── pdfkit layout ─────────────────────────────────────────────────────────────
-
-const FONTS = {
-  regular: 'Helvetica',
-  bold: 'Helvetica-Bold',
-  italic: 'Helvetica-Oblique',
-  boldItalic: 'Helvetica-BoldOblique',
-} as const;
 
 function fontFor(run: Pick<Run, 'bold' | 'italic'>): string {
   if (run.bold && run.italic) return FONTS.boldItalic;
@@ -1839,25 +1910,44 @@ export async function renderReportPdf(input: ReportPdfInput, opts: RenderOptions
   });
 
   /*
+   * The four embedded faces, and a record of which one is currently selected.
+   *
+   * `fontSafe` needs to know the face a string is about to be drawn in, because
+   * coverage is a property of the face and not of the document: the oblique
+   * faces of DejaVu carry fewer scripts than the upright ones. Selection goes
+   * through `doc.font()`, so that is where it is observed. A name this renderer
+   * did not register — nothing does today — leaves the record alone rather than
+   * guessing, so the worst case is measuring coverage against the wrong one of
+   * our own faces rather than a crash.
+   */
+  useEmbeddedFonts(doc);
+  let face: FaceName = 'regular';
+  const selectFont = doc.font.bind(doc) as (src: unknown, ...rest: unknown[]) => PDFKit.PDFDocument;
+  (doc as { font: unknown }).font = (src: unknown, ...rest: unknown[]) => {
+    const named = typeof src === 'string' ? faceNamed(src) : null;
+    if (named) face = named;
+    return selectFont(src, ...rest);
+  };
+
+  /*
    * Every string this renderer draws goes through `fontSafe` first.
    *
    * Wrapped here, once, rather than applied at the 40-odd `.text()` call sites.
    * Two reasons, and the second is the one that matters: a call site added
-   * later cannot forget it, and the largest source of unrepresentable
-   * characters is not this file at all — it is the authored section bodies,
-   * which are free text an analyst pastes into a legal deliverable and which
-   * reach pdfkit through the same method.
+   * later cannot forget it, and the largest source of unusual characters is not
+   * this file at all — it is the authored section bodies, which are free text an
+   * analyst pastes into a legal deliverable and which reach pdfkit through the
+   * same method.
    *
-   * The alternative is embedding a Unicode TTF. That is the right answer the
-   * day this platform has to set a CJK company name; it is a different change,
-   * with a font file to license and ship and every metric in this renderer to
-   * re-tune, and it would not make today's report correct any sooner.
+   * Now that the faces are embedded Unicode ones this is nearly a no-op, but it
+   * is the no-op that guarantees a character the face cannot draw is visibly
+   * replaced rather than silently set as a blank box.
    */
   const drawText = doc.text.bind(doc) as (text: string, ...rest: unknown[]) => PDFKit.PDFDocument;
   (doc as { text: unknown }).text = (text: unknown, ...rest: unknown[]) =>
     // pdfkit accepts a number here too (it stringifies), so this coerces the
     // same way rather than refusing what the library allows.
-    drawText(fontSafe(typeof text === 'string' ? text : String(text)), ...rest);
+    drawText(fontSafe(typeof text === 'string' ? text : String(text), face), ...rest);
 
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve, reject) => {

@@ -8,6 +8,7 @@ import {
   type ChartSpec,
   type ReportPdfInput,
 } from '../src/pdf.js';
+import { extractText } from './support/pdfText.js';
 
 /**
  * The two chart shapes added for composition and for trend.
@@ -17,13 +18,6 @@ import {
  * nobody opens. The render pass then only has to prove the labels reach the
  * page and that a degenerate series does not take the document down with it.
  */
-
-function extractText(pdf: Buffer): string {
-  const raw = pdf.toString('latin1');
-  return Array.from(raw.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-}
 
 const BASE: ReportPdfInput = {
   title: 'IRC 409A Valuation Report',

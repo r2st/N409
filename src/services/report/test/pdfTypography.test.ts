@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MIN_LINES_KEPT, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
+import { pageLines, pageTexts } from './support/pdfText.js';
 
 /**
  * Where the page breaks fall.
@@ -18,35 +19,6 @@ import { MIN_LINES_KEPT, renderReportPdf, type ReportPdfInput } from '../src/pdf
  * would sit in one arbitrary position and pass whatever the logic did.
  */
 
-/** Content streams in page order (rendered uncompressed for inspection). */
-function contentStreams(pdf: Buffer): string[] {
-  const streams: string[] = [];
-  let i = 0;
-  for (;;) {
-    const start = pdf.indexOf('stream', i);
-    if (start < 0) break;
-    let from = start + 'stream'.length;
-    if (pdf[from] === 0x0d) from += 1;
-    if (pdf[from] === 0x0a) from += 1;
-    const end = pdf.indexOf('endstream', from);
-    if (end < 0) break;
-    const body = pdf.subarray(from, end).toString('latin1');
-    if (body.includes('Tm')) streams.push(body);
-    i = end + 'endstream'.length;
-  }
-  return streams;
-}
-
-const shown = (hexRun: string): string =>
-  Array.from(hexRun.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-
-/** Text of each page, in order. */
-function pageTexts(pdf: Buffer): string[] {
-  return contentStreams(pdf).map((stream) => shown(stream));
-}
-
 /**
  * For each page, how many laid-out lines contain `marker`.
  *
@@ -54,13 +26,9 @@ function pageTexts(pdf: Buffer): string[] {
  * whose text carries the marker counts the marker's lines on that page.
  */
 function markerLinesPerPage(pdf: Buffer, marker: string): number[] {
-  return contentStreams(pdf).map((stream) => {
-    const baselines = new Set<string>();
-    for (const m of stream.matchAll(/1 0 0 1 ([-\d.]+) ([-\d.]+) Tm\s*\/F\d+ [\d.]+ Tf\s*\[([^\]]*)\]/g)) {
-      if (shown(m[3]!).includes(marker)) baselines.add(m[2]!);
-    }
-    return baselines.size;
-  });
+  return pageLines(pdf).map(
+    (page) => new Set(page.filter((l) => l.text.includes(marker)).map((l) => l.baseline)).size,
+  );
 }
 
 const filler = (n: number): string =>

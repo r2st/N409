@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { fontSafe, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
+import { faceCovers, fontSafe, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
+import { pageTexts } from './support/pdfText.js';
 
 /**
  * Two defects found by rendering a real 409A and reading it, rather than by
  * reading the renderer. Both were on the pages a board actually looks at.
  *
- * 1. The renderer sets type in the standard-14 Helvetica, whose encoding is
- *    WinAnsi. pdfkit does not fail on a character that encoding cannot carry —
- *    it emits a byte regardless. The executive summary's key assumptions
- *    printed as `<2c"RrT 4.00y` where they meant `σ 62% · T 4.00y`, and every
- *    negative figure in the value-bridge chart lost its minus sign.
+ * 1. The renderer set type in the standard-14 Helvetica, whose encoding is
+ *    WinAnsi — 224 characters. Everything else was transliterated, or replaced
+ *    with `?`, or worse: pdfkit does not fail on a character the encoding
+ *    cannot carry, it emits a byte regardless. The executive summary's key
+ *    assumptions printed as `<2c"RrT 4.00y` where they meant `σ 62% · T 4.00y`,
+ *    every negative figure in the value-bridge chart lost its minus sign, a
+ *    rupee amount lost its currency, and a company named in any script but
+ *    Latin lost its name. The renderer embeds DejaVu Sans now, and these tests
+ *    are what says so.
  *
  * 2. The cover's fact block was anchored at a fixed `page.height - 250`, which
  *    fitted the five facts a cover carried when that line was written. A 409A
@@ -18,47 +23,6 @@ import { fontSafe, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
  *    produced had a cover ending in "CURRENCY" and a second page beginning
  *    with "USD".
  */
-
-/** Content streams in page order (rendered uncompressed for inspection). */
-function contentStreams(pdf: Buffer): string[] {
-  const streams: string[] = [];
-  let i = 0;
-  for (;;) {
-    const start = pdf.indexOf('stream', i);
-    if (start < 0) break;
-    let from = start + 'stream'.length;
-    if (pdf[from] === 0x0d) from += 1;
-    if (pdf[from] === 0x0a) from += 1;
-    const end = pdf.indexOf('endstream', from);
-    if (end < 0) break;
-    const body = pdf.subarray(from, end).toString('latin1');
-    if (body.includes('Tm')) streams.push(body);
-    i = end + 'endstream'.length;
-  }
-  return streams;
-}
-
-/**
- * The 0x80–0x9F range where CP1252 differs from Latin-1 — the em dash, the
- * curly quotes, the ellipsis. Node has no CP1252 decoder, and reading those
- * bytes as Latin-1 turns an em dash into an unprintable control character, so
- * an assertion written with the character an author typed would fail against a
- * PDF that is correct.
- */
-const CP1252_HIGH =
-  '\u20ac\u0081\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u008d\u017d\u008f\u0090\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u009d\u017e\u0178';
-
-const decodeCp1252 = (bytes: Buffer): string =>
-  Array.from(bytes)
-    .map((b) => (b >= 0x80 && b <= 0x9f ? CP1252_HIGH[b - 0x80]! : String.fromCharCode(b)))
-    .join('');
-
-const shown = (hexRun: string): string =>
-  Array.from(hexRun.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => decodeCp1252(Buffer.from(m[1]!, 'hex')))
-    .join('');
-
-const pageTexts = (pdf: Buffer): string[] => contentStreams(pdf).map(shown);
 
 const COVER_META = [
   { label: 'Engagement', value: '01J8Z9WQ5T7K2M4N6P8R0S1V3X' },
@@ -79,42 +43,77 @@ const base = (over: Partial<ReportPdfInput> = {}): ReportPdfInput => ({
   ...over,
 });
 
-describe('fontSafe — what the standard-14 fonts can actually draw', () => {
-  it('transliterates the symbols this domain reaches for', () => {
-    // Spelled out rather than dropped: a bare `s` next to a percentage reads as
-    // a typo, where `sigma` reads as the symbol it stands in for.
-    expect(fontSafe('σ 62%')).toBe('sigma 62%');
-    expect(fontSafe('β 1.2')).toBe('beta 1.2');
+describe('fontSafe — what the embedded face can actually draw', () => {
+  it('leaves the symbols this domain reaches for exactly as the author wrote them', () => {
+    // These used to be transliterated — `σ` to the word `sigma` — because the
+    // font could not draw them. It can, so a report that says sigma prints the
+    // letter, and the model in the exhibit is the model as it is written down.
+    expect(fontSafe('σ 62%')).toBe('σ 62%');
+    expect(fontSafe('β 1.2')).toBe('β 1.2');
+    expect(fontSafe('2Φ(v/2) − 1')).toBe('2Φ(v/2) − 1');
+    expect(fontSafe('σ × (S/V) × ∂V/∂S')).toBe('σ × (S/V) × ∂V/∂S');
+    expect(fontSafe('DLOM ≤ 35%')).toBe('DLOM ≤ 35%');
   });
 
-  it('turns the typographic minus into one the font has', () => {
-    // U+2212, indistinguishable from a hyphen on the page, and the reason every
-    // negative figure in the value bridge was corrupt.
-    expect(fontSafe('−$0.1410')).toBe('-$0.1410');
+  it('keeps the typographic minus that every value bridge is written with', () => {
+    // U+2212. Indistinguishable from a hyphen on the page and unrepresentable
+    // in WinAnsi, which is how every negative figure in the bridge came out
+    // corrupt.
+    expect(fontSafe('−$0.1410')).toBe('−$0.1410');
   });
 
-  it('leaves the punctuation the encoding already carries', () => {
-    // WinAnsi is CP1252: the em dash, the middot, curly quotes, ×, ±, é and the
-    // currency signs are all present, and rewriting them would make the
-    // typography worse to fix a problem that does not exist.
-    const carried = '— · × ± é £ € ’ “ ” … ² ½';
+  it('keeps every currency sign a valuation might be denominated in', () => {
+    // The four that were `?` before this: rupee, won, shekel, dong. A 409A for
+    // a company with an Indian subsidiary quotes INR in its financial analysis,
+    // and `?1,20,00,000` is not a number anyone can act on.
+    for (const sign of ['₹', '₩', '₪', '₫', '₽', '₺', '₴', '฿', '€', '£', '¥', '$']) {
+      expect(fontSafe(`${sign}1,200`), `${sign} is not drawable`).toBe(`${sign}1,200`);
+    }
+  });
+
+  it('keeps a company name that is not written in Latin script', () => {
+    // A subject company's legal name is the one string in a valuation report
+    // that may not be paraphrased, transliterated or approximated.
+    expect(fontSafe('ООО «Ромашка»')).toBe('ООО «Ромашка»');
+    expect(fontSafe('Ελληνική Τεχνολογία ΑΕ')).toBe('Ελληνική Τεχνολογία ΑΕ');
+    expect(fontSafe('חברת טכנולוגיה בע״מ')).toBe('חברת טכנולוגיה בע״מ');
+    expect(fontSafe('Šiaurės Technologijos UAB')).toBe('Šiaurės Technologijos UAB');
+  });
+
+  it('leaves the punctuation a word processor produces', () => {
+    const carried = '— · × ± é £ € ’ “ ” … ² ½ ‑ ‚ „';
     expect(fontSafe(carried)).toBe(carried);
   });
 
-  it('replaces a character no substitution names, visibly', () => {
-    // A report body is analyst-authored free text and can hold anything a paste
-    // produces. `?` is the honest outcome: wrong in a way somebody notices,
-    // rather than a plausible glyph that is silently the wrong one.
+  it('replaces a character the face has no glyph for, visibly', () => {
+    // DejaVu Sans has no Han glyphs, so a CJK name is still lost — but it is
+    // lost as a row of question marks rather than as the blank boxes pdfkit
+    // would otherwise draw, which is the difference between a defect somebody
+    // notices and one that ships. Closing this is a matter of registering a
+    // face that covers CJK, not of changing a rule here.
     expect(fontSafe('株式会社')).toBe('????');
+    expect(faceCovers('regular', '中'.codePointAt(0)!)).toBe(false);
   });
 
   it('counts an astral character once, not once per surrogate', () => {
     expect(fontSafe('a🙂b')).toBe('a?b');
   });
 
-  it('drops zero-width characters rather than emitting a byte for them', () => {
-    // They draw nothing by definition, so a substitution would add a mark the
-    // author did not ask for.
+  it('answers for the face the run will actually be set in', () => {
+    // Coverage is a property of a face, not of a family: DejaVu's oblique cuts
+    // carry fewer scripts than its upright ones. Asking the wrong face is how a
+    // string passes a check and then draws as boxes.
+    const alef = 'ا'.codePointAt(0)!;
+    expect(faceCovers('regular', alef)).toBe(true);
+    expect(faceCovers('italic', alef)).toBe(false);
+    expect(fontSafe('ا', 'regular')).toBe('ا');
+    expect(fontSafe('ا', 'italic')).toBe('?');
+  });
+
+  it('drops zero-width characters whether or not the face can draw them', () => {
+    // DejaVu does have glyphs for these — glyphs zero points wide. Drawing them
+    // faithfully would carry an invisible character into a legal deliverable,
+    // where it breaks search and copy-paste for a reader who cannot see why.
     expect(fontSafe('a​b﻿c')).toBe('abc');
   });
 
@@ -129,18 +128,45 @@ describe('fontSafe — what the standard-14 fonts can actually draw', () => {
 
   it('reaches text the renderer draws, wherever it came from', async () => {
     // The interception is on the document, not on the call sites, because the
-    // biggest source of unrepresentable characters is the authored body — free
-    // text pasted into a legal deliverable — and not this codebase at all.
+    // biggest source of unusual characters is the authored body — free text
+    // pasted into a legal deliverable — and not this codebase at all.
     const pdf = await renderReportPdf(
       base({ sections: [{ heading: 'Volatility (σ)', html: '<p>Applied −$0.14 for DLOC.</p>' }] }),
       { compress: false },
     );
     const text = pageTexts(pdf).join('\n');
-    expect(text).toContain('Volatility (sigma)');
-    expect(text).toContain('-$0.14');
-    // And nothing raw survived: a σ that reached the content stream would be
-    // there as the mangled byte, which is the bug.
-    expect(text).not.toContain('σ');
+    expect(text).toContain('Volatility (σ)');
+    expect(text).toContain('−$0.14');
+  });
+
+  it('sets an INR figure on the page as an INR figure', async () => {
+    const pdf = await renderReportPdf(
+      base({
+        meta: [{ label: 'Currency', value: 'INR' }],
+        sections: [{ heading: 'Financial analysis', html: '<p>FY-1 revenue of ₹1,20,00,000.</p>' }],
+      }),
+      { compress: false },
+    );
+    const text = pageTexts(pdf).join('\n');
+    expect(text).toContain('₹1,20,00,000');
+    expect(text).not.toContain('?1,20,00,000');
+  });
+
+  it('sets a non-Latin company name on the cover and in the running footer', async () => {
+    // The name reaches the page three times — cover, footer, structure tree —
+    // and used to be destroyed in all three.
+    const pdf = await renderReportPdf(
+      base({
+        title: 'Отчёт об оценке — ООО «Ромашка»',
+        company_name: 'ООО «Ромашка»',
+        sections: [{ heading: 'Раздел', html: '<p>Текст раздела.</p>' }],
+      }),
+      { compress: false },
+    );
+    const pages = pageTexts(pdf);
+    expect(pages[0]).toContain('ООО «Ромашка»');
+    expect(pages[1]).toContain('Раздел');
+    expect(pages.join('\n')).not.toContain('????');
   });
 });
 

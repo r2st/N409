@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
+import { extractText } from './support/pdfText.js';
 
 /** Improvement 8 — white-label partner branding on the report cover. */
 
@@ -15,14 +16,6 @@ const ONE_PX_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 );
-
-/** pdfkit writes text runs as hex strings (WinAnsi bytes) — decode them all. */
-function extractText(pdf: Buffer): string {
-  const raw = pdf.toString('latin1');
-  return Array.from(raw.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-}
 
 describe('renderReportPdf branding', () => {
   it('renders the partnership line and stays a valid PDF', async () => {

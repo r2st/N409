@@ -10,6 +10,7 @@ import {
   type ReportPdfInput,
   type ReportPdfSummary,
 } from '../src/pdf.js';
+import { extractText, pageCount } from './support/pdfText.js';
 
 const SAMPLE: ReportPdfInput = {
   title: 'IRC 409A Valuation Report',
@@ -142,14 +143,6 @@ describe('htmlToBlocks', () => {
 });
 
 /** pdfkit writes text runs as hex strings (WinAnsi bytes) — decode them all. */
-function extractText(pdf: Buffer): string {
-  const raw = pdf.toString('latin1');
-  // kerning may split one logical string across hex tokens — join bare
-  return Array.from(raw.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-}
-
 describe('renderReportPdf', () => {
   it('produces a valid PDF document', async () => {
     const pdf = await renderReportPdf(SAMPLE);
@@ -226,7 +219,6 @@ describe('table of contents', () => {
   });
 
   it('shifts the body one page later to make room for it', async () => {
-    const pageCount = (pdf: Buffer) => (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
     const input = withSections(6);
     const without = await renderReportPdf({ ...input, include_toc: false }, { compress: false });
     const withToc = await renderReportPdf({ ...input, include_toc: true }, { compress: false });
@@ -411,7 +403,6 @@ describe('executive summary page', () => {
   });
 
   it('adds exactly one page', async () => {
-    const pageCount = (pdf: Buffer) => (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
     const without = await renderReportPdf(SAMPLE, { compress: false });
     const withSummary = await renderReportPdf({ ...SAMPLE, summary: SUMMARY }, { compress: false });
     expect(pageCount(withSummary)).toBe(pageCount(without) + 1);
@@ -485,8 +476,6 @@ describe('section charts', () => {
   });
 
   it('pushes a chart that will not fit onto the next page', async () => {
-    const pageCount = (pdf: Buffer) => (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
-    const longProse = `<p>${'Filler sentence for pagination. '.repeat(120)}</p>`;
     const chart = {
       type: 'waterfall' as const,
       title: 'Bridge',
@@ -494,15 +483,26 @@ describe('section charts', () => {
       steps: [{ label: 'Less', value: -2 }],
       end_label: 'End',
     };
-    const withChart = await renderReportPdf(
-      { ...SAMPLE, include_toc: false, sections: [{ heading: 'Long', html: longProse, charts: [chart] }] },
-      { compress: false },
-    );
-    const withoutChart = await renderReportPdf(
-      { ...SAMPLE, include_toc: false, sections: [{ heading: 'Long', html: longProse }] },
-      { compress: false },
-    );
-    expect(pageCount(withChart)).toBeGreaterThan(pageCount(withoutChart));
-    expect(extractText(withChart)).toContain('Bridge');
+    // Swept rather than fixed. How much prose fills a page is a property of the
+    // face, so one filler length exercises the push only by coincidence — this
+    // test passed for a year and then stopped the day the renderer embedded a
+    // wider one, with the logic untouched. Across the sweep the chart is
+    // certain to meet a page with too little room left on it.
+    let pushed = 0;
+    for (const sentences of [100, 110, 120, 130, 140]) {
+      const longProse = `<p>${'Filler sentence for pagination. '.repeat(sentences)}</p>`;
+      const withChart = await renderReportPdf(
+        { ...SAMPLE, include_toc: false, sections: [{ heading: 'Long', html: longProse, charts: [chart] }] },
+        { compress: false },
+      );
+      const withoutChart = await renderReportPdf(
+        { ...SAMPLE, include_toc: false, sections: [{ heading: 'Long', html: longProse }] },
+        { compress: false },
+      );
+      // Wherever it lands, it lands whole and it lands in the file.
+      expect(extractText(withChart)).toContain('Bridge');
+      if (pageCount(withChart) > pageCount(withoutChart)) pushed += 1;
+    }
+    expect(pushed, 'no filler length left the chart short of room').toBeGreaterThan(0);
   });
 });

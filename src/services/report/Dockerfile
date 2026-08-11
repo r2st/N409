@@ -17,6 +17,10 @@ COPY --from=build /repo/src/packages/shared/package.json src/packages/shared/
 COPY --from=build /repo/src/packages/shared/dist src/packages/shared/dist
 COPY --from=build /repo/src/services/report/package.json src/services/report/
 COPY --from=build /repo/src/services/report/dist src/services/report/dist
+# The embedded typeface. `dist/` and `assets/` are siblings because pdf.ts
+# resolves the font files relative to its own module URL; without this the
+# renderer throws on the first page it draws.
+COPY --from=build /repo/src/services/report/assets src/services/report/assets
 RUN npm ci --omit=dev --workspaces --include-workspace-root && npm cache clean --force
 USER node
 EXPOSE 3004

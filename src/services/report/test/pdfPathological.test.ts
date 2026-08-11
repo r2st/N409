@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { breakLongRuns, htmlToBlocks, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
+import { extractText } from './support/pdfText.js';
 
 /**
  * Shapes of input that are well inside every declared limit and used to cost
@@ -141,6 +142,8 @@ describe('rendering pathological sections', () => {
     const pdf = await renderReportPdf(withHtml(`<p>${prose}</p>`), { compress: false });
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
     // No break opportunity was inserted into text that never needed one.
-    expect(pdf.toString('latin1')).not.toContain('­');
+    // Asked of the decoded page rather than of the file: the embedded font
+    // program is arbitrary bytes, and 0xAD occurs inside it innocently.
+    expect(extractText(pdf)).not.toContain('­');
   });
 });
