@@ -8,6 +8,16 @@ import {
   sampleReportPdfInput,
 } from '../../src/domain/sampleReportPdf.js';
 import { templateForKind } from '../../src/domain/report.js';
+/*
+ * Reading text back out of a rendered PDF is the report service's problem, and
+ * it stopped being a one-liner when the renderer embedded a Unicode face: the
+ * codes in a content stream are now glyph indices in a subset font, and getting
+ * characters back means following the font's /ToUnicode CMap. That reader is
+ * written once, in the service that writes the documents. This file used to
+ * carry its own two-line version, which kept passing until the day the encoding
+ * changed under it and then asserted on glyph numbers.
+ */
+import { extractText as pdfText, pageTexts } from '../../../report/test/support/pdfText.js';
 
 /**
  * The publicly downloadable sample 409A.
@@ -24,29 +34,6 @@ import { templateForKind } from '../../src/domain/report.js';
  * are there because a sample valuation whose summary contradicts its own
  * Exhibit H is a worse advertisement than no sample.
  */
-
-/** Text of every content stream, concatenated. Needs `compress: false`. */
-function pdfText(pdf: Buffer): string {
-  const raw = pdf.toString('latin1');
-  return Array.from(raw.matchAll(/<([0-9a-fA-F]+)>/g))
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-}
-
-/** Per-page text, resolved through each page's own /Contents reference. */
-function pageTexts(pdf: Buffer): string[] {
-  const raw = pdf.toString('latin1');
-  const bodies = new Map<string, string>();
-  for (const m of raw.matchAll(/(\d+) 0 obj\n([\s\S]*?)\nendobj/g)) {
-    const stream = /stream\r?\n([\s\S]*?)\r?\nendstream/.exec(m[2]!);
-    if (stream) bodies.set(m[1]!, stream[1]!);
-  }
-  return Array.from(raw.matchAll(/\/Contents (\d+) 0 R/g)).map((m) =>
-    Array.from((bodies.get(m[1]!) ?? '').matchAll(/<([0-9a-fA-F]+)>/g))
-      .map((h) => Buffer.from(h[1]!, 'hex').toString('latin1'))
-      .join(''),
-  );
-}
 
 const figure = (label: string) => SAMPLE_FIGURES.find((f) => f.label === label)!;
 
