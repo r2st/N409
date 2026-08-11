@@ -133,6 +133,7 @@ describe('buildOpenApiDocument', () => {
       auth: 'api_key',
       body: { kind: 'Valuation kind', company_name: 'Company being valued (required)' },
       headers: { 'Idempotency-Key': 'Optional retry key.' },
+      errors: { '409': 'The key was reused with a different body.' },
       response: '201 { valuation }',
     },
     {
@@ -247,6 +248,55 @@ describe('buildOpenApiDocument', () => {
   it('declares the rate-limit headers on success, where a client can act on them', () => {
     const headers = doc.paths['/valuations'].get.responses['200'].headers;
     expect(Object.keys(headers)).toEqual(['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset']);
+  });
+
+  it('declares retry-after on the 429, which is what a backoff is supposed to read', () => {
+    // The header is what the shared problem handler actually sets; a spec that
+    // documents the 429 without it leaves a generated client retrying blind.
+    const rateLimited = doc.paths['/valuations'].get.responses['429'];
+    expect(rateLimited.headers['retry-after'].schema).toEqual({ type: 'integer' });
+    // …and the same number is in the body, for a client that only parses JSON.
+    expect(doc.components.schemas.Problem.properties.retry_after_seconds.type).toBe('integer');
+  });
+
+  it('documents the instance field, which every problem document carries', () => {
+    expect(doc.components.schemas.Problem.properties.instance.type).toBe('string');
+  });
+
+  it('documents an endpoint-specific failure the uniform set does not cover', () => {
+    // 409 is real on create — reusing an Idempotency-Key against a different
+    // body is refused — and impossible on the operations that take no key.
+    const create = doc.paths['/valuations'].post.responses;
+    expect(create['409'].description).toBe('The key was reused with a different body.');
+    expect(create['409'].content['application/problem+json'].schema).toEqual({
+      $ref: '#/components/schemas/Problem',
+    });
+    expect(doc.paths['/valuations'].get.responses['409']).toBeUndefined();
+  });
+
+  it('declares the replay header only where an Idempotency-Key is accepted', () => {
+    // A 201 carrying this header means an earlier attempt created the record,
+    // so the retry did not create a second one.
+    const created = doc.paths['/valuations'].post.responses['201'].headers;
+    expect(created['x-idempotent-replay'].schema).toEqual({ type: 'string', enum: ['true'] });
+    expect(created['x-ratelimit-limit']).toBeDefined();
+    expect(doc.paths['/valuations'].get.responses['200'].headers['x-idempotent-replay']).toBeUndefined();
+  });
+
+  it('separates the 400 on unparseable JSON from the 422 on a bad field', () => {
+    // They arrive from different layers and mean different fixes; a client that
+    // retries a 400 as though it were a validation error retries forever.
+    expect(doc.paths['/valuations'].post.responses['400']).toBeDefined();
+    expect(doc.paths['/valuations'].post.responses['422']).toBeDefined();
+    // A GET has no body to fail parsing.
+    expect(doc.paths['/valuations'].get.responses['400']).toBeUndefined();
+  });
+
+  it('documents the 500 on every operation, public ones included', () => {
+    expect(doc.paths['/valuations'].get.responses['500'].content['application/problem+json']).toBeDefined();
+    expect(doc.paths['/docs'].get.responses['500']).toBeDefined();
+    // …and still no auth failures on the public endpoint.
+    expect(doc.paths['/docs'].get.responses['401']).toBeUndefined();
   });
 
   it('gives every operation a unique operationId', () => {

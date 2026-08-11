@@ -32,6 +32,20 @@ export interface OpenApiEndpoint {
   query?: Record<string, string>;
   headers?: Record<string, string>;
   response: string;
+  /**
+   * Failures this operation can produce that the uniform set does not cover,
+   * as status → what causes it.
+   *
+   * The uniform errors are the ones every authenticated route shares — a bad
+   * key, a missing resource, a failed validator. A 409 from replaying an
+   * Idempotency-Key against a different body, or the 413 a route with its own
+   * `bodyLimit` answers with, is specific to the endpoint that can throw it,
+   * and only the endpoint knows. Declaring it here rather than adding it to
+   * the uniform set keeps the spec honest in both directions: a client is told
+   * about the failure it can actually hit, and is not told to handle a 409 on
+   * the twelve operations that never raise one.
+   */
+  errors?: Record<string, string>;
 }
 
 export interface OpenApiSchemas {
@@ -122,16 +136,45 @@ const PROBLEM_SCHEMA: JsonSchema = {
       description: 'Field-level validation issues, present on 422 responses.',
       items: { type: 'object' },
     },
+    // Both of these are emitted by the shared problem handler, so a client
+    // parsing a problem document receives them and a spec that omits them
+    // under-reports the body. `retry_after_seconds` in particular is the one
+    // field a 429 handler actually needs, and it is the same number the
+    // `retry-after` header carries — a client that reads either is correct.
+    instance: {
+      type: 'string',
+      description: 'The request path this failure occurred on.',
+    },
+    retry_after_seconds: {
+      type: 'integer',
+      description:
+        'Seconds to wait before retrying. Present on 429; mirrors the retry-after response header.',
+    },
   },
   required: ['title', 'status'],
 };
 
-function problemResponse(description: string) {
+function problemResponse(description: string, headers?: Record<string, unknown>) {
   return {
     description,
+    ...(headers ? { headers } : {}),
     content: { 'application/problem+json': { schema: { $ref: '#/components/schemas/Problem' } } },
   };
 }
+
+/**
+ * `retry-after` is the header a well-behaved client backs off on, and the
+ * partner API sets it on every 429 (the shared problem handler emits it from
+ * `ApiProblem.retryAfterSeconds`). Undeclared, a generated client has to reach
+ * past its own types to find it — which in practice means it retries on a
+ * fixed timer and gets rejected again.
+ */
+const RETRY_AFTER_HEADER = {
+  'retry-after': {
+    schema: { type: 'integer' },
+    description: 'Seconds to wait before retrying this request.',
+  },
+};
 
 /**
  * Rate-limit headers, declared on every authenticated response.
@@ -146,6 +189,27 @@ const RATE_LIMIT_HEADERS = {
   'x-ratelimit-remaining': { schema: { type: 'integer' }, description: 'Requests left in this window.' },
   'x-ratelimit-reset': { schema: { type: 'integer' }, description: 'Unix seconds when the window resets.' },
 };
+
+/**
+ * Set on a success that was served from the idempotency store rather than
+ * re-executed. Declared only on the operations that accept an
+ * `Idempotency-Key`, because it is the reply to sending one.
+ *
+ * It matters to a caller: a 201 carrying this header means the valuation was
+ * created by an *earlier* attempt, so the retry did not double-charge and the
+ * id in the body is the one already in flight. Without it, the only way to
+ * tell a replay from a fresh create is to have recorded the first response.
+ */
+const IDEMPOTENT_REPLAY_HEADER = {
+  'x-idempotent-replay': {
+    schema: { type: 'string', enum: ['true'] },
+    description:
+      'Present and "true" when this response was replayed from a previous request with the same Idempotency-Key.',
+  },
+};
+
+/** The header name whose presence means an operation is idempotency-aware. */
+const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
 
 /**
  * The status a successful call answers with.
@@ -236,6 +300,13 @@ export function buildOpenApiDocument(input: OpenApiInput): Record<string, unknow
 
     const status = successStatus(endpoint.response);
     const authenticated = endpoint.auth === 'api_key';
+    const idempotent = Object.keys(endpoint.headers ?? {}).some(
+      (name) => name.toLowerCase() === IDEMPOTENCY_KEY_HEADER,
+    );
+    const successHeaders = {
+      ...(authenticated ? RATE_LIMIT_HEADERS : {}),
+      ...(idempotent ? IDEMPOTENT_REPLAY_HEADER : {}),
+    };
     const operation: Record<string, unknown> = {
       operationId: operationId(endpoint.method, endpoint.path),
       summary: endpoint.summary,
@@ -244,7 +315,7 @@ export function buildOpenApiDocument(input: OpenApiInput): Record<string, unknow
       responses: {
         [status]: {
           description: endpoint.response,
-          ...(authenticated ? { headers: RATE_LIMIT_HEADERS } : {}),
+          ...(Object.keys(successHeaders).length > 0 ? { headers: successHeaders } : {}),
           content: {
             // `report.pdf` is the one endpoint that does not answer JSON, and a
             // spec that says it does makes every generated client try to parse
@@ -269,9 +340,30 @@ export function buildOpenApiDocument(input: OpenApiInput): Record<string, unknow
               ),
               '404': problemResponse('No such resource, or it belongs to another organisation.'),
               '422': problemResponse('The request body or query failed validation.'),
-              '429': problemResponse('Per-key rate limit exceeded. Retry after the window resets.'),
+              '429': problemResponse(
+                'Per-key rate limit exceeded. Retry after the window resets.',
+                RETRY_AFTER_HEADER,
+              ),
             }
           : {}),
+        // A body that is not parseable JSON never reaches the validator, so it
+        // fails as a 400 rather than the 422 the validator produces. Both are
+        // real and a client has to tell them apart: the 400 means "fix the
+        // request framing", the 422 means "fix a field".
+        ...(endpoint.body ? { '400': problemResponse('The request body was not valid JSON.') } : {}),
+        // Declared last so an endpoint-specific description of a status wins
+        // over the uniform one — a 409 has no uniform meaning to override, but
+        // a route that narrows what its 422 means should be able to say so.
+        ...Object.fromEntries(
+          Object.entries(endpoint.errors ?? {}).map(([status, description]) => [
+            status,
+            problemResponse(description, status === '429' ? RETRY_AFTER_HEADER : undefined),
+          ]),
+        ),
+        // Every operation can fail this way, and the shape is the same problem
+        // document — a client that treats a 500 as an unparseable response
+        // loses the one field that tells it whether retrying is worth trying.
+        '500': problemResponse('Unexpected server error. The body carries no detail on a 5xx.'),
       },
       // `security: []` is not the same as omitting the key: it explicitly clears
       // the document-level requirement, which is how `/docs` is marked public.

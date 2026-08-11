@@ -41,7 +41,12 @@ import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
-import { buildOpenApiDocument, schemaKey, type OpenApiSchemas } from '../domain/openapi.js';
+import {
+  buildOpenApiDocument,
+  schemaKey,
+  type OpenApiEndpoint,
+  type OpenApiSchemas,
+} from '../domain/openapi.js';
 import {
   CreateValuationResponse,
   CreateWebhookResponse,
@@ -77,16 +82,13 @@ interface PartnerApiToken {
 export const PARTNER_API_RATE_LIMIT = 120;
 export const PARTNER_API_RATE_WINDOW_MS = 60_000;
 
-export interface PartnerEndpointDoc {
-  method: 'GET' | 'POST' | 'DELETE';
-  path: string;
-  summary: string;
-  auth: 'api_key' | 'none';
-  body?: Record<string, string>;
-  query?: Record<string, string>;
-  headers?: Record<string, string>;
-  response: string;
-}
+/**
+ * A registry entry. Structurally this was a second copy of `OpenApiEndpoint`,
+ * kept in step by hand — which is exactly the drift the registry exists to
+ * prevent, one level up. It is now the same type under the local name the
+ * routes read better with.
+ */
+export type PartnerEndpointDoc = OpenApiEndpoint;
 
 /** Registry the routes are registered from — GET /docs serializes exactly this. */
 export const PARTNER_API_ENDPOINTS: PartnerEndpointDoc[] = [];
@@ -362,6 +364,11 @@ export function registerPartnerApiRoutes(
           'Optional. A retried request with the same key replays the original response instead of ' +
           'creating a second valuation; reusing a key with a different body is refused.',
       },
+      errors: {
+        '409':
+          'This Idempotency-Key was already used for a different request body. Use a fresh key per ' +
+          'distinct request — retrying with the same key and the same body replays instead.',
+      },
       response: '201 { valuation }',
     },
     async (req, reply) => {
@@ -448,6 +455,14 @@ export function registerPartnerApiRoutes(
         kind: `Document kind — one of: ${DOCUMENT_KINDS.join(', ')} (default other)`,
         content_type: 'MIME type (default application/octet-stream)',
         content_base64: `Base64-encoded file body (decoded max ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB)`,
+      },
+      errors: {
+        // Two different limits, and a client that only handles one is surprised
+        // by the other. The 413 is the transport refusing the request before a
+        // handler runs; the 422 is this route rejecting the decoded bytes.
+        '413':
+          'The JSON envelope exceeded the request body limit — base64 inflates the file by about a third, ' +
+          `so a file near the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB cap can exceed it. Upload a smaller file.`,
       },
       response: '201 { document } — includes the stored sha256 fingerprint',
     },
