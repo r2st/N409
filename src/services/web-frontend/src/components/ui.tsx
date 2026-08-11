@@ -111,6 +111,7 @@ export function Field({
   const fieldId = useId();
   const errorId = `${fieldId}-error`;
   const hintId = `${fieldId}-hint`;
+  const labelId = `${fieldId}-label`;
   const describedBy = error ? errorId : hint ? hintId : undefined;
 
   let control: ReactNode = children;
@@ -118,17 +119,26 @@ export function Field({
     const child = children as ReactElement<Record<string, unknown>>;
     const props = child.props;
     const existingDescribedBy = props['aria-describedby'] as string | undefined;
+    // Name the control explicitly rather than leaning on the wrapping <label>.
+    // A field with a tooltip puts an interactive <button> inside that label,
+    // and name-from-a-wrapping-label stops at the nested control: every
+    // tooltipped field on the platform computed an accessible name of "" —
+    // announced by a screen reader as an unlabelled edit box. Pointing at the
+    // label's own text span skips the tooltip trigger and is unambiguous.
+    // An explicit name on the child still wins; the caller meant it.
+    const named = props['aria-label'] !== undefined || props['aria-labelledby'] !== undefined;
     control = cloneElement(child, {
       id: (props.id as string | undefined) ?? fieldId,
       'aria-invalid': error ? true : props['aria-invalid'],
       'aria-describedby': [existingDescribedBy, describedBy].filter(Boolean).join(' ') || undefined,
+      ...(named ? {} : { 'aria-labelledby': labelId }),
     });
   }
 
   return (
     <label className="block">
       <span className="mb-1.5 flex items-center gap-1.5 text-[0.8rem] font-semibold text-ink-700">
-        {label}
+        <span id={labelId}>{label}</span>
         {tooltip && <InfoTooltip text={tooltip} label={`About ${label}`} />}
       </span>
       {control}

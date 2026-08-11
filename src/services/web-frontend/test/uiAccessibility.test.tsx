@@ -28,6 +28,38 @@ describe('Field aria wiring (F-3 P2)', () => {
     const describedBy = input.getAttribute('aria-describedby');
     expect(document.getElementById(describedBy!)).toHaveTextContent('At least 10 characters');
   });
+
+  it('names the control even when the label carries a tooltip', () => {
+    render(
+      <>
+        <Field label="Coupon rate">
+          <TextInput defaultValue="" />
+        </Field>
+        <Field label="Market yield" tooltip="The annual return the market demands.">
+          <TextInput defaultValue="" />
+        </Field>
+      </>,
+    );
+    // A tooltip puts a <button> inside the wrapping <label>, and
+    // name-from-a-wrapping-label stops at the first nested control: the tipped
+    // field computed an accessible name of "" and was announced as an
+    // unlabelled edit box. Twenty-two fields across the platform have one,
+    // including every rate a valuation is defensible on.
+    expect(screen.getByRole('textbox', { name: 'Coupon rate' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Market yield' })).toBeInTheDocument();
+    // The tooltip trigger keeps its own distinct name — it is a separate
+    // control and must not be folded into the field's.
+    expect(screen.getByRole('button', { name: 'About Market yield' })).toBeInTheDocument();
+  });
+
+  it('does not overwrite a name the caller set deliberately', () => {
+    render(
+      <Field label="Search">
+        <TextInput aria-label="Search valuations by company" defaultValue="" />
+      </Field>,
+    );
+    expect(screen.getByRole('textbox', { name: 'Search valuations by company' })).toBeInTheDocument();
+  });
 });
 
 describe('Spinner (F-3 P3)', () => {

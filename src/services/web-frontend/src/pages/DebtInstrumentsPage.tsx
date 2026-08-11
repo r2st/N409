@@ -122,6 +122,9 @@ export function DebtInstrumentsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Tracked apart from `error`, which a failed *create* also sets. Only a
+  // failed load may suppress the empty state — see the render below.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState<{ name: string; instrument_type: InstrumentType; currency: string }>({
     name: '',
@@ -134,9 +137,11 @@ export function DebtInstrumentsPage() {
     try {
       const { instruments: i } = await api<{ instruments: Instrument[] }>('/debt/instruments');
       setInstruments(i);
+      setLoadFailed(false);
       if (i.length > 0 && !selected) setSelected(i[0]!.id);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to load instruments');
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -225,7 +230,9 @@ export function DebtInstrumentsPage() {
         </form>
       )}
 
-      {instruments.length === 0 ? (
+      {/* A list we could not fetch is not an empty list. "No instruments yet"
+          under a failed request tells an operator their portfolio is gone. */}
+      {loadFailed ? null : instruments.length === 0 ? (
         <EmptyState title="No instruments yet">Create a debt instrument to value it.</EmptyState>
       ) : (
         <div className="flex flex-wrap gap-2">
@@ -286,18 +293,24 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
     void load();
   }, [load]);
 
+  /**
+   * Persist the edited parameters. Throws on failure — deliberately.
+   *
+   * Both callers run this and then price the instrument. Swallowing the
+   * rejection here meant a rejected save was followed by a valuation of the
+   * parameters still on the server, and the `load()` that ends a successful
+   * run cleared the error on its way past: the user was shown a fair value
+   * computed from numbers that are not the ones in the form above it, with
+   * nothing on screen to say so. A save that did not happen has to stop the
+   * run that assumed it did.
+   */
   const saveParams = async () => {
     if (!instrument) return;
-    setError(null);
-    try {
-      const parsed: Record<string, unknown> = {};
-      for (const f of PARAM_FIELDS[instrument.instrument_type])
-        parsed[f.key] = f.bool ? params[f.key] === 'true' : Number(params[f.key]);
-      await api(`/debt/instruments/${instrumentId}`, { method: 'PUT', body: { params: parsed } });
-      await load();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Failed to save');
-    }
+    const parsed: Record<string, unknown> = {};
+    for (const f of PARAM_FIELDS[instrument.instrument_type])
+      parsed[f.key] = f.bool ? params[f.key] === 'true' : Number(params[f.key]);
+    await api(`/debt/instruments/${instrumentId}`, { method: 'PUT', body: { params: parsed } });
+    await load();
   };
 
   const runValue = async (overrides: Record<string, unknown> = {}) => {
@@ -353,7 +366,10 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
     }
   };
 
-  if (!instrument) return <Spinner />;
+  // An error with nothing loaded still has to be shown. Returning the spinner
+  // on `!instrument` alone left a failed detail fetch spinning forever with the
+  // reason set in state and never rendered.
+  if (!instrument) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
   const cur = instrument.currency;
 
   return (
