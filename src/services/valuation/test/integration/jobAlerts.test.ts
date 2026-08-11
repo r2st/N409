@@ -106,6 +106,23 @@ describe.skipIf(!dbUp)('job queue alerts', () => {
     expect(result.opened[0]!.detail).toContain('8h old');
   });
 
+  it('measures the age against the database clock, not the process clock', async () => {
+    // `created_at` is written by Postgres, so the age is only an age if the
+    // clock it is subtracted from is Postgres' too. Subtracting a JS `new
+    // Date()` adds the drift between two hosts to every figure — which shows
+    // up first as an alert that reads "7h 59m" for a job inserted at exactly
+    // eight hours, and matters because the same skewed number is what the
+    // `> stall_minutes` comparison decides on.
+    await stuckEmail(60 * 8);
+    const result = await scan();
+    expect(result.opened).toHaveLength(1);
+    // Time only moves forward between the insert and the scan, so the measured
+    // age can exceed 480 minutes and can never fall below it. A process clock
+    // running even milliseconds behind the database's puts it below.
+    expect(result.opened[0]!.observed).toBeGreaterThanOrEqual(480);
+    expect(result.opened[0]!.observed).toBeLessThan(481);
+  });
+
   it('notifies the people who can act on it, once', async () => {
     await stuckEmail(60 * 8);
     await scan();

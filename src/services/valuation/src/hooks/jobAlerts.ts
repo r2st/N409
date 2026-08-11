@@ -2,7 +2,7 @@ import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { JOB_SOURCES, JOB_SOURCE_LABELS } from '../domain/jobQueue.js';
 import { evaluateJobAlerts, observeQueues } from '../domain/jobAlerts.js';
-import { jobStats, oldestActiveJobs } from '../repos/jobs.js';
+import { dbNow, jobStats, oldestActiveJobs } from '../repos/jobs.js';
 import { listJobAlertRules, reconcileJobAlerts, type ReconcileResult } from '../repos/jobAlerts.js';
 import { createNotification } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
@@ -42,13 +42,17 @@ export async function runJobAlertScan(deps: {
   }
 
   const windowHours = Math.max(...enabled.map((r) => r.failure_window_hours));
-  const [stats, oldest] = await Promise.all([jobStats(deps.pool, windowHours), oldestActiveJobs(deps.pool)]);
+  // The clock is read from the database alongside the stats, not from the
+  // process. Every `created_at` being subtracted was written by Postgres, so
+  // this is the one clock that makes the difference an age rather than an age
+  // plus the drift between two hosts. See `dbNow`.
+  const [stats, oldest, observedAt] = await Promise.all([
+    jobStats(deps.pool, windowHours),
+    oldestActiveJobs(deps.pool),
+    deps.now ? Promise.resolve(deps.now) : dbNow(deps.pool),
+  ]);
 
-  const findings = evaluateJobAlerts(
-    observeQueues(JOB_SOURCES, stats, oldest),
-    rules,
-    deps.now ?? new Date(),
-  );
+  const findings = evaluateJobAlerts(observeQueues(JOB_SOURCES, stats, oldest), rules, observedAt);
   const result = await reconcileJobAlerts(deps.pool, findings);
 
   if (result.opened.length > 0 || result.resolved.length > 0) {

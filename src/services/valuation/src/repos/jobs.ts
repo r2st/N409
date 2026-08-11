@@ -175,6 +175,28 @@ export async function jobStats(pool: pg.Pool, sinceHours: number): Promise<JobSt
 }
 
 /**
+ * The database's wall clock.
+ *
+ * Every timestamp the monitor reads — `created_at` on all five queues — is
+ * written by Postgres, so the only clock that can be subtracted from them
+ * without inventing an error term is Postgres'. The application process runs
+ * on a different host with a different clock, and the difference is not
+ * hypothetical: a few milliseconds of drift is normal on a container host and
+ * a second or more is unremarkable against a managed database. That error
+ * lands in two places that matter — the age an operator reads in the alert,
+ * and the `minutes > stall_minutes` comparison that decides whether the alert
+ * fires at all.
+ *
+ * `clock_timestamp()` rather than `now()`: `now()` is transaction start, and a
+ * sweep that reads it inside a longer transaction would time the transaction
+ * instead of the queue.
+ */
+export async function dbNow(pool: pg.Pool): Promise<Date> {
+  const { rows } = await pool.query<{ at: Date }>('SELECT clock_timestamp() AS at');
+  return new Date(rows[0]!.at);
+}
+
+/**
  * The oldest still-owed job per source — "how far behind is each queue".
  *
  * A count of active jobs cannot distinguish a busy queue from a stopped one.
