@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
+import { isUniqueViolation } from '../db/pgError.js';
 
 export type FundType = 'vc' | 'pe' | 'credit' | 'growth' | 'other';
 export type SecurityType = 'common' | 'preferred' | 'safe' | 'note' | 'warrant' | 'other';
@@ -93,7 +94,7 @@ export async function linkFundToValuation(
     );
     return rows[0] ?? null;
   } catch (err) {
-    if ((err as { code?: string }).code === '23505')
+    if (isUniqueViolation(err, 'fund_portfolios_valuation_uniq'))
       throw new MeasurementLinkConflict('That engagement is already linked to another fund portfolio');
     throw err;
   }

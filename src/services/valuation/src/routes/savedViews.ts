@@ -15,6 +15,36 @@ import {
 } from '../repos/savedViews.js';
 import { findPartnerById } from '../repos/adminUsers.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { isUniqueViolation } from '../db/pgError.js';
+
+/**
+ * `saved_views` carries two unique indexes (migration 0088), and a write can
+ * trip either. Naming them is what keeps the 409 truthful: a bare SQLSTATE
+ * check told a user who lost the race to set a default that they already had
+ * a view with that name, which is the one thing they could not fix.
+ */
+const NAME_TAKEN_INDEX = 'saved_views_owner_name_idx';
+const ONE_DEFAULT_INDEX = 'saved_views_one_default_idx';
+
+/**
+ * The conflict a saved-view write can produce, as a problem the caller can act
+ * on. Rethrows anything that is not one of the two.
+ *
+ * The default collision is genuinely transient — `createSavedView` and
+ * `updateSavedView` clear the previous default inside the same transaction, so
+ * reaching the index means another request did the same thing concurrently and
+ * one of them has to lose. Saying "try again" is accurate; saying "rename it"
+ * was not.
+ */
+function savedViewConflict(err: unknown): never {
+  if (isUniqueViolation(err, NAME_TAKEN_INDEX)) {
+    throw problems.conflict('You already have a view with that name');
+  }
+  if (isUniqueViolation(err, ONE_DEFAULT_INDEX)) {
+    throw problems.conflict('Another view was made your default at the same moment — try again');
+  }
+  throw err;
+}
 
 /**
  * Saved worklist views (feature-improvements §2 "Saved views").
@@ -147,10 +177,8 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
       reply.code(201);
       return { view: { ...row, is_owner: true } };
     } catch (err) {
-      // The (owner, lower(name)) unique index is the check — re-querying first
-      // would still race.
-      if (isUniqueViolation(err)) throw problems.conflict('You already have a view with that name');
-      throw err;
+      // The unique indexes are the check — re-querying first would still race.
+      savedViewConflict(err);
     }
   });
 
@@ -180,8 +208,7 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
       if (!row) throw problems.notFound();
       return { view: { ...row, is_owner: true } };
     } catch (err) {
-      if (isUniqueViolation(err)) throw problems.conflict('You already have a view with that name');
-      throw err;
+      savedViewConflict(err);
     }
   });
 
@@ -236,8 +263,7 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
       reply.code(201);
       return { view: { ...row, is_owner: true }, created: true };
     } catch (err) {
-      if (isUniqueViolation(err)) throw problems.conflict('You already have a view with that name');
-      throw err;
+      savedViewConflict(err);
     }
   });
 
@@ -252,9 +278,4 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
     reply.code(204);
     return null;
   });
-}
-
-/** Postgres unique-violation SQLSTATE. */
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505';
 }

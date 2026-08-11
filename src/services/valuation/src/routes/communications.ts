@@ -33,6 +33,7 @@ import { retryFailedEmails } from '../hooks/emailRetry.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { isUniqueViolation } from '../db/pgError.js';
 
 /**
  * Communication templates + auto email campaigns (409.ai §15.5/§15.6).
@@ -341,7 +342,7 @@ export function registerCommunicationRoutes(
     try {
       campaign = await createAutoEmail(deps.pool, parsed.data);
     } catch (err) {
-      if ((err as { code?: string }).code === '23505')
+      if (isUniqueViolation(err, 'auto_emails_name_key'))
         throw problems.conflict('A campaign with this name already exists');
       throw err;
     }

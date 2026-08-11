@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { asPgError } from './pgError.js';
 
 export interface PoolTuning {
   /** Hard ceiling on any single statement (ms). A slow query can otherwise pin
@@ -118,7 +119,7 @@ export function attachPoolErrorHandler(pool: pg.Pool, log?: PoolErrorLog): void 
 
   const handler = (err: Error): void => {
     log?.error(
-      { err, code: (err as { code?: string }).code },
+      { err, code: asPgError(err)?.code },
       'idle database client error — client dropped, pool will reconnect',
     );
   };

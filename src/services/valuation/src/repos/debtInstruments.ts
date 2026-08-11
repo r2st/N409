@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
+import { isUniqueViolation } from '../db/pgError.js';
 
 export type InstrumentType = 'bond' | 'term_loan' | 'convertible' | 'safe' | 'credit_spread';
 export type Seniority = 'senior_secured' | 'senior' | 'subordinated' | 'mezzanine';
@@ -77,7 +78,7 @@ export async function linkInstrumentToValuation(
     );
     return rows[0] ?? null;
   } catch (err) {
-    if ((err as { code?: string }).code === '23505')
+    if (isUniqueViolation(err, 'debt_instruments_valuation_uniq'))
       throw new MeasurementLinkConflict('That engagement is already linked to another debt instrument');
     throw err;
   }

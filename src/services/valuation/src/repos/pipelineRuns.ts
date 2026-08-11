@@ -3,6 +3,7 @@ import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { invalidateValuationAfter } from './valuations.js';
+import { isUniqueViolation } from '../db/pgError.js';
 
 /**
  * Auto-pipeline run tracking (final-status §4.4 #3). One row per orchestrated
@@ -38,9 +39,7 @@ export interface PipelineRunRow {
 export const ACTIVE_RUN_UNIQUE_INDEX = 'pipeline_runs_one_active_per_valuation_idx';
 
 function isActiveRunConflict(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  const e = err as { code?: unknown; constraint?: unknown };
-  return e.code === '23505' && e.constraint === ACTIVE_RUN_UNIQUE_INDEX;
+  return isUniqueViolation(err, ACTIVE_RUN_UNIQUE_INDEX);
 }
 
 /**

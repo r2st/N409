@@ -46,6 +46,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
+import { isUniqueViolation } from '../db/pgError.js';
 
 const ListQuery = z.object({
   q: z.string().max(200).optional(),
@@ -577,7 +578,7 @@ export function registerAdminUserRoutes(
       await audit(principal.id, 'partner_created', 'partner', partner.id, partner.name);
       return reply.status(201).send({ partner });
     } catch (err) {
-      if ((err as { code?: string }).code === '23505')
+      if (isUniqueViolation(err, 'partners_key_key'))
         throw problems.conflict('A partner with this key already exists');
       throw err;
     }
@@ -644,7 +645,7 @@ export function registerAdminUserRoutes(
       // partners_subdomain_key — two firms cannot share an address, and the
       // unique index is the arbiter because two admins can claim the same
       // label in the same second.
-      if ((err as { code?: string }).code === '23505')
+      if (isUniqueViolation(err, 'partners_subdomain_key'))
         throw problems.conflict(`The subdomain "${patch.subdomain}" is already taken`);
       throw err;
     }

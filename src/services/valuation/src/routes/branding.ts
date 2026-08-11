@@ -19,6 +19,7 @@ import {
 } from '../repos/branding.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { isUniqueViolation } from '../db/pgError.js';
 
 /**
  * White-label branding (migration 0091).
@@ -153,7 +154,7 @@ export function registerBrandingRoutes(
       // partners_subdomain_key. Two firms cannot share an address, and the
       // race between "is it free?" and "take it" is real enough that the
       // unique index has to be what answers, not a prior SELECT.
-      if ((err as { code?: string }).code === '23505') {
+      if (isUniqueViolation(err, 'partners_subdomain_key')) {
         throw problems.conflict(`The subdomain "${patch.subdomain}" is already taken`);
       }
       throw err;
