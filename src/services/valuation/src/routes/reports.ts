@@ -669,6 +669,10 @@ export function registerReportRoutes(
     const outcome = applyNarrative(version.content, drafted, {
       overwrite: parsed.data.overwrite,
       baseline: baseline?.content ?? null,
+      // Which chapter each drafted section belongs in is a property of the
+      // deliverable, not of the agent's vocabulary: an ASC 820 hierarchy
+      // section has no home in a 409A's chapter list and vice versa.
+      kind: valuation.kind,
       // Only consulted when there is no baseline to compare against.
       figures: reportFigures(calculation, valuation.currency),
     });

@@ -1,13 +1,18 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   applyNarrative,
   draftedSectionsFrom,
   MIN_DRAFT_LENGTH,
   NARRATIVE_SECTION_MAP,
+  narrativeSectionMap,
   paragraphsToHtml,
 } from '../../src/domain/narrativeApply.js';
+import { resolveNarrativeSections } from '../../src/domain/narrativePrompts.js';
+import type { NarrativePromptLike } from '../../src/domain/narrativePrompts.js';
 import { instantiateTemplate, templateForKind } from '../../src/domain/report.js';
 import type { ReportContent } from '../../src/domain/report.js';
+import { VALUATION_KINDS, type ValuationKind } from '../../src/domain/valuation.js';
 
 /**
  * Putting the drafted narrative into the report.
@@ -58,8 +63,13 @@ describe('mapping the agent’s keys onto the report’s', () => {
   it('leaves the executive summary out on purpose', () => {
     // The PDF builds its own summary page from the calculation — headline FMV,
     // the figures grid, the charts. A drafted prose summary would sit beside it
-    // saying the same things in a voice nothing verified.
-    expect(NARRATIVE_SECTION_MAP.executive_summary).toBeUndefined();
+    // saying the same things in a voice nothing verified. Written as an
+    // explicit null so the outcome reads `suppressed` — a decision — rather
+    // than `unmatched`, which is what a mapping bug looks like.
+    expect(NARRATIVE_SECTION_MAP.executive_summary).toBeNull();
+    const out = applyNarrative(doc([UNWRITTEN]), [{ key: 'executive_summary', body: PROSE }]);
+    expect(out.applied[0]).toMatchObject({ section_key: null, outcome: 'suppressed' });
+    expect(out.changed).toBe(false);
   });
 
   it('falls through to the key itself when the two already agree', () => {
@@ -74,6 +84,181 @@ describe('mapping the agent’s keys onto the report’s', () => {
     const out = applyNarrative(doc([UNWRITTEN]), [{ key: 'repurchase_obligation', body: PROSE }]);
     expect(out.applied[0]).toMatchObject({ section_key: null, outcome: 'unmatched' });
     expect(out.changed).toBe(false);
+  });
+});
+
+/**
+ * The map above is the 409A's vocabulary, and it was applied to all fifteen
+ * deliverables. The prompt library has drafted per-kind sections since it was
+ * seeded and the skeletons have carried per-kind chapters for as long; nothing
+ * joined the two, so an ASC 820 report's hierarchy chapter — the classification
+ * an auditor tests first — was drafted, found no section of that name, recorded
+ * `unmatched`, and thrown away with a success reported to the route.
+ *
+ * The seeded library is the input to that, so it is what these tests read: the
+ * migration itself, parsed, rather than a copy of it that can fall out of step
+ * with the rows a database actually holds.
+ */
+describe('every deliverable’s own vocabulary', () => {
+  const SEED = readFileSync(
+    new URL('../../migrations/0114_narrative_prompt_library.sql', import.meta.url),
+    'utf8',
+  );
+
+  /**
+   * The seeded rows, as `resolveNarrativeSections` takes them. Ids are prefixed
+   * `01N409NARR`, which is what makes them findable; a row's `enabled` is the
+   * trailing `false` on its tuple, and its absence means the column default.
+   */
+  const seededRows = (): NarrativePromptLike[] => {
+    const starts = [...SEED.matchAll(/\('01N409NARR\d+',\s*(NULL|'[^']*'),\s*'([^']+)'/g)];
+    return starts.map((m, i) => {
+      const tuple = SEED.slice(m.index, starts[i + 1]?.index ?? SEED.length);
+      return {
+        kind: m[1] === 'NULL' ? null : (m[1]!.slice(1, -1) as ValuationKind),
+        section_key: m[2]!,
+        label: '',
+        guidance: '',
+        sort_order: 0,
+        enabled: !/,\s*false\s*\)/.test(tuple),
+      };
+    });
+  };
+
+  it('reads the seeded library, so a mis-parse cannot pass these tests', () => {
+    const rows = seededRows();
+    expect(rows.length).toBeGreaterThan(30);
+    expect(rows.filter((r) => r.kind === null)).toHaveLength(8);
+    // The suppressions — a disabled kind row is how a deliverable says "not
+    // this section", and reading them as enabled would make the sweep below
+    // demand a home for chapters nobody drafts.
+    expect(rows.some((r) => r.kind === 'qsbs' && r.section_key === 'dlom_analysis' && !r.enabled)).toBe(
+      true,
+    );
+  });
+
+  /**
+   * The sweep that would have caught this. Every section the library drafts for
+   * a kind must land in a chapter that kind's skeleton actually has, or be
+   * suppressed in so many words — silently discarding it is the one outcome
+   * that is never a decision anybody made.
+   */
+  it('gives every drafted section a home, or says why it has none', () => {
+    const rows = seededRows();
+    for (const kind of VALUATION_KINDS) {
+      const map = narrativeSectionMap(kind);
+      const chapters = new Set(templateForKind(kind).sections.map((s) => s.key));
+      for (const { key } of resolveNarrativeSections(rows, kind)) {
+        const target = Object.hasOwn(map, key) ? map[key] : key;
+        if (target === null) continue;
+        expect(chapters.has(target!), `${kind}: drafted “${key}” → “${target}”, which it has no chapter for`)
+          .toBe(true);
+      }
+    }
+  });
+
+  it('routes the sections whose two names disagreed', () => {
+    // The two the audit named. Both were drafted on every run and discarded on
+    // every run.
+    expect(narrativeSectionMap('820').fair_value_hierarchy).toBe('hierarchy');
+    expect(narrativeSectionMap('ifrs2').measurement_basis).toBe('measurement_principles');
+    // And the renames the same mismatch produced elsewhere.
+    expect(narrativeSectionMap('esop').valuation_methodology).toBe('valuation_approaches');
+    expect(narrativeSectionMap('fmv').valuation_methodology).toBe('valuation_methods');
+    expect(narrativeSectionMap('fund').conclusion).toBe('nav_conclusion');
+    expect(narrativeSectionMap('debt').income_approach).toBe('discount_rate');
+  });
+
+  it('leaves the 409A’s mapping exactly as it was', () => {
+    // Its keys are what the base map was written from, and it is the one kind
+    // that was never broken; a fix that moved it would be a regression.
+    expect(narrativeSectionMap('409a')).toEqual(NARRATIVE_SECTION_MAP);
+    expect(narrativeSectionMap()).toEqual(NARRATIVE_SECTION_MAP);
+  });
+
+  it('calls an inapplicable section suppressed rather than unmatched', () => {
+    // A §1202 attestation weights no approaches and takes no discount. The
+    // prose is not misrouted; there is nothing for it to say.
+    const out = applyNarrative(
+      doc([{ key: 'entity_test', heading: 'Eligible Corporation', html: '<p>Describe …</p>' }]),
+      [
+        { key: 'dlom_analysis', body: PROSE },
+        { key: 'entity_test', body: PROSE },
+      ],
+      { kind: 'qsbs' },
+    );
+    expect(out.applied[0]).toMatchObject({ source_key: 'dlom_analysis', outcome: 'suppressed' });
+    expect(out.applied[1]).toMatchObject({ section_key: 'entity_test', outcome: 'written' });
+  });
+
+  it('appends where a deliverable argues two drafted sections in one chapter', () => {
+    // A gift report argues both discounts under "Interest-Level Discounts".
+    // Writing the second over the first, or keeping the first and dropping the
+    // second, each loses one of them — which is the defect being fixed.
+    const dloc = 'D'.repeat(MIN_DRAFT_LENGTH + 1);
+    const dlom = 'M'.repeat(MIN_DRAFT_LENGTH + 1);
+    const out = applyNarrative(
+      doc([{ key: 'discounts', heading: 'Interest-Level Discounts', html: '<p>State the …</p>' }]),
+      [
+        { key: 'dloc', body: dloc },
+        { key: 'dlom_analysis', body: dlom },
+      ],
+      { kind: 'gifts' },
+    );
+    expect(out.applied.map((a) => a.outcome)).toEqual(['written', 'appended']);
+    const html = out.content.sections[0]!.html;
+    expect(html).toContain(dloc);
+    expect(html).toContain(dlom);
+    expect(html.indexOf(dloc)).toBeLessThan(html.indexOf(dlom));
+  });
+
+  it('still refuses to append onto prose an analyst wrote', () => {
+    // Appending is only ever onto text this same call produced. A chapter
+    // somebody has written is kept, exactly as before.
+    const written = {
+      key: 'discounts',
+      heading: 'Interest-Level Discounts',
+      html: '<p>A 22% minority discount was concluded from the control-premium studies cited.</p>',
+    };
+    const out = applyNarrative(
+      doc([written]),
+      [
+        { key: 'dloc', body: PROSE },
+        { key: 'dlom_analysis', body: PROSE },
+      ],
+      { kind: 'gifts' },
+    );
+    expect(out.applied.map((a) => a.outcome)).toEqual(['kept', 'kept']);
+    expect(out.content.sections[0]!.html).toBe(written.html);
+    expect(out.changed).toBe(false);
+  });
+
+  /**
+   * The end of the story the mapping bug is: prose drafted, discarded, and the
+   * skeleton's instructions delivered in its place. Asserted on the real
+   * skeletons so it stays true as they grow chapters.
+   */
+  it('writes prose into the specialty skeletons it used to leave untouched', () => {
+    const rows = seededRows();
+    for (const kind of ['820', 'ifrs2', 'esop', 'fund', 'debt', 'goodwill'] as const) {
+      const skeleton = instantiateTemplate(templateForKind(kind), {
+        company_name: 'Northwind Robotics, Inc.',
+        kind,
+        valuation_ref: 'N-1001',
+        date: '2026-06-30',
+        currency: 'USD',
+      });
+      const out = applyNarrative(
+        skeleton,
+        resolveNarrativeSections(rows, kind).map(({ key }) => ({ key, body: PROSE })),
+        { baseline: skeleton, kind },
+      );
+      const written = out.applied.filter((a) => a.outcome === 'written' || a.outcome === 'appended');
+      expect(written.length, `${kind} had no chapter drafted into`).toBeGreaterThan(0);
+      expect(out.applied.filter((a) => a.outcome === 'unmatched'), `${kind} discarded a section`).toEqual(
+        [],
+      );
+    }
   });
 });
 
