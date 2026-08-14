@@ -4,7 +4,12 @@ import {
   renderedScheduleIds,
   resolveExhibitReferences,
 } from '../../src/domain/reportExhibitIndex.js';
-import { instantiateTemplate, templateForKind, type ReportContent } from '../../src/domain/report.js';
+import {
+  CLASS_VOLATILITY_SCHEDULE,
+  instantiateTemplate,
+  templateForKind,
+  type ReportContent,
+} from '../../src/domain/report.js';
 import { scheduleTitle, SCHEDULE_CATALOGUE } from '../../src/domain/reportExhibits.js';
 
 /**
@@ -79,6 +84,32 @@ describe('renderedScheduleIds', () => {
   it('is empty for a report drafted before the engine has run', () => {
     expect(renderedScheduleIds([])).toEqual(new Set());
   });
+
+  /**
+   * A heading identifies one schedule, and for nearly every exhibit that is the
+   * whole story. Exhibit H-1 is the exception: it prints a DLOM derivation, a
+   * class-volatility schedule, or both, and only the breakpoint waterfall
+   * produces the second — so a valuation run without a cap table gets an H-1
+   * holding the derivation alone.
+   */
+  it('takes the extra pointer ids a section declares, beyond the one in its heading', () => {
+    expect(
+      renderedScheduleIds([
+        {
+          heading: 'Exhibit H-1 — Marketability Discount: Derivation',
+          schedules: ['H-1-class-volatility'],
+        },
+      ]),
+      // Upper-cased on the way in, so a declaration and a pointer that differ
+      // only in case still meet — the same rule the pointer resolution applies.
+    ).toEqual(new Set(['H-1', 'H-1-CLASS-VOLATILITY']));
+  });
+
+  it('gives a section that declares nothing only the id in its heading', () => {
+    expect(renderedScheduleIds([{ heading: 'Exhibit H-1 — Marketability Discount: Derivation' }])).toEqual(
+      new Set(['H-1']),
+    );
+  });
 });
 
 describe('resolveExhibitReferences — conditional pointers', () => {
@@ -131,6 +162,52 @@ describe('resolveExhibitReferences — conditional pointers', () => {
       TYPICAL,
     );
     expect(html(body, 's')).toBe('kept');
+  });
+
+  /**
+   * The pointer at a *block* of an exhibit rather than at the exhibit.
+   *
+   * "Exhibit H-1 was built" and "the class volatilities are in it" are two
+   * different facts, and the body asserted the second on the strength of the
+   * first — in Selected Volatility and again under the DLOM chapter. A run
+   * with no cap table produces no waterfall and so no class volatilities,
+   * leaving an H-1 that exists, that the reader is twice sent to, and that
+   * does not contain what they were sent for.
+   */
+  it('drops a pointer at a block the exhibit did not print, while keeping the exhibit’s own', () => {
+    const derivationOnly = [{ heading: 'Exhibit H-1 — Marketability Discount: Derivation' }];
+    const body = resolveExhibitReferences(
+      content([
+        {
+          key: 'dlom',
+          html:
+            '<p>Concluded.{{#exhibit:H-1}} Derived in <strong>Exhibit H-1</strong>.{{/exhibit:H-1}}' +
+            '{{#exhibit:H-1-CLASS-VOLATILITY}} Class volatilities in <strong>Exhibit H-1</strong>.' +
+            '{{/exhibit:H-1-CLASS-VOLATILITY}}</p>',
+        },
+      ]),
+      derivationOnly,
+    );
+    expect(html(body, 'dlom')).toBe('<p>Concluded. Derived in <strong>Exhibit H-1</strong>.</p>');
+  });
+
+  it('keeps that pointer where the block did print', () => {
+    const withSchedule = [
+      {
+        heading: 'Exhibit H-1 — Marketability Discount: Derivation',
+        schedules: ['H-1-CLASS-VOLATILITY'],
+      },
+    ];
+    const body = resolveExhibitReferences(
+      content([
+        {
+          key: 'vol',
+          html: '<p>{{#exhibit:H-1-CLASS-VOLATILITY}}Set out in H-1.{{/exhibit:H-1-CLASS-VOLATILITY}}</p>',
+        },
+      ]),
+      withSchedule,
+    );
+    expect(html(body, 'vol')).toBe('<p>Set out in H-1.</p>');
   });
 
   it('leaves a section it did not change identical, not merely equal', () => {
@@ -248,5 +325,48 @@ describe('the 409A skeleton, resolved', () => {
 
   it('leaves the index chapter free of the marker it was resolved from', () => {
     expect(html(resolveExhibitReferences(drafted(), TYPICAL), 'exhibit_index')).not.toContain('{{');
+  });
+
+  /**
+   * The two chapters that send the reader to H-1 *for the class volatilities*,
+   * against an H-1 that carries only the DLOM derivation — which is what a
+   * valuation with no cap table produces, since only the breakpoint waterfall
+   * decomposes the payoff far enough to give each class a delta.
+   *
+   * `danglingReferences` cannot catch this and should not be asked to: H-1 is
+   * in the file, so the reference resolves. What is wrong is the sentence.
+   */
+  describe('the class-volatility pointers', () => {
+    const derivationOnly = TYPICAL.map((h) => ({ heading: h }));
+    const withSchedule = TYPICAL.map((h) =>
+      h.startsWith('Exhibit H-1 ') ? { heading: h, schedules: [CLASS_VOLATILITY_SCHEDULE] } : { heading: h },
+    );
+
+    it('are dropped where Exhibit H-1 holds the derivation and nothing else', () => {
+      const body = resolveExhibitReferences(drafted(), derivationOnly);
+      expect(html(body, 'selected_volatility')).not.toContain('class volatilities');
+      expect(html(body, 'dlom')).not.toContain('class volatilities');
+    });
+
+    it('leaves the derivation pointer standing, which is the half that is there', () => {
+      const body = resolveExhibitReferences(drafted(), derivationOnly);
+      expect(html(body, 'dlom')).toContain('Its derivation is set out in <strong>Exhibit H-1</strong>');
+    });
+
+    it('are kept where the schedule printed', () => {
+      const body = resolveExhibitReferences(drafted(), withSchedule);
+      expect(html(body, 'selected_volatility')).toContain(
+        'The class volatilities are set out in <strong>Exhibit H-1</strong>',
+      );
+      expect(html(body, 'dlom')).toContain('<strong>Exhibit H-1</strong> sets out the class volatilities');
+    });
+
+    it('leaves no marker behind in either case', () => {
+      for (const exhibits of [derivationOnly, withSchedule]) {
+        const body = resolveExhibitReferences(drafted(), exhibits);
+        expect(html(body, 'selected_volatility')).not.toContain('{{#exhibit');
+        expect(html(body, 'dlom')).not.toContain('{{#exhibit');
+      }
+    });
   });
 });

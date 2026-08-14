@@ -413,7 +413,7 @@ export function sampleReportPdfInput(kind: ValuationKind = '409a'): ReportPdfInp
         date: SAMPLE_VALUATION_DATE,
         currency: SAMPLE_CURRENCY,
       }),
-      exhibits.map((s) => s.heading),
+      exhibits,
     ),
     // A plain object rather than a row: `reportFigures` reads `status` and
     // `results` and nothing else, and fabricating a whole CalculationRow would

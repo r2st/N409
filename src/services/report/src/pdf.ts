@@ -16,6 +16,18 @@ export interface ReportPdfSection {
   html: string;
   /** Vector charts appended after this section's prose. */
   charts?: ChartSpec[];
+  /**
+   * Conditional-pointer ids this section answers *beyond* the one in its
+   * heading. Ignored by the renderer — it is read by the valuation service's
+   * `resolveExhibitReferences`, which keeps or drops each `{{#exhibit:X}}`
+   * pointer in the authored body according to what actually printed.
+   *
+   * An exhibit built from independently-conditional blocks needs it: Exhibit
+   * H-1 prints a DLOM derivation, a class-volatility schedule, or both, and a
+   * body pointer that could only see the heading sent the reader to a schedule
+   * the exhibit did not contain.
+   */
+  schedules?: readonly string[];
 }
 
 /** One plotted value. `display` overrides the default number formatting. */

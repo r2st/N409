@@ -390,6 +390,25 @@ const INDEX_MARKER = EXHIBIT_INDEX_MARKER;
 const EXHIBIT_IF = (id: string, html: string) => `{{#exhibit:${id}}}${html}{{/exhibit:${id}}}`;
 
 /**
+ * The pointer id for Exhibit H-1's *second* block, the class-volatility
+ * schedule.
+ *
+ * Not a schedule of its own — it prints inside Exhibit H-1, and the body names
+ * it as "Exhibit H-1" because that is what a reader turns to. It needs an id
+ * of its own because it is separately conditional. Only the breakpoint
+ * waterfall produces class volatilities (engine/compute.py, which says so),
+ * so a valuation run without a cap table prints an H-1 carrying the DLOM
+ * derivation and nothing else. "H-1 was built" is then true and "the class
+ * volatilities are in it" is not — and on the strength of the first, two
+ * chapters asserted the second, sending the reader to a schedule the exhibit
+ * did not contain.
+ *
+ * Written here, declared by `dlomDerivationExhibit` on the section it builds,
+ * and resolved by `domain/reportExhibitIndex.ts`.
+ */
+export const CLASS_VOLATILITY_SCHEDULE = 'H-1-CLASS-VOLATILITY';
+
+/**
  * The 409A deliverable skeleton, modelled on the production 409a layout.
  * v54 adds the sections a reviewing auditor expects to find and the earlier
  * skeleton omitted: standard/premise of value, sources of information, the
@@ -451,9 +470,16 @@ const EXHIBIT_IF = (id: string, html: string) => `{{#exhibit:${id}}}${html}{{/ex
  *     the analyst is subpoenaed, and that it is not updated for later events is
  *     one whose limits are decided after the fact by whoever is arguing about
  *     it.
+ *
+ * v60 corrects the two pointers at the class-volatility schedule. Both were
+ * conditional on Exhibit H-1 being built, and H-1 is built for a DLOM
+ * derivation alone — so a valuation with no cap table, which produces no
+ * waterfall and therefore no class volatilities, printed an H-1 the body twice
+ * said contained them. They are conditional on `CLASS_VOLATILITY_SCHEDULE`
+ * instead, which the exhibit declares only when that half of it prints.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v59',
+  version: '409a.v60',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -702,7 +728,10 @@ const TEMPLATE_409A: ReportTemplate = {
         ) +
         P(
           'The volatility of the enterprise is not the volatility of a share class. Each class is a levered claim on the enterprise — under the breakpoint method, a spread of call options — and common, ranking behind the preference stack, is the most geared. Where an option-based marketability discount is struck on common, it takes common’s own volatility.' +
-            EXHIBIT_IF('H-1', ' The class volatilities are set out in <strong>Exhibit H-1</strong>.'),
+            EXHIBIT_IF(
+              CLASS_VOLATILITY_SCHEDULE,
+              ' The class volatilities are set out in <strong>Exhibit H-1</strong>.',
+            ),
         ),
     },
     {
@@ -729,7 +758,10 @@ const TEMPLATE_409A: ReportTemplate = {
         '<ul>' +
         '<li><strong>Quantitative — restricted stock studies.</strong> Where the conclusion rests on empirical studies of private placements of registered but unregistered-for-resale stock, name the studies relied on and note that observations predating the 1997 and 2008 amendments to Rule 144 measured a longer restriction than applies today.</li>' +
         '<li><strong>Quantitative — option-based models.</strong> Chaffee prices a protective put over the holding period; Finnerty and Ghaidarov price the average-strike put — the value of giving up the choice of when to sell. State the volatility and the holding period assumed, and note that the volatility of the <em>subject class</em> is not the volatility of the enterprise: common is a levered claim behind the preference stack.' +
-        EXHIBIT_IF('H-1', ' <strong>Exhibit H-1</strong> sets out the class volatilities.') +
+        EXHIBIT_IF(
+          CLASS_VOLATILITY_SCHEDULE,
+          ' <strong>Exhibit H-1</strong> sets out the class volatilities.',
+        ) +
         '</li>' +
         '<li><strong>Qualitative.</strong> Where judgement adjusts a modelled figure, identify the factors weighed — distribution history, transfer restrictions, the pool of likely buyers, the expected time to liquidity — and the direction and size of the adjustment.</li>' +
         '</ul>' +

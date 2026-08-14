@@ -54,8 +54,14 @@ import { visibleSections, type ReportContent } from './report.js';
 /** `Exhibit C`, `Exhibit D-1`, `Appendix II` — as the builders title them. */
 const SCHEDULE_TITLE = /^(?:Exhibit|Appendix)\s+([A-Z]+(?:-\d+)?)\s/;
 
-/** `{{#exhibit:F-1}} … {{/exhibit:F-1}}`, non-greedy, across newlines. */
-const CONDITIONAL = /\{\{#exhibit:([A-Za-z]+(?:-\d+)?)\}\}([\s\S]*?)\{\{\/exhibit:\1\}\}/g;
+/**
+ * `{{#exhibit:F-1}} … {{/exhibit:F-1}}`, non-greedy, across newlines.
+ *
+ * The id accepts more than a schedule identifier because a pointer can be
+ * conditional on something finer than "the exhibit printed" — see
+ * `renderedScheduleIds` and `ReportPdfSection.schedules`.
+ */
+const CONDITIONAL = /\{\{#exhibit:([A-Za-z0-9-]+)\}\}([\s\S]*?)\{\{\/exhibit:\1\}\}/g;
 
 const INDEX_MARKER = '{{exhibit_index}}';
 
@@ -67,17 +73,40 @@ function esc(value: string): string {
 }
 
 /**
+ * A schedule as this module needs to see it: the heading it prints under, plus
+ * any finer-grained pointer ids it answers.
+ *
+ * A bare string is the heading, which is what a caller with nothing finer to
+ * say passes — most tests, and any list already reduced to headings.
+ */
+export type ScheduleSource = string | { readonly heading: string; readonly schedules?: readonly string[] };
+
+const headingOf = (s: ScheduleSource): string => (typeof s === 'string' ? s : s.heading);
+
+/**
  * The identifiers of the schedules that will print, e.g. `A`, `D-1`, `II`.
  *
  * Exported for the coherence check, which needs the same reading of the same
  * headings — a check that parsed them differently could pass a body the render
  * would contradict.
+ *
+ * A heading identifies one schedule, and for nearly every exhibit that is the
+ * whole story. It is not for an exhibit assembled from blocks that appear
+ * independently: Exhibit H-1 prints a DLOM derivation, a class-volatility
+ * schedule, or both, so "H-1 printed" does not answer "are the class
+ * volatilities in it". A run with no cap table produces no waterfall and
+ * therefore no class volatilities, and the body still told the reader twice —
+ * in Selected Volatility and again under the DLOM chapter — that they were set
+ * out in Exhibit H-1, an exhibit which existed and did not contain them. Such
+ * a builder declares the extra ids on the section (`schedules`), and a pointer
+ * conditional on one is resolved against what actually printed.
  */
-export function renderedScheduleIds(exhibitHeadings: readonly string[]): Set<string> {
+export function renderedScheduleIds(exhibits: readonly ScheduleSource[]): Set<string> {
   const out = new Set<string>();
-  for (const heading of exhibitHeadings) {
-    const m = SCHEDULE_TITLE.exec(heading);
+  for (const exhibit of exhibits) {
+    const m = SCHEDULE_TITLE.exec(headingOf(exhibit));
     if (m) out.add(m[1]!);
+    if (typeof exhibit !== 'string') for (const id of exhibit.schedules ?? []) out.add(id.toUpperCase());
   }
   return out;
 }
@@ -129,14 +158,15 @@ function resolveConditionals(html: string, rendered: ReadonlySet<string>): strin
  */
 export function resolveExhibitReferences(
   content: ReportContent,
-  exhibitHeadings: readonly string[],
+  exhibits: readonly ScheduleSource[],
 ): ReportContent {
-  const rendered = renderedScheduleIds(exhibitHeadings);
+  const rendered = renderedScheduleIds(exhibits);
+  const headings = exhibits.map(headingOf);
   return {
     title: content.title,
     sections: content.sections.map((s) => {
       let html = resolveConditionals(s.html, rendered);
-      if (s.key === INDEX_SECTION_KEY) html = withExhibitIndex(html, exhibitHeadings);
+      if (s.key === INDEX_SECTION_KEY) html = withExhibitIndex(html, headings);
       return html === s.html ? s : { ...s, html };
     }),
   };
@@ -149,9 +179,9 @@ export function resolveExhibitReferences(
  */
 export function danglingReferences(
   content: ReportContent,
-  exhibitHeadings: readonly string[],
+  exhibits: readonly ScheduleSource[],
 ): { heading: string; id: string }[] {
-  const rendered = renderedScheduleIds(exhibitHeadings);
+  const rendered = renderedScheduleIds(exhibits);
   const out: { heading: string; id: string }[] = [];
   for (const section of visibleSections(content)) {
     const text = section.html.replace(/<[^>]*>/g, ' ');

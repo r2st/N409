@@ -46,7 +46,17 @@ export const P = (text: string): string => `<p>${text}</p>`;
  * a schedule with no content is dropped rather than printed as an empty table
  * under a heading that promises figures.
  */
-export function section(heading: string, parts: Array<string | null>): ReportPdfSection | null {
+export function section(
+  heading: string,
+  parts: Array<string | null>,
+  /**
+   * Extra conditional-pointer ids this schedule answers — see
+   * `ReportPdfSection.schedules`. Only an exhibit whose blocks are separately
+   * conditional needs one; everything else is identified by its heading alone.
+   */
+  schedules?: readonly string[],
+): ReportPdfSection | null {
   const html = parts.filter((p): p is string => p !== null && p !== '').join('');
-  return html ? { heading, html } : null;
+  if (!html) return null;
+  return schedules && schedules.length > 0 ? { heading, html, schedules } : { heading, html };
 }

@@ -25,7 +25,7 @@ import {
   SCHEDULE_CATALOGUE,
   type ExhibitContext,
 } from '../../src/domain/reportExhibits.js';
-import { ALLOWED_TAGS, sanitizeHtml } from '../../src/domain/report.js';
+import { ALLOWED_TAGS, CLASS_VOLATILITY_SCHEDULE, sanitizeHtml } from '../../src/domain/report.js';
 import { renderedScheduleIds } from '../../src/domain/reportExhibitIndex.js';
 import { sensitivityGrid, sensitivityTables } from '../../src/domain/sensitivity.js';
 import { computeWorkbook } from '../../src/domain/workbook.js';
@@ -1967,6 +1967,35 @@ describe('dlomDerivationExhibit', () => {
     expect(text).toContain('74.2%');
     expect(text).toContain('60.5%');
     expect(text).toContain('1.20x');
+  });
+
+  /**
+   * The exhibit's two blocks are separately conditional, and the body points at
+   * each by name. Only the breakpoint waterfall produces class volatilities, so
+   * a valuation run without a cap table gets an H-1 carrying the derivation and
+   * nothing else — while two chapters, conditional on H-1 alone, went on
+   * telling the reader the class volatilities were in it. The section declares
+   * which half printed so the pointers can resolve against that rather than
+   * against the heading.
+   */
+  describe('the pointer id for the class-volatility schedule', () => {
+    it('is declared where the schedule printed', () => {
+      expect(dlomDerivationExhibit(MODEL, CONTEXT)!.schedules).toEqual([CLASS_VOLATILITY_SCHEDULE]);
+    });
+
+    it('is absent where the run produced no waterfall to derive one from', () => {
+      const noCapTable = { ...MODEL, class_volatility: undefined };
+      const s = dlomDerivationExhibit(noCapTable, CONTEXT)!;
+      // The exhibit is still built — the derivation is the half that is there.
+      expect(plain(s.html)).toContain('Finnerty average-strike put model');
+      expect(plain(s.html)).not.toContain('Class volatility');
+      expect(s.schedules).toBeUndefined();
+    });
+
+    it('is absent where the waterfall reported a block with no classes in it', () => {
+      const empty = { ...MODEL, class_volatility: { enterprise_volatility: 0.62 } };
+      expect(dlomDerivationExhibit(empty, CONTEXT)!.schedules).toBeUndefined();
+    });
   });
 
   /**

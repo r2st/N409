@@ -100,8 +100,11 @@ export function registerQaRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
      */
     const { exhibits } = await summaryFor(deps.pool, valuation);
     const exhibitHeadings = exhibits.map((s) => s.heading);
+    // The sections rather than the headings, for the reason `renderedScheduleIds`
+    // gives: an exhibit built from separately-conditional blocks declares which
+    // of them printed, and a body pointer at one resolves against that.
     const reportContent = reportVersion?.content
-      ? resolveExhibitReferences(reportVersion.content, exhibitHeadings)
+      ? resolveExhibitReferences(reportVersion.content, exhibits)
       : null;
     // Checked against what this calculation can actually fill in. A computed
     // marker the run supplies is not a hole; one it does not is a set of literal

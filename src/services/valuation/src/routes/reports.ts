@@ -409,13 +409,11 @@ async function renderVersionPdf(
   // index of them and the body's pointers into them are resolved here, from the
   // very list about to be rendered — never written back, exactly as the figures
   // below are. See domain/reportExhibitIndex.ts.
-  const body = fillFigures(
-    resolveExhibitReferences(
-      content,
-      exhibits.map((s) => s.heading),
-    ),
-    figures,
-  );
+  // The whole sections rather than their headings: an exhibit assembled from
+  // separately-conditional blocks declares what it actually printed, and a
+  // pointer at one of those blocks resolves against that. See
+  // `renderedScheduleIds`.
+  const body = fillFigures(resolveExhibitReferences(content, exhibits), figures);
   const pdf = await renderReportPdf({
     title: body.title,
     company_name: valuation.company_name,

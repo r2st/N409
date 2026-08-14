@@ -3,6 +3,7 @@ import type { CalculationRow } from '../repos/calculations.js';
 import { APPROACH_LABELS, ALLOCATION_LABELS, formatCurrency, formatPercent, num } from './reportSummary.js';
 import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
+import { CLASS_VOLATILITY_SCHEDULE } from './report.js';
 import { MULTIPLE_LABELS, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
 import { requiredReturnRows } from './requiredReturns.js';
@@ -2812,6 +2813,12 @@ export function dlomDerivationExhibit(
   const classVol = record(results.class_volatility);
   if (!detail && !classVol) return null;
 
+  // Whether the second of this exhibit's two blocks actually printed. The body
+  // points at it by name in two chapters, and the pointer resolves against the
+  // ids this section declares rather than against its heading — see
+  // `CLASS_VOLATILITY_SCHEDULE`.
+  let classVolatilityPrinted = false;
+
   const body: string[] = [
     P(
       'The discount applied in Exhibit H is derived below. The model or study is the uncontested ' +
@@ -2905,10 +2912,11 @@ export function dlomDerivationExhibit(
           ],
         }),
       );
+      classVolatilityPrinted = true;
     }
   }
 
-  return section(SCHEDULE['H-1'], body);
+  return section(SCHEDULE['H-1'], body, classVolatilityPrinted ? [CLASS_VOLATILITY_SCHEDULE] : undefined);
 }
 
 // ── Appendix II — the financial statements the analysis rests on ─────────────
