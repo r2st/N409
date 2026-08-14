@@ -83,35 +83,32 @@ function mockApi(
   } = {},
 ): Call[] {
   const calls: Call[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      const method = (init?.method ?? 'GET').toUpperCase();
-      calls.push({
-        url,
-        method,
-        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-      });
-      if (/\/wacc\/preview$/.test(url)) {
-        return opts.preview
-          ? opts.preview()
-          : json({ wacc: RESULT, applied_on_next_run: true });
-      }
-      if (/\/params$/.test(url) && method === 'PATCH') return opts.patch ? opts.patch() : json({});
-      if (/\/params$/.test(url)) {
-        return opts.params ? opts.params() : json({ params: { wacc_inputs: null, auto_wacc: false } });
-      }
-      return json({});
-    },
-  );
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    });
+    if (/\/wacc\/preview$/.test(url)) {
+      return opts.preview ? opts.preview() : json({ wacc: RESULT, applied_on_next_run: true });
+    }
+    if (/\/params$/.test(url) && method === 'PATCH') return opts.patch ? opts.patch() : json({});
+    if (/\/params$/.test(url)) {
+      return opts.params ? opts.params() : json({ params: { wacc_inputs: null, auto_wacc: false } });
+    }
+    return json({});
+  });
   return calls;
 }
 
-const stored = (wacc_inputs: unknown, auto_wacc = false) => () =>
-  json({ params: { wacc_inputs, auto_wacc } });
+const stored =
+  (wacc_inputs: unknown, auto_wacc = false) =>
+  () =>
+    json({ params: { wacc_inputs, auto_wacc } });
 
-const problem = (status: number, detail: string) => () =>
-  json({ status, title: 'Error', detail }, status);
+const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
 /** The body of the last PATCH, which is the build-up as it would be stored. */
 function savedInputs(calls: Call[]): Record<string, unknown> | null {
@@ -259,6 +256,91 @@ describe('WaccPanel', () => {
       expect(savedInputs(calls)).toMatchObject({ tax_rate: 0.21, equity_risk_premium: 0.055 });
     });
 
+    /**
+     * Which of the nine fields is a percentage and which is a plain number is
+     * the panel's whole unit contract, and it is expressed one field at a time
+     * — each box picks `plain` or `fraction` at its own call site through the
+     * same curried `set('key')` helper. A field wired to the wrong one is a
+     * 100x error in the discount rate that still renders as a plausible
+     * number, so fill all nine at once and assert the shape that gets stored.
+     */
+    it('stores each field in the unit that field is kept in', async () => {
+      const user = userEvent.setup();
+      const calls = mockApi({ params: stored(null) });
+      renderPanel();
+      await ready();
+
+      const typed: Array<[RegExp, string]> = [
+        [/^Unlevered beta/, '1.05'],
+        [/^Target debt \/ equity/, '0.3'],
+        [/^Market capitalisation/, '50000000'],
+        [/^Equity risk premium/, '5.5'],
+        [/^Company-specific premium/, '3'],
+        [/^Tax rate/, '21'],
+        [/^Forecast horizon/, '5'],
+        [/^Risk-free rate/, '4.25'],
+        [/^Cost of debt/, '8'],
+      ];
+      for (const [label, value] of typed) await user.type(screen.getByLabelText(label), value);
+      await user.click(saveButton());
+
+      await waitFor(() => expect(savedInputs(calls)).not.toBeNull());
+      expect(savedInputs(calls)).toEqual({
+        // Plain: a beta, a ratio, a currency amount and a count of years are
+        // stored exactly as typed.
+        unlevered_beta_input: 1.05,
+        target_debt_to_equity: 0.3,
+        market_cap: 50_000_000,
+        forecast_horizon_years: 5,
+        // Percentages: every rate and premium is divided back to a fraction.
+        equity_risk_premium: 0.055,
+        company_specific_premium: 0.03,
+        tax_rate: 0.21,
+        risk_free_rate_override: 0.0425,
+        cost_of_debt: 0.08,
+      });
+    });
+
+    /** Analysts paste a market cap out of a spreadsheet, separators and all. */
+    it('reads a market cap typed with thousands separators', async () => {
+      const user = userEvent.setup();
+      const calls = mockApi({ params: stored(null) });
+      renderPanel();
+      await ready();
+
+      await user.type(screen.getByLabelText(/^Market capitalisation/), '1,250,000,000');
+      await user.click(saveButton());
+
+      await waitFor(() => expect(savedInputs(calls)).not.toBeNull());
+      expect(savedInputs(calls)).toMatchObject({ market_cap: 1_250_000_000 });
+    });
+
+    /** Every one of the nine survives a save and comes back as it was typed. */
+    it('round-trips the whole build-up through a reload', async () => {
+      const user = userEvent.setup();
+      mockApi({ params: stored(STORED_INPUTS) });
+      renderPanel();
+      await ready();
+
+      for (const [label, shown] of [
+        [/^Unlevered beta/, '1.05'],
+        [/^Target debt \/ equity/, '0.3'],
+        [/^Market capitalisation/, '50000000'],
+        [/^Equity risk premium/, '5.5'],
+        [/^Company-specific premium/, '3'],
+        [/^Tax rate/, '21'],
+        [/^Forecast horizon/, '5'],
+        [/^Risk-free rate/, '4.25'],
+        [/^Cost of debt/, '8'],
+      ] as Array<[RegExp, string]>) {
+        expect(screen.getByLabelText(label), String(label)).toHaveValue(shown);
+      }
+      // And an edit to one of them does not disturb its neighbours.
+      await user.clear(screen.getByLabelText(/^Tax rate/));
+      await user.type(screen.getByLabelText(/^Tax rate/), '25');
+      expect(screen.getByLabelText(/^Cost of debt/)).toHaveValue('8');
+    });
+
     it('omits a blank field rather than saving it as zero', async () => {
       // A zeroed equity risk premium is not the same as an unset one: unset
       // takes the engine's default, zero asserts that equities carry no risk
@@ -388,8 +470,7 @@ describe('WaccPanel', () => {
       await user.click(screen.getByRole('button', { name: 'Preview rate' }));
       await screen.findByText('18.34%');
       const table = screen.getByRole('table', { name: 'Cost of capital build-up' });
-      const line = (label: string | RegExp) =>
-        within(table).getByText(label).closest('tr') as HTMLElement;
+      const line = (label: string | RegExp) => within(table).getByText(label).closest('tr') as HTMLElement;
       expect(line('Risk-free rate')).toHaveTextContent('4.25%');
       expect(line('Unlevered beta')).toHaveTextContent('1.0512');
       expect(line('Relevered beta')).toHaveTextContent('1.2438');
@@ -449,12 +530,8 @@ describe('WaccPanel', () => {
       renderPanel();
       await ready();
       await user.click(screen.getByRole('button', { name: 'Preview rate' }));
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'No guideline betas and no unlevered beta.',
-      );
-      expect(
-        screen.queryByRole('table', { name: 'Cost of capital build-up' }),
-      ).not.toBeInTheDocument();
+      expect(await screen.findByRole('alert')).toHaveTextContent('No guideline betas and no unlevered beta.');
+      expect(screen.queryByRole('table', { name: 'Cost of capital build-up' })).not.toBeInTheDocument();
     });
   });
 

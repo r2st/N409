@@ -689,10 +689,7 @@ describe('Asc718Tab — award sections', () => {
     renderTab();
     await goPublic(user);
 
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: /^Expected-term method/ }),
-      'historical',
-    );
+    await user.selectOptions(screen.getByRole('combobox', { name: /^Expected-term method/ }), 'historical');
     await user.type(boxIn(card('Option grants'), 'Exercise price'), '10');
     await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
 
@@ -1012,7 +1009,9 @@ describe('Asc718Tab — results', () => {
       ],
     });
 
-    expect(within(screen.getByText('PSU').closest('tr')!).getByText(/performance \(80%\)/)).toBeInTheDocument();
+    expect(
+      within(screen.getByText('PSU').closest('tr')!).getByText(/performance \(80%\)/),
+    ).toBeInTheDocument();
     expect(
       within(screen.getByText('Market PSU').closest('tr')!).getByText(/market \(P=45%\)/),
     ).toBeInTheDocument();

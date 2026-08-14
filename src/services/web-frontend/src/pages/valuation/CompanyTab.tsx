@@ -370,18 +370,12 @@ export function CompanyTab() {
                   by hand and then ran the agent did not ask to have that
                   reconsidered. This is the explicit opt-in. */}
               <label className="flex items-center gap-2 text-sm text-bond-800">
-                <input
-                  type="checkbox"
-                  checked={overwrite}
-                  onChange={(e) => setOverwrite(e.target.checked)}
-                />
+                <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
                 Replace values already on the profile
               </label>
             </div>
             {agentPhase === 'drafting' && (
-              <p className="mt-2 text-xs text-bond-700">
-                Free-tier models can take up to a minute…
-              </p>
+              <p className="mt-2 text-xs text-bond-700">Free-tier models can take up to a minute…</p>
             )}
             {agentNote && <p className="mt-2 text-sm font-medium text-bond-800">{agentNote}</p>}
             {agentError && (

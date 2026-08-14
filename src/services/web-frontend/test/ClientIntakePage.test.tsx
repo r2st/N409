@@ -78,6 +78,7 @@ const completion = (answered: number, ready = false) => ({
 });
 
 interface PortalOverrides {
+  sections?: unknown[];
   answers?: Record<string, unknown>;
   can_edit?: boolean;
   status?: string;
@@ -90,7 +91,7 @@ function portalBody(o: PortalOverrides = {}) {
   return {
     firm: FIRM,
     client_name: 'Northwind Robotics',
-    sections: SECTIONS,
+    sections: o.sections ?? SECTIONS,
     answers: o.answers ?? {},
     completion: completion(o.answered ?? 0, o.ready ?? false),
     status: o.status ?? 'sent',
@@ -487,5 +488,170 @@ describe('ClientIntakePage', () => {
 
     const bar = screen.getByRole('progressbar', { name: 'Intake completion' });
     expect(bar).toHaveAttribute('aria-valuenow', '67');
+  });
+});
+
+/**
+ * Moving around a questionnaire the client cannot finish in one sitting.
+ *
+ * The form is a wizard with three ways backwards — the Back button on a
+ * section, the Back button on the review screen, and the numbered sidebar —
+ * plus an Edit link per section on the review. Each runs its own handler, and
+ * every one of them calls `goTo`, which flushes whatever the client had just
+ * typed before it changes step. A back route that skipped that flush would
+ * discard the answer the client typed last, which is the answer they were
+ * still thinking about.
+ */
+describe('ClientIntakePage — moving between sections', () => {
+  const heading = (title: string) => screen.findByRole('heading', { name: title, level: 2 });
+  const step = (name: string) => screen.getByRole('button', { name: new RegExp(name) });
+
+  it('goes back to the previous section without losing the answer just typed', async () => {
+    const calls = mockPortal();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await heading('Company information');
+
+    await user.type(screen.getByLabelText(/Legal company name/), 'Northwind Robotics Ltd');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await heading('Legal & governance');
+
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await heading('Company information');
+    expect(screen.getByLabelText(/Legal company name/)).toHaveValue('Northwind Robotics Ltd');
+    await waitFor(() => expect(calls.some((c) => c.path.endsWith('/portal/answers'))).toBe(true));
+  });
+
+  it('cannot go back past the first section', async () => {
+    mockPortal();
+    render(<ClientIntakePage />);
+    await heading('Company information');
+
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+  });
+
+  it('jumps straight to a section from the sidebar', async () => {
+    mockPortal();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await heading('Company information');
+
+    await user.click(step('Legal & governance'));
+    await heading('Legal & governance');
+
+    await user.click(step('Company information'));
+    await heading('Company information');
+  });
+
+  it('opens the review from the sidebar and comes back out of it', async () => {
+    mockPortal();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await heading('Company information');
+
+    await user.click(step('Review & submit'));
+    await screen.findByRole('button', { name: /Submit/ });
+
+    // Back from the review lands on the last section, not the first.
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    await heading('Legal & governance');
+  });
+
+  /** The point of the review: spot a gap, and go straight to the section with it. */
+  it('sends the client to the section they chose to edit', async () => {
+    mockPortal();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await heading('Company information');
+
+    await user.click(step('Review & submit'));
+    const review = (await screen.findAllByRole('heading', { name: 'Company information', level: 2 }))[0]!;
+    await user.click(within(review.closest('section')!).getByRole('button', { name: 'Edit' }));
+
+    // Back on the form, on the section that was chosen, with its fields live.
+    expect(await screen.findByLabelText(/Legal company name/)).toBeEnabled();
+  });
+
+  /** A submitted form shows the same review with nothing to edit. */
+  it('offers no Edit links once the form has been submitted', async () => {
+    mockPortal({ portal: { status: 'submitted', can_edit: false, submitted_at: '2026-08-01T10:00:00Z' } });
+    render(<ClientIntakePage />);
+    await screen.findByText(/that’s everything/);
+
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+  });
+});
+
+describe('ClientIntakePage — the field types', () => {
+  const answersFor = (calls: Call[]) =>
+    calls.filter((c) => c.path.endsWith('/portal/answers')).map((c) => c.body.answers);
+
+  it('records a long-form answer from the textarea', async () => {
+    const calls = mockPortal();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await screen.findByLabelText(/Business description/);
+
+    await user.type(screen.getByLabelText(/Business description/), 'Autonomous warehouse robots.');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(answersFor(calls).length).toBeGreaterThan(0));
+    expect(answersFor(calls).at(-1)).toMatchObject({
+      business_description: 'Autonomous warehouse robots.',
+    });
+  });
+
+  /** The picker offers words; what is stored is a boolean, not the word. */
+  it('records a yes/no answer as a boolean', async () => {
+    const calls = mockPortal();
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    await screen.findByLabelText(/Legal company name/);
+
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByLabelText(/Articles of incorporation available/);
+    await user.selectOptions(screen.getByLabelText(/Articles of incorporation available/), 'yes');
+    await user.click(screen.getByRole('button', { name: 'Review answers' }));
+
+    await waitFor(() => expect(answersFor(calls).length).toBeGreaterThan(0));
+    expect(answersFor(calls).at(-1)).toMatchObject({ has_articles: true });
+  });
+
+  /**
+   * A `select` field renders its options from the questionnaire definition,
+   * underscores turned back into spaces for the client to read — while the
+   * value that goes back is the key the engine expects.
+   */
+  it('records a chosen option, showing it in the client’s words', async () => {
+    const calls = mockPortal({
+      portal: {
+        sections: [
+          {
+            key: 'company',
+            title: 'Company information',
+            description: 'Tell us about the company being valued.',
+            fields: [
+              {
+                key: 'entity_type',
+                label: 'Entity type',
+                type: 'select',
+                required: true,
+                options: ['c_corp', 'llc'],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const user = userEvent.setup();
+    render(<ClientIntakePage />);
+    const picker = await screen.findByLabelText(/Entity type/);
+
+    expect(within(picker).getByRole('option', { name: 'c corp' })).toHaveValue('c_corp');
+    await user.selectOptions(picker, 'c_corp');
+    await user.click(screen.getByRole('button', { name: 'Review answers' }));
+
+    await waitFor(() => expect(answersFor(calls).length).toBeGreaterThan(0));
+    expect(answersFor(calls).at(-1)).toMatchObject({ entity_type: 'c_corp' });
   });
 });

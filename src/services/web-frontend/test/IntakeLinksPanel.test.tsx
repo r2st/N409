@@ -422,3 +422,184 @@ describe('IntakeLinksPanel — converting an intake', () => {
     for (const call of calls) expect(call.path).toContain('partner_id=01N409FIRM0000000000000AA');
   });
 });
+
+/**
+ * Everything on this panel that closes something.
+ *
+ * The one-time link banner is the sharp edge: the raw token is shown once and
+ * only a hash is stored, so Dismiss is unrecoverable and has to be the only
+ * thing that does it. The two modals close three ways each — their button,
+ * Escape, and the backdrop — and each route runs its own handler, so an
+ * unwired one leaves an operator with a dialog they cannot get out of.
+ */
+describe('IntakeLinksPanel — dismissing and cancelling', () => {
+  /** Walks the create form and returns with the issued-link banner on screen. */
+  async function issueLink(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', { name: 'New intake link' }));
+    await user.click(screen.getByRole('button', { name: 'Create link' }));
+    await screen.findByText(/Link ready/);
+  }
+
+  /** Opens the convert dialog on the submitted row. */
+  async function openConvert(user: ReturnType<typeof userEvent.setup>) {
+    const row = screen.getByText('Halcyon Bio').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'Convert' }));
+    return screen.findByRole('dialog');
+  }
+
+  it('sends the email and expiry the form was given', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Northwind Robotics');
+
+    await user.click(screen.getByRole('button', { name: 'New intake link' }));
+    await user.type(screen.getByLabelText(/Client name/), 'Acme Corp');
+    await user.type(screen.getByLabelText(/Client email/), 'founder@acme.example');
+    const expiry = screen.getByLabelText(/Expires in/);
+    await user.clear(expiry);
+    await user.type(expiry, '14');
+    await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+      client_name: 'Acme Corp',
+      client_email: 'founder@acme.example',
+      expires_in_days: 14,
+    });
+  });
+
+  /** A cleared expiry is the 30-day default, not a link that expires today. */
+  it('falls back to thirty days when the expiry is cleared', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Northwind Robotics');
+
+    await user.click(screen.getByRole('button', { name: 'New intake link' }));
+    await user.clear(screen.getByLabelText(/Expires in/));
+    await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ expires_in_days: 30 });
+  });
+
+  it('takes the one-time link off screen for good when dismissed', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Northwind Robotics');
+    await issueLink(user);
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    expect(screen.queryByText(/Link ready/)).not.toBeInTheDocument();
+    // The credential is gone from the document, not merely hidden — and there
+    // is no affordance offering it back.
+    expect(screen.queryByText(/raw-token-value/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy link' })).not.toBeInTheDocument();
+  });
+
+  it('clears the client fields so the next link does not inherit them', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Northwind Robotics');
+
+    await user.click(screen.getByRole('button', { name: 'New intake link' }));
+    await user.type(screen.getByLabelText(/Client name/), 'Acme Corp');
+    await user.type(screen.getByLabelText(/Client email/), 'founder@acme.example');
+    await user.click(screen.getByRole('button', { name: 'Create link' }));
+    await screen.findByText(/Link ready/);
+
+    await user.click(screen.getByRole('button', { name: 'New intake link' }));
+    expect(screen.getByLabelText(/Client name/)).toHaveValue('');
+    expect(screen.getByLabelText(/Client email/)).toHaveValue('');
+  });
+
+  it('dismisses the conversion notice', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const dialog = await openConvert(user);
+    await user.click(within(dialog).getByRole('button', { name: 'Create engagement' }));
+    await screen.findByRole('link', { name: 'Open the engagement' });
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByRole('link', { name: 'Open the engagement' })).not.toBeInTheDocument();
+  });
+
+  /** Following the link leaves the panel, so the notice must not outlive it. */
+  it('drops the conversion notice when the engagement is opened from it', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const dialog = await openConvert(user);
+    await user.click(within(dialog).getByRole('button', { name: 'Create engagement' }));
+    await user.click(await screen.findByRole('link', { name: 'Open the engagement' }));
+
+    expect(screen.queryByText(/is now an engagement/)).not.toBeInTheDocument();
+  });
+
+  it('cancels the conversion without creating anything', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const dialog = await openConvert(user);
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.path.includes('/convert'))).toBe(false);
+  });
+
+  it('closes the conversion dialog on Escape', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    await openConvert(user);
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.path.includes('/convert'))).toBe(false);
+  });
+
+  /** Reopening starts from the stored legal name again, not the abandoned edit. */
+  it('forgets an abandoned company-name edit', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const dialog = await openConvert(user);
+    const name = within(dialog).getByLabelText(/Company name/);
+    await user.clear(name);
+    await user.type(name, 'Wrong Co');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    const reopened = await openConvert(user);
+    expect(within(reopened).getByLabelText(/Company name/)).toHaveValue('Halcyon Bio, Inc.');
+  });
+
+  it('closes the submission detail on Escape', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('Halcyon Bio');
+
+    const row = screen.getByText('Halcyon Bio').closest('tr')!;
+    await user.click(within(row).getByRole('button', { name: 'View' }));
+    await screen.findByRole('dialog');
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+});
