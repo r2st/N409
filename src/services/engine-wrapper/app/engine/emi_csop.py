@@ -210,9 +210,18 @@ def emi_csop_valuation(scheme, params) -> dict:
         raise EngineInputError("params must be an object")
 
     value_keys = {"equity_value", "total_shares", "restriction_discount", "minority_discount"}
-    values = share_values(**{k: v for k, v in params.items() if k in value_keys})
+    # Both halves of the dispatch are guarded, because both unpack a
+    # caller-supplied dict into keyword-only parameters. Only the qualification
+    # call used to be, and `equity_value` and `total_shares` are required with
+    # no default — so the one omission a caller is most likely to make left
+    # `share_values` raising a bare TypeError, which is not an EngineInputError
+    # and so never reached the route's 422 handler. `{"scheme": "emi",
+    # "params": {}}` was answered with a 500 and a stack trace in the log,
+    # while the same omission on `/debt-valuation` and `/projection` — the two
+    # other routes with a free-form `params` dict — is a 422 naming the fields.
     rest = {k: v for k, v in params.items() if k not in value_keys}
     try:
+        values = share_values(**{k: v for k, v in params.items() if k in value_keys})
         if name == "emi":
             qualification = emi_qualification(umv_per_share=values["umv_per_share"], **rest)
         else:
