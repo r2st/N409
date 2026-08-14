@@ -4,7 +4,7 @@ import { api, ApiError } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
 import type { Valuation } from '../lib/types';
-import { Button, ErrorNote, Field, TextInput } from './ui';
+import { Button, ErrorNote, Field, Spinner, TextInput } from './ui';
 
 /**
  * Board approval workflow (feature 5). After a valuation is finalized, ops
@@ -82,16 +82,34 @@ export function signingLinkNote(
 
 export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
   const [data, setData] = useState<BoardResponse | null>(null);
+  const [loadFailed, setLoadFailed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [member, setMember] = useState({ name: '', email: '', title: '' });
   const [lastLink, setLastLink] = useState<string | null>(null);
 
+  /*
+   * Emphatically not `setData({ resolution: null, members: [] })`, and not a
+   * render that begins before the read lands either. Both put the panel into
+   * its no-resolution branch — "Generate a board resolution from the concluded
+   * fair market value…" over a "Generate resolution" button — on an engagement
+   * that may already carry an approved resolution and a full set of board
+   * signatures. Generating replaces it: the panel's own control for doing so
+   * deliberately reads "Regenerate (clears signatures)". So a request that
+   * failed, or merely had not returned yet, invited an appraiser to destroy the
+   * safe-harbor record it was too broken to show them.
+   *
+   * Sibling of the SignaturePanel fix in round 17, and the same rule: an empty
+   * board is a claim, and a read that did not come back cannot support one.
+   */
   const load = useCallback(async () => {
     try {
       setData(await api<BoardResponse>(`/valuations/${valuation.id}/board`));
-    } catch {
-      setData({ resolution: null, members: [] });
+      setLoadFailed(null);
+    } catch (err) {
+      setLoadFailed(
+        err instanceof ApiError ? err.message : 'Could not load the board approval for this valuation.',
+      );
     }
   }, [valuation.id]);
 
@@ -189,7 +207,11 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
         </div>
       )}
 
-      {!resolution ? (
+      {loadFailed ? (
+        <ErrorNote>{loadFailed}</ErrorNote>
+      ) : !data ? (
+        <Spinner label="Loading board approval…" />
+      ) : !resolution ? (
         <div>
           <p className="mb-3 text-sm text-ink-500">
             Generate a board resolution from the concluded fair market value, then collect e-signatures from

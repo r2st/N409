@@ -117,13 +117,43 @@ describe('BoardApprovalPanel', () => {
     expect(screen.getByText(/safe-harbor adoption/)).toBeInTheDocument();
   });
 
-  it('treats an unreadable board endpoint as "nothing yet" rather than a blank panel', async () => {
-    // The panel sits inside the valuation detail page; a 403 for a role that
-    // cannot see the board must not take the surrounding page down.
+  /**
+   * A board that failed to load is not a board that does not exist.
+   *
+   * `catch { setData({ resolution: null, members: [] }) }` put the panel into
+   * its no-resolution branch — the safe-harbor blurb over a "Generate
+   * resolution" button — on an engagement that may already carry an approved
+   * resolution and a full set of signatures. Generating replaces it: the
+   * control for doing so deliberately reads "Regenerate (clears signatures)".
+   * So a read that failed invited an appraiser to destroy the safe-harbor
+   * record it was too broken to show them.
+   *
+   * The panel still must not take the surrounding valuation page down, which
+   * is what the 403 case was originally written for.
+   */
+  it('reports an unreadable board rather than offering to generate over it', async () => {
     mockApi({}, { loadStatus: 403 });
     renderPanel();
 
-    await screen.findByRole('button', { name: 'Generate resolution' });
+    expect(await screen.findByText('No')).toBeInTheDocument();
+    // The panel is still on the page — only its contents are missing.
+    expect(screen.getByText('Board approval')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate resolution' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/safe-harbor adoption/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The same offer used to be on screen during the load itself, because `data`
+   * starts null and the branch keys off the resolution rather than off whether
+   * anything has been read. On a slow board endpoint the button was there to
+   * be clicked before the resolution it would have cleared arrived.
+   */
+  it('offers nothing until the board has actually been read', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(() => {}) as Promise<Response>);
+    renderPanel();
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Loading board approval');
+    expect(screen.queryByRole('button', { name: 'Generate resolution' })).not.toBeInTheDocument();
   });
 
   it('generates the resolution and shows the concluded figure it was built from', async () => {
