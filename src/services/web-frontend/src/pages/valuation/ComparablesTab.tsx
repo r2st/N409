@@ -68,6 +68,18 @@ interface RefreshResponse {
   unavailable: Array<{ ticker: string; warning: string }>;
 }
 
+/**
+ * `POST /valuations/:id/ai/comp_selection/apply`. `selected` is what landed
+ * included; `excluded` is everything the agent named that did not, which is the
+ * union of its own rejected half and the comps it chose that the market data
+ * could not price — `unusable` counts that second group separately, because the
+ * two are set aside for opposite reasons and only one of them is a judgement.
+ */
+interface CompSelectionApplied {
+  applied: { selected: number; excluded: number; unusable: number };
+  written: number;
+}
+
 interface MultipleSummary {
   key: MultipleKey;
   label: string;
@@ -202,6 +214,49 @@ export function ComparablesTab() {
    * believing they were now looking at observed market data.
    */
   const [feedNote, setFeedNote] = useState<string | null>(null);
+
+  /**
+   * Run the `comp_selection` agent and apply what it found to this set.
+   *
+   * Two calls, run then apply, because they are two endpoints — but one button,
+   * because "discover peers" is one intention and a UI that made an analyst
+   * press Apply after every run would only ever be pressed twice in a row.
+   *
+   * A failed run stops here rather than falling through to the apply. The apply
+   * endpoint takes the *latest successful* run, so a fallback would quietly
+   * write a set the analyst never asked for and had no way to date — the same
+   * kind of silent staleness the `figures_source` column exists to prevent.
+   */
+  const [aiPhase, setAiPhase] = useState<'finding' | 'applying' | null>(null);
+  const discover = async () => {
+    setFeedNote(null);
+    setAiPhase('finding');
+    await run(
+      async () => {
+        try {
+          await api(`/valuations/${valuation.id}/ai/comp_selection`, { method: 'POST' });
+          setAiPhase('applying');
+          const res = await api<CompSelectionApplied>(
+            `/valuations/${valuation.id}/ai/comp_selection/apply`,
+            { method: 'POST', body: {} },
+          );
+          const { selected, excluded, unusable } = res.applied;
+          setFeedNote(
+            `Applied the AI peer set — ${selected} ${selected === 1 ? 'company' : 'companies'} included, ` +
+              `${excluded} set aside` +
+              (unusable > 0
+                ? `, ${unusable} of those chosen by the agent but carrying no market figures to strike a ` +
+                  `multiple on.`
+                : '.'),
+          );
+        } finally {
+          setAiPhase(null);
+        }
+      },
+      'Could not run the AI comparable agent.',
+    );
+  };
+
   const refresh = async () => {
     setFeedNote(null);
     await run(async () => {
@@ -281,6 +336,13 @@ export function ComparablesTab() {
             <Button variant="ghost" onClick={refresh} disabled={busy}>
               Refresh from market
             </Button>
+            <Button variant="ghost" onClick={discover} disabled={busy}>
+              {aiPhase === 'finding'
+                ? 'Finding peers…'
+                : aiPhase === 'applying'
+                  ? 'Applying…'
+                  : 'Find peers with AI'}
+            </Button>
             <Button onClick={screen} disabled={busy}>
               Re-screen
             </Button>
@@ -292,6 +354,13 @@ export function ComparablesTab() {
         <div className="mt-4">
           <ErrorNote>{error}</ErrorNote>
         </div>
+      )}
+
+      {aiPhase === 'finding' && (
+        <p className="mt-4 text-sm text-ink-500">
+          Screening guideline companies and verifying their tickers against market data — free-tier models can
+          take up to a minute…
+        </p>
       )}
 
       {feedNote && (
@@ -376,8 +445,9 @@ export function ComparablesTab() {
       {data.comparables.length === 0 ? (
         <div className="mt-6">
           <EmptyState title="No comparables recorded">
-            Run a screen to pull the guideline set from the reference universe, or add a peer by hand. Until
-            then the market approach uses the summarised multiples from the AI comp-selection run.
+            Run a screen to pull the guideline set from the reference universe, let the AI agent find peers, or
+            add one by hand. Until then the market approach uses the summarised multiples from the AI
+            comp-selection run.
           </EmptyState>
         </div>
       ) : (

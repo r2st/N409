@@ -610,4 +610,121 @@ describe('ComparablesTab', () => {
     await userEvent.type(screen.getByLabelText('Company name'), 'Delta Corp');
     expect(screen.queryByText('Company name is required.')).not.toBeInTheDocument();
   });
+
+  /**
+   * R33 — the `comp_selection` agent and its apply endpoint both shipped API-only,
+   * so the agent's set could only reach the peer set through a hand-written POST.
+   * These cover the button that closed that.
+   */
+  describe('AI peer discovery', () => {
+    /** Run then apply, in that order: applying without running would take
+     *  whatever earlier run happened to be the latest successful one. */
+    it('runs the agent and then applies its set', async () => {
+      const posts: string[] = [];
+      mockApi({}, (path) => {
+        posts.push(path);
+        return path.includes('/apply')
+          ? jsonResponse({ applied: { selected: 6, excluded: 3, unusable: 0 }, written: 9 })
+          : jsonResponse({});
+      });
+      renderTab();
+      await screen.findByText('Alpha Analytics');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Find peers with AI' }));
+      await waitFor(() => expect(posts).toHaveLength(2));
+      expect(posts[0]).toMatch(/\/ai\/comp_selection$/);
+      expect(posts[1]).toMatch(/\/ai\/comp_selection\/apply$/);
+    });
+
+    it('reports what landed and what was set aside', async () => {
+      mockApi({}, (path) =>
+        path.includes('/apply')
+          ? jsonResponse({ applied: { selected: 6, excluded: 3, unusable: 0 }, written: 9 })
+          : jsonResponse({}),
+      );
+      renderTab();
+      await screen.findByText('Alpha Analytics');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Find peers with AI' }));
+      expect(
+        await screen.findByText('Applied the AI peer set — 6 companies included, 3 set aside.'),
+      ).toBeInTheDocument();
+    });
+
+    /**
+     * The unpriced count is called out separately because a comp the agent
+     * *chose* and the market data could not price is set aside for a different
+     * reason from one the agent rejected — and only the second is a judgement.
+     */
+    it('calls out the comps it chose but could not price', async () => {
+      mockApi({}, (path) =>
+        path.includes('/apply')
+          ? jsonResponse({ applied: { selected: 1, excluded: 4, unusable: 2 }, written: 5 })
+          : jsonResponse({}),
+      );
+      renderTab();
+      await screen.findByText('Alpha Analytics');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Find peers with AI' }));
+      const note = await screen.findByText(/Applied the AI peer set/);
+      // Singular, because one company landed.
+      expect(note).toHaveTextContent('1 company included, 4 set aside');
+      expect(note).toHaveTextContent('2 of those chosen by the agent but carrying no market figures');
+    });
+
+    /**
+     * A failed run must not fall through to the apply: that endpoint takes the
+     * latest *successful* run, so it would silently write a set from some
+     * earlier day that the analyst never asked for.
+     */
+    it('does not apply when the agent run fails', async () => {
+      const posts: string[] = [];
+      mockApi({}, (path) => {
+        posts.push(path);
+        return problem('The "comp_selection" agent is disabled');
+      });
+      renderTab();
+      await screen.findByText('Alpha Analytics');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Find peers with AI' }));
+      expect(await screen.findByText('The "comp_selection" agent is disabled')).toBeInTheDocument();
+      expect(posts).toHaveLength(1);
+      expect(posts[0]).toMatch(/\/ai\/comp_selection$/);
+    });
+
+    /** The 422 the apply raises when the run named nothing storable. */
+    it('surfaces an apply that had nothing to write', async () => {
+      mockApi({}, (path) =>
+        path.includes('/apply')
+          ? problem('That comparable-selection run named no company with a ticker — re-run the agent, or add comps by hand')
+          : jsonResponse({}),
+      );
+      renderTab();
+      await screen.findByText('Alpha Analytics');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Find peers with AI' }));
+      expect(await screen.findByText(/named no company with a ticker/)).toBeInTheDocument();
+    });
+
+    it('falls back to a plain message when the agent fails without a problem body', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        if ((init?.method ?? 'GET') !== 'GET') throw new TypeError('network down');
+        if (String(url).includes('/comparables')) return jsonResponse(SET);
+        throw new Error(`unexpected fetch ${String(url)}`);
+      });
+      renderTab();
+      await screen.findByText('Alpha Analytics');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Find peers with AI' }));
+      expect(await screen.findByText('Could not run the AI comparable agent.')).toBeInTheDocument();
+    });
+
+    /** Same ops-only gate the endpoints enforce — `can_edit` is `isOps`. */
+    it('is hidden from a reader who cannot edit', async () => {
+      mockApi({ can_edit: false });
+      renderTab();
+      await screen.findByText('Alpha Analytics');
+      expect(screen.queryByRole('button', { name: 'Find peers with AI' })).not.toBeInTheDocument();
+    });
+  });
 });
