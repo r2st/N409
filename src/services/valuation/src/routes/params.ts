@@ -350,6 +350,48 @@ export function validateWaccBuildUp(
   return { ok: true };
 }
 
+/**
+ * Every invariant a patched params row has to satisfy, checked against the row
+ * the patch will actually land on.
+ *
+ * The four above were each called once, in this order, on the row the request
+ * had read moments earlier — which is correct for one editor and wrong for
+ * two. Two analysts on one engagement each merge their patch over the row *as
+ * they read it*, so two patches that are individually legal compose into a row
+ * that is not: one moves weight from asset to opm while the other moves it
+ * from market to opm, both pass, and the row that lands sums to 1.25. The
+ * table's `weights_sum_to_one` and `valuation_params_one_dlom_form` are then
+ * the only things between that and a stored valuation, and a check constraint
+ * firing inside a repo nothing catches is a 500 — which tells the analyst who
+ * lost the race nothing at all.
+ *
+ * So the rules are named once here and run twice: by the route, on the row it
+ * read, so a patch that is wrong on its own is refused before a transaction is
+ * opened; and by `patchParams`, on the row it has locked for the write, which
+ * is the one reading nobody else can have moved. The second run is what turns
+ * the losing patch of a race into the same 422 it would have got had the two
+ * analysts saved a second apart.
+ */
+export function checkParamInvariants(
+  current: Record<string, unknown>,
+  patch: ParamsPatch,
+): { ok: true } | { ok: false; detail: string } {
+  const weights = validateWeights(current, patch);
+  if (!weights.ok) return weights;
+
+  // Qualitative DLOM needs its value; model methods compute DLOM in the engine.
+  const method = 'dlom_method' in patch ? patch.dlom_method : current.dlom_method;
+  const dlomQual = 'dlom_qualitative' in patch ? patch.dlom_qualitative : current.dlom_qualitative;
+  if (method === 'qualitative' && (dlomQual === null || dlomQual === undefined)) {
+    return { ok: false, detail: 'dlom_qualitative is required when dlom_method is "qualitative"' };
+  }
+
+  const blend = validateDlomMethods(current, patch);
+  if (!blend.ok) return blend;
+
+  return validateWaccBuildUp(current, patch);
+}
+
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'human', actorId: principal.id, source: 'api' };
 }
@@ -388,28 +430,18 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     const parsed = ParamsPatchBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid params', { errors: parsed.error.issues });
 
-    const weights = validateWeights(current, parsed.data);
-    if (!weights.ok) throw problems.unprocessable(weights.detail);
-
-    // Qualitative DLOM needs its value; model methods compute DLOM in the engine.
-    const method = 'dlom_method' in parsed.data ? parsed.data.dlom_method : current.dlom_method;
-    const dlomQual =
-      'dlom_qualitative' in parsed.data ? parsed.data.dlom_qualitative : current.dlom_qualitative;
-    if (method === 'qualitative' && (dlomQual === null || dlomQual === undefined)) {
-      throw problems.unprocessable('dlom_qualitative is required when dlom_method is "qualitative"');
-    }
-
-    const blend = validateDlomMethods(current, parsed.data);
-    if (!blend.ok) throw problems.unprocessable(blend.detail);
-
-    const wacc = validateWaccBuildUp(current, parsed.data);
-    if (!wacc.ok) throw problems.unprocessable(wacc.detail);
+    const check = checkParamInvariants(current, parsed.data);
+    if (!check.ok) throw problems.unprocessable(check.detail);
 
     const updated = await patchParams(
       deps.pool,
       current,
       parsed.data as Record<string, unknown>,
       actorFor(principal),
+      // Run again inside the write, against the locked row. Same rules, same
+      // messages — the only difference is that this reading of "the row" is
+      // one no concurrent editor can have moved.
+      { revalidate: (fresh) => checkParamInvariants(fresh, parsed.data) },
     );
     return { params: updated };
   });

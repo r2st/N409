@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { diffRecords } from '../domain/auditTrail.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
@@ -240,18 +241,70 @@ export async function applyEngineInputs(
   });
 }
 
-/** Field-level patch + params_updated audit event, atomically. */
+export interface PatchParamsOptions {
+  /**
+   * The row's invariants, re-checked against the row under the write lock.
+   *
+   * Supplied by the route (`checkParamInvariants`), which has already run the
+   * same rules on the row the request read. This second run is the one that
+   * holds under concurrency — see the comment on `patchParams` below.
+   */
+  revalidate?: (fresh: ValuationParamsRow) => { ok: true } | { ok: false; detail: string };
+}
+
+/**
+ * Field-level patch + params_updated audit event, atomically.
+ *
+ * `current` is the row the caller read, which by the time the write runs may
+ * no longer be the row on the table. Everything that depends on the row's
+ * contents therefore happens *here*, against a fresh `SELECT ... FOR UPDATE`,
+ * and `current` is used for nothing but its id:
+ *
+ *   * the diff, so a field the caller is setting is compared against what is
+ *     stored rather than against what was stored when the form was opened.
+ *     Patching `runway_months` to 12 when the caller's snapshot said 12 and
+ *     another editor has since made it 18 is a real change, and diffing
+ *     against the snapshot dropped it as a no-op — a lost update that left the
+ *     analyst looking at a saved form holding a value nobody stored;
+ *   * `revalidate`, so the invariants are checked on the merged row that will
+ *     actually be written. Two individually-legal patches can compose into a
+ *     row that violates `weights_sum_to_one` or
+ *     `valuation_params_one_dlom_form`, and a check constraint firing under a
+ *     repo nothing catches is a 500 rather than the 422 naming the rule;
+ *   * the audit event's `from` values, which now report a transition that
+ *     happened instead of one the caller assumed.
+ *
+ * The row lock is what makes the three agree: a second writer blocks on it
+ * until the first commits, then reads what the first left behind.
+ */
 export async function patchParams(
   pool: pg.Pool,
   current: ValuationParamsRow,
   fields: Record<string, unknown>,
   actor: EventActor,
+  options: PatchParamsOptions = {},
 ): Promise<ValuationParamsRow> {
-  const changes = diffRecords(current, fields, PARAM_COLUMNS);
-  const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
-  if (entries.length === 0) return current;
+  // An empty patch asks for nothing, whatever the row says. Returning here
+  // keeps a no-op PATCH from taking a row lock other editors are queued on.
+  if (Object.keys(fields).length === 0) return current;
 
   return withTransaction(pool, async (client) => {
+    const { rows: locked } = await client.query<ValuationParamsRow>(
+      'SELECT * FROM valuation_params WHERE valuation_id = $1 FOR UPDATE',
+      [current.valuation_id],
+    );
+    // The row is created with the valuation and deleted only with it, so this
+    // is reachable only by a purge landing mid-request.
+    const fresh = locked[0];
+    if (!fresh) throw problems.notFound();
+
+    const check = options.revalidate?.(fresh);
+    if (check && !check.ok) throw problems.unprocessable(check.detail);
+
+    const changes = diffRecords(fresh, fields, PARAM_COLUMNS);
+    const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
+    if (entries.length === 0) return fresh;
+
     const sets: string[] = ['updated_at = now()'];
     const params: unknown[] = [];
     for (const [key, value] of entries) {
