@@ -63,6 +63,16 @@ export function DashboardPage() {
   // Tracked apart from `analytics`, which is also null when the pivot failed —
   // keyed off the data alone, a failed fetch would leave placeholders up for good.
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  /**
+   * Tracked apart from `analytics` for the same reason `analyticsLoading` is,
+   * and one more: a failed pivot used to null the data, so the section rendered
+   * neither the skeleton (loading was over) nor the pivot (there was no data) —
+   * an "Analytics" heading over blank space, saying nothing about whether the
+   * server had failed or the range was genuinely empty.
+   */
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  /** Bumped by the retry button, to re-run the effect on an unchanged range. */
+  const [analyticsReload, setAnalyticsReload] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState({ from: '', to: '' });
 
@@ -88,13 +98,28 @@ export function DashboardPage() {
     let cancelled = false;
     setAnalyticsLoading(true);
     api<DashboardAnalytics>(`/stats/dashboard?${q}`)
-      .then((data) => !cancelled && setAnalytics(data))
-      .catch(() => !cancelled && setAnalytics(null))
+      .then((data) => {
+        if (cancelled) return;
+        setAnalytics(data);
+        setAnalyticsError(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        /*
+         * The pivot already on screen is kept, which is the same rule a
+         * *successful* range change follows: the reader is comparing against
+         * what it said a moment ago, and figures for the previous range are
+         * more use than a blank section, as long as they are labelled as not
+         * current. Discarding them was the one outcome that rule exists to
+         * prevent, and it happened silently.
+         */
+        setAnalyticsError('Analytics could not be loaded.');
+      })
       .finally(() => !cancelled && setAnalyticsLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [range, showAnalytics]);
+  }, [range, showAnalytics, analyticsReload]);
 
   const stats = valuations ? computeStats(valuations) : null;
   const recent = valuations?.slice(0, 6) ?? [];
@@ -286,6 +311,28 @@ export function DashboardPage() {
                * on screen rather than collapsing it to placeholders — the reader
                * is comparing against what it said a moment ago.
                */}
+              {/*
+                * Above the pivot rather than in place of it: when a range change
+                * fails there are still figures below, and the reader has to be
+                * told they are the previous range's before reading them.
+                */}
+              {analyticsError && !analyticsLoading && (
+                <div className="mt-4">
+                  <ErrorNote>
+                    <span className="flex flex-wrap items-center justify-between gap-3">
+                      <span>
+                        {analytics
+                          ? 'Analytics could not be refreshed — the figures below are from the previous range.'
+                          : 'Analytics could not be loaded.'}
+                      </span>
+                      <Button variant="ghost" onClick={() => setAnalyticsReload((n) => n + 1)}>
+                        Retry
+                      </Button>
+                    </span>
+                  </ErrorNote>
+                </div>
+              )}
+
               {analyticsLoading && !analytics && (
                 <LoadingBlock label="Loading analytics…">
                   <div className="mt-4 grid gap-4 lg:grid-cols-2">

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { DashboardPage } from '../src/pages/DashboardPage';
 import type { DashboardAnalytics, User, Valuation } from '../src/lib/types';
@@ -260,6 +261,72 @@ describe('DashboardPage', () => {
       .find((l) => l.getAttribute('href') === '/valuations/01N409VAL000000000000000AA');
     expect(row!.textContent).toContain('Acme');
     expect(row!.textContent).toContain('#1042');
+  });
+
+  /**
+   * The analytics pivot is the half of this page that can fail on its own — the
+   * valuation list has its own fetch and its own error line. A failed pivot set
+   * `analytics` to null and stopped, which renders neither the loading skeleton
+   * (loading is over) nor the pivot (there is no data): an "Analytics" heading
+   * over blank space, with nothing to say whether the server failed or the range
+   * is genuinely empty.
+   */
+  describe('when the analytics pivot fails', () => {
+    const mockFailingAnalytics = (failFrom = 0) => {
+      let calls = 0;
+      return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const path = String(url);
+        if (path.includes('/valuations?'))
+          return jsonResponse({ valuations, page: 1, per_page: 100, total: 1 });
+        if (path.includes('/stats/dashboard')) {
+          if (calls++ >= failFrom) return jsonResponse({ error: 'boom' }, 500);
+          return jsonResponse(analytics);
+        }
+        throw new Error(`unexpected fetch ${path}`);
+      });
+    };
+
+    it('says so rather than rendering an empty analytics section', async () => {
+      mockFailingAnalytics();
+      renderPage();
+      await screen.findByText('Recent valuations');
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toMatch(/analytics/i);
+    });
+
+    it('offers a retry that fetches the pivot again', async () => {
+      const fetchSpy = mockFailingAnalytics();
+      renderPage();
+      await screen.findByRole('alert');
+      const before = fetchSpy.mock.calls.filter((c) => String(c[0]).includes('/stats/dashboard')).length;
+      await userEvent.click(screen.getByRole('button', { name: /retry|try again/i }));
+      await waitFor(() =>
+        expect(
+          fetchSpy.mock.calls.filter((c) => String(c[0]).includes('/stats/dashboard')).length,
+        ).toBeGreaterThan(before),
+      );
+    });
+
+    /**
+     * A range change deliberately keeps the pivot already on screen rather than
+     * collapsing it to placeholders — the reader is comparing against what it
+     * said a moment ago. A *failed* range change discarded it, which is the one
+     * case that rule exists to prevent, done silently.
+     */
+    it('keeps the figures already on screen when a range change fails', async () => {
+      mockFailingAnalytics(1);
+      renderPage();
+      await screen.findByRole('table', { name: /Valuations by product and workflow stage/ });
+
+      await userEvent.type(screen.getByLabelText('Analytics from'), '2026-01-01');
+      await screen.findByRole('alert');
+
+      // The stale pivot is still readable, and labelled as not current.
+      expect(
+        screen.getByRole('table', { name: /Valuations by product and workflow stage/ }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('alert').textContent).toMatch(/could not|failed|not be refreshed/i);
+    });
   });
 
   it('shows a client none of the four bands', async () => {
