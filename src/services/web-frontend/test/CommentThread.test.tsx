@@ -277,9 +277,7 @@ describe('CommentsSection', () => {
         return jsonResponse({ comments: deletes.length ? [] : [chat] });
       });
 
-      await userEvent.click(
-        await screen.findByRole('button', { name: /^Delete message — Grace Hopper/ }),
-      );
+      await userEvent.click(await screen.findByRole('button', { name: /^Delete message — Grace Hopper/ }));
       await waitFor(() => expect(deletes).toHaveLength(1));
     });
   });
@@ -290,5 +288,158 @@ describe('CommentsSection', () => {
 
     await screen.findByText('When is the draft due?');
     expect(screen.queryByRole('button', { name: /^Delete message/ })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Rows whose author or email metadata is missing.
+ *
+ * `author_name` and `author_email` are both nullable and both genuinely null in
+ * practice: a comment survives the deletion of the account that wrote it (the
+ * thread is the record of a conversation, not of a user), and an inbound email
+ * is attributed to a sender the platform has no account for at all. Rendering
+ * `null` into an avatar or an aria-label is how a thread starts announcing
+ * "Delete message — null".
+ */
+describe('CommentsSection — an author the row cannot name', () => {
+  const anon: Comment = {
+    ...chat,
+    id: '01HZXW5N8YBFJ4G2Q0TCVMKRC1',
+    author_id: 'u9',
+    author_name: null,
+    author_email: null,
+    body: 'Left by an account that has since been deleted.',
+  };
+
+  const byEmailOnly: Comment = {
+    ...chat,
+    id: '01HZXW5N8YBFJ4G2Q0TCVMKRC2',
+    author_name: null,
+    author_email: 'grace@acme.com',
+    body: 'Named by address alone.',
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('falls back to the address, then to a placeholder, in the byline and the avatar', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({ comments: [anon, byEmailOnly] }),
+    );
+    renderSection();
+
+    expect(await screen.findByText('Left by an account that has since been deleted.')).toBeInTheDocument();
+    expect(screen.getByText('unknown')).toBeInTheDocument();
+    expect(screen.getByText('?')).toBeInTheDocument(); // the avatar's two letters
+    expect(screen.getByText('grace@acme.com')).toBeInTheDocument();
+    expect(screen.getByText('GR')).toBeInTheDocument();
+  });
+
+  it('names an unattributable message in the delete control rather than saying "null"', async () => {
+    localStorage.setItem('n409.token', '1');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      String(url).endsWith('/auth/me')
+        ? jsonResponse({ user: { id: 'op', email: 'rae@n409.ai', roles: ['admin'], verified: true } })
+        : jsonResponse({ comments: [anon] }),
+    );
+    renderSection();
+
+    const remove = await screen.findByRole('button', { name: /Delete message/ });
+    expect(remove).toHaveAccessibleName(expect.stringContaining('unknown'));
+    expect(remove).not.toHaveAccessibleName(expect.stringContaining('null'));
+  });
+
+  it('names a note by its address, then by "ops", in the pin control', async () => {
+    localStorage.setItem('n409.token', '1');
+    const note: Comment = {
+      ...chat,
+      id: '01HZXW5N8YBFJ4G2Q0TCVMKRC3',
+      kind: 'note',
+      author_id: 'op',
+      author_name: null,
+      author_email: null,
+      pinned: true,
+      body: 'Chase the audited accounts.',
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      String(url).endsWith('/auth/me')
+        ? jsonResponse({ user: { id: 'op', email: 'rae@n409.ai', roles: ['admin'], verified: true } })
+        : jsonResponse({ comments: [note] }),
+    );
+    renderSection();
+
+    // Already pinned, so the control offers the other direction.
+    const pin = await screen.findByRole('button', { name: /Unpin note/ });
+    expect(pin).toHaveAccessibleName(expect.stringContaining('ops'));
+    expect(pin).not.toHaveAccessibleName(expect.stringContaining('null'));
+  });
+});
+
+describe('CommentsSection — an inbound email with no metadata', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('labels it as email without inventing a sender or a subject', async () => {
+    const bare: Comment = {
+      ...chat,
+      id: '01HZXW5N8YBFJ4G2Q0TCVMKRD1',
+      kind: 'email',
+      author_name: null,
+      author_email: null,
+      email_meta: null,
+      body: 'Forwarded from the shared inbox.',
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => jsonResponse({ comments: [bare] }));
+    renderSection();
+
+    expect(await screen.findByText('Forwarded from the shared inbox.')).toBeInTheDocument();
+    expect(screen.getByText('email')).toBeInTheDocument();
+    expect(screen.getByText('Email')).toBeInTheDocument(); // the badge, with no subject appended
+    // An email is never the reader's own message, so it carries no delete.
+    expect(screen.queryByRole('button', { name: /Delete message/ })).not.toBeInTheDocument();
+  });
+
+  it('appends the subject to the badge when there is one', async () => {
+    const withMeta: Comment = {
+      ...chat,
+      id: '01HZXW5N8YBFJ4G2Q0TCVMKRD2',
+      kind: 'email',
+      author_name: null,
+      author_email: null,
+      email_meta: { from: 'founder@northwind.test', subject: 'Audited accounts' },
+      body: 'Attached.',
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => jsonResponse({ comments: [withMeta] }));
+    renderSection();
+
+    expect(await screen.findByText('founder@northwind.test')).toBeInTheDocument();
+    expect(screen.getByText('Email · Audited accounts')).toBeInTheDocument();
+  });
+});
+
+describe('CommentsSection — a blank message', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('sends nothing for whitespace, rather than posting an empty comment', async () => {
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
+      return jsonResponse({ comments: [chat] });
+    });
+    renderSection();
+
+    const box = await screen.findByLabelText(/message/i);
+    await userEvent.type(box, '   ');
+    await userEvent.click(screen.getByRole('button', { name: /Send/i }));
+
+    await waitFor(() => expect(calls.some((c) => c.startsWith('POST'))).toBe(false));
+    expect(box).toHaveValue('   ');
   });
 });

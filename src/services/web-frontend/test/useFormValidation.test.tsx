@@ -13,8 +13,10 @@ import {
   numberMin,
   numberRange,
   pattern,
+  optional,
   required,
   useFormValidation,
+  type Validator,
 } from '../src/lib/useFormValidation';
 
 /**
@@ -339,5 +341,71 @@ describe('the validators', () => {
       expect(rule({ v: '' })).toBe('Shares is required.');
       expect(rule({ v: 'many' })).toBe('Shares must be a number.');
     });
+  });
+});
+
+/**
+ * Every validator reads its field as `String(values[key] ?? '')`, and the `??`
+ * is not decoration: a form's state object holds `null` for a cleared select,
+ * an unfilled optional box, or a row loaded from the API before the user has
+ * touched it. `String(null)` is the four characters "null" — long enough to
+ * pass `minLength`, non-empty enough to pass `required`, and `Number('null')`
+ * is NaN, so without the coalesce a null would report "must be a number" on a
+ * box the user has not filled in yet.
+ */
+describe('the validators — a field holding null or nothing at all', () => {
+  const cases: Array<[string, Validator<Record<string, unknown>>, string]> = [
+    ['required', required('v', 'Company name'), 'Company name is required.'],
+    ['email', email('v', 'Work email'), 'Work email is required.'],
+    ['minLength', minLength('v', 10, 'Password'), 'Password is required.'],
+    ['numberRange', numberRange('v', 1, 10, 'Weight'), 'Weight is required.'],
+    ['numberMin', numberMin('v', 0, 'Equity value'), 'Equity value is required.'],
+    ['integer', integer('v', 'Shares'), 'Shares is required.'],
+  ];
+
+  it.each(cases)('%s reads null as absent', (_name, rule, message) => {
+    expect(rule({ v: null })).toBe(message);
+    expect(rule({ v: undefined })).toBe(message);
+    expect(rule({})).toBe(message);
+  });
+
+  it.each([
+    ['matches', matches('v', 'other', 'Passwords do not match.')],
+    ['pattern', pattern('v', /[a-z0-9_]+/, 'Use lowercase letters, digits and underscores.')],
+    ['optional', optional('v', required('v', 'Support email'))],
+  ] as Array<[string, Validator<Record<string, unknown>>]>)(
+    '%s leaves a null field to the required rule',
+    (_name, rule) => {
+      expect(rule({ v: null })).toBeNull();
+      expect(rule({ v: undefined })).toBeNull();
+      expect(rule({})).toBeNull();
+    },
+  );
+
+  it('matches a null confirm field against a null original without reporting one', () => {
+    // Both cleared is not a mismatch — it is two empty boxes.
+    expect(matches('v', 'other', 'Passwords do not match.')({ v: null, other: null })).toBeNull();
+    expect(matches('v', 'other', 'Passwords do not match.')({ v: 'x', other: null })).toBe(
+      'Passwords do not match.',
+    );
+  });
+
+  it('runs an optional rule once the field is filled', () => {
+    const rule = optional('v', email('v', 'Support email'));
+    expect(rule({ v: '   ' })).toBeNull();
+    expect(rule({ v: 'nonsense' })).toBe('Enter a valid email address.');
+    expect(rule({ v: 'help@corp.com' })).toBeNull();
+  });
+
+  it('reports a number above the ceiling as well as below the floor', () => {
+    const rule = numberRange('v', 1, 10, 'Weight');
+    expect(rule({ v: '11' })).toBe('Weight must be at most 10.');
+    expect(rule({ v: '0' })).toBe('Weight must be at least 1.');
+    expect(rule({ v: 'heavy' })).toBe('Weight must be a number.');
+    expect(rule({ v: '10' })).toBeNull();
+  });
+
+  it('passes every rule when all of them pass', () => {
+    expect(all(required('v', 'Key'), pattern('v', /[a-z]+/, 'lowercase only'))({ v: 'slug' })).toBeNull();
   });
 });
