@@ -170,11 +170,15 @@ export default defineConfig({
       // Ratcheted with the round-14 push, which tested the five components
       // that had no test of their own: measured 90.52 lines/statements,
       // 85.49 branches, 72.95 functions.
+      // Ratcheted again with the partner portal (which had no test at all) and
+      // the ASC 718 workspace (the package's lowest file, tested for its
+      // tooltips only): measured 93.29 lines/statements, 86.63 branches,
+      // 76.50 functions.
       thresholds: {
-        lines: 90,
-        statements: 90,
-        functions: 72,
-        branches: 85,
+        lines: 93,
+        statements: 93,
+        functions: 76,
+        branches: 86,
       },
     },
   },
