@@ -180,6 +180,7 @@ describe('against the real 409A skeleton', () => {
       market_movement_index: 'no benchmark selected',
       fully_diluted_common: '9,250,000',
       common_equity_value: '$19,900,045',
+      allocated_level: 'marketable, controlling',
     };
     const verdict = reportReadiness(drafted, figures);
     expect(verdict.placeholders.some((p) => p.key === 'conclusion')).toBe(false);

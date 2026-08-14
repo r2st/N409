@@ -665,12 +665,12 @@ const MERIDIAN: SampleEngagement = {
       P(
         'Inputs applied: expected volatility {{volatility}}, expected time to liquidity ' +
           '{{time_to_exit_years}} years, risk-free rate {{risk_free_rate}}. The allocation ' +
-          'indicates a marketable, controlling value of <strong>{{marketable_value_per_share}}</strong> ' +
+          'indicates a {{allocated_level}} value of <strong>{{marketable_value_per_share}}</strong> ' +
           'per common share before the discounts below.',
       ),
     dloc:
       P(
-        'The allocation above produces the value of a common share on a controlling basis. A ' +
+        'The allocation above produces the value of a common share on a {{allocated_level}} basis. A ' +
           'holder of Meridian common stock holds a minority interest: the preferred classes ' +
           'control the board, the charter requires a Series B majority to approve a sale, a ' +
           'recapitalisation or a new senior series, and a common holder can neither compel a ' +
@@ -1154,7 +1154,7 @@ const HELIX: SampleEngagement = {
           'resulting common value are set out in <strong>Exhibit G</strong>, and the OPM leg in ' +
           '<strong>Exhibit F</strong>. Inputs applied: expected volatility {{volatility}}, ' +
           'expected time to liquidity {{time_to_exit_years}} years, risk-free rate ' +
-          '{{risk_free_rate}}. The blended allocation indicates a marketable, controlling value of ' +
+          '{{risk_free_rate}}. The blended allocation indicates a {{allocated_level}} value of ' +
           '<strong>{{marketable_value_per_share}}</strong> per common share before the discounts ' +
           'below.',
       ),
@@ -1661,13 +1661,13 @@ const CASCADE: SampleEngagement = {
         'Inputs applied: expected volatility {{volatility}}, expected time to liquidity ' +
           '{{time_to_exit_years}} years, risk-free rate {{risk_free_rate}}. These do not enter the ' +
           'allocation itself under the current value method; they are stated because the ' +
-          'marketability discount below is struck on them. The allocation indicates a marketable, ' +
-          'controlling value of <strong>{{marketable_value_per_share}}</strong> per common share ' +
+          'marketability discount below is struck on them. The allocation indicates a ' +
+          '{{allocated_level}} value of <strong>{{marketable_value_per_share}}</strong> per common share ' +
           'before the discounts below.',
       ),
     dloc:
       P(
-        'The allocation above produces the value of a common share on a controlling basis. The ' +
+        'The allocation above produces the value of a common share on a {{allocated_level}} basis. The ' +
           'subject interest is a minority one: the founding family holds 61% directly and a ' +
           'further 14% through a trust, so a minority common holder cannot elect a director, ' +
           'compel a sale or a distribution, set officer compensation, or influence the capital ' +

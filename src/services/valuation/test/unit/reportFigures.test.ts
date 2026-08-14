@@ -240,6 +240,62 @@ describe('the 409A skeleton and the figures it names', () => {
     expect(asc718.html).toContain('62.0%');
   });
 
+  /**
+   * The level of value the body is allowed to claim.
+   *
+   * Three chapters said "marketable, controlling" flat out, and for the typical
+   * 409A that is wrong: a backsolve inverts the price a minority investor paid
+   * and guideline public multiples are struck on minority trading prices, so
+   * neither produces a controlling value. Exhibit H has printed the qualified
+   * label since the engine started measuring the mix, which left the prose
+   * contradicting the schedule it points the reader at.
+   */
+  describe('the allocated level of value', () => {
+    const withMix = (weight: number | null) =>
+      calculation({
+        results: {
+          ...RESULTS,
+          discounts: {
+            ...RESULTS.discounts,
+            ...(weight === null ? {} : { dloc_detail: { minority_basis_weight: weight } }),
+          },
+        },
+      });
+
+    const body = (weight: number | null) =>
+      fillFigures(instantiateTemplate(template, vars), reportFigures(withMix(weight), 'USD'));
+
+    it('says controlling where the weight sits on control-basis approaches', () => {
+      const html = body(0.2).sections.map((s) => s.html).join('');
+      expect(html).toContain('a marketable, controlling value of');
+      expect(html).toContain('on a marketable, controlling basis');
+      expect(html).toContain('allocated to a marketable, controlling common value of');
+    });
+
+    it('declines to, where a majority of the weight already produced a minority value', () => {
+      const html = body(0.75).sections.map((s) => s.html).join('');
+      expect(html).not.toContain('controlling value');
+      expect(html).not.toContain('controlling basis');
+      expect(html).toContain('a marketable value of');
+      expect(html).toContain('allocated to a marketable common value of');
+    });
+
+    /**
+     * The same rule `discountExhibit` applies, and deliberately so — an
+     * unmeasured mix is what a run with no weights, or with a zero DLOC that
+     * cannot double-count, produces, and it is the case the wording was
+     * written for.
+     */
+    it('reads an unmeasured mix as controlling', () => {
+      expect(reportFigures(withMix(null), 'USD').allocated_level).toBe('marketable, controlling');
+    });
+
+    it('treats an even split as controlling, as the exhibit does', () => {
+      expect(reportFigures(withMix(0.5), 'USD').allocated_level).toBe('marketable, controlling');
+      expect(reportFigures(withMix(0.5001), 'USD').allocated_level).toBe('marketable');
+    });
+  });
+
   it('drops the pointer to a schedule this calculation did not produce', () => {
     // The asset approach carried no weight, so no Exhibit E was built. The
     // chapter explaining the approach stays — saying an approach was considered

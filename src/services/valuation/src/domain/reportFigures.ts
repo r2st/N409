@@ -67,7 +67,11 @@ interface ResultsShape {
   common_equity_value?: unknown;
   fully_diluted_common?: unknown;
   allocation?: { common_per_share?: unknown } | null;
-  discounts?: { dloc?: unknown; dlom?: unknown } | null;
+  discounts?: {
+    dloc?: unknown;
+    dlom?: unknown;
+    dloc_detail?: { minority_basis_weight?: unknown } | null;
+  } | null;
   assumptions?: {
     volatility?: unknown;
     risk_free_rate?: unknown;
@@ -120,6 +124,30 @@ export function reportFigures(calculation: CalculationRow | null, currency: stri
   if (dloc !== null && dlom !== null) {
     put('combined_discount', formatPercent(1 - (1 - dloc) * (1 - dlom)));
   }
+
+  /*
+   * The level of value the allocation actually landed at, as the body names it.
+   *
+   * Three chapters — the allocation, the control discount and the conclusion —
+   * called it "marketable, controlling" unconditionally, and for the typical
+   * 409A that is not true: most of the weight sits on a backsolve, which
+   * inverts the price a minority investor paid, and on guideline public company
+   * multiples, which are struck on minority trading prices. The engine measures
+   * the mix (`dloc.minority_basis_share`), and Exhibit H has printed the
+   * qualified label since it did — so the deliverable stated one level of value
+   * in its prose and declined to state it in the schedule the prose points at,
+   * three pages apart, on the sentence that says what was concluded.
+   *
+   * Resolved by exactly the rule `discountExhibit` applies, and for that
+   * reason: the two must not be able to disagree. An unmeasured mix — no
+   * weights, or a zero DLOC, which cannot double-count — reads as controlling,
+   * which is the case the wording was written for.
+   */
+  const minorityWeight = num(results.discounts?.dloc_detail?.minority_basis_weight);
+  put(
+    'allocated_level',
+    minorityWeight === null || minorityWeight <= 0.5 ? 'marketable, controlling' : 'marketable',
+  );
 
   const volatility = num(results.assumptions?.volatility);
   put('volatility', volatility !== null ? formatPercent(volatility) : null);

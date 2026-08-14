@@ -477,9 +477,18 @@ export const CLASS_VOLATILITY_SCHEDULE = 'H-1-CLASS-VOLATILITY';
  * waterfall and therefore no class volatilities, printed an H-1 the body twice
  * said contained them. They are conditional on `CLASS_VOLATILITY_SCHEDULE`
  * instead, which the exhibit declares only when that half of it prints.
+ *
+ * v61 stops three chapters — the allocation, the control discount and the
+ * conclusion — asserting that the allocated value is a *controlling* one. For
+ * the typical 409A it is not: most of the weight sits on a backsolve, which
+ * inverts the price a minority investor paid, and on guideline public company
+ * multiples, which are struck on minority trading prices. The engine measures
+ * the mix and Exhibit H has printed the qualified label since it did, so the
+ * body was contradicting the schedule it sends the reader to.
+ * `{{allocated_level}}` resolves against that same measurement.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v60',
+  version: '409a.v61',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -694,7 +703,7 @@ const TEMPLATE_409A: ReportTemplate = {
           'Under the breakpoint method the payoff of each class is piecewise linear in exit equity value, so its expected value is the sum of Black-Scholes call spreads between consecutive breakpoints. The breakpoints, the value of each tranche and the resulting value of each class are set out in <strong>Exhibit F</strong>. State the basis for the expected time to a liquidity event; the expected volatility is dealt with in the section that follows.',
         ) +
         P(
-          'Inputs applied: expected volatility {{volatility}}, expected time to liquidity {{time_to_exit_years}} years, risk-free rate {{risk_free_rate}}. The allocation indicates a marketable, controlling value of <strong>{{marketable_value_per_share}}</strong> per common share before the discounts below.',
+          'Inputs applied: expected volatility {{volatility}}, expected time to liquidity {{time_to_exit_years}} years, risk-free rate {{risk_free_rate}}. The allocation indicates a {{allocated_level}} value of <strong>{{marketable_value_per_share}}</strong> per common share before the discounts below.',
         ),
     },
     {
@@ -739,7 +748,7 @@ const TEMPLATE_409A: ReportTemplate = {
       heading: 'Discount for Lack of Control',
       html:
         P(
-          'The allocation above produces the value of a common share on a controlling basis. A holder of common stock in {{company_name}} holds a minority interest: it cannot compel a liquidity event, set the timing or terms of an exit, direct the business, or access the company’s cash flows. A discount for lack of control is therefore applied to reflect the difference between a controlling and a minority interest in the same equity.',
+          'The allocation above produces the value of a common share on a {{allocated_level}} basis. A holder of common stock in {{company_name}} holds a minority interest: it cannot compel a liquidity event, set the timing or terms of an exit, direct the business, or access the company’s cash flows. A discount for lack of control is therefore applied to reflect the difference between a controlling and a minority interest in the same equity. Where the approaches carrying the weight already produce a minority value, <strong>Exhibit H</strong> says so and states what portion of the conclusion they carried.',
         ) +
         P(
           'State the basis for the concluded discount — control premium studies, the specific rights held by the preferred classes, or the analyst’s qualitative assessment. The concluded discount is <strong>{{dloc}}</strong>, applied as set out in <strong>Exhibit H</strong>.',
@@ -781,7 +790,7 @@ const TEMPLATE_409A: ReportTemplate = {
           'Based on the analyses described herein, it is our opinion that the fair market value of one share of common stock of <strong>{{company_name}}</strong> as of {{date}} is <strong>{{fmv_per_share}}</strong> per share.',
         ) +
         P(
-          'The conclusion is stated on a non-marketable, minority-interest basis. It derives from a concluded total equity value of {{equity_value}}, allocated to a marketable, controlling common value of {{marketable_value_per_share}} per share, less a discount for lack of control of {{dloc}} and a discount for lack of marketability of {{dlom}} — a combined discount of {{combined_discount}}. The full derivation is set out in <strong>Exhibit H</strong>.',
+          'The conclusion is stated on a non-marketable, minority-interest basis. It derives from a concluded total equity value of {{equity_value}}, allocated to a {{allocated_level}} common value of {{marketable_value_per_share}} per share, less a discount for lack of control of {{dloc}} and a discount for lack of marketability of {{dlom}} — a combined discount of {{combined_discount}}. The full derivation is set out in <strong>Exhibit H</strong>.',
         ) +
         P(
           'This conclusion is valid as of the valuation date stated and is subject to the assumptions and limiting conditions set out below.',

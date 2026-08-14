@@ -844,7 +844,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       await opsGet(`/api/v1/valuations/${v.id}/report`);
       const res = await draft(v.id, ops.token);
       expect(res.statusCode).toBe(200);
-      expect(res.json().template_version).toBe('409a.v60');
+      expect(res.json().template_version).toBe('409a.v61');
       const keys = (res.json().version.content.sections as Array<{ key: string }>).map((s) => s.key);
       expect(keys).toContain('purpose_and_scope');
     });
@@ -867,7 +867,7 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
       const v = await seed('Redraft Three, Inc.', true);
       await opsGet(`/api/v1/valuations/${v.id}/report`);
       const res = await draft(v.id, ops.token);
-      expect(res.json().report.template_version).toBe('409a.v60');
+      expect(res.json().report.template_version).toBe('409a.v61');
     });
 
     it('is refused to a client', async () => {

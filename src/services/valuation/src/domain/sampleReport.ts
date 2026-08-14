@@ -157,7 +157,7 @@ export interface SampleReportSection {
 
 export interface SampleReportOutline {
   kind: ValuationKind;
-  /** The template version the outline was read from, e.g. `409a.v60`. */
+  /** The template version the outline was read from, e.g. `409a.v61`. */
   version: string;
   name: string;
   sections: SampleReportSection[];
