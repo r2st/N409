@@ -102,3 +102,39 @@ def test_wacc_endpoint():
 
     bad = client.post("/engine/v1/wacc", json={"inputs": {"unlevered_beta_input": 1.0, "bogus_key": 1}})
     assert bad.status_code == 422
+
+
+def test_the_risk_free_rate_records_where_it_came_from():
+    """Appendix I of the report states the rate's basis — "Treasury yield at
+    the valuation date, matched to the forecast horizon" — and had no way to
+    know an override had replaced it, so it described a derivation that did not
+    happen for exactly the runs where an analyst substituted their judgement.
+    The size premium already marks its own override; this was the one component
+    of the build-up whose provenance was not on the result at all."""
+    typed = compute_wacc(unlevered_beta_input=1.0, risk_free_rate_override=0.04)
+    assert typed["capm"]["risk_free_rate_source"] == "override"
+    assert typed["capm"]["risk_free_rate"] == pytest.approx(0.04)
+
+    curve = compute_wacc(
+        unlevered_beta_input=1.0,
+        forecast_horizon_years=5.0,
+        treasury_curve={"5": 0.041},
+    )
+    assert curve["capm"]["risk_free_rate_source"] == "curve"
+    assert curve["capm"]["risk_free_rate"] == pytest.approx(0.041)
+
+
+def test_a_typed_beta_records_no_guideline_set():
+    """The report decides what the unlevered-beta row may claim from this: an
+    empty `comparables` means no median was taken over anything."""
+    typed = compute_wacc(unlevered_beta_input=1.0, risk_free_rate_override=0.04)
+    assert typed["comparables"] == []
+
+    screened = compute_wacc(
+        comparable_betas=[
+            {"ticker": "ABCD", "beta": 1.4, "debt_to_equity": 0.2},
+            {"ticker": "EFGH", "beta": 1.3, "debt_to_equity": 0.1},
+        ],
+        risk_free_rate_override=0.04,
+    )
+    assert [c["ticker"] for c in screened["comparables"]] == ["ABCD", "EFGH"]

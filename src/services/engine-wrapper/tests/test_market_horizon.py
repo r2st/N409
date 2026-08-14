@@ -25,6 +25,16 @@ class TestMarketMultiples:
         out = market_multiples(1_000_000, [8.0], horizon="ltm")
         assert out["multiple_label"] == "EV/LTM"
 
+    def test_ebitda_is_spelled_as_an_acronym(self):
+        """`str.title()` produced "EV/LTM Ebitda", which now reaches a
+        client-facing exhibit rather than only a JSON field."""
+        out = market_multiples(1_000_000, [8.0], horizon="ltm", basis="ebitda")
+        assert out["multiple_label"] == "EV/LTM EBITDA"
+
+    def test_an_unmapped_basis_still_gets_a_readable_label(self):
+        out = market_multiples(1_000_000, [8.0], horizon="ntm", basis="gross profit")
+        assert out["multiple_label"] == "EV/NTM Gross Profit"
+
     def test_defaults_to_ltm(self):
         assert market_multiples(1_000_000, [8.0])["horizon"] == "ltm"
 

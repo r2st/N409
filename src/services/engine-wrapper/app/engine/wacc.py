@@ -290,10 +290,20 @@ def compute_wacc(
     relevered = relever_beta(unlevered, target_de, tax_rate)
 
     # ── Risk-free ─────────────────────────────────────────────────────────────
+    # Recorded, not just applied. Appendix I of the report states the rate's
+    # basis — "Treasury yield at the valuation date, matched to the forecast
+    # horizon" — and had no way to know that an override had replaced it, so it
+    # described a derivation that did not happen for exactly the runs where an
+    # analyst had substituted their own judgement. The size premium already
+    # marks its own override this way (`size_tier`), and the beta is decidable
+    # from an empty `comparables`; the risk-free rate was the one component of
+    # the build-up whose provenance was not on the result at all.
     if risk_free_rate_override is not None:
         rf = _num(risk_free_rate_override, "risk_free_rate_override", nonneg=True)
+        rf_source = "override"
     else:
         rf = risk_free_rate(forecast_horizon_years, treasury_curve)
+        rf_source = "curve"
 
     # ── Size premium ──────────────────────────────────────────────────────────
     if size_premium_override is not None:
@@ -344,6 +354,7 @@ def compute_wacc(
         "after_tax_cost_of_debt": round(after_tax_kd, 6),
         "capm": {
             "risk_free_rate": round(rf, 6),
+            "risk_free_rate_source": rf_source,
             "beta_unlevered": round(unlevered, 4),
             "beta_relevered": round(relevered, 4),
             "equity_risk_premium": round(erp, 6),

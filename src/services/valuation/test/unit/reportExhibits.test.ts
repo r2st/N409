@@ -1094,8 +1094,84 @@ describe('market approach exhibit', () => {
     expect(seen).toContain('$28,000,000');
   });
 
-  it('is absent when the market approach carried no weight', () => {
-    expect(marketExhibit(INPUTS, { ...RESULTS, approaches: {} }, CONTEXT)).toBeNull();
+  /*
+   * The engine records the horizon and the metric basis on every market
+   * approach, and `_market_metric` gives the reason: a valuation configured for
+   * forward multiples but struck on trailing revenue applies the same 8.0× to a
+   * smaller number and understates a growing company by its growth rate. This
+   * exhibit is where a reviewer checks that pairing, and it printed neither
+   * half — a bare "Selected multiple 6.50x" against a "Company metric" with no
+   * name.
+   */
+  describe('the basis the multiple was struck on', () => {
+    const withMarket = (patch: Record<string, unknown>) => ({
+      ...RESULTS,
+      approaches: {
+        ...(RESULTS.approaches as Record<string, unknown>),
+        market: { ...((RESULTS.approaches as Record<string, any>).market as object), ...patch },
+      },
+    });
+
+    const forward = withMarket({ horizon: 'ntm', basis: 'revenue', multiple_label: 'EV/NTM Revenue' });
+
+    it('names the multiple in the column head, the footer and the bridge', () => {
+      const seen = plain(marketExhibit(INPUTS, forward, CONTEXT)!.html);
+      expect(seen).toContain('Selected EV/NTM Revenue (median) 6.50x');
+      expect(seen).toContain('EV/NTM Revenue');
+      expect(seen).not.toContain('Selected multiple (median)');
+    });
+
+    it('states which twelve months both sides were struck over', () => {
+      const seen = plain(marketExhibit(INPUTS, forward, CONTEXT)!.html);
+      expect(seen).toContain('both struck over the next twelve months, as forecast');
+      expect(seen).toContain('Revenue over the next twelve months, as forecast');
+    });
+
+    it('distinguishes a trailing multiple from a forward one', () => {
+      const trailing = withMarket({ horizon: 'ltm', basis: 'ebitda', multiple_label: 'EV/LTM EBITDA' });
+      const seen = plain(marketExhibit(INPUTS, trailing, CONTEXT)!.html);
+      expect(seen).toContain('EV/LTM EBITDA');
+      expect(seen).toContain('both struck over the last twelve months, as reported');
+      expect(seen).toContain('EBITDA over the last twelve months, as reported');
+      expect(seen).not.toContain('next twelve months');
+    });
+
+    it('builds the label itself for a result stored before the engine recorded one', () => {
+      const seen = plain(
+        marketExhibit(INPUTS, withMarket({ horizon: 'ntm', basis: 'ebitda' }), CONTEXT)!.html,
+      );
+      expect(seen).toContain('EV/NTM EBITDA');
+    });
+
+    it('names the horizon even where the metric basis was never set', () => {
+      // `market_method` is optional — the analyst can type the metric straight
+      // in — and the horizon is the half that decides the pairing.
+      const seen = plain(marketExhibit(INPUTS, withMarket({ horizon: 'ltm' }), CONTEXT)!.html);
+      expect(seen).toContain('EV/LTM');
+      expect(seen).toContain('both struck over the last twelve months, as reported');
+    });
+
+    it('says nothing it does not know on a result carrying no horizon', () => {
+      // The pre-horizon fixture: the exhibit degrades to what it always printed
+      // rather than asserting a basis the run never recorded.
+      const seen = plain(marketExhibit(INPUTS, RESULTS, CONTEXT)!.html);
+      expect(seen).toContain('Selected multiple (median) 6.50x');
+      expect(seen).toContain('As selected for the analysis');
+      expect(seen).not.toContain('twelve months');
+    });
+
+    it('ignores a horizon it does not recognise rather than printing it raw', () => {
+      const seen = plain(marketExhibit(INPUTS, withMarket({ horizon: 'quarterly' }), CONTEXT)!.html);
+      expect(seen).not.toContain('twelve months');
+      expect(seen).not.toContain('QUARTERLY');
+      expect(seen).toContain('Selected multiple (median)');
+      expect(seen).toContain('As selected for the analysis');
+    });
+
+    it('emits only markup the report renderer understands', () => {
+      const html = marketExhibit(INPUTS, forward, CONTEXT)!.html;
+      expect(sanitizeHtml(html)).toBe(html);
+    });
   });
 });
 
@@ -2917,6 +2993,73 @@ describe('Appendix I — the WACC build-up', () => {
     // Exactly one of the two may call its figure the WACC.
     expect(appendix).toContain('weighted average cost of capital');
     expect(exhibitC.toLowerCase()).not.toContain('weighted average cost of capital');
+  });
+
+  /*
+   * `compute_wacc` takes an override for the risk-free rate and for the size
+   * premium, and takes the beta either from a guideline set or from a figure
+   * the analyst typed. Every Basis cell used to state one derivation whatever
+   * the run did — the same failure Exhibit C's discount-rate line had, in the
+   * appendix whose whole purpose is to let a reviewer retrace the build-up.
+   */
+  describe('the basis of a component the analyst supplied', () => {
+    it('does not claim a guideline median for a beta that was typed in', () => {
+      // No guideline set means no median was taken, and the guideline table is
+      // already absent — so the claim pointed at a table that is not there.
+      const out = plain(html({ comparables: [] }));
+      expect(out).not.toContain('Median of the guideline set');
+      expect(out).toContain('records no guideline set to unlever');
+      expect(out).toContain('1.2400'); // the beta is still stated
+    });
+
+    it('still claims the median when there is a guideline set to have taken it over', () => {
+      const out = plain(html());
+      expect(out).toContain('Median of the guideline set below');
+      expect(out).toContain('ABCD');
+    });
+
+    it('does not call an overridden risk-free rate a curve-matched Treasury yield', () => {
+      const out = plain(html({ capm: { ...AUTO_WACC.capm, risk_free_rate_source: 'override' } }));
+      expect(out).not.toContain('matched to the forecast horizon');
+      expect(out).toContain('as supplied by the analyst, in place of a curve-matched yield');
+    });
+
+    it('states the curve basis when the rate came off the curve', () => {
+      const out = plain(html({ capm: { ...AUTO_WACC.capm, risk_free_rate_source: 'curve' } }));
+      expect(out).toContain('matched to the forecast horizon');
+    });
+
+    it('keeps the curve wording for a result stored before the source was recorded', () => {
+      expect(plain(html())).toContain('matched to the forecast horizon');
+    });
+
+    it('does not print an engine enum where a size tier belongs', () => {
+      // "Size tier: override" is a slug in a client deliverable, and it was the
+      // only line that could have told a reader what the premium beside it is.
+      const out = plain(html({ capm: { ...AUTO_WACC.capm, size_tier: 'override' } }));
+      expect(out).not.toContain('Size tier: override');
+      expect(out).toContain('Set by the analyst rather than read from a size tier');
+    });
+
+    it('says a nil size premium was not applied rather than measured', () => {
+      const out = plain(html({ capm: { ...AUTO_WACC.capm, size_premium: 0, size_tier: 'n/a' } }));
+      expect(out).not.toContain('n/a');
+      expect(out).toContain('no market capitalisation was supplied');
+    });
+
+    it('explains a subject above the largest tier', () => {
+      const out = plain(html({ capm: { ...AUTO_WACC.capm, size_premium: 0, size_tier: 'large' } }));
+      expect(out).toContain('Above the largest premium tier');
+    });
+
+    it('names a real tier as the tier it is', () => {
+      expect(plain(html())).toContain('Market capitalisation tier Decile 10b');
+    });
+
+    it('emits only markup the report renderer understands', () => {
+      const out = html({ comparables: [], capm: { ...AUTO_WACC.capm, size_tier: 'override' } });
+      expect(sanitizeHtml(out)).toBe(out);
+    });
   });
 
   it('renders nothing when the rate was typed rather than built', () => {

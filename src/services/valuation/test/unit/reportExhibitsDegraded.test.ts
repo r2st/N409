@@ -158,7 +158,11 @@ describe('Exhibit C — income approach without an income input block', () => {
             equity_value: 20_000_000,
             terminal_method: 'exit_multiple',
             pv_terminal: 12_000_000,
-            terminal_detail: { exit_multiple: 8, terminal_metric: 2_500_000, terminal_metric_basis: 'ebitda' },
+            terminal_detail: {
+              exit_multiple: 8,
+              terminal_metric: 2_500_000,
+              terminal_metric_basis: 'ebitda',
+            },
           },
         },
       },
@@ -191,7 +195,11 @@ describe('Exhibit C — income approach without an income input block', () => {
   });
 
   it('drops the schedule when a flow stream exists but no discount rate does', () => {
-    const s = incomeExhibit({ income: { free_cash_flows: [1_000, 2_000] } }, { approaches: { income: {} } }, CTX);
+    const s = incomeExhibit(
+      { income: { free_cash_flows: [1_000, 2_000] } },
+      { approaches: { income: {} } },
+      CTX,
+    );
     expect(s!.html).toContain('Forecast year');
     // Factor and present value both degrade rather than printing a factor of 1.
     expect(s!.html.match(/—/g)?.length).toBeGreaterThanOrEqual(4);
@@ -202,7 +210,9 @@ describe('Exhibit D — market approach with no observed set', () => {
   it('drops the guideline table but keeps the bridge', () => {
     const s = marketExhibit(
       {},
-      { approaches: { market: { metric: 4_000_000, enterprise_value: 26_000_000, equity_value: 28_000_000 } } },
+      {
+        approaches: { market: { metric: 4_000_000, enterprise_value: 26_000_000, equity_value: 28_000_000 } },
+      },
       CTX,
     );
     expect(s!.html).not.toContain('Guideline observation');
@@ -255,7 +265,9 @@ describe('Exhibit D-1 — guideline set on rows the database did not shape', () 
 
   it('describes an analyst-entered set as entered from the workpapers', () => {
     const s = peerSetExhibit(
-      [{ name: 'Alpha', included: true, multiples: { ev_revenue_ltm: 3 }, figures_source: 'analyst' }] as never,
+      [
+        { name: 'Alpha', included: true, multiples: { ev_revenue_ltm: 3 }, figures_source: 'analyst' },
+      ] as never,
       withMarket,
     );
     expect(s!.html).toContain('entered by the analyst');
@@ -552,7 +564,10 @@ describe('Exhibit H-1 — DLOM derivation on partial detail', () => {
             method: 'pre_ipo',
             dlom: 0.4,
             statistic: 'mean',
-            studies: [{ study: 'Emory', median: 0.44 }, { mean: 0.38, period_start: 1985 }],
+            studies: [
+              { study: 'Emory', median: 0.44 },
+              { mean: 0.38, period_start: 1985 },
+            ],
             predates_modern_ipo_market: true,
             low: 0.3,
             high: 0.5,
@@ -610,7 +625,7 @@ describe('Appendix I — WACC build-up on a partial record', () => {
       { auto: { wacc: { capm: { size_tier: 'Decile 10' }, comparables: [{ beta: 1.4 }, 'x'] } } },
       CTX,
     );
-    expect(s!.html).toContain('Size tier: Decile 10');
+    expect(s!.html).toContain('Market capitalisation tier Decile 10');
     expect(s!.html).toContain('1.400');
     // The comparable has no ticker and no name.
     expect(s!.html).toContain('—');
@@ -676,7 +691,11 @@ describe('Appendix II — financial statements from a partial workbook', () => {
 
   it('drops the appendix when every row is empty across the reported periods', () => {
     const s = financialsExhibit(
-      [sheet({ rows: [{ label: 'Inventory', format: 'currency', cells: [{ column_key: 'FY2025', value: null }] }] })] as never,
+      [
+        sheet({
+          rows: [{ label: 'Inventory', format: 'currency', cells: [{ column_key: 'FY2025', value: null }] }],
+        }),
+      ] as never,
       CTX,
     );
     expect(s).toBeNull();
@@ -757,10 +776,7 @@ describe('Exhibit C-1 — projection basis on a stored run', () => {
     }) as ProjectionRow;
 
   it('states a by-year growth assumption as a range and the period in the singular', () => {
-    const sections = buildExhibits(
-      calc({ inputs: { inputs: {} } }),
-      { ...CTX, projection: projection() },
-    );
+    const sections = buildExhibits(calc({ inputs: { inputs: {} } }), { ...CTX, projection: projection() });
     const c1 = sections.find((s) => s.heading.startsWith('Exhibit C-1'));
     expect(c1!.html).toContain('30.0% to 40.0%, by year');
     expect(c1!.html).toContain('1 year');
@@ -768,19 +784,19 @@ describe('Exhibit C-1 — projection basis on a stored run', () => {
   });
 
   it('says the forecast was never adopted when the calculation discounts something else', () => {
-    const sections = buildExhibits(
-      calc({ inputs: { inputs: { income: { free_cash_flows: [999] } } } }),
-      { ...CTX, projection: projection() },
-    );
+    const sections = buildExhibits(calc({ inputs: { inputs: { income: { free_cash_flows: [999] } } } }), {
+      ...CTX,
+      projection: projection(),
+    });
     const c1 = sections.find((s) => s.heading.startsWith('Exhibit C-1'));
     expect(c1!.html).toContain('not been adopted');
   });
 
   it('says the model was amended when an adopted forecast no longer matches', () => {
-    const sections = buildExhibits(
-      calc({ inputs: { inputs: { income: { free_cash_flows: [999] } } } }),
-      { ...CTX, projection: projection({ applied_at: new Date('2026-07-01T00:00:00Z') }) },
-    );
+    const sections = buildExhibits(calc({ inputs: { inputs: { income: { free_cash_flows: [999] } } } }), {
+      ...CTX,
+      projection: projection({ applied_at: new Date('2026-07-01T00:00:00Z') }),
+    });
     const c1 = sections.find((s) => s.heading.startsWith('Exhibit C-1'));
     expect(c1!.html).toContain('financial model was amended');
   });

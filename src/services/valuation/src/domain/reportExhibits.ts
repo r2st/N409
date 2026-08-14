@@ -1232,6 +1232,30 @@ export function projectionExhibit(
 
 // ── Exhibit D — market approach ──────────────────────────────────────────────
 
+/**
+ * Which twelve months the multiple and the metric were both struck over.
+ *
+ * The engine records this on every market approach and gives the reason in
+ * `_market_metric`: extraction pulls a forward revenue off the projections, and
+ * a valuation configured for forward multiples that was struck on trailing
+ * revenue applies the same 8.0× to a smaller number, understating a growing
+ * company by its whole growth rate with nothing on the result saying so. It
+ * fixed that by recording the horizon it picked — and Exhibit D, the one
+ * schedule a reviewer checks the pairing on, printed neither the horizon nor
+ * the metric's name. "Selected multiple 6.50×" against "Company metric
+ * $4,000,000 — as selected for the analysis" is the bare number the engine went
+ * to the trouble of labelling, restated without its label.
+ */
+const MARKET_HORIZON_WORDS: Record<string, string> = {
+  ltm: 'the last twelve months, as reported',
+  ntm: 'the next twelve months, as forecast',
+};
+
+const MARKET_BASIS_WORDS: Record<string, string> = {
+  revenue: 'Revenue',
+  ebitda: 'EBITDA',
+};
+
 export function marketExhibit(
   inputs: Record<string, unknown>,
   results: Record<string, unknown>,
@@ -1247,23 +1271,49 @@ export function marketExhibit(
   const selected = num(approach.selected_multiple);
   const metric = num(approach.metric);
 
+  // The engine's own label where it recorded one; otherwise built from the two
+  // fields it is built from, so a result stored before `multiple_label` existed
+  // still names its basis rather than falling back to the bare "Multiple" this
+  // exhibit used to print for every run.
+  const horizon = (text(approach.horizon) ?? '').toLowerCase();
+  const basis = (text(approach.basis) ?? '').toLowerCase();
+  const horizonWords = MARKET_HORIZON_WORDS[horizon] ?? null;
+  const basisWord = MARKET_BASIS_WORDS[basis] ?? null;
+  // Built only from a horizon this exhibit can also put into words: a stored
+  // value the engine would have rejected is not a label, and "EV/QUARTERLY" is
+  // worse than the unlabelled column it replaces.
+  const label =
+    text(approach.multiple_label) ??
+    (horizonWords ? `EV/${horizon.toUpperCase()}${basisWord ? ` ${basisWord}` : ''}` : null);
+  const multipleHead = label ? esc(label) : 'Multiple';
+  const metricBasis =
+    basisWord && horizonWords
+      ? `${basisWord} over ${horizonWords}`
+      : (horizonWords ?? 'As selected for the analysis');
+
   const observed =
     multiples.length > 0
       ? table({
-          head: ['Guideline observation', 'Multiple'],
+          head: ['Guideline observation', multipleHead],
           rows: multiples
             .slice()
             .sort((a, b) => a - b)
             .map((m, i) => [`Comparable ${i + 1}`, ratio(m, 2)]),
-          foot: ['Selected multiple (median)', selected === null ? '—' : ratio(selected, 2)],
+          foot: [
+            `Selected ${label ? esc(label) : 'multiple'} (median)`,
+            selected === null ? '—' : ratio(selected, 2),
+          ],
         })
       : null;
 
   const bridge: string[][] = [];
-  if (metric !== null)
-    bridge.push(['Company metric', formatCurrency(metric, currency, 0), 'As selected for the analysis']);
+  if (metric !== null) bridge.push(['Company metric', formatCurrency(metric, currency, 0), metricBasis]);
   if (selected !== null)
-    bridge.push(['Selected multiple', ratio(selected, 2), 'Median of the guideline set']);
+    bridge.push([
+      `Selected ${label ? esc(label) : 'multiple'}`,
+      ratio(selected, 2),
+      'Median of the guideline set',
+    ]);
   const ev = num(approach.enterprise_value);
   if (ev !== null)
     bridge.push(['Indicated enterprise value', formatCurrency(ev, currency, 0), 'Metric × multiple']);
@@ -1276,7 +1326,13 @@ export function marketExhibit(
     P(
       'The market approach applies valuation multiples observed for comparable companies and ' +
         'transactions to the corresponding metric of the subject company. The median of the guideline ' +
-        'set is selected, which limits the influence of any single outlying observation.',
+        'set is selected, which limits the influence of any single outlying observation.' +
+        (horizonWords
+          ? ` The multiples and the subject metric are both struck over ${horizonWords}` +
+            `${label ? `, stated below as <strong>${esc(label)}</strong>` : ''} — a multiple taken over ` +
+            'one twelve months and applied to the other would misstate the indication by the growth ' +
+            'between them.'
+          : ''),
     ),
     observed,
     table({
@@ -3315,30 +3371,70 @@ export function waccExhibit(
   const pct = (v: unknown, dp = 2) => (num(v) === null ? '—' : formatPercent(num(v) as number, dp));
   const dec = (v: unknown, dp = 4) => (num(v) === null ? '—' : (num(v) as number).toFixed(dp));
 
+  /*
+   * The guideline set, read before the build-up rather than after it: whether
+   * there is one decides what the unlevered beta row may claim.
+   *
+   * A beta is the one input in the build-up that is not a published figure or a
+   * judgement — it is a calculation over a chosen set of companies, and the set
+   * is the part a reviewer argues with.
+   */
+  const comps = list(wacc.comparables)
+    .map(record)
+    .filter((c): c is Record<string, unknown> => c !== null);
+
+  /*
+   * Every row of this build-up used to state one basis whatever the run did,
+   * and three of them can be wrong in the same way Exhibit C's discount-rate
+   * line was: `compute_wacc` takes an override for the risk-free rate and for
+   * the size premium, and takes the beta either from a guideline set or from a
+   * figure the analyst typed. So a build-up that was half judgement printed
+   * "Median of the guideline set" against a beta nobody unlevered — beside an
+   * absent guideline table — and "Treasury yield at the valuation date" against
+   * a rate that was typed in. An appendix whose whole purpose is to let a
+   * reviewer retrace the derivation is the last place to assert one that did
+   * not happen.
+   */
+  const rfBasis =
+    text(capm.risk_free_rate_source) === 'override'
+      ? 'Applied as supplied by the analyst, in place of a curve-matched yield'
+      : 'Treasury yield at the valuation date, matched to the forecast horizon';
+
+  const betaBasis =
+    comps.length > 0
+      ? 'Median of the guideline set below, stripped of their capital structures'
+      : 'Applied as supplied — this run records no guideline set to unlever';
+
+  /*
+   * `size_tier` is an engine enum, and two of its values are not tiers at all:
+   * "override" for a premium the analyst set, "n/a" for a run with no market
+   * capitalisation to place (which applies no size premium). Both reached the
+   * page as "Size tier: override" — a slug in a client deliverable, and the
+   * only line that would have told a reader the 0.00% beside it means "none
+   * applied" rather than "measured and found to be nil".
+   */
+  const sizeTier = text(capm.size_tier);
+  const sizeBasis =
+    sizeTier === 'override'
+      ? 'Set by the analyst rather than read from a size tier'
+      : sizeTier === 'n/a'
+        ? 'No size premium applied — no market capitalisation was supplied to place the subject'
+        : sizeTier === 'large'
+          ? 'Above the largest premium tier, so no size premium applies'
+          : sizeTier
+            ? `Market capitalisation tier ${esc(sizeTier)}`
+            : 'Excess return of small capitalisations';
+
   const equity: string[][] = [
-    [
-      'Risk-free rate',
-      pct(capm.risk_free_rate),
-      'Treasury yield at the valuation date, matched to the forecast horizon',
-    ],
+    ['Risk-free rate', pct(capm.risk_free_rate), rfBasis],
     [
       'Equity risk premium',
       pct(capm.equity_risk_premium),
       'Expected return on equities over the risk-free rate',
     ],
-    [
-      'Unlevered beta',
-      dec(capm.beta_unlevered),
-      'Median of the guideline set, stripped of their capital structures',
-    ],
+    ['Unlevered beta', dec(capm.beta_unlevered), betaBasis],
     ['Relevered beta', dec(capm.beta_relevered), 'Re-levered to the subject’s target debt-to-equity'],
-    [
-      'Size premium',
-      pct(capm.size_premium),
-      text(capm.size_tier)
-        ? `Size tier: ${esc(text(capm.size_tier) as string)}`
-        : 'Excess return of small capitalisations',
-    ],
+    ['Size premium', pct(capm.size_premium), sizeBasis],
     [
       'Company-specific risk premium',
       pct(capm.company_specific_premium),
@@ -3358,15 +3454,7 @@ export function waccExhibit(
     ['Weight — debt', pct(weights.debt, 1), ''],
   ];
 
-  /*
-   * The guideline betas, where the relevering came from. A beta is the one
-   * input in the build-up that is not a published figure or a judgement — it is
-   * a calculation over a chosen set of companies, and the set is the part a
-   * reviewer argues with.
-   */
-  const comps = list(wacc.comparables)
-    .map(record)
-    .filter((c): c is Record<string, unknown> => c !== null);
+  /** The guideline betas themselves, where the relevering came from. */
   const compTable =
     comps.length > 0
       ? table({

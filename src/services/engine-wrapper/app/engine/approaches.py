@@ -214,6 +214,15 @@ def income_dcf(
 #: interchangeable — see `market_multiples`.
 MARKET_HORIZONS = ("ltm", "ntm")
 
+#: How each metric basis is spelled in the multiple's label. `str.title()` is
+#: right for "Revenue" and wrong for an acronym — it produced "EV/LTM Ebitda",
+#: which now reaches a client-facing exhibit rather than only a JSON field.
+_MARKET_BASIS_LABELS = {"revenue": "Revenue", "ebitda": "EBITDA"}
+
+
+def _basis_label(basis: str) -> str:
+    return _MARKET_BASIS_LABELS.get(basis.lower(), basis.title())
+
 
 def market_multiples(
     metric: float,
@@ -249,7 +258,7 @@ def market_multiples(
     selected = statistics.median(clean)
     enterprise = selected * metric
     hint = "check the metric and multiple magnitudes"
-    label = f"EV/{horizon.upper()} {basis.title()}" if basis else f"EV/{horizon.upper()}"
+    label = f"EV/{horizon.upper()} {_basis_label(basis)}" if basis else f"EV/{horizon.upper()}"
     return {
         "metric": metric,
         "multiples": clean,
