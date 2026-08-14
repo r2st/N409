@@ -5,6 +5,7 @@ import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findCompanyProfile, upsertCompanyProfile } from '../repos/companyProfiles.js';
+import { isNaicsCode, isSicCode } from '../domain/companyProfile.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -42,6 +43,12 @@ const PatchBody = z
     postal_code: Str(30),
     country: Str(120),
     industry: Str(200),
+    // Migration 0151. The same validators the agent's apply path uses — a
+    // malformed SIC ranks against no universe row in the comparable screen, so
+    // it has to be refused wherever it can be typed.
+    business_description: z.string().max(20_000).nullable(),
+    sic_code: Str(12).refine((v) => v === null || isSicCode(v), 'A SIC code is 2-4 digits'),
+    naics_code: Str(12).refine((v) => v === null || isNaicsCode(v), 'A NAICS code is 2-6 digits'),
     founded_on: DateStr,
     employee_count: z.number().int().min(0).max(10_000_000).nullable(),
     revenue_range: z.enum(REVENUE_RANGES).nullable(),

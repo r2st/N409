@@ -50,6 +50,16 @@ export const AI_PIPELINES = [
   'assumptions',
   'audit_defense',
   'roll_forward',
+  // Company profile (migrations 0151/0152) — the business description, SIC /
+  // NAICS classification and scale metrics behind the report's company section,
+  // drafted from the engagement's own documents.
+  //
+  // Deliberately not named 'company_overview': that value is the web-grounded
+  // research prompt below, and the two sit on opposite sides of the trust
+  // boundary. The research topic sends a *guideline* company's name out to a
+  // search provider and refuses the engagement's own; this agent reads the
+  // engagement's confidential documents and never leaves the redactor.
+  'company_profile',
   // Web-grounded research (migrations 0116/0117). These are prompt-registry
   // entries rather than runnable pipelines: they carry the system prompt and
   // the Sonar tier for a research topic, and routes/research.ts reads them.
@@ -92,8 +102,20 @@ export const CALCULATION_DEPENDENT_PIPELINES: ReadonlySet<AiPipeline> = new Set(
   'audit_defense',
 ]);
 
-/** Agents that read the uploaded document corpus (cap-table docs, financials). */
-export const DOCUMENT_DEPENDENT_PIPELINES: ReadonlySet<AiPipeline> = new Set(['extract', 'cap_table']);
+/**
+ * Agents that read the uploaded document corpus (cap-table docs, financials).
+ *
+ * `company_profile` belongs here for a reason particular to it: the documents
+ * are not merely helpful to that agent, they are its *only* source. Run against
+ * an empty corpus it would have nothing to describe the business from but the
+ * redacted placeholder standing in for its name — which is the ungrounded
+ * answer the whole design refuses.
+ */
+export const DOCUMENT_DEPENDENT_PIPELINES: ReadonlySet<AiPipeline> = new Set([
+  'extract',
+  'cap_table',
+  'company_profile',
+]);
 
 export const PIPELINE_EVENT_TYPES = {
   taskCreated: 'review_task_created',

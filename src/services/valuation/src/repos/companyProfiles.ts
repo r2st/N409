@@ -13,6 +13,10 @@ export interface CompanyProfileRow {
   postal_code: string | null;
   country: string | null;
   industry: string | null;
+  /** Migration 0151 — the three fields the company-profile agent fills. */
+  business_description: string | null;
+  sic_code: string | null;
+  naics_code: string | null;
   founded_on: string | null;
   employee_count: number | null;
   revenue_range: string | null;
@@ -32,6 +36,9 @@ export const PROFILE_FIELDS = [
   'postal_code',
   'country',
   'industry',
+  'business_description',
+  'sic_code',
+  'naics_code',
   'founded_on',
   'employee_count',
   'revenue_range',
@@ -45,7 +52,8 @@ export async function findCompanyProfile(
 ): Promise<CompanyProfileRow | null> {
   const { rows } = await pool.query<CompanyProfileRow>(
     `SELECT valuation_id, legal_name, website, address_line1, address_line2, city, region,
-            postal_code, country, industry, founded_on::text AS founded_on, employee_count,
+            postal_code, country, industry, business_description, sic_code, naics_code,
+            founded_on::text AS founded_on, employee_count,
             revenue_range, cap_table_summary, updated_by, created_at, updated_at
      FROM company_profiles WHERE valuation_id = $1`,
     [valuationId],
@@ -71,7 +79,8 @@ export async function upsertCompanyProfile(
        VALUES (${placeholders.join(', ')})
        ON CONFLICT (valuation_id) DO UPDATE SET ${updates.join(', ')}
        RETURNING valuation_id, legal_name, website, address_line1, address_line2, city, region,
-                 postal_code, country, industry, founded_on::text AS founded_on, employee_count,
+                 postal_code, country, industry, business_description, sic_code, naics_code,
+            founded_on::text AS founded_on, employee_count,
                  revenue_range, cap_table_summary, updated_by, created_at, updated_at`,
       values,
     );

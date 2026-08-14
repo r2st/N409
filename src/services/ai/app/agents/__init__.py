@@ -1,9 +1,12 @@
 """Analyst AI agents for the N409 409A valuation platform.
 
-Six multi-step / structured agents that go beyond the M1 extraction pipelines:
+Seven multi-step / structured agents that go beyond the M1 extraction pipelines:
 
 - cap_table        — parse charter/articles/cap-table docs into the engine's
                      share_classes schema, with citations and confidence.
+- company_profile  — draft the business description, SIC/NAICS classification
+                     and scale metrics behind the report's company section,
+                     from the engagement's own documents.
 - comp_selection   — suggest guideline public companies, verify their tickers
                      against real market data, then filter to a defensible set.
 - report_narrative — draft the prose sections of a 409A report from a finished
@@ -25,12 +28,14 @@ from __future__ import annotations
 from .assumptions import run_assumptions
 from .audit_defense import run_audit_defense
 from .cap_table import run_cap_table
+from .company_profile import run_company_profile
 from .comp_selection import run_comp_selection
 from .report_narrative import run_report_narrative
 from .roll_forward import run_roll_forward
 
 AGENT_PIPELINES = {
     "cap_table": run_cap_table,
+    "company_profile": run_company_profile,
     "comp_selection": run_comp_selection,
     "report_narrative": run_report_narrative,
     "assumptions": run_assumptions,

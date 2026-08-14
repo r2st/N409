@@ -124,7 +124,12 @@ describe.skipIf(!dbUp)('P1/P2 features API', () => {
         'audit_defense',
         'cap_table',
         'comp_selection',
+        // The web-grounded research prompt for a *guideline* company (0116/0117)
+        // and the agent that drafts the subject's own profile from its uploaded
+        // documents (0151/0152). Two rows on purpose: they sit on opposite
+        // sides of the trust boundary — see domain/pipeline.ts.
         'company_overview',
+        'company_profile',
         'comparables',
         'competitor_analysis',
         'extract',

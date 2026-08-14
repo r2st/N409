@@ -42,6 +42,13 @@ import {
   type MappedComparableSet,
 } from '../domain/aiComparables.js';
 import { presentComparable } from './comparables.js';
+import { findCompanyProfile, upsertCompanyProfile } from '../repos/companyProfiles.js';
+import {
+  AiCompanyProfileError,
+  draftFromAgentResult,
+  narrativeProfilePayload,
+  type ProfileDraft,
+} from '../domain/companyProfile.js';
 
 /**
  * How long one AI pipeline call may take, end to end.
@@ -92,6 +99,12 @@ const RunBody = z
     context: z.record(z.unknown()).optional(),
   })
   .default({ anonymize: true, auto_apply: false });
+
+/**
+ * `overwrite` is opt-in and explicit: an analyst who classified the business by
+ * hand and then ran the agent did not ask to have that reconsidered.
+ */
+const ApplyProfileBody = z.object({ overwrite: z.boolean().default(false) }).default({ overwrite: false });
 
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'ai', actorId: principal.id, source: 'ai-service' };
@@ -186,13 +199,22 @@ export async function runAiPipeline(
   // `narrativeResearchPayload`. This is where the research adapter's value is
   // actually collected: everything upstream of it is plumbing.
   let researchPayload: ReturnType<typeof narrativeResearchPayload> = null;
+  // The structured company profile (migration 0151). The `company_overview`
+  // section has always been asked for what the company does with nothing in
+  // front of the model that says it — the calculation carries share counts and
+  // discount rates, not a business description — so it was drafted from
+  // whatever the params implied. Null until somebody fills the profile, by hand
+  // or from the `company_profile` agent.
+  let profilePayload: Record<string, unknown> | null = null;
   if (pipeline === 'report_narrative') {
-    const [rows, research] = await Promise.all([
+    const [rows, research, profile] = await Promise.all([
       listNarrativePromptsForKind(deps.pool, valuation.kind),
       listMarketResearch(deps.pool, valuation.id),
+      findCompanyProfile(deps.pool, valuation.id),
     ]);
     narrativeSections = narrativeSectionsPayload(rows, valuation.kind);
     researchPayload = narrativeResearchPayload(research);
+    profilePayload = narrativeProfilePayload(profile);
   }
 
   const payload = {
@@ -208,6 +230,7 @@ export async function runAiPipeline(
     prompt: promptRow ? { system: promptRow.system_prompt, model: promptRow.model } : null,
     ...(narrativeSections ? { narrative_sections: narrativeSections } : {}),
     ...(researchPayload ? { market_research: researchPayload } : {}),
+    ...(profilePayload ? { company_profile: profilePayload } : {}),
     options: { anonymize: args.anonymize },
     ...(args.extraPayload ?? {}),
   };
@@ -455,6 +478,60 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
         statistics: summarizeSet(items),
         applied: mapped.summary,
         written: written.length,
+        source_job_id: job.id,
+      };
+    },
+  );
+
+  /**
+   * Apply the latest successful `company_profile` run to the company profile.
+   *
+   * The agent drafts the business description, the SIC / NAICS classification
+   * and the scale metrics from the engagement's own documents (migrations
+   * 0151/0152); this writes the four typed fields into `company_profiles`,
+   * where the workbook, the HMRC forms, the package view and the narrative
+   * agent's company section all read them.
+   *
+   * Blanks only, unless `overwrite` says otherwise — see `draftFromAgentResult`.
+   * The metrics and the ranked runner-up codes stay in the job result rather
+   * than being written anywhere: they are the analyst's evidence for the choice,
+   * and the profile has one field per answer.
+   */
+  app.post(
+    '/api/v1/valuations/:id/ai/company_profile/apply',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
+      const { id } = req.params as { id: string };
+      await loadValuation(id);
+
+      const body = ApplyProfileBody.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw problems.unprocessable('Invalid options', { errors: body.error.issues });
+      }
+
+      const job = await latestSucceededJob(deps.pool, id, 'company_profile');
+      if (!job) {
+        throw problems.unprocessable(
+          'No successful company-profile run to apply — run the company_profile agent first',
+        );
+      }
+
+      const existing = await findCompanyProfile(deps.pool, id);
+      let draft: ProfileDraft;
+      try {
+        draft = draftFromAgentResult(job.result, existing, { overwrite: body.data.overwrite });
+      } catch (err) {
+        if (err instanceof AiCompanyProfileError) throw problems.unprocessable(err.message);
+        throw err;
+      }
+
+      const profile = await upsertCompanyProfile(deps.pool, id, draft.fields, actorFor(principal));
+      return {
+        profile,
+        applied_fields: Object.keys(draft.fields),
+        skipped_fields: draft.skipped,
         source_job_id: job.id,
       };
     },

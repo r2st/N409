@@ -144,6 +144,53 @@ def research_block(payload: dict) -> str:
     )
 
 
+#: How much of the drafted profile rides along. The description is the bulk of
+#: it and is already capped at 8k by the agent that wrote it; this bounds a
+#: hand-edited one so the profile cannot crowd the calculation out of the
+#: context window — the figures are what the sections are graded on.
+MAX_PROFILE_CHARS = 6000
+
+
+def profile_block(payload: dict) -> str:
+    """The company's structured profile, as prompt text.
+
+    The `company_overview` section has always been asked for "what the company
+    does, its stage and traction, and the industry it competes in" with nothing
+    in front of the model that says any of it — the calculation carries share
+    counts and discount rates, not a business description. So the section was
+    drafted from whatever the params implied, which is how a company overview
+    ends up describing a generic company at that revenue.
+
+    The valuation service ships `company_profiles` (migration 0151) here when a
+    row exists. It travels through the redactor with everything else: the
+    description was itself drafted from redacted documents, and a hand-edited
+    one can easily have had the company's name typed back into it.
+    """
+    raw = payload.get("company_profile")
+    if not isinstance(raw, dict):
+        return ""
+    fields = (
+        ("business_description", "What the company does"),
+        ("industry", "Industry"),
+        ("sic_code", "SIC"),
+        ("naics_code", "NAICS"),
+        ("revenue_range", "Revenue range"),
+        ("employee_count", "Employees"),
+        ("founded_on", "Founded"),
+    )
+    lines = []
+    for key, label in fields:
+        value = c.clean_str(raw.get(key), limit=MAX_PROFILE_CHARS)
+        if value:
+            lines.append(f"{label}: {value}")
+    if not lines:
+        return ""
+    return (
+        "\n\nThe company's profile, as recorded on the engagement (use it for the "
+        "company and industry discussion; do not contradict it):\n" + "\n".join(lines)
+    )
+
+
 def _sections(doc: Any, spec: tuple[tuple[str, str, str], ...]) -> list[dict]:
     """Every requested key, in order, filled from the model or blanked."""
     raw = doc.get("sections") if isinstance(doc, dict) else None
@@ -171,7 +218,7 @@ def run_report_narrative(payload: dict) -> tuple[str, dict]:
     user = f"""Company: {c.subject(payload)} ({valuation.get("kind")} valuation, {valuation.get("currency", "USD")})
 Params: {c.params_summary(params)}
 Methodology choices: {_methodology_summary(payload)}
-Calculation results: {c.calculation_summary(payload)}{research_block(payload)}
+Calculation results: {c.calculation_summary(payload)}{profile_block(payload)}{research_block(payload)}
 
 Draft the report narrative. Return JSON:
 {{
