@@ -392,7 +392,11 @@ export function ScenariosTab() {
               {saveBusy ? 'Saving…' : 'Save scenario'}
             </Button>
           </div>
-          {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
+          {saveError && (
+            <p role="alert" className="mt-2 text-sm text-red-600">
+              {saveError}
+            </p>
+          )}
         </div>
       </section>
 

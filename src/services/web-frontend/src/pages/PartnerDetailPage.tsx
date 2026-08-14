@@ -111,7 +111,11 @@ function PinPartnerView({ partnerId, partnerName }: { partnerId: string; partner
       {state === 'already' && (
         <span className="text-sm text-ink-500">Already pinned — it is in the saved views strip.</span>
       )}
-      {error && <span className="text-sm text-red-700">{error}</span>}
+      {error && (
+        <span role="alert" className="text-sm text-red-700">
+          {error}
+        </span>
+      )}
     </div>
   );
 }

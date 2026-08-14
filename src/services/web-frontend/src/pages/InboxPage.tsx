@@ -175,7 +175,13 @@ function ReplyBox({
         }
         className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-800 focus:border-bond-500 focus:outline-none"
       />
-      {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
+      {/* Announced: a reply that failed to send is the one thing on this form
+          the user must not miss, and by the time it appears focus is on Send. */}
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-red-700">
+          {error}
+        </p>
+      )}
       <div className="mt-2 flex items-center gap-2">
         <Button type="submit" disabled={busy || body.trim() === ''}>
           {busy ? 'Sending…' : 'Send'}

@@ -222,7 +222,15 @@ export function SavedViews() {
         </>
       )}
 
-      {error && <span className="text-xs font-semibold text-red-700">{error}</span>}
+      {/* `role="alert"` because this only ever appears in answer to something
+          the user just did — saving, applying or deleting a view. Without it
+          the message is painted next to a control the user has already left,
+          and a screen reader says nothing at all. */}
+      {error && (
+        <span role="alert" className="text-xs font-semibold text-red-700">
+          {error}
+        </span>
+      )}
 
       <Modal open={saveOpen} onClose={() => setSaveOpen(false)} title="Save this view">
         <div className="space-y-4 px-5 py-4">
