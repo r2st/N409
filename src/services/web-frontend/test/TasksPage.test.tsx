@@ -176,4 +176,88 @@ describe('TasksPage', () => {
       expect(post!.body).toEqual({ decision: 'request_changes', comment: 'Fix the DLOM inputs.' });
     });
   });
+
+  /**
+   * R31 — sending a valuation back is the one decision that carries an
+   * instruction, and the box collecting it was optional. "Send back" on an
+   * empty form returned the engagement to the analyst with the state changed
+   * and nothing saying why. The API still accepts a bare `request_changes`
+   * because approving needs no note, so the requirement belongs on the form
+   * that asks the question.
+   */
+  it('will not send a valuation back with no explanation', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Review queue' }));
+    await user.click(await screen.findByRole('button', { name: 'Request changes' }));
+    await user.click(screen.getByRole('button', { name: 'Send back' }));
+
+    expect(
+      await screen.findByText('Say what needs to change — this is the note the analyst gets.'),
+    ).toBeInTheDocument();
+    expect(calls.find((c) => c.url.includes('/review/decision'))).toBeUndefined();
+  });
+
+  /** Whitespace is not an explanation. */
+  it('will not accept a blank-looking explanation', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Review queue' }));
+    await user.click(await screen.findByRole('button', { name: 'Request changes' }));
+    await user.type(screen.getByLabelText(`Changes requested for ${review.company_name}`), '   ');
+    await user.click(screen.getByRole('button', { name: 'Send back' }));
+
+    expect(
+      await screen.findByText('Say what needs to change — this is the note the analyst gets.'),
+    ).toBeInTheDocument();
+    expect(calls.find((c) => c.url.includes('/review/decision'))).toBeUndefined();
+  });
+
+  /** Approving still needs no note — the rule is on the send-back form only. */
+  it('leaves approval free of the explanation rule', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Review queue' }));
+    // Reveal the message on the send-back form first, then approve instead.
+    await user.click(await screen.findByRole('button', { name: 'Request changes' }));
+    await user.click(screen.getByRole('button', { name: 'Send back' }));
+    await screen.findByText('Say what needs to change — this is the note the analyst gets.');
+
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => {
+      const post = calls.find((c) => c.url.includes('/review/decision'));
+      expect(post).toBeTruthy();
+      expect(post!.body).toEqual({ decision: 'approve' });
+    });
+  });
+
+  /**
+   * The panel is reused for whichever valuation is open, so a message revealed
+   * on one must not greet the next with an error it has not earned.
+   */
+  it('clears the revealed message when the panel is reopened', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Review queue' }));
+    await user.click(await screen.findByRole('button', { name: 'Request changes' }));
+    await user.click(screen.getByRole('button', { name: 'Send back' }));
+    await screen.findByText('Say what needs to change — this is the note the analyst gets.');
+
+    // Close and reopen the panel.
+    await user.click(screen.getByRole('button', { name: 'Request changes' }));
+    await user.click(screen.getByRole('button', { name: 'Request changes' }));
+
+    expect(
+      screen.queryByText('Say what needs to change — this is the note the analyst gets.'),
+    ).not.toBeInTheDocument();
+  });
 });

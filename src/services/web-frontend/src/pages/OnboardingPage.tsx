@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, apiUpload, ApiError } from '../lib/api';
+import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatMoney, KIND_LABELS } from '../lib/format';
 import { DOCUMENT_KIND_LABELS, type DocumentKind } from '../lib/pipeline';
 import { clearDraft, loadDraft, saveDraft } from '../lib/onboardingDraft';
@@ -106,8 +106,21 @@ export function OnboardingPage() {
   }, [valuation, step]);
 
   // ── Step 1: create the engagement ────────────────────────────────────────
-  const createValuation = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * The same two rules the ops-side new-valuation form carries, because this is
+   * the same POST. Worth more here: the client filling this in is not an
+   * analyst who knows what the box wants, and the first screen of the funnel is
+   * the worst place to hand someone a server 422 for "USDollars".
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
+    company_name: required('company_name', 'Company legal name'),
+    currency: all(
+      required('currency', 'Currency'),
+      pattern('currency', /[A-Za-z]{3}/, 'Currency must be a three-letter ISO 4217 code, like USD.'),
+    ),
+  });
+
+  const createValuation = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -116,7 +129,7 @@ export function OnboardingPage() {
         body: {
           kind: form.kind,
           company_name: form.company_name.trim(),
-          currency: form.currency.trim().toUpperCase() || 'USD',
+          currency: form.currency.trim().toUpperCase(),
         },
       });
       setValuation(res.valuation);
@@ -130,7 +143,7 @@ export function OnboardingPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   // ── Step 2: Stripe checkout (optional — invoice fallback) ───────────────
   const checkout = async () => {
@@ -223,11 +236,13 @@ export function OnboardingPage() {
         <form
           onSubmit={createValuation}
           className="mt-6 space-y-5 rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+          noValidate
         >
-          <Field label="Company legal name">
+          <Field label="Company legal name" error={errorFor('company_name')}>
             <TextInput
               value={form.company_name}
               onChange={(e) => setForm((f) => ({ ...f, company_name: e.target.value }))}
+              onBlur={blurHandler('company_name')}
               required
               maxLength={300}
               placeholder="Acme Robotics, Inc."
@@ -246,16 +261,17 @@ export function OnboardingPage() {
                 ))}
               </Select>
             </Field>
-            <Field label="Currency">
+            <Field label="Currency" error={errorFor('currency')}>
               <TextInput
                 value={form.currency}
                 onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
+                onBlur={blurHandler('currency')}
                 maxLength={3}
                 required
               />
             </Field>
           </div>
-          <Button type="submit" disabled={busy || !form.company_name.trim()}>
+          <Button type="submit" disabled={busy}>
             {busy ? 'Creating…' : 'Continue →'}
           </Button>
         </form>

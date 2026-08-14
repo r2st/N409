@@ -235,4 +235,96 @@ describe('OnboardingPage (guided client funnel)', () => {
     await waitFor(() => expect(screen.getByText(/not allowed to create valuations/i)).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /pay now/i })).not.toBeInTheDocument();
   });
+
+  /**
+   * R31 — the first screen of the funnel is the worst place to hand someone a
+   * server 422, and the person filling it in is a client rather than an analyst
+   * who knows what the boxes want. The rules are the ones the ops-side
+   * new-valuation form already carries, because it is the same POST.
+   */
+  describe('validation', () => {
+    it('names the empty company box instead of disabling the button', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}));
+      renderPage();
+
+      const submit = screen.getByRole('button', { name: /continue/i });
+      expect(submit).toBeEnabled();
+      await user.click(submit);
+
+      expect(await screen.findByText('Company legal name is required.')).toBeInTheDocument();
+      expect(fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')).toBeUndefined();
+    });
+
+    it('refuses a currency that is not a three-letter code', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}));
+      renderPage();
+
+      await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
+      await user.clear(screen.getByLabelText('Currency'));
+      await user.type(screen.getByLabelText('Currency'), 'US');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      expect(
+        await screen.findByText('Currency must be a three-letter ISO 4217 code, like USD.'),
+      ).toBeInTheDocument();
+      expect(fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')).toBeUndefined();
+    });
+
+    it('refuses a blank currency rather than quietly substituting USD', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}));
+      renderPage();
+
+      await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
+      await user.clear(screen.getByLabelText('Currency'));
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      expect(await screen.findByText('Currency is required.')).toBeInTheDocument();
+      expect(fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')).toBeUndefined();
+    });
+
+    /** Lower case is accepted and upper-cased on the way out, as before. */
+    it('upper-cases an accepted currency on the way to the API', async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith('/valuations') && init?.method === 'POST')
+          return jsonResponse({ valuation: VALUATION }, 201);
+        return jsonResponse({ quote: { amount_cents: 1000, currency: 'GBP', kind: '409a' } });
+      });
+      renderPage();
+
+      await user.type(screen.getByPlaceholderText('Acme Robotics, Inc.'), 'Acme Robotics, Inc.');
+      await user.clear(screen.getByLabelText('Currency'));
+      await user.type(screen.getByLabelText('Currency'), 'gbp');
+      await user.click(screen.getByRole('button', { name: /continue/i }));
+
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST');
+        expect(post).toBeTruthy();
+        expect(JSON.parse(String(post![1]!.body)).currency).toBe('GBP');
+      });
+    });
+
+    /**
+     * The message waits for the box to be left once: telling a client their
+     * company name is required while they are typing the "A" of "Acme" is the
+     * failure mode this rule exists to avoid.
+     */
+    it('holds the message back until the box is blurred', async () => {
+      const user = userEvent.setup();
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}));
+      renderPage();
+
+      const company = screen.getByPlaceholderText('Acme Robotics, Inc.');
+      await user.type(company, 'A');
+      await user.clear(company);
+      expect(screen.queryByText('Company legal name is required.')).not.toBeInTheDocument();
+
+      await user.tab();
+      expect(await screen.findByText('Company legal name is required.')).toBeInTheDocument();
+    });
+  });
 });

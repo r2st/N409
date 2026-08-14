@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime, KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS } from '../lib/types';
@@ -63,8 +63,24 @@ export function TemplatesPage() {
     }
   };
 
-  const create = (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * The name is the identity a version is minted under — "409a" is what makes
+   * the next draft `409a.v55` rather than a second family — and the route
+   * rejects anything outside the slug shape. The box carried `pattern`, which
+   * the browser stopped enforcing the moment the form was told not to check.
+   */
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(form, {
+    name: all(
+      required('name', 'Template name'),
+      pattern(
+        'name',
+        /[a-z0-9][a-z0-9_-]*/,
+        'Use lower-case letters, digits, hyphens and underscores, starting with a letter or digit.',
+      ),
+    ),
+  });
+
+  const create = handleSubmit(() => {
     void run(async () => {
       await api('/report-templates', {
         method: 'POST',
@@ -72,8 +88,9 @@ export function TemplatesPage() {
       });
       setCreating(false);
       setForm({ name: '', kind: '409a', body: '' });
+      reset();
     });
-  };
+  });
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
   if (!templates) return <Spinner />;
@@ -103,12 +120,18 @@ export function TemplatesPage() {
         <form
           onSubmit={create}
           className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+          noValidate
         >
           <div className="grid gap-5 sm:grid-cols-2">
-            <Field label="Template name" hint="Reusing a name mints its next version (e.g. 409a → 409a.v2).">
+            <Field
+              label="Template name"
+              hint="Reusing a name mints its next version (e.g. 409a → 409a.v2)."
+              error={errorFor('name')}
+            >
               <TextInput
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                onBlur={blurHandler('name')}
                 required
                 pattern="[a-z0-9][a-z0-9_-]*"
                 placeholder="409a"
@@ -140,7 +163,7 @@ export function TemplatesPage() {
               />
             </Field>
           </div>
-          <Button type="submit" disabled={busy || !form.name.trim()} className="mt-5">
+          <Button type="submit" disabled={busy} className="mt-5">
             {busy ? 'Creating…' : 'Create draft'}
           </Button>
         </form>

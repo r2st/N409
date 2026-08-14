@@ -277,15 +277,77 @@ describe('TemplatesPage', () => {
     expect(screen.getByDisplayValue('409a')).toBeInTheDocument();
   });
 
-  it('will not submit an unnamed template', async () => {
-    mockApi();
+  /**
+   * A transport failure carries no problem document, so it is not an ApiError
+   * and takes the page's own wording — otherwise an activate that never
+   * reached the server looks like one that succeeded.
+   */
+  it('falls back to its own wording when an action fails without a problem document', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') !== 'GET') throw new TypeError('network down');
+      return jsonResponse({ templates: TEMPLATES });
+    });
+    renderPage();
+    await screen.findByText('409a.v55');
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Activate' })[0]!);
+
+    expect(await screen.findByText('Action failed.')).toBeInTheDocument();
+  });
+
+  /**
+   * R31 — the submit button used to be disabled until the name box held
+   * something, which is a rule you can only discover by guessing. It now
+   * submits and says what is missing.
+   */
+  it('will not submit an unnamed template, and says which box', async () => {
+    const fetchSpy = mockApi();
     renderPage();
     await screen.findByText('409a.v54');
 
     await userEvent.click(screen.getByRole('button', { name: /New version/i }));
-    expect(screen.getByRole('button', { name: /Create draft/i })).toBeDisabled();
-    await userEvent.type(screen.getByLabelText(/^Template name/), 'x');
-    expect(screen.getByRole('button', { name: /Create draft/i })).toBeEnabled();
+    await userEvent.click(screen.getByRole('button', { name: /Create draft/i }));
+
+    expect(await screen.findByText('Template name is required.')).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
+
+  /**
+   * The name is the identity a version is minted under, and the route rejects
+   * anything outside the slug shape. The box carried a `pattern` attribute the
+   * browser stopped honouring once the form was marked `noValidate`.
+   */
+  it('refuses a template name that is not a slug', async () => {
+    const fetchSpy = mockApi();
+    renderPage();
+    await screen.findByText('409a.v54');
+
+    await userEvent.click(screen.getByRole('button', { name: /New version/i }));
+    await userEvent.type(screen.getByLabelText(/^Template name/), '409A Report!');
+    await userEvent.click(screen.getByRole('button', { name: /Create draft/i }));
+
+    expect(
+      await screen.findByText(
+        'Use lower-case letters, digits, hyphens and underscores, starting with a letter or digit.',
+      ),
+    ).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('accepts a well-formed name and posts the draft', async () => {
+    const fetchSpy = mockApi();
+    renderPage();
+    await screen.findByText('409a.v54');
+
+    await userEvent.click(screen.getByRole('button', { name: /New version/i }));
+    await userEvent.type(screen.getByLabelText(/^Template name/), 'qsbs_short');
+    await userEvent.click(screen.getByRole('button', { name: /Create draft/i }));
+
+    await waitFor(() => {
+      const post = fetchSpy.mock.calls.find(([, init]) => init?.method === 'POST');
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post![1]!.body)).name).toBe('qsbs_short');
+    });
   });
 
   it('toggles the create form closed again', async () => {

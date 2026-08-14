@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
+import { required, useFormValidation } from '../../lib/useFormValidation';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../../components/ui';
@@ -61,8 +62,15 @@ export function DecisionsTab() {
     void load();
   }, [load]);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
+    { decision, rationale },
+    {
+      decision: required('decision', 'Decision'),
+      rationale: required('rationale', 'Rationale'),
+    },
+  );
+
+  const submit = handleSubmit(async () => {
     setSaving(true);
     setError(null);
     try {
@@ -78,13 +86,17 @@ export function DecisionsTab() {
       setDecision('');
       setRationale('');
       setSupersedes('');
+      // The form stays mounted for the next decision, so the revealed state has
+      // to go with the values — otherwise the empty boxes it leaves behind are
+      // immediately marked as errors.
+      reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not record the decision.');
     } finally {
       setSaving(false);
     }
-  };
+  });
 
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
   if (!data) return <Spinner />;
@@ -147,8 +159,9 @@ export function DecisionsTab() {
       <aside>
         <h2 className="overline mb-4 text-ink-400">Record a decision</h2>
         <form
-          onSubmit={(e) => void submit(e)}
+          onSubmit={submit}
           className="space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+          noValidate
         >
           <Field label="Category">
             <Select value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -159,14 +172,26 @@ export function DecisionsTab() {
               ))}
             </Select>
           </Field>
-          <Field label="Decision" hint="What was decided, e.g. “DLOM of 30% via Finnerty”.">
-            <TextInput value={decision} onChange={(e) => setDecision(e.target.value)} required />
+          <Field
+            label="Decision"
+            hint="What was decided, e.g. “DLOM of 30% via Finnerty”."
+            error={errorFor('decision')}
+          >
+            <TextInput
+              value={decision}
+              onChange={(e) => setDecision(e.target.value)}
+              onBlur={blurHandler('decision')}
+              required
+              maxLength={2000}
+            />
           </Field>
-          <Field label="Rationale" hint="Why — this is what an auditor reads.">
+          <Field label="Rationale" hint="Why — this is what an auditor reads." error={errorFor('rationale')}>
             <textarea
               value={rationale}
               onChange={(e) => setRationale(e.target.value)}
+              onBlur={blurHandler('rationale')}
               required
+              maxLength={10000}
               rows={4}
               className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-500 focus:ring-1 focus:ring-bond-500 focus:outline-none"
               aria-label="Rationale"
@@ -185,7 +210,7 @@ export function DecisionsTab() {
             </Field>
           )}
           {error && <ErrorNote>{error}</ErrorNote>}
-          <Button type="submit" disabled={saving || !decision.trim() || !rationale.trim()}>
+          <Button type="submit" disabled={saving}>
             {saving ? 'Recording…' : 'Record decision'}
           </Button>
         </form>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { useFormValidation } from '../lib/useFormValidation';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
@@ -19,6 +20,7 @@ import {
   Button,
   EmptyState,
   ErrorNote,
+  Field,
   KindBadge,
   PickerOverflowNote,
   Select,
@@ -280,6 +282,22 @@ function ReviewQueue({ options }: { options: UserOption[] }) {
     void load();
   }, [load]);
 
+  /*
+   * Sending a valuation back is the one decision that carries an instruction,
+   * and the box collecting it was optional: "Send back" on an empty form
+   * returned the engagement to the analyst with the state changed and nothing
+   * saying why. The API still accepts a bare `request_changes` — approving does
+   * not need a note — so the requirement belongs here, on the form that asks
+   * the question.
+   */
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
+    { comment },
+    {
+      comment: (v) =>
+        String(v.comment).trim() ? null : 'Say what needs to change — this is the note the analyst gets.',
+    },
+  );
+
   const decide = async (v: ReviewQueueItem, decision: 'approve' | 'request_changes') => {
     setBusyId(v.id);
     setError(null);
@@ -293,6 +311,7 @@ function ReviewQueue({ options }: { options: UserOption[] }) {
       });
       setChangesFor(null);
       setComment('');
+      reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not record the decision.');
@@ -379,6 +398,10 @@ function ReviewQueue({ options }: { options: UserOption[] }) {
                     disabled={busyId === v.id}
                     onClick={() => {
                       setComment('');
+                      // The panel is reused for whichever valuation is open, so
+                      // a message revealed on the last one must not greet the
+                      // next with an error it has not earned.
+                      reset();
                       setChangesFor(changesFor === v.id ? null : v.id);
                     }}
                   >
@@ -388,23 +411,22 @@ function ReviewQueue({ options }: { options: UserOption[] }) {
                 {changesFor === v.id && (
                   <form
                     className="mt-3 flex flex-wrap items-end gap-2 rounded-md bg-paper-100 p-3"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void decide(v, 'request_changes');
-                    }}
+                    onSubmit={handleSubmit(() => decide(v, 'request_changes'))}
+                    noValidate
                   >
                     <div className="min-w-64 flex-1">
-                      <label className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">
-                        What needs to change?
-                      </label>
-                      <textarea
-                        aria-label={`Changes requested for ${v.company_name}`}
-                        value={comment}
-                        onChange={(e) => setComment(e.target.value)}
-                        rows={2}
-                        className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 focus:border-bond-500 focus:outline-none"
-                        placeholder="Recorded as an internal note on the valuation."
-                      />
+                      <Field label="What needs to change?" error={errorFor('comment')}>
+                        <textarea
+                          aria-label={`Changes requested for ${v.company_name}`}
+                          value={comment}
+                          onChange={(e) => setComment(e.target.value)}
+                          onBlur={blurHandler('comment')}
+                          required
+                          rows={2}
+                          className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 focus:border-bond-500 focus:outline-none"
+                          placeholder="Recorded as an internal note on the valuation."
+                        />
+                      </Field>
                     </div>
                     <Button type="submit" disabled={busyId === v.id}>
                       Send back

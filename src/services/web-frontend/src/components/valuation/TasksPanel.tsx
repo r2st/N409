@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
+import {
+  all,
+  integer,
+  numberRange,
+  optional,
+  required,
+  useFormValidation,
+} from '../../lib/useFormValidation';
 import { useAuth } from '../../lib/auth';
 import {
   REVIEW_TASK_KINDS,
@@ -72,8 +79,21 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
     void load();
   }, [load]);
 
-  const create = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * A blank SLA is legal and posts null — a task the pipeline does not clock is
+   * a normal state. Filled in, it has to be what the route accepts: a whole
+   * number of hours from 1 to 90 days, because `Number('')`-style slips post
+   * NaN and `1.5` is rejected server-side after the round trip.
+   */
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(form, {
+    title: required('title', 'Title'),
+    sla_hours: optional(
+      'sla_hours',
+      all(integer('sla_hours', 'SLA'), numberRange('sla_hours', 1, 2160, 'SLA')),
+    ),
+  });
+
+  const create = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -87,13 +107,16 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
         },
       });
       setForm((f) => ({ ...f, title: '' }));
+      // The panel stays mounted for the next task, so the revealed state is
+      // cleared with the title it was about.
+      reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the task.');
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const setStatus = async (task: ReviewTask, status: ReviewTaskStatus) => {
     try {
@@ -124,13 +147,18 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
     <div className="space-y-6">
       {error && <ErrorNote>{error}</ErrorNote>}
 
-      <form onSubmit={create} className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
+      <form
+        onSubmit={create}
+        className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+        noValidate
+      >
         <h3 className="overline mb-4 text-ink-400">New review task</h3>
         <div className="grid gap-4 sm:grid-cols-[1fr_11rem_7rem_auto]">
-          <Field label="Title">
+          <Field label="Title" error={errorFor('title')}>
             <TextInput
               value={form.title}
               onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              onBlur={blurHandler('title')}
               placeholder="e.g. Tie out preferred share count"
               required
               maxLength={300}
@@ -148,17 +176,18 @@ export function TasksPanel({ valuationId }: { valuationId: string }) {
               ))}
             </Select>
           </Field>
-          <Field label="SLA (hours)">
+          <Field label="SLA (hours)" error={errorFor('sla_hours')}>
             <TextInput
               type="number"
               min={1}
               max={2160}
               value={form.sla_hours}
               onChange={(e) => setForm((f) => ({ ...f, sla_hours: e.target.value }))}
+              onBlur={blurHandler('sla_hours')}
             />
           </Field>
           <div className="flex items-end pb-0.5">
-            <Button type="submit" disabled={busy || !form.title.trim()}>
+            <Button type="submit" disabled={busy}>
               {busy ? 'Adding…' : 'Add task'}
             </Button>
           </div>

@@ -131,7 +131,116 @@ describe('TasksPanel', () => {
     renderPanel();
 
     await screen.findByText('No review tasks yet');
-    expect(screen.getByRole('button', { name: 'Add task' })).toBeDisabled();
+    // The button is live even with an empty form: pressing it is how the
+    // analyst finds out what the form wants (R31).
+    expect(screen.getByRole('button', { name: 'Add task' })).toBeEnabled();
+  });
+
+  /**
+   * A transport failure carries no problem document, so it is not an ApiError
+   * and takes the panel's own wording. Both write paths have one, and a silent
+   * failure here is a task the analyst believes they created.
+   */
+  it('falls back to its own wording when a create fails without a problem document', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (path.endsWith('/auth/me')) return jsonResponse({ user: ME });
+      if ((init?.method ?? 'GET') !== 'GET') throw new TypeError('network down');
+      return jsonResponse({ tasks: [] });
+    });
+    renderPanel();
+    await screen.findByText('No review tasks yet');
+
+    await userEvent.type(screen.getByLabelText('Title'), 'Tie out the pool');
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }));
+
+    expect(await screen.findByText('Could not create the task.')).toBeInTheDocument();
+  });
+
+  it('falls back to its own wording when a status move fails without a problem document', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if (path.endsWith('/auth/me')) return jsonResponse({ user: ME });
+      if ((init?.method ?? 'GET') !== 'GET') throw new TypeError('network down');
+      return jsonResponse({ tasks: [task()] });
+    });
+    renderPanel();
+    await screen.findByText('Tie out preferred share count');
+
+    await userEvent.selectOptions(
+      screen.getByLabelText('Status of Tie out preferred share count'),
+      'in_progress',
+    );
+
+    expect(await screen.findByText('Could not update the task.')).toBeInTheDocument();
+  });
+
+  /**
+   * R31 — the panel used to hide the rule in a disabled button. It now submits
+   * and names the box.
+   */
+  it('refuses a titleless task, and says which box', async () => {
+    const { calls } = mockApi([]);
+    renderPanel();
+    await screen.findByText('No review tasks yet');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }));
+
+    expect(await screen.findByText('Title is required.')).toBeInTheDocument();
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  /**
+   * The route takes a whole number of hours from 1 to 90 days. `min`/`max` on
+   * the box said so to a browser that had been told not to check, and `1.5`
+   * came back as a 422 after the round trip.
+   */
+  it('refuses a fractional SLA', async () => {
+    const { calls } = mockApi([]);
+    renderPanel();
+    await screen.findByText('No review tasks yet');
+
+    await userEvent.type(screen.getByLabelText('Title'), 'Tie out the pool');
+    await userEvent.clear(screen.getByLabelText('SLA (hours)'));
+    await userEvent.type(screen.getByLabelText('SLA (hours)'), '1.5');
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }));
+
+    expect(await screen.findByText('SLA must be a whole number.')).toBeInTheDocument();
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  it('refuses an SLA beyond the ninety-day ceiling', async () => {
+    const { calls } = mockApi([]);
+    renderPanel();
+    await screen.findByText('No review tasks yet');
+
+    await userEvent.type(screen.getByLabelText('Title'), 'Tie out the pool');
+    await userEvent.clear(screen.getByLabelText('SLA (hours)'));
+    await userEvent.type(screen.getByLabelText('SLA (hours)'), '5000');
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }));
+
+    expect(await screen.findByText('SLA must be at most 2160.')).toBeInTheDocument();
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+  });
+
+  /**
+   * A task the pipeline does not clock is a normal state, so a blank SLA has to
+   * stay legal — it is still posted as null.
+   */
+  it('keeps a blank SLA legal and posts it as null', async () => {
+    const { calls } = mockApi([]);
+    renderPanel();
+    await screen.findByText('No review tasks yet');
+
+    await userEvent.type(screen.getByLabelText('Title'), 'Unclocked task');
+    await userEvent.clear(screen.getByLabelText('SLA (hours)'));
+    await userEvent.click(screen.getByRole('button', { name: 'Add task' }));
+
+    await waitFor(() => {
+      const post = calls.find((c) => c.method === 'POST');
+      expect(post).toBeTruthy();
+      expect(post!.body).toMatchObject({ title: 'Unclocked task', sla_hours: null });
+    });
   });
 
   it('sends the title, kind, SLA and assignee the form was showing', async () => {
