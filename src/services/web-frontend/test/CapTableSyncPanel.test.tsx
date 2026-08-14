@@ -89,4 +89,15 @@ describe('CapTableSyncPanel (feature 4)', () => {
     await user.click(screen.getByRole('button', { name: 'Apply provider data' }));
     await waitFor(() => expect(onApplied).toHaveBeenCalled());
   });
+
+  /**
+   * The panel set an error on a failed load and then returned a spinner, so
+   * the ErrorNote it wrote sat in markup that never rendered.
+   */
+  it('reports a failed provider load instead of spinning forever', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    expect(await screen.findByText('Could not load sync providers.')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });

@@ -1,9 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('../src/lib/auth', () => ({ useAuth: () => ({ user: { roles: ['valuation_user'] } }) }));
-vi.mock('../src/lib/rbac', () => ({ isOps: () => false }));
+// The ops flag is mutable so the admin dashboard — which only renders for ops —
+// can be exercised without a second copy of the whole fixture set.
+const flags = vi.hoisted(() => ({ ops: false }));
+vi.mock('../src/lib/rbac', () => ({ isOps: () => flags.ops }));
 
 import { SubscriptionSection } from '../src/components/SubscriptionSection';
 
@@ -32,12 +35,18 @@ const plans = [
   },
 ];
 
-function mockApi(mySub: unknown, portal?: { body: unknown; status?: number }) {
+function mockApi(
+  mySub: unknown,
+  portal?: { body: unknown; status?: number },
+  extra?: Record<string, { body: unknown; status?: number }>,
+) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
     const key = String(url).replace(/^.*\/api\/v1/, '');
     if (key === '/billing/plans') return jsonResponse({ plans });
     if (key === '/me/subscription') return jsonResponse(mySub);
     if (key === '/billing/portal' && portal) return jsonResponse(portal.body, portal.status ?? 200);
+    const hit = extra?.[key];
+    if (hit) return jsonResponse(hit.body, hit.status ?? 200);
     throw new Error(`unexpected fetch ${key}`);
   });
 }
@@ -60,7 +69,10 @@ const subscribed = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('SubscriptionSection (feature 7)', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    flags.ops = false;
+  });
 
   it('offers subscribable plans when the user has no subscription', async () => {
     mockApi({ subscription: null, plan: null, usage: null, invoices: [] });
@@ -158,5 +170,160 @@ describe('SubscriptionSection (feature 7)', () => {
     render(<SubscriptionSection />);
     await screen.findByTestId('usage');
     expect(screen.queryByText(/did not go through/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * The billing section set an error on a failed load and then returned a
+   * spinner, so the ErrorNote it had written was inside markup that never
+   * rendered: a customer whose billing state would not load watched a
+   * spinner instead of being told.
+   */
+  it('reports a failed load instead of spinning forever', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    render(<SubscriptionSection />);
+    expect(await screen.findByText('Could not load subscription details.')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: /loading/i })).not.toBeInTheDocument();
+  });
+
+  describe('subscribing', () => {
+    const noSubscription = (over?: Parameters<typeof mockApi>[2]) =>
+      mockApi({ subscription: null, plan: null, usage: null, invoices: [] }, undefined, over);
+
+    it('sends the buyer to Stripe checkout for the chosen tier', async () => {
+      noSubscription({
+        '/billing/subscribe': { body: { checkout_url: 'https://checkout.stripe.com/c/abc' } },
+      });
+      const location = { href: '' } as Location;
+      vi.spyOn(window, 'location', 'get').mockReturnValue(location);
+
+      render(<SubscriptionSection />);
+      await userEvent.click(await screen.findByRole('button', { name: 'Subscribe' }));
+      await waitFor(() => expect(location.href).toBe('https://checkout.stripe.com/c/abc'));
+    });
+
+    it('reports a refused checkout and re-enables the button', async () => {
+      noSubscription({
+        '/billing/subscribe': {
+          body: { title: 'Conflict', detail: 'Billing is not configured on this deployment.' },
+          status: 503,
+        },
+      });
+      render(<SubscriptionSection />);
+      await userEvent.click(await screen.findByRole('button', { name: 'Subscribe' }));
+
+      expect(await screen.findByText(/Billing is not configured/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Subscribe' })).toBeEnabled();
+    });
+  });
+
+  it('counts usage without a ceiling on an unlimited plan', async () => {
+    mockApi(
+      subscribed({
+        usage: { limit: null, used: 31, remaining: null, unlimited: true, exhausted: false },
+      }),
+    );
+    render(<SubscriptionSection />);
+    expect(await screen.findByTestId('usage')).toHaveTextContent(
+      'Unlimited valuations · 31 used this period',
+    );
+  });
+
+  /** An exhausted allowance is the one number worth colouring. */
+  it('marks the remaining count when the allowance is spent', async () => {
+    mockApi(
+      subscribed({
+        usage: { limit: 12, used: 12, remaining: 0, unlimited: false, exhausted: true },
+      }),
+    );
+    render(<SubscriptionSection />);
+    const usage = await screen.findByTestId('usage');
+    expect(usage).toHaveTextContent('12 of 12 valuations used');
+    expect(within(usage).getByText('0 remaining')).toHaveClass('text-red-600');
+  });
+
+  it('falls back to the raw tier when the plan behind a subscription is gone', async () => {
+    mockApi(subscribed({ plan: null }));
+    render(<SubscriptionSection />);
+    expect(await screen.findByText('annual_retainer')).toBeInTheDocument();
+  });
+
+  it('lists invoices with a PDF link per row', async () => {
+    mockApi(
+      subscribed({
+        invoices: [
+          { id: 'in_1', number: 'INV-0001', status: 'paid', amount_cents: 119000, currency: 'usd' },
+          { id: 'in_2', number: 'INV-0002', status: 'open', amount_cents: 99000, currency: 'usd' },
+        ],
+      }),
+    );
+    render(<SubscriptionSection />);
+    expect(await screen.findByText('INV-0001')).toBeInTheDocument();
+    expect(screen.getByText('$1,190.00')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'PDF' })[0]).toHaveAttribute(
+      'href',
+      '/api/v1/billing/invoices/in_1/pdf',
+    );
+  });
+
+  it('omits the invoice table entirely when there is nothing billed yet', async () => {
+    mockApi(subscribed());
+    render(<SubscriptionSection />);
+    await screen.findByTestId('usage');
+    expect(screen.queryByText('Invoices')).not.toBeInTheDocument();
+  });
+
+  describe('the ops billing dashboard', () => {
+    const adminBilling = {
+      summary: { active: 4, mrr_cents: 500000, collected_cents: 12000000 },
+      subscriptions: [
+        {
+          id: 'sub_1',
+          email: 'cfo@zorblatt.example',
+          plan_name: 'Annual retainer',
+          status: 'active',
+          valuations_used: 5,
+          valuation_limit: 12,
+        },
+        {
+          id: 'sub_2',
+          email: 'ops@globex.example',
+          plan_name: 'Enterprise',
+          status: 'active',
+          valuations_used: 40,
+          valuation_limit: null,
+        },
+      ],
+      invoices: [],
+    };
+
+    it('is not fetched at all for a non-ops reader', async () => {
+      mockApi(subscribed());
+      render(<SubscriptionSection />);
+      await screen.findByTestId('usage');
+      expect(screen.queryByTestId('admin-billing')).not.toBeInTheDocument();
+    });
+
+    it('summarises the book and states an unlimited plan without a ceiling', async () => {
+      flags.ops = true;
+      mockApi(subscribed(), undefined, { '/admin/billing': { body: adminBilling } });
+      render(<SubscriptionSection />);
+
+      const panel = await screen.findByTestId('admin-billing');
+      expect(within(panel).getByText('$5,000.00')).toBeInTheDocument();
+      expect(within(panel).getByText('$120,000.00')).toBeInTheDocument();
+      expect(within(panel).getByText('5 / 12')).toBeInTheDocument();
+      // A null limit is unlimited — "40 / null" would be worse than nothing.
+      expect(within(panel).getByText('40')).toBeInTheDocument();
+    });
+
+    it('stays out of the way when the ops figures cannot be loaded', async () => {
+      flags.ops = true;
+      mockApi(subscribed(), undefined, {
+        '/admin/billing': { body: { title: 'Forbidden' }, status: 403 },
+      });
+      render(<SubscriptionSection />);
+      await screen.findByTestId('usage');
+      await waitFor(() => expect(screen.queryByTestId('admin-billing')).not.toBeInTheDocument());
+    });
   });
 });

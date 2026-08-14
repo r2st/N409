@@ -136,6 +136,9 @@ export function CapTableSyncPanel({
     }
   };
 
+  // Before the spinner: a failed load sets the error and leaves `providers`
+  // null, so the ErrorNote below this return would never render.
+  if (error && !providers) return <ErrorNote>{error}</ErrorNote>;
   if (!providers) return <Spinner />;
 
   return (

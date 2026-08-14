@@ -129,16 +129,23 @@ function VestingTimeline({ timeline, total }: { timeline: VestingPoint[]; total:
 
 function GrantDetailPanel({ valuationId, grant }: { valuationId: string; grant: Grant }) {
   const [detail, setDetail] = useState<GrantDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     void api<GrantDetail>(`/valuations/${valuationId}/grants/${grant.id}`)
       .then((d) => live && setDetail(d))
-      .catch(() => {});
+      .catch((err: unknown) => {
+        // An empty catch left the expanded grant spinning forever with nothing
+        // said — the reader has no way to tell a slow request from a grant
+        // they cannot see.
+        if (live) setError(err instanceof ApiError ? err.message : 'Could not load the grant.');
+      });
     return () => {
       live = false;
     };
   }, [valuationId, grant.id]);
 
+  if (error) return <ErrorNote>{error}</ErrorNote>;
   if (!detail) return <Spinner />;
   const { currency } = grant;
   return (
@@ -219,9 +226,7 @@ export function GrantsTab() {
       // render at all; the empty state below defers to the error instead.
       setGrants([]);
       setLoadFailed(true);
-      setError(
-        err instanceof ApiError ? err.message : 'Could not load the grants for this valuation.',
-      );
+      setError(err instanceof ApiError ? err.message : 'Could not load the grants for this valuation.');
     }
   }, [valuation.id]);
 

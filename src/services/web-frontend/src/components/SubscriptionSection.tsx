@@ -120,6 +120,10 @@ export function SubscriptionSection() {
     }
   };
 
+  // Before the spinner, not after: the load sets an error and leaves `mine`
+  // null, so an error rendered only in the loaded markup below is one the
+  // customer never sees — the billing section just spins.
+  if (error && !mine) return <ErrorNote>{error}</ErrorNote>;
   if (!mine) return <Spinner />;
 
   return (

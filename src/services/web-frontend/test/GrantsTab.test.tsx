@@ -111,32 +111,29 @@ function mockApi(
   } = {},
 ): Call[] {
   const calls: Call[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      const method = (init?.method ?? 'GET').toUpperCase();
-      calls.push({
-        url,
-        method,
-        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-      });
-      if (/\/grant-templates$/.test(url)) return json({ templates: TEMPLATES });
-      if (/\/grants$/.test(url) && method === 'POST') return opts.create ? opts.create() : json({});
-      if (/\/grants$/.test(url)) return opts.grants ? opts.grants() : json({ grants: [GRANT] });
-      if (/\/grants\/[^/]+$/.test(url) && method === 'DELETE') {
-        return opts.remove ? opts.remove() : json({});
-      }
-      if (/\/grants\/[^/]+$/.test(url)) return opts.detail ? opts.detail() : json(DETAIL);
-      // HrisSyncPanel's provider list, and anything else incidental.
-      if (/\/hris$/.test(url)) return json({ providers: [] });
-      return json({});
-    },
-  );
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    });
+    if (/\/grant-templates$/.test(url)) return json({ templates: TEMPLATES });
+    if (/\/grants$/.test(url) && method === 'POST') return opts.create ? opts.create() : json({});
+    if (/\/grants$/.test(url)) return opts.grants ? opts.grants() : json({ grants: [GRANT] });
+    if (/\/grants\/[^/]+$/.test(url) && method === 'DELETE') {
+      return opts.remove ? opts.remove() : json({});
+    }
+    if (/\/grants\/[^/]+$/.test(url)) return opts.detail ? opts.detail() : json(DETAIL);
+    // HrisSyncPanel's provider list, and anything else incidental.
+    if (/\/hris$/.test(url)) return json({ providers: [] });
+    return json({});
+  });
   return calls;
 }
 
-const problem = (status: number, detail: string) => () =>
-  json({ status, title: 'Error', detail }, status);
+const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
 function renderTab() {
   return render(
@@ -226,9 +223,7 @@ describe('GrantsTab', () => {
       mockApi({ grants: problem(503, 'The grants service is unavailable.') });
       renderTab();
       await ready();
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'The grants service is unavailable.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('The grants service is unavailable.');
       expect(screen.queryByText('No grants issued yet')).not.toBeInTheDocument();
     });
   });
@@ -248,7 +243,9 @@ describe('GrantsTab', () => {
       renderTab();
       await ready();
       expect(screen.queryByRole('button', { name: 'New grant' })).not.toBeInTheDocument();
-      expect(within(grantCard('Dana Reed')).queryByRole('button', { name: 'cancel' })).not.toBeInTheDocument();
+      expect(
+        within(grantCard('Dana Reed')).queryByRole('button', { name: 'cancel' }),
+      ).not.toBeInTheDocument();
       expect(screen.queryByText(/HRIS/i)).not.toBeInTheDocument();
     });
 
@@ -410,9 +407,7 @@ describe('GrantsTab', () => {
       renderTab();
       await ready();
       await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'cancel' }));
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'This grant has already been exercised.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('This grant has already been exercised.');
     });
   });
 
@@ -498,6 +493,41 @@ describe('GrantsTab', () => {
       expect(await screen.findByRole('status')).toBeInTheDocument();
       release();
       expect(await screen.findByText('Vesting timeline')).toBeInTheDocument();
+    });
+
+    /**
+     * The detail fetch had an empty `.catch(() => {})`, so a grant whose
+     * detail could not be loaded expanded into a spinner that never resolved
+     * and said nothing. A reader cannot tell that from a slow request.
+     */
+    it('says why the detail could not be loaded rather than spinning forever', async () => {
+      const user = userEvent.setup();
+      mockApi({
+        detail: () => json({ title: 'Not Found', detail: 'This grant has been cancelled.' }, 404),
+      });
+      renderTab();
+      await ready();
+      await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Detail' }));
+
+      expect(await screen.findByText('This grant has been cancelled.')).toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('falls back to a plain message when the detail fails without a problem body', async () => {
+      const user = userEvent.setup();
+      mockApi();
+      // Re-wrap so only the detail call fails, and with no problem body.
+      const base = globalThis.fetch as typeof fetch;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (/\/grants\/[^/]+$/.test(url)) throw new TypeError('network down');
+        return base(input, init);
+      });
+      renderTab();
+      await ready();
+      await user.click(within(grantCard('Dana Reed')).getByRole('button', { name: 'Detail' }));
+
+      expect(await screen.findByText('Could not load the grant.')).toBeInTheDocument();
     });
   });
 });

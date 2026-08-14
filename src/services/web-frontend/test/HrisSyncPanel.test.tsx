@@ -54,4 +54,16 @@ describe('HrisSyncPanel (feature 11)', () => {
     await waitFor(() => expect(onImported).toHaveBeenCalled());
     expect(screen.getByText(/8 grants imported/)).toBeInTheDocument();
   });
+
+  /**
+   * The panel set an error on a failed load and then returned a spinner, so
+   * the ErrorNote it wrote sat in markup that never rendered. The tab showed
+   * a permanent spinner where the provider list should be.
+   */
+  it('reports a failed provider load instead of spinning forever', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    render(<HrisSyncPanel valuationId={VAL} onImported={vi.fn()} />);
+    expect(await screen.findByText('Could not load HRIS providers.')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });
