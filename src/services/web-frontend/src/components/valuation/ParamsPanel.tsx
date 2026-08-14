@@ -1394,7 +1394,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             rows={3}
             maxLength={20000}
             placeholder="One paragraph on what the company does — feeds the comparables pipeline."
-            className="mt-1 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
+            className="mt-1 w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
           />
         </Field>
       </section>

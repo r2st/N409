@@ -139,7 +139,7 @@ export function CommentsSection({
               onChange={(e) => setNoteDraft(e.target.value)}
               placeholder="Add an internal note…"
               aria-label="Add an internal note"
-              className="w-full rounded-md border border-amber-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brass-500 focus:ring-2 focus:ring-brass-500/20 focus:outline-none"
+              className="w-full rounded-md border border-amber-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-brass-500 focus:ring-2 focus:ring-brass-500/20 focus:outline-none"
             />
             <Button type="submit" variant="secondary" disabled={busy || !noteDraft.trim()}>
               Add note
@@ -213,7 +213,7 @@ export function CommentsSection({
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Write a message…"
             aria-label="Write a message"
-            className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
+            className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
           />
           <Button type="submit" disabled={busy || !draft.trim()}>
             Send

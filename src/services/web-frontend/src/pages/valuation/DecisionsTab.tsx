@@ -168,7 +168,7 @@ export function DecisionsTab() {
               onChange={(e) => setRationale(e.target.value)}
               required
               rows={4}
-              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-1 focus:ring-bond-500 focus:outline-none"
+              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-500 focus:ring-1 focus:ring-bond-500 focus:outline-none"
               aria-label="Rationale"
             />
           </Field>

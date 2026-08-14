@@ -115,7 +115,7 @@ export function EngagementsPage() {
                     </Link>
                   ))}
                   {inStage.length === 0 && (
-                    <p className="rounded-lg border border-dashed border-paper-300 px-3 py-4 text-center text-xs text-ink-300">
+                    <p className="rounded-lg border border-dashed border-paper-300 px-3 py-4 text-center text-xs text-ink-400">
                       —
                     </p>
                   )}

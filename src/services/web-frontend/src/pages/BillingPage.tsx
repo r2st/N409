@@ -196,7 +196,7 @@ export function BillingPage() {
                           View receipt ↗
                         </a>
                       ) : (
-                        <span className="text-xs text-ink-300">—</span>
+                        <span className="text-xs text-ink-400">—</span>
                       )}
                     </td>
                   </tr>

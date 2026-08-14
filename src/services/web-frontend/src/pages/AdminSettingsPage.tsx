@@ -144,7 +144,7 @@ export function AdminSettingsPage() {
                     {knob.label}
                   </label>
                   <p className="text-sm text-ink-400">{knob.help}</p>
-                  <p className="mt-1 text-xs text-ink-300">{provenance(knob.key)}</p>
+                  <p className="mt-1 text-xs text-ink-400">{provenance(knob.key)}</p>
                 </div>
               </div>
             ))}

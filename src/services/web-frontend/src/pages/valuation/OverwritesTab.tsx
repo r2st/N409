@@ -240,7 +240,7 @@ export function OverwritesTab() {
                             </div>
                           </>
                         ) : (
-                          <span className="text-ink-300">—</span>
+                          <span className="text-ink-400">—</span>
                         )}
                       </div>
                       <div className="flex gap-2">

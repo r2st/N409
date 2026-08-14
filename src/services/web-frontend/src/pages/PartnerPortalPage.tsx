@@ -251,7 +251,7 @@ export function PartnerPortalPage() {
                       </td>
                       <td className="py-2.5">
                         {t.revoked_at ? (
-                          <span className="text-xs font-semibold text-ink-300">Revoked</span>
+                          <span className="text-xs font-semibold text-ink-400">Revoked</span>
                         ) : (
                           <button
                             onClick={() => revoke(t)}

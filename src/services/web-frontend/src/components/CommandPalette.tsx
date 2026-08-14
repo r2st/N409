@@ -272,10 +272,10 @@ export function CommandPalette() {
             aria-label="Search commands"
             aria-controls="command-palette-list"
             aria-activedescendant={rows[cursor] ? `cmd-${rowKey(rows[cursor]!)}` : undefined}
-            className="w-full bg-transparent py-4 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none"
+            className="w-full bg-transparent py-4 text-sm text-ink-900 placeholder:text-ink-400 focus:outline-none"
           />
           {searching && (
-            <span className="text-[0.65rem] font-semibold text-ink-300" role="status">
+            <span className="text-[0.65rem] font-semibold text-ink-400" role="status">
               Searching…
             </span>
           )}
@@ -300,7 +300,7 @@ export function CommandPalette() {
             const active = index === cursor;
             return (
               <div key={rowKey(row)}>
-                {heading && <div className="overline px-4 pt-3 pb-1 text-ink-300">{heading}</div>}
+                {heading && <div className="overline px-4 pt-3 pb-1 text-ink-400">{heading}</div>}
                 <button
                   type="button"
                   id={`cmd-${rowKey(row)}`}

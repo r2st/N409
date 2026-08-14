@@ -464,7 +464,7 @@ export function ValuationsPage() {
               onChange={(e) => setFilter('created_from', e.target.value)}
               className="!w-auto"
             />
-            <span className="text-ink-300">–</span>
+            <span className="text-ink-400">–</span>
             <TextInput
               type="date"
               aria-label="Created to"
@@ -484,7 +484,7 @@ export function ValuationsPage() {
               onChange={(e) => setFilter('due_from', e.target.value)}
               className="!w-auto"
             />
-            <span className="text-ink-300">–</span>
+            <span className="text-ink-400">–</span>
             <TextInput
               type="date"
               aria-label="Due to"

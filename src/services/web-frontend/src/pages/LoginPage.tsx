@@ -180,7 +180,7 @@ export function LoginPage() {
 
       {(providers?.google || providers?.saml) && (
         <>
-          <div className="my-6 flex items-center gap-3 text-xs text-ink-300">
+          <div className="my-6 flex items-center gap-3 text-xs text-ink-400">
             <span className="h-px flex-1 bg-paper-300" />
             or
             <span className="h-px flex-1 bg-paper-300" />

@@ -265,7 +265,7 @@ export function DashboardPage() {
                     onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
                     className="!w-auto"
                   />
-                  <span className="text-ink-300">–</span>
+                  <span className="text-ink-400">–</span>
                   <TextInput
                     type="date"
                     aria-label="Analytics to"

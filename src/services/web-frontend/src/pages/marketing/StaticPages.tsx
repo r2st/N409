@@ -175,7 +175,7 @@ function ContactForm() {
           value={form.message}
           onChange={set('message')}
           placeholder="Tell us what you need and your timeline…"
-          className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
+          className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
         />
       </Field>
       <Button type="submit" disabled={busy || !form.name || !form.email || !form.message}>

@@ -68,7 +68,7 @@ interface SpecialtyResponse {
  * kind of detail that makes a deliverable look assembled rather than produced.
  */
 function ResultValue({ value }: { value: unknown }) {
-  if (value === null || value === undefined) return <span className="text-ink-300">—</span>;
+  if (value === null || value === undefined) return <span className="text-ink-400">—</span>;
   if (typeof value === 'boolean') {
     return (
       <span className={value ? 'font-semibold text-emerald-700' : 'font-semibold text-red-700'}>

@@ -132,7 +132,7 @@ describe('AdminRetentionPage', () => {
     const archiveAfter = row.getByDisplayValue('365');
     await userEvent.clear(archiveAfter);
     await userEvent.type(archiveAfter, '180');
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
+    await userEvent.click(row.getByRole('button', { name: /^Save the .* retention policy$/ }));
 
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]!.method).toBe('PUT');
@@ -156,7 +156,7 @@ describe('AdminRetentionPage', () => {
     const row = within(policyRow('valuations'));
     await userEvent.clear(row.getByDisplayValue('2555'));
     await userEvent.click(row.getByRole('checkbox'));
-    await userEvent.click(row.getByRole('button', { name: 'Save' }));
+    await userEvent.click(row.getByRole('button', { name: /^Save the .* retention policy$/ }));
 
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]!.retention_days).toBeNull();
@@ -168,7 +168,7 @@ describe('AdminRetentionPage', () => {
     renderPage();
     await loaded();
 
-    await userEvent.click(within(policyRow('valuations')).getByRole('button', { name: 'Save' }));
+    await userEvent.click(within(policyRow('valuations')).getByRole('button', { name: /^Save the .* retention policy$/ }));
     await screen.findByText('retention must exceed the archive window');
     // The table survives — the error is a banner, not a replacement.
     expect(policyRow('documents')).toBeInTheDocument();

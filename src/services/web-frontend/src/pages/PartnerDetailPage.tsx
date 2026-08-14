@@ -724,7 +724,7 @@ export function PartnerDetailPage() {
               onChange={(e) => setCcEmails(e.target.value)}
               rows={3}
               placeholder="filings@yourfirm.com"
-              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
+              className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 placeholder:text-ink-400 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
             />
           </Field>
 
@@ -848,7 +848,7 @@ export function PartnerDetailPage() {
                     value={t.body}
                     onChange={(e) => set('body', e.target.value)}
                     rows={3}
-                    className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
+                    className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
                   />
                 </div>
               </div>

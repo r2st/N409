@@ -227,7 +227,7 @@ describe('WaccPanel', () => {
       mockApi({ params: stored(STORED_INPUTS) });
       renderPanel();
       await ready();
-      await user.click(within(betaRows()[0]!).getByRole('button', { name: 'Remove' }));
+      await user.click(within(betaRows()[0]!).getByRole('button', { name: /^Remove peer / }));
       const rows = betaRows();
       expect(rows).toHaveLength(1);
       expect(cells(rows[0]!)[1]).toHaveValue('0.9');
@@ -240,7 +240,7 @@ describe('WaccPanel', () => {
       mockApi({ params: stored({ comparable_betas: [{ ticker: 'AAA', beta: 1.2 }] }) });
       renderPanel();
       await ready();
-      await user.click(within(betaRows()[0]!).getByRole('button', { name: 'Remove' }));
+      await user.click(within(betaRows()[0]!).getByRole('button', { name: /^Remove peer / }));
       expect(betaRows()).toHaveLength(1);
       expect(cells(betaRows()[0]!).map((i) => i.value)).toEqual(['', '', '']);
     });
@@ -466,7 +466,7 @@ describe('WaccPanel', () => {
       expect(screen.queryByRole('button', { name: 'Save build-up' })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Preview rate' })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: '+ Add guideline beta' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Remove peer / })).not.toBeInTheDocument();
       expect(screen.queryByTestId('auto-wacc')).not.toBeInTheDocument();
     });
 

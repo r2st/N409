@@ -660,7 +660,7 @@ function Review({
                     )}
                   </dt>
                   <dd
-                    className={`mt-0.5 text-sm ${missing ? 'text-ink-300 italic' : 'font-medium text-ink-900'}`}
+                    className={`mt-0.5 text-sm ${missing ? 'text-ink-400 italic' : 'font-medium text-ink-900'}`}
                   >
                     {displayValue(f, answers[f.key])}
                   </dd>

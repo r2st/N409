@@ -755,7 +755,7 @@ export function AdminUsersPage() {
                           {r}
                         </span>
                       ))}
-                      {u.roles.length === 0 && <span className="text-xs text-ink-300">none</span>}
+                      {u.roles.length === 0 && <span className="text-xs text-ink-400">none</span>}
                     </div>
                   </td>
                   <td className="px-5 py-3.5 text-ink-600">{u.partner_name ?? '—'}</td>
