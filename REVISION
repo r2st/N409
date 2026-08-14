@@ -92,21 +92,30 @@
 #            fix is per-site and wants the OID-1082 callers identified first,
 #            not a find-and-replace.
 #
-# gap:       cap tables imported before the as-converted fix carry a stale
-#            `fully_diluted_shares` in their stored summary. That column is
-#            JSONB written once at import, and until this fix it summed
-#            preferred 1:1 rather than through `conversion_ratio` — so any
-#            table with a ratchet has a denominator on file that the current
-#            build, the workbook and the engine all disagree with. The
+# closed:    cap tables imported before the as-converted fix carried a stale
+#            `fully_diluted_shares` in their stored summary. Closed at d946f0d
+#            by recomputation on read rather than by the backfill this entry
+#            originally called for, and the difference is worth keeping: a
+#            migration fixes the rows that exist once and leaves the *next*
+#            rule change to go stale exactly the same way. `validation` is a
+#            pure function of the entries beside it — every writer stores
+#            precisely `validateCapTable(entries)` and folds in nothing else —
+#            so `withFreshValidation` in `repos/capTables.ts` re-derives it on
+#            both read paths, which are the only two `SELECT`s against the
+#            table (`onboarding.ts` counts rows and reads no JSONB). The
+#            monitoring baseline is the one figure that cannot be recomputed —
+#            it is a snapshot of entries that are gone — and is handled
+#            separately by `reconcileBaselineShares`, below. Description of the
+#            original gap follows.
+#            That column is JSONB written once at import, and until this fix it
+#            summed preferred 1:1 rather than through `conversion_ratio` — so
+#            any table with a ratchet has a denominator on file that the
+#            current build, the workbook and the engine all disagree with. The
 #            deliverable is already safe: both export sheets recompute from the
 #            entries. What still reads the stored figure is the Cap table tab's
 #            summary strip and the `cap_table` monitoring baseline, so the tab
 #            understates dilution and the first re-import after this commit
-#            will look like a cap-table change that nobody made. Re-saving the
-#            table fixes a row; the query for the list is a `cap_tables` row
-#            whose `validation->'summary'->>'fully_diluted_shares'` differs
-#            from `sum(shares × coalesce(conversion_ratio, 1))` over its
-#            `entries`, which for anything without a ratchet is none of them.
+#            will look like a cap-table change that nobody made.
 #
 # gap:       the OpenRouter account is on the keyless free tier, which allows
 #            50 model requests a day, and it is exhausted — so every model in
