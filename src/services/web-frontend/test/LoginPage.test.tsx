@@ -243,10 +243,16 @@ describe('LoginPage', () => {
       expect(screen.getByLabelText('Authenticator code')).toBeInTheDocument();
     });
 
-    it('will not submit an empty code', async () => {
-      mockMfaLogin(() => jsonResponse({ user: me, token: 'jwt-token' }));
+    it('will not submit an empty code, and says why', async () => {
+      const verify = vi.fn(() => jsonResponse({ user: me, token: 'jwt-token' }));
+      mockMfaLogin(verify);
       await reachTheCodeStep();
-      expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled();
+
+      // The button is live rather than disabled: a disabled button cannot tell
+      // anyone what it is waiting for. Submitting is what reveals the message.
+      await userEvent.click(screen.getByRole('button', { name: 'Verify' }));
+      expect(await screen.findByText('Authenticator code is required.')).toBeInTheDocument();
+      expect(verify).not.toHaveBeenCalled();
     });
   });
 });

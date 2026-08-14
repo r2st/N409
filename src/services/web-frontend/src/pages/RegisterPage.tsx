@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { ChangeEvent, FormEvent } from 'react';
+import type { ChangeEvent } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { AuthShell } from '../components/AuthShell';
 import type { PublicSystemSettings } from '../lib/types';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
+import { email, minLength, useFormValidation } from '../lib/useFormValidation';
 
 /** The onboarding funnel is per-valuation; company name collected here seeds the first one. */
 export const COMPANY_HINT_KEY = 'n409.company_hint';
@@ -32,6 +33,12 @@ export function RegisterPage() {
    * destination is decided going in rather than afterwards.
    */
   const [destination, setDestination] = useState('/dashboard');
+
+  // Above the early returns below: hooks cannot be called conditionally.
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
+    email: email('email', 'Work email'),
+    password: minLength('password', 10, 'Password'),
+  });
 
   useEffect(() => {
     api<{ settings: PublicSystemSettings }>('/public/settings')
@@ -72,13 +79,8 @@ export function RegisterPage() {
   const set = (key: keyof typeof form) => (e: ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const submit = handleSubmit(async () => {
     setError(null);
-    if (form.password.length < 10) {
-      setError('Password must be at least 10 characters.');
-      return;
-    }
     setBusy(true);
     // New clients land in the guided onboarding funnel, not the worklist.
     setDestination('/onboarding');
@@ -96,7 +98,7 @@ export function RegisterPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <AuthShell title="Create your account" subtitle="Start your first valuation in minutes.">
@@ -128,17 +130,18 @@ export function RegisterPage() {
             placeholder="Acme, Inc."
           />
         </Field>
-        <Field label="Work email">
+        <Field label="Work email" error={errorFor('email')}>
           <TextInput
             type="email"
             autoComplete="email"
             required
             value={form.email}
             onChange={set('email')}
+            onBlur={blurHandler('email')}
             placeholder="you@company.com"
           />
         </Field>
-        <Field label="Password" hint="At least 10 characters.">
+        <Field label="Password" hint="At least 10 characters." error={errorFor('password')}>
           <TextInput
             type="password"
             autoComplete="new-password"
@@ -146,10 +149,17 @@ export function RegisterPage() {
             minLength={10}
             value={form.password}
             onChange={set('password')}
+            onBlur={blurHandler('password')}
             placeholder="••••••••••"
           />
         </Field>
-        <Button type="submit" disabled={busy || !form.email || !form.password} className="w-full">
+        {/*
+          Not disabled on the fields being empty any more. A submit button that
+          is disabled until the form is valid cannot tell anyone *why* — the
+          rules are invisible and the button just does not work. It submits, and
+          the submit is what reveals the messages.
+        */}
+        <Button type="submit" disabled={busy} className="w-full">
           {busy ? 'Creating account…' : 'Create account'}
         </Button>
       </form>

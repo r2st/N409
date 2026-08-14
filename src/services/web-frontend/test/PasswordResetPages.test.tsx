@@ -85,8 +85,37 @@ describe('ResetPasswordPage', () => {
     await userEvent.type(screen.getByLabelText(/^New password/), 'a-long-new-password');
     await userEvent.type(screen.getByLabelText('Confirm new password'), 'different-password');
     await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent("Passwords don't match.");
+    // Beside the confirmation box — the field the user can actually fix —
+    // rather than in the banner above the form.
+    expect(await screen.findByText("Passwords don't match.")).toBeInTheDocument();
+    expect(screen.getByLabelText('Confirm new password')).toHaveAttribute('aria-invalid', 'true');
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('flags a short password on blur, before the form is submitted', async () => {
+    window.history.replaceState(null, '', '/reset-password#token=secret-token');
+    vi.spyOn(globalThis, 'fetch');
+    renderAt('/reset-password', <ResetPasswordPage />);
+    await userEvent.type(screen.getByLabelText(/^New password/), 'short');
+    await userEvent.tab();
+    expect(
+      await screen.findByText('Password must be at least 10 characters.'),
+    ).toBeInTheDocument();
+  });
+
+  it('clears the mismatch when the first password is changed to agree', async () => {
+    window.history.replaceState(null, '', '/reset-password#token=secret-token');
+    vi.spyOn(globalThis, 'fetch');
+    renderAt('/reset-password', <ResetPasswordPage />);
+    const first = screen.getByLabelText(/^New password/);
+    await userEvent.type(first, 'a-long-new-password');
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'different-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Set new password' }));
+    expect(await screen.findByText("Passwords don't match.")).toBeInTheDocument();
+
+    await userEvent.clear(first);
+    await userEvent.type(first, 'different-password');
+    expect(screen.queryByText("Passwords don't match.")).not.toBeInTheDocument();
   });
 
   it('surfaces the API problem for a bad token', async () => {

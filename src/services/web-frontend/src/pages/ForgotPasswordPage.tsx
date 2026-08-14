@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { email as emailRule, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { AuthShell } from '../components/AuthShell';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
@@ -12,8 +12,12 @@ export function ForgotPasswordPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { email },
+    { email: emailRule('email') },
+  );
+
+  const submit = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -24,7 +28,7 @@ export function ForgotPasswordPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <AuthShell title="Reset your password" subtitle="We'll email you a link to choose a new one.">
@@ -44,17 +48,18 @@ export function ForgotPasswordPage() {
         <>
           <form onSubmit={submit} className="space-y-5" noValidate>
             <ErrorNote>{error}</ErrorNote>
-            <Field label="Email">
+            <Field label="Email" error={errorFor('email')}>
               <TextInput
                 type="email"
                 autoComplete="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={blurHandler('email')}
                 placeholder="you@company.com"
               />
             </Field>
-            <Button type="submit" disabled={busy || !email} className="w-full">
+            <Button type="submit" disabled={busy} className="w-full">
               {busy ? 'Sending…' : 'Send reset link'}
             </Button>
           </form>

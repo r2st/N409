@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { all, matches, minLength, required, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import type { User } from '../lib/types';
@@ -47,17 +47,20 @@ export function AcceptInvitePage() {
       .catch(() => setState('invalid'));
   }, []);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  // Before the early returns below: hooks cannot be called conditionally.
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { password, confirm },
+    {
+      password: minLength('password', 10, 'Password'),
+      confirm: all(
+        required('confirm', 'Confirmation'),
+        matches('confirm', 'password', "Passwords don't match."),
+      ),
+    },
+  );
+
+  const submit = handleSubmit(async () => {
     setError(null);
-    if (password.length < 10) {
-      setError('Password must be at least 10 characters.');
-      return;
-    }
-    if (password !== confirm) {
-      setError("Passwords don't match.");
-      return;
-    }
     setBusy(true);
     try {
       const res = await api<{ user: User; token: string }>('/auth/accept-invite', {
@@ -75,7 +78,7 @@ export function AcceptInvitePage() {
       setError(err instanceof ApiError ? err.message : 'Something went wrong — please try again.');
       setBusy(false);
     }
-  };
+  });
 
   if (state === 'loading') {
     return (
@@ -128,7 +131,7 @@ export function AcceptInvitePage() {
             />
           </Field>
         </div>
-        <Field label="Password" hint="At least 10 characters.">
+        <Field label="Password" hint="At least 10 characters." error={errorFor('password')}>
           <TextInput
             type="password"
             autoComplete="new-password"
@@ -136,20 +139,22 @@ export function AcceptInvitePage() {
             minLength={10}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onBlur={blurHandler('password')}
             placeholder="••••••••••"
           />
         </Field>
-        <Field label="Confirm password">
+        <Field label="Confirm password" error={errorFor('confirm')}>
           <TextInput
             type="password"
             autoComplete="new-password"
             required
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
+            onBlur={blurHandler('confirm')}
             placeholder="••••••••••"
           />
         </Field>
-        <Button type="submit" disabled={busy || !password || !confirm} className="w-full">
+        <Button type="submit" disabled={busy} className="w-full">
           {busy ? 'Creating account…' : 'Create account & sign in'}
         </Button>
       </form>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { email as emailRule, required, useFormValidation } from '../lib/useFormValidation';
 import { ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
@@ -42,13 +42,19 @@ export function PartnerLoginPage() {
       .catch(() => setNotFound(true));
   }, [slug]);
 
+  // Above the early returns: hooks cannot be called conditionally. The
+  // password rule is `required` only, for the reason LoginPage gives.
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { email, password },
+    { email: emailRule('email'), password: required('password', 'Password') },
+  );
+
   if (status === 'authenticated') return <Navigate to="/" replace />;
   if (notFound) return <Navigate to="/login" replace />;
 
   const accent = branding?.brand_color ?? '#1d4ed8';
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const submit = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -59,7 +65,7 @@ export function PartnerLoginPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper-100 px-5 py-10">
@@ -91,23 +97,25 @@ export function PartnerLoginPage() {
 
             <form onSubmit={submit} className="space-y-5" noValidate>
               <ErrorNote>{error}</ErrorNote>
-              <Field label="Email">
+              <Field label="Email" error={errorFor('email')}>
                 <TextInput
                   type="email"
                   autoComplete="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  onBlur={blurHandler('email')}
                   placeholder="you@company.com"
                 />
               </Field>
-              <Field label="Password">
+              <Field label="Password" error={errorFor('password')}>
                 <TextInput
                   type="password"
                   autoComplete="current-password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onBlur={blurHandler('password')}
                   placeholder="••••••••••"
                 />
               </Field>
@@ -121,7 +129,7 @@ export function PartnerLoginPage() {
               </div>
               <Button
                 type="submit"
-                disabled={busy || !email || !password}
+                disabled={busy}
                 className="w-full"
                 style={{ backgroundColor: accent }}
               >

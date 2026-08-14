@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { email as emailRule, required, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import type { AuthProviders } from '../lib/types';
@@ -54,6 +54,24 @@ export function LoginPage() {
       .catch(() => setProviders({ password: true, google: false }));
   }, []);
 
+  /*
+   * Both forms' validation is declared here, above every early return below —
+   * hooks cannot be called conditionally, and this component returns early
+   * three times (authenticated, MFA challenge, the sign-in form).
+   *
+   * The password rule is `required` and nothing more. A length rule here would
+   * be wrong twice over: it tells an attacker what the policy is, and it locks
+   * out an account whose password predates the current one.
+   */
+  const credentials = useFormValidation(
+    { email, password },
+    { email: emailRule('email'), password: required('password', 'Password') },
+  );
+  const secondFactor = useFormValidation(
+    { code },
+    { code: required('code', useBackup ? 'Backup code' : 'Authenticator code') },
+  );
+
   if (status === 'authenticated') {
     const from = (location.state as { from?: string } | null)?.from;
     // "/" is the role-aware landing (partners → /partner, others → /dashboard).
@@ -62,8 +80,7 @@ export function LoginPage() {
 
   const goHome = () => navigate((location.state as { from?: string } | null)?.from ?? '/', { replace: true });
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  const submit = credentials.handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -78,10 +95,9 @@ export function LoginPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
-  const submitCode = async (e: FormEvent) => {
-    e.preventDefault();
+  const submitCode = secondFactor.handleSubmit(async () => {
     if (!challenge) return;
     setError(null);
     setBusy(true);
@@ -98,14 +114,17 @@ export function LoginPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   if (challenge) {
     return (
       <AuthShell title="Two-factor authentication" subtitle="Enter the code from your authenticator app.">
         <form onSubmit={submitCode} className="space-y-5" noValidate>
           <ErrorNote>{error}</ErrorNote>
-          <Field label={useBackup ? 'Backup code' : 'Authenticator code'}>
+          <Field
+            label={useBackup ? 'Backup code' : 'Authenticator code'}
+            error={secondFactor.errorFor('code')}
+          >
             <TextInput
               autoFocus
               inputMode={useBackup ? 'text' : 'numeric'}
@@ -113,6 +132,7 @@ export function LoginPage() {
               required
               value={code}
               onChange={(e) => setCode(e.target.value)}
+              onBlur={secondFactor.blurHandler('code')}
               placeholder={useBackup ? 'XXXX-XXXX' : '123456'}
               aria-label={useBackup ? 'Backup code' : 'Authenticator code'}
             />
@@ -125,7 +145,7 @@ export function LoginPage() {
             />
             Remember this device for 30 days
           </label>
-          <Button type="submit" disabled={busy || !code.trim()} className="w-full">
+          <Button type="submit" disabled={busy} className="w-full">
             {busy ? 'Verifying…' : 'Verify'}
           </Button>
           <button
@@ -148,23 +168,25 @@ export function LoginPage() {
     <AuthShell title="Sign in" subtitle="Access your valuations workspace.">
       <form onSubmit={submit} className="space-y-5" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        <Field label="Email">
+        <Field label="Email" error={credentials.errorFor('email')}>
           <TextInput
             type="email"
             autoComplete="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onBlur={credentials.blurHandler('email')}
             placeholder="you@company.com"
           />
         </Field>
-        <Field label="Password">
+        <Field label="Password" error={credentials.errorFor('password')}>
           <TextInput
             type="password"
             autoComplete="current-password"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onBlur={credentials.blurHandler('password')}
             placeholder="••••••••••"
           />
         </Field>
@@ -173,7 +195,7 @@ export function LoginPage() {
             Forgot password?
           </Link>
         </div>
-        <Button type="submit" disabled={busy || !email || !password} className="w-full">
+        <Button type="submit" disabled={busy} className="w-full">
           {busy ? 'Signing in…' : 'Sign in'}
         </Button>
       </form>

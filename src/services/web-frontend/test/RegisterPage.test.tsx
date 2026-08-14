@@ -76,7 +76,45 @@ describe('RegisterPage', () => {
     await userEvent.type(screen.getByLabelText('Password'), 'short');
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/at least 10 characters/i);
+    // Next to the password box, not in the banner above the form: the message
+    // is what `aria-describedby` on that control points at.
+    const box = screen.getByLabelText('Password');
+    await waitFor(() => expect(box).toHaveAttribute('aria-invalid', 'true'));
+    expect(document.getElementById(box.getAttribute('aria-describedby')!)).toHaveTextContent(
+      /at least 10 characters/i,
+    );
+    expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('/auth/register'))).toHaveLength(
+      0,
+    );
+  });
+
+  it('flags a malformed email on blur, before anything is submitted', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(publicSettings(true));
+    renderRegister();
+
+    await userEvent.type(await screen.findByLabelText('Work email'), 'ada@');
+    await userEvent.tab();
+    expect(await screen.findByText('Enter a valid email address.')).toBeInTheDocument();
+  });
+
+  it('says nothing about an email still being typed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(publicSettings(true));
+    renderRegister();
+
+    await userEvent.type(await screen.findByLabelText('Work email'), 'ada@');
+    expect(screen.queryByText('Enter a valid email address.')).not.toBeInTheDocument();
+  });
+
+  it('reveals both messages on a submit of the empty form, and calls nothing', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(publicSettings(true));
+    renderRegister();
+
+    // The button is no longer disabled while the form is incomplete — a
+    // disabled button cannot say why it will not work.
+    await userEvent.click(await screen.findByRole('button', { name: 'Create account' }));
+
+    expect(await screen.findByText('Work email is required.')).toBeInTheDocument();
+    expect(screen.getByText('Password is required.')).toBeInTheDocument();
     expect(fetchSpy.mock.calls.filter(([u]) => String(u).includes('/auth/register'))).toHaveLength(
       0,
     );

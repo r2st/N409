@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { email as emailRule, numberRange, optional, useFormValidation } from '../lib/useFormValidation';
 import { formatDateTime } from '../lib/format';
 import type { SystemSettings, SystemSettingsResponse } from '../lib/types';
 import { Button, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
@@ -35,16 +35,27 @@ const TOGGLES: Knob[] = [
   },
 ];
 
-const NUMBERS: Knob[] = [
+/**
+ * The bounds live on the knob rather than in a ternary at the call site: they
+ * are needed twice now — once for the `min`/`max` attributes and once for the
+ * rule that actually enforces them — and two copies would drift.
+ */
+type NumberKey = 'password_min_length' | 'default_delivery_days';
+
+const NUMBERS: Array<Knob & { key: NumberKey; min: number; max: number }> = [
   {
     key: 'password_min_length',
     label: 'Minimum password length',
     help: 'Applies to registration, invitations, resets and password changes. Cannot be set below 10.',
+    min: 10,
+    max: 128,
   },
   {
     key: 'default_delivery_days',
     label: 'Default delivery days',
     help: 'Pre-filled turnaround on a new valuation.',
+    min: 1,
+    max: 365,
   },
 ];
 
@@ -64,6 +75,30 @@ export function AdminSettingsPage() {
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load system settings.'));
   }, []);
 
+  /*
+   * Above the early returns — hooks cannot be called conditionally — so the
+   * values are read through a fallback for the render before the fetch lands.
+   * Nothing is displayed then anyway: no field has been blurred and the form
+   * has not been submitted.
+   *
+   * The form carries `noValidate`, so `min`/`max`/`type="email"` on these
+   * controls were decoration. The API enforces the same bounds and answers 422;
+   * this is what stops that being the first time anyone hears about it.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    {
+      password_min_length: draft?.password_min_length ?? 10,
+      default_delivery_days: draft?.default_delivery_days ?? 1,
+      support_email: draft?.support_email ?? '',
+    },
+    {
+      password_min_length: numberRange('password_min_length', 10, 128, 'Minimum password length'),
+      default_delivery_days: numberRange('default_delivery_days', 1, 365, 'Default delivery days'),
+      // Optional: the platform runs without a published support address.
+      support_email: optional('support_email', emailRule('support_email', 'Support email')),
+    },
+  );
+
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
   if (!data || !draft) return <Spinner />;
 
@@ -73,8 +108,7 @@ export function AdminSettingsPage() {
   );
 
   /** Only the changed keys are sent, so two admins editing different knobs don't collide. */
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  const save = handleSubmit(async () => {
     setError(null);
     setSaved(false);
     setBusy(true);
@@ -92,7 +126,7 @@ export function AdminSettingsPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const provenance = (key: keyof SystemSettings) => {
     const meta = data.updated[key];
@@ -155,22 +189,27 @@ export function AdminSettingsPage() {
           <h2 className="overline mb-4 text-ink-400">Defaults</h2>
           <div className="space-y-5">
             {NUMBERS.map((knob) => (
-              <Field key={knob.key} label={knob.label} hint={knob.help}>
+              <Field key={knob.key} label={knob.label} hint={knob.help} error={errorFor(knob.key)}>
                 <TextInput
                   type="number"
                   className="max-w-[10rem]"
                   disabled={!editable}
-                  min={knob.key === 'password_min_length' ? 10 : 1}
-                  max={knob.key === 'password_min_length' ? 128 : 365}
+                  min={knob.min}
+                  max={knob.max}
                   value={String(draft[knob.key])}
                   onChange={(e) => {
                     setDraft({ ...draft, [knob.key]: Number(e.target.value) });
                     setSaved(false);
                   }}
+                  onBlur={blurHandler(knob.key)}
                 />
               </Field>
             ))}
-            <Field label="Support email" hint="Shown to signed-out visitors on the contact page.">
+            <Field
+              label="Support email"
+              hint="Shown to signed-out visitors on the contact page."
+              error={errorFor('support_email')}
+            >
               <TextInput
                 type="email"
                 disabled={!editable}
@@ -179,6 +218,7 @@ export function AdminSettingsPage() {
                   setDraft({ ...draft, support_email: e.target.value });
                   setSaved(false);
                 }}
+                onBlur={blurHandler('support_email')}
               />
             </Field>
           </div>

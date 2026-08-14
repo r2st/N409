@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { all, matches, minLength, required, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { AuthShell } from '../components/AuthShell';
 import { Button, ErrorNote, Field, TextInput } from '../components/ui';
@@ -35,17 +35,20 @@ export function ResetPasswordPage() {
     setToken(t);
   }, []);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  // Before the early returns below: hooks cannot be called conditionally.
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { password, confirm },
+    {
+      password: minLength('password', 10, 'Password'),
+      confirm: all(
+        required('confirm', 'Confirmation'),
+        matches('confirm', 'password', "Passwords don't match."),
+      ),
+    },
+  );
+
+  const submit = handleSubmit(async () => {
     setError(null);
-    if (password.length < 10) {
-      setError('Password must be at least 10 characters.');
-      return;
-    }
-    if (password !== confirm) {
-      setError("Passwords don't match.");
-      return;
-    }
     setBusy(true);
     try {
       await api('/auth/reset-password', { method: 'POST', body: { token, password } });
@@ -55,7 +58,7 @@ export function ResetPasswordPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   if (missing) {
     return (
@@ -91,7 +94,7 @@ export function ResetPasswordPage() {
     <AuthShell title="Choose a new password" subtitle="Reset links work once and expire after an hour.">
       <form onSubmit={submit} className="space-y-5" noValidate>
         <ErrorNote>{error}</ErrorNote>
-        <Field label="New password" hint="At least 10 characters.">
+        <Field label="New password" hint="At least 10 characters." error={errorFor('password')}>
           <TextInput
             type="password"
             autoComplete="new-password"
@@ -99,20 +102,22 @@ export function ResetPasswordPage() {
             minLength={10}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onBlur={blurHandler('password')}
             placeholder="••••••••••"
           />
         </Field>
-        <Field label="Confirm new password">
+        <Field label="Confirm new password" error={errorFor('confirm')}>
           <TextInput
             type="password"
             autoComplete="new-password"
             required
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
+            onBlur={blurHandler('confirm')}
             placeholder="••••••••••"
           />
         </Field>
-        <Button type="submit" disabled={busy || !password || !confirm} className="w-full">
+        <Button type="submit" disabled={busy} className="w-full">
           {busy ? 'Updating…' : 'Set new password'}
         </Button>
       </form>
