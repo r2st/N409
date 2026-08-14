@@ -344,4 +344,88 @@ describe.runIf(dbUp)('ASC 718 — public market feed', () => {
     expect(lastFeedBody).toBeNull();
     expect(res.json().asc718.market).toBeNull();
   });
+
+  // ── The saved expected-term election ──────────────────────────────────────
+  //
+  // `GrantBody.expected_term_method` documents itself as overriding "the
+  // settings default", and until now there was no settings default to override:
+  // the row was written by PUT and read back by GET, and the pricing route
+  // never loaded it. The browser tab hid this by stamping its own copy of the
+  // election onto every grant it submits, so the setting worked from the UI and
+  // was inert for the partner API and every other client.
+
+  const saveSettings = (id: string, body: Record<string, unknown>) =>
+    ctx.app.inject({
+      method: 'PUT',
+      url: `/api/v1/valuations/${id}/asc718/settings`,
+      headers: auth(),
+      payload: body,
+    });
+
+  /** The three methods disagree, so the term alone identifies which one ran. */
+  const LATTICE_GRANT = {
+    ...BARE_GRANT,
+    contractual_term_years: 10,
+    exercise_multiple: 2,
+    exercise_history: [
+      { years: 3, options: 6_000 },
+      { years: 7, options: 4_000 },
+    ],
+  };
+
+  it('applies the saved election to a grant that names no method of its own', async () => {
+    const id = await seedValuation();
+    expect((await saveSettings(id, { company_type: 'public', ticker: 'ACME' })).statusCode).toBe(200);
+
+    const simplified = await price(id, publicBody({ grants: [LATTICE_GRANT] }));
+    expect(simplified.statusCode).toBe(200);
+    const simplifiedTerm = simplified.json().asc718.options.grants[0].assumptions.expectedTermYears;
+
+    // Same request, same grant — only the stored election changes.
+    expect(
+      (await saveSettings(id, { company_type: 'public', ticker: 'ACME', expected_term_method: 'historical' }))
+        .statusCode,
+    ).toBe(200);
+    const historical = await price(id, publicBody({ grants: [LATTICE_GRANT] }));
+    expect(historical.statusCode).toBe(200);
+    // 3y × 6000 + 7y × 4000, over 10000 options.
+    expect(historical.json().asc718.options.grants[0].assumptions.expectedTermYears).toBe(4.6);
+    expect(simplifiedTerm).not.toBe(4.6);
+  });
+
+  it('still lets a grant override the saved election', async () => {
+    const id = await seedValuation();
+    await saveSettings(id, { company_type: 'public', ticker: 'ACME', expected_term_method: 'historical' });
+
+    const res = await price(id, {
+      ...publicBody({ grants: [{ ...LATTICE_GRANT, expected_term_method: 'lattice' }] }),
+    });
+    expect(res.statusCode).toBe(200);
+    const term = res.json().asc718.options.grants[0].assumptions.expectedTermYears;
+    // The lattice is solved against the resolved market inputs, so it lands
+    // somewhere inside the contractual life rather than on the historical 4.6.
+    expect(term).not.toBe(4.6);
+    expect(term).toBeGreaterThan(0);
+    expect(term).toBeLessThanOrEqual(10);
+  });
+
+  it('refuses when the saved election needs an input the grant does not carry', async () => {
+    const id = await seedValuation();
+    await saveSettings(id, { company_type: 'public', ticker: 'ACME', expected_term_method: 'historical' });
+
+    // The refusal now reaches a caller who never mentioned a term method — so
+    // it has to name the method as well as the grant to be actionable.
+    const res = await price(id, publicBody());
+    expect(res.statusCode).toBe(422);
+    expect(res.json().detail).toMatch(/uses the historical term method but has no exercise_history/);
+  });
+
+  it('falls back to simplified for an engagement with no settings row at all', async () => {
+    const id = await seedValuation();
+    const res = await price(id, publicBody({ grants: [LATTICE_GRANT] }));
+    expect(res.statusCode).toBe(200);
+    const term = res.json().asc718.options.grants[0].assumptions.expectedTermYears;
+    // Simplified over a 4-year vest and a 10-year contractual life: (4 + 10) / 2.
+    expect(term).toBe(7);
+  });
 });

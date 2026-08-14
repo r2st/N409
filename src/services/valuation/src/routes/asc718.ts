@@ -244,14 +244,23 @@ async function resolveMarket(
   }
 }
 
-/** Resolve a grant's expected term from the elected method. */
+/**
+ * Resolve a grant's expected term from the elected method.
+ *
+ * The election is the grant's own, then the engagement's saved ASC 718 setting,
+ * then simplified. The middle step is what `GrantBody.expected_term_method`
+ * already calls "the settings default": the row was written by PUT
+ * .../asc718/settings and read back by GET, and nothing had ever applied it —
+ * the browser tab happens to stamp its local copy onto every grant it submits,
+ * so the setting worked from the UI and was inert for every other caller.
+ */
 function resolveExpectedTerm(
   g: z.infer<typeof GrantBody>,
-  companyType: 'private' | 'public',
+  settingsMethod: 'simplified' | 'lattice' | 'historical' | undefined,
   underlying: number,
   volatility: number,
 ): number {
-  const method = g.expected_term_method ?? (companyType === 'public' ? 'simplified' : 'simplified');
+  const method = g.expected_term_method ?? settingsMethod ?? 'simplified';
   if (method === 'historical') {
     if (!g.exercise_history || g.exercise_history.length === 0) {
       throw problems.unprocessable(
@@ -333,8 +342,12 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
       throw problems.unprocessable('Provide at least one grant, ESPP, RSU or TSR award');
     }
 
-    // The concluded 409A FMV is the private default underlying.
-    const calculation = await latestSucceededCalculation(deps.pool, id);
+    // The concluded 409A FMV is the private default underlying; the settings
+    // row supplies the expected-term election for grants that omit their own.
+    const [calculation, settings] = await Promise.all([
+      latestSucceededCalculation(deps.pool, id),
+      findAsc718Settings(deps.pool, id),
+    ]);
     const fmv = calculation?.fmv_per_share != null ? Number(calculation.fmv_per_share) : null;
 
     // Public: resolve the issuer's own market price + historical volatility.
@@ -376,7 +389,12 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
           `Grant "${g.label ?? 'unnamed'}" has no volatility (supply per-grant volatility or default_volatility)`,
         );
       }
-      const expectedTermYears = resolveExpectedTerm(g, b.company_type, underlying, volatility);
+      const expectedTermYears = resolveExpectedTerm(
+        g,
+        settings?.expected_term_method,
+        underlying,
+        volatility,
+      );
       grants.push({
         label: g.label,
         optionsGranted: g.options_granted,
