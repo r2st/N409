@@ -2634,6 +2634,44 @@ describe('the per-class value table in Exhibit H', () => {
     // The common chain above it still renders — that is the exhibit's job.
     expect(text).toContain('Concluded fair market value');
   });
+
+  /**
+   * The two OPM waterfalls call it `per_share`; PWERM calls the same figure
+   * `fmv_per_share` (engine/pwerm.py `by_class`), because it is a present value
+   * rather than an exit value. Exhibit F has read both since it was written.
+   * This table read only the first, so a PWERM valuation printed class names
+   * and share counts with an em-dash in both value columns — under a paragraph
+   * explaining how the discounts had been applied to them.
+   */
+  it('reads the per-share figure under the name PWERM records it', () => {
+    const pwerm = {
+      ...RESULTS,
+      allocation: {
+        method: 'pwerm',
+        common_value: 16_903_370,
+        common_shares: 9_247_000,
+        common_per_share: 1.828148,
+        classes: {
+          Common: {
+            kind: 'common',
+            shares: 9_247_000,
+            present_value: 16_903_370,
+            fmv_per_share: 1.828148,
+          },
+          'Series A': {
+            kind: 'preferred',
+            shares: 4_000_000,
+            present_value: 20_000_000,
+            fmv_per_share: 5.0,
+          },
+        },
+      },
+    };
+    const text = plain(discountExhibit(pwerm, CONTEXT)!.html);
+    expect(text).toContain('$1.8281'); // Common, marketable
+    expect(text).toContain('$1.2340'); // and discounted, as on the waterfall path
+    expect(text).toContain('$5.0000'); // Series A, marketable and undiscounted
+  });
 });
 
 /**

@@ -2403,7 +2403,13 @@ function classValueBlock(
     .map(([name, raw]) => ({ name, value: record(raw) }))
     .filter((c) => c.value !== null)
     .map((c) => {
-      const perShare = num(c.value?.per_share);
+      // `per_share` on the two OPM waterfalls, `fmv_per_share` on PWERM — the
+      // same figure under the name each allocator gives it, read the same way
+      // Exhibit F reads it. Reading only the first printed a PWERM valuation's
+      // table as class names and share counts with an em-dash in both value
+      // columns, under a paragraph explaining how the discounts were applied
+      // to them.
+      const perShare = num(c.value?.per_share) ?? num(c.value?.fmv_per_share);
       const kind = text(c.value?.kind) ?? '—';
       const discounted = kind === 'common' && perShare !== null ? perShare * factor : null;
       return [
