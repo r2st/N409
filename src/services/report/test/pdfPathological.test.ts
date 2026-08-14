@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { expectSubQuadratic } from './support/complexity.js';
 import { breakLongRuns, htmlToBlocks, renderReportPdf, type ReportPdfInput } from '../src/pdf.js';
 import { extractText } from './support/pdfText.js';
 
@@ -80,25 +81,9 @@ describe('tokenizer on input with no closing bracket', () => {
     // `"<p"` repeated: every `<` used to re-scan to the end of the document
     // looking for a `>` that is not there. 60k copies took 3.1s in
     // htmlToBlocks alone and 16s through a full render.
-    const html = '<p'.repeat(SECTION_LIMIT / 2 - 1);
-    const started = Date.now();
-    const blocks = htmlToBlocks(html);
-    expect(Date.now() - started).toBeLessThan(1_000);
     // A `<` that starts no tag is text, and the text has to survive.
-    expect(blocks.length).toBeGreaterThan(0);
-  });
-
-  it('scales linearly rather than quadratically as the input doubles', () => {
-    const cost = (n: number) => {
-      const html = '<p'.repeat(n);
-      const started = Date.now();
-      htmlToBlocks(html);
-      return Date.now() - started;
-    };
-    cost(2_000); // warm up, so the first measurement is not paying for JIT
-    // Quadratic would be ~16x across this 4x span; the budget catches a return
-    // of the exponent without pinning the constant.
-    expect(cost(60_000)).toBeLessThan(Math.max(cost(15_000), 5) * 8);
+    expect(htmlToBlocks('<p'.repeat(SECTION_LIMIT / 2 - 1)).length).toBeGreaterThan(0);
+    expectSubQuadratic({ input: (n) => '<p'.repeat(n), run: htmlToBlocks, size: 15_000 });
   });
 
   it('still tokenizes tags identically once a bracket does close', () => {

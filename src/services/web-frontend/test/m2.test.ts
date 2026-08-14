@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { expectSubQuadratic } from './support/complexity.js';
 import { formatWorkbookValue, sanitizeHtml, REPORT_VISIBLE_STATES } from '../src/lib/m2';
 
 describe('sanitizeHtml (client mirror)', () => {
@@ -26,12 +27,15 @@ describe('sanitizeHtml (client mirror)', () => {
   it('sanitizes markers that are never closed in linear time', () => {
     // ReportTab sanitizes each section on every render, so a stored section of
     // `<!--` froze the tab of everyone who opened the report — not just the
-    // author who saved it. Ceiling is loose so a slow CI box does not flake it.
+    // author who saved it. What is asserted is the exponent rather than a
+    // wall-clock ceiling: the ceiling was a property of the CI box, and it
+    // flaked accordingly.
     for (const marker of ['<!--', '<script>', '<style>']) {
-      const body = marker.repeat(Math.ceil(100_000 / marker.length));
-      const started = performance.now();
-      sanitizeHtml(body);
-      expect(performance.now() - started).toBeLessThan(3_000);
+      expectSubQuadratic({
+        input: (chars) => marker.repeat(Math.ceil(chars / marker.length)),
+        run: sanitizeHtml,
+        size: 25_000,
+      });
     }
   });
 });
@@ -72,27 +76,14 @@ describe('REPORT_VISIBLE_STATES', () => {
  * exponent rather than on a slow machine.
  */
 describe('sanitizeHtml on input with no closing bracket', () => {
-  const SECTION_LIMIT = 100_000;
-  const elapsed = (fn: () => unknown): number => {
-    const started = Date.now();
-    fn();
-    return Date.now() - started;
-  };
-
   it('sanitizes a section-sized run of unterminated tags in linear time', () => {
-    expect(elapsed(() => sanitizeHtml('<p'.repeat(SECTION_LIMIT / 2)))).toBeLessThan(500);
+    expectSubQuadratic({ input: (n) => '<p'.repeat(n / 2), run: sanitizeHtml, size: 25_000 });
   });
 
   it('sanitizes a section-sized run of junk leads in linear time', () => {
     // `"<3"` exercises the second regex, the junk-tag sweep, which was
     // quadratic in exactly the same way and by exactly the same amount.
-    expect(elapsed(() => sanitizeHtml('<3'.repeat(SECTION_LIMIT / 2)))).toBeLessThan(500);
-  });
-
-  it('scales linearly rather than quadratically as the input doubles', () => {
-    const cost = (n: number) => elapsed(() => sanitizeHtml('<p'.repeat(n)));
-    cost(2_000); // warm up so the first measurement is not paying for JIT
-    expect(cost(50_000)).toBeLessThan(Math.max(cost(12_500), 5) * 8);
+    expectSubQuadratic({ input: (n) => '<3'.repeat(n / 2), run: sanitizeHtml, size: 25_000 });
   });
 
   it('keeps the text of an unterminated tag rather than eating the rest', () => {

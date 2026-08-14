@@ -74,9 +74,7 @@ describe('expectSubQuadratic', () => {
     // input only, so the small measurement absorbed the JIT tier-up, the ratio
     // came out under the limit, and this exact assertion passed quadratic code.
     // Move it below another user of `quadraticScan` and it stops testing that.
-    expect(() =>
-      expectSubQuadratic({ input: text, run: quadraticScan, size: 2_000, runs: 3 }),
-    ).toThrow();
+    expect(() => expectSubQuadratic({ input: text, run: quadraticScan, size: 2_000, runs: 3 })).toThrow();
   });
 
   it('names both measurements when it fails, so the number can be judged', () => {
