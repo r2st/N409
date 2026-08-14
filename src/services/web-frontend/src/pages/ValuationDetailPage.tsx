@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, apiDownload, ApiError, ifMatch } from '../lib/api';
+import { required, useFormValidation } from '../lib/useFormValidation';
 import { useAuth } from '../lib/auth';
 import { editableFields, isOps } from '../lib/rbac';
 import { eventLabel, formatDate, formatDateTime, STATE_LABELS } from '../lib/format';
@@ -71,8 +72,17 @@ export function ValuationDetailPage() {
   const canEdit = editable.size > 0;
   const ops = isOps(user);
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * Only `company_name` carries a rule — the state is a select and the service
+   * name is genuinely free text. The rule is here rather than on the button
+   * because the button was disabled on an empty name with nothing to say why,
+   * which reads as a broken save on the one form whose job is renaming.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
+    company_name: required('company_name', 'Company name'),
+  });
+
+  const save = handleSubmit(async () => {
     setSaveError(null);
     setSaved(false);
     setBusy(true);
@@ -112,7 +122,7 @@ export function ValuationDetailPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const clone = async (rollForward: boolean) => {
     setCloning(true);
@@ -221,7 +231,7 @@ export function ValuationDetailPage() {
         {canEdit && (
           <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
             <h2 className="overline mb-5 text-ink-400">Edit</h2>
-            <form onSubmit={save} className="space-y-5">
+            <form onSubmit={save} className="space-y-5" noValidate>
               {saveError && <ErrorNote>{saveError}</ErrorNote>}
               {saved && (
                 <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
@@ -230,10 +240,11 @@ export function ValuationDetailPage() {
               )}
               <div className="grid gap-5 sm:grid-cols-2">
                 {editable.has('company_name') && (
-                  <Field label="Company name">
+                  <Field label="Company name" error={errorFor('company_name')}>
                     <TextInput
                       value={form.company_name}
                       onChange={(e) => setForm((f) => ({ ...f, company_name: e.target.value }))}
+                      onBlur={blurHandler('company_name')}
                       required
                       maxLength={300}
                     />
@@ -264,7 +275,7 @@ export function ValuationDetailPage() {
                   </Field>
                 )}
               </div>
-              <Button type="submit" disabled={busy || !form.company_name.trim()}>
+              <Button type="submit" disabled={busy}>
                 {busy ? 'Saving…' : 'Save changes'}
               </Button>
             </form>

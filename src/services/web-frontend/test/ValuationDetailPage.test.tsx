@@ -150,9 +150,7 @@ describe('ValuationDetailPage', () => {
       VALUATION = valuation({ paid_status: 'paid_by_partner' });
       stubFetches();
       const { unmount } = renderPage();
-      expect((await screen.findByText('Payment')).parentElement).toHaveTextContent(
-        'Paid by partner',
-      );
+      expect((await screen.findByText('Payment')).parentElement).toHaveTextContent('Paid by partner');
       unmount();
 
       VALUATION = valuation({ paid_status: 'paid' });
@@ -198,9 +196,7 @@ describe('ValuationDetailPage', () => {
       stubFetches([], {
         events: () =>
           jsonResponse({
-            events: [
-              event({ type: 'state_changed', payload: { from: 'pending', to: 'started' } }),
-            ],
+            events: [event({ type: 'state_changed', payload: { from: 'pending', to: 'started' } })],
           }),
       });
       renderPage();
@@ -333,10 +329,7 @@ describe('ValuationDetailPage', () => {
       const calls: Recorded[] = [];
       stubFetches(calls, {
         patch: () =>
-          jsonResponse(
-            { title: 'Conflict', detail: 'Rae saved this 30 seconds ago.', status: 409 },
-            409,
-          ),
+          jsonResponse({ title: 'Conflict', detail: 'Rae saved this 30 seconds ago.', status: 409 }, 409),
       });
       renderPage();
 
@@ -357,15 +350,12 @@ describe('ValuationDetailPage', () => {
       await userEvent.type(await screen.findByLabelText('Company name'), ' Ltd');
       await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        /Someone else changed this valuation/i,
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent(/Someone else changed this valuation/i);
     });
 
     it('surfaces an ordinary rejected save', async () => {
       stubFetches([], {
-        patch: () =>
-          jsonResponse({ title: 'Unprocessable', detail: 'Company name is too long.' }, 422),
+        patch: () => jsonResponse({ title: 'Unprocessable', detail: 'Company name is too long.' }, 422),
       });
       renderPage();
 
@@ -376,12 +366,20 @@ describe('ValuationDetailPage', () => {
       expect(reload).not.toHaveBeenCalled();
     });
 
-    it('will not save a blank company name', async () => {
-      stubFetches();
+    /**
+     * R30 — a disabled button with no message reads as a broken save on the one
+     * form whose job is renaming, so the rule says which box is empty.
+     */
+    it('will not save a blank company name, and says which box is empty', async () => {
+      const calls: Recorded[] = [];
+      stubFetches(calls);
       renderPage();
 
       await userEvent.clear(await screen.findByLabelText('Company name'));
-      expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+      await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+      expect(await screen.findByText('Company name is required.')).toBeInTheDocument();
+      expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(0);
     });
   });
 
@@ -417,9 +415,7 @@ describe('ValuationDetailPage', () => {
 
       await userEvent.click(await screen.findByRole('button', { name: /^clone$/i }));
 
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'A published valuation cannot be cloned.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('A published valuation cannot be cloned.');
       expect(screen.queryByText('CLONED VALUATION')).not.toBeInTheDocument();
     });
   });

@@ -100,7 +100,9 @@ describe('NewValuationPage', () => {
 
     expect(screen.queryByRole('button', { name: /IFRS 2/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: `Show all ${VALUATION_KINDS.length} valuation types →` }));
+    await user.click(
+      screen.getByRole('button', { name: `Show all ${VALUATION_KINDS.length} valuation types →` }),
+    );
 
     expect(screen.getByRole('button', { name: /IFRS 2/ })).toBeInTheDocument();
     // The disclosure retires itself once everything is on screen.
@@ -122,24 +124,49 @@ describe('NewValuationPage', () => {
     expect(localStorage.getItem(COMPANY_HINT_KEY)).toBeNull();
   });
 
-  it('refuses to submit without a company name or a three-letter currency', async () => {
+  /**
+   * R30 — this used to be a disabled button. Someone who had cleared the
+   * currency box was told the form was broken rather than that a three-letter
+   * code was wanted, so the rules say it at the box instead.
+   */
+  it('refuses to submit without a company name, and says which box', async () => {
+    const posts = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText('Company legal name'), '   ');
+    await user.click(screen.getByRole('button', { name: 'Create valuation' }));
+
+    expect(await screen.findByText('Company legal name is required.')).toBeInTheDocument();
+    expect(posts).toHaveLength(0);
+  });
+
+  it('refuses a currency that is not three letters, and says so', async () => {
+    const posts = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText('Company legal name'), 'Acme');
+    await user.clear(screen.getByLabelText(/Currency/));
+    await user.type(screen.getByLabelText(/Currency/), 'US');
+    await user.click(screen.getByRole('button', { name: 'Create valuation' }));
+
+    expect(
+      await screen.findByText('Currency must be a three-letter ISO 4217 code, like USD.'),
+    ).toBeInTheDocument();
+    expect(posts).toHaveLength(0);
+  });
+
+  it('names an emptied currency box as required rather than malformed', async () => {
     mockApi();
     const user = userEvent.setup();
     renderPage();
 
-    const submit = screen.getByRole('button', { name: 'Create valuation' });
-    expect(submit).toBeDisabled();
-
-    await user.type(screen.getByLabelText('Company legal name'), '   ');
-    expect(submit).toBeDisabled();
-
-    await user.clear(screen.getByLabelText('Company legal name'));
     await user.type(screen.getByLabelText('Company legal name'), 'Acme');
-    expect(submit).toBeEnabled();
-
     await user.clear(screen.getByLabelText(/Currency/));
-    await user.type(screen.getByLabelText(/Currency/), 'US');
-    expect(submit).toBeDisabled();
+    await user.tab();
+
+    expect(await screen.findByText('Currency is required.')).toBeInTheDocument();
   });
 
   it('normalises a lowercase currency to its ISO 4217 form', async () => {

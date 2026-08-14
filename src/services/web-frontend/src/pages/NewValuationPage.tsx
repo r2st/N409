@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { HelpIcon } from '../components/HelpIcon';
 import { KIND_LABELS } from '../lib/format';
 import { VALUATION_KINDS } from '../lib/types';
@@ -31,15 +31,29 @@ export function NewValuationPage() {
   const navigate = useNavigate();
   const [kind, setKind] = useState<ValuationKind>('409a');
   const [showAll, setShowAll] = useState(false);
-  const [company, setCompany] = useState(() => localStorage.getItem(COMPANY_HINT_KEY) ?? '');
-  const [currency, setCurrency] = useState('USD');
+  const [form, setForm] = useState(() => ({
+    company: localStorage.getItem(COMPANY_HINT_KEY) ?? '',
+    currency: 'USD',
+  }));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const kinds = showAll ? [...VALUATION_KINDS] : FEATURED;
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * The button used to be disabled until both boxes were right, which told
+   * someone who had cleared the currency that the form was broken rather than
+   * that a three-letter code was wanted. The rules say so instead.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
+    company: required('company', 'Company legal name'),
+    currency: all(
+      required('currency', 'Currency'),
+      pattern('currency', /[A-Za-z]{3}/, 'Currency must be a three-letter ISO 4217 code, like USD.'),
+    ),
+  });
+
+  const submit = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -47,8 +61,8 @@ export function NewValuationPage() {
         method: 'POST',
         body: {
           kind,
-          company_name: company.trim(),
-          currency: currency.trim().toUpperCase() || undefined,
+          company_name: form.company.trim(),
+          currency: form.currency.trim().toUpperCase(),
         },
       });
       localStorage.removeItem(COMPANY_HINT_KEY);
@@ -57,7 +71,7 @@ export function NewValuationPage() {
       setError(err instanceof ApiError ? err.message : 'Could not create the valuation.');
       setBusy(false);
     }
-  };
+  });
 
   return (
     <div className="max-w-2xl">
@@ -70,7 +84,7 @@ export function NewValuationPage() {
         Choose the opinion you need — an analyst-reviewed, engine-computed report follows.
       </p>
 
-      <form onSubmit={submit} className="mt-8 space-y-8">
+      <form onSubmit={submit} className="mt-8 space-y-8" noValidate>
         <ErrorNote>{error}</ErrorNote>
 
         <fieldset>
@@ -123,19 +137,22 @@ export function NewValuationPage() {
         </fieldset>
 
         <div className="grid gap-5 sm:grid-cols-[1fr_8rem]">
-          <Field label="Company legal name">
+          <Field label="Company legal name" error={errorFor('company')}>
             <TextInput
               required
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
+              value={form.company}
+              onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))}
+              onBlur={blurHandler('company')}
               placeholder="Acme, Inc."
               maxLength={300}
             />
           </Field>
-          <Field label="Currency" hint="ISO 4217">
+          <Field label="Currency" hint="ISO 4217" error={errorFor('currency')}>
             <TextInput
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
+              required
+              value={form.currency}
+              onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
+              onBlur={blurHandler('currency')}
               maxLength={3}
               placeholder="USD"
               className="uppercase"
@@ -144,7 +161,7 @@ export function NewValuationPage() {
         </div>
 
         <div className="flex gap-3">
-          <Button type="submit" disabled={busy || !company.trim() || currency.trim().length !== 3}>
+          <Button type="submit" disabled={busy}>
             {busy ? 'Creating…' : 'Create valuation'}
           </Button>
           <Button type="button" variant="ghost" onClick={() => navigate(-1)}>
