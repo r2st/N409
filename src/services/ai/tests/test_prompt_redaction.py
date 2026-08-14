@@ -82,6 +82,19 @@ def payload(**over) -> dict:
         "calculation": {"equity_value": 42_000_000, "fmv_per_share": 1.23},
         "qa_checks": [{"check": "fmv_vs_last_round", "detail": f"{SHORT} priced above its round"}],
         "comp_context": {"description": OVERVIEW},
+        # The tagging agent refuses a payload with no vocabulary rather than
+        # asking an uninstructed model for free text, so the sweep has to carry
+        # one to reach it at all. Nothing in a catalogue is client-identifying —
+        # it is the same fixed list on every engagement — which is why it can
+        # sit in the shared payload without weakening a single assertion below.
+        "tag_catalogue": [
+            {
+                "category": "stage",
+                "label": "Stage",
+                "exclusive": True,
+                "tags": [{"slug": "seed", "label": "Seed", "definition": "A seed round has closed."}],
+            }
+        ],
         "options": {"known_people": [FOUNDER]},
     }
     base.update(over)

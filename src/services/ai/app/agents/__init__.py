@@ -1,6 +1,6 @@
 """Analyst AI agents for the N409 409A valuation platform.
 
-Seven multi-step / structured agents that go beyond the M1 extraction pipelines:
+Eight multi-step / structured agents that go beyond the M1 extraction pipelines:
 
 - cap_table        — parse charter/articles/cap-table docs into the engine's
                      share_classes schema, with citations and confidence.
@@ -17,6 +17,11 @@ Seven multi-step / structured agents that go beyond the M1 extraction pipelines:
                      responses plus a weakness assessment.
 - roll_forward     — diff a prior valuation against new data and pre-populate the
                      next engagement's inputs.
+- tagging           — classify the engagement against the platform's fixed tag
+                     vocabulary (stage, revenue, business model, capital
+                     structure, valuation context, risk), which the valuation
+                     service supplies in the payload rather than this service
+                     holding a second copy of it.
 
 Each agent is registered under AGENT_PIPELINES with the same
 ``run(payload) -> (model, result)`` contract as the built-in pipelines, so the
@@ -32,6 +37,7 @@ from .company_profile import run_company_profile
 from .comp_selection import run_comp_selection
 from .report_narrative import run_report_narrative
 from .roll_forward import run_roll_forward
+from .tagging import PipelineInputError, run_tagging
 
 AGENT_PIPELINES = {
     "cap_table": run_cap_table,
@@ -41,6 +47,7 @@ AGENT_PIPELINES = {
     "assumptions": run_assumptions,
     "audit_defense": run_audit_defense,
     "roll_forward": run_roll_forward,
+    "tagging": run_tagging,
 }
 
-__all__ = ["AGENT_PIPELINES"]
+__all__ = ["AGENT_PIPELINES", "PipelineInputError"]

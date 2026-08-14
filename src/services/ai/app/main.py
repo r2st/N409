@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .agents import AGENT_PIPELINES
+from .agents import AGENT_PIPELINES, PipelineInputError
 from .anonymize import AnonymizeInputError, Redactor, anonymization_enforced
 from .build_info import build_info
 from .documents import extract_texts
@@ -502,6 +502,13 @@ def run_pipeline(pipeline: str, request: PipelineRequest) -> PipelineResponse:
         # An input problem, not a model problem — 422 names the field to fix.
         # Must precede the ValueError arm below, which reads as "the model said
         # something unusable" and would mislabel this one.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PipelineInputError as exc:
+        # The request itself is unusable and no retry can fix it — a required
+        # payload field is missing. Ahead of the ValueError arm for the same
+        # reason AnonymizeInputError is: that arm reads as "the model said
+        # something unusable", which would send the caller looking at the model
+        # for a fault that is in the request.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OpenRouterError as exc:
         # 503 → the valuation service records the job as failed and returns 502.
