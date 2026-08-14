@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { findVisibleViewByQuery } from '../../src/repos/savedViews.js';
 
 /** Saved worklist views (feature-improvements §2 "Saved views"). */
 
@@ -178,5 +179,65 @@ describe.skipIf(!dbUp)('saved views', () => {
       payload: {},
     });
     expect(res.statusCode).toBe(422);
+  });
+
+  describe('findVisibleViewByQuery', () => {
+    /*
+     * The lookup behind the partner pin's idempotency check, tested at the repo
+     * because the invariant is about the SQL and not about the route.
+     *
+     * The visibility predicate is `owner_id = $1 OR (ops AND shared)`, and this
+     * function appends `AND v.query = $3` to it. `AND` binds tighter than `OR`,
+     * so without parentheses around the pair the filter reaches only the shared
+     * branch and every view the principal *owns* matches regardless of its
+     * query — the lookup answers "yes, already pinned" for a firm that has
+     * never been pinned, and the operator opens somebody else's queue.
+     */
+    let owner: Awaited<ReturnType<typeof seedUser>>;
+
+    beforeAll(async () => {
+      owner = await seedUser(ctx, { roles: ['admin'] });
+      for (const q of ['partner_id=01JQ0000000000000000000001', 'partner_id=01JQ0000000000000000000002']) {
+        const res = await create(owner.token, { name: `Owned ${q.slice(-2)}`, query: q, visibility: 'shared' });
+        expect(res.statusCode).toBe(201);
+      }
+    });
+
+    it('matches a view the principal owns only when the query is the one asked for', async () => {
+      const hit = await findVisibleViewByQuery(ctx.pool, {
+        userId: owner.id,
+        includeShared: true,
+        query: 'partner_id=01JQ0000000000000000000002',
+      });
+      expect(hit?.query).toBe('partner_id=01JQ0000000000000000000002');
+    });
+
+    it('finds nothing for a query nobody saved, rather than the principal’s first view', async () => {
+      const miss = await findVisibleViewByQuery(ctx.pool, {
+        userId: owner.id,
+        includeShared: true,
+        query: 'partner_id=01JQ0000000000000000000009',
+      });
+      expect(miss).toBeNull();
+    });
+
+    it('still filters correctly for a principal who owns nothing', async () => {
+      // The shared branch on its own — the half that was accidentally the only
+      // one the filter reached.
+      const stranger = await seedUser(ctx, { roles: ['admin'] });
+      const hit = await findVisibleViewByQuery(ctx.pool, {
+        userId: stranger.id,
+        includeShared: true,
+        query: 'partner_id=01JQ0000000000000000000001',
+      });
+      expect(hit?.query).toBe('partner_id=01JQ0000000000000000000001');
+
+      const miss = await findVisibleViewByQuery(ctx.pool, {
+        userId: stranger.id,
+        includeShared: false,
+        query: 'partner_id=01JQ0000000000000000000001',
+      });
+      expect(miss).toBeNull();
+    });
   });
 });

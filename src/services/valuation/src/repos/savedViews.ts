@@ -29,12 +29,22 @@ export interface SavedViewWithOwner extends SavedViewRow {
   owner_last_name: string | null;
 }
 
+/**
+ * The visibility predicate, shared by the two readers below.
+ *
+ * The outer parentheses are load-bearing. `AND` binds tighter than `OR`, so a
+ * caller appending `AND v.query = $3` to an unparenthesized
+ * `owner_id = $1 OR (shared)` gets the filter applied to the shared branch
+ * only, and every view the principal owns matches whatever the filter said.
+ * That is not a slow query, it is the wrong row: it made the partner pin hand
+ * back the first firm the operator had ever pinned, for every firm after it.
+ */
 const VISIBLE_VIEWS_SQL = `
   SELECT v.*, u.email AS owner_email, u.first_name AS owner_first_name, u.last_name AS owner_last_name
     FROM saved_views v
     JOIN users u ON u.id = v.owner_id
-   WHERE v.owner_id = $1
-      OR ($2::boolean AND v.visibility = 'shared')`;
+   WHERE (v.owner_id = $1
+      OR ($2::boolean AND v.visibility = 'shared'))`;
 
 export const SAVED_VIEW_PAGE_LIMIT = 200;
 
