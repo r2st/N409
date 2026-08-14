@@ -59,6 +59,7 @@ export const ID_PARAM_NAMES: ReadonlySet<string> = new Set([
   'paymentId',
   'projectionId',
   'roundId',
+  'runId', // roll-forward run
   'scenarioId',
   'transactionId',
   'valuationId',
