@@ -191,11 +191,24 @@ export default defineConfig({
       // three input devices: measured 97.78 lines/statements, 89.73
       // branches, 88.46 functions. Functions was the weak metric and moved
       // 1.5 points; it is the one worth raising.
+      // Ratcheted again on the round that went after the untested *mutations*
+      // — the auditor link revoke, the onboarding upload, the signature
+      // remove, the portfolio create, the report editor's toolbar: measured
+      // 98.04 statements/lines, 90.10 branches, 92.85 functions.
+      //
+      // The gap between measured and gate is chosen per metric, in items
+      // rather than percent, because the metrics are wildly different sizes:
+      // one point of `functions` is 19 functions but one point of
+      // `statements` is 422. A gate set just under the measured percentage
+      // leaves ~17 statements of headroom, which is one modest untested
+      // helper away from failing a run that regressed nothing. These leave
+      // roughly 60–230 items of slack each — enough that the gate fires on a
+      // real regression and not on noise.
       thresholds: {
-        lines: 97,
-        statements: 97,
-        functions: 88,
-        branches: 89,
+        lines: 97.5,
+        statements: 97.5,
+        functions: 92,
+        branches: 89.5,
       },
     },
   },
