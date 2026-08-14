@@ -127,7 +127,7 @@ describe('AccountingConnect — edges', () => {
   describe('the actions', () => {
     it('reports why an import was refused, in the API’s own words', async () => {
       const user = userEvent.setup();
-      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, _init) => {
         const path = String(url);
         if (path.includes('/import'))
           return new Response(JSON.stringify({ title: 'No published P&L for the period' }), {
