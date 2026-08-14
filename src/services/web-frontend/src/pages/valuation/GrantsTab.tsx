@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
+import {
+  all,
+  email as emailRule,
+  integer,
+  numberMin,
+  optional,
+  required,
+  useFormValidation,
+} from '../../lib/useFormValidation';
 import { api, ApiError } from '../../lib/api';
 import { formatMoney, formatNumber } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
@@ -248,8 +256,23 @@ export function GrantsTab() {
 
   const custom = form.vesting_template === 'custom';
 
-  const create = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * `options_count` has no `step`, which for `type="number"` means a step of 1 —
+   * so the browser was rejecting a fractional grant, and the page has to keep
+   * doing it. `Number(form.options_count)` in the body below would otherwise
+   * post 1500.5 options.
+   */
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(form, {
+    grantee_name: required('grantee_name', 'Grantee name'),
+    grantee_email: optional('grantee_email', emailRule('grantee_email')),
+    grant_date: required('grant_date', 'Grant date'),
+    options_count: all(
+      numberMin('options_count', 1, 'Number of options'),
+      integer('options_count', 'Number of options'),
+    ),
+  });
+
+  const create = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -264,13 +287,14 @@ export function GrantsTab() {
       await api(`/valuations/${valuation.id}/grants`, { method: 'POST', body });
       setForm(emptyForm);
       setShowForm(false);
+      reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not issue the grant.');
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const cancel = async (id: string) => {
     setBusy(true);
@@ -319,37 +343,42 @@ export function GrantsTab() {
         <form
           onSubmit={create}
           className="grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-2"
+          noValidate
         >
-          <Field label="Grantee name">
+          <Field label="Grantee name" error={errorFor('grantee_name')}>
             <TextInput
               value={form.grantee_name}
               onChange={(e) => setForm((f) => ({ ...f, grantee_name: e.target.value }))}
+              onBlur={blurHandler('grantee_name')}
               required
               maxLength={200}
             />
           </Field>
-          <Field label="Grantee email (optional)">
+          <Field label="Grantee email (optional)" error={errorFor('grantee_email')}>
             <TextInput
               type="email"
               value={form.grantee_email}
               onChange={(e) => setForm((f) => ({ ...f, grantee_email: e.target.value }))}
+              onBlur={blurHandler('grantee_email')}
               maxLength={320}
             />
           </Field>
-          <Field label="Grant date">
+          <Field label="Grant date" error={errorFor('grant_date')}>
             <TextInput
               type="date"
               value={form.grant_date}
               onChange={(e) => setForm((f) => ({ ...f, grant_date: e.target.value }))}
+              onBlur={blurHandler('grant_date')}
               required
             />
           </Field>
-          <Field label="Number of options">
+          <Field label="Number of options" error={errorFor('options_count')}>
             <TextInput
               type="number"
               min={1}
               value={form.options_count}
               onChange={(e) => setForm((f) => ({ ...f, options_count: e.target.value }))}
+              onBlur={blurHandler('options_count')}
               required
             />
           </Field>
@@ -380,10 +409,7 @@ export function GrantsTab() {
             </p>
           )}
           <div className="sm:col-span-2">
-            <Button
-              type="submit"
-              disabled={busy || !form.grantee_name.trim() || !form.grant_date || !form.options_count}
-            >
+            <Button type="submit" disabled={busy}>
               {busy ? 'Issuing…' : 'Issue grant'}
             </Button>
           </div>

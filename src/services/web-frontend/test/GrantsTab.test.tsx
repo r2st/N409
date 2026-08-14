@@ -296,20 +296,72 @@ describe('GrantsTab', () => {
       expect(screen.getByText(/4-year monthly schedule by default/)).toBeInTheDocument();
     });
 
-    it('keeps the submit disabled until the grant is actually specified', async () => {
+    it('names each unspecified part of the grant instead of a dead submit button', async () => {
+      // R29 — the button was disabled until all three were filled, which
+      // refuses the submit without saying which part is missing.
       const user = userEvent.setup();
-      mockApi();
+      const calls = mockApi();
       renderTab();
       await ready();
       await openForm(user);
-      const submit = screen.getByRole('button', { name: 'Issue grant' });
-      expect(submit).toBeDisabled();
+
+      await user.click(screen.getByRole('button', { name: 'Issue grant' }));
+
+      expect(await screen.findByText('Grantee name is required.')).toBeInTheDocument();
+      expect(screen.getByText('Grant date is required.')).toBeInTheDocument();
+      expect(screen.getByText('Number of options is required.')).toBeInTheDocument();
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+    });
+
+    it('refuses a fractional option count, which is what the default step meant', async () => {
+      // `type="number"` with no `step` is a step of 1, so the browser rejected
+      // this. `Number(form.options_count)` would have posted 40000.5 options.
+      const user = userEvent.setup();
+      const calls = mockApi();
+      renderTab();
+      await ready();
+      await openForm(user);
+
       await user.type(screen.getByLabelText(/^Grantee name/), 'Dana Reed');
-      expect(submit).toBeDisabled();
       await user.type(screen.getByLabelText(/^Grant date/), '2026-01-15');
-      expect(submit).toBeDisabled();
+      await user.type(screen.getByLabelText(/^Number of options/), '40000.5');
+      await user.click(screen.getByRole('button', { name: 'Issue grant' }));
+
+      expect(await screen.findByText('Number of options must be a whole number.')).toBeInTheDocument();
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+    });
+
+    it('refuses a zero-option grant', async () => {
+      const user = userEvent.setup();
+      const calls = mockApi();
+      renderTab();
+      await ready();
+      await openForm(user);
+
+      await user.type(screen.getByLabelText(/^Grantee name/), 'Dana Reed');
+      await user.type(screen.getByLabelText(/^Grant date/), '2026-01-15');
+      await user.type(screen.getByLabelText(/^Number of options/), '0');
+      await user.click(screen.getByRole('button', { name: 'Issue grant' }));
+
+      expect(await screen.findByText('Number of options must be at least 1.')).toBeInTheDocument();
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+    });
+
+    it('checks the grantee email only when one is given', async () => {
+      const user = userEvent.setup();
+      const calls = mockApi();
+      renderTab();
+      await ready();
+      await openForm(user);
+
+      await user.type(screen.getByLabelText(/^Grantee name/), 'Dana Reed');
+      await user.type(screen.getByLabelText(/^Grant date/), '2026-01-15');
       await user.type(screen.getByLabelText(/^Number of options/), '40000');
-      expect(submit).toBeEnabled();
+      await user.type(screen.getByLabelText(/^Grantee email/), 'dana@');
+      await user.click(screen.getByRole('button', { name: 'Issue grant' }));
+
+      expect(await screen.findByText('Enter a valid email address.')).toBeInTheDocument();
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
     });
 
     it('sends a blank email as null and defaults the vesting start to the grant date', async () => {

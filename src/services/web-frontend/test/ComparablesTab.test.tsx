@@ -247,9 +247,11 @@ describe('ComparablesTab', () => {
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Exclude' })[0]!);
     const reason = await screen.findByLabelText(/why is this company not comparable/i);
-    // The field is required, so submitting empty never reaches the network.
+    // Submitting empty never reaches the network — and since R29 it says why
+    // rather than silently doing nothing.
     await userEvent.click(screen.getAllByRole('button', { name: 'Exclude' }).at(-1)!);
     expect(sent).toHaveLength(0);
+    expect(await screen.findByText('A reason is required.')).toBeInTheDocument();
 
     await userEvent.type(reason, 'acquired mid-period');
     await userEvent.click(screen.getAllByRole('button', { name: 'Exclude' }).at(-1)!);
@@ -551,5 +553,61 @@ describe('ComparablesTab', () => {
     await screen.findByText('Alpha Analytics');
     expect(screen.getByText(/0 of 3 companies/)).toBeInTheDocument();
     expect(screen.queryByText(/x–/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * R29 — both forms here relied on the browser for their one required box,
+   * which refuses the submit with a tooltip on the control and nothing in the
+   * page. The exclusion reason is the one that matters: it is what an auditor
+   * reads to understand why a peer was dropped from the set.
+   */
+  it('names the empty company name rather than refusing the add silently', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    mockApi({}, (path, init) => {
+      if (init.method === 'POST' && path.endsWith('/comparables')) {
+        sent.push(JSON.parse(String(init.body)));
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add peer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add comparable' }));
+
+    expect(await screen.findByText('Company name is required.')).toBeInTheDocument();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('treats a whitespace-only company name as no name', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    mockApi({}, (path, init) => {
+      if (init.method === 'POST' && path.endsWith('/comparables')) {
+        sent.push(JSON.parse(String(init.body)));
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add peer' }));
+    await userEvent.type(screen.getByLabelText('Company name'), '   ');
+    await userEvent.click(screen.getByRole('button', { name: 'Add comparable' }));
+
+    expect(await screen.findByText('Company name is required.')).toBeInTheDocument();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('clears the name message as soon as a name is typed', async () => {
+    mockApi();
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add peer' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add comparable' }));
+    expect(await screen.findByText('Company name is required.')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Company name'), 'Delta Corp');
+    expect(screen.queryByText('Company name is required.')).not.toBeInTheDocument();
   });
 });

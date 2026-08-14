@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { required, useFormValidation } from '../../lib/useFormValidation';
 import { api, ApiError } from '../../lib/api';
 import { useWorkspace } from './ValuationWorkspace';
 import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../../components/ui';
@@ -159,8 +160,12 @@ export function ComparablesTab() {
       'Could not include the comparable.',
     );
 
-  const exclude = async (e: FormEvent) => {
-    e.preventDefault();
+  const excludeValidation = useFormValidation(
+    { reason },
+    { reason: required('reason', 'A reason') },
+  );
+
+  const exclude = excludeValidation.handleSubmit(async () => {
     if (!excluding) return;
     const ok = await run(
       () =>
@@ -173,8 +178,9 @@ export function ComparablesTab() {
     if (ok) {
       setExcluding(null);
       setReason('');
+      excludeValidation.reset();
     }
-  };
+  });
 
   const remove = (row: Comparable) =>
     run(
@@ -214,8 +220,18 @@ export function ComparablesTab() {
     }, 'Could not refresh the comparable set from market data.');
   };
 
-  const addPeer = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * Only the name is checked. The three figure boxes run through `money`, which
+   * maps anything unparseable to null — the same value a blank box sends — and
+   * that is deliberate rather than an oversight: "n/a" is how an analyst writes
+   * "not known", and a rule here would reject it. See the "sends an unparseable
+   * figure as null rather than NaN" test, which fixes that behaviour.
+   */
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(draft, {
+    name: required('name', 'Company name'),
+  });
+
+  const addPeer = handleSubmit(async () => {
     const ok = await run(
       () =>
         api(`/valuations/${valuation.id}/comparables`, {
@@ -234,8 +250,9 @@ export function ComparablesTab() {
     if (ok) {
       setDraft({ ticker: '', name: '', sic: '', ev: '', revenue: '', ebitda: '' });
       setAdding(false);
+      reset();
     }
-  };
+  });
 
   if (error && !data) return <ErrorNote>{error}</ErrorNote>;
   if (!data) return <Spinner />;
@@ -308,12 +325,14 @@ export function ComparablesTab() {
         <form
           onSubmit={addPeer}
           className="mt-6 grid gap-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card sm:grid-cols-3"
+          noValidate
         >
-          <Field label="Company name">
+          <Field label="Company name" error={errorFor('name')}>
             <TextInput
               required
               value={draft.name}
               onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+              onBlur={blurHandler('name')}
             />
           </Field>
           <Field label="Ticker">
@@ -452,14 +471,19 @@ export function ComparablesTab() {
         <form
           onSubmit={exclude}
           className="mt-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+          noValidate
         >
-          <Field label="Why is this company not comparable?">
+          <Field
+            label="Why is this company not comparable?"
+            error={excludeValidation.errorFor('reason')}
+          >
             <TextInput
               required
               autoFocus
               value={reason}
               placeholder="e.g. different industry, acquired mid-period, pre-revenue"
               onChange={(e) => setReason(e.target.value)}
+              onBlur={excludeValidation.blurHandler('reason')}
             />
           </Field>
           <div className="mt-3 flex gap-2">
