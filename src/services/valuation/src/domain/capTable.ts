@@ -461,6 +461,30 @@ export function investedAmount(entry: CapTableEntry): number {
 }
 
 /**
+ * What a preferred class is paid before common: invested × multiple.
+ *
+ * The third figure the platform derived in four places from the same two
+ * nullable columns, and the third to disagree with the engine. Both defaults
+ * are the engine's: `toWaterfallInputs` takes the invested amount as
+ * `price_per_share × shares` when the amount column is blank, and defaults an
+ * absent multiple to 1× — which `validateCapTable` warns about (`default_liq_pref`)
+ * rather than treating as "no preference".
+ *
+ * Reading the two columns raw instead is how the cap-table *graph* — the one
+ * picture on the platform whose subject is the preference stack — drew an
+ * ordinary Carta export's Series A with no preference at all, on a row the
+ * waterfall was paying ahead of common.
+ *
+ * Zero for a non-preferred class: options, warrants and common hold no
+ * preference, and returning the multiple times nothing would invite a caller to
+ * print one.
+ */
+export function liquidationPreference(entry: CapTableEntry): number {
+  if (entry.class_type !== 'preferred') return 0;
+  return investedAmount(entry) * (entry.liquidation_multiple ?? 1);
+}
+
+/**
  * The fully-diluted, as-converted count for a whole table.
  *
  * Prefer this over a stored `CapTableSummary.fully_diluted_shares` anywhere the
@@ -646,7 +670,7 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
           message: `${at}"${e.security_class}" has no invested amount or price — preference stack may be understated.`,
         });
       }
-      summary.total_preference_stack += invested * mult;
+      summary.total_preference_stack += liquidationPreference(e);
     }
   }
 

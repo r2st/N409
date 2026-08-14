@@ -1,4 +1,9 @@
-import { asConvertedShares, investedAmount, type CapTableEntry } from './capTable.js';
+import {
+  asConvertedShares,
+  investedAmount,
+  liquidationPreference,
+  type CapTableEntry,
+} from './capTable.js';
 import type { ComputedSheet } from './workbook.js';
 import { OVERWRITE_FIELDS_BY_KEY } from './overwrites.js';
 
@@ -226,7 +231,7 @@ export function capTableTotals(entries: readonly CapTableEntry[]): CapTableTotal
         // amount as having raised nothing and holding no preference.
         const invested = investedAmount(e);
         totals.invested_capital += invested;
-        totals.liquidation_preference += invested * (num(e.liquidation_multiple) ?? 1);
+        totals.liquidation_preference += liquidationPreference(e);
         break;
       }
       case 'option':

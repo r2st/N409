@@ -1,4 +1,9 @@
-import { asConvertedShares, type CapTableEntry, type CapTableClassType } from './capTable.js';
+import {
+  asConvertedShares,
+  liquidationPreference,
+  type CapTableEntry,
+  type CapTableClassType,
+} from './capTable.js';
 
 /**
  * The cap table as a graph — what converts into what, and what sits in front
@@ -220,10 +225,22 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
       ownership: share(converted(entry)),
       class_type: entry.class_type,
       seniority: entry.seniority,
-      liquidation_preference:
-        entry.liquidation_multiple !== null && entry.invested_amount !== null
-          ? entry.liquidation_multiple * entry.invested_amount
-          : null,
+      /*
+       * The figure the engine will actually pay this class ahead of common,
+       * defaults included — not the product of two raw columns.
+       *
+       * Requiring both to be stated drew nothing on the ordinary case. A Carta
+       * export carries the round price and leaves "Amount Invested" blank, and
+       * a sheet that states a 1× preference usually states it by omission; the
+       * engine fills both gaps (`toWaterfallInputs`), so the waterfall paid a
+       * class the picture of the preference stack drew as holding no
+       * preference at all.
+       *
+       * Null still means null — a class with neither an amount nor a price has
+       * no preference to draw, which is the `no_investment` warning's case and
+       * is worth showing as absent rather than as zero.
+       */
+      liquidation_preference: liquidationPreference(entry) || null,
       price_per_share: entry.price_per_share,
       invested_amount: entry.invested_amount,
       conversion_ratio: entry.conversion_ratio,

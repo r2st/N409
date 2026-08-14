@@ -205,6 +205,52 @@ describe('cap table graph', () => {
     expect(nodes.find((n) => n.label === 'Series A')!.liquidation_preference).toBe(18_000_000);
   });
 
+  /**
+   * The preference the *engine* will pay, defaults included.
+   *
+   * This is the one picture on the platform whose subject is the preference
+   * stack, and it required both columns to be stated before it would draw one.
+   * Neither is, on an ordinary export: Carta leaves "Amount Invested" blank and
+   * carries the round price, and a 1× preference is usually stated by omission.
+   * `toWaterfallInputs` fills both gaps, so the waterfall paid a class the
+   * diagram drew as holding nothing.
+   */
+  describe('the preference a node draws', () => {
+    const engineFor = (e: CapTableEntry) => {
+      const p = toWaterfallInputs([COMMON, e]).preferred[0]!;
+      return p.invested_amount * p.liquidation_multiple;
+    };
+    const drawnFor = (e: CapTableEntry) =>
+      build([COMMON, e]).nodes.find((n) => n.label === e.security_class)!.liquidation_preference;
+
+    it('reads a priced class with no stated amount as the engine does', () => {
+      const priced = entry({
+        security_class: 'Series A',
+        class_type: 'preferred',
+        shares: 2_000_000,
+        price_per_share: 1.5,
+        seniority: 1,
+      });
+      expect(engineFor(priced)).toBe(3_000_000);
+      expect(drawnFor(priced)).toBe(3_000_000);
+    });
+
+    it('defaults an unstated multiple to 1×, as the engine does', () => {
+      const noMultiple = entry({ ...A, liquidation_multiple: null });
+      expect(engineFor(noMultiple)).toBe(9_000_000);
+      expect(drawnFor(noMultiple)).toBe(9_000_000);
+    });
+
+    it('still draws nothing where there is neither an amount nor a price', () => {
+      // `validateCapTable` raises `no_investment` on this row. An absent
+      // preference is the truth about it, and showing it as $0 would read as a
+      // measured figure rather than a missing one.
+      const bare = entry({ ...A, invested_amount: null, price_per_share: null });
+      expect(engineFor(bare)).toBe(0);
+      expect(drawnFor(bare)).toBeNull();
+    });
+  });
+
   it('sorts unstated seniorities behind stated ones, by cheque size', () => {
     // An unstated seniority is far more often an unfilled column than a
     // genuine last place; ordering the unknowns by money at least puts the
