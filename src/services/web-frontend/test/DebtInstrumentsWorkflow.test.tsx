@@ -133,6 +133,35 @@ const combo = (label: string) =>
 /** The detail pane has rendered once its parameter card is on screen. */
 const awaitDetail = (heading: RegExp) => screen.findByRole('heading', { name: heading });
 
+/**
+ * Read a nested object off a recorded request body.
+ *
+ * Casting the body to `Record<string, unknown>` and indexing it asserts a shape
+ * the request may not have: a test that meant to check the `params` the page
+ * sent would read `undefined` off a body that carried none and compare it to
+ * `undefined`, passing while the page sent nothing at all. Narrowing instead
+ * fails loudly, and names the call that was missing the key.
+ */
+function bodyObject(call: Call | undefined, key: string): Record<string, unknown> {
+  const value = call?.body?.[key];
+  if (typeof value !== 'object' || value === null) {
+    const where = call ? `${call.method} ${call.path}` : 'a call that was never made';
+    throw new Error(`expected ${where} to carry an object at "${key}", got ${JSON.stringify(value)}`);
+  }
+  return value as Record<string, unknown>;
+}
+
+/** A number the page sent under `overrides`, or a failure naming what it sent instead. */
+function numericOverride(call: Call, key: string): number {
+  const value = bodyObject(call, 'overrides')[key];
+  if (typeof value !== 'number') {
+    throw new Error(
+      `expected ${call.method} ${call.path} to override "${key}" with a number, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
 describe('DebtInstrumentsPage — list and creation', () => {
   beforeEach(() => vi.restoreAllMocks());
 
@@ -225,7 +254,7 @@ describe('DebtInstrumentsPage — list and creation', () => {
     // `"false"` is truthy in Python and in JS. A term loan defaults to
     // amortizing and a bond does not, so the wrong type here silently reprices
     // the instrument on a different schedule.
-    expect((post?.body?.params as Record<string, unknown>).amortizing).toBe(true);
+    expect(bodyObject(post, 'params').amortizing).toBe(true);
   });
 
   it('keeps the form open and says why when the create is rejected', async () => {
@@ -298,7 +327,7 @@ describe('DebtInstrumentsPage — valuing an instrument', () => {
     // parameters and the number on screen does not belong to the form above it.
     const put = calls.find((c) => c.method === 'PUT');
     expect(put?.path).toBe('/debt/instruments/i1');
-    expect((put?.body?.params as Record<string, unknown>).market_yield).toBe(0.065);
+    expect(bodyObject(put, 'params').market_yield).toBe(0.065);
     expect(calls.findIndex((c) => c.method === 'PUT')).toBeLessThan(
       calls.findIndex((c) => c.path.endsWith('/value')),
     );
@@ -396,7 +425,7 @@ describe('DebtInstrumentsPage — sensitivity', () => {
 
     const shifted = calls
       .filter((c) => c.path.endsWith('/value'))
-      .map((c) => (c.body?.overrides as Record<string, number>).market_yield);
+      .map((c) => numericOverride(c, 'market_yield'));
     expect(shifted.map((n) => Number(n.toFixed(4)))).toEqual([0.04, 0.05, 0.06, 0.07, 0.08]);
 
     const table = screen.getByRole('heading', { name: 'Sensitivity' }).parentElement!;
@@ -418,7 +447,7 @@ describe('DebtInstrumentsPage — sensitivity', () => {
 
     const shifted = calls
       .filter((c) => c.path.endsWith('/value'))
-      .map((c) => (c.body?.overrides as Record<string, number>).market_yield);
+      .map((c) => numericOverride(c, 'market_yield'));
     expect(Math.min(...shifted)).toBe(0);
   });
 
