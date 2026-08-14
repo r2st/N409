@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  all,
+  email as emailRule,
+  matches,
+  minLength,
+  required,
+  useFormValidation,
+} from '../lib/useFormValidation';
 import { api, ApiError, tokenExpiry } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
@@ -61,9 +68,16 @@ function ProfileCard() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
-  // The phone error only appears once the field has been left, so a half-typed
-  // number is not scolded on its first digit.
-  const [phoneTouched, setPhoneTouched] = useState(false);
+
+  /*
+   * The phone box used to carry its own `phoneTouched` flag and an early return
+   * in the submit handler — which is the hook's whole job, written out once.
+   * The API rejects a non-E.164 number with a 422; this says so next to the
+   * field instead, as it did before.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
+    phone: (v) => phoneFieldError(String(v.phone ?? '')),
+  });
 
   if (!user) return null;
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) => {
@@ -71,16 +85,7 @@ function ProfileCard() {
     setSaved(false);
   };
 
-  const phoneError = phoneFieldError(form.phone);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    // The API rejects a non-E.164 number with a 422; say so here instead, next
-    // to the field, rather than as a banner at the top of the form.
-    if (phoneError) {
-      setPhoneTouched(true);
-      return;
-    }
+  const submit = handleSubmit(async () => {
     setError(null);
     setSaved(false);
     setBusy(true);
@@ -93,7 +98,7 @@ function ProfileCard() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <Card title="Profile" description="How your name appears on reports and in comment threads.">
@@ -113,14 +118,14 @@ function ProfileCard() {
           <Field label="Job title">
             <TextInput value={form.job_title} onChange={set('job_title')} maxLength={150} />
           </Field>
-          <Field label="Phone" error={phoneTouched ? phoneError : null} hint="Used for SMS notifications.">
+          <Field label="Phone" error={errorFor('phone')} hint="Used for SMS notifications.">
             <PhoneInput
               value={form.phone}
               onChange={(phone) => {
                 setForm((f) => ({ ...f, phone }));
                 setSaved(false);
               }}
-              onBlur={() => setPhoneTouched(true)}
+              onBlur={blurHandler('phone')}
             />
           </Field>
           <Field label="Time zone" hint="Used for dates and deadlines.">
@@ -153,8 +158,21 @@ function ChangeEmailCard() {
 
   if (!user) return null;
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * The form carried `noValidate` and both boxes carried `required`, so
+   * between them nothing checked anything: a malformed address went to the
+   * API and came back a 422 banner. R28 fixed eight forms in this shape and
+   * missed the four on this page.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { email, password },
+    {
+      email: emailRule('email'),
+      password: required('password', 'Current password'),
+    },
+  );
+
+  const submit = handleSubmit(async () => {
     setError(null);
     setSaved(false);
     setBusy(true);
@@ -171,7 +189,7 @@ function ChangeEmailCard() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <Card
@@ -181,25 +199,34 @@ function ChangeEmailCard() {
       <form onSubmit={submit} className="max-w-sm space-y-4" noValidate>
         <ErrorNote>{error}</ErrorNote>
         {saved && <SavedNote>Email updated. Check your inbox to verify the new address.</SavedNote>}
-        <Field label="Email">
+        <Field label="Email" error={errorFor('email')}>
           <TextInput
             type="email"
             required
             autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onBlur={blurHandler('email')}
           />
         </Field>
-        <Field label="Current password" hint="Required to change the email on your account.">
+        <Field
+          label="Current password"
+          hint="Required to change the email on your account."
+          error={errorFor('password')}
+        >
           <TextInput
             type="password"
             required
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onBlur={blurHandler('password')}
           />
         </Field>
-        <Button type="submit" disabled={busy || !password || email === user.email}>
+        {/* Still gated on the address having actually changed — that is a
+            statement about the form's purpose, not a validation failure, and
+            there is no message to show for it. */}
+        <Button type="submit" disabled={busy || email === user.email}>
           {busy ? 'Updating…' : 'Update email'}
         </Button>
       </form>
@@ -217,18 +244,27 @@ function ChangePasswordCard() {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * These two rules were already here, as early returns setting a banner above
+   * the form — which said "New password must be at least 10 characters" without
+   * indicating which of the three password boxes it meant. Same rules, attached
+   * to the box each is about.
+   */
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
+    { current, next, confirm },
+    {
+      current: required('current', 'Current password'),
+      next: minLength('next', 10, 'New password'),
+      confirm: all(
+        required('confirm', 'Confirmation'),
+        matches('confirm', 'next', "New passwords don't match."),
+      ),
+    },
+  );
+
+  const submit = handleSubmit(async () => {
     setError(null);
     setSaved(false);
-    if (next.length < 10) {
-      setError('New password must be at least 10 characters.');
-      return;
-    }
-    if (next !== confirm) {
-      setError("New passwords don't match.");
-      return;
-    }
     setBusy(true);
     try {
       const res = await api<{ token?: string }>('/auth/change-password', {
@@ -242,28 +278,33 @@ function ChangePasswordCard() {
       setNext('');
       setConfirm('');
       setSaved(true);
+      // The card stays mounted after saving, and the three boxes have just been
+      // emptied — without this every "is required" message reappears at once
+      // on a form the user has finished with.
+      reset();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not change the password.');
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <Card title="Change password">
       <form onSubmit={submit} className="max-w-sm space-y-4" noValidate>
         <ErrorNote>{error}</ErrorNote>
         {saved && <SavedNote>Password updated. Other sessions have been signed out.</SavedNote>}
-        <Field label="Current password">
+        <Field label="Current password" error={errorFor('current')}>
           <TextInput
             type="password"
             autoComplete="current-password"
             required
             value={current}
             onChange={(e) => setCurrent(e.target.value)}
+            onBlur={blurHandler('current')}
           />
         </Field>
-        <Field label="New password" hint="At least 10 characters.">
+        <Field label="New password" hint="At least 10 characters." error={errorFor('next')}>
           <TextInput
             type="password"
             autoComplete="new-password"
@@ -271,18 +312,20 @@ function ChangePasswordCard() {
             minLength={10}
             value={next}
             onChange={(e) => setNext(e.target.value)}
+            onBlur={blurHandler('next')}
           />
         </Field>
-        <Field label="Confirm new password">
+        <Field label="Confirm new password" error={errorFor('confirm')}>
           <TextInput
             type="password"
             autoComplete="new-password"
             required
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
+            onBlur={blurHandler('confirm')}
           />
         </Field>
-        <Button type="submit" disabled={busy || !current || !next || !confirm}>
+        <Button type="submit" disabled={busy}>
           {busy ? 'Updating…' : 'Update password'}
         </Button>
       </form>
@@ -408,8 +451,12 @@ function ApiTokensCard() {
     void load();
   }, []);
 
-  const create = async (e: FormEvent) => {
-    e.preventDefault();
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
+    { name },
+    { name: required('name', 'Token name') },
+  );
+
+  const create = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -419,13 +466,16 @@ function ApiTokensCard() {
       });
       setMinted({ name: res.token.name, secret: res.secret });
       setName('');
+      // The box is now empty and the form is still on screen; without this the
+      // "is required" message appears the moment the token is created.
+      reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the token.');
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const revoke = async (token: ApiToken) => {
     if (!window.confirm(`Revoke "${token.name}"? Anything using it will stop working.`)) return;
@@ -492,19 +542,20 @@ function ApiTokensCard() {
         </table>
       )}
 
-      <form onSubmit={create} className="mt-5 flex max-w-md items-end gap-3">
+      <form onSubmit={create} className="mt-5 flex max-w-md items-end gap-3" noValidate>
         <div className="flex-1">
-          <Field label="New token name">
+          <Field label="New token name" error={errorFor('name')}>
             <TextInput
               required
               maxLength={200}
               placeholder="e.g. reporting script"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onBlur={blurHandler('name')}
             />
           </Field>
         </div>
-        <Button type="submit" disabled={busy || !name.trim()}>
+        <Button type="submit" disabled={busy}>
           {busy ? 'Creating…' : 'Create token'}
         </Button>
       </form>
@@ -583,8 +634,18 @@ function CloseAccountCard() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const close = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * The password box is not rendered for a Google SSO account — there is no
+   * password to confirm — so the rule has to ask who is signed in rather than
+   * demand a field that is not on screen.
+   */
+  const needsPassword = user?.sso_provider !== 'google';
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { password },
+    { password: needsPassword ? required('password', 'Password') : undefined },
+  );
+
+  const close = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -595,7 +656,7 @@ function CloseAccountCard() {
       setError(err instanceof ApiError ? err.message : 'Could not close your account.');
       setBusy(false);
     }
-  };
+  });
 
   return (
     <Card
@@ -609,14 +670,15 @@ function CloseAccountCard() {
       ) : (
         <form onSubmit={close} className="max-w-sm space-y-4" noValidate>
           <ErrorNote>{error}</ErrorNote>
-          {user?.sso_provider !== 'google' && (
-            <Field label="Confirm your password">
+          {needsPassword && (
+            <Field label="Confirm your password" error={errorFor('password')}>
               <TextInput
                 type="password"
                 required
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onBlur={blurHandler('password')}
               />
             </Field>
           )}

@@ -49,17 +49,63 @@ describe('contact form (gap #28)', () => {
     expect(await screen.findByText('Thanks — your message is in.')).toBeInTheDocument();
   });
 
-  it('keeps the submit button disabled until the required fields are filled', async () => {
+  it('names every empty required box on a submit of the blank form', async () => {
+    // R29 — the button used to be disabled until all three were filled, which
+    // is a refusal with nothing to read. The form carried `noValidate` too, so
+    // once the button went live nothing at all was checking these.
     const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderContact();
 
-    const button = screen.getByRole('button', { name: 'Send message' });
-    expect(button).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByText('Full name is required.')).toBeInTheDocument();
+    expect(screen.getByText('Email is required.')).toBeInTheDocument();
+    expect(screen.getByText('Message is required.')).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed address rather than posting it', async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderContact();
+
+    await user.type(screen.getByLabelText('Full name'), 'Ada');
+    await user.type(screen.getByLabelText('Email'), 'ada@');
+    await user.type(screen.getByLabelText('Message'), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByText('Enter a valid email address.')).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('leaves the optional phone box optional', async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ ok: true }));
+    renderContact();
 
     await user.type(screen.getByLabelText('Full name'), 'Ada');
     await user.type(screen.getByLabelText('Email'), 'ada@x.example');
     await user.type(screen.getByLabelText('Message'), 'Hello');
-    expect(button).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByText('Thanks — your message is in.')).toBeInTheDocument();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses a phone number that is present but not dialable', async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    renderContact();
+
+    await user.type(screen.getByLabelText('Full name'), 'Ada');
+    await user.type(screen.getByLabelText('Email'), 'ada@x.example');
+    await user.type(screen.getByLabelText('Message'), 'Hello');
+    await user.type(screen.getByLabelText('Phone number'), '555');
+    await user.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByText(/too short/i)).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('surfaces a server error without clearing the form', async () => {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { email as emailRule, required, useFormValidation } from '../../lib/useFormValidation';
 import { api, ApiError } from '../../lib/api';
 import { Button, ErrorNote, Field, TextInput } from '../../components/ui';
 import { PhoneInput, phoneFieldError } from '../../components/PhoneInput';
@@ -73,21 +74,25 @@ function ContactForm() {
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [phoneTouched, setPhoneTouched] = useState(false);
 
   const set = (key: keyof typeof form) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  // Phone is optional here, so this is null for an empty field and only fires
-  // on a number that is present but not dialable.
-  const phoneError = phoneFieldError(form.phone);
+  /*
+   * The form carried `noValidate`, three boxes carried `required`, and only the
+   * phone had a check — so a submit with an empty name went to the public
+   * endpoint and came back a 422 banner. Phone stays optional: the rule is null
+   * for an empty field and only fires on a number that is present but not
+   * dialable.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
+    name: required('name', 'Full name'),
+    email: emailRule('email'),
+    message: required('message', 'Message'),
+    phone: (v) => phoneFieldError(String(v.phone ?? '')),
+  });
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (phoneError) {
-      setPhoneTouched(true);
-      return;
-    }
+  const submit = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -107,7 +112,7 @@ function ContactForm() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   if (sent) {
     return (
@@ -133,22 +138,24 @@ function ContactForm() {
     >
       <ErrorNote>{error}</ErrorNote>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Full name">
+        <Field label="Full name" error={errorFor('name')}>
           <TextInput
             required
             autoComplete="name"
             value={form.name}
             onChange={set('name')}
+            onBlur={blurHandler('name')}
             placeholder="Ada Lovelace"
           />
         </Field>
-        <Field label="Email">
+        <Field label="Email" error={errorFor('email')}>
           <TextInput
             type="email"
             required
             autoComplete="email"
             value={form.email}
             onChange={set('email')}
+            onBlur={blurHandler('email')}
             placeholder="you@company.com"
           />
         </Field>
@@ -160,25 +167,26 @@ function ContactForm() {
             placeholder="Acme, Inc."
           />
         </Field>
-        <Field label="Phone" error={phoneTouched ? phoneError : null}>
+        <Field label="Phone" error={errorFor('phone')}>
           <PhoneInput
             value={form.phone}
             onChange={(phone) => setForm((f) => ({ ...f, phone }))}
-            onBlur={() => setPhoneTouched(true)}
+            onBlur={blurHandler('phone')}
           />
         </Field>
       </div>
-      <Field label="Message">
+      <Field label="Message" error={errorFor('message')}>
         <textarea
           required
           rows={5}
           value={form.message}
           onChange={set('message')}
+          onBlur={blurHandler('message')}
           placeholder="Tell us what you need and your timeline…"
           className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-600 focus:ring-2 focus:ring-bond-600/20 focus:outline-none"
         />
       </Field>
-      <Button type="submit" disabled={busy || !form.name || !form.email || !form.message}>
+      <Button type="submit" disabled={busy}>
         {busy ? 'Sending…' : 'Send message'}
       </Button>
     </form>

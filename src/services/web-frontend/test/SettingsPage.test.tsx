@@ -364,3 +364,197 @@ describe('SettingsPage — sessions and account closure', () => {
     expect(screen.queryByLabelText('Confirm your password')).not.toBeInTheDocument();
   });
 });
+
+/**
+ * R29 — four of the five forms on this page carried `noValidate` together with
+ * `required`, which between them meant nothing checked anything: the email card
+ * sent a malformed address to the API and rendered the 422, and the close-account
+ * card sent an empty password. The password card did check, but as a banner above
+ * three password boxes that never said which one it meant.
+ */
+describe('SettingsPage — form validation', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const wrote = (calls: Call[], method: string, fragment: string) =>
+    calls.filter((c) => c.method === method && c.path.includes(fragment));
+
+  it('refuses a malformed new email instead of letting the API answer', async () => {
+    const calls = mockApi();
+    renderSettings();
+    await settled();
+
+    const emailCard = card('Email address');
+    await userEvent.clear(within(emailCard).getByLabelText('Email'));
+    await userEvent.type(within(emailCard).getByLabelText('Email'), 'ada@');
+    await userEvent.type(within(emailCard).getByLabelText('Current password'), 'hunter2hunter2');
+    await userEvent.click(within(emailCard).getByRole('button', { name: 'Update email' }));
+
+    expect(await screen.findByText('Enter a valid email address.')).toBeInTheDocument();
+    expect(wrote(calls, 'PATCH', '/me')).toHaveLength(0);
+  });
+
+  it('names the empty password box on the email card rather than sending nothing', async () => {
+    const calls = mockApi();
+    renderSettings();
+    await settled();
+
+    const emailCard = card('Email address');
+    await userEvent.clear(within(emailCard).getByLabelText('Email'));
+    await userEvent.type(within(emailCard).getByLabelText('Email'), 'ada@newcorp.com');
+    await userEvent.click(within(emailCard).getByRole('button', { name: 'Update email' }));
+
+    expect(
+      await within(emailCard).findByText('Current password is required.'),
+    ).toBeInTheDocument();
+    expect(wrote(calls, 'PATCH', '/me')).toHaveLength(0);
+  });
+
+  it('still changes the email when both boxes are good', async () => {
+    const calls = mockApi();
+    renderSettings();
+    await settled();
+
+    const emailCard = card('Email address');
+    await userEvent.clear(within(emailCard).getByLabelText('Email'));
+    await userEvent.type(within(emailCard).getByLabelText('Email'), 'ada@newcorp.com');
+    await userEvent.type(within(emailCard).getByLabelText('Current password'), 'hunter2hunter2');
+    await userEvent.click(within(emailCard).getByRole('button', { name: 'Update email' }));
+
+    await waitFor(() => expect(wrote(calls, 'PATCH', '/me')).toHaveLength(1));
+    expect(wrote(calls, 'PATCH', '/me')[0]!.body).toMatchObject({
+      email: 'ada@newcorp.com',
+      current_password: 'hunter2hunter2',
+    });
+  });
+
+  it('puts the short-password message on the box it is about', async () => {
+    // It used to be a banner above three password boxes reading "New password
+    // must be at least 10 characters", with nothing tying it to the middle one.
+    const calls = mockApi();
+    renderSettings();
+    await settled();
+
+    const pw = card('Change password');
+    await userEvent.type(within(pw).getByLabelText('Current password'), 'oldpassword');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'short');
+    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'short');
+    await userEvent.click(within(pw).getByRole('button', { name: 'Update password' }));
+
+    const box = within(pw).getByLabelText('New password');
+    await waitFor(() => expect(box).toHaveAttribute('aria-invalid', 'true'));
+    expect(document.getElementById(box.getAttribute('aria-describedby')!)).toHaveTextContent(
+      'New password must be at least 10 characters.',
+    );
+    expect(wrote(calls, 'POST', '/auth/change-password')).toHaveLength(0);
+  });
+
+  it('puts the mismatch message on the confirmation box', async () => {
+    const calls = mockApi();
+    renderSettings();
+    await settled();
+
+    const pw = card('Change password');
+    await userEvent.type(within(pw).getByLabelText('Current password'), 'oldpassword');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse');
+    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorsf');
+    await userEvent.click(within(pw).getByRole('button', { name: 'Update password' }));
+
+    const box = within(pw).getByLabelText('Confirm new password');
+    await waitFor(() => expect(box).toHaveAttribute('aria-invalid', 'true'));
+    expect(document.getElementById(box.getAttribute('aria-describedby')!)).toHaveTextContent(
+      "New passwords don't match.",
+    );
+    expect(wrote(calls, 'POST', '/auth/change-password')).toHaveLength(0);
+  });
+
+  it('clears the mismatch when the first box is corrected, not only the second', async () => {
+    mockApi();
+    renderSettings();
+    await settled();
+
+    const pw = card('Change password');
+    await userEvent.type(within(pw).getByLabelText('Current password'), 'oldpassword');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse');
+    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorsf');
+    await userEvent.click(within(pw).getByRole('button', { name: 'Update password' }));
+    expect(await within(pw).findByText("New passwords don't match.")).toBeInTheDocument();
+
+    await userEvent.clear(within(pw).getByLabelText('New password'));
+    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorsf');
+    expect(within(pw).queryByText("New passwords don't match.")).not.toBeInTheDocument();
+  });
+
+  it('does not re-raise every message on the emptied boxes after a successful change', async () => {
+    // The card stays mounted and the three boxes are cleared on success, so
+    // without a reset the form fills with "is required" the moment it works.
+    mockApi();
+    renderSettings();
+    await settled();
+
+    const pw = card('Change password');
+    await userEvent.type(within(pw).getByLabelText('Current password'), 'oldpassword');
+    await userEvent.type(within(pw).getByLabelText('New password'), 'correcthorse');
+    await userEvent.type(within(pw).getByLabelText('Confirm new password'), 'correcthorse');
+    await userEvent.click(within(pw).getByRole('button', { name: 'Update password' }));
+
+    expect(await within(pw).findByText(/Password updated/)).toBeInTheDocument();
+    expect(within(pw).queryByText('Current password is required.')).not.toBeInTheDocument();
+    expect(within(pw).queryByText('New password is required.')).not.toBeInTheDocument();
+    expect(within(pw).queryByText('Confirmation is required.')).not.toBeInTheDocument();
+  });
+
+  it('will not close an account on an empty password confirmation', async () => {
+    const calls = mockApi();
+    renderSettings();
+    await settled();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Close my account' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Permanently close account' }));
+
+    expect(await screen.findByText('Password is required.')).toBeInTheDocument();
+    expect(wrote(calls, 'DELETE', '/me')).toHaveLength(0);
+    expect(screen.queryByText('LOGIN')).not.toBeInTheDocument();
+  });
+
+  it('closes a Google SSO account, which has no password to confirm', async () => {
+    // The rule has to ask who is signed in — demanding a field that is not
+    // rendered would make the button do nothing with nothing to show for it.
+    const calls = mockApi(() => undefined, { ...baseUser, sso_provider: 'google' });
+    renderSettings();
+    await settled();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Close my account' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Permanently close account' }));
+
+    await waitFor(() => expect(wrote(calls, 'DELETE', '/me')).toHaveLength(1));
+  });
+
+  it('will not mint a token with a whitespace-only name', async () => {
+    const calls = mockApi();
+    renderSettings();
+    await settled();
+
+    const tokensCard = card('API tokens');
+    await userEvent.type(within(tokensCard).getByLabelText('New token name'), '   ');
+    await userEvent.click(within(tokensCard).getByRole('button', { name: 'Create token' }));
+
+    expect(await within(tokensCard).findByText('Token name is required.')).toBeInTheDocument();
+    expect(wrote(calls, 'POST', '/me/tokens')).toHaveLength(0);
+  });
+
+  it('flags a non-E.164 phone number on blur and refuses the save', async () => {
+    const calls = mockApi();
+    renderSettings();
+    await settled();
+
+    // PhoneInput is a country select plus a number box, so the field is
+    // addressed by the inner control's own label rather than the Field's.
+    const profile = card('Profile');
+    await userEvent.type(within(profile).getByLabelText('Phone number'), '555');
+    await userEvent.tab();
+    expect(await within(profile).findByText(/too short/i)).toBeInTheDocument();
+
+    await userEvent.click(within(profile).getByRole('button', { name: /Save/ }));
+    expect(wrote(calls, 'PATCH', '/me')).toHaveLength(0);
+  });
+});
