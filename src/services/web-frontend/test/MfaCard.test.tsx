@@ -27,6 +27,15 @@ vi.mock('../src/lib/auth', () => ({
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+/** jsdom's Blob has no `.text()`; FileReader is the portable way in. */
+const readBlob = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+
 function mockApi(overrides: Partial<Record<string, () => Response>> = {}) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const method = init?.method ?? 'GET';
@@ -48,7 +57,10 @@ function mockApi(overrides: Partial<Record<string, () => Response>> = {}) {
 }
 
 describe('MfaCard (feature 2)', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setUser.mockClear();
+  });
 
   it('shows the disabled state with a setup button', async () => {
     mockApi();
@@ -97,4 +109,201 @@ describe('MfaCard (feature 2)', () => {
     render(<MfaCard />);
     expect(await screen.findByText(/signs in with Google SSO/i)).toBeInTheDocument();
   });
+
+  it('says the status could not be loaded rather than spinning forever', async () => {
+    mockApi({ 'GET /account/mfa': () => jsonResponse({ title: 'Unavailable' }, 503) });
+    render(<MfaCard />);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /Could not load two-factor status/i,
+    );
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('surfaces a setup call that fails, leaving the enrol button usable', async () => {
+    const u = userEvent.setup();
+    mockApi({
+      'POST /account/mfa/setup': () =>
+        jsonResponse({ title: 'Too many attempts', detail: 'Try again in a minute.' }, 429),
+    });
+    render(<MfaCard />);
+
+    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Try again in a minute.');
+    expect(screen.getByRole('button', { name: /set up two-factor/i })).toBeEnabled();
+  });
+
+  it('rejects a code the server refuses without claiming 2FA is on', async () => {
+    const u = userEvent.setup();
+    mockApi({
+      'POST /account/mfa/setup': () =>
+        jsonResponse({ secret: 'ABCDEF234567', otpauth_uri: 'otpauth://x', qr: 'data:,' }),
+      'POST /account/mfa/confirm': () =>
+        jsonResponse({ title: 'Invalid code', detail: 'That code has expired.' }, 400),
+    });
+    render(<MfaCard />);
+
+    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await u.type(await screen.findByLabelText('Authenticator code'), '000000');
+    await u.click(screen.getByRole('button', { name: /enable 2fa/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('That code has expired.');
+    expect(screen.queryByTestId('backup-codes')).not.toBeInTheDocument();
+    expect(setUser).not.toHaveBeenCalled();
+  });
+
+  it('abandons enrolment on cancel', async () => {
+    const u = userEvent.setup();
+    mockApi({
+      'POST /account/mfa/setup': () =>
+        jsonResponse({ secret: 'ABCDEF234567', otpauth_uri: 'otpauth://x', qr: 'data:,' }),
+    });
+    render(<MfaCard />);
+
+    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await u.click(await screen.findByRole('button', { name: /cancel/i }));
+
+    expect(screen.queryByAltText('TOTP QR code')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /set up two-factor/i })).toBeInTheDocument();
+  });
+
+  describe('once enabled', () => {
+    const enabled = (over: Record<string, unknown> = {}) =>
+      jsonResponse({
+        enabled: true,
+        confirmed_at: '2026-01-01T00:00:00Z',
+        backup_codes_remaining: 1,
+        required: false,
+        can_enroll: true,
+        ...over,
+      });
+
+    it('counts a single remaining backup code in the singular', async () => {
+      mockApi({ 'GET /account/mfa': () => enabled() });
+      render(<MfaCard />);
+      expect(await screen.findByTestId('mfa-backup-remaining')).toHaveTextContent(
+        '1 backup code remaining.',
+      );
+    });
+
+    it('asks for the password before regenerating rather than calling the API', async () => {
+      const u = userEvent.setup();
+      const fetchSpy = mockApi({ 'GET /account/mfa': () => enabled() });
+      render(<MfaCard />);
+
+      await u.click(await screen.findByRole('button', { name: /regenerate backup codes/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/Enter your password/i);
+      expect(
+        fetchSpy.mock.calls.filter(([url]) => String(url).includes('backup-codes')),
+      ).toHaveLength(0);
+    });
+
+    it('regenerates backup codes and clears the password it used', async () => {
+      const u = userEvent.setup();
+      mockApi({
+        'GET /account/mfa': () => enabled({ backup_codes_remaining: 8 }),
+        'POST /account/mfa/backup-codes': () => jsonResponse({ backup_codes: ['EEEE-FFFF'] }),
+      });
+      render(<MfaCard />);
+
+      await u.type(await screen.findByLabelText('Password'), 'hunter2');
+      await u.click(screen.getByRole('button', { name: /regenerate backup codes/i }));
+
+      expect(await screen.findByText('EEEE-FFFF')).toBeInTheDocument();
+      expect(screen.getByLabelText('Password')).toHaveValue('');
+    });
+
+    it('reports a regeneration the server refused', async () => {
+      const u = userEvent.setup();
+      mockApi({
+        'GET /account/mfa': () => enabled(),
+        'POST /account/mfa/backup-codes': () =>
+          jsonResponse({ title: 'Forbidden', detail: 'That password is wrong.' }, 403),
+      });
+      render(<MfaCard />);
+
+      await u.type(await screen.findByLabelText('Password'), 'nope');
+      await u.click(screen.getByRole('button', { name: /regenerate backup codes/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('That password is wrong.');
+    });
+
+    it('disables 2FA with the password and tells the session it is off', async () => {
+      const u = userEvent.setup();
+      let off = false;
+      mockApi({
+        'GET /account/mfa': () => (off ? jsonResponse(disabledBody) : enabled()),
+        'POST /account/mfa/disable': () => {
+          off = true;
+          return jsonResponse({ ok: true });
+        },
+      });
+      render(<MfaCard />);
+
+      await u.type(await screen.findByLabelText('Password'), 'hunter2');
+      await u.click(screen.getByRole('button', { name: /disable 2fa/i }));
+
+      await waitFor(() => expect(screen.getByTestId('mfa-state')).toHaveTextContent('Disabled'));
+      expect(setUser).toHaveBeenCalledWith(expect.objectContaining({ totp_enabled: false }));
+    });
+
+    it('reports a refused disable and leaves 2FA on', async () => {
+      const u = userEvent.setup();
+      mockApi({
+        'GET /account/mfa': () => enabled(),
+        'POST /account/mfa/disable': () =>
+          jsonResponse({ title: 'Forbidden', detail: 'Password did not match.' }, 403),
+      });
+      render(<MfaCard />);
+
+      await u.type(await screen.findByLabelText('Password'), 'wrong');
+      await u.click(screen.getByRole('button', { name: /disable 2fa/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Password did not match.');
+      expect(screen.getByTestId('mfa-state')).toHaveTextContent('Enabled');
+    });
+
+    it('offers no way to turn 2FA off when the organization requires it', async () => {
+      mockApi({ 'GET /account/mfa': () => enabled({ required: true }) });
+      render(<MfaCard />);
+
+      expect(await screen.findByText(/organization requires two-factor/i)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /disable 2fa/i })).not.toBeInTheDocument();
+    });
+
+    it('downloads the backup codes as a text file', async () => {
+      const u = userEvent.setup();
+      mockApi({
+        'GET /account/mfa': () => enabled(),
+        'POST /account/mfa/backup-codes': () =>
+          jsonResponse({ backup_codes: ['1111-2222', '3333-4444'] }),
+      });
+      // jsdom implements neither half of the object-URL pair.
+      const createUrl = vi.fn((_blob: Blob) => 'blob:codes');
+      const revokeUrl = vi.fn();
+      Object.defineProperty(URL, 'createObjectURL', { value: createUrl, configurable: true });
+      Object.defineProperty(URL, 'revokeObjectURL', { value: revokeUrl, configurable: true });
+      const click = vi
+        .spyOn(HTMLAnchorElement.prototype, 'click')
+        .mockImplementation(() => {});
+      render(<MfaCard />);
+
+      await u.type(await screen.findByLabelText('Password'), 'hunter2');
+      await u.click(screen.getByRole('button', { name: /regenerate backup codes/i }));
+      await u.click(await screen.findByRole('button', { name: /download codes/i }));
+
+      expect(click).toHaveBeenCalled();
+      const blob = createUrl.mock.calls[0]![0];
+      await expect(readBlob(blob)).resolves.toContain('1111-2222');
+      expect(revokeUrl).toHaveBeenCalledWith('blob:codes');
+    });
+  });
 });
+
+const disabledBody = {
+  enabled: false,
+  confirmed_at: null,
+  backup_codes_remaining: 0,
+  required: false,
+  can_enroll: true,
+};

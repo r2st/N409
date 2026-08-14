@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { AuthShell } from '../components/AuthShell';
@@ -12,7 +12,6 @@ export const COMPANY_HINT_KEY = 'n409.company_hint';
 
 export function RegisterPage() {
   const { status, register } = useAuth();
-  const navigate = useNavigate();
   const [form, setForm] = useState({
     first_name: '',
     last_name: '',
@@ -25,6 +24,14 @@ export function RegisterPage() {
   /** null until we know; the API is the authority either way. */
   const [openToSignup, setOpenToSignup] = useState<boolean | null>(null);
   const [supportEmail, setSupportEmail] = useState<string | null>(null);
+  /**
+   * Where an authenticated visitor is sent. `register()` flips the session to
+   * authenticated, and React re-renders across that await — so the redirect
+   * below fires *before* any navigate() in the submit handler could run. A
+   * brand-new client belongs in the guided funnel, not the worklist, so the
+   * destination is decided going in rather than afterwards.
+   */
+  const [destination, setDestination] = useState('/dashboard');
 
   useEffect(() => {
     api<{ settings: PublicSystemSettings }>('/public/settings')
@@ -37,7 +44,7 @@ export function RegisterPage() {
       .catch(() => setOpenToSignup(true));
   }, []);
 
-  if (status === 'authenticated') return <Navigate to="/dashboard" replace />;
+  if (status === 'authenticated') return <Navigate to={destination} replace />;
 
   if (openToSignup === false) {
     return (
@@ -73,6 +80,8 @@ export function RegisterPage() {
       return;
     }
     setBusy(true);
+    // New clients land in the guided onboarding funnel, not the worklist.
+    setDestination('/onboarding');
     try {
       if (form.company.trim()) localStorage.setItem(COMPANY_HINT_KEY, form.company.trim());
       await register({
@@ -81,9 +90,8 @@ export function RegisterPage() {
         first_name: form.first_name || undefined,
         last_name: form.last_name || undefined,
       });
-      // New clients land in the guided onboarding funnel, not the worklist.
-      navigate('/onboarding', { replace: true });
     } catch (err) {
+      setDestination('/dashboard');
       setError(err instanceof ApiError ? err.message : 'Unable to register — please try again.');
     } finally {
       setBusy(false);

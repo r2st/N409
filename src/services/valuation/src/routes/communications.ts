@@ -260,7 +260,13 @@ export function registerCommunicationRoutes(
       const parsed = z
         .object({
           valuation_id: z.string().optional(),
-          vars: z.record(z.union([z.string(), z.number()])).default({}),
+          // Bounded on all three axes — how many substitutions, how long each
+          // one is, and whether a number is a number. The preview renders these
+          // into the template body, so an unbounded map is an unbounded email.
+          vars: z
+            .record(z.string().max(200), z.union([z.string().max(4000), z.number().finite()]))
+            .refine((v) => Object.keys(v).length <= 200, { message: 'At most 200 template variables' })
+            .default({}),
           // Unsaved editor content. Falls back to the stored row per field, so
           // previewing a body edit does not blank the subject.
           subject: z.string().max(500).optional(),

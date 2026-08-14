@@ -40,7 +40,10 @@ const GenerateBody = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'valuation_date must be YYYY-MM-DD')
     .refine(isIsoCalendarDate, 'Not a real calendar date')
     .optional(),
-  fmv_conclusion: z.number().positive().optional(),
+  // Bounded above as well as below: the figure is printed on a board
+  // resolution, and `1e999` is Infinity to zod's `.positive()` and `null` to
+  // the JSON that stores it. $1e12/share is not a conclusion.
+  fmv_conclusion: z.number().positive().max(1e12).optional(),
   methodology_summary: z.string().min(1).max(4000).optional(),
   appraiser_qualifications: z.string().min(1).max(4000).optional(),
 });

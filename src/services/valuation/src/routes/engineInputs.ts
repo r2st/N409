@@ -7,6 +7,7 @@ import { findValuationById } from '../repos/valuations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { finite, finiteNonNegative, finitePositive } from '../domain/finite.js';
 
 /**
  * Analyst-entered financial model (`valuation_params.engine_inputs`).
@@ -24,8 +25,11 @@ import type { EventActor } from '../events/record.js';
  * Send an explicit null to clear a field/section.
  */
 
-const nonNeg = z.number().nonnegative();
-const pos = z.number().positive();
+// `.finite()`, not merely `.nonnegative()` / `.positive()`: `1e999` in a JSON
+// body parses to Infinity, satisfies both, and stringifies back to `null` on
+// the way into jsonb and on to the engine. See domain/finite.ts.
+const nonNeg = finiteNonNegative();
+const pos = finitePositive();
 const DateStr = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
@@ -121,7 +125,7 @@ export const EngineInputsBody = z
     // (the report cites it); only free_cash_flows drives income_dcf().
     income: z
       .object({
-        free_cash_flows: z.array(z.number()).max(30).nullable().optional(),
+        free_cash_flows: z.array(finite()).max(30).nullable().optional(),
         revenues: z.array(nonNeg).max(30).nullable().optional(),
         discount_rate: z.number().positive().max(1).nullable().optional(),
         terminal_growth: z.number().min(0).max(1).nullable().optional(),
@@ -143,7 +147,7 @@ export const EngineInputsBody = z
         mid_year_convention: z.boolean().nullable().optional(),
         terminal_method: z.enum(['gordon', 'exit_multiple']).nullable().optional(),
         exit_multiple: z.number().positive().max(100).nullable().optional(),
-        terminal_metric: z.number().nullable().optional(),
+        terminal_metric: finite().nullable().optional(),
         terminal_metric_basis: z.enum(['ebitda', 'revenue', 'fcff']).nullable().optional(),
       })
       .strict()
@@ -198,7 +202,7 @@ export const EngineInputsBody = z
                   .optional(),
                 probability: z.number().min(0).max(1),
                 equity_value: nonNeg.nullable().optional(),
-                enterprise_value: z.number().nullable().optional(),
+                enterprise_value: finite().nullable().optional(),
                 time_to_exit_years: z.number().min(0).max(50).default(0),
                 discount_rate: z.number().min(-0.99).max(1).nullable().optional(),
               })

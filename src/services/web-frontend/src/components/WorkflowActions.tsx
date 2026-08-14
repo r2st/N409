@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { displayName, STATE_LABELS } from '../lib/format';
 import type { UserOption, Valuation, ValuationState } from '../lib/types';
-import { Button, ErrorNote, Select } from './ui';
+import { Button, ErrorNote, Field, Select } from './ui';
 
 /**
  * Workflow engine controls (M4) — auto-advance, restart, reassign. Rendered
@@ -33,11 +33,14 @@ export function WorkflowActions({
   const [busy, setBusy] = useState(false);
   const [reviewerId, setReviewerId] = useState(valuation.assigned_reviewer_id ?? '');
   const [options, setOptions] = useState<UserOption[]>([]);
+  // An empty reviewer list reads as "there are no reviewers"; a load that failed
+  // has to say so, or ops is left staring at a control that cannot work.
+  const [optionsFailed, setOptionsFailed] = useState(false);
 
   useEffect(() => {
     api<{ options: UserOption[] }>('/users/options?group=ops')
       .then((res) => setOptions(res.options))
-      .catch(() => {});
+      .catch(() => setOptionsFailed(true));
   }, []);
 
   // Mirrors nextState() server-side, payment divert included — the button
@@ -81,23 +84,29 @@ export function WorkflowActions({
       </div>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <div className="w-72">
-          <label className="mb-1.5 block text-[0.8rem] font-semibold text-ink-700">Assigned reviewer</label>
-          <Select
-            aria-label="Assigned reviewer"
-            value={reviewerId}
-            onChange={(e) => setReviewerId(e.target.value)}
+          <Field
+            label="Assigned reviewer"
+            error={optionsFailed ? 'Reviewers could not be loaded — reload to try again.' : null}
           >
-            <option value="">Unassigned</option>
-            {options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {displayName(o)}
-              </option>
-            ))}
-          </Select>
+            <Select
+              value={reviewerId}
+              disabled={optionsFailed}
+              onChange={(e) => setReviewerId(e.target.value)}
+            >
+              <option value="">Unassigned</option>
+              {options.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {displayName(o)}
+                </option>
+              ))}
+            </Select>
+          </Field>
         </div>
         <Button
           variant="secondary"
-          disabled={busy || (reviewerId || null) === valuation.assigned_reviewer_id}
+          disabled={
+            busy || optionsFailed || (reviewerId || null) === valuation.assigned_reviewer_id
+          }
           onClick={() => void run('reassign', { reviewer_id: reviewerId || null })}
         >
           Reassign

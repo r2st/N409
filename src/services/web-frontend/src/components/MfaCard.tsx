@@ -73,11 +73,14 @@ export function MfaCard() {
     void load();
   }, []);
 
+  // A failed status load has to say so. `status` stays null on failure, so the
+  // spinner below would otherwise spin for as long as the tab is open while the
+  // error it recorded rendered nowhere.
   if (!status) {
     return (
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <h2 className="overline mb-4 text-ink-400">Two-factor authentication</h2>
-        <Spinner />
+        {error ? <ErrorNote>{error}</ErrorNote> : <Spinner />}
       </section>
     );
   }

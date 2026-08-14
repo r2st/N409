@@ -44,7 +44,18 @@ const DateStr = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 
-const ExerciseHistory = z.object({ years: z.number().min(0).max(30), options: z.number().positive() });
+/**
+ * `options` carries the same ceiling as `options_granted` below, and for a
+ * sharper reason than tidiness: `historicalExpectedTerm` divides the
+ * option-weighted sum of years by the option total, so an unbounded count of
+ * `1e999` — Infinity, which `.positive()` alone admits — makes that division
+ * `Infinity / Infinity`, and the grant's expected term comes back NaN. NaN then
+ * runs the whole way through Black-Scholes and lands in the response as `null`.
+ */
+const ExerciseHistory = z.object({
+  years: z.number().min(0).max(30),
+  options: z.number().positive().max(1e12),
+});
 
 const GrantBody = z.object({
   label: z.string().trim().min(1).max(120).optional(),
