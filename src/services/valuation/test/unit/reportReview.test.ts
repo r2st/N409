@@ -429,3 +429,106 @@ describe('reviewing the drafted report', () => {
     expect(result.detail).toMatch(/Exhibit E/);
   });
 });
+
+/**
+ * A figure the prose froze, and the calculation has since moved past.
+ *
+ * `frozen_figure` is about a chapter that *will* go stale — it fires on a
+ * chapter with nothing left to resolve, and says a recalculation will change
+ * nothing on the page. Neither it nor `reportReadiness` ever compares a number
+ * in the body against the number the engine currently concludes, so the case
+ * this describes — the report already states two different values, three pages
+ * apart — was invisible to every deterministic check:
+ *
+ *   * the marker is gone, so a marker search has nothing to find;
+ *   * other markers remain in the chapter, so `frozen_figure` passes it over;
+ *   * the exhibits render from the live calculation and are correct, so no
+ *     figure check is looking at the wrong one.
+ *
+ * The evidence is what makes this decidable rather than a guess: the literal in
+ * the prose is not merely *a* number, it is the value this engagement's own
+ * superseded run concluded. Nothing but a freeze puts that string there.
+ */
+describe('a figure the body froze before the calculation moved', () => {
+  const CONCLUSION = (html: string) => content([{ key: 'conclusion', heading: 'Conclusion of Value', html }]);
+
+  it('reports prose still stating the value a superseded run concluded', () => {
+    const result = reviewReport({
+      content: CONCLUSION(
+        '<p>The fair market value of one share is <strong>$1.4947</strong> per share. ' +
+          'It derives from a concluded total equity value of {{equity_value}}, less a discount ' +
+          'for lack of marketability of {{dlom}}.</p>',
+      ),
+      exhibitHeadings: EXHIBITS,
+      figures: { fmv_per_share: '$1.6120', equity_value: '$42,000,000', dlom: '23.5%' },
+      supersededFigures: [{ fmv_per_share: '$1.4947', equity_value: '$38,000,000', dlom: '23.5%' }],
+    });
+    const stale = result.findings.filter((f) => f.check === 'stale_figure');
+    expect(stale).toHaveLength(1);
+    expect(stale[0]!.section_key).toBe('conclusion');
+    expect(stale[0]!.summary).toMatch(/\$1\.4947/);
+    expect(stale[0]!.summary).toMatch(/\$1\.6120/);
+    expect(result.status).toBe('warn');
+  });
+
+  it('says nothing when the chapter still resolves the figure from the calculation', () => {
+    const result = reviewReport({
+      content: CONCLUSION('<p>The fair market value of one share is {{fmv_per_share}} per share.</p>'),
+      exhibitHeadings: EXHIBITS,
+      figures: { fmv_per_share: '$1.6120' },
+      supersededFigures: [{ fmv_per_share: '$1.4947' }],
+    });
+    expect(result.findings.filter((f) => f.check === 'stale_figure')).toEqual([]);
+  });
+
+  /**
+   * "Revised from $1.4947 to $1.6120" is a chapter doing its job, and it
+   * contains a superseded figure by design. The current value being present is
+   * what separates a deliberate comparison from a freeze.
+   */
+  it('says nothing when the body states the current figure alongside the old one', () => {
+    const result = reviewReport({
+      content: CONCLUSION('<p>Revised from $1.4947 at the prior measurement date to $1.6120 per share.</p>'),
+      exhibitHeadings: EXHIBITS,
+      figures: { fmv_per_share: '$1.6120' },
+      supersededFigures: [{ fmv_per_share: '$1.4947' }],
+    });
+    expect(result.findings.filter((f) => f.check === 'stale_figure')).toEqual([]);
+  });
+
+  /** A figure the run did not move is not stale, however it got into the prose. */
+  it('says nothing about a frozen figure the recalculation left where it was', () => {
+    const result = reviewReport({
+      content: CONCLUSION('<p>A discount for lack of marketability of 23.5% was applied.</p>'),
+      exhibitHeadings: EXHIBITS,
+      figures: { dlom: '23.5%' },
+      supersededFigures: [{ dlom: '23.5%' }],
+    });
+    expect(result.findings.filter((f) => f.check === 'stale_figure')).toEqual([]);
+  });
+
+  /**
+   * `$1.49` is not `$1.4947`. Matching on a bare substring would report the
+   * current figure as its own superseded one on any run that added a decimal.
+   */
+  it('does not read a superseded figure out of a longer number', () => {
+    const result = reviewReport({
+      content: CONCLUSION('<p>The concluded value is $1.4947 per share.</p>'),
+      exhibitHeadings: EXHIBITS,
+      figures: { fmv_per_share: '$1.4947' },
+      supersededFigures: [{ fmv_per_share: '$1.49' }],
+    });
+    expect(result.findings.filter((f) => f.check === 'stale_figure')).toEqual([]);
+  });
+
+  /** With no prior run there is no evidence, and the check must not guess. */
+  it('says nothing when the engagement has no superseded run', () => {
+    const result = reviewReport({
+      content: CONCLUSION('<p>The concluded value is $1.4947 per share.</p>'),
+      exhibitHeadings: EXHIBITS,
+      figures: { fmv_per_share: '$1.6120' },
+      supersededFigures: [],
+    });
+    expect(result.findings.filter((f) => f.check === 'stale_figure')).toEqual([]);
+  });
+});

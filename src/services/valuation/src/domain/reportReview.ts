@@ -165,7 +165,25 @@ export interface ReportReviewInput {
    * than guessed at — the others do not depend on it.
    */
   template?: ReportTemplate | null;
+  /**
+   * What the current calculation resolves, exactly as `reportFigures` formats
+   * it — the same map the render substitutes into the body.
+   *
+   * Formatted rather than numeric on purpose: the check asks whether a *string*
+   * in the prose is one of these, and re-deriving the formatting here would let
+   * it disagree with what the page actually says.
+   */
+  figures?: ResolvableFigures;
+  /**
+   * The same map for each superseded succeeded run of this engagement, newest
+   * first. Absent or empty disables the staleness check — with no prior run
+   * there is no evidence, and a figure check that guesses is worse than none.
+   */
+  supersededFigures?: readonly ResolvableFigures[];
 }
+
+/** A formatted figure map, keyed by placeholder name. `reportFigures` shape. */
+export type ResolvableFigures = Readonly<Record<string, string>>;
 
 export function reviewReport(input: ReportReviewInput): ReportReviewResult {
   if (!input.content) {
@@ -180,6 +198,7 @@ export function reviewReport(input: ReportReviewInput): ReportReviewResult {
   checkApproachChapters(input.approaches, shown, findings);
   checkFrozenFigures(sections, input.template ?? null, findings);
   checkUneditedGuidance(sections, input.template ?? null, findings);
+  checkStaleFigures(sections, input.figures ?? {}, input.supersededFigures ?? [], findings);
 
   if (findings.length === 0) {
     return {
@@ -382,6 +401,94 @@ function checkFrozenFigures(
         'will leave the numbers in it unchanged',
     });
   }
+}
+
+/**
+ * A figure the prose froze, and the calculation has since moved past.
+ *
+ * `checkFrozenFigures` above is about a chapter that *will* go stale: it fires
+ * when nothing is left to resolve, and its claim is about the next
+ * recalculation. This one is about the recalculation that already happened. The
+ * two are not the same finding and the second was invisible to everything:
+ *
+ *   * the marker is gone, so `reportReadiness`' marker search has nothing to
+ *     find;
+ *   * the conclusion chapter states its headline figure in one paragraph and
+ *     its derivation in the next, so freezing the one that matters leaves
+ *     `{{equity_value}}` and `{{dlom}}` behind and `frozen_figure` passes the
+ *     chapter over;
+ *   * the summary page and the exhibits render from the live calculation and
+ *     are right, so no figure check is looking at the wrong number.
+ *
+ * What is left is a signed opinion stating $1.4947 per share in its Conclusion
+ * of Value and $1.6120 on the summary page three pages earlier.
+ *
+ * The evidence is what makes this decidable rather than a heuristic about
+ * numbers that look like conclusions. The literal in the prose is not merely a
+ * plausible figure — it is, character for character, the value *this
+ * engagement's own superseded run* concluded, in the formatting the render
+ * would have produced. Nothing but a freeze puts that string on the page, so
+ * the check needs no view about which numbers a chapter is allowed to contain.
+ *
+ * A warning rather than a failure, for the reason `checkFrozenFigures` gives: an
+ * analyst may be quoting the prior conclusion deliberately, and the useful act
+ * is to make the divergence visible rather than to refuse the document. The
+ * guard below covers the common form of that — a chapter comparing the two
+ * states both, and stating the current figure is what separates a comparison
+ * from a freeze.
+ */
+function checkStaleFigures(
+  sections: readonly { key: string; heading: string; html: string }[],
+  figures: ResolvableFigures,
+  superseded: readonly ResolvableFigures[],
+  findings: ReportReviewFinding[],
+): void {
+  if (superseded.length === 0) return;
+  for (const section of sections) {
+    const text = textOf(section.html);
+    for (const [key, current] of Object.entries(figures)) {
+      /*
+       * The chapter restating the current value is the whole point of the
+       * placeholder mechanism, and a chapter that does it — whether from a
+       * marker or by having been retyped correctly — is not stating a stale
+       * conclusion whatever else it mentions. Checked before the superseded
+       * scan so "revised from $1.4947 to $1.6120" is read as the comparison it
+       * is.
+       */
+      if (statesFigure(text, current)) continue;
+      const stale = superseded.find((f) => {
+        const prior = f[key];
+        return prior !== undefined && prior !== current && statesFigure(text, prior);
+      });
+      if (!stale) continue;
+      findings.push({
+        check: 'stale_figure',
+        severity: 'warn',
+        section_key: section.key,
+        heading: section.heading,
+        summary:
+          `“${section.heading}” states ${stale[key]!}, which this engagement concluded on an ` +
+          `earlier run — the calculation behind the schedules now concludes ${current}`,
+      });
+      // One per chapter. A frozen conclusion paragraph usually froze its
+      // derivation too, and four findings about one edit is a wall, not a review.
+      break;
+    }
+  }
+}
+
+/**
+ * Does the prose state this exact figure, as a figure?
+ *
+ * Bounded on both ends against the characters a number is made of, because a
+ * bare substring test reads `$1.49` out of `$1.4947` — which would report the
+ * current conclusion as its own superseded one on any run that merely added a
+ * decimal place, the single most likely way for two of these strings to be
+ * prefixes of each other.
+ */
+function statesFigure(text: string, figure: string): boolean {
+  const escaped = figure.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\d.,])${escaped}(?![\\d.,%])`).test(text);
 }
 
 /**
