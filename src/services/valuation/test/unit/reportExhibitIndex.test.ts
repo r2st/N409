@@ -5,6 +5,7 @@ import {
   resolveExhibitReferences,
 } from '../../src/domain/reportExhibitIndex.js';
 import { instantiateTemplate, templateForKind, type ReportContent } from '../../src/domain/report.js';
+import { scheduleTitle, SCHEDULE_CATALOGUE } from '../../src/domain/reportExhibits.js';
 
 /**
  * The defect these cover is not a wrong number, which is why every arithmetic
@@ -19,22 +20,14 @@ import { instantiateTemplate, templateForKind, type ReportContent } from '../../
  * that schedule is in the file.
  */
 
-const ALL_EXHIBITS = [
-  'Exhibit A — Capitalization Table',
-  'Exhibit B — Reconciliation of Valuation Approaches',
-  'Exhibit C — Income Approach (Discounted Cash Flow)',
-  'Exhibit C-1 — Basis of the Cash-Flow Forecast',
-  'Exhibit D — Market Approach (Guideline Multiples)',
-  'Exhibit D-1 — Guideline Company Set',
-  'Exhibit E — Asset Approach',
-  'Exhibit F — Allocation of Equity Value',
-  'Exhibit F-1 — Selected Volatility',
-  'Exhibit G — Probability-Weighted Expected Return Scenarios',
-  'Exhibit H — Discounts and Concluded Value',
-  'Exhibit H-1 — Marketability Discount: Derivation',
-  'Appendix I — Discount Rate Build-Up (WACC)',
-  'Appendix II — Historical Financial Statements',
-];
+/**
+ * Every schedule the renderer can print, from the catalogue the builders take
+ * their headings from. This was a hand-copied list until it fell a schedule
+ * behind — it never gained Appendix III — which is the same drift the
+ * catalogue exists to make impossible. `reportExhibits.test.ts` pins the
+ * catalogue against what `buildExhibits` actually emits.
+ */
+const ALL_EXHIBITS = SCHEDULE_CATALOGUE.map(scheduleTitle);
 
 /** What a going concern with no asset approach and a judged sigma actually gets. */
 const TYPICAL = ALL_EXHIBITS.filter((h) => !h.startsWith('Exhibit E ') && !h.startsWith('Exhibit F-1 '));
@@ -49,7 +42,7 @@ const html = (body: ReportContent, key: string): string => body.sections.find((s
 describe('renderedScheduleIds', () => {
   it('reads the identifier out of each builder heading', () => {
     expect(renderedScheduleIds(ALL_EXHIBITS)).toEqual(
-      new Set(['A', 'B', 'C', 'C-1', 'D', 'D-1', 'E', 'F', 'F-1', 'G', 'H', 'H-1', 'I', 'II']),
+      new Set(['A', 'B', 'C', 'C-1', 'D', 'D-1', 'E', 'F', 'F-1', 'G', 'H', 'H-1', 'I', 'II', 'III']),
     );
   });
 

@@ -8,6 +8,12 @@ import {
   sampleReportPdfInput,
 } from '../../src/domain/sampleReportPdf.js';
 import { templateForKind } from '../../src/domain/report.js';
+import {
+  scheduleTitle,
+  SCHEDULE,
+  SCHEDULE_CATALOGUE,
+  type ScheduleId,
+} from '../../src/domain/reportExhibits.js';
 /*
  * Reading text back out of a rendered PDF is the report service's problem, and
  * it stopped being a one-liner when the renderer embedded a Unicode face: the
@@ -107,14 +113,25 @@ describe('sample report PDF — it is the real template', () => {
     // Not a subset check: a sample that quietly drops chapters is exactly the
     // drift this is built through the template to prevent.
     for (const s of template.sections) expect(headings).toContain(s.heading);
-    expect(headings.filter((h) => h.startsWith('Exhibit '))).toEqual([
-      'Exhibit A — Capitalization Table',
-      'Exhibit B — Reconciliation of Valuation Approaches',
-      'Exhibit C — Income Approach (Discounted Cash Flow)',
-      'Exhibit D — Market Approach',
-      'Exhibit F — Allocation',
-      'Exhibit H — Discounts & Conclusion',
-    ]);
+    // Titled exactly as a client's own report titles them — read from the same
+    // catalogue the renderer's builders use, so the sample cannot come to call
+    // a schedule something the deliverable does not.
+    expect(headings.filter((h) => h.startsWith('Exhibit '))).toEqual(
+      ['A', 'B', 'C', 'D', 'F', 'H'].map((id) => SCHEDULE[id as ScheduleId]),
+    );
+  });
+
+  it('names its schedules as the renderer names them, not in its own words', () => {
+    // Three of these headings were hand-written and had drifted: the sample
+    // offered "Exhibit D — Market Approach" and "Exhibit H — Discounts &
+    // Conclusion" against a deliverable that says "Market Approach (Guideline
+    // Multiples)" and "Discounts and Concluded Value". A prospect comparing
+    // the sample to the report they received would find neither.
+    const catalogued = new Set(SCHEDULE_CATALOGUE.map(scheduleTitle));
+    for (const h of input.sections.map((s) => s.heading)) {
+      if (!h.startsWith('Exhibit ') && !h.startsWith('Appendix ')) continue;
+      expect(catalogued.has(h), `${h} is not a schedule the renderer prints`).toBe(true);
+    }
   });
 
   it('names the template version it was rendered from', () => {

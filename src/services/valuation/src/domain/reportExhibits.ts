@@ -96,6 +96,75 @@ export interface ExhibitPeer {
   figures_as_of?: Date | string | null;
 }
 
+/** The identifier the index and the body's pointers use for a schedule. */
+export type ScheduleId =
+  'A' | 'B' | 'C' | 'C-1' | 'D' | 'D-1' | 'E' | 'F' | 'F-1' | 'G' | 'H' | 'H-1' | 'I' | 'II' | 'III';
+
+export interface ScheduleDescriptor {
+  id: ScheduleId;
+  /** Lettered schedules are exhibits; the trailing support is an appendix. */
+  kind: 'Exhibit' | 'Appendix';
+  /** The name without the `Exhibit A — ` prefix. */
+  name: string;
+  /** True when every completed 409A carries it, whatever the engagement. */
+  always: boolean;
+}
+
+/**
+ * Every schedule `buildExhibits` can print, in printed order.
+ *
+ * This is the *catalogue*, and it exists because the identity of a schedule was
+ * previously stated in three places that could disagree: the builder's own
+ * heading literal, the public sample page's `SAMPLE_EXHIBITS` list, and the
+ * reader's expectation. They did disagree. `domain/sampleReport.ts` promised a
+ * prospect twelve schedules — A through H-1 — while `buildExhibits` had grown
+ * three appendices (the WACC build-up, the historical statements, the
+ * required-return ladder) that the page never mentioned. The sections of that
+ * page are derived from the real template and so could not drift; the exhibit
+ * list was hand-maintained and did.
+ *
+ * So the builders take their headings from here (`SCHEDULE`), the public page
+ * derives its list from here, and a new schedule is unreachable until it has an
+ * entry — which is the only arrangement in which the page and the deliverable
+ * cannot come apart.
+ *
+ * `always` means "every completed 409A carries it": a company with no DCF gets
+ * no Exhibit C, and one whose analyst chose sigma by judgement gets no F-1, so
+ * only the cap table, the reconciliation, the allocation and the conclusion are
+ * guaranteed. The appendices are conditional on data nobody is obliged to
+ * enter, so none of them is `always` either.
+ */
+export const SCHEDULE_CATALOGUE: readonly ScheduleDescriptor[] = [
+  { id: 'A', kind: 'Exhibit', name: 'Capitalization Table', always: true },
+  { id: 'B', kind: 'Exhibit', name: 'Reconciliation of Valuation Approaches', always: true },
+  { id: 'C', kind: 'Exhibit', name: 'Income Approach (Discounted Cash Flow)', always: false },
+  { id: 'C-1', kind: 'Exhibit', name: 'Basis of the Cash-Flow Forecast', always: false },
+  { id: 'D', kind: 'Exhibit', name: 'Market Approach (Guideline Multiples)', always: false },
+  { id: 'D-1', kind: 'Exhibit', name: 'Guideline Company Set', always: false },
+  { id: 'E', kind: 'Exhibit', name: 'Asset Approach', always: false },
+  { id: 'F', kind: 'Exhibit', name: 'Allocation of Equity Value', always: true },
+  { id: 'F-1', kind: 'Exhibit', name: 'Selected Volatility', always: false },
+  { id: 'G', kind: 'Exhibit', name: 'Probability-Weighted Expected Return Scenarios', always: false },
+  { id: 'H', kind: 'Exhibit', name: 'Discounts and Concluded Value', always: true },
+  { id: 'H-1', kind: 'Exhibit', name: 'Marketability Discount: Derivation', always: false },
+  { id: 'I', kind: 'Appendix', name: 'Discount Rate Build-Up (WACC)', always: false },
+  { id: 'II', kind: 'Appendix', name: 'Historical Financial Statements', always: false },
+  { id: 'III', kind: 'Appendix', name: 'Required Rates of Return by Stage of Development', always: false },
+];
+
+/** `Exhibit D-1 — Guideline Company Set`, as the heading is printed. */
+export function scheduleTitle(s: ScheduleDescriptor): string {
+  return `${s.kind} ${s.id} — ${s.name}`;
+}
+
+/**
+ * Headings by id, for the builders. A typo is a compile error rather than a
+ * schedule that silently drops out of the index and the sample page.
+ */
+export const SCHEDULE: Readonly<Record<ScheduleId, string>> = Object.freeze(
+  Object.fromEntries(SCHEDULE_CATALOGUE.map((s) => [s.id, scheduleTitle(s)])) as Record<ScheduleId, string>,
+);
+
 /**
  * Text → HTML text. Class names, scenario names and DLOM method labels all
  * originate with the client, travel through jsonb untouched, and land inside
@@ -196,7 +265,7 @@ export function capitalizationExhibit(
     });
     const totalShares = classes.reduce((sum, c) => sum + (num(c.shares) ?? 0), 0);
     const totalPreference = classes.reduce((sum, c) => sum + (num(c.preference) ?? 0), 0);
-    return section('Exhibit A — Capitalization Table', [
+    return section(SCHEDULE.A, [
       P(
         `The capitalization of ${esc(ctx.companyName)}${ctx.valuationDate ? ` as of ${ctx.valuationDate}` : ''}, ` +
           'as allocated by the option-pricing waterfall. Liquidation preference is the aggregate ' +
@@ -236,7 +305,7 @@ export function capitalizationExhibit(
   }
   if (options !== null && options > 0) rows.push(['Options outstanding', shares(options), '—']);
   const total = (common ?? 0) + (preferred ?? 0) + (options ?? 0);
-  return section('Exhibit A — Capitalization Table', [
+  return section(SCHEDULE.A, [
     P(
       'The capitalization is stated on the aggregate basis: a single blended preferred class behind a ' +
         'single liquidation preference, with common and the option pool sharing the residual. No ' +
@@ -297,7 +366,7 @@ export function approachExhibit(
   const concluded = num(results.equity_value);
   const weightTotal = entries.reduce((sum, e) => sum + e.weight, 0);
 
-  return section('Exhibit B — Reconciliation of Valuation Approaches', [
+  return section(SCHEDULE.B, [
     P(
       'Each approach indicates a value for total equity on a marketable, controlling basis. The ' +
         'concluded equity value is the weighted average of the indications, with weights reflecting ' +
@@ -526,7 +595,7 @@ export function incomeExhibit(
   push('Add: cash and equivalents', num(inputs.cash));
   push('Less: interest-bearing debt', num(inputs.debt) === null ? null : -(num(inputs.debt) as number));
 
-  return section('Exhibit C — Income Approach (Discounted Cash Flow)', [
+  return section(SCHEDULE.C, [
     P(
       'The income approach discounts the projected free cash flows of the business to present value at ' +
         'a rate reflecting the risk of achieving them, and adds the present value of a terminal value ' +
@@ -694,7 +763,7 @@ export function projectionExhibit(
         )
       : null;
 
-  return section('Exhibit C-1 — Basis of the Cash-Flow Forecast', [
+  return section(SCHEDULE['C-1'], [
     P(
       'The free cash flows discounted in <strong>Exhibit C</strong> are not an assumption in themselves. ' +
         'They are derived from a forecast of revenue and of the costs, capital expenditure and working ' +
@@ -764,7 +833,7 @@ export function marketExhibit(
   if (cash !== null) bridge.push(['Add: cash and equivalents', formatCurrency(cash, currency, 0), '']);
   if (debt !== null) bridge.push(['Less: interest-bearing debt', formatCurrency(-debt, currency, 0), '']);
 
-  return section('Exhibit D — Market Approach (Guideline Multiples)', [
+  return section(SCHEDULE.D, [
     P(
       'The market approach applies valuation multiples observed for comparable companies and ' +
         'transactions to the corresponding metric of the subject company. The median of the guideline ' +
@@ -921,7 +990,7 @@ export function peerSetExhibit(
     );
   })();
 
-  return section('Exhibit D-1 — Guideline Company Set', [
+  return section(SCHEDULE['D-1'], [
     P(
       'The guideline companies below were screened on industry classification, scale, growth and ' +
         'margin profile. The multiples in Exhibit D are struck from the companies retained; the ' +
@@ -956,7 +1025,7 @@ export function assetExhibit(results: Record<string, unknown>, ctx: ExhibitConte
     ]);
   }
 
-  return section('Exhibit E — Asset Approach', [
+  return section(SCHEDULE.E, [
     P(
       method === 'cost_to_replicate'
         ? 'The asset approach is applied on a cost-to-replicate basis: the cost a market participant ' +
@@ -1102,7 +1171,7 @@ export function allocationExhibit(
     simulation.push(['Standard error of the simulated value per share', formatCurrency(stdErr, currency, 6)]);
   }
 
-  return section('Exhibit F — Allocation of Equity Value', [
+  return section(SCHEDULE.F, [
     P(
       `Equity value is allocated across the capital structure using the <strong>${esc(label)}</strong>. ` +
         (breakpoints.length > 0
@@ -1230,7 +1299,7 @@ export function volatilityExhibit(
           )
         : null;
 
-  return section('Exhibit F-1 — Selected Volatility', [
+  return section(SCHEDULE['F-1'], [
     P(
       'The expected volatility applied in the allocation is not an assumption of the subject company ' +
         'directly — a private company has no traded price series to measure. It is estimated from the ' +
@@ -1299,7 +1368,7 @@ export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitConte
   if (scenarios.length === 0) return null;
   const { currency } = ctx;
 
-  return section('Exhibit G — Probability-Weighted Expected Return Scenarios', [
+  return section(SCHEDULE.G, [
     P(
       'Under PWERM the value of common stock is the probability-weighted present value of its proceeds ' +
         'in each modelled future outcome. Each scenario is allocated through the liquidation waterfall ' +
@@ -1463,7 +1532,7 @@ export function discountExhibit(
     method ? (DLOM_MODEL_NAMES[method] ?? esc(method)) : 'No active market exists for the shares',
   ]);
 
-  return section('Exhibit H — Discounts and Concluded Value', [
+  return section(SCHEDULE.H, [
     P(
       (controlling
         ? 'The allocation produces the value of a common share on a marketable, controlling basis. '
@@ -2070,7 +2139,7 @@ export function dlomDerivationExhibit(
     }
   }
 
-  return section('Exhibit H-1 — Marketability Discount: Derivation', body);
+  return section(SCHEDULE['H-1'], body);
 }
 
 // ── Appendix II — the financial statements the analysis rests on ─────────────
@@ -2165,7 +2234,7 @@ export function financialsExhibit(
 
   if (blocks.length === 0) return null;
 
-  return section('Appendix II — Historical Financial Statements', [
+  return section(SCHEDULE.II, [
     P(
       'The financial statements below are the reported figures the analysis rests on, as entered in ' +
         'the valuation workbook and carried into the engine without adjustment. Subtotals, margins ' +
@@ -2214,7 +2283,7 @@ export function requiredReturnExhibit(ctx: ExhibitContext): ReportPdfSection | n
   }
   if (!rows.some((r) => r.matched)) return null;
 
-  return section('Appendix III — Required Rates of Return by Stage of Development', [
+  return section(SCHEDULE.III, [
     P(
       'The rate applied in the income approach is built up in <strong>Appendix I</strong>. The ranges ' +
         'below are the indicative required rates of return the venture capital literature reports by ' +
@@ -2347,7 +2416,7 @@ export function waccExhibit(
         })
       : null;
 
-  return section('Appendix I — Discount Rate Build-Up (WACC)', [
+  return section(SCHEDULE.I, [
     P(
       'The discount rate applied in the income approach is the weighted average cost of capital. The ' +
         'cost of equity is built up under the modified capital asset pricing model and blended with the ' +

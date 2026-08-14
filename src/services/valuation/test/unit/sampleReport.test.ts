@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sampleReportOutline, SAMPLE_EXHIBITS } from '../../src/domain/sampleReport.js';
 import { templateForKind } from '../../src/domain/report.js';
+import { SCHEDULE_CATALOGUE } from '../../src/domain/reportExhibits.js';
 import { VALUATION_KINDS } from '../../src/domain/valuation.js';
 
 describe('sampleReportOutline', () => {
@@ -82,6 +83,48 @@ describe('sampleReportOutline', () => {
     for (const e of SAMPLE_EXHIBITS) {
       expect(e.title.length).toBeGreaterThan(3);
       expect(e.description.length).toBeGreaterThan(20);
+    }
+  });
+
+  /*
+   * The page is a prospect's account of what the deliverable contains, and it
+   * had fallen behind the deliverable: it listed Exhibits A through H-1 and
+   * stopped, while the renderer had grown three appendices — the WACC
+   * build-up, the historical statements and the required-return ladder. The
+   * chapters could not drift, because they are read off the real template; the
+   * exhibit list was a second, hand-maintained copy, and it did.
+   */
+  it('lists every schedule the renderer can print — no hand-maintained second copy', () => {
+    expect(SAMPLE_EXHIBITS.map((e) => e.id)).toEqual(SCHEDULE_CATALOGUE.map((s) => s.id));
+    expect(SAMPLE_EXHIBITS.map((e) => e.title)).toEqual(SCHEDULE_CATALOGUE.map((s) => s.name));
+    expect(SAMPLE_EXHIBITS.map((e) => e.always)).toEqual(SCHEDULE_CATALOGUE.map((s) => s.always));
+  });
+
+  it('promises the three appendices the deliverable actually carries', () => {
+    const byId = new Map(SAMPLE_EXHIBITS.map((e) => [e.id, e]));
+    for (const id of ['I', 'II', 'III']) {
+      expect(byId.has(id), `Appendix ${id} is missing from the sample page`).toBe(true);
+      // An appendix nobody has entered the data for is not rendered, so the
+      // page must not present one as guaranteed.
+      expect(byId.get(id)!.always).toBe(false);
+    }
+    expect(byId.get('I')!.title).toContain('WACC');
+    expect(byId.get('II')!.title).toContain('Historical');
+    expect(byId.get('III')!.title).toContain('Required Rates of Return');
+  });
+
+  it('explains every schedule — the exhibit copy is complete and stays closed', () => {
+    // The counterpart of `missingBlurbs` for the chapters: this is what fails
+    // when a schedule is added to the catalogue without a word for the reader.
+    expect(sampleReportOutline('409a').missingExhibitBlurbs).toEqual([]);
+    for (const e of SAMPLE_EXHIBITS) {
+      expect(e.description, `${e.id} has no description`).toBeTruthy();
+    }
+  });
+
+  it('claims no exhibits for the specialty kinds, which render their own', () => {
+    for (const kind of VALUATION_KINDS.filter((k) => k !== '409a')) {
+      expect(sampleReportOutline(kind).missingExhibitBlurbs).toEqual([]);
     }
   });
 });

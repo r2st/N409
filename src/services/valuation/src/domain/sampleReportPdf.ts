@@ -1,6 +1,7 @@
 import type { ReportPdfInput, ReportPdfSection, ReportPdfSummary } from '@n409/report/pdf';
 import { instantiateTemplate, templateForKind, visibleSections } from './report.js';
 import { resolveExhibitReferences } from './reportExhibitIndex.js';
+import { SCHEDULE } from './reportExhibits.js';
 import { fillFigures, reportFigures } from './reportFigures.js';
 import { formatCurrency, formatPercent } from './reportSummary.js';
 import { esc, table } from './exhibitHtml.js';
@@ -208,7 +209,7 @@ function sampleExhibits(): ReportPdfSection[] {
   const weighted = APPROACHES.reduce((n, a) => n + a.indication * a.weight, 0);
 
   const capTable: ReportPdfSection = {
-    heading: 'Exhibit A — Capitalization Table',
+    heading: SCHEDULE.A,
     html: table({
       head: ['Class', 'Shares', 'Liquidation preference', '% fully diluted'],
       rows: CAP_TABLE.map((r) => [
@@ -222,7 +223,7 @@ function sampleExhibits(): ReportPdfSection[] {
   };
 
   const income: ReportPdfSection = {
-    heading: 'Exhibit C — Income Approach (Discounted Cash Flow)',
+    heading: SCHEDULE.C,
     html:
       table({
         head: ['Year', 'Free cash flow', `Discount factor @ ${formatPercent(DCF.wacc)}`, 'Present value'],
@@ -273,7 +274,7 @@ function sampleExhibits(): ReportPdfSection[] {
   };
 
   const market: ReportPdfSection = {
-    heading: 'Exhibit D — Market Approach',
+    heading: SCHEDULE.D,
     html:
       table({
         head: ['Guideline company', 'EV / LTM revenue'],
@@ -297,7 +298,7 @@ function sampleExhibits(): ReportPdfSection[] {
   };
 
   const reconciliation: ReportPdfSection = {
-    heading: 'Exhibit B — Reconciliation of Valuation Approaches',
+    heading: SCHEDULE.B,
     html: table({
       head: ['Approach', 'Indication', 'Weight', 'Weighted'],
       rows: APPROACHES.map((a) => [
@@ -311,7 +312,7 @@ function sampleExhibits(): ReportPdfSection[] {
   };
 
   const allocation: ReportPdfSection = {
-    heading: 'Exhibit F — Allocation',
+    heading: SCHEDULE.F,
     html: table({
       head: ['Class', 'Shares', 'Allocated value', 'Per share'],
       rows: CAP_TABLE.map((r) => [
@@ -325,7 +326,7 @@ function sampleExhibits(): ReportPdfSection[] {
   };
 
   const conclusion: ReportPdfSection = {
-    heading: 'Exhibit H — Discounts & Conclusion',
+    heading: SCHEDULE.H,
     html: table({
       head: ['Step', 'Basis', 'Amount'],
       rows: [
@@ -351,6 +352,12 @@ function sampleExhibits(): ReportPdfSection[] {
   // schedules in and the order SAMPLE_EXHIBITS lists them for the page. A
   // sample whose exhibits ran A, C, D, B would be describing a different
   // document from the one the outline promises.
+  //
+  // The headings come from `SCHEDULE` for the same reason: three of these were
+  // hand-written and three of those had drifted from the renderer's own — the
+  // sample called Exhibit H "Discounts & Conclusion" where a client's report
+  // says "Discounts and Concluded Value". A sample exists to show the real
+  // document, so it does not get to name its schedules differently.
   return [capTable, reconciliation, income, market, allocation, conclusion];
 }
 

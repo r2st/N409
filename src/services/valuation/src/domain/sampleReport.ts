@@ -1,4 +1,5 @@
 import { templateForKind, type ReportTemplate } from './report.js';
+import { SCHEDULE_CATALOGUE } from './reportExhibits.js';
 import type { ValuationKind } from './valuation.js';
 
 /**
@@ -77,14 +78,42 @@ const SECTION_BLURBS: Record<string, string> = {
 };
 
 /**
+ * What each supporting schedule does for the reader, keyed by its catalogue id.
+ *
+ * Only the *explanations* live here. The set of schedules, their ids, their
+ * titles and which of them every engagement receives all come from
+ * `SCHEDULE_CATALOGUE` — the same catalogue the builders take their headings
+ * from — because a hand-maintained second list is precisely what went wrong
+ * before: this page promised A through H-1 while the renderer had grown three
+ * appendices nobody had told the prospect about.
+ */
+const EXHIBIT_BLURBS: Record<string, string> = {
+  A: 'Every share class, its preferences and the fully diluted position at the valuation date.',
+  B: 'Each indication, its weight, and the weighted total equity value.',
+  C: 'The cash-flow stream, discount factors and present values.',
+  'C-1': 'The forecast the DCF discounts, and the assumptions that built it.',
+  D: 'The multiples selected and the indication they produce.',
+  'D-1': 'The peer set behind the market approach, including the companies excluded and why.',
+  E: 'The adjusted net asset build-up.',
+  F: 'The breakpoint schedule and the value allocated to each class at each breakpoint.',
+  'F-1': 'The guideline companies, lookback window and the selected volatility.',
+  G: 'Each exit scenario, its probability, and the per-share value it implies.',
+  H: 'DLOC, DLOM and the concluded fair market value per share.',
+  'H-1': 'The option-model inputs and the study data supporting the DLOM.',
+  I: 'The discount rate the income approach applied, built up component by component — risk-free rate, equity risk premium, size premium and company-specific risk.',
+  II: 'The historical income statement and balance sheet the analysis rests on, as reported.',
+  III: 'The rates of return investors require of a company at this stage of development, against which the concluded discount rate is tested.',
+};
+
+/**
  * The supporting schedules, as the renderer titles them.
  *
  * Unlike the chapters these are produced at render time from the calculation
  * rather than from a stored skeleton, so there is no template to read them
- * off. They are listed with the `conditional` flag that decides whether a
- * given engagement's report contains them — a company with no DCF has no
- * Exhibit C, and a page claiming otherwise is describing a document the
- * client will not receive.
+ * off — but there is a catalogue, and it is the same one the builders use.
+ * Each carries the `always` flag that decides whether a given engagement's
+ * report contains it: a company with no DCF has no Exhibit C, and a page
+ * claiming otherwise is describing a document the client will not receive.
  */
 export interface SampleExhibit {
   id: string;
@@ -94,80 +123,19 @@ export interface SampleExhibit {
   always: boolean;
 }
 
-export const SAMPLE_EXHIBITS: readonly SampleExhibit[] = [
-  {
-    id: 'A',
-    title: 'Capitalization Table',
-    description: 'Every share class, its preferences and the fully diluted position at the valuation date.',
-    always: true,
-  },
-  {
-    id: 'B',
-    title: 'Reconciliation of Valuation Approaches',
-    description: 'Each indication, its weight, and the weighted total equity value.',
-    always: true,
-  },
-  {
-    id: 'C',
-    title: 'Income Approach (Discounted Cash Flow)',
-    description: 'The cash-flow stream, discount factors and present values.',
-    always: false,
-  },
-  {
-    id: 'C-1',
-    title: 'Basis of the Cash-Flow Forecast',
-    description: 'The forecast the DCF discounts, and the assumptions that built it.',
-    always: false,
-  },
-  {
-    id: 'D',
-    title: 'Market Approach',
-    description: 'The multiples selected and the indication they produce.',
-    always: false,
-  },
-  {
-    id: 'D-1',
-    title: 'Guideline Company Set',
-    description: 'The peer set behind the market approach, including the companies excluded and why.',
-    always: false,
-  },
-  {
-    id: 'E',
-    title: 'Asset Approach',
-    description: 'The adjusted net asset build-up.',
-    always: false,
-  },
-  {
-    id: 'F',
-    title: 'Allocation',
-    description: 'The breakpoint schedule and the value allocated to each class at each breakpoint.',
-    always: true,
-  },
-  {
-    id: 'F-1',
-    title: 'Selected Volatility',
-    description: 'The guideline companies, lookback window and the selected volatility.',
-    always: false,
-  },
-  {
-    id: 'G',
-    title: 'PWERM Scenarios',
-    description: 'Each exit scenario, its probability, and the per-share value it implies.',
-    always: false,
-  },
-  {
-    id: 'H',
-    title: 'Discounts & Conclusion',
-    description: 'DLOC, DLOM and the concluded fair market value per share.',
-    always: true,
-  },
-  {
-    id: 'H-1',
-    title: 'Marketability Discount, Derived',
-    description: 'The option-model inputs and the study data supporting the DLOM.',
-    always: false,
-  },
-];
+export const SAMPLE_EXHIBITS: readonly SampleExhibit[] = SCHEDULE_CATALOGUE.map((s) => ({
+  id: s.id,
+  // The heading the client's own report prints, minus the `Exhibit A — `
+  // prefix the `id` column already carries.
+  title: s.name,
+  description: EXHIBIT_BLURBS[s.id] ?? '',
+  always: s.always,
+}));
+
+/** Catalogue ids carrying no explanation — empty when the copy is complete. */
+export const MISSING_EXHIBIT_BLURBS: readonly string[] = SCHEDULE_CATALOGUE.filter(
+  (s) => !EXHIBIT_BLURBS[s.id],
+).map((s) => s.id);
 
 export interface SampleReportSection {
   key: string;
@@ -185,6 +153,12 @@ export interface SampleReportOutline {
   exhibits: readonly SampleExhibit[];
   /** Section keys carrying no blurb — empty when the copy is complete. */
   missingBlurbs: string[];
+  /**
+   * Schedule ids carrying no blurb. Empty unless a schedule has been added to
+   * `SCHEDULE_CATALOGUE` without a word of explanation for the prospect; only
+   * ever populated for the 409A, which is the only kind that lists exhibits.
+   */
+  missingExhibitBlurbs: string[];
 }
 
 /**
@@ -208,5 +182,6 @@ export function sampleReportOutline(kind: ValuationKind = '409a'): SampleReportO
     sections,
     exhibits: kind === '409a' ? SAMPLE_EXHIBITS : [],
     missingBlurbs: sections.filter((s) => s.blurb === null).map((s) => s.key),
+    missingExhibitBlurbs: kind === '409a' ? [...MISSING_EXHIBIT_BLURBS] : [],
   };
 }

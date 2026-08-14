@@ -13,11 +13,16 @@ import {
   pwermExhibit,
   financialsExhibit,
   waccExhibit,
+  scheduleTitle,
+  SCHEDULE_CATALOGUE,
   type ExhibitContext,
 } from '../../src/domain/reportExhibits.js';
 import { ALLOWED_TAGS, sanitizeHtml } from '../../src/domain/report.js';
+import { renderedScheduleIds } from '../../src/domain/reportExhibitIndex.js';
 import { computeWorkbook } from '../../src/domain/workbook.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
+import type { ProjectionRow } from '../../src/repos/projections.js';
+import type { VolatilityEstimateRow } from '../../src/repos/volatilityEstimates.js';
 
 const CONTEXT = {
   currency: 'USD',
@@ -176,6 +181,216 @@ describe('buildExhibits', () => {
       // something it would strip.
       expect(sanitizeHtml(s.html)).toBe(s.html);
     }
+  });
+});
+
+/**
+ * The catalogue against the renderer.
+ *
+ * `SCHEDULE_CATALOGUE` is the single place a schedule's id, heading and
+ * always-ness are stated, and three separate lists used to state them
+ * independently: the builders' own heading literals, `SAMPLE_EXHIBITS` on the
+ * public page, and `ALL_EXHIBITS` in the index test. Two of the three had
+ * already drifted — the sample page promised a prospect twelve schedules while
+ * the renderer printed fifteen, and the index test's list was missing Appendix
+ * III — and nothing failed, because no test rendered every schedule at once.
+ *
+ * This is that test. It builds the engagement that produces all fifteen and
+ * requires the headings to be the catalogue, in the catalogue's order. A
+ * builder added without an entry fails here; an entry whose title no longer
+ * matches its builder fails here; and the public page, being derived from the
+ * catalogue, cannot then be describing a different document.
+ */
+describe('the schedule catalogue', () => {
+  /** Enough of every input that no builder returns null. */
+  const MAXIMAL_RESULTS = {
+    ...RESULTS,
+    approaches: {
+      ...RESULTS.approaches,
+      // Exhibit E — an asset approach that was actually weighted.
+      asset: {
+        weight: 0.1,
+        method: 'nav',
+        total_assets: 9_000_000,
+        total_liabilities: 2_000_000,
+        equity_value: 7_000_000,
+      },
+    },
+    allocation: {
+      ...RESULTS.allocation,
+      // Exhibit G — PWERM scenarios alongside the breakpoint schedule.
+      scenarios: [
+        { name: 'IPO', type: 'ipo', probability: 0.3, exit_equity_value: 200_000_000, years: 4 },
+        { name: 'Acquisition', type: 'ma', probability: 0.5, exit_equity_value: 80_000_000, years: 3 },
+        { name: 'Dissolution', type: 'dissolution', probability: 0.2, exit_equity_value: 0, years: 2 },
+      ],
+    },
+    // Exhibit H-1 — the DLOM derivation and the class-volatility schedule.
+    discounts: {
+      ...RESULTS.discounts,
+      dlom_detail: {
+        method: 'chaffee',
+        dlom: 0.25,
+        volatility: 0.62,
+        volatility_basis: 'class',
+        time_to_exit_years: 4,
+      },
+    },
+    class_volatility: {
+      enterprise_volatility: 0.62,
+      time_to_exit_years: 4,
+      risk_free_rate: 0.0421,
+      equity_value: 42_000_000,
+      delta_total: 1,
+      classes: {
+        Common: { kind: 'common', value: 19_900_045, delta: 0.555, elasticity: 1.1971, volatility: 0.7422 },
+      },
+    },
+    // Appendix I — the WACC build-up behind the income approach's rate.
+    auto: {
+      wacc: {
+        wacc: 0.2812,
+        cost_of_equity: 0.2954,
+        capm: {
+          risk_free_rate: 0.0421,
+          equity_risk_premium: 0.055,
+          size_premium: 0.0389,
+          beta_relevered: 1.38,
+        },
+      },
+    },
+  };
+
+  const MAXIMAL_CONTEXT: ExhibitContext = {
+    ...CONTEXT,
+    // Exhibit D-1.
+    peers: [
+      {
+        ticker: 'AAA',
+        name: 'Alpha Analytics',
+        included: true,
+        exclude_reason: null,
+        source: 'market_feed',
+        score: 0.82,
+        multiples: { ev_revenue_ltm: 5.0 },
+      },
+    ],
+    // Exhibit F-1.
+    volatility: {
+      id: '01V',
+      valuation_id: '01K',
+      method: 'close_to_close',
+      periods_per_year: 252,
+      window_start: new Date('2024-06-30T00:00:00Z'),
+      window_end: new Date('2026-06-30T00:00:00Z'),
+      companies: [{ ticker: 'AAA', volatility: 0.62, observations: 500, used: true }],
+      excluded: [],
+      recommended: 0.65,
+      median_vol: 0.62,
+      mean_vol: 0.62,
+      min_vol: 0.62,
+      max_vol: 0.62,
+      coefficient_of_variation: 0.0,
+      time_to_exit_years: 3.5,
+      confidence: 'medium',
+      manual_override: null,
+      applied_at: new Date('2026-07-01T00:00:00Z'),
+      applied_by: null,
+      created_by: null,
+      created_at: new Date('2026-07-01T00:00:00Z'),
+    } as VolatilityEstimateRow,
+    // Exhibit C-1.
+    projection: {
+      id: '01J0PROJECTION000000000001',
+      valuation_id: '01J0VALUATION00000000001',
+      method: 'growth',
+      years: 3,
+      tax_rate: 0.21,
+      inputs: {
+        method: 'growth',
+        years: 3,
+        base_revenue: 8_000_000,
+        revenue_growth: 0.25,
+        cogs_pct: 0.4,
+        opex_pct: 0.3,
+        tax_rate: 0.21,
+      },
+      projections: [1_000_000, 1_500_000, 2_200_000].map((fcff, i) => ({
+        year: i + 1,
+        revenue: 10_000_000 + i * 3_000_000,
+        cogs: 4_000_000,
+        opex: 3_000_000,
+        ebitda: 3_000_000,
+        da: 500_000,
+        ebit: 2_500_000,
+        nopat: 1_975_000,
+        capex: 600_000,
+        delta_nwc: 250_000,
+        fcff,
+      })),
+      free_cash_flows: [1_000_000, 1_500_000, 2_200_000],
+      terminal_method: null,
+      terminal_value: null,
+      applied_at: new Date('2026-07-01T00:00:00Z'),
+      applied_by: null,
+      created_by: null,
+      created_at: new Date('2026-06-30T00:00:00Z'),
+    } as ProjectionRow,
+    // Appendix II.
+    financials: computeWorkbook([
+      { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 6_000_000 },
+      { sheet: 'balance_sheet', row_key: 'cash', column_key: 'fy_current', value: 3_000_000 },
+    ]),
+    // Appendix III.
+    developmentStage: 3,
+  };
+
+  const maximal = () =>
+    buildExhibits(calculation({ results: MAXIMAL_RESULTS } as Partial<CalculationRow>), MAXIMAL_CONTEXT);
+
+  it('prints every schedule it catalogues, in the catalogued order', () => {
+    // The assertion the three hand-maintained lists could not make between
+    // them: this is the whole deliverable, and it is exactly the catalogue.
+    expect(maximal().map((s) => s.heading)).toEqual(SCHEDULE_CATALOGUE.map(scheduleTitle));
+  });
+
+  it('catalogues no schedule the renderer cannot produce', () => {
+    // The other direction: an entry left behind by a builder that was deleted
+    // would have the public page promising a schedule nobody receives.
+    const printed = new Set(maximal().map((s) => s.heading));
+    for (const s of SCHEDULE_CATALOGUE) {
+      expect(printed.has(scheduleTitle(s)), `${scheduleTitle(s)} is catalogued but never printed`).toBe(true);
+    }
+  });
+
+  it('gives every schedule a distinct id the index can parse', () => {
+    const ids = SCHEDULE_CATALOGUE.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // `renderedScheduleIds` is what resolves the body's `{{#exhibit:E}}`
+    // pointers and the Index of Exhibits. A heading it cannot parse is a
+    // schedule the body can never point at.
+    expect(renderedScheduleIds(SCHEDULE_CATALOGUE.map(scheduleTitle))).toEqual(new Set(ids));
+  });
+
+  it('marks as always only the schedules a bare engagement still receives', () => {
+    // The minimum: an engagement with no peer set, no derived sigma, no
+    // forecast, no financials, no stage and no asset approach.
+    const bare = buildExhibits(calculation(), CONTEXT).map((s) => s.heading);
+    for (const s of SCHEDULE_CATALOGUE) {
+      expect(bare.includes(scheduleTitle(s)), `${scheduleTitle(s)} always=${s.always}`).toBe(
+        // C and D survive the bare fixture because INPUTS carries both an
+        // income and a market approach; they are not guaranteed in general.
+        s.always || s.id === 'C' || s.id === 'D',
+      );
+    }
+    expect(SCHEDULE_CATALOGUE.filter((s) => s.always).map((s) => s.id)).toEqual(['A', 'B', 'F', 'H']);
+  });
+
+  it('puts the appendices after the exhibits', () => {
+    const headings = maximal().map((s) => s.heading);
+    const lastExhibit = headings.findLastIndex((h) => h.startsWith('Exhibit '));
+    const firstAppendix = headings.findIndex((h) => h.startsWith('Appendix '));
+    expect(firstAppendix).toBeGreaterThan(lastExhibit);
   });
 });
 
