@@ -76,6 +76,22 @@
 #              $1.2242, because every QA check grades a number and none of them
 #              opened the report.
 #
+# gap:       cap tables imported before the as-converted fix carry a stale
+#            `fully_diluted_shares` in their stored summary. That column is
+#            JSONB written once at import, and until this fix it summed
+#            preferred 1:1 rather than through `conversion_ratio` — so any
+#            table with a ratchet has a denominator on file that the current
+#            build, the workbook and the engine all disagree with. The
+#            deliverable is already safe: both export sheets recompute from the
+#            entries. What still reads the stored figure is the Cap table tab's
+#            summary strip and the `cap_table` monitoring baseline, so the tab
+#            understates dilution and the first re-import after this commit
+#            will look like a cap-table change that nobody made. Re-saving the
+#            table fixes a row; the query for the list is a `cap_tables` row
+#            whose `validation->'summary'->>'fully_diluted_shares'` differs
+#            from `sum(shares × coalesce(conversion_ratio, 1))` over its
+#            `entries`, which for anything without a ratchet is none of them.
+#
 # gap:       the OpenRouter account is on the keyless free tier, which allows
 #            50 model requests a day, and it is exhausted — so every model in
 #            the chain answers 429 and /ai/v1/research returns 503 "synthesis
