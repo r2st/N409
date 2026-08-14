@@ -4,6 +4,7 @@ import {
   createPayment,
   findPaymentBySessionId,
   markPayment,
+  recordDispute,
   recordRefund,
 } from '../../src/repos/payments.js';
 import { priceForKind } from '../../src/routes/payments.js';
@@ -218,6 +219,58 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
         headers: authHeader(client.token),
       });
       expect(res.statusCode).toBe(404);
+    });
+
+    it('404s a payment id that is not an id', async () => {
+      // Before the shape check the path went to the repo, where a ULID column
+      // compared against arbitrary text is a 500 rather than a 404.
+      const vid = await createValuation('Receipt Bad Id Co');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/not-a-payment-id/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('says a disputed payment is disputed rather than heading it paid', async () => {
+      const { vid, payment } = await settledPayment('Receipt Dispute Co', 'cs_test_receipt_6');
+      await recordDispute(ctx.pool, payment.id, 'open');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const text = readable(res.rawPayload);
+      // The money is held, not returned — so the document must not read like a
+      // refund and must not quietly still read "paid".
+      expect(text).toContain('disputed');
+      expect(text).not.toContain('Refunded');
+    });
+
+    it('renders a payment taken before add-ons were itemised', async () => {
+      // `price_breakdown` is null on every row written before migration 0108.
+      // With no lines to print, the receipt states the engagement and the total
+      // rather than an empty table under a "Description" heading.
+      const vid = await createValuation('Legacy Receipt Co');
+      const payment = await createPayment(ctx.pool, {
+        valuationId: vid,
+        sessionId: 'cs_test_receipt_7',
+        amountCents: 119_000,
+        currency: 'USD',
+        createdBy: ops.id,
+      });
+      await markPayment(ctx.pool, payment.id, 'succeeded');
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${vid}/payments/${payment.id}/receipt.pdf`,
+        headers: authHeader(ops.token),
+      });
+      expect(res.statusCode).toBe(200);
+      const text = readable(res.rawPayload);
+      expect(text).toContain('Valuation engagement');
+      expect(text).toContain('$1,190.00');
     });
   });
 
