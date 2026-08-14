@@ -141,8 +141,14 @@ describe.skipIf(!dbUp)('narrative prompt library', () => {
     ]) {
       expect(keys).not.toContain(suppressed);
     }
-    // ...and the sections that do survive are still there.
-    expect(keys).toContain('company_overview');
+    // `company_overview` used to be asserted here as a section that survives.
+    // It does not: the §1202 skeleton has no company chapter, the map routes
+    // the section to NULL, and every run drafted a business description that
+    // `applyNarrative` then discarded. What the memorandum says about the
+    // business it says under the active-business test, which is the chapter an
+    // examiner reads it in.
+    expect(keys).not.toContain('company_overview');
+    expect(keys).toContain('conclusion');
 
     const summary = sections.find((s) => s.key === 'executive_summary')!;
     expect(summary.overridden).toBe(true);
@@ -173,6 +179,68 @@ describe.skipIf(!dbUp)('narrative prompt library', () => {
     for (const gone of ['allocation_methodology', 'dlom_analysis', 'market_approach']) {
       expect(keys, `${kind} still drafts ${gone}`).not.toContain(gone);
     }
+  });
+
+  /**
+   * The six 0145 closed. Same defect as the five above and one step further
+   * along: these kinds already had chapters under other names, so the preview
+   * showed an analyst that an EMI pack would be drafted with a marketability
+   * discount where HMRC expects the UMV/AMV pair, and an ESOP report with no
+   * level-of-value argument at all.
+   */
+  it.each([
+    ['csop', ['scheme_limits']],
+    ['emi', ['scheme_limits', 'dlom_analysis']],
+    ['esop', ['repurchase_obligation', 'dlom_analysis']],
+    ['fmv', ['earnings_normalization']],
+    ['gifts', ['chapter_14']],
+    ['ifrs2', ['awards']],
+  ])('previews %s with the chapters only it has', async (kind, expected) => {
+    const keys = (await sectionsFor(kind)).map((s) => s.key);
+    for (const key of expected) expect(keys, `${kind} is missing ${key}`).toContain(key);
+    // Every one of them renames or suppresses the equity allocation, and none
+    // of them should still be asking for a 409A's approach chapters.
+    for (const gone of ['allocation_methodology', 'market_approach', 'income_approach']) {
+      expect(keys, `${kind} still drafts ${gone}`).not.toContain(gone);
+    }
+  });
+
+  it('gives the renamed chapters this deliverable’s subject', async () => {
+    // EMI's is the clearest: the chapter the map sends `dlom_analysis` to is
+    // not a discount discussion, it is the statutory pair HMRC agrees.
+    const umv = (await sectionsFor('emi')).find((s) => s.key === 'dlom_analysis');
+    expect(umv?.label).toBe('UMV and AMV');
+    expect(umv?.overridden).toBe(true);
+    expect(umv?.guidance).toMatch(/actual market value/);
+    expect(umv?.guidance).not.toMatch(/DLOM method chosen/);
+
+    const level = (await sectionsFor('esop')).find((s) => s.key === 'dlom_analysis');
+    expect(level?.label).toBe('Level of Value & Discounts');
+    expect(level?.guidance).toMatch(/adequate consideration|level of value|409\(h\)/);
+  });
+
+  it('stops asking 820, QSBS and PPA for sections their own map discards', async () => {
+    // 0114 suppressed two per kind and left the rest enabled, so the agent was
+    // drafting a marketability discount for a Level 3 measurement and an
+    // approach weighting for a purchase price allocation — both discarded on
+    // arrival, and neither visible as a decision anybody made.
+    for (const [kind, gone] of [
+      ['820', ['dlom_analysis', 'market_approach', 'income_approach', 'allocation_methodology']],
+      ['qsbs', ['company_overview']],
+      ['ppa', ['valuation_methodology', 'market_approach', 'income_approach']],
+    ] as const) {
+      const keys = (await sectionsFor(kind)).map((s) => s.key);
+      for (const key of gone) expect(keys, `${kind} still drafts ${key}`).not.toContain(key);
+    }
+    // And the chapters those kinds are actually argued in survive — including
+    // the two §1202 chapters that had no library row at all, so nothing was
+    // drafted for them and they shipped as the skeleton wrote them.
+    expect((await sectionsFor('820')).map((s) => s.key)).toContain('fair_value_hierarchy');
+    expect((await sectionsFor('ppa')).map((s) => s.key)).toContain('intangible_assets');
+    const qsbs = await sectionsFor('qsbs');
+    expect(qsbs.map((s) => s.key)).toContain('gross_asset_test');
+    expect(qsbs.map((s) => s.key)).toContain('issuance_and_holding');
+    expect(qsbs.find((s) => s.key === 'exclusion_cap')?.guidance).toMatch(/1202\(b\)/);
   });
 
   it('rewrites the sections a specialty kind redirects rather than dropping them', async () => {

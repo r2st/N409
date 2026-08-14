@@ -1,10 +1,17 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { FundPortfolioPage } from '../src/pages/FundPortfolioPage';
 
 const fund = { id: 'f1', name: 'Growth Fund I', fund_type: 'vc', currency: 'USD', vintage_year: 2021 };
+const otherFund = {
+  id: 'f2',
+  name: 'Credit Fund II',
+  fund_type: 'credit',
+  currency: 'EUR',
+  vintage_year: 2023,
+};
 const position = {
   id: 'p1',
   company_name: 'Acme',
@@ -23,24 +30,69 @@ const position = {
 const detail = { fund, lp_terms: null, positions: [position] };
 const nav = {
   net_asset_value: 750000,
-  gross_asset_value: 750000,
+  gross_asset_value: 800000,
   total_cost_basis: 500000,
   total_unrealized_gain: 250000,
-  liabilities: 0,
-  level_breakdown: { level_1: 0, level_2: 0, level_3: 750000 },
+  liabilities: 50000,
+  level_breakdown: { level_1: 10000, level_2: 20000, level_3: 720000 },
 };
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-function mockApi() {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
-    const path = String(url);
-    if (path.includes('/positions/') && path.endsWith('/marks')) return jsonResponse({ marks: [] });
-    if (path.endsWith('/nav')) return jsonResponse({ nav });
-    if (/\/funds\/[^/]+$/.test(path)) return jsonResponse(detail);
-    return jsonResponse({ funds: [fund] });
+const problem = (detail: string, status = 422) =>
+  new Response(JSON.stringify({ title: 'Unprocessable', status, detail }), {
+    status,
+    headers: { 'content-type': 'application/problem+json' },
   });
+
+/** Every write the page can make, in the order it made them. */
+interface Sent {
+  path: string;
+  method: string;
+  body: Record<string, unknown>;
+}
+
+interface Overrides {
+  funds?: unknown[];
+  detail?: unknown;
+  marks?: unknown[];
+  /** Return a Response to answer a write yourself; undefined falls through. */
+  onWrite?: (path: string, body: Record<string, unknown>) => Response | undefined;
+}
+
+function mockApi(over: Overrides = {}) {
+  const sent: Sent[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const path = String(url);
+    const method = init?.method ?? 'GET';
+    if (method !== 'GET') {
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      sent.push({ path, method, body });
+      const answer = over.onWrite?.(path, body);
+      if (answer) return answer;
+      if (path.endsWith('/funds')) return jsonResponse({ fund });
+      if (path.endsWith('/waterfall')) {
+        return jsonResponse({
+          waterfall: {
+            distributable: 1000000,
+            lp_distribution: 900000,
+            gp_distribution: 100000,
+            clawback_owed: 0,
+            tiers: {},
+          },
+        });
+      }
+      return jsonResponse({});
+    }
+    if (path.includes('/positions/') && path.endsWith('/marks')) {
+      return jsonResponse({ marks: over.marks ?? [] });
+    }
+    if (path.endsWith('/nav')) return jsonResponse({ nav });
+    if (/\/funds\/[^/]+$/.test(path)) return jsonResponse(over.detail ?? detail);
+    return jsonResponse({ funds: over.funds ?? [fund] });
+  });
+  return sent;
 }
 
 function renderPage() {
@@ -52,12 +104,10 @@ function renderPage() {
 }
 
 describe('FundPortfolioPage', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    mockApi();
-  });
+  beforeEach(() => vi.restoreAllMocks());
 
   it('renders a contextual HelpIcon that opens the fund-holdings article', async () => {
+    mockApi();
     const user = userEvent.setup();
     renderPage();
 
@@ -71,6 +121,7 @@ describe('FundPortfolioPage', () => {
   });
 
   it('explains the LP waterfall tiers and carry with tooltips', async () => {
+    mockApi();
     renderPage();
     // WaterfallCard renders once the fund detail loads.
     expect(await screen.findByRole('button', { name: 'About the LP waterfall' })).toBeInTheDocument();
@@ -79,6 +130,7 @@ describe('FundPortfolioPage', () => {
   });
 
   it('explains the fair-value level on the mark method when adding a position', async () => {
+    mockApi();
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole('button', { name: 'About Carry' });
@@ -90,6 +142,7 @@ describe('FundPortfolioPage', () => {
   });
 
   it('explains the calibration date on the mark form', async () => {
+    mockApi();
     const user = userEvent.setup();
     renderPage();
 
@@ -97,5 +150,472 @@ describe('FundPortfolioPage', () => {
     const row = await screen.findByRole('button', { name: /Acme/ });
     await user.click(row);
     await waitFor(() => expect(screen.getByRole('button', { name: 'About Date' })).toBeInTheDocument());
+  });
+
+  /*
+   * NAV and the hierarchy disclosure. The three levels are the point of the
+   * whole surface — an auditor reads how much of the fund is marked to a model
+   * before anything else — so each has to carry its own figure rather than the
+   * table rendering with three copies of the total.
+   */
+  it('rolls the positions into NAV and discloses the ASC 820 hierarchy', async () => {
+    mockApi();
+    renderPage();
+
+    expect(await screen.findByText('$750,000')).toBeInTheDocument();
+    expect(screen.getByText('$800,000')).toBeInTheDocument();
+    expect(screen.getByText('$500,000')).toBeInTheDocument();
+    expect(screen.getByText('$250,000')).toBeInTheDocument();
+
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('$10,000')).toBeInTheDocument();
+    expect(within(table).getByText('$20,000')).toBeInTheDocument();
+    expect(within(table).getByText('$720,000')).toBeInTheDocument();
+  });
+
+  /** A fund with nothing in it has no NAV to state, and must not invent one. */
+  it('skips NAV entirely for a fund with no positions', async () => {
+    mockApi({ detail: { fund, lp_terms: null, positions: [] } });
+    renderPage();
+
+    expect(
+      await screen.findByText('No positions. Add a holding to mark it to fair value.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Net asset value')).not.toBeInTheDocument();
+    expect(screen.queryByText('ASC 820 fair-value hierarchy')).not.toBeInTheDocument();
+  });
+
+  it('invites the first fund when the operator has none', async () => {
+    mockApi({ funds: [] });
+    renderPage();
+    expect(await screen.findByText('No funds yet')).toBeInTheDocument();
+    expect(screen.getByText(/Create a fund to start marking/)).toBeInTheDocument();
+  });
+
+  it('creates a fund, upper-cases its currency and selects it', async () => {
+    const created = { ...otherFund, id: 'f9', name: 'Seed Fund III' };
+    const sent = mockApi({
+      onWrite: (path) => (path.endsWith('/funds') ? jsonResponse({ fund: created }) : undefined),
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: /Growth Fund I/ });
+
+    await user.click(screen.getByRole('button', { name: 'New fund' }));
+    await user.type(screen.getByLabelText('Fund name'), 'Seed Fund III');
+    await user.selectOptions(screen.getByLabelText('Type'), 'growth');
+    await user.clear(screen.getByLabelText('Currency'));
+    await user.type(screen.getByLabelText('Currency'), 'gbp');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toEqual({
+      name: 'Seed Fund III',
+      fund_type: 'growth',
+      currency: 'GBP',
+      vintage_year: 2024,
+    });
+    // The form closes on success, so the toggle reads "New fund" again.
+    await waitFor(() => expect(screen.queryByLabelText('Fund name')).not.toBeInTheDocument());
+  });
+
+  /** A blank vintage is "unknown", not year zero. */
+  it('sends a blank vintage as null', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: /Growth Fund I/ });
+
+    await user.click(screen.getByRole('button', { name: 'New fund' }));
+    await user.type(screen.getByLabelText('Fund name'), 'Vintageless');
+    await user.clear(screen.getByLabelText('Vintage'));
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body.vintage_year).toBeNull();
+  });
+
+  it('keeps the create form open, with its draft, when the fund is rejected', async () => {
+    mockApi({
+      onWrite: (path) =>
+        path.endsWith('/funds') ? problem('A fund named Seed Fund III already exists.') : undefined,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: /Growth Fund I/ });
+
+    await user.click(screen.getByRole('button', { name: 'New fund' }));
+    await user.type(screen.getByLabelText('Fund name'), 'Seed Fund III');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText('A fund named Seed Fund III already exists.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Fund name')).toHaveValue('Seed Fund III');
+  });
+
+  it('abandons the create form on Cancel', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: /Growth Fund I/ });
+
+    await user.click(screen.getByRole('button', { name: 'New fund' }));
+    expect(screen.getByLabelText('Fund name')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByLabelText('Fund name')).not.toBeInTheDocument();
+  });
+
+  it('surfaces a failed fund list rather than an empty page', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(problem('Ops access required.', 403));
+    renderPage();
+    expect(await screen.findByText('Ops access required.')).toBeInTheDocument();
+  });
+
+  it('falls back to a plain message when the fund list fails without a problem body', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    renderPage();
+    expect(await screen.findByText('Failed to load funds')).toBeInTheDocument();
+  });
+
+  it('switches funds, and remounts the detail so nothing carries over', async () => {
+    mockApi({ funds: [fund, otherFund] });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Positions');
+
+    const second = screen.getByRole('button', { name: /Credit Fund II/ });
+    expect(second).toHaveTextContent('CREDIT');
+    await user.click(second);
+    // The detail is keyed by fund id, so it refetches rather than showing f1's.
+    await waitFor(() => expect(screen.getByText('Positions')).toBeInTheDocument());
+  });
+
+  it('adds a position, sending quantity and cost basis as numbers', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Positions');
+
+    await user.click(screen.getByRole('button', { name: 'Add position' }));
+    await user.type(screen.getByLabelText('Company'), 'Globex');
+    await user.selectOptions(screen.getByLabelText('Security'), 'safe');
+    // A tooltipped Field puts a <button> inside the <label>, and a button is a
+    // labelable element — so the label matches the trigger as well as the input.
+    await user.selectOptions(screen.getByLabelText('Default mark method', { selector: 'select' }), 'market');
+    await user.clear(screen.getByLabelText('Quantity'));
+    await user.type(screen.getByLabelText('Quantity'), '250');
+    await user.clear(screen.getByLabelText('Cost basis'));
+    await user.type(screen.getByLabelText('Cost basis'), '125000');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.path).toContain('/funds/f1/positions');
+    expect(sent[0]!.body).toEqual({
+      company_name: 'Globex',
+      security_type: 'safe',
+      quantity: 250,
+      cost_basis: 125000,
+      mark_method: 'market',
+    });
+  });
+
+  it('keeps the position form open, with its draft, when the write is rejected', async () => {
+    mockApi({
+      onWrite: (path) =>
+        path.endsWith('/positions') ? problem('quantity must be greater than zero') : undefined,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Positions');
+
+    await user.click(screen.getByRole('button', { name: 'Add position' }));
+    await user.type(screen.getByLabelText('Company'), 'Globex');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('quantity must be greater than zero')).toBeInTheDocument();
+    expect(screen.getByLabelText('Company')).toHaveValue('Globex');
+  });
+
+  it('states each position’s latest mark and its fair-value level', async () => {
+    mockApi();
+    renderPage();
+    const row = await screen.findByRole('button', { name: /Acme/ });
+    expect(row).toHaveTextContent('$750,000 · L3');
+    expect(row).toHaveTextContent('preferred');
+  });
+
+  /** Never marked means there is no fair value to show — cost is what is known. */
+  it('falls back to cost basis on a position that has never been marked', async () => {
+    mockApi({
+      detail: { fund, lp_terms: null, positions: [{ ...position, latest_mark: null }] },
+    });
+    renderPage();
+    const row = await screen.findByRole('button', { name: /Acme/ });
+    expect(row).toHaveTextContent('cost $500,000');
+  });
+
+  it('loads the mark history once, on first expand', async () => {
+    mockApi({
+      marks: [
+        {
+          id: 'm1',
+          measurement_date: '2026-03-31',
+          method: 'calibrated_opm',
+          fair_value: '750000',
+          level: 3,
+        },
+        {
+          id: 'm0',
+          measurement_date: '2025-12-31',
+          method: 'last_round',
+          fair_value: '600000',
+          level: 2,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = await screen.findByRole('button', { name: /Acme/ });
+    await user.click(row);
+    expect(await screen.findByText('2025-12-31')).toBeInTheDocument();
+    expect(screen.getByText('L2')).toBeInTheDocument();
+    expect(screen.getByText('$600,000')).toBeInTheDocument();
+
+    const before = (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    await user.click(row); // collapse
+    await user.click(row); // re-expand — history is already in hand
+    expect((globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(before);
+  });
+
+  it('says so when a position has no marks yet', async () => {
+    mockApi({ marks: [] });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Acme/ }));
+    expect(await screen.findByText('No marks yet.')).toBeInTheDocument();
+  });
+
+  /*
+   * The mark form sends a different body per method, and sending the wrong one
+   * is how a Level 3 model value ends up recorded as a quoted price. Each
+   * branch gets its own case.
+   */
+  it('records a market mark as quantity × quoted price', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Acme/ }));
+    await user.type(await screen.findByLabelText('Quoted price'), '12.5');
+    await user.click(screen.getByRole('button', { name: 'Record mark' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.path).toContain('/funds/f1/positions/p1/marks');
+    expect(sent[0]!.body).toEqual({
+      measurement_date: '2026-03-31',
+      method: 'market',
+      quantity: 1000,
+      quoted_price: 12.5,
+    });
+  });
+
+  it('records a last-round mark as quantity × round price per share', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Acme/ }));
+    await user.selectOptions(await screen.findByLabelText('Method'), 'last_round');
+    await user.type(screen.getByLabelText('Round price/sh'), '9');
+    await user.click(screen.getByRole('button', { name: 'Record mark' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toEqual({
+      measurement_date: '2026-03-31',
+      method: 'last_round',
+      quantity: 1000,
+      round_price_per_share: 9,
+    });
+  });
+
+  it('records a calibrated OPM mark as a model value, with no per-share price', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Acme/ }));
+    await user.selectOptions(await screen.findByLabelText('Method'), 'calibrated_opm');
+    await user.type(screen.getByLabelText('Model value'), '820000');
+    await user.click(screen.getByRole('button', { name: 'Record mark' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toEqual({
+      measurement_date: '2026-03-31',
+      method: 'calibrated_opm',
+      model_value: 820000,
+    });
+    expect(sent[0]!.body).not.toHaveProperty('quantity');
+  });
+
+  /** Cost carries no figure of its own — the position's basis is the mark. */
+  it('records a cost mark with neither a price nor a model value', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Acme/ }));
+    await user.selectOptions(await screen.findByLabelText('Method'), 'cost');
+    expect(screen.queryByLabelText('Quoted price')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Model value')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Record mark' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toEqual({ measurement_date: '2026-03-31', method: 'cost' });
+  });
+
+  it('reports a rejected mark against the position that was marked', async () => {
+    mockApi({
+      onWrite: (path) =>
+        path.endsWith('/marks') ? problem('measurement_date is before the fund vintage') : undefined,
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Acme/ }));
+    await user.click(await screen.findByRole('button', { name: 'Record mark' }));
+    expect(await screen.findByText('measurement_date is before the fund vintage')).toBeInTheDocument();
+  });
+
+  /*
+   * LP terms. The defaults are the market-standard 8 / 20 with catch-up, and
+   * the card has to send what is on screen — a saved carry of 0.2 that reaches
+   * the server as 20 is a hundredfold error in the GP's favour.
+   */
+  it('saves LP terms as numbers, from the stated defaults', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('LP waterfall calculator');
+
+    await user.clear(screen.getByLabelText('Committed'));
+    await user.type(screen.getByLabelText('Committed'), '50000000');
+    await user.clear(screen.getByLabelText('Contributed'));
+    await user.type(screen.getByLabelText('Contributed'), '30000000');
+    await user.click(screen.getByRole('button', { name: 'Save LP terms' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.method).toBe('PUT');
+    expect(sent[0]!.path).toContain('/funds/f1/lp-terms');
+    expect(sent[0]!.body).toEqual({
+      committed_capital: 50000000,
+      contributed_capital: 30000000,
+      preferred_return_rate: 0.08,
+      carry_pct: 0.2,
+      gp_catch_up: true,
+    });
+  });
+
+  it('seeds the terms from the fund’s stored LP agreement when it has one', async () => {
+    mockApi({
+      detail: {
+        fund,
+        positions: [position],
+        lp_terms: {
+          committed_capital: '100000000',
+          contributed_capital: '75000000',
+          preferred_return_rate: '0.06',
+          carry_pct: '0.25',
+          gp_catch_up: false,
+        },
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByLabelText('Committed')).toHaveValue('100000000');
+    expect(screen.getByLabelText('Pref return', { selector: 'input' })).toHaveValue('0.06');
+    expect(screen.getByLabelText('Carry', { selector: 'input' })).toHaveValue('0.25');
+    expect(screen.getByRole('checkbox', { name: /GP catch-up/ })).not.toBeChecked();
+  });
+
+  it('sends the GP catch-up as the operator left it', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('LP waterfall calculator');
+
+    await user.click(screen.getByRole('checkbox', { name: /GP catch-up/ }));
+    await user.click(screen.getByRole('button', { name: 'Save LP terms' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body.gp_catch_up).toBe(false);
+  });
+
+  it('reports a rejected LP-terms save', async () => {
+    mockApi({
+      onWrite: (path) =>
+        path.endsWith('/lp-terms') ? problem('contributed capital exceeds committed') : undefined,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('LP waterfall calculator');
+
+    await user.click(screen.getByRole('button', { name: 'Save LP terms' }));
+    expect(await screen.findByText('contributed capital exceeds committed')).toBeInTheDocument();
+  });
+
+  it('runs the waterfall and splits the proceeds between LPs and the GP', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('LP waterfall calculator');
+
+    await user.clear(screen.getByLabelText('Distributable'));
+    await user.type(screen.getByLabelText('Distributable'), '1000000');
+    await user.clear(screen.getByLabelText('Years'));
+    await user.type(screen.getByLabelText('Years'), '5');
+    await user.click(screen.getByRole('button', { name: 'Run waterfall' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.body).toEqual({ distributable: 1000000, years: 5 });
+    expect(await screen.findByText('$900,000')).toBeInTheDocument();
+    expect(screen.getByText('$100,000')).toBeInTheDocument();
+    expect(screen.getByText('To LPs')).toBeInTheDocument();
+    expect(screen.getByText('Clawback owed')).toBeInTheDocument();
+  });
+
+  it('reports a rejected waterfall run without clearing an earlier result', async () => {
+    mockApi({
+      onWrite: (path) => (path.endsWith('/waterfall') ? problem('LP terms must be saved first') : undefined),
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('LP waterfall calculator');
+
+    await user.click(screen.getByRole('button', { name: 'Run waterfall' }));
+    expect(await screen.findByText('LP terms must be saved first')).toBeInTheDocument();
+    expect(screen.queryByText('To LPs')).not.toBeInTheDocument();
+  });
+
+  it('surfaces a failed fund detail without blanking the fund picker', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (/\/funds\/[^/]+$/.test(path)) return problem('Fund not found.', 404);
+      return jsonResponse({ funds: [fund] });
+    });
+    renderPage();
+
+    expect(await screen.findByText('Fund not found.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Growth Fund I/ })).toBeInTheDocument();
+  });
+
+  it('renders each fund’s own currency', async () => {
+    mockApi({
+      funds: [otherFund],
+      detail: { fund: otherFund, lp_terms: null, positions: [position] },
+    });
+    renderPage();
+    // EUR, not the USD of the first fund in the list.
+    expect(await screen.findByText('€750,000')).toBeInTheDocument();
   });
 });

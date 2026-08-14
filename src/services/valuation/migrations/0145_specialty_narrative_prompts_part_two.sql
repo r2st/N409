@@ -248,3 +248,70 @@ VALUES
    'the reconciliation across approaches and the final concluded fair market value per common share',
    'the reconciliation across approaches and the final concluded fair market value per common share', 80, false)
 ON CONFLICT (kind, section_key) DO NOTHING;
+
+-- ── the three 0114 suppressed only partly ───────────────────────────────────
+--
+-- Found by sweeping the seeded library against the maps rather than by reading
+-- the list of kinds again: 820, qsbs and ppa each still ask for sections their
+-- own map sends to NULL, so the agent drafts them on every run and
+-- `applyNarrative` discards them on every run. 0114 disabled the two most
+-- obviously wrong per kind and stopped there.
+--
+-- The cost is not the tokens. A model asked for "the DLOM method chosen, the
+-- factors considered, and the resulting discount" about a Level 3 measurement
+-- will produce a discount, and a reviewer reading the drafted output — which
+-- is visible in the job result whether or not it reaches the report — has no
+-- way to tell that the platform threw it away.
+--
+-- ppa.valuation_methodology is the one worth naming separately: a purchase
+-- price allocation argues each intangible's method in the intangibles chapter,
+-- which 0114 already seeded, so a second chapter weighting approaches across
+-- the transaction is not merely discarded, it contradicts the one that ships.
+INSERT INTO narrative_prompts (id, kind, section_key, label, guidance, default_guidance, sort_order, enabled)
+VALUES
+  ('01N409NARR0000000000000129', '820', 'company_overview', 'Company Overview and Industry Analysis',
+   'what the company does, its stage and traction, and the industry it competes in',
+   'what the company does, its stage and traction, and the industry it competes in', 20, false),
+  ('01N409NARR0000000000000130', '820', 'market_approach', 'Market Approach Analysis',
+   'the guideline public companies selected, the selection rationale, and the multiples applied',
+   'the guideline public companies selected, the selection rationale, and the multiples applied', 40, false),
+  ('01N409NARR0000000000000131', '820', 'income_approach', 'Income Approach Analysis',
+   'the projection assumptions and the discount-rate / WACC build-up',
+   'the projection assumptions and the discount-rate / WACC build-up', 50, false),
+  ('01N409NARR0000000000000132', '820', 'allocation_methodology', 'Allocation Methodology',
+   'the OPM and/or PWERM rationale and the allocation of equity value to the common shares',
+   'the OPM and/or PWERM rationale and the allocation of equity value to the common shares', 60, false),
+  ('01N409NARR0000000000000133', '820', 'dlom_analysis', 'Discount for Lack of Marketability',
+   'the DLOM method chosen, the factors considered, and the resulting discount',
+   'the DLOM method chosen, the factors considered, and the resulting discount', 70, false),
+  ('01N409NARR0000000000000134', 'qsbs', 'company_overview', 'Company Overview and Industry Analysis',
+   'what the company does, its stage and traction, and the industry it competes in',
+   'what the company does, its stage and traction, and the industry it competes in', 20, false),
+  ('01N409NARR0000000000000135', 'ppa', 'company_overview', 'Company Overview and Industry Analysis',
+   'what the company does, its stage and traction, and the industry it competes in',
+   'what the company does, its stage and traction, and the industry it competes in', 20, false),
+  ('01N409NARR0000000000000136', 'ppa', 'valuation_methodology', 'Valuation Methodology',
+   'which approaches were used, why they fit this company, and how they were weighted',
+   'which approaches were used, why they fit this company, and how they were weighted', 30, false),
+  ('01N409NARR0000000000000137', 'ppa', 'market_approach', 'Market Approach Analysis',
+   'the guideline public companies selected, the selection rationale, and the multiples applied',
+   'the guideline public companies selected, the selection rationale, and the multiples applied', 40, false),
+  ('01N409NARR0000000000000138', 'ppa', 'income_approach', 'Income Approach Analysis',
+   'the projection assumptions and the discount-rate / WACC build-up',
+   'the projection assumptions and the discount-rate / WACC build-up', 50, false)
+ON CONFLICT (kind, section_key) DO NOTHING;
+
+-- The other side of the same sweep: two QSBS chapters with no library row, so
+-- nothing was drafted for them and they shipped as the skeleton wrote them.
+-- Both are matters of fact an examiner checks against the shareholder's own
+-- records, which is exactly why the memorandum has to state them rather than
+-- leave an instruction where they belong.
+INSERT INTO narrative_prompts (id, kind, section_key, label, guidance, default_guidance, sort_order)
+VALUES
+  ('01N409NARR0000000000000139', 'qsbs', 'issuance_and_holding', 'Issuance and Holding Period',
+   'how the stock was acquired and from whom — original issuance from the corporation for money, property or services, which §1202(c)(1) requires, as against a purchase from another holder, which does not qualify — the issuance date, the holding period run to the measurement date against the five-year requirement, and any redemption within the §1202(c)(3) look-back windows that would disqualify the issuance',
+   'how the stock was acquired and from whom — original issuance from the corporation for money, property or services, which §1202(c)(1) requires, as against a purchase from another holder, which does not qualify — the issuance date, the holding period run to the measurement date against the five-year requirement, and any redemption within the §1202(c)(3) look-back windows that would disqualify the issuance', 50),
+  ('01N409NARR0000000000000140', 'qsbs', 'exclusion_cap', 'Exclusion Limitation',
+   'the per-issuer limitation under §1202(b): the greater of the dollar cap and ten times the taxpayer''s aggregate adjusted basis in the qualified stock disposed of in the year, the exclusion percentage that applies to this issuance date, and the resulting excludable gain. State the thresholds and percentage as they stand for the issuance date rather than the current ones, since both have changed with successive amendments and applying today''s figures to older stock is the error this chapter exists to prevent',
+   'the per-issuer limitation under §1202(b): the greater of the dollar cap and ten times the taxpayer''s aggregate adjusted basis in the qualified stock disposed of in the year, the exclusion percentage that applies to this issuance date, and the resulting excludable gain. State the thresholds and percentage as they stand for the issuance date rather than the current ones, since both have changed with successive amendments and applying today''s figures to older stock is the error this chapter exists to prevent', 60)
+ON CONFLICT (kind, section_key) DO NOTHING;

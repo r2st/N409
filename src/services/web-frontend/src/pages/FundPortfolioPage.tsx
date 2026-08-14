@@ -267,6 +267,11 @@ function FundDetailView({ fundId }: { fundId: string }) {
     }
   };
 
+  // The error has to be checked before the spinner, not inside the loaded
+  // branch below it: a fund whose detail never arrives has `detail === null`
+  // forever, so an error rendered only under `detail` is an error nobody sees.
+  // A 403 or a deleted fund span the same failure as a slow network.
+  if (error && !detail) return <ErrorNote>{error}</ErrorNote>;
   if (!detail) return <Spinner />;
   const { fund, positions } = detail;
   const cur = fund.currency;
