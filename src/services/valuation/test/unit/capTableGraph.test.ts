@@ -111,6 +111,41 @@ describe('cap table graph', () => {
     expect(nodes.find((n) => n.kind === 'company')!.shares).toBe(11_000_000);
   });
 
+  /*
+   * The graph draws the conversion ratio on the edge, so it cannot compute the
+   * percentage on the node as though the ratio were 1 — the two would be the
+   * same picture contradicting itself, and both are read at a glance.
+   */
+  describe('a class converting at other than 1:1', () => {
+    const RATCHET = entry({ ...SEED, conversion_ratio: 2 });
+
+    it('counts it as-converted in every ownership figure', () => {
+      // 8M common + 2M seed at 2:1 + 1M pool = 13M as-converted, not 11M.
+      const { nodes } = build([COMMON, RATCHET, POOL]);
+      expect(nodes.find((n) => n.kind === 'company')!.shares).toBe(13_000_000);
+      expect(nodes.find((n) => n.label === 'Common')!.ownership).toBeCloseTo(8 / 13, 10);
+      expect(nodes.find((n) => n.label === 'Series Seed')!.ownership).toBeCloseTo(4 / 13, 10);
+      expect(nodes.find((n) => n.label === 'Option Pool')!.ownership).toBeCloseTo(1 / 13, 10);
+    });
+
+    it('agrees with the edge label it draws for the same class', () => {
+      const { edges } = build([COMMON, RATCHET, POOL]);
+      const conversion = edges.find((e) => e.kind === 'converts_to' && e.from.includes('series-seed'));
+      expect(conversion!.label).toBe('converts 2:1');
+    });
+
+    it('leaves the class its pre-conversion share count', () => {
+      // `shares` is what the sheet says; `ownership` is what it converts into.
+      expect(build([COMMON, RATCHET]).nodes.find((n) => n.label === 'Series Seed')!.shares).toBe(2_000_000);
+    });
+
+    it('sums every class to the whole company', () => {
+      const { nodes } = build([COMMON, RATCHET, A, B, POOL]);
+      const classes = nodes.filter((n) => n.kind !== 'company' && n.kind !== 'funding_round');
+      expect(classes.reduce((sum, n) => sum + (n.ownership ?? 0), 0)).toBeCloseTo(1, 10);
+    });
+  });
+
   it('multiplies the preference out rather than showing the multiple alone', () => {
     const participating = entry({ ...A, liquidation_multiple: 2, invested_amount: 9_000_000 });
     const { nodes } = build([COMMON, participating]);

@@ -1,4 +1,4 @@
-import { type CapTableEntry, type CapTableClassType } from './capTable.js';
+import { asConvertedShares, type CapTableEntry, type CapTableClassType } from './capTable.js';
 
 /**
  * The cap table as a graph — what converts into what, and what sits in front
@@ -135,7 +135,22 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
   const nodes: CapTableGraphNode[] = [];
   const edges: CapTableGraphEdge[] = [];
 
-  const fullyDiluted = input.entries.reduce((sum, e) => sum + (e.shares > 0 ? e.shares : 0), 0);
+  /*
+   * As-converted, like every other fully-diluted figure on the platform.
+   *
+   * This was the raw share sum, which put the graph at odds with itself: the
+   * conversion edges below are labelled from the same `conversion_ratio` — a
+   * class converting 2:1 is drawn saying so — while the ownership percentage on
+   * the node it points at was computed as though it converted 1:1. Whichever of
+   * the two a reader believed, the picture disagreed with the workbook and with
+   * the engine's denominator.
+   *
+   * Non-positive share counts stay out of the total, as before: they are refused
+   * upstream (`bad_shares`), and a negative in a denominator is not a smaller
+   * company.
+   */
+  const converted = (e: CapTableEntry) => Math.max(0, asConvertedShares(e));
+  const fullyDiluted = input.entries.reduce((sum, e) => sum + converted(e), 0);
   const share = (n: number) => (fullyDiluted > 0 ? n / fullyDiluted : null);
 
   const companyId = nodeId('company', input.companyName, taken);
@@ -171,7 +186,7 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
       label: entry.security_class,
       rank: i + 1,
       shares: entry.shares,
-      ownership: share(entry.shares),
+      ownership: share(converted(entry)),
       class_type: entry.class_type,
       seniority: entry.seniority,
       liquidation_preference:
@@ -205,7 +220,7 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
       label: entry.security_class,
       rank: commonRank,
       shares: entry.shares,
-      ownership: share(entry.shares),
+      ownership: share(converted(entry)),
       class_type: entry.class_type,
       seniority: entry.seniority,
       liquidation_preference: null,
