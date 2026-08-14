@@ -1890,3 +1890,296 @@ export const MARKET_PRICE_BANDS: Array<{ tier: string; range: string; note: stri
     note: 'Typically the most thorough and the slowest, with audit support at partner rates.',
   },
 ];
+
+// ── Funding-stage landing pages ───────────────────────────────────────────────
+// `/409a-valuation/:stage`. A founder searching "series B 409A valuation" is
+// asking a narrower question than the product page answers: what changes in the
+// analysis at *my* stage, and what will it cost *me*. Six pages, one per stage,
+// each naming the methodology that actually differs there.
+//
+// The price range is derived from the 409A's entry price and the raise bands
+// rather than written, because a stage page quoting a figure the checkout does
+// not charge is the worst place in the site to be wrong.
+
+export interface FundingStage {
+  /** URL segment under `/409a-valuation/`. */
+  slug: string;
+  /** "Series B". */
+  name: string;
+  /**
+   * Search-result description, ~140 characters. Separate from `heroSubhead`
+   * because a meta description has a hard budget Google truncates at and the
+   * hero does not — writing one and reusing it for the other loses the end of
+   * the sentence in the result.
+   */
+  searchBlurb: string;
+  /** Sentence under the hero. */
+  heroSubhead: string;
+  /** Who is reading this page. */
+  audience: string;
+  /** Typical capital raised, as an index range into RAISE_BANDS (inclusive). */
+  bandRange: [number, number];
+  /** The two or three things that genuinely differ in the analysis here. */
+  sections: Array<{ title: string; body: string }>;
+  /** What the engine actually leans on at this stage — shown as chips. */
+  methods: string[];
+  faq: FaqItem[];
+}
+
+export const FUNDING_STAGES: FundingStage[] = [
+  {
+    slug: 'pre-seed',
+    name: 'Pre-seed',
+    searchBlurb:
+      '409A valuations for pre-seed companies granting their first options: the asset approach, SAFE and note treatment, and a wide marketability discount.',
+    heroSubhead:
+      'You are granting your first options, usually before anyone has bought priced equity. The valuation has to be built rather than backed out.',
+    audience: 'Founders making their first grants',
+    bandRange: [0, 0],
+    methods: ['Asset / cost-to-recreate', 'Backsolve (if a priced round exists)', 'High DLOM'],
+    sections: [
+      {
+        title: 'There may be no round to back out of',
+        body: 'A backsolve needs a priced round to solve against. On SAFEs and convertible notes alone there is no per-share price to calibrate to — the notes are a promise about a future round, not a purchase of common stock today. The analysis leans on the asset approach: what it would cost to recreate the technology, the team and the customer relationships that exist right now.',
+      },
+      {
+        title: 'SAFEs and notes still change the answer',
+        body: 'They are not equity yet, but they sit ahead of common on the way out and they dilute you on conversion. Discounts, valuation caps and most-favoured-nation terms all move the number, and a valuation that treats a $2M SAFE stack as though it were not there overstates what the common stock is worth.',
+      },
+      {
+        title: 'The marketability discount is at its widest',
+        body: 'Nobody is buying your common stock, an exit is years out, and the range of outcomes is enormous. That combination is exactly what the DLOM models price, and pre-seed sits at the top of the range they produce.',
+      },
+    ],
+    faq: [
+      {
+        q: 'Do I need a 409A before I have raised a priced round?',
+        a: 'If you are granting stock options, yes. The requirement attaches to the grant, not to the round — the strike price of your first grant needs support on the day it is set.',
+      },
+      {
+        q: 'We have only raised on SAFEs. What do you value against?',
+        a: 'Primarily the asset approach — the cost to recreate what the business has built — cross-checked against the terms of the SAFEs themselves, including any valuation cap, which is evidence of what investors thought the company was worth.',
+      },
+      {
+        q: 'How long is the valuation good for?',
+        a: 'Twelve months, or until a material event — most commonly your first priced round, which invalidates it the day it closes.',
+      },
+    ],
+  },
+  {
+    slug: 'seed',
+    name: 'Seed',
+    searchBlurb:
+      '409A valuations for seed-stage companies: an OPM backsolve to your priced round, a single preference layer, and converted SAFEs in the share count.',
+    heroSubhead:
+      'A first priced round gives the analysis something to calibrate against, and a preference stack to allocate through.',
+    audience: 'Companies that have closed or are closing a seed round',
+    bandRange: [1, 1],
+    methods: ['OPM backsolve', 'Single-preference waterfall', 'Asset cross-check'],
+    sections: [
+      {
+        title: 'The backsolve becomes the primary method',
+        body: 'A priced seed round is an arm’s-length transaction in your own securities, which is the strongest evidence of value there is. The option-pricing model is solved so that the preferred issued in that round prices back to what investors actually paid, and the common stock falls out of the same allocation.',
+      },
+      {
+        title: 'One preference layer, but it is not nothing',
+        body: 'Seed preferred typically carries a 1× non-participating preference. In a modest exit that preference takes the first dollars out, and the common only participates above it — which is precisely why your common stock is worth materially less per share than the price the round was struck at.',
+      },
+      {
+        title: 'Converting notes land here',
+        body: 'SAFEs and notes written before the round usually convert into it, often at a discount or a cap. The converted shares are part of the capital structure the valuation allocates over, and getting the conversion mechanics right is the difference between a defensible fully-diluted share count and a plausible one.',
+      },
+    ],
+    faq: [
+      {
+        q: 'Our round just closed. When do we need the valuation?',
+        a: 'Before the next grant. Any valuation dated before the close is invalid from the day the round closes, and grants made in that gap are the ones that surface in diligence.',
+      },
+      {
+        q: 'Why is our common worth so much less than the seed price?',
+        a: 'Because the seed price buys preferred stock with a liquidation preference and, usually, other rights common stock does not have — plus common stock has no market to be sold into, which the marketability discount prices.',
+      },
+      {
+        q: 'Does an extension or a bridge count as a new round?',
+        a: 'If it is priced, yes. A bridge on notes is a material event to assess rather than an automatic revaluation trigger.',
+      },
+    ],
+  },
+  {
+    slug: 'series-a',
+    name: 'Series A',
+    searchBlurb:
+      '409A valuations for Series A companies: two preferred classes, waterfall breakpoints, an option pool that moves the number, and a DCF cross-check.',
+    heroSubhead:
+      'Two classes of preferred, a real option pool, and the first forecast anyone will hold you to.',
+    audience: 'Series A companies granting across a growing team',
+    bandRange: [2, 2],
+    methods: ['OPM backsolve', 'Multi-class waterfall', 'Income approach cross-check'],
+    sections: [
+      {
+        title: 'A second preferred class adds breakpoints',
+        body: 'Seed and Series A preferred rarely have identical rights. Different preference amounts, different conversion ratios and sometimes different seniority mean the exit waterfall now has several points where the split between classes changes — and the option-pricing model has to be broken at each one rather than at a single aggregate preference.',
+      },
+      {
+        title: 'The option pool is now large enough to matter',
+        body: 'A 10–15% pool, partly granted and partly reserved, sits in the fully-diluted count. Whether unissued reserve is treated as outstanding, and how in-the-money options are handled, moves the per-share result — so the treatment gets stated in the report rather than buried in a spreadsheet.',
+      },
+      {
+        title: 'A forecast that supports an income approach',
+        body: 'Most Series A companies have a plan with revenue in it that someone underwrote. That makes a discounted cash flow a genuine cross-check on the backsolve rather than an exercise — and where the two disagree, the report says why and how they were weighted.',
+      },
+    ],
+    faq: [
+      {
+        q: 'How often will we need a new valuation at Series A?',
+        a: 'At least every 12 months, and again after any material event — a new round, an acquisition approach, a secondary sale, or a substantial miss against the forecast the valuation relied on.',
+      },
+      {
+        q: 'Does the unissued option pool reduce our common share price?',
+        a: 'It increases the fully-diluted share count, which reduces value per share. The treatment of unissued reserve is a documented judgement and is set out in the report.',
+      },
+      {
+        q: 'Our plan changed after the round closed. Does that matter?',
+        a: 'If the change is material to what a buyer would pay, yes — a substantially revised forecast is a material event.',
+      },
+    ],
+  },
+  {
+    slug: 'series-b',
+    name: 'Series B',
+    searchBlurb:
+      '409A valuations for Series B companies: a multi-class preference waterfall, participating preferred, and secondary sales weighed as real evidence.',
+    heroSubhead:
+      'A deeper preference stack, and secondary transactions that start to count as evidence.',
+    audience: 'Series B companies with several preferred classes',
+    bandRange: [3, 3],
+    methods: ['OPM backsolve', 'Full breakpoint waterfall', 'Secondary-transaction evidence'],
+    sections: [
+      {
+        title: 'The waterfall is where the value goes',
+        body: 'Three or more preferred classes, each with its own preference amount and participation rights, produce a schedule of breakpoints rather than a single hurdle. Participating preferred is the one to watch: it takes its preference and then shares in the upside, which compresses the common stock at every exit value below the participation cap.',
+      },
+      {
+        title: 'Secondaries become real evidence',
+        body: 'By Series B, employees and founders are selling. A tender offer or a negotiated secondary in your common stock is a transaction in the exact security being valued — the strongest evidence available, and one that has to be weighed against the backsolve rather than ignored. Whether it was arm’s length, and how large it was, determines how much weight it carries.',
+      },
+      {
+        title: 'The exit horizon shortens',
+        body: 'A shorter expected time to liquidity lowers both the option-model term and the marketability discount, which pushes the common stock price up relative to earlier rounds independently of any change in enterprise value.',
+      },
+    ],
+    faq: [
+      {
+        q: 'Does a tender offer trigger a new 409A?',
+        a: 'It can. A material secondary transaction in your common stock is evidence of fair market value, and if it is out of line with the current valuation it is a material event.',
+      },
+      {
+        q: 'How is participating preferred handled?',
+        a: 'As additional breakpoints in the allocation. The preference is taken first and the residual is shared, so the common stock only participates fully above the participation cap where one exists.',
+      },
+      {
+        q: 'We changed our forecast materially. Do we need a revaluation?',
+        a: 'If the revision would change what a buyer would pay, yes. That is the test, not the size of the spreadsheet edit.',
+      },
+    ],
+  },
+  {
+    slug: 'series-c',
+    name: 'Series C and later',
+    searchBlurb:
+      '409A valuations for Series C and later: hybrid PWERM/OPM scenarios, screened public comparables, and a preference stack with real structure in it.',
+    heroSubhead:
+      'Enough structure and enough visibility that a single option-pricing model stops being the whole answer.',
+    audience: 'Late-stage private companies',
+    bandRange: [4, 4],
+    methods: ['Hybrid PWERM/OPM', 'Full waterfall', 'Market multiples'],
+    sections: [
+      {
+        title: 'Scenarios you can actually describe',
+        body: 'At Series C the plausible exits are nameable — an IPO in a defined window, a strategic sale, a downside recapitalisation — with different probabilities and different payoffs to each class. That is what a probability-weighted expected return method models, and where a hybrid that runs an option model inside each scenario earns its complexity over a single lognormal assumption.',
+      },
+      {
+        title: 'Comparable companies get closer',
+        body: 'With real revenue and a defined market, public comparables stop being a formality. Revenue and EBITDA multiples from a screened peer set become a genuine market approach, weighted against the backsolve rather than mentioned beside it.',
+      },
+      {
+        title: 'Structure accumulates',
+        body: 'Multiple liquidation preferences, participation caps, seniority stacks, warrants, and often a secondary market in your own shares. Every one of them is a branch in the allocation, and the report shows the schedule rather than asserting a result.',
+      },
+    ],
+    faq: [
+      {
+        q: 'When does PWERM make more sense than an OPM backsolve?',
+        a: 'When the exit outcomes are genuinely distinguishable and you can support probabilities for them — typically once an IPO or a sale process is a describable path rather than an abstraction.',
+      },
+      {
+        q: 'Should we be valuing more often than annually?',
+        a: 'Many late-stage companies move to a semi-annual or quarterly cadence, because material events arrive faster and grant volume is higher.',
+      },
+      {
+        q: 'Do down rounds get handled differently?',
+        a: 'The mechanics are the same, but anti-dilution adjustments and any recapitalisation terms change the share counts and the preference stack the allocation runs over.',
+      },
+    ],
+  },
+  {
+    slug: 'pre-ipo',
+    name: 'Pre-IPO',
+    searchBlurb:
+      '409A valuations on an IPO path: hybrid PWERM/OPM, cheap-stock scrutiny, a compressed marketability discount, and tender offers you must reconcile with.',
+    heroSubhead:
+      'Cheap-stock scrutiny is real, the liquidity horizon is short, and the auditors arrive before the regulator does.',
+    audience: 'Companies on an IPO path',
+    bandRange: [4, 4],
+    methods: ['Hybrid PWERM/OPM', 'Cheap-stock analysis', 'Compressed DLOM'],
+    sections: [
+      {
+        title: 'Cheap stock is examined in retrospect',
+        body: 'In an IPO registration, the grants made in the run-up are looked at against the offer price, and a steep climb from the last 409A to the listing invites the question of whether the earlier grants were underpriced. The defence is a contemporaneous, well-supported valuation at each grant date — which is a thing you can only have built beforehand.',
+      },
+      {
+        title: 'A short horizon compresses the discounts',
+        body: 'A liquidity event months away rather than years shortens the option term and shrinks the marketability discount sharply. Both push the common stock price toward the preferred price, which is the mechanical reason late-stage 409A values rise steeply even without an operational change.',
+      },
+      {
+        title: 'Tender offers and an active secondary market',
+        body: 'Pre-IPO companies frequently run tender offers, and there is often a broker market in their shares. These are transactions in the security being valued, and at this stage they carry substantial weight — the analysis has to reconcile with them rather than around them.',
+      },
+    ],
+    faq: [
+      {
+        q: 'How often should we revalue on an IPO path?',
+        a: 'Quarterly is common, and more frequently around material events. Auditors expect a contemporaneous valuation supporting every grant date in the registration period.',
+      },
+      {
+        q: 'What is a cheap-stock issue?',
+        a: 'Where option grants in the run-up to a listing are judged to have been priced below fair value in hindsight, producing additional stock-compensation expense and questions in the registration process.',
+      },
+      {
+        q: 'Does an active secondary market set our 409A price?',
+        a: 'It does not set it, but it is strong evidence and it has to be reconciled with. A valuation that ignores a liquid market in its own common stock is not defensible.',
+      },
+    ],
+  },
+];
+
+export function fundingStageBySlug(slug: string): FundingStage | undefined {
+  return FUNDING_STAGES.find((s) => s.slug === slug);
+}
+
+/**
+ * The 409A price range a stage typically pays, in cents — the product's entry
+ * price plus the raise-band uplifts at either end of the stage's band range.
+ *
+ * Derived rather than written: this is the number a prospect reads before they
+ * sign up, and the checkout recomputes it from the same ladder.
+ */
+export function stagePriceRangeCents(stage: FundingStage): { fromCents: number; toCents: number } {
+  const base = productBySlug('409a-valuation')!.priceCents;
+  const clamp = (i: number) => Math.min(Math.max(i, 0), RAISE_BANDS.length - 1);
+  const [lo, hi] = stage.bandRange;
+  return {
+    fromCents: base + RAISE_BANDS[clamp(lo)]!.upliftCents,
+    toCents: base + RAISE_BANDS[clamp(hi)]!.upliftCents,
+  };
+}

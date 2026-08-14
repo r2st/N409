@@ -1,12 +1,15 @@
 import {
   COMPARISONS,
+  FUNDING_STAGES,
   MIN_PRODUCT_PRICE_CENTS,
   PRICING_FAQ,
   PRODUCTS,
   VALUATION_TRIGGERS,
   comparisonBySlug,
   formatUsd,
+  fundingStageBySlug,
   productBySlug,
+  stagePriceRangeCents,
 } from './marketing';
 import {
   SITE_TAGLINE,
@@ -169,6 +172,38 @@ export function productPageMeta(slug: string): HeadInput | undefined {
 }
 
 /**
+ * Metadata for a funding-stage landing page.
+ *
+ * The parent crumb is the 409A product page, which links to every stage — the
+ * trail a search result reads is `n409.ai › 409A Valuation › Series B`. The
+ * stage FAQ is marked up because those questions are the reason the page ranks;
+ * the price in the description is derived so it cannot drift from checkout.
+ */
+export function stagePageMeta(slug: string): HeadInput | undefined {
+  const stage = fundingStageBySlug(slug);
+  if (!stage) return undefined;
+  const path = `/409a-valuation/${stage.slug}`;
+  const { fromCents, toCents } = stagePriceRangeCents(stage);
+  const price =
+    fromCents === toCents ? formatUsd(fromCents) : `${formatUsd(fromCents)}–${formatUsd(toCents)}`;
+  const product = productBySlug('409a-valuation')!;
+  return {
+    path,
+    title: `${stage.name} 409A valuation`,
+    description: `${stage.searchBlurb} Typically ${price}, drafted in 24 hours.`,
+    jsonLd: [
+      faqJsonLd(stage.faq),
+      breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: product.name, path: `/products/${product.slug}` },
+        { name: `${stage.name} 409A valuation`, path },
+      ]),
+      websiteJsonLd(),
+    ],
+  };
+}
+
+/**
  * Metadata for a single competitor comparison page. The hub at
  * COMPARE_HUB_PATH links to every one of these, so it is a real parent and the
  * breadcrumb is a three-step trail.
@@ -198,6 +233,7 @@ export function allPageMeta(): HeadInput[] {
   return [
     ...staticPages(),
     ...PRODUCTS.map((p) => productPageMeta(p.slug)!),
+    ...FUNDING_STAGES.map((s) => stagePageMeta(s.slug)!),
     ...COMPARISONS.map((c) => comparePageMeta(c.slug)!),
   ];
 }

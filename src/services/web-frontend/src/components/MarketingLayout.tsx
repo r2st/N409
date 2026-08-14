@@ -4,7 +4,7 @@ import { ThemeToggleButton } from './ThemeToggle';
 import { ErrorBoundary } from './ErrorBoundary';
 import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { Wordmark } from './Logo';
-import { COMPARISONS, PRODUCTS } from '../lib/marketing';
+import { COMPARISONS, FUNDING_STAGES, PRODUCTS } from '../lib/marketing';
 import { siteConfig } from '../lib/siteConfig';
 
 /** Brand glyph for a social link (gap #29). */
@@ -244,6 +244,14 @@ export function MarketingFooter() {
             {COMPARISONS.map((c) => (
               <Link key={c.slug} to={`/compare/${c.slug}`} className="hover:text-chrome-fg">
                 N409 vs {c.competitor}
+              </Link>
+            ))}
+          </div>
+          <div className="overline mt-8 mb-4 text-brass-400">By stage</div>
+          <div className="grid grid-cols-1 gap-1.5 text-sm">
+            {FUNDING_STAGES.map((s) => (
+              <Link key={s.slug} to={`/409a-valuation/${s.slug}`} className="hover:text-chrome-fg">
+                {s.name} 409A
               </Link>
             ))}
           </div>

@@ -1,4 +1,4 @@
-import { COMPARISONS, PRODUCTS } from './marketing';
+import { COMPARISONS, FUNDING_STAGES, PRODUCTS } from './marketing';
 
 /**
  * Static route inventory for SEO (409.ai §24). Pure data — no browser or
@@ -38,6 +38,12 @@ export function marketingRoutes(): SitemapRoute[] {
   ];
   for (const product of PRODUCTS) {
     routes.push({ path: `/products/${product.slug}`, changefreq: 'monthly', priority: 0.8 });
+  }
+  // Stage pages rank for the query a founder actually types ("series b 409a
+  // valuation"), so they sit just under the product pages rather than with the
+  // long tail.
+  for (const stage of FUNDING_STAGES) {
+    routes.push({ path: `/409a-valuation/${stage.slug}`, changefreq: 'monthly', priority: 0.7 });
   }
   for (const comparison of COMPARISONS) {
     routes.push({ path: `/compare/${comparison.slug}`, changefreq: 'monthly', priority: 0.6 });

@@ -1,5 +1,12 @@
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { PROCESS_STEPS, PRODUCTS, formatUsd, productBySlug, productContent } from '../../lib/marketing';
+import {
+  FUNDING_STAGES,
+  PROCESS_STEPS,
+  PRODUCTS,
+  formatUsd,
+  productBySlug,
+  productContent,
+} from '../../lib/marketing';
 import { BookACallSection } from './MarketingSections';
 import { Seo } from '../../components/Seo';
 import { productPageMeta } from '../../lib/pageMeta';
@@ -203,6 +210,38 @@ export function ProductPage() {
           </div>
         </div>
       </section>
+
+      {/* 6b. By funding stage — 409A only.
+          The stage pages name this page as their breadcrumb parent, so it has
+          to actually link to them: a crumb pointing at a page that never
+          mentions its children is a trail crawlers can descend but not
+          discover. */}
+      {product.slug === '409a-valuation' && (
+        <section className="mx-auto max-w-6xl px-5 py-16">
+          <div className="overline text-brass-600">By funding stage</div>
+          <h2 className="mt-2 font-display text-2xl font-semibold text-ink-900">
+            What changes between pre-seed and pre-IPO
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-600">
+            The methodology is not the same at every stage. Pick yours to see which approaches carry
+            the weight, what the capital structure does to the number, and what it typically costs.
+          </p>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {FUNDING_STAGES.map((stage) => (
+              <Link
+                key={stage.slug}
+                to={`/409a-valuation/${stage.slug}`}
+                className="group rounded-lg border border-paper-300 bg-surface p-5 shadow-card transition-colors hover:border-ink-300"
+              >
+                <h3 className="font-display text-base font-semibold text-ink-900 group-hover:text-bond-700">
+                  {stage.name}
+                </h3>
+                <p className="mt-1.5 text-sm text-ink-600">{stage.audience}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* 7. FAQ */}
       {content && content.faq.length > 0 && (

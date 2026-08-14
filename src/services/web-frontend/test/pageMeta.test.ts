@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { allPageMeta, comparePageMeta, pageMeta, productPageMeta } from '../src/lib/pageMeta';
+import { allPageMeta, comparePageMeta, pageMeta, productPageMeta, stagePageMeta } from '../src/lib/pageMeta';
 import { marketingRoutes } from '../src/lib/routes';
-import { COMPARISONS, PRODUCTS } from '../src/lib/marketing';
+import { COMPARISONS, FUNDING_STAGES, PRODUCTS } from '../src/lib/marketing';
 
 describe('page metadata registry (§24)', () => {
   it('covers every route we publish in the sitemap', () => {
@@ -33,9 +33,14 @@ describe('page metadata registry (§24)', () => {
     // one, what does it cost), the sample report, the compare hub, blog,
     // about, contact, terms, privacy. Individual blog posts are database rows
     // and are deliberately absent — this registry is build-time data.
-    expect(allPageMeta()).toHaveLength(14 + PRODUCTS.length + COMPARISONS.length);
+    expect(allPageMeta()).toHaveLength(
+      14 + PRODUCTS.length + FUNDING_STAGES.length + COMPARISONS.length,
+    );
     for (const product of PRODUCTS) {
       expect(productPageMeta(product.slug)?.path).toBe(`/products/${product.slug}`);
+    }
+    for (const stage of FUNDING_STAGES) {
+      expect(stagePageMeta(stage.slug)?.path).toBe(`/409a-valuation/${stage.slug}`);
     }
     for (const comparison of COMPARISONS) {
       expect(comparePageMeta(comparison.slug)?.path).toBe(`/compare/${comparison.slug}`);
@@ -45,6 +50,7 @@ describe('page metadata registry (§24)', () => {
   it('returns undefined for unknown slugs and paths', () => {
     expect(productPageMeta('not-a-product')).toBeUndefined();
     expect(comparePageMeta('not-a-competitor')).toBeUndefined();
+    expect(stagePageMeta('not-a-stage')).toBeUndefined();
     expect(pageMeta('/nope')).toBeUndefined();
   });
 
