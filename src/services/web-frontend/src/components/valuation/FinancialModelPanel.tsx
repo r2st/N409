@@ -118,8 +118,25 @@ const numOrNull = (v: string): number | null => {
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
 };
+/**
+ * Numbers from a column of text inputs, skipping the cells nobody filled in.
+ *
+ * The blank filter has to come first. `Number('')` is `0`, not `NaN`, so a
+ * `Number`-then-`isFinite` pass reads every empty cell as a real zero: an
+ * untouched model saved an income section of `free_cash_flows: [0]`, a model
+ * with cash flows but no revenue line saved `revenues: [0, 0]` beside it, and
+ * an empty "+ Add multiple" row saved a 0 the engine rejects outright
+ * (`market.multiples must contain at least one positive multiple`). The
+ * revenue case is the quiet one — the report's DCF exhibit prints a Revenue
+ * column whenever it has one figure per forecast year, so merely opening this
+ * form and pressing Save added a column of zero revenue to the 409A.
+ */
 const numList = (vals: string[]): number[] =>
-  vals.map((v) => Number(v.trim())).filter((n) => Number.isFinite(n));
+  vals
+    .map((v) => v.trim())
+    .filter((t) => t !== '')
+    .map(Number)
+    .filter((n) => Number.isFinite(n));
 
 /** Builds the engine_inputs patch, sending null for wholly-empty sections. */
 function toBody(form: FormState): EngineInputs {
