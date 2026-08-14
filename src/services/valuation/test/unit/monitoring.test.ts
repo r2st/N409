@@ -110,3 +110,56 @@ describe('monitoring', () => {
     expect(a.map((t) => t.signature)).toEqual(b.map((t) => t.signature));
   });
 });
+
+describe('monitoring — the arithmetic at the edges', () => {
+  it('does not credit a month that has not completed', () => {
+    // Started on the 15th, and it is the 14th eleven months later: that is ten
+    // whole months, not eleven, so the expiry warning is not yet due.
+    const start: MonitorSnapshot = { ...baseline, valuation_date: '2025-09-15' };
+    expect(evaluateTriggers(start, same, new Date('2026-07-14T00:00:00Z'))).toHaveLength(0);
+    // The 15th completes it.
+    const due = evaluateTriggers(start, same, new Date('2026-07-15T00:00:00Z'));
+    expect(due.map((t) => t.level)).toEqual(['yellow']);
+    expect(due[0]!.detail).toMatchObject({ months: 10 });
+  });
+
+  it('fires nothing on a valuation date it cannot read, rather than a 0-month age', () => {
+    // `monthsBetween` answers 0 for an unparseable date, which is the one answer
+    // that cannot be mistaken for "expired" on a column that is free text on
+    // some import paths.
+    const bad: MonitorSnapshot = { ...baseline, valuation_date: 'not a date' };
+    expect(evaluateTriggers(bad, same, new Date('2030-01-01T00:00:00Z'))).toHaveLength(0);
+  });
+
+  it('reports a shrinking cap table with its sign', () => {
+    const current: MonitorSnapshot = { ...same, fully_diluted_shares: 9_000_000 };
+    const [trigger] = evaluateTriggers(baseline, current, new Date('2026-03-01T00:00:00Z'));
+    expect(trigger!.type).toBe('cap_table_change');
+    expect(trigger!.message).toContain('-1,000,000 shares');
+    expect(trigger!.message).not.toContain('+-');
+    expect(trigger!.level).toBe('red'); // 10% is over the 5% bar
+  });
+
+  it('treats any movement off a zero baseline as material', () => {
+    // There is no percentage to take against zero, and a cap table that went
+    // from no recorded shares to some is not a rounding difference.
+    const from: MonitorSnapshot = { ...baseline, fully_diluted_shares: 0 };
+    const to: MonitorSnapshot = { ...same, fully_diluted_shares: 1 };
+    const [trigger] = evaluateTriggers(from, to, new Date('2026-03-01T00:00:00Z'));
+    expect(trigger!.level).toBe('red');
+  });
+
+  it('ranks a mixed set by its worst member, in either order', () => {
+    // `overallStatus` folds the set, so it has to be indifferent to the order
+    // the triggers happen to have been pushed in.
+    const current: MonitorSnapshot = {
+      ...same,
+      annual_revenue: 1_200_000, // +20% — yellow
+      fully_diluted_shares: 11_000_000, // +10% — red
+    };
+    const triggers = evaluateTriggers(baseline, current, new Date('2026-03-01T00:00:00Z'));
+    expect(triggers.map((t) => t.level).sort()).toEqual(['red', 'yellow']);
+    expect(overallStatus(triggers)).toBe('red');
+    expect(overallStatus([...triggers].reverse())).toBe('red');
+  });
+});

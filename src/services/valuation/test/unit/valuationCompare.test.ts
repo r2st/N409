@@ -299,3 +299,115 @@ describe('headlineSummary', () => {
     expect(headlineSummary([])).toBeNull();
   });
 });
+
+/**
+ * Two runs that disagree about vocabulary rather than about numbers.
+ *
+ * Both sides of a comparison are stored `results` blobs written by whichever
+ * engine version produced them, so the labels this module knows are a snapshot
+ * and the blob is the authority. Every lookup here therefore has a fallback,
+ * and the fallback is what renders whenever one of the two runs predates a
+ * rename or uses a method added since — which on a roll-forward comparison,
+ * whose whole point is to sit across a version boundary, is the common case.
+ */
+describe('compareValuations — labels this build has not heard of', () => {
+  it('shows an unrecognised allocation method in caps rather than dropping the row', () => {
+    const rows = rowsOf(
+      compareValuations(
+        side({ results: { allocation_method: 'ecm' } }),
+        side({ results: { allocation_method: 'opm' } }),
+      ),
+    );
+    expect(rows.get('allocation_method')?.a_display).toBe('ECM');
+    expect(rows.get('allocation_method')?.b_display).toBe('Option pricing model');
+  });
+
+  it('shows an unrecognised DLOM method as written', () => {
+    const rows = rowsOf(
+      compareValuations(
+        side({ results: { discounts: { dlom_method: 'ghaidarov' } } }),
+        side({ results: { discounts: { dlom_method: 'chaffee' } } }),
+      ),
+    );
+    expect(rows.get('dlom_method')?.a_display).toBe('ghaidarov');
+  });
+
+  it('keys an unrecognised approach by its own name', () => {
+    const rows = rowsOf(
+      compareValuations(
+        side({ results: { approaches: { replacement_cost: { weight: 1, equity_value: 5 } } } }),
+        side({ results: { approaches: {} } }),
+      ),
+    );
+    expect(rows.get('approach_replacement_cost_weight')?.label).toBe('replacement_cost — weight');
+  });
+
+  it('reads the older spelling of the time-to-exit assumption', () => {
+    // `expected_time_to_exit_years` is what the engine wrote before the rename;
+    // a comparison spanning it must not show the row as "not stated" on one side.
+    const rows = rowsOf(
+      compareValuations(
+        side({ results: { assumptions: { expected_time_to_exit_years: 4 } } }),
+        side({ results: { assumptions: { time_to_exit_years: 3 } } }),
+      ),
+    );
+    expect(rows.get('time_to_exit')?.a).toBe(4);
+    expect(rows.get('time_to_exit')?.b).toBe(3);
+  });
+
+  it('treats a blank string in the blob as unstated, not as an empty label', () => {
+    const rows = rowsOf(
+      compareValuations(
+        side({ results: { allocation_method: '   ' } }),
+        side({ results: { allocation_method: 'opm' } }),
+      ),
+    );
+    expect(rows.get('allocation_method')?.a_display).toBeNull();
+  });
+
+  it('formats the per-share figure to four places, unlike the equity value', () => {
+    const rows = rowsOf(
+      compareValuations(
+        side({ results: { fmv_per_share: 1.23456, equity_value: 48_000_000 } }),
+        side({ results: { fmv_per_share: 1.23456, equity_value: 48_000_000 } }),
+      ),
+    );
+    // A 409A price is defended to the fraction of a cent; the equity value is not.
+    expect(rows.get('fmv_per_share')?.a_display).toContain('1.2346');
+    expect(rows.get('equity_value')?.a_display).not.toContain('.');
+  });
+});
+
+describe('headlineSummary — the other two sentences', () => {
+  const summaryFor = (a: number, b: number, results: Record<string, unknown> = {}) =>
+    headlineSummary(
+      compareValuations(
+        side({ results: { fmv_per_share: a, ...results } }),
+        side({ results: { fmv_per_share: b, ...results } }),
+      ),
+    );
+
+  it('says a fall is a fall', () => {
+    expect(summaryFor(1.87, 1.42)).toContain('down');
+  });
+
+  it('says so when the price did not move at all', () => {
+    const line = summaryFor(1.42, 1.42);
+    expect(line).toContain('unchanged');
+    expect(line).not.toContain('up');
+    expect(line).not.toContain('down');
+  });
+
+  it('omits the percentage when there is no base to take one against', () => {
+    // A first valuation off a zero prior has an infinite percentage change,
+    // which is not a figure to put in a sentence.
+    const line = summaryFor(0, 1.42);
+    expect(line).toContain('up');
+    expect(line).not.toContain('(');
+  });
+
+  it('says nothing at all when neither side priced a share', () => {
+    expect(headlineSummary(compareValuations(side({ results: {} }), side({ results: {} })))).toBeNull();
+    expect(headlineSummary([])).toBeNull();
+  });
+});
