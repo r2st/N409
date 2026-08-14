@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { moneyFormatter } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { HelpIcon } from '../components/HelpIcon';
@@ -151,8 +151,15 @@ export function DebtInstrumentsPage() {
     void load();
   }, [load]);
 
-  const create = async (e: FormEvent) => {
-    e.preventDefault();
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(form, {
+    name: required('name', 'Name'),
+    currency: all(
+      required('currency', 'Currency'),
+      pattern('currency', /[A-Za-z]{3}/, 'Currency must be a three-letter ISO 4217 code, like USD.'),
+    ),
+  });
+
+  const create = handleSubmit(async () => {
     setError(null);
     try {
       const params: Record<string, unknown> = {};
@@ -169,12 +176,13 @@ export function DebtInstrumentsPage() {
       });
       setShowNew(false);
       setForm({ name: '', instrument_type: 'bond', currency: 'USD' });
+      reset();
       await load();
       setSelected(instrument.id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to create instrument');
     }
-  };
+  });
 
   if (loading) return <Spinner />;
 
@@ -199,11 +207,13 @@ export function DebtInstrumentsPage() {
         <form
           onSubmit={create}
           className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-surface p-4"
+          noValidate
         >
-          <Field label="Name">
+          <Field label="Name" error={errorFor('name')}>
             <TextInput
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              onBlur={blurHandler('name')}
               required
             />
           </Field>
@@ -219,11 +229,13 @@ export function DebtInstrumentsPage() {
               ))}
             </Select>
           </Field>
-          <Field label="Currency">
+          <Field label="Currency" error={errorFor('currency')}>
             <TextInput
               value={form.currency}
               onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              onBlur={blurHandler('currency')}
               className="w-20"
+              required
             />
           </Field>
           <Button type="submit">Create</Button>

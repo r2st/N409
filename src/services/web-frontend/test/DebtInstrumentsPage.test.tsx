@@ -32,6 +32,40 @@ function renderPage() {
 describe('DebtInstrumentsPage', () => {
   beforeEach(() => vi.restoreAllMocks());
 
+  /**
+   * R30 — the create form asked the browser to check `required` and nothing at
+   * all to check the currency, which is posted upper-cased straight into the
+   * instrument's currency column.
+   */
+  it('refuses a nameless instrument, and says which box', async () => {
+    const fetchSpy = mockApi('bond');
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'New instrument' }));
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText('Name is required.')).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('refuses a currency that is not a three-letter code', async () => {
+    const fetchSpy = mockApi('bond');
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'New instrument' }));
+    await user.type(screen.getByLabelText('Name'), 'Note B');
+    await user.clear(screen.getByLabelText('Currency'));
+    await user.type(screen.getByLabelText('Currency'), 'Dollars');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(
+      await screen.findByText('Currency must be a three-letter ISO 4217 code, like USD.'),
+    ).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
+
   it('renders a contextual HelpIcon that opens the debt-valuation article', async () => {
     mockApi('bond');
     const user = userEvent.setup();

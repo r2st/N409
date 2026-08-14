@@ -67,6 +67,43 @@ describe('CalculatorPage', () => {
     vi.unstubAllGlobals();
   });
 
+  /**
+   * R30 — every box here is free text and `parseMoney` returns null for
+   * anything it cannot read, so a visitor who typed "2.5m" had their figure
+   * silently dropped and was then asked to enter the figure they had just
+   * entered. Nothing is required; what is checked is that a figure which was
+   * typed is one the estimator can use.
+   */
+  it('says a figure it cannot read is unreadable, rather than ignoring it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText(/Post-money of that round/), '2.5m');
+    await user.tab();
+
+    expect(await screen.findByText('Enter a figure in digits, e.g. 2500000.')).toBeInTheDocument();
+  });
+
+  it('says a zero or negative figure is one, rather than dropping it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(screen.getByLabelText(/Total capital raised/), '-400');
+    await user.tab();
+
+    expect(await screen.findByText('Enter a figure above zero, or leave the box blank.')).toBeInTheDocument();
+  });
+
+  it('says nothing about a blank box, which is the normal state here', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByLabelText(/Revenue, last 12 months/));
+    await user.tab();
+
+    expect(screen.queryByText(/Enter a figure/)).not.toBeInTheDocument();
+  });
+
   it('shows no figure, and calls nothing, until evidence is entered', async () => {
     renderPage();
     expect(screen.getByText(/Enter a round price, profit, revenue, or capital raised/i)).toBeTruthy();

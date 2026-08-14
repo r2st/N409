@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import {
+  all,
+  integer,
+  numberMin,
+  numberRange,
+  optional,
+  pattern,
+  required,
+  useFormValidation,
+  type Rules,
+} from '../lib/useFormValidation';
 import { moneyFormatter } from '../lib/format';
 import {
   Button,
@@ -99,8 +109,21 @@ export function FundPortfolioPage() {
     void loadFunds();
   }, [loadFunds]);
 
-  const create = async (e: FormEvent) => {
-    e.preventDefault();
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(form, {
+    name: required('name', 'Fund name'),
+    currency: all(
+      required('currency', 'Currency'),
+      pattern('currency', /[A-Za-z]{3}/, 'Currency must be a three-letter ISO 4217 code, like USD.'),
+    ),
+    // Blank is sent as null: a vintage the fund has not recorded is a normal
+    // state, so the rule only says what a year must look like when given.
+    vintage_year: optional(
+      'vintage_year',
+      all(numberRange('vintage_year', 1900, 2100, 'Vintage'), integer('vintage_year', 'Vintage')),
+    ),
+  });
+
+  const create = handleSubmit(async () => {
     setError(null);
     try {
       const { fund } = await api<{ fund: Fund }>('/funds', {
@@ -114,12 +137,15 @@ export function FundPortfolioPage() {
       });
       setShowCreate(false);
       setForm({ name: '', fund_type: 'vc', currency: 'USD', vintage_year: '2024' });
+      // The panel is reopened for the next fund, so the refilled defaults must
+      // not arrive already carrying the last attempt's messages.
+      reset();
       await loadFunds();
       setSelected(fund.id);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to create fund');
     }
-  };
+  });
 
   if (loading) return <Spinner />;
 
@@ -144,11 +170,13 @@ export function FundPortfolioPage() {
         <form
           onSubmit={create}
           className="flex flex-wrap items-end gap-3 rounded-lg border border-paper-200 bg-surface p-4"
+          noValidate
         >
-          <Field label="Fund name">
+          <Field label="Fund name" error={errorFor('name')}>
             <TextInput
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              onBlur={blurHandler('name')}
               required
             />
           </Field>
@@ -161,18 +189,22 @@ export function FundPortfolioPage() {
               <option value="other">Other</option>
             </Select>
           </Field>
-          <Field label="Currency">
+          <Field label="Currency" error={errorFor('currency')}>
             <TextInput
               value={form.currency}
               onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              onBlur={blurHandler('currency')}
               className="w-20"
+              required
             />
           </Field>
-          <Field label="Vintage">
+          <Field label="Vintage" error={errorFor('vintage_year')}>
             <TextInput
               value={form.vintage_year}
               onChange={(e) => setForm({ ...form, vintage_year: e.target.value })}
+              onBlur={blurHandler('vintage_year')}
               className="w-24"
+              required
             />
           </Field>
           <Button type="submit">Create</Button>
@@ -239,8 +271,19 @@ function FundDetailView({ fundId }: { fundId: string }) {
     void load();
   }, [load]);
 
-  const addPosition = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * `quantity` and `cost_basis` are plain text boxes read with `Number(...)`,
+   * so "1,200" became NaN and was posted as null. The rules say what shape the
+   * box wants rather than letting a mistyped holding reach the fund's NAV as
+   * an absence.
+   */
+  const positionForm = useFormValidation(posForm, {
+    company_name: required('company_name', 'Company'),
+    quantity: numberMin('quantity', 0, 'Quantity'),
+    cost_basis: numberMin('cost_basis', 0, 'Cost basis'),
+  });
+
+  const addPosition = positionForm.handleSubmit(async () => {
     setError(null);
     try {
       await api(`/funds/${fundId}/positions`, {
@@ -261,11 +304,12 @@ function FundDetailView({ fundId }: { fundId: string }) {
         cost_basis: '0',
         mark_method: 'cost',
       });
+      positionForm.reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to add position');
     }
-  };
+  });
 
   // The error has to be checked before the spinner, not inside the loaded
   // branch below it: a fund whose detail never arrives has `detail === null`
@@ -324,11 +368,12 @@ function FundDetailView({ fundId }: { fundId: string }) {
           </Button>
         </div>
         {showPos && (
-          <form onSubmit={addPosition} className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Field label="Company">
+          <form onSubmit={addPosition} className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3" noValidate>
+            <Field label="Company" error={positionForm.errorFor('company_name')}>
               <TextInput
                 value={posForm.company_name}
                 onChange={(e) => setPosForm({ ...posForm, company_name: e.target.value })}
+                onBlur={positionForm.blurHandler('company_name')}
                 required
               />
             </Field>
@@ -358,16 +403,18 @@ function FundDetailView({ fundId }: { fundId: string }) {
                 <option value="calibrated_opm">Calibrated OPM (L3)</option>
               </Select>
             </Field>
-            <Field label="Quantity">
+            <Field label="Quantity" error={positionForm.errorFor('quantity')}>
               <TextInput
                 value={posForm.quantity}
                 onChange={(e) => setPosForm({ ...posForm, quantity: e.target.value })}
+                onBlur={positionForm.blurHandler('quantity')}
               />
             </Field>
-            <Field label="Cost basis">
+            <Field label="Cost basis" error={positionForm.errorFor('cost_basis')}>
               <TextInput
                 value={posForm.cost_basis}
                 onChange={(e) => setPosForm({ ...posForm, cost_basis: e.target.value })}
+                onBlur={positionForm.blurHandler('cost_basis')}
               />
             </Field>
             <div className="flex items-end">
@@ -425,8 +472,36 @@ function PositionRow({
     if (!marks) void loadMarks();
   };
 
-  const addMark = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * Only the box the chosen method actually reads is checked. A quoted price
+   * left over from a market mark must not block a calibrated one, and each of
+   * the three is read with `Number(...)` — a blank one posts 0, which is a
+   * fair value of nothing rather than a missing input.
+   */
+  const markRules: Rules<typeof markForm> = {
+    measurement_date: all(
+      required('measurement_date', 'Date'),
+      pattern('measurement_date', /\d{4}-\d{2}-\d{2}/, 'Date must be written as YYYY-MM-DD.'),
+    ),
+    ...(markForm.method === 'market'
+      ? {
+          quantity: numberMin<typeof markForm>('quantity', 0, 'Quantity'),
+          quoted_price: numberMin<typeof markForm>('quoted_price', 0, 'Quoted price'),
+        }
+      : {}),
+    ...(markForm.method === 'last_round'
+      ? {
+          quantity: numberMin<typeof markForm>('quantity', 0, 'Quantity'),
+          round_price_per_share: numberMin<typeof markForm>('round_price_per_share', 0, 'Round price/sh'),
+        }
+      : {}),
+    ...(markForm.method === 'calibrated_opm'
+      ? { model_value: numberMin<typeof markForm>('model_value', 0, 'Model value') }
+      : {}),
+  };
+  const mark = useFormValidation(markForm, markRules);
+
+  const addMark = mark.handleSubmit(async () => {
     if (recording) return;
     setRecording(true);
     setError(null);
@@ -452,7 +527,7 @@ function PositionRow({
     } finally {
       setRecording(false);
     }
-  };
+  });
 
   const lm = position.latest_mark;
   return (
@@ -476,14 +551,16 @@ function PositionRow({
       {open && (
         <div className="space-y-3 border-t border-paper-200 p-3">
           {error && <ErrorNote>{error}</ErrorNote>}
-          <form onSubmit={addMark} className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <form onSubmit={addMark} className="grid grid-cols-2 gap-2 md:grid-cols-4" noValidate>
             <Field
               label="Date"
               tooltip="Measurement date for this mark. For a calibrated OPM, this is the calibration date the model is anchored to — usually the last observable transaction, such as the round the fund invested in."
+              error={mark.errorFor('measurement_date')}
             >
               <TextInput
                 value={markForm.measurement_date}
                 onChange={(e) => setMarkForm({ ...markForm, measurement_date: e.target.value })}
+                onBlur={mark.blurHandler('measurement_date')}
               />
             </Field>
             <Field label="Method">
@@ -498,26 +575,29 @@ function PositionRow({
               </Select>
             </Field>
             {markForm.method === 'market' && (
-              <Field label="Quoted price">
+              <Field label="Quoted price" error={mark.errorFor('quoted_price')}>
                 <TextInput
                   value={markForm.quoted_price}
                   onChange={(e) => setMarkForm({ ...markForm, quoted_price: e.target.value })}
+                  onBlur={mark.blurHandler('quoted_price')}
                 />
               </Field>
             )}
             {markForm.method === 'last_round' && (
-              <Field label="Round price/sh">
+              <Field label="Round price/sh" error={mark.errorFor('round_price_per_share')}>
                 <TextInput
                   value={markForm.round_price_per_share}
                   onChange={(e) => setMarkForm({ ...markForm, round_price_per_share: e.target.value })}
+                  onBlur={mark.blurHandler('round_price_per_share')}
                 />
               </Field>
             )}
             {markForm.method === 'calibrated_opm' && (
-              <Field label="Model value">
+              <Field label="Model value" error={mark.errorFor('model_value')}>
                 <TextInput
                   value={markForm.model_value}
                   onChange={(e) => setMarkForm({ ...markForm, model_value: e.target.value })}
+                  onBlur={mark.blurHandler('model_value')}
                 />
               </Field>
             )}

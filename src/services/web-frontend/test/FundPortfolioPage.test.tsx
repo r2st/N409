@@ -457,6 +457,53 @@ describe('FundPortfolioPage', () => {
   });
 
   /** Cost carries no figure of its own — the position's basis is the mark. */
+  /**
+   * R30 — every money box on this page is plain text read with `Number(...)`,
+   * so "1,200" became NaN and reached the API as null, and a blank quoted
+   * price posted a fair value of zero. Neither said anything at the box.
+   */
+  it('refuses a market mark with no quoted price rather than marking it at zero', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Acme/ }));
+    await user.click(await screen.findByRole('button', { name: 'Record mark' }));
+
+    expect(await screen.findByText('Quoted price is required.')).toBeInTheDocument();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('refuses a quantity that is not a number, at the box', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Add position' }));
+    await user.type(await screen.findByLabelText('Company'), 'Beta Ltd');
+    await user.clear(screen.getByLabelText('Quantity'));
+    await user.type(screen.getByLabelText('Quantity'), '1,200');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('Quantity must be a number.')).toBeInTheDocument();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('refuses a vintage outside the years a fund can have, but allows none', async () => {
+    const sent = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'New fund' }));
+    await user.type(await screen.findByLabelText('Fund name'), 'Fund IV');
+    await user.clear(screen.getByLabelText('Vintage'));
+    await user.type(screen.getByLabelText('Vintage'), '3024');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText('Vintage must be at most 2100.')).toBeInTheDocument();
+    expect(sent).toHaveLength(0);
+  });
+
   it('records a cost mark with neither a price nor a model value', async () => {
     const sent = mockApi();
     const user = userEvent.setup();
@@ -481,6 +528,10 @@ describe('FundPortfolioPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: /Acme/ }));
+    // The default method is Market, and a market mark now needs its price
+    // before the request is made at all — the subject here is what happens to
+    // the server's objection, not what happens without one.
+    await user.type(await screen.findByLabelText('Quoted price'), '4.25');
     await user.click(await screen.findByRole('button', { name: 'Record mark' }));
     expect(await screen.findByText('measurement_date is before the fund vintage')).toBeInTheDocument();
   });

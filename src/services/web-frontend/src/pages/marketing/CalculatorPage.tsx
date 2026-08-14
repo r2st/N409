@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../../lib/api';
+import { optional, useFormValidation, type Rules } from '../../lib/useFormValidation';
 import { Seo } from '../../components/Seo';
 import { pageMeta } from '../../lib/pageMeta';
 
@@ -194,6 +195,29 @@ export function CalculatorPage() {
   const [data, setData] = useState<EstimatorResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * Every box here is free text — `inputMode="decimal"` is a keyboard hint and
+   * not a constraint — and `parseMoney` returns null for anything it cannot
+   * read. So a visitor who typed "2.5m" or "-400" or "0" had their figure
+   * silently dropped and was then told to "Enter a round price, profit,
+   * revenue, or capital raised", which they had just done. Nothing on this
+   * page is required; what is checked is that a figure which was typed is one
+   * the estimator can actually use.
+   */
+  const figures = useMemo(() => ({ ...money, shares }), [money, shares]);
+  const figureRules: Rules<typeof figures> = Object.fromEntries(
+    [...MONEY_FIELDS.map((f) => f.key), 'shares' as const].map((key) => [
+      key,
+      optional<typeof figures>(key, (values) => {
+        const raw = String(values[key]).replace(/[$,\s]/g, '');
+        const value = Number(raw);
+        if (!Number.isFinite(value)) return 'Enter a figure in digits, e.g. 2500000.';
+        return value > 0 ? null : 'Enter a figure above zero, or leave the box blank.';
+      }),
+    ]),
+  );
+  const { errorFor, blurHandler } = useFormValidation(figures, figureRules);
+
   const payload = useMemo(() => {
     const body: Record<string, unknown> = { stage, round_age: roundAge };
     for (const { key } of MONEY_FIELDS) {
@@ -287,10 +311,19 @@ export function CalculatorPage() {
                 inputMode="decimal"
                 value={money[f.key]}
                 onChange={(e) => setMoney((m) => ({ ...m, [f.key]: e.target.value }))}
+                onBlur={blurHandler(f.key)}
                 placeholder="$"
+                aria-invalid={errorFor(f.key) ? true : undefined}
+                aria-describedby={errorFor(f.key) ? `${f.key}-error` : undefined}
                 className="rounded-md border border-paper-300 bg-surface px-3 py-2 text-sm text-ink-900"
               />
-              {f.hint && <span className="text-xs text-ink-500">{f.hint}</span>}
+              {errorFor(f.key) ? (
+                <span id={`${f.key}-error`} className="text-xs font-medium text-red-600">
+                  {errorFor(f.key)}
+                </span>
+              ) : (
+                f.hint && <span className="text-xs text-ink-500">{f.hint}</span>
+              )}
             </label>
           ))}
 
@@ -303,8 +336,16 @@ export function CalculatorPage() {
               inputMode="decimal"
               value={shares}
               onChange={(e) => setShares(e.target.value)}
+              onBlur={blurHandler('shares')}
+              aria-invalid={errorFor('shares') ? true : undefined}
+              aria-describedby={errorFor('shares') ? 'shares-error' : undefined}
               className="rounded-md border border-paper-300 bg-surface px-3 py-2 text-sm text-ink-900"
             />
+            {errorFor('shares') && (
+              <span id="shares-error" className="text-xs font-medium text-red-600">
+                {errorFor('shares')}
+              </span>
+            )}
           </label>
         </form>
 
