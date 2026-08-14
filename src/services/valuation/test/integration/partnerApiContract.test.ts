@@ -30,6 +30,71 @@ const dbUp = await isDbAvailable();
  * projection without documenting it fails this file rather than shipping a spec
  * that under-reports the payload.
  */
+/**
+ * As much of an OpenAPI document as these tests walk.
+ *
+ * The alternative — reading the parsed JSON through `any` — is what let the
+ * assertions below drift: `schema.properties.valuations.items.properties.state`
+ * type-checks against `any` whether or not the spec has any of those levels,
+ * and when the spec stops publishing one the test fails with "cannot read
+ * properties of undefined" and no indication of which level went missing.
+ */
+interface SchemaNode {
+  type?: string;
+  enum?: unknown[];
+  minimum?: number;
+  additionalProperties?: unknown;
+  properties?: Record<string, SchemaNode | undefined>;
+  items?: SchemaNode;
+}
+
+interface MediaType {
+  schema: SchemaNode;
+}
+
+interface Operation {
+  requestBody?: { content: Record<string, MediaType | undefined> };
+  responses: Record<string, { content: Record<string, MediaType | undefined> } | undefined>;
+}
+
+interface OpenApiDoc {
+  paths: Record<string, Record<string, Operation | undefined> | undefined>;
+}
+
+const JSON_CT = 'application/json';
+
+function operation(doc: OpenApiDoc, path: string, method: string): Operation {
+  const op = doc.paths[path]?.[method];
+  if (!op) throw new Error(`openapi.json publishes no ${method.toUpperCase()} ${path}`);
+  return op;
+}
+
+/** The JSON response schema for one status, or a failure naming what is missing. */
+function responseSchema(doc: OpenApiDoc, path: string, method: string, status: string): SchemaNode {
+  const schema = operation(doc, path, method).responses[status]?.content[JSON_CT]?.schema;
+  if (!schema) throw new Error(`no ${status} JSON response schema for ${method.toUpperCase()} ${path}`);
+  return schema;
+}
+
+function requestSchema(doc: OpenApiDoc, path: string, method: string): SchemaNode {
+  const schema = operation(doc, path, method).requestBody?.content[JSON_CT]?.schema;
+  if (!schema) throw new Error(`no JSON request schema for ${method.toUpperCase()} ${path}`);
+  return schema;
+}
+
+/** A named property, or a failure saying which one the spec stopped publishing. */
+function at(node: SchemaNode, key: string): SchemaNode {
+  const child = node.properties?.[key];
+  if (!child) throw new Error(`the schema publishes no "${key}" property`);
+  return child;
+}
+
+/** The element schema of an array property. */
+function item(node: SchemaNode, label: string): SchemaNode {
+  if (!node.items) throw new Error(`"${label}" is published without an item schema`);
+  return node.items;
+}
+
 describe.skipIf(!dbUp)('partner API response contract', () => {
   let ctx: TestApp;
   let app: FastifyInstance;
@@ -104,35 +169,29 @@ describe.skipIf(!dbUp)('partner API response contract', () => {
   it('renders those schemas into openapi.json rather than a bare object', async () => {
     const res = await app.inject({ method: 'GET', url: `${PARTNER_API_PREFIX}/openapi.json` });
     expect(res.statusCode).toBe(200);
-    const doc = res.json() as {
-      paths: Record<string, Record<string, { responses: Record<string, any> }>>;
-    };
+    const doc = res.json() as OpenApiDoc;
 
-    const listOk = doc.paths['/valuations']!.get!.responses['200'];
-    const schema = listOk.content['application/json'].schema;
-    expect(schema.properties.total).toEqual({ type: 'integer', minimum: 0 });
-    expect(schema.properties.valuations.type).toBe('array');
-    expect(schema.properties.valuations.items.properties.state.enum).toContain('published');
+    const schema = responseSchema(doc, '/valuations', 'get', '200');
+    expect(schema.properties?.total).toEqual({ type: 'integer', minimum: 0 });
+    const valuations = at(schema, 'valuations');
+    expect(valuations.type).toBe('array');
+    expect(item(valuations, 'valuations').properties?.state?.enum).toContain('published');
     // A decimal column is a string on the wire; a spec that says `number` is
     // how a client silently rounds a valuation.
-    expect(schema.properties.valuations.items.properties.number.type).toBe('string');
+    expect(item(valuations, 'valuations').properties?.number?.type).toBe('string');
 
     // Responses must stay additive-safe: closing them would break every
     // strictly-generated client the day a field is added.
-    const walk = (node: any): void => {
-      if (!node || typeof node !== 'object') return;
+    const walk = (node: SchemaNode): void => {
       expect(node.additionalProperties).toBeUndefined();
-      Object.values(node.properties ?? {}).forEach(walk);
+      for (const child of Object.values(node.properties ?? {})) walk(child);
       if (node.items) walk(node.items);
     };
     walk(schema);
 
     // The request half is still closed — that direction catches a caller's typo.
-    const createBody = doc.paths['/valuations']!.post!.responses['201'];
-    expect(createBody.content['application/json'].schema.properties.valuation).toBeDefined();
-    const requestSchema = (doc.paths['/valuations']!.post as any).requestBody.content['application/json']
-      .schema;
-    expect(requestSchema.additionalProperties).toBe(false);
+    expect(responseSchema(doc, '/valuations', 'post', '201').properties?.valuation).toBeDefined();
+    expect(requestSchema(doc, '/valuations', 'post').additionalProperties).toBe(false);
   });
 
   it('matches the published schema on the valuation lifecycle endpoints', async () => {

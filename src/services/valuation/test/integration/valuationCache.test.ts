@@ -14,6 +14,29 @@ import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from 
 
 const dbUp = await isDbAvailable();
 
+/**
+ * The pool members these tests replace, as one declared seam.
+ *
+ * `pg.Pool.query` and `pg.Pool.connect` are overloaded across callback and
+ * promise forms and typed generically over the row, so a monkey-patch never
+ * satisfies the declaration and every patch site was reaching for `as any`.
+ * Six of those is six places the compiler stopped checking anything at all —
+ * including the calls *through* the patched member, where a wrong argument
+ * count would have compiled. One narrow, named assertion instead: the patched
+ * members are stated once, and every use of them is checked against it.
+ */
+interface PatchablePool {
+  query: (...args: unknown[]) => unknown;
+  connect: (...args: unknown[]) => unknown;
+}
+
+/** A pooled client, in the one shape these hooks touch. */
+interface PatchableClient {
+  query: (...args: unknown[]) => Promise<unknown>;
+}
+
+const patchable = (pool: TestApp['pool']): PatchablePool => pool as unknown as PatchablePool;
+
 describe.skipIf(!dbUp)('valuation read cache', () => {
   let ctx: TestApp;
   let ops: Awaited<ReturnType<typeof seedUser>>;
@@ -21,19 +44,20 @@ describe.skipIf(!dbUp)('valuation read cache', () => {
 
   /** Counts the point lookups the cache is meant to absorb. */
   function countPointLookups(): { calls: () => number; restore: () => void } {
-    const original = ctx.pool.query.bind(ctx.pool);
+    const pool = patchable(ctx.pool);
+    const original = pool.query.bind(ctx.pool);
     let calls = 0;
 
-    (ctx.pool as any).query = (...args: unknown[]) => {
+    pool.query = (...args: unknown[]) => {
       const sql = typeof args[0] === 'string' ? args[0] : '';
       if (sql.includes('FROM valuations WHERE id = $1')) calls += 1;
 
-      return (original as any)(...args);
+      return original(...args);
     };
     return {
       calls: () => calls,
 
-      restore: () => void ((ctx.pool as any).query = original),
+      restore: () => void (pool.query = original),
     };
   }
 
@@ -208,17 +232,18 @@ describe.skipIf(!dbUp)('valuation read cache', () => {
      * the commit, this read is harmless because the drop is still to come.
      */
     function onWriteBeforeCommit(duringTransaction: () => Promise<unknown>): { restore: () => void } {
-      const originalConnect = ctx.pool.connect.bind(ctx.pool);
+      const pool = patchable(ctx.pool);
+      const originalConnect = pool.connect.bind(ctx.pool);
       // Clients are pooled and handed out again, so every one we wrap has to be
       // put back exactly as it was — otherwise the hook outlives this test.
       const unwrap: Array<() => void> = [];
       let fired = false;
 
-      (ctx.pool as any).connect = (...args: unknown[]) => {
+      pool.connect = (...args: unknown[]) => {
         // pg's connect is callback-or-promise; only the promise form is ours to
         // wrap, and it is the form `withTransaction` uses.
-        if (args.length > 0) return (originalConnect as any)(...args);
-        return (originalConnect as any)().then((client: any) => {
+        if (args.length > 0) return originalConnect(...args);
+        return (originalConnect() as Promise<PatchableClient>).then((client) => {
           const originalQuery = client.query.bind(client);
           unwrap.push(() => void (client.query = originalQuery));
           let wroteValuation = false;
@@ -236,7 +261,7 @@ describe.skipIf(!dbUp)('valuation read cache', () => {
       };
       return {
         restore: () => {
-          (ctx.pool as any).connect = originalConnect;
+          pool.connect = originalConnect;
           for (const undo of unwrap) undo();
         },
       };

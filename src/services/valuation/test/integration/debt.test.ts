@@ -15,7 +15,17 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
   let engineStub: FastifyInstance;
   let ops: Awaited<ReturnType<typeof seedUser>>;
   let client: Awaited<ReturnType<typeof seedUser>>;
-  let lastPayload: Record<string, any> | null = null;
+  /**
+   * The request the service sends the engine, in the shape this stub reads it.
+   * Typed rather than `Record<string, any>` because the assertions below are
+   * the point of the file — `lastPayload?.params?.market_yield` against `any`
+   * passes whether or not the service sent a `params` at all.
+   */
+  interface DebtEngineRequest {
+    instrument_type?: string;
+    params?: Record<string, unknown>;
+  }
+  let lastPayload: DebtEngineRequest | null = null;
 
   beforeAll(async () => {
     db = await setupTestDb();
@@ -24,7 +34,7 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
 
     engineStub = Fastify({ logger: false });
     engineStub.post('/engine/v1/debt-valuation', async (req) => {
-      lastPayload = req.body as Record<string, any>;
+      lastPayload = req.body as DebtEngineRequest;
       // Return a plausible shape depending on type.
       if (lastPayload.instrument_type === 'safe')
         return { fair_value: 400000, conversion_price: 0.5, converted_via: 'cap' };
@@ -44,10 +54,15 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
         convexity: 20,
       };
     });
-    engineStub.post('/engine/v1/debt-rating-spread', async (req) => ({
-      rating: (req.body as any).rating.toUpperCase(),
-      spread: 0.03,
-    }));
+    engineStub.post('/engine/v1/debt-rating-spread', async (req) => {
+      const { rating } = req.body as { rating?: unknown };
+      // A stub that TypeErrors here reports "cannot read toUpperCase of
+      // undefined" from inside Fastify; say what was actually sent instead.
+      if (typeof rating !== 'string') {
+        throw new Error(`debt-rating-spread called without a rating: ${JSON.stringify(req.body)}`);
+      }
+      return { rating: rating.toUpperCase(), spread: 0.03 };
+    });
     await engineStub.listen({ port: 0, host: '127.0.0.1' });
     const address = engineStub.server.address();
     const enginePort = typeof address === 'object' && address ? address.port : 0;
@@ -130,8 +145,8 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
       headers: authHeader(ops.token),
       payload: {},
     });
-    expect(lastPayload?.params.benchmark_yield).toBe(0.03);
-    expect(lastPayload?.params.rating).toBe('BB');
+    expect(lastPayload?.params?.benchmark_yield).toBe(0.03);
+    expect(lastPayload?.params?.rating).toBe('BB');
   });
 
   it('values a convertible and a SAFE', async () => {
@@ -184,7 +199,7 @@ describe.skipIf(!dbUp)('Debt valuation', () => {
       headers: authHeader(ops.token),
       payload: { overrides: { market_yield: 0.09 } },
     });
-    expect(lastPayload?.params.market_yield).toBe(0.09);
+    expect(lastPayload?.params?.market_yield).toBe(0.09);
   });
 
   it('looks up a rating spread', async () => {

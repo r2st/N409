@@ -34,16 +34,16 @@ describe('toScimUser', () => {
     expect(result.externalId).toBe('ext-001');
     expect(result.userName).toBe('alice@example.com');
     expect(result.active).toBe(true);
-    expect((result.name as any).givenName).toBe('Alice');
-    expect((result.name as any).familyName).toBe('Smith');
+    expect(result.name.givenName).toBe('Alice');
+    expect(result.name.familyName).toBe('Smith');
     expect(result.displayName).toBe('Alice Smith');
-    expect((result.emails as any[])[0]).toEqual({
+    expect(result.emails[0]).toEqual({
       value: 'alice@example.com',
       primary: true,
       type: 'work',
     });
-    expect((result.meta as any).resourceType).toBe('User');
-    expect((result.meta as any).location).toBe('/scim/v2/Users/usr_123');
+    expect(result.meta.resourceType).toBe('User');
+    expect(result.meta.location).toBe('/scim/v2/Users/usr_123');
   });
 
   it('marks soft-deleted user as inactive', () => {
@@ -59,13 +59,35 @@ describe('toScimUser', () => {
   it('falls back to email as displayName when names are null', () => {
     const result = toScimUser(fakeUser({ first_name: null, last_name: null }));
     expect(result.displayName).toBe('alice@example.com');
-    expect((result.name as any).givenName).toBeUndefined();
-    expect((result.name as any).familyName).toBeUndefined();
+    expect(result.name.givenName).toBeUndefined();
+    expect(result.name.familyName).toBeUndefined();
   });
 
   it('uses first name only when last name is null', () => {
     const result = toScimUser(fakeUser({ last_name: null }));
     expect(result.displayName).toBe('Alice');
+  });
+
+  /**
+   * The attributes RFC 7644 requires on a User resource. An IdP that does not
+   * find them reports "the SCIM endpoint is not compliant" and nothing more
+   * specific, so a field quietly dropped from the mapping surfaces as an
+   * integration nobody can debug from either end.
+   */
+  it('carries every attribute an IdP looks for', () => {
+    const result = toScimUser(fakeUser());
+    expect(Object.keys(result).sort()).toEqual([
+      'active',
+      'displayName',
+      'emails',
+      'externalId',
+      'id',
+      'meta',
+      'name',
+      'schemas',
+      'userName',
+    ]);
+    expect(result.meta.created).toEqual(new Date('2024-01-15T00:00:00Z'));
   });
 });
 
@@ -86,13 +108,13 @@ describe('scimList', () => {
     expect(list.totalResults).toBe(2);
     expect(list.startIndex).toBe(1);
     expect(list.itemsPerPage).toBe(2);
-    expect((list.Resources as any[]).length).toBe(2);
+    expect(list.Resources.length).toBe(2);
   });
 
   it('handles empty list', () => {
     const list = scimList([]);
     expect(list.totalResults).toBe(0);
-    expect((list.Resources as any[]).length).toBe(0);
+    expect(list.Resources.length).toBe(0);
   });
 });
 

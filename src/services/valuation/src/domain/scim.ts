@@ -18,7 +18,62 @@ export interface ScimUserRow {
   created_at: Date;
 }
 
-export function toScimUser(u: ScimUserRow): Record<string, unknown> {
+/**
+ * The SCIM 2.0 resources this service emits, as types rather than as
+ * `Record<string, unknown>`.
+ *
+ * The bag type compiled, which is the problem: `userName` misspelled, `meta`
+ * omitted, `schemas` left off a list response — RFC 7644 requires all three —
+ * are the errors an IdP reports as "the SCIM endpoint is not compliant" and
+ * nothing else. Nothing checked them, and a test reading `result.meta` had to
+ * cast to reach it, which is a cast the compiler can never disprove.
+ */
+export interface ScimName {
+  givenName?: string;
+  familyName?: string;
+}
+
+export interface ScimEmail {
+  value: string;
+  primary: boolean;
+  type: string;
+}
+
+export interface ScimMeta {
+  resourceType: 'User';
+  created: Date;
+  location: string;
+}
+
+export interface ScimUser {
+  schemas: string[];
+  id: string;
+  /** Absent rather than null when the IdP never sent one — SCIM omits, it does not null. */
+  externalId?: string;
+  userName: string;
+  name: ScimName;
+  displayName: string;
+  emails: ScimEmail[];
+  active: boolean;
+  meta: ScimMeta;
+}
+
+export interface ScimListResponse {
+  schemas: string[];
+  totalResults: number;
+  startIndex: number;
+  itemsPerPage: number;
+  Resources: ScimUser[];
+}
+
+export interface ScimErrorResponse {
+  schemas: string[];
+  /** SCIM sends the status as a string in the body, not a number. */
+  status: string;
+  detail: string;
+}
+
+export function toScimUser(u: ScimUserRow): ScimUser {
   return {
     schemas: [SCIM_USER_SCHEMA],
     id: u.id,
@@ -60,11 +115,11 @@ export function scimBoolean(value: unknown): boolean {
   return Boolean(value);
 }
 
-export function scimError(status: number, detail: string): Record<string, unknown> {
+export function scimError(status: number, detail: string): ScimErrorResponse {
   return { schemas: [SCIM_ERROR_SCHEMA], status: String(status), detail };
 }
 
-export function scimList(resources: Record<string, unknown>[]): Record<string, unknown> {
+export function scimList(resources: ScimUser[]): ScimListResponse {
   return {
     schemas: [SCIM_LIST_SCHEMA],
     totalResults: resources.length,
