@@ -59,16 +59,45 @@ export function InfoTooltip({
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
+  /*
+   * Which pointer, if any, put focus on the button — null means the keyboard
+   * did.
+   *
+   * A tap fires the compatibility mouse events off the one gesture: enter,
+   * then focus, then click. Hover-opens and focus-opens both fired before the
+   * click toggled, so a tap opened the bubble and shut it again before the
+   * finger left the glass, and the first tap on a "?" showed nothing at all.
+   * These are the app's inline explanations of volatility, expected term and
+   * the rest, so on a tablet every one of them needed two taps.
+   *
+   * Hover and focus-to-open are a mouse and a keyboard affordance
+   * respectively. Suppressing both for a touch pointer leaves the click
+   * toggle governing touch on its own, which is the behaviour the button
+   * would have had if it had never listened for hover.
+   */
+  const focusedByPointer = useRef<string | null>(null);
   return (
     <span className={`relative inline-flex ${className}`}>
       <button
         type="button"
         aria-label={label}
         aria-describedby={open ? id : undefined}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
+        onPointerDown={(e) => {
+          focusedByPointer.current = e.pointerType;
+        }}
+        onPointerEnter={(e) => {
+          if (e.pointerType === 'mouse') setOpen(true);
+        }}
+        onPointerLeave={(e) => {
+          if (e.pointerType === 'mouse') setOpen(false);
+        }}
+        onFocus={() => {
+          if (focusedByPointer.current === null) setOpen(true);
+        }}
+        onBlur={() => {
+          focusedByPointer.current = null;
+          setOpen(false);
+        }}
         onClick={(e) => {
           // Inside a <label> a bare click would toggle the field; keep it local.
           e.preventDefault();
