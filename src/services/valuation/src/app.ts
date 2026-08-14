@@ -319,7 +319,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Runtime-editable system settings (registration switch, maintenance mode,
   // password floor). Cached — `maintenance_mode` is read on every mutating
   // request via app.authenticate.
-  const settings = new SystemSettingsStore(pool);
+  const settings = new SystemSettingsStore(pool, undefined, undefined, app.log);
 
   void app.register(multipart, { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
   // Parses Cookie headers into req.cookies so the auth plugin can read the

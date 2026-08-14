@@ -40,9 +40,7 @@ export async function writeSettings(
   // showing some of the operator's changes applied and the rest not, with no
   // indication of which. A single multi-row upsert is atomic without needing a
   // transaction around it.
-  const values = entries
-    .map((_, i) => `($${i * 2 + 2}, $${i * 2 + 3}::jsonb, $1)`)
-    .join(', ');
+  const values = entries.map((_, i) => `($${i * 2 + 2}, $${i * 2 + 3}::jsonb, $1)`).join(', ');
   await pool.query(
     `INSERT INTO system_settings (key, value, updated_by)
      VALUES ${values}
@@ -67,19 +65,54 @@ export class SystemSettingsStore {
     private readonly pool: pg.Pool,
     private readonly ttlMs = 5_000,
     private readonly now: () => number = Date.now,
+    /** Where a failed read is reported. Optional so the tests can omit it. */
+    private readonly log?: { warn: (obj: unknown, msg: string) => void },
   ) {}
 
+  /**
+   * A failed read must never be the reason a request fails, so this degrades
+   * rather than throws. What it degrades *to* matters, and the two cases are
+   * not the same:
+   *
+   *  - **Warm cache.** Serving the last values actually read is right: they
+   *    came from the table and are at most a TTL stale.
+   *
+   *  - **Cold cache.** There is nothing to serve but `SYSTEM_SETTINGS_DEFAULTS`,
+   *    and every one of the three operational flags defaults to its permissive
+   *    value — `registration_enabled: true`, `maintenance_mode: false`,
+   *    `require_mfa: false`. So a replica that has never completed a read
+   *    answers "registration is open", "the platform is not in maintenance"
+   *    and "2FA is not mandatory" to an operator who set all three the other
+   *    way. That is a fail-open, and it used to be an entirely silent one: no
+   *    log, and `#readAt` was stamped as though the read had succeeded, so the
+   *    permissive answer was then served from cache for a full TTL without
+   *    another attempt.
+   *
+   * The cold-cache fallback stays — taking the platform down over the settings
+   * table is worse — but it no longer pretends to be a read. The clock is not
+   * stamped, so the next caller retries immediately instead of inheriting the
+   * defaults, and both cases are logged so a fail-open window is visible in the
+   * logs rather than inferred later from its consequences.
+   */
   async read(): Promise<SystemSettings> {
     if (this.#cached && this.now() - this.#readAt < this.ttlMs) return this.#cached;
     try {
       this.#cached = await readSettings(this.pool);
-    } catch {
-      // A settings read must never be the reason a request fails. Serve the
-      // last known good values, or the defaults on a cold cache.
-      this.#cached ??= { ...SYSTEM_SETTINGS_DEFAULTS };
+      this.#readAt = this.now();
+      return this.#cached;
+    } catch (err) {
+      if (this.#cached) {
+        this.log?.warn({ err }, 'system settings read failed; serving the last values read');
+        this.#readAt = this.now();
+        return this.#cached;
+      }
+      this.log?.warn(
+        { err },
+        'system settings read failed with nothing cached; serving defaults, which are permissive ' +
+          '(registration open, no maintenance mode, 2FA not mandatory) — retrying on the next read',
+      );
+      return { ...SYSTEM_SETTINGS_DEFAULTS };
     }
-    this.#readAt = this.now();
-    return this.#cached;
   }
 
   async get<K extends SystemSettingKey>(key: K): Promise<SystemSettings[K]> {

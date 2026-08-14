@@ -131,4 +131,81 @@ describe('SystemSettingsStore', () => {
     now += 2_000;
     expect(await store.get('password_min_length')).toBe(24);
   });
+
+  /**
+   * The cold-cache fallback is a fail-open: every operational flag defaults to
+   * its permissive value, so a replica that has never completed a read tells
+   * the platform registration is open, maintenance mode is off and 2FA is not
+   * mandatory — whatever the operator set. It stays, because taking the
+   * platform down over the settings table is worse. What it must not do is
+   * happen quietly, or last.
+   */
+  describe('when the very first read fails', () => {
+    const unreachable = () =>
+      ({
+        query: vi.fn(async () => {
+          throw new Error('connection refused');
+        }),
+      }) as unknown as pg.Pool;
+
+    it('does not cache the defaults — the next caller tries the database again', async () => {
+      const pool = unreachable();
+      // The clock never moves, so nothing but an uncached fallback can produce
+      // a second query inside the TTL.
+      const store = new SystemSettingsStore(pool, 5_000, () => 0);
+
+      await store.read();
+      await store.read();
+      await store.read();
+      expect(pool.query).toHaveBeenCalledTimes(3);
+    });
+
+    it('serves the real values as soon as one read succeeds', async () => {
+      let fail = true;
+      const pool = {
+        query: vi.fn(async () => {
+          if (fail) throw new Error('connection refused');
+          return { rows: [{ key: 'require_mfa', value: true }], rowCount: 1 };
+        }),
+      } as unknown as pg.Pool;
+      const store = new SystemSettingsStore(pool, 5_000, () => 0);
+
+      expect(await store.get('require_mfa')).toBe(false); // the permissive default
+      fail = false;
+      expect(await store.get('require_mfa')).toBe(true);
+    });
+
+    it('says so in the log, and says the answer is permissive', async () => {
+      const warn = vi.fn();
+      const store = new SystemSettingsStore(unreachable(), 5_000, () => 0, { warn });
+
+      await store.read();
+      expect(warn).toHaveBeenCalledTimes(1);
+      const [context, message] = warn.mock.calls[0]!;
+      expect((context as { err: Error }).err).toBeInstanceOf(Error);
+      expect(message).toContain('permissive');
+    });
+  });
+
+  it('logs a failed refresh even though the cached values are still good', async () => {
+    let fail = false;
+    const pool = {
+      query: vi.fn(async () => {
+        if (fail) throw new Error('connection refused');
+        return { rows: [{ key: 'maintenance_mode', value: true }], rowCount: 1 };
+      }),
+    } as unknown as pg.Pool;
+    const warn = vi.fn();
+    let now = 0;
+    const store = new SystemSettingsStore(pool, 1_000, () => now, { warn });
+
+    expect(await store.get('maintenance_mode')).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+
+    fail = true;
+    now += 2_000;
+    expect(await store.get('maintenance_mode')).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![1]).toContain('last values read');
+  });
 });

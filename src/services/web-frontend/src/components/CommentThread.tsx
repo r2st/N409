@@ -7,6 +7,12 @@ import { formatDateTime } from '../lib/format';
 import type { Comment } from '../lib/types';
 import { Button, ErrorNote, Spinner } from './ui';
 
+/** First few words of a message, for naming the controls that act on it. */
+function excerpt(body: string, max = 40): string {
+  const flat = body.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max).trimEnd()}…` : flat;
+}
+
 /**
  * M3 features 10 + 11 — per-valuation conversation (chat + threaded email)
  * and, for ops, internal sticky notes.
@@ -87,27 +93,38 @@ export function CommentsSection({
         <section className="rounded-lg border border-amber-300 bg-amber-50/50 p-6 shadow-card">
           <h2 className="overline mb-4 text-amber-800">Sticky notes · internal</h2>
           <ul className="space-y-3">
-            {notes.map((n) => (
-              <li key={n.id} className="rounded-md border border-amber-200 bg-surface px-4 py-3">
-                <p className="text-sm whitespace-pre-wrap text-ink-800">{n.body}</p>
-                <div className="mt-2 flex items-center gap-3 text-xs text-ink-400">
-                  <span>{n.author_name ?? n.author_email ?? 'ops'}</span>
-                  <span className="tnum">{formatDateTime(n.created_at)}</span>
-                  <button
-                    onClick={() => togglePin(n)}
-                    className="cursor-pointer font-semibold text-amber-700 hover:text-amber-800"
-                  >
-                    {n.pinned ? 'Unpin' : 'Pin'}
-                  </button>
-                  <button
-                    onClick={() => remove(n.id)}
-                    className="cursor-pointer font-semibold text-red-600 hover:text-red-700"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
+            {notes.map((n) => {
+              // Every row's controls read "Pin"/"Delete" on screen. Naming them
+              // by author alone would still collide, so the accessible name
+              // carries the note's own opening words — enough to tell a list of
+              // them apart when they are announced out of visual context.
+              const noteRef = `${n.author_name ?? n.author_email ?? 'ops'}: ${excerpt(n.body)}`;
+              return (
+                <li key={n.id} className="rounded-md border border-amber-200 bg-surface px-4 py-3">
+                  <p className="text-sm whitespace-pre-wrap text-ink-800">{n.body}</p>
+                  <div className="mt-2 flex items-center gap-3 text-xs text-ink-400">
+                    <span>{n.author_name ?? n.author_email ?? 'ops'}</span>
+                    <span className="tnum">{formatDateTime(n.created_at)}</span>
+                    <button
+                      type="button"
+                      onClick={() => togglePin(n)}
+                      aria-label={`${n.pinned ? 'Unpin' : 'Pin'} note — ${noteRef}`}
+                      className="cursor-pointer font-semibold text-amber-700 hover:text-amber-800"
+                    >
+                      {n.pinned ? 'Unpin' : 'Pin'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(n.id)}
+                      aria-label={`Delete note — ${noteRef}`}
+                      className="cursor-pointer font-semibold text-red-600 hover:text-red-700"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
             {notes.length === 0 && <li className="text-sm text-ink-400">No notes yet.</li>}
           </ul>
           <form
@@ -121,6 +138,7 @@ export function CommentsSection({
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
               placeholder="Add an internal note…"
+              aria-label="Add an internal note"
               className="w-full rounded-md border border-amber-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brass-500 focus:ring-2 focus:ring-brass-500/20 focus:outline-none"
             />
             <Button type="submit" variant="secondary" disabled={busy || !noteDraft.trim()}>
@@ -165,7 +183,9 @@ export function CommentsSection({
                   <span className="tnum">{formatDateTime(c.created_at)}</span>
                   {c.kind === 'chat' && canModerate(c) && (
                     <button
+                      type="button"
                       onClick={() => remove(c.id)}
+                      aria-label={`Delete message — ${c.author_name ?? c.author_email ?? 'unknown'}: ${excerpt(c.body)}`}
                       className="cursor-pointer font-semibold text-red-600 hover:text-red-700"
                     >
                       Delete
