@@ -126,9 +126,19 @@ export function Field({
   const primary = childList.length > 1 ? childList.find((c) => isValidElement(c)) : children;
 
   let control: ReactNode = children;
+  /*
+   * Whether the control this field wraps is required, read off the control
+   * itself rather than passed in beside it. 63 controls across the product
+   * carry `required` and not one of them said so on the label, so a form was
+   * only discoverable by submitting it and being told. Reading the attribute
+   * means the marker cannot drift away from the rule it describes, and no call
+   * site has to be edited to gain one.
+   */
+  let isRequired = false;
   if (isValidElement(primary)) {
     const child = primary as ReactElement<Record<string, unknown>>;
     const props = child.props;
+    isRequired = props.required === true || props['aria-required'] === true;
     const existingDescribedBy = props['aria-describedby'] as string | undefined;
     // Name the control explicitly rather than leaning on the wrapping <label>.
     // A field with a tooltip puts an interactive <button> inside that label,
@@ -152,7 +162,18 @@ export function Field({
   return (
     <label className="block">
       <span className="mb-1.5 flex items-center gap-1.5 text-[0.8rem] font-semibold text-ink-700">
-        <span id={labelId}>{label}</span>
+        <span className="flex items-baseline">
+          <span id={labelId}>{label}</span>
+          {/* Outside the labelled span, and hidden: `required` on the control
+              is already an implicit `aria-required`, so a screen reader
+              announces the rule anyway — carrying the asterisk into the name
+              would only make the field "Company name star". */}
+          {isRequired && (
+            <span aria-hidden="true" className="ml-0.5 text-red-600">
+              *
+            </span>
+          )}
+        </span>
         {tooltip && <InfoTooltip text={tooltip} label={`About ${label}`} />}
       </span>
       {control}
