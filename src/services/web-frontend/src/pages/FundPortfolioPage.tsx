@@ -453,7 +453,9 @@ function PositionRow({
   return (
     <div className="rounded-md border border-paper-200">
       <button
+        type="button"
         onClick={toggle}
+        aria-expanded={open}
         className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-paper-50"
       >
         <span className="font-medium text-ink-700">

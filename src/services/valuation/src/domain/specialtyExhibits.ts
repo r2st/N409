@@ -59,6 +59,22 @@ function pct(value: unknown, digits = 1): string | null {
   return n === null ? null : formatPercent(n, digits);
 }
 
+/**
+ * A cell's text, escaped, or the em-dash when the value is not printable text.
+ *
+ * `esc(String(value ?? '—'))` was the idiom, and it has two holes that only
+ * show up on a result the engine did not produce cleanly: `??` does not catch
+ * `NaN`, so a numeric field that arrives as NaN prints the word "NaN"; and
+ * `String({})` is "[object Object]", so a field that arrives as an object where
+ * a name was expected prints that. Both put a token in a valuation exhibit that
+ * a reader cannot interpret and cannot tell from a real value.
+ */
+function str(value: unknown, fallback = '—'): string {
+  if (typeof value === 'string') return value === '' ? fallback : esc(value);
+  if (typeof value === 'number') return Number.isFinite(value) ? esc(String(value)) : fallback;
+  return fallback;
+}
+
 // ── QSBS ─────────────────────────────────────────────────────────────────────
 
 function qsbsExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
@@ -374,6 +390,296 @@ function intangibleExhibit(specialty: Record<string, unknown>, ctx: ExhibitConte
   ]);
 }
 
+// ── ASC 820 fair-value measurement ───────────────────────────────────────────
+
+/**
+ * The 820-10-50 disclosure tables: the hierarchy, the positions the rules
+ * re-levelled, the significant unobservable inputs, and the Level 3
+ * rollforward.
+ *
+ * The reclassification table is second rather than last on purpose. A position
+ * the engine moved out of the level the analyst stated is the finding a
+ * reviewer opens this exhibit for, and a schedule that reports only the
+ * aggregate would let a Level 3 measurement be disclosed as Level 2 with the
+ * evidence three tables further down.
+ */
+function fairValue820Exhibit(
+  specialty: Record<string, unknown>,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const total = num(specialty.total_fair_value);
+  const byLevel = record(specialty.by_level);
+  if (total === null || !byLevel) return null;
+
+  const nav = record(specialty.nav_practical_expedient);
+  const navAmount = num(nav?.fair_value);
+  const categorised = num(specialty.categorized_fair_value);
+
+  const hierarchy = table({
+    head: ['Fair value hierarchy', 'Amount', '% of total'],
+    rows: [
+      ['Level 1 — quoted prices in active markets', 'level_1'],
+      ['Level 2 — other observable inputs', 'level_2'],
+      ['Level 3 — unobservable inputs', 'level_3'],
+    ].map(([caption, key]) => {
+      const amount = num(byLevel[key!]) ?? 0;
+      return [caption!, shown(amount, ctx), total > 0 ? formatPercent(amount / total) : '—'];
+    }),
+    foot: ['Total fair value', shown(total, ctx), '100.0%'],
+  });
+
+  // Only when there is one. The NAV expedient line reconciles the hierarchy to
+  // the statement total (820-10-35-59) and reads as a fourth level if it is
+  // printed at zero for a portfolio that holds no such investment.
+  const navLine =
+    navAmount !== null && navAmount !== 0
+      ? table({
+          head: ['Reconciling item', 'Amount'],
+          rows: [
+            ['Categorised in the hierarchy', categorised === null ? '—' : shown(categorised, ctx)],
+            ['Measured at net asset value as a practical expedient', shown(navAmount, ctx)],
+          ],
+          foot: ['Total per the statement of financial position', shown(total, ctx)],
+        }) + P(str(nav?.note, ''))
+      : null;
+
+  const reclassified = list(specialty.reclassified_positions)
+    .map(record)
+    .filter((r): r is Record<string, unknown> => r !== null);
+  const reclassifiedTable =
+    reclassified.length > 0
+      ? P(
+          'The categorisation below differs from the level stated for the position. ' +
+            'ASC 820-10-35-37 categorises a measurement by the lowest level of input ' +
+            'that is significant to it.',
+        ) +
+        table({
+          head: ['Position', 'Categorised as', 'Basis'],
+          rows: reclassified.map((r) => [str(r.name), label(str(r.level)), str(r.basis)]),
+        })
+      : null;
+
+  const unobservable = list(specialty.unobservable_inputs)
+    .map(record)
+    .filter((r): r is Record<string, unknown> => r !== null);
+  const unobservableTable =
+    unobservable.length > 0
+      ? table({
+          head: ['Significant unobservable input', 'Low', 'High', 'Weighted average', 'Positions'],
+          rows: unobservable.map((u) => {
+            const average = num(u.weighted_average);
+            return [
+              str(u.input),
+              String(num(u.low) ?? '—'),
+              String(num(u.high) ?? '—'),
+              // Labelled when it is not what 820-10-50-2(bbb) asks for: every
+              // position carrying the input was marked at zero, so there was no
+              // weight to average by and this is the arithmetic mean.
+              average === null
+                ? '—'
+                : `${average}${u.weighted === false ? ' (unweighted — no fair value to weight by)' : ''}`,
+              String(num(u.position_count) ?? '—'),
+            ];
+          }),
+        })
+      : null;
+
+  const roll = record(specialty.level_3_rollforward);
+  const rollTable = roll
+    ? table({
+        head: ['Level 3 rollforward', 'Amount'],
+        rows: [
+          'beginning_balance',
+          'purchases',
+          'issuances',
+          'sales',
+          'settlements',
+          'transfers_into_level_3',
+          'transfers_out_of_level_3',
+          'realized_gains_losses',
+          'unrealized_gains_losses',
+        ]
+          .map((key) => [label(key), money(roll[key], ctx)])
+          .filter((row): row is string[] => row[1] !== null),
+        foot: ['Ending balance', money(byLevel.level_3, ctx) ?? '—'],
+      }) +
+      // The engine foots the rollforward against the Level 3 total it measured
+      // and reports whether the two agree. A rollforward that does not tie is
+      // the single most important thing on this exhibit, and printing the table
+      // without the verdict leaves the reader to add up nine rows to find out.
+      (roll.ties === false
+        ? P(
+            `<strong>The rollforward does not tie.</strong> The movements sum to ` +
+              `${money(roll.computed_ending_balance, ctx) ?? '—'} against a measured Level 3 balance of ` +
+              `${money(roll.measured_ending_balance, ctx) ?? '—'} — a difference of ` +
+              `${money(roll.difference, ctx) ?? '—'}.`,
+          )
+        : P('The movements above tie to the measured Level 3 balance.'))
+    : null;
+
+  return section('Exhibit — Fair Value Measurements (ASC 820-10-50)', [
+    hierarchy,
+    navLine,
+    reclassifiedTable,
+    unobservableTable,
+    rollTable,
+  ]);
+}
+
+// ── Gift & estate ────────────────────────────────────────────────────────────
+
+/**
+ * The value bridge, the discount arithmetic and the Revenue Ruling 59-60
+ * checklist.
+ *
+ * `effective_discount` is printed beside the two rates because it is the line
+ * a reviewer checks: the discounts compound, 1 − (1 − a)(1 − b), and a reader
+ * who adds them gets a different number.
+ */
+function giftEstateExhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
+  const concluded = num(specialty.concluded_value);
+  const proRata = num(specialty.pro_rata_value);
+  if (concluded === null || proRata === null) return null;
+
+  const percent = num(specialty.percent_interest);
+  const entity = num(specialty.entity_value);
+  const bridge = table({
+    head: ['Step', 'Rate', 'Amount'],
+    rows: [
+      ['Entity value', '', entity === null ? '—' : shown(entity, ctx)],
+      [
+        // `percent_interest` comes back as a percentage, not a fraction — the
+        // engine takes it that way because that is how the questionnaire asks
+        // ("what percentage interest was transferred"), and reports it
+        // unchanged. Running it through `pct` would print a 15% interest as
+        // 1,500%.
+        `Pro rata ${percent === null ? '' : `${percent}%`} interest`.trim(),
+        '',
+        shown(proRata, ctx),
+      ],
+      [
+        'Less discount for lack of control',
+        pct(specialty.dloc) ?? '—',
+        money(specialty.value_after_dloc, ctx) ?? '—',
+      ],
+      ['Less discount for lack of marketability', pct(specialty.dlom) ?? '—', shown(concluded, ctx)],
+    ],
+    foot: [
+      'Concluded value of the transferred interest',
+      pct(specialty.effective_discount) ?? '—',
+      shown(concluded, ctx),
+    ],
+  });
+
+  const exclusion = record(specialty.annual_exclusion);
+  const taxable = num(specialty.taxable_gift);
+  const gift =
+    taxable === null
+      ? null
+      : table({
+          head: ['Reportable gift', 'Amount'],
+          rows: [
+            ['Value of the transferred interest', shown(concluded, ctx)],
+            [
+              exclusion?.applies === true
+                ? `Less annual exclusion (${String(num(exclusion.donees) ?? 1)} donee(s)` +
+                  `${exclusion.split_gift === true ? ', split gift' : ''})`
+                : 'Annual exclusion — not available for this transfer',
+              exclusion?.applies === true ? `−${money(exclusion.applied, ctx) ?? '—'}` : '—',
+            ],
+            ['Prior taxable gifts', money(specialty.prior_taxable_gifts, ctx) ?? '—'],
+          ],
+          foot: ['Cumulative taxable gifts', money(specialty.cumulative_taxable_gifts, ctx) ?? '—'],
+        });
+
+  const factors = record(specialty.rev_rul_59_60);
+  const factorRows = list(factors?.factors)
+    .map(record)
+    .filter((r): r is Record<string, unknown> => r !== null);
+  const checklist =
+    factorRows.length > 0
+      ? table({
+          head: ['Revenue Ruling 59-60 factor', 'Addressed'],
+          rows: factorRows.map((f) => [str(f.label ?? f.key), f.addressed === true ? 'Yes' : 'No']),
+          foot: [
+            'Factors addressed',
+            `${String(num(factors?.addressed_count) ?? 0)} of ${String(num(factors?.total_count) ?? factorRows.length)}`,
+          ],
+        })
+      : null;
+
+  return section('Exhibit — Transferred Interest and Discounts', [bridge, gift, checklist]);
+}
+
+// ── IFRS 2 share-based payment ───────────────────────────────────────────────
+
+/**
+ * The grant-date measurement and the expense attribution.
+ *
+ * `warnings` and the true-up basis are rendered rather than dropped: both are
+ * statements about which paragraph governs the number above them, and an
+ * expense schedule with no note of whether it will be trued up is a figure a
+ * reviewer cannot check.
+ */
+function ifrs2Exhibit(specialty: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
+  const totalExpense = num(specialty.total_expense);
+  const perAward = num(specialty.fair_value_per_award);
+  if (totalExpense === null || perAward === null) return null;
+
+  const measurement = table({
+    head: ['Grant-date measurement', 'Value'],
+    rows: [
+      ['Settlement', label(str(specialty.settlement))],
+      ['Vesting condition', label(str(specialty.vesting_condition))],
+      ['Model', label(str(specialty.model))],
+      ['Fair value per award', shown(perAward, ctx, 4)],
+      ['Awards granted', String(num(specialty.options_granted) ?? '—')],
+      ['Grant-date fair value', money(specialty.grant_date_fair_value_total, ctx) ?? '—'],
+      ['Expected forfeiture rate', pct(specialty.expected_forfeiture_rate) ?? '—'],
+      ['Expected to vest', String(num(specialty.expected_to_vest) ?? '—')],
+    ],
+    foot: ['Total expense', shown(totalExpense, ctx)],
+  });
+
+  const schedule = list(specialty.expense_schedule)
+    .map(record)
+    .filter((r): r is Record<string, unknown> => r !== null);
+  const scheduleTable =
+    schedule.length > 0
+      ? table({
+          // `period` is the expense *of* the period, not its name — the name is
+          // `year`. Reading them the other way round prints the schedule with
+          // every row labelled by its own amount.
+          head: ['Year', 'Expense', 'Cumulative', 'Cumulative %'],
+          rows: schedule.map((p) => [
+            `Year ${String(num(p.year) ?? '—')}`,
+            money(p.period, ctx) ?? '—',
+            money(p.cumulative, ctx) ?? '—',
+            pct(p.cumulative_pct) ?? '—',
+          ]),
+          foot: [
+            `Attribution — ${label(str(specialty.attribution))}`,
+            shown(totalExpense, ctx),
+            '',
+            '100.0%',
+          ],
+        })
+      : null;
+
+  const trueUp = record(specialty.true_up);
+  const trueUpNote = trueUp ? P(str(trueUp.basis, '')) : null;
+  const warnings = list(specialty.warnings).filter((w): w is string => typeof w === 'string');
+  const warningNote =
+    warnings.length > 0 ? warnings.map((w) => P(`<strong>Note.</strong> ${esc(w)}`)).join('') : null;
+
+  return section('Exhibit — Share-Based Payment (IFRS 2)', [
+    measurement,
+    scheduleTable,
+    trueUpNote,
+    warningNote,
+  ]);
+}
+
 /**
  * The exhibits for a specialty calculation, dispatched on the kind the run
  * recorded (results.kind, written by routes/specialty.ts). Unknown kinds and
@@ -404,6 +710,16 @@ export function buildSpecialtyExhibits(
         return [emiCsopExhibit(specialty, ctx)];
       case 'ip':
         return [intangibleExhibit(specialty, ctx)];
+      // The three kinds that gained an engine endpoint after this switch was
+      // written. Each ran, recorded a result, and then rendered a deliverable
+      // with no schedules at all under an "Index of Exhibits" section
+      // promising them.
+      case '820':
+        return [fairValue820Exhibit(specialty, ctx)];
+      case 'gifts':
+        return [giftEstateExhibit(specialty, ctx)];
+      case 'ifrs2':
+        return [ifrs2Exhibit(specialty, ctx)];
       default:
         return [];
     }

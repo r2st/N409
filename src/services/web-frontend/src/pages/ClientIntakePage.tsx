@@ -440,24 +440,44 @@ export function ClientIntakePage() {
   );
 }
 
+/**
+ * The labelling props `Field` clones onto its single child.
+ *
+ * `Field` names the control by injecting these — but it injects them into
+ * whatever element it was given, and here that element is this component, not
+ * a DOM node. React passes them straight through as ordinary props, and a
+ * component that does not forward them drops them on the floor. Every control
+ * on the client questionnaire was therefore an unlabelled edit box: announced
+ * as "blank, edit text", with no aria-invalid on a rejected answer and no
+ * pointer at the hint underneath it.
+ */
+interface InjectedFieldProps {
+  id?: string;
+  'aria-labelledby'?: string;
+  'aria-describedby'?: string;
+  'aria-invalid'?: boolean;
+}
+
 /** One questionnaire control, typed by the schema the server sent. */
 function Control({
   field,
   answers,
   disabled,
   onChange,
+  ...labelling
 }: {
   field: IntakeField;
   answers: Record<string, unknown>;
   disabled: boolean;
   onChange: (key: string, value: unknown) => void;
-}) {
+} & InjectedFieldProps) {
   const value = controlValue(answers, field.key);
   const set = (raw: string) => onChange(field.key, answerFromControl(field, raw));
 
   if (field.type === 'textarea') {
     return (
       <textarea
+        {...labelling}
         disabled={disabled}
         rows={4}
         maxLength={field.rules?.maxLength}
@@ -469,7 +489,7 @@ function Control({
   }
   if (field.type === 'boolean') {
     return (
-      <Select disabled={disabled} value={value} onChange={(e) => set(e.target.value)}>
+      <Select {...labelling} disabled={disabled} value={value} onChange={(e) => set(e.target.value)}>
         <option value="">Select…</option>
         <option value="yes">Yes</option>
         <option value="no">No</option>
@@ -478,7 +498,7 @@ function Control({
   }
   if (field.type === 'select') {
     return (
-      <Select disabled={disabled} value={value} onChange={(e) => set(e.target.value)}>
+      <Select {...labelling} disabled={disabled} value={value} onChange={(e) => set(e.target.value)}>
         <option value="">Select…</option>
         {field.options?.map((o) => (
           <option key={o} value={o}>
@@ -490,6 +510,7 @@ function Control({
   }
   return (
     <TextInput
+      {...labelling}
       disabled={disabled}
       type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
       maxLength={field.type === 'text' ? field.rules?.maxLength : undefined}

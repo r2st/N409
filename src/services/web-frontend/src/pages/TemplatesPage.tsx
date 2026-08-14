@@ -210,6 +210,7 @@ export function TemplatesPage() {
                         {editing?.id === t.id && (
                           <div className="mt-3">
                             <textarea
+                              aria-label={`Body of the ${t.name} template`}
                               value={editing.body}
                               onChange={(e) => setEditing({ id: t.id, body: e.target.value })}
                               rows={10}

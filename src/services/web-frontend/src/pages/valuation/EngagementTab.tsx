@@ -151,7 +151,12 @@ export function EngagementTab() {
             Advance to next stage
           </Button>
           <div className="flex items-center gap-2">
-            <Select value={target} onChange={(e) => setTarget(e.target.value)} className="w-48">
+            <Select
+              aria-label="Jump to stage"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              className="w-48"
+            >
               <option value="">Jump to stage…</option>
               {stages.map((s) => (
                 <option key={s.key} value={s.key}>

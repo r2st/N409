@@ -749,7 +749,18 @@ export function ValuationsPage() {
                           className="h-2 w-2 shrink-0 rounded-full bg-bond-600"
                         />
                       )}
-                      {v.company_name}
+                      {/* The whole row is clickable, which is a mouse-only
+                          affordance: a <tr onClick> is not focusable and has no
+                          key binding, so opening a valuation from the worklist
+                          was unreachable from the keyboard. The name is the
+                          real link; the row click stays as a convenience. */}
+                      <Link
+                        to={`/valuations/${v.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="rounded-sm hover:underline focus-visible:ring-2 focus-visible:ring-bond-600/40 focus-visible:outline-none"
+                      >
+                        {v.company_name}
+                      </Link>
                       {ops && v.partner_id && (
                         <span className="rounded-full bg-paper-200 px-1.5 py-0.5 text-[0.65rem] font-semibold text-ink-500 ring-1 ring-ink-200 ring-inset">
                           Partner

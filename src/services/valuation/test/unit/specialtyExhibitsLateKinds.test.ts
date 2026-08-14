@@ -1,0 +1,273 @@
+import { describe, expect, it } from 'vitest';
+import { buildSpecialtyExhibits } from '../../src/domain/specialtyExhibits.js';
+import {
+  SAMPLE_820_RESULT,
+  SAMPLE_GIFTS_RESULT,
+  SAMPLE_IFRS2_RESULT,
+} from '../../src/domain/specialtySamples.js';
+import type { CalculationRow } from '../../src/repos/calculations.js';
+
+/**
+ * `820`, `gifts` and `ifrs2` gained engine endpoints after `buildSpecialtyExhibits`
+ * was written, and were never added to its switch. Each ran, recorded a result,
+ * and rendered a deliverable with no schedules under it — beneath an "Index of
+ * Exhibits" section whose text promises that "the exhibits that follow are
+ * generated from the valuation model supporting this report".
+ *
+ * The payloads are the real engines' output (see domain/specialtySamples.ts),
+ * not hand-written objects. That matters: writing these exhibits against the
+ * shapes the Python was *assumed* to return got three fields wrong — the NAV
+ * reconciling line reads `fair_value`/`note` rather than `amount`/`basis`,
+ * `percent_interest` comes back as a percentage rather than a fraction, and in
+ * the IFRS 2 expense schedule `period` is the amount while `year` is the label.
+ * Each would have rendered plausibly and wrongly.
+ */
+
+const ctx = { currency: 'USD', companyName: 'Northwind Robotics, Inc.', valuationDate: '2026-03-31' };
+
+function calc(kind: string, specialty: Record<string, unknown>): CalculationRow {
+  return {
+    id: '01J',
+    valuation_id: '01K',
+    engine_version: 'test',
+    status: 'succeeded',
+    inputs: {},
+    results: { kind, specialty },
+    equity_value: null,
+    fmv_per_share: null,
+    error: null,
+    diagnostics: [],
+    created_by: null,
+    created_at: new Date(),
+  };
+}
+
+const only = (kind: string, specialty: Record<string, unknown>) => {
+  const sections = buildSpecialtyExhibits(calc(kind, specialty), ctx);
+  expect(sections).toHaveLength(1);
+  return sections[0]!;
+};
+
+describe('ASC 820 fair value measurement', () => {
+  const exhibit = () => only('820', SAMPLE_820_RESULT);
+
+  it('is rendered at all', () => {
+    expect(exhibit().heading).toContain('820-10-50');
+  });
+
+  it('prints the hierarchy with each level as a share of the total', () => {
+    const html = exhibit().html;
+    expect(html).toContain('$4,200,000'); // level 1
+    expect(html).toContain('$2,650,000'); // level 2
+    expect(html).toContain('$7,550,000'); // level 3
+    expect(html).toContain('$17,500,000'); // total
+    expect(html).toContain('43.1%'); // level 3 as a share
+  });
+
+  it('reconciles the NAV practical expedient to the statement total', () => {
+    const html = exhibit().html;
+    expect(html).toContain('$3,100,000');
+    expect(html).toContain('$14,400,000'); // categorised
+    expect(html).toContain('820-10-35-59');
+  });
+
+  it('names the position the hierarchy re-levelled, and why', () => {
+    const html = exhibit().html;
+    expect(html).toContain('Series B preferred');
+    expect(html).toContain('820-10-35-37');
+    expect(html).toContain('does not govern');
+  });
+
+  it('discloses the significant unobservable inputs as a range and a weighted average', () => {
+    const html = exhibit().html;
+    expect(html).toContain('Discount for lack of marketability');
+    expect(html).toContain('0.275');
+    expect(html).toContain('0.32');
+  });
+
+  it('foots the Level 3 rollforward and says whether it ties', () => {
+    const html = exhibit().html;
+    expect(html).toContain('Beginning balance');
+    expect(html).toContain('$6,900,000');
+    expect(html).toContain('tie to the measured Level 3 balance');
+  });
+
+  it('says loudly when the rollforward does not tie', () => {
+    const broken = {
+      ...SAMPLE_820_RESULT,
+      level_3_rollforward: {
+        ...(SAMPLE_820_RESULT.level_3_rollforward as Record<string, unknown>),
+        ties: false,
+        computed_ending_balance: 7_100_000,
+        measured_ending_balance: 7_550_000,
+        difference: 450_000,
+      },
+    };
+    const html = only('820', broken).html;
+    expect(html).toContain('does not tie');
+    expect(html).toContain('$450,000');
+  });
+
+  it('omits the NAV line entirely when no position uses the expedient', () => {
+    const noNav = {
+      ...SAMPLE_820_RESULT,
+      nav_practical_expedient: { fair_value: 0, position_count: 0, note: 'n/a' },
+    };
+    // A zero line reads as a fourth level in the hierarchy.
+    expect(only('820', noNav).html).not.toContain('practical expedient');
+  });
+});
+
+describe('gift & estate', () => {
+  const exhibit = () => only('gifts', SAMPLE_GIFTS_RESULT);
+
+  it('prints the bridge from entity value to the transferred interest', () => {
+    const html = exhibit().html;
+    expect(html).toContain('$24,000,000'); // entity
+    expect(html).toContain('$3,600,000'); // pro rata 15%
+    expect(html).toContain('$3,168,000'); // after DLOC
+    expect(html).toContain('$2,280,960'); // concluded
+  });
+
+  it('states the interest as the percentage the engine returns, not as a fraction of one', () => {
+    // `percent_interest` is 15, not 0.15 — running it through a percent
+    // formatter would print a 15% interest as 1,500%.
+    const html = exhibit().html;
+    expect(html).toContain('15%');
+    expect(html).not.toContain('1,500');
+  });
+
+  it('foots with the effective discount, which is not the sum of the two rates', () => {
+    // 1 − (1 − 0.12)(1 − 0.28) = 36.64%, where adding gives 40%.
+    const html = exhibit().html;
+    expect(html).toContain('36.6%');
+    expect(html).not.toContain('40.0%');
+  });
+
+  it('carries the reportable gift through the annual exclusion and prior gifts', () => {
+    const html = exhibit().html;
+    expect(html).toContain('$38,000'); // exclusion applied, 2 donees
+    expect(html).toContain('$1,250,000'); // prior taxable gifts
+    expect(html).toContain('$3,492,960'); // cumulative
+  });
+
+  it('prints the Revenue Ruling 59-60 checklist with what is still unaddressed', () => {
+    const html = exhibit().html;
+    expect(html).toContain('The earning capacity of the company');
+    expect(html).toContain('7 of 8');
+    expect(html).toContain('No'); // the unaddressed factor
+  });
+});
+
+describe('IFRS 2 share-based payment', () => {
+  const exhibit = () => only('ifrs2', SAMPLE_IFRS2_RESULT);
+
+  it('prints the grant-date measurement and what it expects to vest', () => {
+    const html = exhibit().html;
+    expect(html).toContain('Black scholes');
+    expect(html).toContain('$0.7437'); // fair value per award
+    expect(html).toContain('750000'); // awards granted
+    expect(html).toContain('690000'); // expected to vest after 8% forfeiture
+  });
+
+  it('labels each schedule row by its year and not by its own amount', () => {
+    const html = exhibit().html;
+    expect(html).toContain('Year 1');
+    expect(html).toContain('Year 4');
+    expect(html).toContain('$267,249'); // year 1 expense
+  });
+
+  it('shows the attribution the awards actually used', () => {
+    // Graded, because IFRS 2.IG11 has no straight-line election for
+    // instalment vesting.
+    expect(exhibit().html).toContain('Graded');
+  });
+
+  it('states whether the expense will be trued up, and under which paragraph', () => {
+    const html = exhibit().html;
+    expect(html).toContain('IFRS 2.19');
+    expect(html).toContain('trued up');
+  });
+
+  it('renders the graded-attribution warning when the engine raises one', () => {
+    const warned = { ...SAMPLE_IFRS2_RESULT, warnings: ['IFRS 2.IG11 requires graded attribution'] };
+    expect(only('ifrs2', warned).html).toContain('IG11');
+  });
+});
+
+describe('degradation', () => {
+  it.each([
+    ['820', {}],
+    ['gifts', {}],
+    ['ifrs2', {}],
+    ['820', { total_fair_value: 1 }], // no by_level
+    ['gifts', { concluded_value: 1 }], // no pro_rata_value
+    ['ifrs2', { total_expense: 1 }], // no fair_value_per_award
+  ])('drops the %s exhibit rather than throwing on a shape it does not recognise', (kind, payload) => {
+    expect(buildSpecialtyExhibits(calc(kind, payload), ctx)).toEqual([]);
+  });
+
+  /**
+   * `results.specialty` is jsonb written straight from an engine response. An
+   * engine version that stops emitting a field, or emits null where it emitted
+   * a figure, produces exactly these shapes — and the report still has to
+   * render. Every leaf, one at a time, rather than the handful somebody thought
+   * of: the module's contract is that no shape throws inside a render, and a
+   * contract stated over "every field" has to be tested over every field.
+   */
+  function leafPaths(value: unknown, prefix: string[] = []): string[][] {
+    if (value === null || typeof value !== 'object') return [prefix];
+    if (Array.isArray(value)) return value.flatMap((v, i) => leafPaths(v, [...prefix, String(i)]));
+    return Object.entries(value).flatMap(([k, v]) => leafPaths(v, [...prefix, k]));
+  }
+
+  function replaceAt(value: unknown, path: string[], replacement: unknown): unknown {
+    if (path.length === 0) return replacement;
+    const [head, ...rest] = path;
+    if (Array.isArray(value)) {
+      return value.map((v, i) => (String(i) === head ? replaceAt(v, rest, replacement) : v));
+    }
+    const obj = value as Record<string, unknown>;
+    return { ...obj, [head!]: replaceAt(obj[head!], rest, replacement) };
+  }
+
+  describe.each([
+    ['820', SAMPLE_820_RESULT],
+    ['gifts', SAMPLE_GIFTS_RESULT],
+    ['ifrs2', SAMPLE_IFRS2_RESULT],
+  ])('%s', (kind, sample) => {
+    const paths = leafPaths(sample);
+
+    it('has leaves to corrupt', () => {
+      expect(paths.length).toBeGreaterThan(20);
+    });
+
+    it.each([null, undefined, 'unexpected string', NaN, {}, []])(
+      'renders or drops — never throws — with any single leaf replaced by %s',
+      (replacement) => {
+        for (const path of paths) {
+          const corrupted = replaceAt(sample, path, replacement) as Record<string, unknown>;
+          expect(
+            () => buildSpecialtyExhibits(calc(kind, corrupted), ctx),
+            `${kind}.${path.join('.')} = ${String(replacement)}`,
+          ).not.toThrow();
+        }
+      },
+    );
+
+    it('never prints a literal NaN, undefined or [object Object]', () => {
+      for (const path of paths) {
+        for (const replacement of [NaN, undefined, {}]) {
+          const corrupted = replaceAt(sample, path, replacement) as Record<string, unknown>;
+          const html = buildSpecialtyExhibits(calc(kind, corrupted), ctx)
+            .map((s) => s.html)
+            .join('');
+          const where = `${kind}.${path.join('.')} = ${String(replacement)}`;
+          expect(html, where).not.toContain('NaN');
+          expect(html, where).not.toContain('undefined');
+          expect(html, where).not.toContain('[object Object]');
+        }
+      }
+    });
+  });
+});

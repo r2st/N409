@@ -291,11 +291,16 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
               // they are saved, and a ticker the analyst is halfway through
               // typing is not one.
               <tr key={i} className="border-b border-paper-200 last:border-0">
+                {/* A column header names a cell, not a control inside one, so
+                    an editable grid has to name each input itself — otherwise
+                    every box in the table is announced as "blank, edit text"
+                    and there is no way to tell which column you are in. */}
                 <td className="px-4 py-2">
                   <TextInput
                     disabled={readOnly}
                     value={row.ticker}
                     placeholder="AAA"
+                    aria-label={`Peer ${i + 1} ticker`}
                     onChange={(e) =>
                       setBetas((b) => b.map((r, j) => (j === i ? { ...r, ticker: e.target.value } : r)))
                     }
@@ -307,6 +312,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
                     inputMode="decimal"
                     value={row.beta}
                     placeholder="1.20"
+                    aria-label={`Peer ${i + 1} levered beta`}
                     onChange={(e) =>
                       setBetas((b) => b.map((r, j) => (j === i ? { ...r, beta: e.target.value } : r)))
                     }
@@ -316,6 +322,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
                   <TextInput
                     disabled={readOnly}
                     inputMode="decimal"
+                    aria-label={`Peer ${i + 1} debt to equity`}
                     value={row.debt_to_equity}
                     placeholder="0.25"
                     onChange={(e) =>
@@ -330,6 +337,7 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
                     <Button
                       variant="ghost"
                       type="button"
+                      aria-label={`Remove peer ${i + 1}${row.ticker ? ` (${row.ticker})` : ''}`}
                       onClick={() =>
                         setBetas((b) => (b.length === 1 ? [{ ...EMPTY_BETA }] : b.filter((_, j) => j !== i)))
                       }

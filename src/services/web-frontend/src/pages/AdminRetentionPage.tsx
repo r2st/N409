@@ -168,9 +168,14 @@ export function AdminRetentionPage() {
               {policies.map((p) => (
                 <tr key={p.data_type} className="border-b border-paper-200 last:border-0">
                   <td className="px-3 py-2 font-semibold text-ink-800">{p.data_type}</td>
+                  {/* Every control in this grid is named after its own row: the
+                      column header names the cell, not the input inside it, so
+                      without this the page offers three anonymous edit boxes and
+                      a button called "Save" per data type. */}
                   <td className="px-3 py-2">
                     <TextInput
                       type="number"
+                      aria-label={`Archive ${p.data_type} after (days)`}
                       value={p.archive_after_days ?? ''}
                       onChange={(e) =>
                         setPolicy(p.data_type, {
@@ -183,6 +188,7 @@ export function AdminRetentionPage() {
                   <td className="px-3 py-2">
                     <TextInput
                       type="number"
+                      aria-label={`Retain ${p.data_type} for (days)`}
                       value={p.retention_days ?? ''}
                       onChange={(e) =>
                         setPolicy(p.data_type, {
@@ -195,12 +201,15 @@ export function AdminRetentionPage() {
                   <td className="px-3 py-2">
                     <input
                       type="checkbox"
+                      aria-label={`Enable the ${p.data_type} retention policy`}
                       checked={p.enabled}
                       onChange={(e) => setPolicy(p.data_type, { enabled: e.target.checked })}
                     />
                   </td>
                   <td className="px-3 py-2 text-right">
                     <button
+                      type="button"
+                      aria-label={`Save the ${p.data_type} retention policy`}
                       onClick={() => savePolicy(p)}
                       className="text-sm font-semibold text-bond-600 hover:text-bond-700"
                     >

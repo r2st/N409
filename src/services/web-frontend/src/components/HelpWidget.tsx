@@ -217,8 +217,12 @@ export function HelpWidget() {
             </div>
             {view === 'topics' && (
               <input
+                type="search"
                 className="mt-3 w-full rounded-md border border-chrome-700 bg-chrome-800 px-3 py-2 text-sm text-chrome-fg placeholder:text-chrome-faint focus:border-brass-400 focus:outline-none"
                 placeholder="Search help topics…"
+                // A placeholder is not a name: it is gone the moment anything
+                // is typed, and never reaches the accessibility tree as one.
+                aria-label="Search help topics"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -236,7 +240,9 @@ export function HelpWidget() {
                 {topics.map((t) => (
                   <div key={t.id} className="rounded-md">
                     <button
+                      type="button"
                       onClick={() => setOpenTopic(openTopic === t.id ? null : t.id)}
+                      aria-expanded={openTopic === t.id}
                       className="flex w-full cursor-pointer items-center justify-between rounded-md px-3 py-2.5 text-left text-sm font-semibold text-ink-800 hover:bg-paper-100"
                     >
                       {t.title}
