@@ -185,15 +185,69 @@ describe('FundingHistory', () => {
     expect(screen.getByLabelText('Round name')).toHaveValue('Series D');
   });
 
-  it('will not submit a round with no name', async () => {
-    mockApi({});
+  it('will not submit a round with no name, and says which box is empty', async () => {
+    // R29 — the button used to be disabled until a name was typed, which
+    // refused the submit without ever saying why. It is now live, and the
+    // refusal comes with a message attached to the box it is about.
+    const calls = mockApi({});
     renderHistory();
     await screen.findByText('No funding rounds recorded.');
 
     await userEvent.click(screen.getByRole('button', { name: '+ Add round' }));
-    expect(screen.getByRole('button', { name: 'Add round' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Add round' }));
+
+    expect(await screen.findByText('Round name is required.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('treats a whitespace-only round name as no name at all', async () => {
+    const calls = mockApi({});
+    renderHistory();
+    await screen.findByText('No funding rounds recorded.');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add round' }));
     await userEvent.type(screen.getByLabelText('Round name'), '   ');
-    expect(screen.getByRole('button', { name: 'Add round' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Add round' }));
+
+    expect(await screen.findByText('Round name is required.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('refuses a negative amount rather than storing negative cents', async () => {
+    // `toCents` has no floor of its own — it would turn "-5" into -500 and the
+    // API would take it. The min="0" on the control was the only guard, and
+    // that stopped applying when the form took validation over.
+    const calls = mockApi({});
+    renderHistory();
+    await screen.findByText('No funding rounds recorded.');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add round' }));
+    await userEvent.type(screen.getByLabelText('Round name'), 'Series D');
+    await userEvent.type(screen.getByLabelText('Amount raised ($)'), '-5');
+    await userEvent.click(screen.getByRole('button', { name: 'Add round' }));
+
+    expect(await screen.findByText('Amount raised must be at least 0.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('leaves the optional money boxes alone when they are blank', async () => {
+    // The floor applies only to a box that has something in it — otherwise
+    // "optional" would have quietly become "required at zero".
+    const calls = mockApi({});
+    renderHistory();
+    await screen.findByText('No funding rounds recorded.');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add round' }));
+    await userEvent.type(screen.getByLabelText('Round name'), 'Series D');
+    await userEvent.click(screen.getByRole('button', { name: 'Add round' }));
+
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({
+      name: 'Series D',
+      amount_raised_cents: null,
+      pre_money_cents: null,
+      post_money_cents: null,
+    });
   });
 
   it('abandons the round form on cancel', async () => {
@@ -309,12 +363,31 @@ describe('FundingHistory', () => {
   it('will not submit a transaction with no date', async () => {
     // Without a date a transaction cannot be placed relative to the valuation
     // date, which is the only thing that makes it evidence.
-    mockApi({});
+    const calls = mockApi({});
     renderHistory();
     await screen.findByText('No transactions recorded.');
 
     await userEvent.click(screen.getByRole('button', { name: '+ Add transaction' }));
-    expect(screen.getByRole('button', { name: 'Add transaction' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Add transaction' }));
+
+    expect(await screen.findByText('Date is required.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('refuses a fractional share count on a transaction', async () => {
+    // step="1" said so, and `Math.round` in the submit body would otherwise
+    // have silently rounded 25000.5 shares to 25001 without telling anyone.
+    const calls = mockApi({});
+    renderHistory();
+    await screen.findByText('No transactions recorded.');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add transaction' }));
+    await userEvent.type(screen.getByLabelText('Date'), '2026-01-20');
+    await userEvent.type(screen.getByLabelText('Shares'), '25000.5');
+    await userEvent.click(screen.getByRole('button', { name: 'Add transaction' }));
+
+    expect(await screen.findByText('Shares must be a whole number.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
   });
 
   it('offers every transaction kind the API accepts', async () => {

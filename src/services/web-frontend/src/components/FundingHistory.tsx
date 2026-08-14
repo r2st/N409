@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
+import {
+  all,
+  integer,
+  numberMin,
+  optional,
+  required,
+  useFormValidation,
+} from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { formatDate, formatMoney, formatNumber } from '../lib/format';
 import { TRANSACTION_KINDS } from '../lib/types';
@@ -81,9 +88,27 @@ export function FundingHistory({
     }
   };
 
-  const addRound = (e: FormEvent) => {
-    e.preventDefault();
-    void run(async () => {
+  /*
+   * The money boxes are genuinely optional — a round can be recorded before its
+   * terms are — but each carries `min="0"`, and `toCents` will happily turn
+   * "-5" into a negative cent figure the API stores without complaint. So the
+   * floor applies only once something has been typed.
+   */
+  const roundValidation = useFormValidation(roundForm, {
+    name: required('name', 'Round name'),
+    amount: optional('amount', numberMin('amount', 0, 'Amount raised')),
+    pre_money: optional('pre_money', numberMin('pre_money', 0, 'Pre-money')),
+    post_money: optional('post_money', numberMin('post_money', 0, 'Post-money')),
+  });
+
+  const txnValidation = useFormValidation(txnForm, {
+    occurred_on: required('occurred_on', 'Date'),
+    shares: optional('shares', all(numberMin('shares', 0, 'Shares'), integer('shares', 'Shares'))),
+    price: optional('price', numberMin('price', 0, 'Price / share')),
+  });
+
+  const addRound = roundValidation.handleSubmit(() =>
+    run(async () => {
       await api(`/valuations/${valuationId}/rounds`, {
         method: 'POST',
         body: {
@@ -97,12 +122,14 @@ export function FundingHistory({
       });
       setAddingRound(false);
       setRoundForm({ name: '', security_type: '', closed_on: '', amount: '', pre_money: '', post_money: '' });
-    });
-  };
+      // The panel stays mounted, so the next round starts with a clean slate
+      // rather than every message revealed from the last submit.
+      roundValidation.reset();
+    }),
+  );
 
-  const addTxn = (e: FormEvent) => {
-    e.preventDefault();
-    void run(async () => {
+  const addTxn = txnValidation.handleSubmit(() =>
+    run(async () => {
       await api(`/valuations/${valuationId}/transactions`, {
         method: 'POST',
         body: {
@@ -115,8 +142,9 @@ export function FundingHistory({
       });
       setAddingTxn(false);
       setTxnForm({ kind: 'issuance', occurred_on: '', shares: '', price: '', counterparty: '' });
-    });
-  };
+      txnValidation.reset();
+    }),
+  );
 
   return (
     <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
@@ -139,11 +167,13 @@ export function FundingHistory({
         <form
           onSubmit={addRound}
           className="mt-3 grid gap-4 rounded-md border border-paper-300 bg-paper-50 p-4 sm:grid-cols-3"
+          noValidate
         >
-          <Field label="Round name">
+          <Field label="Round name" error={roundValidation.errorFor('name')}>
             <TextInput
               value={roundForm.name}
               onChange={(e) => setRoundForm((f) => ({ ...f, name: e.target.value }))}
+              onBlur={roundValidation.blurHandler('name')}
               required
               placeholder="Series A"
             />
@@ -162,35 +192,39 @@ export function FundingHistory({
               onChange={(e) => setRoundForm((f) => ({ ...f, closed_on: e.target.value }))}
             />
           </Field>
-          <Field label="Amount raised ($)">
+          <Field label="Amount raised ($)" error={roundValidation.errorFor('amount')}>
             <TextInput
               type="number"
               min="0"
               step="any"
               value={roundForm.amount}
               onChange={(e) => setRoundForm((f) => ({ ...f, amount: e.target.value }))}
+              onBlur={roundValidation.blurHandler('amount')}
             />
           </Field>
-          <Field label="Pre-money ($)">
+          <Field label="Pre-money ($)" error={roundValidation.errorFor('pre_money')}>
             <TextInput
               type="number"
               min="0"
               step="any"
               value={roundForm.pre_money}
               onChange={(e) => setRoundForm((f) => ({ ...f, pre_money: e.target.value }))}
+              onBlur={roundValidation.blurHandler('pre_money')}
             />
           </Field>
-          <Field label="Post-money ($)">
+          <Field label="Post-money ($)" error={roundValidation.errorFor('post_money')}>
             <TextInput
               type="number"
               min="0"
               step="any"
               value={roundForm.post_money}
               onChange={(e) => setRoundForm((f) => ({ ...f, post_money: e.target.value }))}
+              onBlur={roundValidation.blurHandler('post_money')}
             />
           </Field>
           <div className="sm:col-span-3">
-            <Button type="submit" disabled={busy || !roundForm.name.trim()}>
+            {/* Enabled while incomplete — a disabled button cannot say why. */}
+            <Button type="submit" disabled={busy}>
               {busy ? 'Saving…' : 'Add round'}
             </Button>
           </div>
@@ -262,6 +296,7 @@ export function FundingHistory({
         <form
           onSubmit={addTxn}
           className="mt-3 grid gap-4 rounded-md border border-paper-300 bg-paper-50 p-4 sm:grid-cols-3"
+          noValidate
         >
           <Field label="Type">
             <Select
@@ -275,11 +310,12 @@ export function FundingHistory({
               ))}
             </Select>
           </Field>
-          <Field label="Date">
+          <Field label="Date" error={txnValidation.errorFor('occurred_on')}>
             <TextInput
               type="date"
               value={txnForm.occurred_on}
               onChange={(e) => setTxnForm((f) => ({ ...f, occurred_on: e.target.value }))}
+              onBlur={txnValidation.blurHandler('occurred_on')}
               required
             />
           </Field>
@@ -289,26 +325,28 @@ export function FundingHistory({
               onChange={(e) => setTxnForm((f) => ({ ...f, counterparty: e.target.value }))}
             />
           </Field>
-          <Field label="Shares">
+          <Field label="Shares" error={txnValidation.errorFor('shares')}>
             <TextInput
               type="number"
               min="0"
               step="1"
               value={txnForm.shares}
               onChange={(e) => setTxnForm((f) => ({ ...f, shares: e.target.value }))}
+              onBlur={txnValidation.blurHandler('shares')}
             />
           </Field>
-          <Field label="Price / share ($)">
+          <Field label="Price / share ($)" error={txnValidation.errorFor('price')}>
             <TextInput
               type="number"
               min="0"
               step="any"
               value={txnForm.price}
               onChange={(e) => setTxnForm((f) => ({ ...f, price: e.target.value }))}
+              onBlur={txnValidation.blurHandler('price')}
             />
           </Field>
           <div className="flex items-end">
-            <Button type="submit" disabled={busy || !txnForm.occurred_on}>
+            <Button type="submit" disabled={busy}>
               {busy ? 'Saving…' : 'Add transaction'}
             </Button>
           </div>
