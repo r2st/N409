@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { renderReportPdf } from '@n409/report/pdf';
+import { extractText as pdfText } from '../../../report/test/support/pdfText.js';
 import {
   allocationExhibit,
   approachExhibit,
@@ -8,6 +10,7 @@ import {
   discountExhibit,
   dlomDerivationExhibit,
   incomeExhibit,
+  levelOfValueExhibit,
   marketExhibit,
   peerSetExhibit,
   pwermExhibit,
@@ -239,6 +242,22 @@ describe('the schedule catalogue', () => {
         volatility: 0.62,
         volatility_basis: 'class',
         time_to_exit_years: 4,
+      },
+      // Exhibit B-1 — the level-of-value working, as `dloc.level_of_value_detail`
+      // records it alongside whichever DLOC method was used.
+      dloc_method: 'qualitative',
+      dloc_detail: {
+        method: 'qualitative',
+        dloc: 0.1,
+        minority_basis_weight: 0.428571,
+        control_basis_weight: 0.571429,
+        approach_levels: {
+          asset: 'control',
+          opm_backsolve: 'minority',
+          income: 'control',
+          market: 'minority',
+        },
+        double_counts_minority: false,
       },
     },
     class_volatility: {
@@ -481,6 +500,132 @@ describe('approach reconciliation exhibit', () => {
 
   it('is absent on a PWERM run, which has no approach block', () => {
     expect(approachExhibit({ ...RESULTS, approaches: undefined }, CONTEXT)).toBeNull();
+  });
+
+  it('claims a controlling basis only while nothing has classified the levels', () => {
+    // The unclassified case keeps the original wording: nothing has been
+    // measured that would justify replacing it.
+    expect(plain(approachExhibit(RESULTS, CONTEXT)!.html)).toContain('on a marketable, controlling basis');
+  });
+
+  it('defers to Exhibit B-1 once the engine has classified them', () => {
+    const seen = plain(approachExhibit(LEVELLED_RESULTS, CONTEXT)!.html);
+    // The assertion Exhibit H had already stopped making. Saying it here as
+    // well left one document contradicting itself across two schedules.
+    expect(seen).not.toContain('on a marketable, controlling basis');
+    expect(seen).toContain('Exhibit B-1');
+  });
+});
+
+// ── Exhibit B-1 ──────────────────────────────────────────────────────────────
+
+/** `dloc_detail` as `dloc.level_of_value_detail` records it on a mixed run. */
+const LEVEL_DETAIL = {
+  method: 'qualitative',
+  dloc: 0.1,
+  // The fixture's own weights: income 0.25 + market 0.25 + opm 0.5, so the
+  // minority side (market + backsolve) is 0.75 of the weighted value.
+  minority_basis_weight: 0.75,
+  control_basis_weight: 0.25,
+  approach_levels: { income: 'control', market: 'minority', opm_backsolve: 'minority' },
+  double_counts_minority: true,
+  note:
+    '75% of the weighted equity value came from approaches that already produce a marketable ' +
+    'minority value — a backsolve inverts the price a minority investor paid, and guideline public ' +
+    'company multiples are struck on minority trading prices. A discount for lack of control ' +
+    'applied to that portion discounts a second time for a control the value never included.',
+};
+
+const LEVELLED_RESULTS = {
+  ...RESULTS,
+  discounts: { ...RESULTS.discounts, dloc_method: 'qualitative', dloc_detail: LEVEL_DETAIL },
+};
+
+describe('Exhibit B-1 — level of value', () => {
+  it('classifies each weighted approach beside the weight it carries', () => {
+    const seen = plain(levelOfValueExhibit(LEVELLED_RESULTS, CONTEXT)!.html);
+    expect(seen).toContain('OPM backsolve');
+    expect(seen).toContain('Income (DCF)');
+    expect(seen).toContain('Market (comparables)');
+    expect(seen).toContain('Control, marketable');
+    expect(seen).toContain('Minority, marketable');
+    // The split the engine measured, restated as the total line.
+    expect(seen).toContain('75% minority, 25% control');
+  });
+
+  it('orders the approaches heaviest first, as Exhibit B does', () => {
+    const seen = plain(levelOfValueExhibit(LEVELLED_RESULTS, CONTEXT)!.html);
+    expect(seen.indexOf('OPM backsolve')).toBeLessThan(seen.indexOf('Income (DCF)'));
+  });
+
+  it('states the double count in terms, and does not soften it into a footnote', () => {
+    const seen = plain(levelOfValueExhibit(LEVELLED_RESULTS, CONTEXT)!.html);
+    expect(seen).toContain('A discount for lack of control of 10.0% has been applied to a value');
+    expect(seen).toContain('that is 75% minority-based');
+    // The engine's own note, printed as it wrote it rather than re-derived —
+    // this page and the analyst's pre-flight warning cannot then disagree.
+    expect(seen).toContain('discounts a second time for a control the value never included');
+  });
+
+  it('says the ordinary thing when the majority of the value was at a control level', () => {
+    const detail = {
+      ...LEVEL_DETAIL,
+      minority_basis_weight: 0.25,
+      control_basis_weight: 0.75,
+      double_counts_minority: false,
+      note: undefined,
+    };
+    const seen = plain(
+      levelOfValueExhibit({ ...RESULTS, discounts: { ...RESULTS.discounts, dloc_detail: detail } }, CONTEXT)!
+        .html,
+    );
+    expect(seen).toContain('75% of the weighted equity value arrived at a control level');
+    expect(seen).not.toContain('has been applied to a value');
+  });
+
+  it('prints an unfamiliar level as itself rather than as a blank cell', () => {
+    const detail = { ...LEVEL_DETAIL, approach_levels: { income: 'liquidation' } };
+    const seen = plain(
+      levelOfValueExhibit({ ...RESULTS, discounts: { ...RESULTS.discounts, dloc_detail: detail } }, CONTEXT)!
+        .html,
+    );
+    expect(seen).toContain('liquidation');
+  });
+
+  it('drops rather than guessing when the engine recorded no level of value', () => {
+    // The PWERM path derives equity value from its own exit scenarios and has
+    // no approach weights to classify; a zero DLOC cannot double-count. Both
+    // reach here as an absent `approach_levels`.
+    expect(levelOfValueExhibit(RESULTS, CONTEXT)).toBeNull();
+    expect(levelOfValueExhibit({}, CONTEXT)).toBeNull();
+    expect(levelOfValueExhibit({ discounts: { dloc_detail: {} } }, CONTEXT)).toBeNull();
+    expect(
+      levelOfValueExhibit(
+        { discounts: { dloc_detail: { approach_levels: { income: 'control' } } } },
+        CONTEXT,
+      ),
+    ).toBeNull();
+    // Levels recorded, but none of them survived — nothing to tabulate.
+    expect(
+      levelOfValueExhibit(
+        { discounts: { dloc_detail: { approach_levels: {}, minority_basis_weight: 0 } } },
+        CONTEXT,
+      ),
+    ).toBeNull();
+  });
+
+  it('renders a weight the results block no longer carries as a dash, not a zero', () => {
+    // A stored calculation whose `approaches` and `dloc_detail` disagree: the
+    // level is still the engine's finding, and printing "0%" beside it would
+    // assert a weight nobody recorded.
+    const seen = plain(
+      levelOfValueExhibit(
+        { ...LEVELLED_RESULTS, approaches: { income: { weight: 0.25, equity_value: 1 } } },
+        CONTEXT,
+      )!.html,
+    );
+    expect(seen).toContain('—');
+    expect(seen).toContain('Market (comparables)');
   });
 });
 
@@ -2326,4 +2471,46 @@ describe('exhibit degradation under partial and hostile results', () => {
     expect(html).toContain('Series A &amp; B &lt;old&gt;');
     expect(html).not.toContain('<old>');
   });
+});
+
+/**
+ * The new schedules, through the renderer that actually produces the client's
+ * file rather than only through `plain()`.
+ *
+ * An exhibit can be correct as HTML and still not reach the reader: the PDF
+ * renderer takes a small tag subset and drops what it does not know, so a
+ * schedule assembled from markup it silently strips is a heading followed by
+ * white space in the delivered document and passes every string assertion made
+ * against the fragment. This renders the document and reads the text back out
+ * of it, which is the only assertion that covers that gap.
+ */
+describe('the new schedules survive the PDF renderer', () => {
+  const pdfInput = (sections: Array<{ heading: string; html: string }>) => ({
+    title: '409A Valuation Report',
+    company_name: CONTEXT.companyName,
+    meta: [{ label: 'Valuation date', value: CONTEXT.valuationDate }],
+    sections,
+    generated_at: new Date('2026-07-01T00:00:00.000Z'),
+  });
+
+  it('prints Exhibit B-1 and its level-of-value finding into the document text', async () => {
+    const sections = buildExhibits(
+      calculation({ results: LEVELLED_RESULTS } as Partial<CalculationRow>),
+      CONTEXT,
+    );
+    expect(sections.map((s) => s.heading)).toContain('Exhibit B-1 — Level of Value');
+
+    const pdf = await renderReportPdf(pdfInput(sections), { compress: false });
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    const text = pdfText(pdf);
+
+    expect(text).toContain('Exhibit B-1');
+    expect(text).toContain('Level of Value');
+    // The classification, the split, and the finding — the three things the
+    // schedule exists to say, each read back out of the rendered file.
+    expect(text).toContain('Minority, marketable');
+    expect(text).toContain('Control, marketable');
+    expect(text).toContain('75% minority, 25% control');
+    expect(text).toContain('discounts a second time');
+  }, 60_000);
 });

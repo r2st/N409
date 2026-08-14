@@ -90,6 +90,8 @@ const SECTION_BLURBS: Record<string, string> = {
 const EXHIBIT_BLURBS: Record<string, string> = {
   A: 'Every share class, its preferences and the fully diluted position at the valuation date.',
   B: 'Each indication, its weight, and the weighted total equity value.',
+  'B-1':
+    'At what level of value each weighted approach arrived — control or marketable minority — and what that means for the discount for lack of control.',
   C: 'The cash-flow stream, discount factors and present values.',
   'C-1': 'The forecast the DCF discounts, and the assumptions that built it.',
   D: 'The multiples selected and the indication they produce.',

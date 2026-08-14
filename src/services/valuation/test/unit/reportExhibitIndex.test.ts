@@ -42,7 +42,25 @@ const html = (body: ReportContent, key: string): string => body.sections.find((s
 describe('renderedScheduleIds', () => {
   it('reads the identifier out of each builder heading', () => {
     expect(renderedScheduleIds(ALL_EXHIBITS)).toEqual(
-      new Set(['A', 'B', 'C', 'C-1', 'D', 'D-1', 'E', 'F', 'F-1', 'F-2', 'G', 'H', 'H-1', 'I', 'II', 'III']),
+      new Set([
+        'A',
+        'B',
+        'B-1',
+        'C',
+        'C-1',
+        'D',
+        'D-1',
+        'E',
+        'F',
+        'F-1',
+        'F-2',
+        'G',
+        'H',
+        'H-1',
+        'I',
+        'II',
+        'III',
+      ]),
     );
   });
 

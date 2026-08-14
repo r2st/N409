@@ -99,7 +99,23 @@ export interface ExhibitPeer {
 
 /** The identifier the index and the body's pointers use for a schedule. */
 export type ScheduleId =
-  'A' | 'B' | 'C' | 'C-1' | 'D' | 'D-1' | 'E' | 'F' | 'F-1' | 'F-2' | 'G' | 'H' | 'H-1' | 'I' | 'II' | 'III';
+  | 'A'
+  | 'B'
+  | 'B-1'
+  | 'C'
+  | 'C-1'
+  | 'D'
+  | 'D-1'
+  | 'E'
+  | 'F'
+  | 'F-1'
+  | 'F-2'
+  | 'G'
+  | 'H'
+  | 'H-1'
+  | 'I'
+  | 'II'
+  | 'III';
 
 export interface ScheduleDescriptor {
   id: ScheduleId;
@@ -138,6 +154,7 @@ export interface ScheduleDescriptor {
 export const SCHEDULE_CATALOGUE: readonly ScheduleDescriptor[] = [
   { id: 'A', kind: 'Exhibit', name: 'Capitalization Table', always: true },
   { id: 'B', kind: 'Exhibit', name: 'Reconciliation of Valuation Approaches', always: true },
+  { id: 'B-1', kind: 'Exhibit', name: 'Level of Value', always: false },
   { id: 'C', kind: 'Exhibit', name: 'Income Approach (Discounted Cash Flow)', always: false },
   { id: 'C-1', kind: 'Exhibit', name: 'Basis of the Cash-Flow Forecast', always: false },
   { id: 'D', kind: 'Exhibit', name: 'Market Approach (Guideline Multiples)', always: false },
@@ -368,11 +385,26 @@ export function approachExhibit(
   const concluded = num(results.equity_value);
   const weightTotal = entries.reduce((sum, e) => sum + e.weight, 0);
 
+  /*
+   * This paragraph asserted "on a marketable, controlling basis" unconditionally,
+   * and for the typical 409A it is false — most of the weight sits on a backsolve
+   * and on guideline multiples, neither of which produces a controlling value.
+   * Exhibit H already stopped saying it (see `discountExhibit`); saying it here
+   * as well left the two schedules contradicting each other in one document.
+   * Where the engine has classified the mix, Exhibit B-1 prints it and this
+   * sentence defers to it; where it has not, the original wording stands, since
+   * nothing has been measured that would justify replacing it.
+   */
+  const classified = record(record(results.discounts)?.dloc_detail)?.approach_levels !== undefined;
+
   return section(SCHEDULE.B, [
     P(
-      'Each approach indicates a value for total equity on a marketable, controlling basis. The ' +
-        'concluded equity value is the weighted average of the indications, with weights reflecting ' +
-        'the relevance and reliability of each approach to this company at this stage.',
+      (classified
+        ? 'Each approach indicates a value for total equity at the level of value its inputs ' +
+          'carry, which is not the same for all four — Exhibit B-1 sets out which. '
+        : 'Each approach indicates a value for total equity on a marketable, controlling basis. ') +
+        'The concluded equity value is the weighted average of the indications, with weights ' +
+        'reflecting the relevance and reliability of each approach to this company at this stage.',
     ),
     table({
       head: ['Approach', 'Method', 'Enterprise value', 'Equity value', 'Weight', 'Weighted'],
@@ -472,6 +504,151 @@ function movementBlock(
       ],
     }),
   ];
+}
+
+// ── Exhibit B-1 — level of value ─────────────────────────────────────────────
+
+/**
+ * The level of value each approach delivers, as the engine classifies it.
+ *
+ * `dloc.LEVEL_OF_VALUE_BY_APPROACH` is the authority and is deliberately not
+ * restated here — this map only turns its vocabulary into the phrase an
+ * appraisal report uses for it. A level the engine adds later prints as itself
+ * rather than as a blank cell, which is the failure mode a second hand-kept
+ * copy of the classification would have instead.
+ */
+const LEVEL_OF_VALUE_NAMES: Record<string, string> = {
+  control: 'Control, marketable',
+  minority: 'Minority, marketable',
+  unknown: 'Not classified',
+};
+
+/** Why an approach arrives at the level it does, in one clause. */
+const LEVEL_OF_VALUE_BASIS: Record<string, string> = {
+  asset:
+    'The adjusted net asset value of the whole enterprise — a figure only a holder able to direct ' +
+    'the assets could realise',
+  income:
+    'The present value of the whole enterprise’s cash flows, discounted at a rate a controlling ' +
+    'owner would require',
+  market:
+    'Guideline public company multiples are struck on minority trading prices, so the indication ' +
+    'arrives already at a minority level',
+  opm_backsolve:
+    'The backsolve inverts the price a minority investor paid for a preferred share, so the ' +
+    'indication arrives already at a minority level',
+};
+
+/**
+ * Exhibit B-1 — at what level of value the weighted equity value arrived.
+ *
+ * Exhibit B reconciles four approaches into one equity value and, until this
+ * schedule existed, said they were all "on a marketable, controlling basis".
+ * For the typical 409A that is not true, and the untruth is the one that most
+ * often costs a number: a discount for lack of control steps a value from
+ * control down to marketable minority, so applied to an indication that was
+ * already at a minority level it discounts twice for one thing. Nothing about
+ * the result looks wrong — it is a plausible per-share figure that is simply
+ * too low — which is exactly why it needs a page rather than a database column.
+ *
+ * The engine measures the mix (`dloc.minority_basis_share`, fed the very
+ * `weight_by_approach` map that produced the weighted equity value) and records
+ * it on `discounts.dloc_detail`. Exhibit H reads one number out of it to decide
+ * whether to call its opening line "controlling", and every other figure the
+ * engine computed for this — which approach sits at which level, and what share
+ * of the value each side accounts for — reached no reader at all. This is that
+ * working, printed beside the weights it is derived from.
+ *
+ * Conditional on the engine having something to say. `level_of_value_detail`
+ * returns nothing when there are no approach weights to read — the PWERM path
+ * derives equity value from its own exit scenarios, and a guess about its level
+ * would be worse than silence — and nothing when the concluded DLOC is zero,
+ * since a discount that was not applied cannot have been applied twice. Both
+ * cases drop the schedule rather than printing a table with no finding in it.
+ */
+export function levelOfValueExhibit(
+  results: Record<string, unknown>,
+  _ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const discounts = record(results.discounts);
+  const detail = record(discounts?.dloc_detail);
+  const levels = record(detail?.approach_levels);
+  const minority = num(detail?.minority_basis_weight);
+  if (!levels || minority === null) return null;
+
+  const control = num(detail?.control_basis_weight) ?? 1 - minority;
+  const approaches = record(results.approaches) ?? {};
+  const dloc = num(discounts?.dloc) ?? 0;
+
+  const entries = Object.entries(levels)
+    .map(([key, raw]) => ({
+      key,
+      level: text(raw) ?? 'unknown',
+      weight: num(record(approaches[key])?.weight),
+    }))
+    // The weighted ones, heaviest first, matching Exhibit B's own ordering so
+    // the two tables can be read down alongside each other.
+    .sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+  if (entries.length === 0) return null;
+
+  const rows = entries.map((e) => [
+    APPROACH_LABELS[e.key] ?? esc(e.key),
+    e.weight === null ? '—' : formatPercent(e.weight, 0),
+    LEVEL_OF_VALUE_NAMES[e.level] ?? esc(e.level),
+    LEVEL_OF_VALUE_BASIS[e.key] ?? '',
+  ]);
+
+  const parts: string[] = [
+    P(
+      'A valuation approach does not simply produce a number: it produces a number at a level of ' +
+        'value, and which level depends on what the approach was struck on. The discounts in ' +
+        'Exhibit H step the concluded value down that ladder — control to marketable minority, ' +
+        'then marketable minority to non-marketable minority — so the level the weighted equity ' +
+        'value arrived at decides which of those steps there is still room to take.',
+    ),
+    table({
+      head: ['Approach', 'Weight', 'Level of value indicated', 'Basis'],
+      rows,
+      foot: [
+        'Weighted equity value',
+        formatPercent(minority + control, 0),
+        `${formatPercent(minority, 0)} minority, ${formatPercent(control, 0)} control`,
+        '',
+      ],
+    }),
+  ];
+
+  /*
+   * The finding, where there is one. `double_counts_minority` is the engine's
+   * own threshold judgement (a majority of the weight arriving at a minority
+   * level) and its `note` states the figure; both are printed as it wrote them
+   * rather than re-derived, so this page cannot disagree with the pre-flight
+   * warning the analyst saw about the same calculation.
+   */
+  if (detail?.double_counts_minority === true) {
+    parts.push(
+      P(
+        `<strong>A discount for lack of control of ${formatPercent(dloc)} has been applied to a ` +
+          `value that is ${formatPercent(minority, 0)} minority-based.</strong> ` +
+          (text(detail.note) ??
+            'A discount for lack of control applied to that portion discounts a second time for a ' +
+              'control the value never included.') +
+          ' The discount is the appraiser’s conclusion and stands as taken; it is disclosed here ' +
+          'so that a reader can weigh it rather than discover it.',
+      ),
+    );
+  } else {
+    parts.push(
+      P(
+        `${formatPercent(control, 0)} of the weighted equity value arrived at a control level, so ` +
+          `the discount for lack of control of ${formatPercent(dloc)} in Exhibit H is taken ` +
+          'predominantly against value that stood at that level. The remainder was already at a ' +
+          'marketable minority level and is disclosed above rather than adjusted for separately.',
+      ),
+    );
+  }
+
+  return section(SCHEDULE['B-1'], parts);
 }
 
 // ── Exhibit C — income approach ──────────────────────────────────────────────
@@ -2606,6 +2783,10 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
   return [
     capitalizationExhibit(inputs, ctx),
     approachExhibit(results, ctx),
+    // Immediately after B, because it qualifies B's own total: the weights in
+    // that table are what this one classifies, and the sentence B opens with
+    // depends on the same reading.
+    levelOfValueExhibit(results, ctx),
     incomeExhibit(inputs, results, ctx),
     // Immediately after C, because it is C's supporting detail — the same
     // relationship D-1 has with D and F-1 with F.
