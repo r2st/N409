@@ -37,6 +37,22 @@ export interface CapTableGraphNode {
    */
   rank: number;
   shares: number;
+  /**
+   * The same holding on the basis `ownership` is struck on — `shares` for
+   * everything that is already in common-equivalent units, and
+   * `shares x conversion_ratio` for a preferred class that is not.
+   *
+   * Carried rather than left to the reader to multiply out, because `shares`
+   * and `ownership` are quoted on different bases the moment a class converts
+   * at other than 1:1, and a node showing "4,000,000 sh" beside "44.4%" gives
+   * a reader no way to tell that the percentage was struck on 8,000,000. The
+   * ratio alone is not enough: it says the two *can* differ, not which of them
+   * the denominator used, and re-deriving the rule frontend-side is how the
+   * ownership figure came to disagree with the engine in the first place.
+   *
+   * Null on the company node and on a funding round, which hold no class.
+   */
+  as_converted_shares: number | null;
   /** Fully-diluted share of the company, 0–1. Null when nothing is outstanding. */
   ownership: number | null;
   class_type: CapTableClassType | null;
@@ -172,6 +188,8 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
     label: input.companyName,
     rank: 0,
     shares: fullyDiluted,
+    // Already the as-converted total — it is the denominator `share` divides by.
+    as_converted_shares: null,
     ownership: fullyDiluted > 0 ? 1 : null,
     class_type: null,
     seniority: null,
@@ -198,6 +216,7 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
       label: entry.security_class,
       rank: i + 1,
       shares: entry.shares,
+      as_converted_shares: converted(entry),
       ownership: share(converted(entry)),
       class_type: entry.class_type,
       seniority: entry.seniority,
@@ -232,6 +251,7 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
       label: entry.security_class,
       rank: commonRank,
       shares: entry.shares,
+      as_converted_shares: converted(entry),
       ownership: share(converted(entry)),
       class_type: entry.class_type,
       seniority: entry.seniority,
@@ -281,6 +301,7 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
       label: closed ? `${round.name} (${closed})` : round.name,
       rank: 0,
       shares: Number(round.shares_issued ?? 0) || 0,
+      as_converted_shares: null,
       ownership: null,
       class_type: null,
       seniority: null,

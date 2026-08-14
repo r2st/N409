@@ -158,6 +158,40 @@ describe('cap table graph', () => {
       expect(build([COMMON, RATCHET]).nodes.find((n) => n.label === 'Series Seed')!.shares).toBe(2_000_000);
     });
 
+    /**
+     * And carries the count in between, because `shares` and `ownership` are
+     * now quoted on different bases and the node draws them side by side. The
+     * ratio does not close that gap on its own: it says the two can differ,
+     * not which of them the denominator used.
+     */
+    it('carries the as-converted count the ownership figure was struck on', () => {
+      const { nodes } = build([COMMON, RATCHET, POOL]);
+      const seed = nodes.find((n) => n.label === 'Series Seed')!;
+      expect(seed.shares).toBe(2_000_000);
+      expect(seed.as_converted_shares).toBe(4_000_000);
+      // And it reconciles: the count over the company's total is the percentage.
+      const total = nodes.find((n) => n.kind === 'company')!.shares;
+      expect(seed.as_converted_shares! / total).toBeCloseTo(seed.ownership!, 10);
+    });
+
+    it('leaves a 1:1 class the same figure on both counts', () => {
+      const { nodes } = build([COMMON, RATCHET, POOL]);
+      for (const label of ['Common', 'Option Pool']) {
+        const n = nodes.find((x) => x.label === label)!;
+        expect(n.as_converted_shares).toBe(n.shares);
+      }
+    });
+
+    /** Neither holds a class, so neither has a converted count to state. */
+    it('leaves the company and a funding round without one', () => {
+      const { nodes } = build(
+        [COMMON, RATCHET],
+        [{ id: 'r1', name: 'Seed', closed_on: null, shares_issued: 100 }],
+      );
+      expect(nodes.find((n) => n.kind === 'company')!.as_converted_shares).toBeNull();
+      expect(nodes.find((n) => n.kind === 'funding_round')!.as_converted_shares).toBeNull();
+    });
+
     it('sums every class to the whole company', () => {
       const { nodes } = build([COMMON, RATCHET, A, B, POOL]);
       const classes = nodes.filter((n) => n.kind !== 'company' && n.kind !== 'funding_round');

@@ -20,6 +20,8 @@ export interface GraphNode {
   label: string;
   rank: number;
   shares: number;
+  /** The holding on the basis `ownership` is struck on; null on non-class nodes. */
+  as_converted_shares: number | null;
   ownership: number | null;
   class_type: string | null;
   seniority: number | null;
@@ -27,6 +29,24 @@ export interface GraphNode {
   price_per_share: number | null;
   invested_amount: number | null;
   conversion_ratio: number | null;
+}
+
+/**
+ * Whether this node's two share figures actually differ.
+ *
+ * `ownership` is struck on the as-converted count, `shares` is the outstanding
+ * one, and for everything that converts 1:1 — which is every common class,
+ * every option pool, and most preferred — they are the same number and saying
+ * so twice is noise. It is only the class converting at other than 1:1 that
+ * needs both, and then it needs both: outstanding alone cannot be reconciled
+ * to the percentage printed beside it.
+ *
+ * Read off the server's own figures rather than off `conversion_ratio`, so the
+ * rule for which kinds convert stays in one place — `capTable.ts`'s
+ * `asConvertedShares`, which the engine's denominator also comes from.
+ */
+function converts(node: GraphNode): boolean {
+  return node.as_converted_shares !== null && node.as_converted_shares !== node.shares;
 }
 
 export interface GraphEdge {
@@ -270,7 +290,11 @@ export function CapTableGraph({ graph }: { graph: CapTableGraphData }) {
                   fontSize="11"
                   fill={isCompany ? 'var(--color-paper-300, #ccc)' : 'var(--color-ink-400, #6f6a62)'}
                 >
-                  {node.kind === 'funding_round' ? 'Round' : `${num(node.shares)} sh`}
+                  {node.kind === 'funding_round'
+                    ? 'Round'
+                    : converts(node)
+                      ? `${num(node.as_converted_shares!)} sh a/c`
+                      : `${num(node.shares)} sh`}
                 </text>
                 {node.ownership !== null && !isCompany && (
                   <text
@@ -312,7 +336,8 @@ export function CapTableGraph({ graph }: { graph: CapTableGraphData }) {
         <dl className="mt-4 grid gap-x-8 gap-y-2 rounded-lg border border-paper-300 bg-surface p-5 text-sm shadow-card sm:grid-cols-2 lg:grid-cols-3">
           <Row label="Class" value={detail.label} />
           <Row label="Type" value={detail.class_type ?? '—'} />
-          <Row label="Shares" value={num(detail.shares)} />
+          <Row label={converts(detail) ? 'Shares (outstanding)' : 'Shares'} value={num(detail.shares)} />
+          {converts(detail) && <Row label="Shares (as-converted)" value={num(detail.as_converted_shares!)} />}
           <Row label="Fully diluted" value={pct(detail.ownership)} />
           <Row
             label="Seniority"

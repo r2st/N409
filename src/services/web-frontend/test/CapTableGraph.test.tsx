@@ -3,19 +3,28 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { CapTableGraph, type CapTableGraphData } from '../src/components/CapTableGraph';
 
-const node = (over: Partial<CapTableGraphData['nodes'][number]> & { id: string; label: string }) => ({
-  kind: 'share_class' as const,
-  rank: 1,
-  shares: 1_000_000,
-  ownership: 0.1,
-  class_type: 'preferred',
-  seniority: null,
-  liquidation_preference: null,
-  price_per_share: null,
-  invested_amount: null,
-  conversion_ratio: null,
-  ...over,
-});
+/**
+ * `as_converted_shares` defaults to the node's own share count — the 1:1 case,
+ * which is every class on this fixture unless a test says otherwise. Applied
+ * after the spread reads `shares` so an override of one still lands, and
+ * overridable itself for the tests that want the two to differ.
+ */
+const node = (over: Partial<CapTableGraphData['nodes'][number]> & { id: string; label: string }) => {
+  const base = {
+    kind: 'share_class' as const,
+    rank: 1,
+    shares: 1_000_000,
+    ownership: 0.1,
+    class_type: 'preferred',
+    seniority: null,
+    liquidation_preference: null,
+    price_per_share: null,
+    invested_amount: null,
+    conversion_ratio: null,
+    ...over,
+  };
+  return { as_converted_shares: base.shares, ...base };
+};
 
 const GRAPH: CapTableGraphData = {
   nodes: [
@@ -112,6 +121,48 @@ describe('CapTableGraph', () => {
     render(<CapTableGraph graph={GRAPH} />);
     await user.click(screen.getByRole('button', { name: /Common/ }));
     expect(screen.getByText('Not stated')).toBeInTheDocument();
+  });
+
+  /**
+   * The node prints a share count and, beside it, a percentage struck on the
+   * as-converted count. For a class converting at other than 1:1 those are two
+   * different numbers, so the one shown has to be the one the percentage came
+   * from — otherwise the node reads as arithmetic that does not check out.
+   */
+  describe('a class converting at other than 1:1', () => {
+    const RATCHET: CapTableGraphData = {
+      ...GRAPH,
+      nodes: GRAPH.nodes.map((n) =>
+        n.label === 'Series A'
+          ? { ...n, shares: 1_250_000, as_converted_shares: 2_500_000, conversion_ratio: 2, ownership: 0.2 }
+          : n,
+      ),
+    };
+
+    it('labels the node with the count the percentage was struck on', () => {
+      render(<CapTableGraph graph={RATCHET} />);
+      expect(screen.getByText('2,500,000 sh a/c')).toBeInTheDocument();
+      // The outstanding count is not what sits beside the percentage.
+      expect(screen.queryByText('1,250,000 sh')).toBeNull();
+    });
+
+    it('gives the detail panel both counts, each named', async () => {
+      const user = userEvent.setup();
+      render(<CapTableGraph graph={RATCHET} />);
+      await user.click(screen.getByRole('button', { name: /Series A/ }));
+      expect(screen.getByText('Shares (outstanding)')).toBeInTheDocument();
+      expect(screen.getByText('1,250,000')).toBeInTheDocument();
+      expect(screen.getByText('Shares (as-converted)')).toBeInTheDocument();
+      expect(screen.getByText('2,500,000')).toBeInTheDocument();
+    });
+
+    it('does not split the column for a class that converts 1:1', async () => {
+      const user = userEvent.setup();
+      render(<CapTableGraph graph={RATCHET} />);
+      await user.click(screen.getByRole('button', { name: /Common/ }));
+      expect(screen.getByText('Shares')).toBeInTheDocument();
+      expect(screen.queryByText('Shares (as-converted)')).toBeNull();
+    });
   });
 
   it('marks an assumed conversion ratio as assumed', async () => {
