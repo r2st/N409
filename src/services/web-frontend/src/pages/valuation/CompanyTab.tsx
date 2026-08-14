@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
+import { isOps } from '../../lib/rbac';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput, inputClass } from '../../components/ui';
 import { useWorkspace } from './ValuationWorkspace';
 
@@ -15,12 +17,48 @@ export interface CompanyProfile {
   postal_code: string | null;
   country: string | null;
   industry: string | null;
+  /** Migration 0151 — the three fields the `company_profile` agent drafts. */
+  business_description: string | null;
+  sic_code: string | null;
+  naics_code: string | null;
   founded_on: string | null;
   employee_count: number | null;
   revenue_range: string | null;
   cap_table_summary: string | null;
   updated_at: string;
 }
+
+/**
+ * The profile columns the agent may fill — `AGENT_PROFILE_FIELDS` in the
+ * valuation service's domain/companyProfile.ts. Only these are merged back
+ * after an apply; see `applyAgent`.
+ */
+const AGENT_FIELDS = ['business_description', 'industry', 'sic_code', 'naics_code'] as const;
+type AgentField = (typeof AGENT_FIELDS)[number];
+
+const AGENT_FIELD_LABELS: Record<AgentField, string> = {
+  business_description: 'Business description',
+  industry: 'Industry',
+  sic_code: 'SIC code',
+  naics_code: 'NAICS code',
+};
+
+const SKIP_REASONS: Record<string, string> = {
+  already_set: 'already filled in',
+  malformed: 'the agent returned an unusable value',
+  empty: 'the documents did not say',
+};
+
+/**
+ * Mirrors `isSicCode` / `isNaicsCode` in the valuation service's
+ * domain/companyProfile.ts, which refuse a malformed code at both the hand
+ * editor and the agent's apply path. The reason it is worth refusing at all:
+ * the comparable screen ranks the reference universe on the SIC, and a
+ * malformed one matches no row — so it presents as "no comparable companies
+ * found" rather than as the bad input it is.
+ */
+const SIC_PATTERN = /^\d{2,4}$/;
+const NAICS_PATTERN = /^\d{2,6}$/;
 
 export const REVENUE_RANGE_LABELS: Record<string, string> = {
   pre_revenue: 'Pre-revenue',
@@ -41,6 +79,9 @@ type Draft = {
   postal_code: string;
   country: string;
   industry: string;
+  business_description: string;
+  sic_code: string;
+  naics_code: string;
   founded_on: string;
   employee_count: string;
   revenue_range: string;
@@ -57,6 +98,9 @@ const EMPTY: Draft = {
   postal_code: '',
   country: '',
   industry: '',
+  business_description: '',
+  sic_code: '',
+  naics_code: '',
   founded_on: '',
   employee_count: '',
   revenue_range: '',
@@ -75,6 +119,9 @@ function toDraft(profile: CompanyProfile | null): Draft {
     postal_code: profile.postal_code ?? '',
     country: profile.country ?? '',
     industry: profile.industry ?? '',
+    business_description: profile.business_description ?? '',
+    sic_code: profile.sic_code ?? '',
+    naics_code: profile.naics_code ?? '',
     founded_on: profile.founded_on ?? '',
     employee_count: profile.employee_count === null ? '' : String(profile.employee_count),
     revenue_range: profile.revenue_range ?? '',
@@ -86,11 +133,18 @@ function toDraft(profile: CompanyProfile | null): Draft {
  * editable by ops and the requesting client. */
 export function CompanyTab() {
   const { valuation } = useWorkspace();
+  const { user } = useAuth();
+  const ops = isOps(user);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  /** The AI drafting panel — ops-only, because the AI routes are. */
+  const [agentPhase, setAgentPhase] = useState<'drafting' | 'applying' | null>(null);
+  const [agentNote, setAgentNote] = useState<string | null>(null);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [overwrite, setOverwrite] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,6 +179,20 @@ export function CompanyTab() {
       return;
     }
 
+    // Refused here as well as by the API, because the failure a malformed code
+    // causes is silent and far away: it reaches the comparable screen, ranks
+    // against no universe row, and reads as "no comparable companies found".
+    const sic = draft.sic_code.trim();
+    if (sic !== '' && !SIC_PATTERN.test(sic)) {
+      setFieldError('A SIC code is 2–4 digits.');
+      return;
+    }
+    const naics = draft.naics_code.trim();
+    if (naics !== '' && !NAICS_PATTERN.test(naics)) {
+      setFieldError('A NAICS code is 2–6 digits.');
+      return;
+    }
+
     const nullable = (v: string) => (v.trim() === '' ? null : v.trim());
     setSaving(true);
     try {
@@ -140,6 +208,9 @@ export function CompanyTab() {
           postal_code: nullable(draft.postal_code),
           country: nullable(draft.country),
           industry: nullable(draft.industry),
+          business_description: nullable(draft.business_description),
+          sic_code: nullable(draft.sic_code),
+          naics_code: nullable(draft.naics_code),
           founded_on: nullable(draft.founded_on),
           employee_count: employeeCount === '' ? null : Number(employeeCount),
           revenue_range: nullable(draft.revenue_range),
@@ -151,6 +222,64 @@ export function CompanyTab() {
       setFieldError(err instanceof ApiError ? err.message : 'Could not save the company profile.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * Run the `company_profile` agent over the engagement's own documents and
+   * apply what it drafted.
+   *
+   * Run then apply, one button, for the reason the comparables tab gives: they
+   * are two endpoints but one intention, and a failed run must not fall through
+   * to an apply that would take whatever earlier run happened to succeed.
+   *
+   * **Only the agent's own four fields are merged back.** The apply returns the
+   * whole stored row, and seeding the draft from it would discard any unsaved
+   * edit elsewhere on this form — the analyst who typed a website, then asked
+   * for a description, would silently lose the website. The agent writes four
+   * columns; four is what comes back into the draft.
+   */
+  const applyAgent = async () => {
+    setAgentError(null);
+    setAgentNote(null);
+    setAgentPhase('drafting');
+    try {
+      await api(`/valuations/${valuation.id}/ai/company_profile`, { method: 'POST' });
+      setAgentPhase('applying');
+      const res = await api<{
+        profile: CompanyProfile;
+        applied_fields: AgentField[];
+        skipped_fields: Array<{ field: AgentField; reason: string }>;
+      }>(`/valuations/${valuation.id}/ai/company_profile/apply`, {
+        method: 'POST',
+        body: { overwrite },
+      });
+      setDraft((d) =>
+        d === null
+          ? d
+          : {
+              ...d,
+              business_description: res.profile.business_description ?? '',
+              industry: res.profile.industry ?? '',
+              sic_code: res.profile.sic_code ?? '',
+              naics_code: res.profile.naics_code ?? '',
+            },
+      );
+      // The applied fields are already saved — the apply wrote them — so this
+      // must not read as an unsaved change waiting on Save.
+      setSaved(false);
+      const applied = res.applied_fields.map((f) => AGENT_FIELD_LABELS[f] ?? f);
+      const held = res.skipped_fields.map(
+        (s) => `${AGENT_FIELD_LABELS[s.field] ?? s.field} (${SKIP_REASONS[s.reason] ?? s.reason})`,
+      );
+      setAgentNote(
+        `Drafted and saved ${applied.join(', ')}.` +
+          (held.length > 0 ? ` Left alone: ${held.join(', ')}.` : ''),
+      );
+    } catch (err) {
+      setAgentError(err instanceof ApiError ? err.message : 'Could not draft the company profile.');
+    } finally {
+      setAgentPhase(null);
     }
   };
 
@@ -201,6 +330,90 @@ export function CompanyTab() {
               ))}
             </Select>
           </Field>
+        </div>
+      </section>
+
+      {/* The three fields the report's company section is written from — and,
+          until now, the three the API accepted with nowhere on screen to type
+          them. The classification sits beside the description because the codes
+          are what the description is being classified *as*. */}
+      <section>
+        <h2 className="overline mb-4 text-ink-400">Business and classification</h2>
+        {ops && (
+          <div className="mb-4 rounded-lg border border-bond-200 bg-bond-50 px-4 py-3">
+            <p className="text-sm text-bond-800">
+              Draft these from the engagement's own uploaded documents. The agent never looks the company up
+              and never sees its name — it reads the deck and the financials you have already uploaded, so a
+              reviewer can trace every sentence back to a document in the engagement.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={agentPhase !== null}
+                onClick={() => void applyAgent()}
+              >
+                {agentPhase === 'drafting'
+                  ? 'Reading documents…'
+                  : agentPhase === 'applying'
+                    ? 'Applying…'
+                    : 'Draft with AI'}
+              </Button>
+              {/* Blanks only by default: an analyst who classified this business
+                  by hand and then ran the agent did not ask to have that
+                  reconsidered. This is the explicit opt-in. */}
+              <label className="flex items-center gap-2 text-sm text-bond-800">
+                <input
+                  type="checkbox"
+                  checked={overwrite}
+                  onChange={(e) => setOverwrite(e.target.checked)}
+                />
+                Replace values already on the profile
+              </label>
+            </div>
+            {agentPhase === 'drafting' && (
+              <p className="mt-2 text-xs text-bond-700">
+                Free-tier models can take up to a minute…
+              </p>
+            )}
+            {agentNote && <p className="mt-2 text-sm font-medium text-bond-800">{agentNote}</p>}
+            {agentError && (
+              <p className="mt-2 text-sm text-red-700" role="alert">
+                {agentError}
+              </p>
+            )}
+          </div>
+        )}
+        <div className="space-y-4">
+          <Field
+            label="Business description"
+            hint="What the company does, in the words the report's company section will be drafted from."
+          >
+            <textarea
+              className={`${inputClass} min-h-28`}
+              value={draft.business_description}
+              onChange={(e) => set('business_description')(e.target.value)}
+              maxLength={20000}
+            />
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="SIC code" hint="2–4 digits — the comparable screen ranks the universe on it.">
+              <TextInput
+                inputMode="numeric"
+                value={draft.sic_code}
+                onChange={(e) => set('sic_code')(e.target.value)}
+                placeholder="e.g. 7372"
+              />
+            </Field>
+            <Field label="NAICS code" hint="2–6 digits.">
+              <TextInput
+                inputMode="numeric"
+                value={draft.naics_code}
+                onChange={(e) => set('naics_code')(e.target.value)}
+                placeholder="e.g. 511210"
+              />
+            </Field>
+          </div>
         </div>
       </section>
 

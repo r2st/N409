@@ -17,6 +17,7 @@ import { latestSucceededCalculation, type CalculationRow } from '../repos/calcul
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { sanitizeExtractedInputs, type RejectedInput } from './engineInputs.js';
 import { listDocuments, type DocumentRow } from '../repos/documents.js';
+import { findUserById } from '../repos/users.js';
 import {
   completeAiJob,
   createAiJob,
@@ -87,6 +88,27 @@ export interface AiPipelineResponse {
   result: Record<string, unknown>;
 }
 
+/**
+ * Redaction is a pure string pass with no model behind it, so the AI service
+ * answers in milliseconds. Nothing about it justifies the pipeline deadline
+ * above, and an operator who has clicked "anonymize" and is watching a spinner
+ * should be told the service is down long before three minutes have gone by.
+ */
+export const AI_ANONYMIZE_TIMEOUT_MS = 30_000;
+
+export interface AiAnonymizeResponse {
+  text: string;
+  documents: Array<{
+    id: string;
+    original_filename: string;
+    filename: string;
+    kind: string;
+    text: string;
+    chars: number;
+  }>;
+  anonymization: Record<string, unknown>;
+}
+
 const RunBody = z
   .object({
     // Cap-table anonymization (PII redaction) is on unless explicitly disabled.
@@ -105,6 +127,26 @@ const RunBody = z
  * hand and then ran the agent did not ask to have that reconsidered.
  */
 const ApplyProfileBody = z.object({ overwrite: z.boolean().default(false) }).default({ overwrite: false });
+
+/**
+ * What an operator hands the anonymizer: pasted text, uploaded documents, or
+ * both, plus any names they know that we do not.
+ *
+ * `known_people` is the field that carries the feature. The issuer's name comes
+ * off the engagement automatically and the regexes find emails and phones on
+ * their own, but a cap table's holders are the most identifying rows on it and
+ * they appear as bare names in a column — no honorific, no "Prepared by",
+ * nothing a pattern can key on. Somebody has to say who they are, and this is
+ * where they say it.
+ */
+const AnonymizeBody = z
+  .object({
+    text: z.string().max(200_000).default(''),
+    document_ids: z.array(z.string()).max(MAX_AI_DOCUMENTS).default([]),
+    known_companies: z.array(z.string().min(1).max(200)).max(200).default([]),
+    known_people: z.array(z.string().min(1).max(200)).max(200).default([]),
+  })
+  .default({ text: '', document_ids: [], known_companies: [], known_people: [] });
 
 function actorFor(principal: Principal): EventActor {
   return { actorType: 'ai', actorId: principal.id, source: 'ai-service' };
@@ -536,6 +578,125 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       };
     },
   );
+
+  /**
+   * Anonymize a cap table (or any client text) on this engagement — 409.ai
+   * parity gap #22, `Ai:AnoymizeCaptable`.
+   *
+   * The redactor has run on every prompt this platform sends since it was
+   * written, and there was no way to run it on purpose. That is the gap, and it
+   * is not cosmetic: the two things an operator actually needs are to produce a
+   * sample or demo report from a real engagement without its client in it, and
+   * to see — before sending anything anywhere — what redaction would and would
+   * not catch on this particular sheet. Both need the redacted text in hand,
+   * and neither is served by a pipeline that redacts on its way to asking a
+   * model something else.
+   *
+   * The issuer's name is supplied from the engagement rather than typed,
+   * because the one entity guaranteed to be on a 409A cap table is the company
+   * the 409A is for, and an operator who forgot to type it would get a
+   * confident report saying redaction was applied. The client contact's name
+   * and their own stated company come along for the same reason: they are known,
+   * they are on the sheet, and nothing about the request would reveal that they
+   * had been missed.
+   *
+   * Nothing is persisted but the fact that it happened. The redacted text is a
+   * work product the operator asked for and is holding; storing a second copy
+   * of client material — even a struck-through one — buys nothing and adds a
+   * place for it to leak from. The admin event is not optional in the same way:
+   * an operator taking an extract of client documents out of the platform is
+   * exactly the action an audit of this system should be able to see.
+   */
+  app.post('/api/v1/valuations/:id/ai/anonymize', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
+    const { id } = req.params as { id: string };
+    const valuation = await loadValuation(id);
+
+    const body = AnonymizeBody.safeParse(req.body ?? {});
+    if (!body.success) throw problems.unprocessable('Invalid options', { errors: body.error.issues });
+    const { text, document_ids: documentIds, known_companies: known, known_people: people } = body.data;
+
+    if (text.trim() === '' && documentIds.length === 0) {
+      throw problems.unprocessable('Provide text or document_ids to anonymize');
+    }
+
+    // Selected by id, not "everything on the engagement". An operator
+    // anonymizing a cap table for a demo wants that sheet, and shipping the
+    // whole corpus would silently blow the AI service's character budget on
+    // documents nobody asked about — the earlier ones would come back redacted
+    // and the rest would come back truncated, with nothing saying which.
+    let documents: DocumentRow[] = [];
+    if (documentIds.length > 0) {
+      const all = await listDocuments(deps.pool, id);
+      const byId = new Map(all.map((d) => [d.id, d]));
+      const missing = documentIds.filter((docId) => !byId.has(docId));
+      if (missing.length > 0) {
+        // Named rather than skipped: a request that asked for four documents
+        // and silently anonymized three is the shape of an accident.
+        throw problems.unprocessable('Some documents are not on this valuation', { missing });
+      }
+      documents = documentIds.map((docId) => byId.get(docId)!);
+    }
+    const encoded = await encodeDocuments(deps.documentsDir, documents);
+    if (documents.length > 0 && encoded.length === 0) {
+      throw problems.unprocessable(
+        'None of the selected documents are in a text-extractable format under the size limit',
+      );
+    }
+
+    // The engagement's own contact. A failed lookup is not worth refusing the
+    // request over — the issuer name and the operator's own list still travel —
+    // but it does change what gets struck, so the response says how many
+    // entities were actually applied rather than letting the caller assume.
+    const client = await findUserById(deps.pool, valuation.user_id).catch(() => null);
+    const clientName = [client?.first_name, client?.last_name].filter(Boolean).join(' ').trim();
+
+    const companyNames = [
+      ...new Set([valuation.company_name, ...(client?.company_name ? [client.company_name] : []), ...known]),
+    ].filter((name) => name.trim() !== '');
+    const personNames = [...new Set([...(clientName ? [clientName] : []), ...people])];
+
+    let result: AiAnonymizeResponse;
+    try {
+      result = await postJson<AiAnonymizeResponse>(
+        'ai-service',
+        `${deps.aiUrl}/ai/v1/anonymize`,
+        { text, documents: encoded, company_names: companyNames, person_names: personNames },
+        {
+          timeoutMs: AI_ANONYMIZE_TIMEOUT_MS,
+          record: { valuationId: valuation.id, name: 'ai anonymize' },
+        },
+      );
+    } catch (err) {
+      if (err instanceof InternalServiceError) throw toProblem(err);
+      throw err;
+    }
+
+    await recordAdminEvent(deps.pool, {
+      type: 'cap_table_anonymized',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'valuation',
+      subjectId: valuation.id,
+      subjectLabel: valuation.company_name,
+      // Counts and ids only. The payload of an audit record about handling
+      // client text must not itself be a copy of that text.
+      payload: {
+        document_ids: documents.map((d) => d.id),
+        text_chars: text.length,
+        known_companies: companyNames.length,
+        known_people: personNames.length,
+        redacted: result.anonymization?.redacted ?? {},
+      },
+    });
+
+    return {
+      text: result.text,
+      documents: result.documents,
+      anonymization: result.anonymization,
+      known_entities: { companies: companyNames.length, people: personNames.length },
+    };
+  });
 
   app.get('/api/v1/valuations/:id/ai', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);

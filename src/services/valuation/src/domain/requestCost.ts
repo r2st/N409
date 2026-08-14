@@ -44,6 +44,13 @@ export const DEFAULT_COST = 0;
  * when a route is renamed.
  */
 export const COST_RULES: readonly CostRule[] = [
+  // Anonymization, above the `/ai/:pipeline` rule below because it would
+  // otherwise be swept up by it and charged as an LLM call. It is not one:
+  // there is no model behind it, only a regex sweep. It is not free either —
+  // it reads, decrypts and base64-encodes up to ten documents on the way — so
+  // it sits at a render, which is the other thing this service does that is
+  // all I/O and no upstream inference.
+  { pattern: /\/ai\/anonymize$/, methods: ['POST'], cost: 10 },
   // AI pipelines — the most expensive thing the platform does per request.
   // POST /valuations/:id/ai/:pipeline. Matching a single trailing segment is
   // deliberate: /ai/extract/apply only re-reads a stored job's result.

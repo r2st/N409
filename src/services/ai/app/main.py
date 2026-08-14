@@ -16,8 +16,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agents import AGENT_PIPELINES
-from .anonymize import AnonymizeInputError, Redactor
+from .anonymize import AnonymizeInputError, Redactor, anonymization_enforced
 from .build_info import build_info
+from .documents import extract_texts
 from .errors import install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import enforce_token_configured, internal_token_middleware
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
@@ -209,6 +210,52 @@ class TestResponse(BaseModel):
     anonymization: dict = Field(default_factory=dict)
 
 
+class AnonymizeRequest(BaseModel):
+    """A cap table (or any client text) to strike identity out of.
+
+    There is deliberately no `options` block. Every other route that redacts
+    accepts `options.anonymize` because redaction is a step on the way to
+    something else the caller wanted; here it *is* the thing the caller wanted,
+    and a request asking this route not to redact has asked for its input back.
+
+    `company_names` / `person_names` are the entities the caller already knows —
+    on a cap table that is the issuer and its holders, which is both the most
+    identifying material on the sheet and the half the regexes cannot find,
+    because "Ada Lovelace — 250,000 shares" carries no honorific and no label.
+    """
+
+    text: str = Field(default="", max_length=200_000)
+    # Same shape the pipelines take: {filename, kind, content_base64}. Text is
+    # extracted here rather than by the caller so a .xlsx cap table can be
+    # anonymized without the operator first converting it to something readable.
+    documents: list[dict] = Field(default_factory=list, max_length=20)
+    company_names: list[str] = Field(default_factory=list)
+    person_names: list[str] = Field(default_factory=list)
+
+
+class AnonymizedDocument(BaseModel):
+    """One extracted document after redaction.
+
+    Both filenames travel. The redacted one is what may be forwarded or pasted
+    into a demo; the original is what the operator recognises in the list they
+    just submitted, and it stays inside our trust boundary the same way
+    `_corpus` keeps it out of the model's.
+    """
+
+    id: str
+    original_filename: str
+    filename: str
+    kind: str
+    text: str
+    chars: int
+
+
+class AnonymizeResponse(BaseModel):
+    text: str
+    documents: list[AnonymizedDocument]
+    anonymization: dict = Field(default_factory=dict)
+
+
 @app.get("/")
 def root() -> dict:
     return {
@@ -384,6 +431,64 @@ def test_prompt(request: TestRequest) -> TestResponse:
     except OpenRouterError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return TestResponse(model=llm.model, content=llm.content, anonymization=red.report())
+
+
+@app.post("/ai/v1/anonymize", response_model=AnonymizeResponse)
+def anonymize(request: AnonymizeRequest) -> AnonymizeResponse:
+    """Redact a cap table (or any client text) — the operator-facing half of
+    what every pipeline already does on its way out (409.ai parity gap #22,
+    `Ai:AnoymizeCaptable`).
+
+    `anonymize.py` has redacted every prompt this service sends since it was
+    written, but only ever as a step inside something else: an operator who
+    wanted to see what redaction does to *their* cap table — before sending it,
+    or to produce a sample report from a real engagement — had no way to ask.
+    That is the whole gap. The mechanism is unchanged; what is new is that it
+    can be called on its own and the answer is the redacted text rather than a
+    model's opinion of it.
+
+    No LLM is involved, and that is a deliberate difference from the reference
+    implementation, which routes this through a Sonnet call. Three reasons, in
+    order of how much they matter:
+
+    * a language model asked to rewrite a cap table can silently change a share
+      count, and nothing downstream would catch it — the numbers are the part
+      that must survive redaction *exactly*;
+    * sending the un-redacted cap table to an external model in order to have it
+      anonymized is the disclosure the feature exists to prevent;
+    * it is deterministic, so the same sheet redacts the same way twice, costs
+      nothing, and cannot fail because a free-tier quota ran out.
+
+    422 when the known-entity list is over the bound (`AnonymizeInputError`);
+    everything else degrades — a document whose text cannot be extracted comes
+    back carrying the extractor's note, exactly as it would inside a pipeline.
+    """
+    try:
+        red = Redactor(
+            company_names=[str(c) for c in request.company_names if c],
+            person_names=[str(p) for p in request.person_names if p],
+            applied=True,
+            enforced=anonymization_enforced(),
+        )
+    except AnonymizeInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    docs = extract_texts(request.documents)
+    # Filenames are redacted through the same tally as the bodies, because a
+    # cap table is conventionally called "Acme Robotics Cap Table.xlsx" — the
+    # one field that would re-identify a sheet whose every row was struck.
+    out = [
+        AnonymizedDocument(
+            id=doc.id,
+            original_filename=doc.filename,
+            filename=red.text(doc.filename),
+            kind=doc.kind,
+            text=red.text(doc.text),
+            chars=len(doc.text),
+        )
+        for doc in docs
+    ]
+    return AnonymizeResponse(text=red.text(request.text), documents=out, anonymization=red.report())
 
 
 @app.post("/ai/v1/pipelines/{pipeline}", response_model=PipelineResponse)

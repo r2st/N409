@@ -5,6 +5,16 @@ import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { CompanyTab } from '../src/pages/valuation/CompanyTab';
 import type { Valuation } from '../src/lib/types';
 
+/**
+ * Mutable so a case can drop to a client principal: the AI drafting panel is
+ * ops-only, matching the `isOps` gate the `/ai/*` routes enforce, and the tab
+ * itself is editable by the requesting client too.
+ */
+let roles: string[] = ['admin'];
+vi.mock('../src/lib/auth', () => ({
+  useAuth: () => ({ user: { id: 'u1', roles } }),
+}));
+
 const valuation = {
   id: '01JCOMPANY00000000000000001',
   kind: '409a',
@@ -25,6 +35,9 @@ const PROFILE = {
   postal_code: '94105',
   country: 'US',
   industry: 'B2B SaaS — logistics',
+  business_description: 'Route-planning software for regional freight carriers.',
+  sic_code: '7372',
+  naics_code: '511210',
   founded_on: '2019-03-15',
   employee_count: 42,
   revenue_range: '1m_10m',
@@ -64,7 +77,10 @@ function renderTab() {
 }
 
 describe('CompanyTab', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    roles = ['admin'];
+  });
 
   it('seeds every field from the stored profile', async () => {
     mockApi(PROFILE);
@@ -242,5 +258,246 @@ describe('CompanyTab', () => {
 
     release!();
     await waitFor(() => expect(screen.getByRole('button', { name: /Save profile/i })).toBeEnabled());
+  });
+
+  /**
+   * R33 — migration 0151 added these three columns and the PATCH route accepted
+   * them from the day it shipped, but the editor had no box for any of them:
+   * the only way to fill the fields the report's company section is drafted
+   * from was the `company_profile` agent or a hand-written PATCH.
+   */
+  describe('business and classification', () => {
+    it('seeds the description and the codes from the stored profile', async () => {
+      mockApi(PROFILE);
+      renderTab();
+      expect(
+        await screen.findByDisplayValue('Route-planning software for regional freight carriers.'),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText(/^SIC code/)).toHaveValue('7372');
+      expect(screen.getByLabelText(/^NAICS code/)).toHaveValue('511210');
+    });
+
+    it('sends them on save, nulling the ones left blank', async () => {
+      let body: Record<string, unknown> | null = null;
+      mockApi(null, (init) => {
+        body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ profile: null });
+      });
+      renderTab();
+      await screen.findByLabelText(/^SIC code/);
+
+      await userEvent.type(screen.getByLabelText(/^SIC code/), '7372');
+      await userEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+      await waitFor(() => expect(body).not.toBeNull());
+      expect(body!.sic_code).toBe('7372');
+      expect(body!.naics_code).toBeNull();
+      expect(body!.business_description).toBeNull();
+    });
+
+    /**
+     * The failure a malformed SIC causes is silent and far away — it reaches
+     * the comparable screen, ranks against no universe row, and presents as
+     * "no comparable companies found". Both entry points refuse it.
+     */
+    it('refuses a malformed SIC before it reaches the server', async () => {
+      const fetchSpy = mockApi(null);
+      renderTab();
+      await screen.findByLabelText(/^SIC code/);
+      const before = fetchSpy.mock.calls.length;
+
+      await userEvent.type(screen.getByLabelText(/^SIC code/), '73A2');
+      await userEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+      await screen.findByText('A SIC code is 2–4 digits.');
+      expect(fetchSpy.mock.calls).toHaveLength(before);
+    });
+
+    it('refuses a NAICS code that is too long', async () => {
+      const fetchSpy = mockApi(null);
+      renderTab();
+      await screen.findByLabelText(/^NAICS code/);
+      const before = fetchSpy.mock.calls.length;
+
+      await userEvent.type(screen.getByLabelText(/^NAICS code/), '5112101');
+      await userEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+      await screen.findByText('A NAICS code is 2–6 digits.');
+      expect(fetchSpy.mock.calls).toHaveLength(before);
+    });
+  });
+
+  describe('AI drafting', () => {
+    const applied = (profile: unknown, extra: Record<string, unknown> = {}) =>
+      jsonResponse({
+        profile,
+        applied_fields: ['business_description', 'sic_code'],
+        skipped_fields: [],
+        source_job_id: '01JJOB000000000000000000001',
+        ...extra,
+      });
+
+    it('runs the agent and then applies what it drafted', async () => {
+      const posts: string[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        if ((init?.method ?? 'GET') !== 'GET') {
+          posts.push(String(url));
+          return String(url).includes('/apply') ? applied(PROFILE) : jsonResponse({});
+        }
+        return jsonResponse({ profile: null });
+      });
+      renderTab();
+      await screen.findByRole('button', { name: 'Draft with AI' });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      await waitFor(() => expect(posts).toHaveLength(2));
+      expect(posts[0]).toMatch(/\/ai\/company_profile$/);
+      expect(posts[1]).toMatch(/\/ai\/company_profile\/apply$/);
+    });
+
+    it('puts the drafted values into the form', async () => {
+      mockApi(null, (init) =>
+        String(init.body ?? '').includes('overwrite') ? applied(PROFILE) : jsonResponse({}),
+      );
+      renderTab();
+      await screen.findByRole('button', { name: 'Draft with AI' });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      expect(
+        await screen.findByDisplayValue('Route-planning software for regional freight carriers.'),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText(/^SIC code/)).toHaveValue('7372');
+    });
+
+    /**
+     * The apply returns the whole stored row, so seeding the form from it would
+     * discard an unsaved edit elsewhere — the analyst who typed a website and
+     * then asked for a description would silently lose the website. Only the
+     * agent's own four columns are merged back.
+     */
+    it('keeps unsaved edits to fields the agent does not write', async () => {
+      mockApi(null, (init) =>
+        String(init.body ?? '').includes('overwrite') ? applied(PROFILE) : jsonResponse({}),
+      );
+      renderTab();
+      await screen.findByLabelText('Website');
+
+      await userEvent.type(screen.getByLabelText('Website'), 'https://typed.example');
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      await screen.findByDisplayValue('Route-planning software for regional freight carriers.');
+
+      // PROFILE.website is https://acme.example — the returned row must not win.
+      expect(screen.getByLabelText('Website')).toHaveValue('https://typed.example');
+    });
+
+    it('names what it wrote and what it left alone', async () => {
+      mockApi(null, (init) =>
+        String(init.body ?? '').includes('overwrite')
+          ? jsonResponse({
+              profile: PROFILE,
+              applied_fields: ['business_description'],
+              skipped_fields: [
+                { field: 'sic_code', reason: 'already_set' },
+                { field: 'naics_code', reason: 'empty' },
+              ],
+            })
+          : jsonResponse({}),
+      );
+      renderTab();
+      await screen.findByRole('button', { name: 'Draft with AI' });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      const note = await screen.findByText(/Drafted and saved/);
+      expect(note).toHaveTextContent('Drafted and saved Business description.');
+      expect(note).toHaveTextContent('SIC code (already filled in)');
+      expect(note).toHaveTextContent('NAICS code (the documents did not say)');
+    });
+
+    /** Blanks only unless the analyst explicitly opts in. */
+    it('sends overwrite only when the box is ticked', async () => {
+      const bodies: string[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        if ((init?.method ?? 'GET') !== 'GET') {
+          if (String(url).includes('/apply')) {
+            bodies.push(String(init!.body));
+            return applied(PROFILE);
+          }
+          return jsonResponse({});
+        }
+        return jsonResponse({ profile: null });
+      });
+      renderTab();
+      await screen.findByRole('button', { name: 'Draft with AI' });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      await waitFor(() => expect(bodies).toHaveLength(1));
+      expect(JSON.parse(bodies[0]!)).toEqual({ overwrite: false });
+
+      await userEvent.click(screen.getByLabelText(/Replace values already on the profile/i));
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      await waitFor(() => expect(bodies).toHaveLength(2));
+      expect(JSON.parse(bodies[1]!)).toEqual({ overwrite: true });
+    });
+
+    /** The 422 raised when every field the run produced is already filled in. */
+    it('surfaces the message telling the analyst to opt into overwriting', async () => {
+      mockApi(null, () =>
+        problem(
+          422,
+          'Every field this run produced is already set on the profile — pass overwrite to replace them',
+        ),
+      );
+      renderTab();
+      await screen.findByRole('button', { name: 'Draft with AI' });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      expect(await screen.findByText(/pass overwrite to replace them/)).toBeInTheDocument();
+    });
+
+    /** A failed run must not fall through to an apply of some earlier one. */
+    it('does not apply when the agent run fails', async () => {
+      const posts: string[] = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        if ((init?.method ?? 'GET') !== 'GET') {
+          posts.push(String(url));
+          return problem(422, 'Upload a document before running the company-profile agent');
+        }
+        return jsonResponse({ profile: null });
+      });
+      renderTab();
+      await screen.findByRole('button', { name: 'Draft with AI' });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      expect(
+        await screen.findByText('Upload a document before running the company-profile agent'),
+      ).toBeInTheDocument();
+      expect(posts).toHaveLength(1);
+    });
+
+    it('falls back to a plain message when the agent fails without a problem document', async () => {
+      mockApi(null, () => {
+        throw new TypeError('network down');
+      });
+      renderTab();
+      await screen.findByRole('button', { name: 'Draft with AI' });
+
+      await userEvent.click(screen.getByRole('button', { name: 'Draft with AI' }));
+      expect(await screen.findByText('Could not draft the company profile.')).toBeInTheDocument();
+    });
+
+    /**
+     * The tab is editable by the requesting client, the `/ai/*` routes are
+     * ops-only — so the panel has to be gated on the narrower of the two.
+     */
+    it('is hidden from the client who owns the engagement', async () => {
+      roles = ['client'];
+      mockApi(PROFILE);
+      renderTab();
+      await screen.findByDisplayValue('Acme Robotics, Inc.');
+
+      expect(screen.queryByRole('button', { name: 'Draft with AI' })).not.toBeInTheDocument();
+      // The fields themselves stay — the client can still type them.
+      expect(screen.getByLabelText(/^SIC code/)).toBeInTheDocument();
+    });
   });
 });

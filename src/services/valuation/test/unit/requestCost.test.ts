@@ -265,6 +265,12 @@ describe('costOfRequest', () => {
     expect(upload).toBeLessThan(costOfRequest('POST', `${VAL}/ai/extract`));
   });
 
+  it('prices anonymization between free and an AI call — it encodes documents, it does not run a model', () => {
+    const anonymize = costOfRequest('POST', `${VAL}/ai/anonymize`);
+    expect(anonymize).toBeGreaterThan(DEFAULT_COST);
+    expect(anonymize).toBeLessThan(costOfRequest('POST', `${VAL}/ai/extract`));
+  });
+
   it('leaves the apply step cheap — it re-reads a stored job, it does not run one', () => {
     expect(costOfRequest('POST', `${VAL}/ai/extract/apply`)).toBe(DEFAULT_COST);
     expect(costOfRequest('GET', `${VAL}/ai`)).toBe(DEFAULT_COST);
