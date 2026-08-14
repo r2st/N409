@@ -120,7 +120,7 @@ describe('registerProblemHandler', () => {
     expect(res.statusCode).toBe(500);
     expect(res.headers['content-type']).toContain('application/problem+json');
     expect(res.json()).toEqual({
-      type: 'about:blank',
+      type: 'urn:n409:problem:internal',
       title: 'Internal Server Error',
       status: 500,
       instance: '/boom',
@@ -146,8 +146,104 @@ describe('registerProblemHandler', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().status).toBe(400);
     expect(res.json().title).not.toBe('Internal Server Error');
+    expect(res.json().detail).toContain('not valid JSON');
     expect(res.json().instance).toBe('/echo');
     await app.close();
+  });
+});
+
+/**
+ * The failures fastify raises before any handler runs.
+ *
+ * All of them used to render as `type: "about:blank"` with fastify's English
+ * sentence as the `title`. That is the one error shape on this platform a
+ * client cannot switch on — and it is the shape returned for precisely the
+ * mistakes an integration makes while it is being written, so the first
+ * fifty errors a partner ever sees were the untyped ones. Each now carries a
+ * stable `urn:n409:problem:*`, the prose moves to `detail` where a message
+ * that varies with the fastify version belongs, and `title` is the reason
+ * phrase RFC 9457 asks to be constant across occurrences.
+ */
+describe('problem types for fastify-native failures', () => {
+  async function post(payload: string, contentType: string, opts: { bodyLimit?: number } = {}) {
+    const app = Fastify({ logger: false, ...opts });
+    registerProblemHandler(app);
+    app.post('/echo', async () => ({ ok: true }));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/echo',
+      headers: { 'content-type': contentType },
+      payload,
+    });
+    await app.close();
+    return res;
+  }
+
+  it('types an unparseable JSON body distinctly from an empty one', async () => {
+    // Both are 400s, and a client should retry neither the same way: one is a
+    // serializer bug, the other a request that never carried a body.
+    const malformed = await post('{not json', 'application/json');
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json().type).toBe('urn:n409:problem:malformed-body');
+    expect(malformed.json().title).toBe('Bad Request');
+
+    const empty = await post('', 'application/json');
+    expect(empty.statusCode).toBe(400);
+    expect(empty.json().type).toBe('urn:n409:problem:empty-body');
+    expect(empty.json().type).not.toBe(malformed.json().type);
+  });
+
+  it('types a content-type nothing can parse', async () => {
+    const res = await post('<x/>', 'application/xml');
+    expect(res.statusCode).toBe(415);
+    expect(res.json().type).toBe('urn:n409:problem:unsupported-media-type');
+    expect(res.json().title).toBe('Unsupported Media Type');
+  });
+
+  it('types an over-limit payload, which a client answers by chunking', async () => {
+    const res = await post(JSON.stringify({ a: 'x'.repeat(500) }), 'application/json', { bodyLimit: 100 });
+    expect(res.statusCode).toBe(413);
+    expect(res.json().type).toBe('urn:n409:problem:payload-too-large');
+    expect(res.json().title).toBe('Content Too Large');
+  });
+
+  it('types a 404 raised by a route that throws one, not just the not-found handler', async () => {
+    const app = Fastify({ logger: false });
+    registerProblemHandler(app);
+    app.get('/gone', async () => {
+      throw Object.assign(new Error('no such thing'), { statusCode: 404 });
+    });
+    const res = await app.inject({ method: 'GET', url: '/gone' });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().type).toBe('urn:n409:problem:not-found');
+    expect(res.json().title).toBe('Not Found');
+    await app.close();
+  });
+
+  it('gives a 5xx a stable type too, still without a detail', async () => {
+    // The type is safe to publish — it says nothing the status does not. The
+    // message is not, which is why there is no `detail` on this branch.
+    const app = Fastify({ logger: false });
+    registerProblemHandler(app);
+    app.get('/boom', () => {
+      throw new Error('ECONNREFUSED 10.0.0.4:5432');
+    });
+    const res = await app.inject({ method: 'GET', url: '/boom' });
+    expect(res.json().type).toBe('urn:n409:problem:internal');
+    expect(res.json().detail).toBeUndefined();
+    expect(res.body).not.toContain('10.0.0.4');
+    await app.close();
+  });
+
+  it('never answers with about:blank, which is what a client cannot branch on', async () => {
+    for (const res of [
+      await post('{not json', 'application/json'),
+      await post('', 'application/json'),
+      await post('<x/>', 'application/xml'),
+      await post(JSON.stringify({ a: 'x'.repeat(500) }), 'application/json', { bodyLimit: 100 }),
+    ]) {
+      expect(res.json().type).toMatch(/^urn:n409:problem:/);
+    }
   });
 
   it('renders an unrouted path as problem+json rather than fastify default', async () => {

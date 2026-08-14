@@ -126,6 +126,66 @@ export const problems = {
 };
 
 /**
+ * Stable problem types for the failures fastify raises before a handler runs.
+ *
+ * These are the errors no route throws on purpose — a body that is not JSON, a
+ * content-type nothing can parse, a payload over the limit. They were rendered
+ * as `type: "about:blank"` with fastify's English sentence as the `title`,
+ * which is the one shape a client cannot branch on: every other failure on this
+ * platform carries a `urn:n409:problem:*` type, so an integration that switches
+ * on `type` fell through to its default case for exactly the errors it is most
+ * likely to hit while being written. Worse, the title moved with the fastify
+ * version — "Body cannot be empty when content-type is set to
+ * 'application/json'" is prose, not an identifier, and matching on it is the
+ * only thing a client could have done.
+ *
+ * Keyed by `err.code`, which fastify guarantees, rather than by status: 400 is
+ * both "unparseable JSON" and "empty body", and a client retrying the second
+ * should not retry the first.
+ */
+const FASTIFY_PROBLEM_TYPES: Readonly<Record<string, string>> = {
+  FST_ERR_CTP_INVALID_JSON_BODY: 'urn:n409:problem:malformed-body',
+  FST_ERR_CTP_EMPTY_JSON_BODY: 'urn:n409:problem:empty-body',
+  FST_ERR_CTP_INVALID_MEDIA_TYPE: 'urn:n409:problem:unsupported-media-type',
+  FST_ERR_CTP_BODY_TOO_LARGE: 'urn:n409:problem:payload-too-large',
+  FST_ERR_VALIDATION: 'urn:n409:problem:validation',
+};
+
+/** Fallback type for a status fastify raised that the table does not name. */
+const STATUS_PROBLEM_TYPES: Readonly<Record<number, string>> = {
+  400: 'urn:n409:problem:bad-request',
+  401: 'urn:n409:problem:unauthorized',
+  403: 'urn:n409:problem:forbidden',
+  404: 'urn:n409:problem:not-found',
+  405: 'urn:n409:problem:method-not-allowed',
+  406: 'urn:n409:problem:not-acceptable',
+  409: 'urn:n409:problem:conflict',
+  413: 'urn:n409:problem:payload-too-large',
+  415: 'urn:n409:problem:unsupported-media-type',
+  422: 'urn:n409:problem:validation',
+  429: 'urn:n409:problem:rate-limited',
+};
+
+/**
+ * The `title` a status gets, which RFC 9457 asks to be stable across
+ * occurrences — so it is the reason phrase, and fastify's sentence becomes the
+ * `detail`, where a message that varies belongs.
+ */
+const REASON_PHRASES: Readonly<Record<number, string>> = {
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  404: 'Not Found',
+  405: 'Method Not Allowed',
+  406: 'Not Acceptable',
+  409: 'Conflict',
+  413: 'Content Too Large',
+  415: 'Unsupported Media Type',
+  422: 'Unprocessable Content',
+  429: 'Too Many Requests',
+};
+
+/**
  * Installs a fastify error handler that renders every error as problem+json
  * and never leaks internals on 5xx.
  */
@@ -137,20 +197,33 @@ export function registerProblemHandler(app: FastifyInstance): void {
       }
       return reply.status(err.status).type('application/problem+json').send(err.toBody(req.url));
     }
-    const fastifyErr = err as { statusCode?: number; message?: string };
+    const fastifyErr = err as { statusCode?: number; message?: string; code?: string };
     const status = fastifyErr.statusCode && fastifyErr.statusCode < 500 ? fastifyErr.statusCode : 500;
     if (status >= 500) {
       // Scrub the free-text message/stack — pino `redact` only masks structured
       // fields, so secrets interpolated into an Error string would leak (B-1 P3).
       req.log.error({ err: scrubError(err) }, 'unhandled error');
+      return reply.status(status).type('application/problem+json').send({
+        type: 'urn:n409:problem:internal',
+        title: 'Internal Server Error',
+        status,
+        instance: req.url,
+      });
     }
+    // A 4xx fastify raised describes the *request*, so its message is safe to
+    // echo — but as `detail`, so `title` stays the constant a client can read.
+    const type =
+      (fastifyErr.code ? FASTIFY_PROBLEM_TYPES[fastifyErr.code] : undefined) ??
+      STATUS_PROBLEM_TYPES[status] ??
+      'about:blank';
     return reply
       .status(status)
       .type('application/problem+json')
       .send({
-        type: 'about:blank',
-        title: status >= 500 ? 'Internal Server Error' : (fastifyErr.message ?? 'Request Error'),
+        type,
+        title: REASON_PHRASES[status] ?? 'Request Error',
         status,
+        ...(fastifyErr.message ? { detail: fastifyErr.message } : {}),
         instance: req.url,
       });
   });
