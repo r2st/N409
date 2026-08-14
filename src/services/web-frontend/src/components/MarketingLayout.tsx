@@ -56,6 +56,7 @@ export function MarketingHeader() {
   const [productsOpen, setProductsOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const mobileButtonRef = useRef<HTMLButtonElement>(null);
+  const productsButtonRef = useRef<HTMLButtonElement>(null);
 
   /* Escape dismisses the mobile menu and returns focus to its trigger — see the
      same note in AppLayout. */
@@ -70,6 +71,25 @@ export function MarketingHeader() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [mobileOpen]);
 
+  /*
+   * The products dropdown had only two ways to shut: move the mouse off it, or
+   * click the trigger again. Both need a mouse. Opening it from the keyboard
+   * left an eight-link panel floating over the page with no way to dismiss it,
+   * and Tab walked straight out of the panel into "Pricing" underneath while it
+   * stayed open. Escape closes it and hands focus back to the trigger — the
+   * same contract the mobile menu below already keeps.
+   */
+  useEffect(() => {
+    if (!productsOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setProductsOpen(false);
+      productsButtonRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [productsOpen]);
+
   return (
     <header className="sticky top-0 z-40 border-b border-paper-300 bg-paper-50/95 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
@@ -82,10 +102,19 @@ export function MarketingHeader() {
             className="relative"
             onMouseEnter={() => setProductsOpen(true)}
             onMouseLeave={() => setProductsOpen(false)}
+            /* Tabbing off the end of the panel is the keyboard equivalent of
+               moving the mouse away, and closes it the same way. `relatedTarget`
+               is where focus is going; null means it left the document. */
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setProductsOpen(false);
+            }}
           >
             <button
+              ref={productsButtonRef}
               className="cursor-pointer rounded-md px-3 py-2 text-sm font-semibold text-ink-700 hover:text-ink-900"
+              aria-haspopup="true"
               aria-expanded={productsOpen}
+              aria-controls="marketing-products-menu"
               onClick={() => setProductsOpen((v) => !v)}
             >
               Products ▾
@@ -94,7 +123,10 @@ export function MarketingHeader() {
                 breakpoint (768px) a fixed 34rem panel centred on this button
                 clears the left edge by 4px, which is luck rather than layout. */}
             {productsOpen && (
-              <div className="absolute left-1/2 mt-0 w-[34rem] max-w-[calc(100vw-2.5rem)] -translate-x-1/2 rounded-lg border border-paper-300 bg-surface p-4 shadow-lift">
+              <div
+                id="marketing-products-menu"
+                className="absolute left-1/2 mt-0 w-[34rem] max-w-[calc(100vw-2.5rem)] -translate-x-1/2 rounded-lg border border-paper-300 bg-surface p-4 shadow-lift"
+              >
                 <ProductsMenu onNavigate={() => setProductsOpen(false)} />
               </div>
             )}
