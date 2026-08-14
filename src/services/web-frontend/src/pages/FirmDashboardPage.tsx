@@ -289,6 +289,7 @@ export function FirmDashboardPage() {
             rowKey={(row) => row.id}
             caption="Engagements needing attention"
             onRowClick={(row) => navigate(`/valuations/${row.id}`)}
+            rowHref={(row) => `/valuations/${row.id}`}
             empty={
               <EmptyState title="Nothing needs chasing">
                 No engagement is overdue, unowned or stalled.
@@ -341,6 +342,7 @@ export function FirmDashboardPage() {
               rowKey={(row) => row.company_name}
               caption="Clients"
               onRowClick={(row) => navigate(`/valuations/${row.latest_valuation_id}`)}
+              rowHref={(row) => `/valuations/${row.latest_valuation_id}`}
               empty={search ? `No client matches “${search}”.` : 'No clients yet.'}
             />
           )}

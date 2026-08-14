@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { DataTable, Pagination, pageCountOf, type Column } from '../src/components/ui';
 
 interface Row {
@@ -43,6 +44,43 @@ describe('DataTable (F-4 P3)', () => {
     render(<DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} onRowClick={onRowClick} />);
     await userEvent.click(screen.getByText('Acme'));
     expect(onRowClick).toHaveBeenCalledWith(ROWS[0]);
+  });
+
+  /**
+   * `onRowClick` alone is mouse-only: a `<tr onClick>` is not focusable and has
+   * no key binding, so a table whose only way in was the row click could not be
+   * opened without a pointer at all.
+   */
+  it('gives a clickable row a keyboard way in, on the first column', async () => {
+    render(
+      <MemoryRouter>
+        <DataTable
+          columns={COLUMNS}
+          rows={ROWS}
+          rowKey={(r) => r.id}
+          onRowClick={vi.fn()}
+          rowHref={(r) => `/valuations/${r.id}`}
+        />
+      </MemoryRouter>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Acme' });
+    expect(link).toHaveAttribute('href', '/valuations/a');
+    await userEvent.tab();
+    expect(link).toHaveFocus();
+
+    // Only the first column becomes a link — the rest of the row is data, and
+    // a link per cell would put four identical stops in the tab order.
+    expect(screen.getAllByRole('link')).toHaveLength(ROWS.length);
+  });
+
+  it('links nothing when the table leads nowhere', () => {
+    render(
+      <MemoryRouter>
+        <DataTable columns={COLUMNS} rows={ROWS} rowKey={(r) => r.id} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
   });
 });
 

@@ -711,6 +711,7 @@ export function DataTable<T>({
   caption,
   empty = 'Nothing to show.',
   onRowClick,
+  rowHref,
 }: {
   columns: Array<Column<T>>;
   rows: T[];
@@ -718,6 +719,16 @@ export function DataTable<T>({
   caption?: string;
   empty?: ReactNode;
   onRowClick?: (row: T) => void;
+  /**
+   * Where the row leads, for the keyboard.
+   *
+   * `onRowClick` alone makes the whole row clickable, which is a mouse-only
+   * affordance: a `<tr onClick>` is not focusable and has no key binding, so
+   * the rows of a table whose only way in was the row click could not be
+   * opened at all without a pointer. Given this, the first column's content
+   * becomes a real link — the row click stays as the convenience it was.
+   */
+  rowHref?: (row: T) => string;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -752,14 +763,29 @@ export function DataTable<T>({
                   onRowClick ? 'cursor-pointer hover:bg-paper-50' : ''
                 }`}
               >
-                {columns.map((col) => (
-                  <td
-                    key={col.key}
-                    className={`px-3 py-2.5 text-ink-800 ${alignClass[col.align ?? 'left']} ${col.className ?? ''}`}
-                  >
-                    {col.render ? col.render(row) : String((row as Record<string, unknown>)[col.key] ?? '')}
-                  </td>
-                ))}
+                {columns.map((col, colIndex) => {
+                  const content = col.render
+                    ? col.render(row)
+                    : String((row as Record<string, unknown>)[col.key] ?? '');
+                  return (
+                    <td
+                      key={col.key}
+                      className={`px-3 py-2.5 text-ink-800 ${alignClass[col.align ?? 'left']} ${col.className ?? ''}`}
+                    >
+                      {rowHref && colIndex === 0 ? (
+                        <Link
+                          to={rowHref(row)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="rounded-sm hover:underline focus-visible:ring-2 focus-visible:ring-bond-600/40 focus-visible:outline-none"
+                        >
+                          {content}
+                        </Link>
+                      ) : (
+                        content
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))
           )}

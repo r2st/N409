@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { ValuationsPage } from '../src/pages/ValuationsPage';
@@ -119,6 +119,33 @@ describe('ValuationsPage responsive layout', () => {
     expect(checkboxes.length).toBe(2); // card + table variants
     await user.click(checkboxes[0]!);
     expect(screen.getByText('1 selected')).toBeInTheDocument();
+  });
+
+  /**
+   * Below md the table is hidden entirely, so this list is the only way into a
+   * valuation on a phone. It was a `<div onClick>` — not focusable, no key
+   * binding — which left the whole worklist unreachable without a pointer.
+   */
+  it('opens a valuation from the card list without a pointer', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <ValuationsPage />
+      </MemoryRouter>,
+    );
+
+    const cards = await screen.findByRole('list', { name: 'Valuations' });
+    const link = within(cards).getByRole('link', { name: 'Pocket Rocket Inc' });
+    expect(link).toHaveAttribute('href', `/valuations/${VAL_A}`);
+
+    // Reachable by tabbing — an anchor with an href is in the tab order, which
+    // is the whole point; a <div onClick> never is.
+    await user.tab();
+    while (document.activeElement !== link && document.activeElement !== document.body) {
+      await user.tab();
+    }
+    expect(link).toHaveFocus();
   });
 
   it('mobile drawer nav gets a scroll container (AppLayout)', async () => {

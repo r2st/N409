@@ -666,9 +666,20 @@ export function ValuationsPage() {
                           className="h-2 w-2 shrink-0 self-center rounded-full bg-bond-600"
                         />
                       )}
-                      <span className="truncate font-display text-[1.05rem] font-semibold text-ink-900">
+                      {/* The card is a <div onClick>, which is a mouse-only
+                          affordance — not focusable, no key binding. Below md
+                          the table is hidden entirely, so on a phone (or a
+                          narrow window) this list was the only way into a
+                          valuation and there was no way in from the keyboard.
+                          The name is the real link; the card click stays as a
+                          convenience, as it is in the table above. */}
+                      <Link
+                        to={`/valuations/${v.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="truncate rounded-sm font-display text-[1.05rem] font-semibold text-ink-900 focus-visible:ring-2 focus-visible:ring-bond-600/40 focus-visible:outline-none"
+                      >
                         {v.company_name}
-                      </span>
+                      </Link>
                       <span className="tnum shrink-0 text-xs text-ink-400">#{v.number ?? '—'}</span>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
