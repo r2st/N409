@@ -897,7 +897,22 @@ def _check_discounts(c: _Collector, params: dict, weights: dict[str, float] | No
                 "params.dlom_qualitative",
                 "the qualitative DLOM method needs dlom_qualitative (or dlom)",
             )
-        dlom = _finite(qualitative if qualitative is not None else params.get("dlom"))
+        # Which of the two the figure comes from decides which field a problem
+        # with it belongs to, so the source is named before it is parsed.
+        source_field = "params.dlom_qualitative" if qualitative is not None else "params.dlom"
+        source = qualitative if qualitative is not None else params.get("dlom")
+        dlom = _finite(source)
+        if source is not None and dlom is None:
+            # Present and unreadable. Without this the value falls through as
+            # None, the range check below is skipped because there is nothing to
+            # range-check, and the payload validates clean — then `compute`
+            # raises "dlom must be a number" with no field path. The pre-flight
+            # exists precisely so that 422 is a save-time error against a field.
+            c.error(
+                "not_a_number",
+                source_field,
+                f"{source_field.split('.')[-1]} must be a finite number",
+            )
     elif method in MODEL_DLOM_METHODS:
         dlom = None  # derived from volatility and time to exit at compute time
     elif method == "restricted_stock":
