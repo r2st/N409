@@ -53,6 +53,14 @@ interface Sent {
   body: Record<string, unknown>;
 }
 
+const waterfallResult = {
+  distributable: 1000000,
+  lp_distribution: 900000,
+  gp_distribution: 100000,
+  clawback_owed: 0,
+  tiers: {},
+};
+
 interface Overrides {
   funds?: unknown[];
   detail?: unknown;
@@ -72,17 +80,7 @@ function mockApi(over: Overrides = {}) {
       const answer = over.onWrite?.(path, body);
       if (answer) return answer;
       if (path.endsWith('/funds')) return jsonResponse({ fund });
-      if (path.endsWith('/waterfall')) {
-        return jsonResponse({
-          waterfall: {
-            distributable: 1000000,
-            lp_distribution: 900000,
-            gp_distribution: 100000,
-            clawback_owed: 0,
-            tiers: {},
-          },
-        });
-      }
+      if (path.endsWith('/waterfall')) return jsonResponse({ waterfall: waterfallResult });
       return jsonResponse({});
     }
     if (path.includes('/positions/') && path.endsWith('/marks')) {
@@ -617,5 +615,77 @@ describe('FundPortfolioPage', () => {
     renderPage();
     // EUR, not the USD of the first fund in the list.
     expect(await screen.findByText('€750,000')).toBeInTheDocument();
+  });
+
+  /**
+   * Recording a mark and running the waterfall both write and then reload, and
+   * neither used to render anything in between. On this page that silence is
+   * expensive: a duplicate mark is a second valuation of the same position on
+   * the same measurement date, which is exactly the fact an auditor reads off
+   * this screen.
+   */
+  describe('while a write is in flight', () => {
+    /** Holds every write open until `release()`, so the in-flight frame exists. */
+    function gate() {
+      let open!: () => void;
+      const held = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      const sent = mockApi({
+        // The mock awaits whatever `onWrite` returns, so a pending promise here
+        // parks the request instead of answering it.
+        onWrite: () => held.then(() => jsonResponse({ waterfall: waterfallResult })) as unknown as Response,
+      });
+      return { sent, release: () => open() };
+    }
+
+    it('says a mark is being recorded and will not record it twice', async () => {
+      const { sent, release } = gate();
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click(await screen.findByRole('button', { name: /Acme/ }));
+      await user.type(await screen.findByLabelText('Quoted price'), '12.5');
+      await user.click(screen.getByRole('button', { name: 'Record mark' }));
+
+      const recording = await screen.findByRole('button', { name: 'Recording…' });
+      expect(recording).toBeDisabled();
+      await user.click(recording);
+      expect(sent).toHaveLength(1);
+
+      release();
+      await screen.findByRole('button', { name: 'Record mark' });
+    });
+
+    it('says the waterfall is running, and blocks the terms save under it', async () => {
+      const { sent, release } = gate();
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText('LP waterfall calculator');
+
+      await user.click(screen.getByRole('button', { name: 'Run waterfall' }));
+      expect(await screen.findByRole('button', { name: 'Running…' })).toBeDisabled();
+      // The two controls share the card and the same fund, so saving terms
+      // mid-run would change the inputs of the calculation being displayed.
+      expect(screen.getByRole('button', { name: 'Save LP terms' })).toBeDisabled();
+      expect(sent).toHaveLength(1);
+
+      release();
+      await screen.findByRole('button', { name: 'Run waterfall' });
+    });
+
+    it('says LP terms are saving, and blocks the run under it', async () => {
+      const { release } = gate();
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByText('LP waterfall calculator');
+
+      await user.click(screen.getByRole('button', { name: 'Save LP terms' }));
+      expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Run waterfall' })).toBeDisabled();
+
+      release();
+      await screen.findByRole('button', { name: 'Save LP terms' });
+    });
   });
 });

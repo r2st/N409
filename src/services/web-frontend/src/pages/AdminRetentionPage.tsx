@@ -38,6 +38,31 @@ export function AdminRetentionPage() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [holdForm, setHoldForm] = useState({ scope: 'valuation', reference_id: '', reason: '' });
+  /**
+   * Which control is mid-write, as `sweep` / `hold` / `policy:<type>` /
+   * `release:<id>`, or null.
+   *
+   * Every action on this page is a write followed by a full three-endpoint
+   * `load()`, and none of them gave the operator anything to look at in
+   * between: the sweep archives across the whole platform, and "Release" ends a
+   * legal hold. A click that produces no visible change reads as a click that
+   * did not land, so the honest response is to click again — which is how the
+   * sweep gets run twice and a hold gets released by someone who thought the
+   * first press missed. One key rather than a boolean because the page has four
+   * controls in three sections and only the pressed one should go quiet.
+   */
+  const [busy, setBusy] = useState<string | null>(null);
+
+  /** Runs `fn` under `key`, ignoring the click entirely if a write is in flight. */
+  const run = async (key: string, fn: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(key);
+    try {
+      await fn();
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -60,73 +85,77 @@ export function AdminRetentionPage() {
 
   if (!policies) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
 
-  const savePolicy = async (p: Policy) => {
-    setError(null);
-    try {
-      await api(`/admin/retention/policies/${p.data_type}`, {
-        method: 'PUT',
-        body: {
-          archive_after_days: p.archive_after_days,
-          retention_days: p.retention_days,
-          enabled: p.enabled,
-        },
-      });
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the policy.');
-    }
-  };
+  const savePolicy = (p: Policy) =>
+    run(`policy:${p.data_type}`, async () => {
+      setError(null);
+      try {
+        await api(`/admin/retention/policies/${p.data_type}`, {
+          method: 'PUT',
+          body: {
+            archive_after_days: p.archive_after_days,
+            retention_days: p.retention_days,
+            enabled: p.enabled,
+          },
+        });
+        await load();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not save the policy.');
+      }
+    });
 
   const setPolicy = (dataType: string, patch: Partial<Policy>) =>
     setPolicies((ps) => ps?.map((p) => (p.data_type === dataType ? { ...p, ...patch } : p)) ?? ps);
 
-  const placeHold = async () => {
-    setError(null);
-    try {
-      await api('/admin/retention/holds', {
-        method: 'POST',
-        body: {
-          scope: holdForm.scope,
-          reference_id: holdForm.scope === 'global' ? null : holdForm.reference_id.trim() || null,
-          reason: holdForm.reason.trim(),
-        },
-      });
-      setHoldForm({ scope: 'valuation', reference_id: '', reason: '' });
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not place the hold.');
-    }
-  };
+  const placeHold = () =>
+    run('hold', async () => {
+      setError(null);
+      try {
+        await api('/admin/retention/holds', {
+          method: 'POST',
+          body: {
+            scope: holdForm.scope,
+            reference_id: holdForm.scope === 'global' ? null : holdForm.reference_id.trim() || null,
+            reason: holdForm.reason.trim(),
+          },
+        });
+        setHoldForm({ scope: 'valuation', reference_id: '', reason: '' });
+        await load();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not place the hold.');
+      }
+    });
 
   // Both of these used to let a rejection escape as an unhandled promise: the
   // click did nothing visible, the hold stayed in place (or the sweep never
   // ran), and the only evidence was in the browser console. On a screen whose
   // whole job is the legal-hold audit trail, a write that silently fails is
   // the one outcome that must never be indistinguishable from success.
-  const releaseHold = async (id: string) => {
-    setError(null);
-    try {
-      await api(`/admin/retention/holds/${id}/release`, { method: 'POST' });
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not release the hold.');
-    }
-  };
+  const releaseHold = (id: string) =>
+    run(`release:${id}`, async () => {
+      setError(null);
+      try {
+        await api(`/admin/retention/holds/${id}/release`, { method: 'POST' });
+        await load();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not release the hold.');
+      }
+    });
 
-  const runSweep = async () => {
-    setNote(null);
-    setError(null);
-    try {
-      const { result } = await api<{ result: { archived: number; skipped_hold: number } }>(
-        '/admin/retention/run',
-        { method: 'POST' },
-      );
-      setNote(`Sweep complete: ${result.archived} archived, ${result.skipped_hold} held.`);
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not run the archival sweep.');
-    }
-  };
+  const runSweep = () =>
+    run('sweep', async () => {
+      setNote(null);
+      setError(null);
+      try {
+        const { result } = await api<{ result: { archived: number; skipped_hold: number } }>(
+          '/admin/retention/run',
+          { method: 'POST' },
+        );
+        setNote(`Sweep complete: ${result.archived} archived, ${result.skipped_hold} held.`);
+        await load();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not run the archival sweep.');
+      }
+    });
 
   return (
     <div className="max-w-4xl">
@@ -149,8 +178,8 @@ export function AdminRetentionPage() {
       <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="overline text-ink-400">Retention policies</h2>
-          <Button variant="secondary" onClick={runSweep}>
-            Run archival sweep
+          <Button variant="secondary" onClick={runSweep} disabled={busy !== null}>
+            {busy === 'sweep' ? 'Running sweep…' : 'Run archival sweep'}
           </Button>
         </div>
         <div className="overflow-x-auto">
@@ -211,9 +240,10 @@ export function AdminRetentionPage() {
                       type="button"
                       aria-label={`Save the ${p.data_type} retention policy`}
                       onClick={() => savePolicy(p)}
-                      className="text-sm font-semibold text-bond-600 hover:text-bond-700"
+                      disabled={busy !== null}
+                      className="cursor-pointer text-sm font-semibold text-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:text-ink-300"
                     >
-                      Save
+                      {busy === `policy:${p.data_type}` ? 'Saving…' : 'Save'}
                     </button>
                   </td>
                 </tr>
@@ -256,8 +286,8 @@ export function AdminRetentionPage() {
               placeholder="e.g. IRS audit 2026"
             />
           </label>
-          <Button disabled={!holdForm.reason.trim()} onClick={placeHold}>
-            Place hold
+          <Button disabled={!holdForm.reason.trim() || busy !== null} onClick={placeHold}>
+            {busy === 'hold' ? 'Placing…' : 'Place hold'}
           </Button>
         </div>
         {holds.length > 0 && (
@@ -275,9 +305,10 @@ export function AdminRetentionPage() {
                     {h.active && (
                       <button
                         onClick={() => releaseHold(h.id)}
-                        className="text-sm font-semibold text-red-600 hover:text-red-700"
+                        disabled={busy !== null}
+                        className="cursor-pointer text-sm font-semibold text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:text-ink-300"
                       >
-                        Release
+                        {busy === `release:${h.id}` ? 'Releasing…' : 'Release'}
                       </button>
                     )}
                   </td>

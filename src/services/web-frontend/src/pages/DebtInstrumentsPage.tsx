@@ -601,8 +601,11 @@ function CreditTermsCard({
     secured: terms?.secured ?? false,
   });
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const save = async () => {
+    if (saving) return;
+    setSaving(true);
     setError(null);
     try {
       await api(`/debt/instruments/${instrumentId}/credit-terms`, {
@@ -618,6 +621,8 @@ function CreditTermsCard({
       onSaved();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to save credit terms');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -667,8 +672,8 @@ function CreditTermsCard({
           />{' '}
           Secured
         </label>
-        <Button variant="secondary" onClick={() => void save()}>
-          Save credit terms
+        <Button variant="secondary" onClick={() => void save()} disabled={saving}>
+          {saving ? 'Saving…' : 'Save credit terms'}
         </Button>
       </div>
     </div>

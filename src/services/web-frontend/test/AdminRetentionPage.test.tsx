@@ -168,7 +168,9 @@ describe('AdminRetentionPage', () => {
     renderPage();
     await loaded();
 
-    await userEvent.click(within(policyRow('valuations')).getByRole('button', { name: /^Save the .* retention policy$/ }));
+    await userEvent.click(
+      within(policyRow('valuations')).getByRole('button', { name: /^Save the .* retention policy$/ }),
+    );
     await screen.findByText('retention must exceed the archive window');
     // The table survives — the error is a banner, not a replacement.
     expect(policyRow('documents')).toBeInTheDocument();
@@ -362,5 +364,108 @@ describe('AdminRetentionPage', () => {
     await screen.findByText('ref-0');
     expect(screen.getAllByText('archived')).toHaveLength(50);
     expect(screen.queryByText('ref-50')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Every action on this page is a write followed by a full three-endpoint
+   * reload, and none of them used to render anything in between. A click that
+   * produces no visible change reads as a click that did not land, so the
+   * honest response is to click again — which on this screen means running the
+   * platform-wide archival sweep twice, or releasing a legal hold that the
+   * operator believed was still held.
+   */
+  describe('while a write is in flight', () => {
+    /**
+     * Holds every write open until `release()` is called, so the in-flight
+     * frame can actually be asserted on rather than raced against.
+     */
+    function gatedWrites() {
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      let writes = 0;
+      // Not `mockApi`: its write hook is synchronous and so cannot hold a
+      // request open, which is the entire mechanism under test here.
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        const path = String(url);
+        if ((init?.method ?? 'GET') !== 'GET') {
+          writes += 1;
+          await gate;
+          return jsonResponse({ result: { archived: 1, skipped_hold: 0 } });
+        }
+        if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
+        if (path.includes('/retention/holds')) return jsonResponse({ holds: HOLDS });
+        return jsonResponse({ actions: ACTIONS });
+      });
+      return { release: () => open(), writeCount: () => writes };
+    }
+
+    it('says the sweep is running and refuses to start a second one', async () => {
+      const { release, writeCount } = gatedWrites();
+      renderPage();
+      await loaded();
+
+      await userEvent.click(screen.getByRole('button', { name: /Run archival sweep/i }));
+      const running = await screen.findByRole('button', { name: /Running sweep…/i });
+      expect(running).toBeDisabled();
+
+      // The whole point: a second press during the sweep must not reach the API.
+      await userEvent.click(running);
+      expect(writeCount()).toBe(1);
+
+      release();
+      await screen.findByRole('button', { name: /Run archival sweep/i });
+    });
+
+    it('names the row being saved and leaves the other rows alone', async () => {
+      const { release } = gatedWrites();
+      renderPage();
+      await loaded();
+
+      await userEvent.click(
+        within(policyRow('valuations')).getByRole('button', { name: /Save the valuations/i }),
+      );
+      expect(within(policyRow('valuations')).getByText('Saving…')).toBeInTheDocument();
+      // The sibling row still reads "Save" — only the pressed control goes
+      // quiet — but it is disabled, because the write it would race with is
+      // going to reload the table underneath it.
+      const sibling = within(policyRow('documents')).getByRole('button', { name: /Save the documents/i });
+      expect(sibling).toHaveTextContent('Save');
+      expect(sibling).toBeDisabled();
+
+      release();
+      await waitFor(() => expect(within(policyRow('valuations')).getByText('Save')).toBeInTheDocument());
+    });
+
+    it('says a hold is being placed', async () => {
+      const { release } = gatedWrites();
+      renderPage();
+      await loaded();
+
+      await userEvent.type(screen.getByPlaceholderText(/IRS audit 2026/i), 'SEC inquiry');
+      await userEvent.click(screen.getByRole('button', { name: /^Place hold$/i }));
+      expect(await screen.findByRole('button', { name: /Placing…/i })).toBeDisabled();
+
+      release();
+      await screen.findByRole('button', { name: /^Place hold$/i });
+    });
+
+    it('says a hold is being released, and only that hold', async () => {
+      const { release, writeCount } = gatedWrites();
+      renderPage();
+      await loaded();
+
+      const releaseButton = screen.getByRole('button', { name: /^Release$/i });
+      await userEvent.click(releaseButton);
+      const releasing = await screen.findByRole('button', { name: /Releasing…/i });
+      expect(releasing).toBeDisabled();
+      // Releasing a legal hold is the click on this page least safe to repeat.
+      await userEvent.click(releasing);
+      expect(writeCount()).toBe(1);
+
+      release();
+      await screen.findByRole('button', { name: /^Release$/i });
+    });
   });
 });

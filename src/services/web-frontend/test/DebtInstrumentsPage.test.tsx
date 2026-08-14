@@ -72,4 +72,43 @@ describe('DebtInstrumentsPage', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent(/cap amount/);
     expect(screen.getByRole('button', { name: 'About Discount' })).toBeInTheDocument();
   });
+
+  it('says the credit terms are saving and will not send them twice', async () => {
+    // The save is a PUT followed by a reload of the instrument, and rendered
+    // nothing in between — so the button read as dead and inviting a re-press,
+    // which re-rates the instrument against whatever is in the form now.
+    let open!: () => void;
+    const held = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let writes = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      if ((init?.method ?? 'GET') !== 'GET') {
+        writes += 1;
+        await held;
+        return jsonResponse({});
+      }
+      // The card only exists on a credit_spread instrument.
+      if (/\/debt\/instruments\/[^/]+$/.test(path)) {
+        return jsonResponse({
+          instrument: instrument('credit_spread'),
+          credit_terms: null,
+          valuations: [],
+        });
+      }
+      return jsonResponse({ instruments: [instrument('credit_spread')] });
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Save credit terms' }));
+    const saving = await screen.findByRole('button', { name: 'Saving…' });
+    expect(saving).toBeDisabled();
+    await user.click(saving);
+    expect(writes).toBe(1);
+
+    open();
+    await screen.findByRole('button', { name: 'Save credit terms' });
+  });
 });

@@ -413,6 +413,7 @@ function PositionRow({
     model_value: '',
   });
   const [error, setError] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
 
   const loadMarks = useCallback(async () => {
     const { marks: m } = await api<{ marks: Mark[] }>(`/funds/${fundId}/positions/${position.id}/marks`);
@@ -426,6 +427,8 @@ function PositionRow({
 
   const addMark = async (e: FormEvent) => {
     e.preventDefault();
+    if (recording) return;
+    setRecording(true);
     setError(null);
     try {
       const body: Record<string, unknown> = {
@@ -446,6 +449,8 @@ function PositionRow({
       onChange();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to record mark');
+    } finally {
+      setRecording(false);
     }
   };
 
@@ -517,8 +522,8 @@ function PositionRow({
               </Field>
             )}
             <div className="flex items-end">
-              <Button type="submit" variant="secondary">
-                Record mark
+              <Button type="submit" variant="secondary" disabled={recording}>
+                {recording ? 'Recording…' : 'Record mark'}
               </Button>
             </div>
           </form>
@@ -579,8 +584,16 @@ function WaterfallCard({
   const [years, setYears] = useState('1');
   const [result, setResult] = useState<Waterfall | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * `save` or `run`, whichever is in flight. Both write, both reload, and
+   * "Run waterfall" in particular takes long enough on a fund with real
+   * positions that a silent button is read as a dead one.
+   */
+  const [busy, setBusy] = useState<'save' | 'run' | null>(null);
 
   const save = async () => {
+    if (busy) return;
+    setBusy('save');
     setError(null);
     try {
       await api(`/funds/${fundId}/lp-terms`, {
@@ -596,10 +609,14 @@ function WaterfallCard({
       onSaved();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to save LP terms');
+    } finally {
+      setBusy(null);
     }
   };
 
   const run = async () => {
+    if (busy) return;
+    setBusy('run');
     setError(null);
     try {
       const { waterfall } = await api<{ waterfall: Waterfall }>(`/funds/${fundId}/waterfall`, {
@@ -609,6 +626,8 @@ function WaterfallCard({
       setResult(waterfall);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to run waterfall');
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -663,8 +682,8 @@ function WaterfallCard({
           />{' '}
           GP catch-up
         </label>
-        <Button variant="secondary" onClick={() => void save()}>
-          Save LP terms
+        <Button variant="secondary" onClick={() => void save()} disabled={busy !== null}>
+          {busy === 'save' ? 'Saving…' : 'Save LP terms'}
         </Button>
         <Field label="Distributable">
           <TextInput value={distributable} onChange={(e) => setDistributable(e.target.value)} />
@@ -672,7 +691,9 @@ function WaterfallCard({
         <Field label="Years">
           <TextInput value={years} onChange={(e) => setYears(e.target.value)} className="w-16" />
         </Field>
-        <Button onClick={() => void run()}>Run waterfall</Button>
+        <Button onClick={() => void run()} disabled={busy !== null}>
+          {busy === 'run' ? 'Running…' : 'Run waterfall'}
+        </Button>
       </div>
       {result && (
         <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
