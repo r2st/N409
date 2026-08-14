@@ -222,9 +222,28 @@ export const SCHEDULE: Readonly<Record<ScheduleId, string>> = Object.freeze(
  */
 
 const INT = new Intl.NumberFormat('en-US');
+const FRACTIONAL_SHARES = new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 });
 
+/**
+ * A share count, whole where it is whole and exact where it is not.
+ *
+ * It rounded unconditionally, and a conversion ratio does not have to produce a
+ * whole number: a Series A of 2,000,001 shares converting at 1.5 is 3,000,001.5
+ * as converted, and rounding it per row while rounding the *sum* separately is
+ * how Exhibit A came to print an as-converted column of 8,000,001 + 3,000,002 +
+ * 1,500,002 under a total of 12,500,004. A capitalization schedule that does not
+ * add up is the one defect a reader finds without checking anything else, and it
+ * appeared on exactly the tables that carry a ratchet — the ones whose
+ * as-converted column is the reason the exhibit prints one.
+ *
+ * Rounding the rows and totalling the rounded rows would make the column add and
+ * put the total half a share per class away from the denominator the allocation
+ * divided, which this exhibit's own prose promises it is. Printing the fraction
+ * keeps both: the column adds, and it adds to the basis the engine used. Four
+ * places because a conversion ratio carries four.
+ */
 function shares(value: number): string {
-  return INT.format(Math.round(value));
+  return Number.isInteger(value) ? INT.format(value) : FRACTIONAL_SHARES.format(value);
 }
 
 /** `1.2345x` — a multiple, a conversion ratio, a discount factor. */

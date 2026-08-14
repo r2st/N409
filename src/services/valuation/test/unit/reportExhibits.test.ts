@@ -588,6 +588,77 @@ describe('capitalization exhibit', () => {
     expect(seen.match(/13,500,000/g)).toHaveLength(2);
   });
 
+  /*
+   * A conversion ratio does not have to produce a whole number, and this is the
+   * one schedule whose whole job is to be added up. Rounding each row and
+   * rounding the sum separately made the as-converted column disagree with its
+   * own total by a share — on exactly the tables that carry a ratchet, which are
+   * the tables the as-converted column exists for.
+   */
+  describe('a ratio that does not divide into whole shares', () => {
+    const odd = {
+      share_classes: [
+        { name: 'Common', kind: 'common', shares: 8_000_001 },
+        {
+          name: 'Series A',
+          kind: 'preferred',
+          shares: 2_000_001,
+          conversion_ratio: 1.5,
+          preference: 2_000_000,
+          seniority: 1,
+        },
+        {
+          name: 'Series B',
+          kind: 'preferred',
+          shares: 1_000_001,
+          conversion_ratio: 1.5,
+          preference: 3_000_000,
+          seniority: 2,
+        },
+      ],
+    };
+
+    /** Every "1,234" or "1,234.5" in the rendered table, as numbers. */
+    const numbers = (html: string) =>
+      (plain(html).match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((n) => Number(n.replace(/,/g, '')));
+
+    it('adds the as-converted column to the as-converted total', () => {
+      const seen = plain(capitalizationExhibit(odd, CONTEXT)!.html);
+      expect(seen).toContain('3,000,001.5 (1.5000x)');
+      expect(seen).toContain('1,500,001.5 (1.5000x)');
+      // 8,000,001 + 3,000,001.5 + 1,500,001.5 — the printed rows, added.
+      expect(seen).toContain('12,500,004');
+      expect(numbers(seen)).toContain(12_500_004);
+    });
+
+    it('totals to the basis the allocation divided, not to a rounded one', () => {
+      // `fullyDilutedShares` over the same classes. Rounding the rows and
+      // totalling the rounded rows would have printed 12,500,005 — a column
+      // that adds, against a denominator the engine never used.
+      const exact = odd.share_classes.reduce(
+        (sum, c) => sum + c.shares * (c.kind === 'preferred' ? (c.conversion_ratio ?? 1) : 1),
+        0,
+      );
+      expect(exact).toBe(12_500_004);
+      expect(plain(capitalizationExhibit(odd, CONTEXT)!.html)).toContain('12,500,004');
+    });
+
+    it('leaves the outstanding column whole', () => {
+      // Only the converted figures are fractional; the shares column is what
+      // the sheet says and adds to its own total either way.
+      const seen = plain(capitalizationExhibit(odd, CONTEXT)!.html);
+      expect(seen).toContain('11,000,003');
+      expect(seen).not.toContain('11,000,003.');
+    });
+
+    it('prints no decimal point on a count that is whole', () => {
+      // The ordinary table must not grow ".0" on every row for this.
+      const seen = plain(capitalizationExhibit(INPUTS, CONTEXT)!.html);
+      expect(seen).not.toMatch(/\d\.0\b/);
+      expect(seen).toContain('13,500,000');
+    });
+  });
+
   it('marks an uncapped participating class as uncapped', () => {
     const classes = INPUTS.share_classes.map((c) =>
       c.name === 'Series A' ? { ...c, participation_cap: undefined } : c,
