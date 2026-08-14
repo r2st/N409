@@ -585,6 +585,21 @@ export function useFocusTrap<T extends HTMLElement>(
   const ref = useRef<T>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
 
+  /*
+   * The escape handler is read through a ref rather than depended on directly.
+   * Every caller passes an inline arrow — `onClose={() => setConverting(null)}`
+   * — so a dependency on it re-ran this effect on every render of the parent
+   * while the overlay was open. Each re-run tore the trap down (restoring focus
+   * to the trigger, outside the dialog) and set it up again (focusing the first
+   * control in it), so any state the dialog owned stole focus as it changed:
+   * picking a valuation type in the convert-to-engagement dialog dropped the
+   * user back into the company-name box, and a caret placed mid-word jumped to
+   * the end on the next keystroke. The trap should install once per opening,
+   * which is what `[active]` alone says.
+   */
+  const escapeRef = useRef(onEscape);
+  escapeRef.current = onEscape;
+
   useEffect(() => {
     if (!active) return;
     restoreFocusRef.current = document.activeElement as HTMLElement | null;
@@ -598,7 +613,7 @@ export function useFocusTrap<T extends HTMLElement>(
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onEscape();
+        escapeRef.current();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -611,6 +626,19 @@ export function useFocusTrap<T extends HTMLElement>(
       const first = items[0]!;
       const last = items[items.length - 1]!;
       const activeEl = document.activeElement;
+      /*
+       * Focus outside the dialog is the case that made this a trap in name
+       * only. A browser drops focus to <body> whenever the focused element
+       * stops being focusable under it — a button that disables itself while
+       * the request is in flight, a row that re-renders away — and from <body>
+       * the next Tab went to the first control on the page *behind* the
+       * overlay. Wherever focus has ended up, Tab belongs back inside.
+       */
+      if (!container || !activeEl || !container.contains(activeEl)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
       if (e.shiftKey && (activeEl === first || activeEl === container)) {
         e.preventDefault();
         last.focus();
@@ -625,7 +653,7 @@ export function useFocusTrap<T extends HTMLElement>(
       document.removeEventListener('keydown', onKeyDown, true);
       restoreFocusRef.current?.focus?.();
     };
-  }, [active, onEscape]);
+  }, [active]);
 
   return ref;
 }
