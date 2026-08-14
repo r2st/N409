@@ -110,7 +110,24 @@ export function AccountingConnect({ valuationId }: { valuationId: string }) {
     }
   };
 
-  if (!providers) return null;
+  /*
+   * A failed load returned null, so the whole section vanished and the message
+   * the catch had just written had nowhere to render — the integrations simply
+   * were not on the Documents tab, which reads as this deployment not having
+   * them rather than as a request that failed. Null is still right *before* the
+   * first response; after a failure the heading stays so the reader knows which
+   * part of the page is missing, and says why.
+   */
+  if (!providers) {
+    return error ? (
+      <section className="mt-8" aria-label="Accounting integrations">
+        <div className="overline text-ink-400">Accounting integrations</div>
+        <div className="mt-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      </section>
+    ) : null;
+  }
 
   return (
     <section className="mt-8" aria-label="Accounting integrations">
