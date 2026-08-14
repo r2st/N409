@@ -48,23 +48,12 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
     url: '/api/v1/auth/google/callback',
     reason: 'OIDC redirect return, authenticated by the signed state',
   },
-  { method: 'GET', url: '/api/v1/auth/me', reason: 'reads the cookie itself and returns null when absent' },
   { method: 'POST', url: '/api/v1/auth/forgot-password', reason: 'the caller has lost their credential' },
   { method: 'POST', url: '/api/v1/auth/reset-password', reason: 'authenticated by the emailed reset token' },
   {
     method: 'POST',
     url: '/api/v1/auth/verify-email',
     reason: 'authenticated by the emailed verification token',
-  },
-  {
-    method: 'POST',
-    url: '/api/v1/auth/resend-verification',
-    reason: 'the caller cannot sign in until verified',
-  },
-  {
-    method: 'POST',
-    url: '/api/v1/auth/change-password',
-    reason: 'authenticated by the current password in the body',
   },
   { method: 'POST', url: '/api/v1/auth/invite-info', reason: 'authenticated by the invitation token' },
   { method: 'POST', url: '/api/v1/auth/accept-invite', reason: 'authenticated by the invitation token' },
@@ -213,6 +202,26 @@ export interface RouteAudit {
   /** Allow-list entries no route matched — a stale exemption to delete. */
   staleExemptions(): string[];
   /**
+   * Allow-list entries whose route does in fact run `app.authenticate` — a
+   * waiver granted to something that never needed one.
+   *
+   * `staleExemptions` cannot see these: the route exists, so the entry matches.
+   * What makes them worth reporting is what the waiver does *next*. The boot
+   * check below only asks "is this route authenticated **or** listed", so an
+   * entry here pre-authorizes the route to lose its `preHandler` — the one
+   * mistake the audit exists to catch would pass silently on exactly the route
+   * somebody already thought was worth writing down. `POST /auth/change-password`
+   * was listed as "authenticated by the current password in the body" while
+   * actually requiring a session, so dropping its preHandler in a refactor would
+   * have turned it into an unauthenticated password-reset endpoint and booted
+   * cleanly.
+   *
+   * Reported rather than fatal: a redundant entry is not itself a leak, and
+   * failing boot on one would take a service down for a comment. The test suite
+   * asserts it is empty, which is where the mistake actually gets made.
+   */
+  redundantExemptions(): string[];
+  /**
    * Every registered route as `METHOD /url`, params still in `:name` form.
    *
    * The audit already walks every route for the authentication check, so it is
@@ -263,6 +272,8 @@ export function registerRouteAudit(app: FastifyInstance): RouteAudit {
         .filter((k) => !authenticated.has(k) && !PUBLIC_KEYS.has(k))
         .sort((a, b) => a.localeCompare(b)),
     staleExemptions: () => [...PUBLIC_KEYS].filter((k) => !seen.has(k)).sort((a, b) => a.localeCompare(b)),
+    redundantExemptions: () =>
+      [...PUBLIC_KEYS].filter((k) => authenticated.has(k)).sort((a, b) => a.localeCompare(b)),
     all: () => [...seen].sort((a, b) => a.localeCompare(b)),
   };
   app.decorate('routeAudit', audit);

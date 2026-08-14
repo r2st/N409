@@ -56,6 +56,61 @@ describe('route authentication audit', () => {
     }
   });
 
+  it('the public allow-list waives nothing that is already authenticated', async () => {
+    // A route that is both listed and guarded has a waiver it never needed —
+    // and the boot check is an `or`, so that waiver is standing permission for
+    // the route to lose its preHandler without anything noticing. This is the
+    // half `staleExemptions` structurally cannot see: the route exists, so the
+    // entry matches.
+    const pool = stubPool();
+    const app = buildApp({ config: testConfig(), pool });
+    try {
+      await app.ready();
+      expect(app.routeAudit.redundantExemptions()).toEqual([]);
+    } finally {
+      await app.close();
+      await pool.end();
+    }
+  });
+
+  it('reports an exemption for a route that authenticates anyway', async () => {
+    const app = Fastify({ logger: false });
+    app.decorate('authenticate', async () => {});
+    const audit = registerRouteAudit(app);
+    // '/health' is on the allow-list as a liveness probe; guard it and the
+    // waiver becomes a lie the audit should say out loud.
+    app.get('/health', { preHandler: app.authenticate }, async () => ({ ok: true }));
+    await app.ready();
+
+    expect(audit.redundantExemptions()).toEqual(['GET /health']);
+    expect(audit.unguarded()).toEqual([]);
+    await app.close();
+  });
+
+  it('leaves a genuinely public route out of the redundant list', async () => {
+    const app = Fastify({ logger: false });
+    app.decorate('authenticate', async () => {});
+    const audit = registerRouteAudit(app);
+    app.get('/health', async () => ({ ok: true }));
+    await app.ready();
+
+    expect(audit.redundantExemptions()).toEqual([]);
+    await app.close();
+  });
+
+  it('no longer waives the three session-backed auth routes', () => {
+    // Each carried a reason describing a design that is no longer the code:
+    // change-password as "authenticated by the current password in the body",
+    // /auth/me as "returns null when absent" (it 401s — cookieAuth.test.ts
+    // pins that), resend-verification as "the caller cannot sign in until
+    // verified". All three run `preHandler: app.authenticate`, so the waivers
+    // covered nothing except the mistake of removing it.
+    const keys = PUBLIC_ROUTES.map((r) => `${r.method} ${r.url}`);
+    expect(keys).not.toContain('POST /api/v1/auth/change-password');
+    expect(keys).not.toContain('GET /api/v1/auth/me');
+    expect(keys).not.toContain('POST /api/v1/auth/resend-verification');
+  });
+
   it('covers the encapsulated webhook and SSO scopes', async () => {
     // These register inside `app.register()` bodies that only run on ready();
     // auditing synchronously would skip them, so assert they were seen.
