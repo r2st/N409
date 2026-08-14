@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../../lib/api';
+import { numberRange, optional, useFormValidation, type Rules } from '../../lib/useFormValidation';
 import { weightsProblem, type ValuationParams } from '../../lib/pipeline';
 import { Button, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
 import { HelpIcon } from '../HelpIcon';
@@ -67,7 +67,7 @@ const DLOC_METHOD_OPTIONS = [
   { value: 'qualitative', label: 'Qualitative (analyst judgement)' },
 ] as const;
 
-interface FormState {
+type FormState = {
   rolling_forward: boolean;
   inception_date: string;
   fiscal_year_end: string;
@@ -95,7 +95,13 @@ interface FormState {
   asset_method: string;
   allocation_method: string;
   business_overview: string;
-}
+};
+
+/** The two weights of a hybrid allocation, as typed. */
+type HybridWeights = {
+  opm: string;
+  pwerm: string;
+};
 
 /** One leg of a weighted DLOM blend (`dlom_methods`). */
 interface DlomLeg {
@@ -123,6 +129,52 @@ const SCENARIO_TYPES = [
   { value: 'liquidation', label: 'Liquidation' },
   { value: 'dissolution', label: 'Dissolution' },
 ];
+
+/**
+ * The bounds the scenario grid's number boxes declare, restated for a form that
+ * no longer asks the browser to check them. `discount_rate` carries no bound —
+ * a negative required return is strange but not impossible — so only its shape
+ * is checked.
+ */
+const SCENARIO_BOUNDS: Array<{ key: keyof ScenarioRow; label: string; min?: number; max?: number }> = [
+  { key: 'probability', label: 'probability', min: 0, max: 1 },
+  { key: 'exit_value', label: 'exit value', min: 0 },
+  { key: 'time_years', label: 'years', min: 0 },
+  { key: 'discount_rate', label: 'discount rate' },
+];
+
+/**
+ * The first bound a scenario row breaks, or null.
+ *
+ * The grid is a table with no room for a message under each cell, so the row is
+ * named in one line beneath it instead — "Scenario 2: probability must be at
+ * most 1" points at a cell as well as an inline message would, and does not
+ * cost the table a third of its height.
+ */
+function scenarioProblem(rows: ScenarioRow[]): string | null {
+  for (const [i, row] of rows.entries()) {
+    for (const { key, label, min, max } of SCENARIO_BOUNDS) {
+      const raw = row[key].trim();
+      if (raw === '') continue;
+      const value = Number(raw);
+      if (!Number.isFinite(value)) return `Scenario ${i + 1}: ${label} must be a number.`;
+      if (min !== undefined && value < min) return `Scenario ${i + 1}: ${label} must be at least ${min}.`;
+      if (max !== undefined && value > max) return `Scenario ${i + 1}: ${label} must be at most ${max}.`;
+    }
+  }
+  return null;
+}
+
+/** The bound a blend leg's weight breaks, or null. `min`/`max` off the box. */
+function legWeightProblem(leg: DlomLeg): string | null {
+  const raw = leg.weight.trim();
+  if (raw === '') return 'Weight is required.';
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return 'Weight must be a number.';
+  if (value < 0) return 'Weight must be at least 0.';
+  if (value > 1) return 'Weight must be at most 1.';
+  return null;
+}
 
 const emptyScenario = (): ScenarioRow => ({
   name: '',
@@ -186,6 +238,43 @@ function fromParams(p: ValuationParams): FormState {
   };
 }
 
+/**
+ * A form of blanks, for the render before the params arrive.
+ *
+ * `useFormValidation` is a hook and so cannot be called after the loading
+ * return, and it needs a values object on every render. Every rule below is
+ * `optional`, so validating this stands nothing up: it fails nothing.
+ */
+const EMPTY_FORM: FormState = {
+  rolling_forward: false,
+  inception_date: '',
+  fiscal_year_end: '',
+  weight_asset: '',
+  weight_opm: '',
+  weight_income: '',
+  weight_market: '',
+  dloc: '',
+  dloc_method: '',
+  control_premium: '',
+  dloc_synergy_share: '',
+  dloc_statistic: '',
+  dlom_method: '',
+  dlom_qualitative: '',
+  dlom_statistic: '',
+  revenue_status: '',
+  development_stage: '',
+  exit_timeline: '',
+  last_round_date: '',
+  last_year_revenue: '',
+  ytd_revenue: '',
+  runway_months: '',
+  market_method: '',
+  market_horizon: '',
+  asset_method: '',
+  allocation_method: 'opm',
+  business_overview: '',
+};
+
 /** The blend legs as the API carries them, or `[]` when a single method is set. */
 function legsFromParams(p: ValuationParams): DlomLeg[] {
   const raw = p.dlom_methods;
@@ -212,8 +301,13 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const [scenarios, setScenarios] = useState<ScenarioRow[]>([]);
   const [scenariosBusy, setScenariosBusy] = useState(false);
   const [scenariosSaved, setScenariosSaved] = useState(false);
-  const [hybridOpmWeight, setHybridOpmWeight] = useState('0.5');
-  const [hybridPwermWeight, setHybridPwermWeight] = useState('0.5');
+  /*
+   * The hybrid blend's two weights, kept as one object rather than two strings
+   * so `useFormValidation` has a values object to read. They are saved by the
+   * scenarios button, not by the methodology form, so they get their own
+   * instance of the hook.
+   */
+  const [hybridWeights, setHybridWeights] = useState<HybridWeights>({ opm: '0.5', pwerm: '0.5' });
   const [dlomLegs, setDlomLegs] = useState<DlomLeg[]>([]);
   /*
    * The three study selections. Kept beside the form rather than in it because
@@ -249,8 +343,10 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         }>(`/valuations/${valuationId}/engine-inputs`);
         const hy = engine_inputs?.hybrid;
         if (hy) {
-          if (hy.opm_weight != null) setHybridOpmWeight(String(hy.opm_weight));
-          if (hy.pwerm_weight != null) setHybridPwermWeight(String(hy.pwerm_weight));
+          setHybridWeights((w) => ({
+            opm: hy.opm_weight != null ? String(hy.opm_weight) : w.opm,
+            pwerm: hy.pwerm_weight != null ? String(hy.pwerm_weight) : w.pwerm,
+          }));
         }
         const raw = engine_inputs?.pwerm?.scenarios;
         if (Array.isArray(raw) && raw.length > 0) {
@@ -285,13 +381,20 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     void load();
   }, [load]);
 
-  if (!form || !params) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
+  /*
+   * Everything from here to the loading return is a pure reading of the form,
+   * hoisted above it because `useFormValidation` is a hook: it has to run on
+   * the render that is still waiting for the params, and the rules it is handed
+   * depend on which method is selected. `values` is the form once it has
+   * arrived and a sheet of blanks before that.
+   */
+  const values = form ?? EMPTY_FORM;
 
   const weightsIssue = weightsProblem({
-    asset: form.weight_asset,
-    opm: form.weight_opm,
-    income: form.weight_income,
-    market: form.weight_market,
+    asset: values.weight_asset,
+    opm: values.weight_opm,
+    income: values.weight_income,
+    market: values.weight_market,
   });
 
   const blending = dlomLegs.length > 0;
@@ -313,19 +416,22 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         ? 'Every leg needs a method.'
         : blendDuplicate !== null
           ? `${DLOM_METHOD_OPTIONS.find((o) => o.value === blendDuplicate)?.label ?? blendDuplicate} is weighted twice.`
-          : Math.abs(blendTotal - 1) > 1e-4
-            ? 'Blend weights must sum to 1.0000.'
-            : null;
+          : // Checked before the sum: legs of −0.5 and 1.5 add to exactly one.
+            dlomLegs.some((leg) => legWeightProblem(leg) !== null)
+            ? 'Every leg needs a weight between 0 and 1.'
+            : Math.abs(blendTotal - 1) > 1e-4
+              ? 'Blend weights must sum to 1.0000.'
+              : null;
 
   // A qualitative leg needs its figure whether it is the single method or one
   // weight among several — the service refuses both the same way.
   const qualitativeSelected = blending
     ? blendMethods.includes('qualitative')
-    : form.dlom_method === 'qualitative';
-  const qualitativeMissing = qualitativeSelected && form.dlom_qualitative.trim() === '';
+    : values.dlom_method === 'qualitative';
+  const qualitativeMissing = qualitativeSelected && values.dlom_qualitative.trim() === '';
   // `dlom_statistic` is read by both study families, so the field is offered
   // whenever either is in play — concluded on, or weighted as a leg.
-  const dlomMethods = blending ? blendMethods : [form.dlom_method];
+  const dlomMethods = blending ? blendMethods : [values.dlom_method];
   const studySelected = dlomMethods.some((m) => m === 'restricted_stock' || m === 'pre_ipo');
   // Each family's set is offered only when that family is in play. The two
   // tables share no study names, so showing both pickers at once would invite
@@ -335,16 +441,82 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   // `dloc` itself stays optional — an engagement that concludes no control
   // discount is a normal outcome — but a method that cannot run without its
   // input is not, so those are caught here rather than by the engine.
-  const controlPremiumMissing = form.dloc_method === 'control_premium' && form.control_premium.trim() === '';
-  const dlocQualitativeMissing = form.dloc_method === 'qualitative' && form.dloc.trim() === '';
-  // The column is a non-negative bigint of cents. A number input's spinner
-  // cannot reach a negative here, but a paste can, and the 422 it earns says
-  // "last_year_revenue_cents" rather than which box to look in.
-  const revenueIssue = [form.last_year_revenue, form.ytd_revenue].some(
-    (v) => v.trim() !== '' && Number(v) < 0,
-  )
-    ? 'Revenue cannot be negative.'
-    : null;
+  const derivingFromPremium = values.dloc_method === 'control_premium';
+  const controlPremiumMissing = derivingFromPremium && values.control_premium.trim() === '';
+  const dlocQualitativeMissing = values.dloc_method === 'qualitative' && values.dloc.trim() === '';
+  /*
+   * The column is a non-negative bigint of cents. A number input's spinner
+   * cannot reach a negative here, but a paste can, and the 422 it earns says
+   * "last_year_revenue_cents" rather than which box to look in.
+   *
+   * Reported per box rather than once for the pair: the message used to be
+   * rendered only on "Last full year revenue", so a negative year-to-date
+   * figure put the complaint next to a box that was fine. It is also not a
+   * `useFormValidation` rule, because unlike a bound nobody can reach by typing
+   * forwards, a negative is always a mistake and is worth saying before the box
+   * is left.
+   */
+  const negative = (v: string) => v.trim() !== '' && Number(v) < 0;
+  const lastYearRevenueIssue = negative(values.last_year_revenue) ? 'Revenue cannot be negative.' : null;
+  const ytdRevenueIssue = negative(values.ytd_revenue) ? 'Revenue cannot be negative.' : null;
+  const revenueIssue = lastYearRevenueIssue ?? ytdRevenueIssue;
+
+  /*
+   * The bounds the number boxes have always declared as `min`/`max`, restated
+   * for a form that no longer asks the browser to check them.
+   *
+   * Every one is `optional`: each of these columns is nullable, and a blank box
+   * is how an analyst says "no view", not an omission. A rule is only installed
+   * when its box is on screen — `control_premium` keeps whatever figure it held
+   * when the derivation is switched away from it, and a stale value behind a
+   * hidden field must not block a save with a message nobody can see.
+   */
+  const rules: Rules<FormState> = {
+    ...Object.fromEntries(
+      WEIGHTS.map(({ key, label }) => [
+        key,
+        optional<FormState>(key, numberRange<FormState>(key, 0, 1, `${label} weight`)),
+      ]),
+    ),
+    runway_months: optional('runway_months', numberRange('runway_months', 0, 600, 'Runway')),
+    ...(values.dloc_method !== 'studies'
+      ? { dloc: optional<FormState>('dloc', numberRange<FormState>('dloc', 0, 1, 'DLOC')) }
+      : {}),
+    ...(derivingFromPremium
+      ? {
+          control_premium: optional<FormState>(
+            'control_premium',
+            numberRange<FormState>('control_premium', 0, 10, 'Control premium'),
+          ),
+          dloc_synergy_share: optional<FormState>(
+            'dloc_synergy_share',
+            numberRange<FormState>('dloc_synergy_share', 0, 0.99, 'Synergy share'),
+          ),
+        }
+      : {}),
+    ...(qualitativeSelected
+      ? {
+          dlom_qualitative: optional<FormState>(
+            'dlom_qualitative',
+            numberRange<FormState>('dlom_qualitative', 0, 1, 'Qualitative DLOM'),
+          ),
+        }
+      : {}),
+  };
+
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(values, rules);
+
+  /*
+   * The hybrid blend is saved by its own button, so it validates on its own.
+   * Blank is not "no view" here — a hybrid allocation with a missing weight is
+   * not an allocation — so these two are required rather than `optional`.
+   */
+  const hybrid = useFormValidation<HybridWeights>(hybridWeights, {
+    opm: numberRange('opm', 0, 1, 'OPM weight'),
+    pwerm: numberRange('pwerm', 0, 1, 'PWERM weight'),
+  });
+
+  if (!form || !params) return error ? <ErrorNote>{error}</ErrorNote> : <Spinner />;
 
   const set = (key: keyof FormState) => (value: string | boolean) => {
     setSaved(false);
@@ -372,8 +544,13 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     revenueIssue,
   );
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * `handleSubmit` owns the field-level bounds — it reveals every message and
+   * refuses the submit. `saveBlocked` is the cross-field half (weights summing
+   * to one, a discount missing the input it is computed from), which keeps its
+   * own always-visible messages and its own disabled button.
+   */
+  const save = handleSubmit(async () => {
     if (saveBlocked) return;
     setError(null);
     setBusy(true);
@@ -445,7 +622,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const weightTotal = [form.weight_asset, form.weight_opm, form.weight_income, form.weight_market]
     .map((v) => Number(v) || 0)
@@ -457,6 +634,10 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const isMonteCarlo = form.allocation_method === 'monte_carlo';
   const probabilityTotal = scenarios.reduce((sum, s) => sum + (Number(s.probability) || 0), 0);
   const probabilityOff = scenarios.length > 0 && Math.abs(probabilityTotal - 1) > 1e-4;
+  const scenarioIssue = scenarioProblem(scenarios);
+  // The hybrid weights ride along with the scenarios save, so a bad one blocks
+  // it too — the request carries both or neither.
+  const scenariosBlocked = probabilityOff || scenarioIssue !== null || (isHybrid && !hybrid.valid);
 
   const setScenario = (i: number, key: keyof ScenarioRow) => (value: string) => {
     setScenariosSaved(false);
@@ -483,8 +664,8 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       // weights, saved together to engine_inputs.
       if (isHybrid) {
         body.hybrid = {
-          opm_weight: hybridOpmWeight.trim() === '' ? null : Number(hybridOpmWeight),
-          pwerm_weight: hybridPwermWeight.trim() === '' ? null : Number(hybridPwermWeight),
+          opm_weight: hybridWeights.opm.trim() === '' ? null : Number(hybridWeights.opm),
+          pwerm_weight: hybridWeights.pwerm.trim() === '' ? null : Number(hybridWeights.pwerm),
         };
       }
       await api(`/valuations/${valuationId}/engine-inputs`, { method: 'PATCH', body });
@@ -497,7 +678,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   };
 
   return (
-    <form onSubmit={save} className="space-y-6">
+    <form onSubmit={save} className="space-y-6" noValidate>
       {error && <ErrorNote>{error}</ErrorNote>}
       {saved && (
         <div className="rounded-md border border-bond-200 bg-bond-50 px-3.5 py-2.5 text-sm text-bond-700">
@@ -553,7 +734,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               onChange={(e) => set('last_round_date')(e.target.value)}
             />
           </Field>
-          <Field label="Runway (months)">
+          <Field label="Runway (months)" error={errorFor('runway_months')}>
             <TextInput
               type="number"
               min={0}
@@ -561,6 +742,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               disabled={readOnly}
               value={form.runway_months}
               onChange={(e) => set('runway_months')(e.target.value)}
+              onBlur={blurHandler('runway_months')}
             />
           </Field>
           <div className="flex items-center">
@@ -602,30 +784,49 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
         </div>
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           {WEIGHTS.map(({ key, label }) => (
+            /*
+             * The message is wired by hand rather than through `Field`'s
+             * `error` prop. A weight is two controls — a coarse slider and the
+             * exact box — so the field's child is the `<div>` holding them, and
+             * that is what `Field` would attach `aria-invalid` and
+             * `aria-describedby` to. A screen reader on the number box, which
+             * is the one holding the figure being complained about, would hear
+             * nothing.
+             */
             <Field key={key} label={label}>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  disabled={readOnly}
-                  value={Number(form[key]) || 0}
-                  onChange={(e) => set(key)(e.target.value)}
-                  className="flex-1 accent-bond-600"
-                  aria-label={`${label} weight slider`}
-                />
-                <TextInput
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.0001}
-                  disabled={readOnly}
-                  value={form[key]}
-                  onChange={(e) => set(key)(e.target.value)}
-                  className="w-24"
-                  aria-label={`${label} weight`}
-                />
+              <div>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    disabled={readOnly}
+                    value={Number(form[key]) || 0}
+                    onChange={(e) => set(key)(e.target.value)}
+                    className="flex-1 accent-bond-600"
+                    aria-label={`${label} weight slider`}
+                  />
+                  <TextInput
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.0001}
+                    disabled={readOnly}
+                    value={form[key]}
+                    onChange={(e) => set(key)(e.target.value)}
+                    onBlur={blurHandler(key)}
+                    className="w-24"
+                    aria-label={`${label} weight`}
+                    aria-invalid={errorFor(key) ? true : undefined}
+                    aria-describedby={errorFor(key) ? `${key}-error` : undefined}
+                  />
+                </div>
+                {errorFor(key) && (
+                  <span id={`${key}-error`} className="mt-1 block text-xs font-medium text-red-600">
+                    {errorFor(key)}
+                  </span>
+                )}
               </div>
             </Field>
           ))}
@@ -701,33 +902,35 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           </Field>
           {isHybrid && (
             <div className="grid grid-cols-2 gap-4" data-testid="hybrid-weights">
-              <Field label="OPM weight" hint="Far-term continuation.">
+              <Field label="OPM weight" hint="Far-term continuation." error={hybrid.errorFor('opm')}>
                 <TextInput
                   type="number"
                   step="0.05"
                   min="0"
                   max="1"
                   disabled={readOnly}
-                  value={hybridOpmWeight}
+                  value={hybridWeights.opm}
                   onChange={(e) => {
                     setScenariosSaved(false);
-                    setHybridOpmWeight(e.target.value);
+                    setHybridWeights((w) => ({ ...w, opm: e.target.value }));
                   }}
+                  onBlur={hybrid.blurHandler('opm')}
                   aria-label="Hybrid OPM weight"
                 />
               </Field>
-              <Field label="PWERM weight" hint="Near-term discrete exits.">
+              <Field label="PWERM weight" hint="Near-term discrete exits." error={hybrid.errorFor('pwerm')}>
                 <TextInput
                   type="number"
                   step="0.05"
                   min="0"
                   max="1"
                   disabled={readOnly}
-                  value={hybridPwermWeight}
+                  value={hybridWeights.pwerm}
                   onChange={(e) => {
                     setScenariosSaved(false);
-                    setHybridPwermWeight(e.target.value);
+                    setHybridWeights((w) => ({ ...w, pwerm: e.target.value }));
                   }}
+                  onBlur={hybrid.blurHandler('pwerm')}
                   aria-label="Hybrid PWERM weight"
                 />
               </Field>
@@ -735,7 +938,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           )}
         </div>
         {isHybrid &&
-          Math.abs((Number(hybridOpmWeight) || 0) + (Number(hybridPwermWeight) || 0) - 1) > 1e-4 && (
+          Math.abs((Number(hybridWeights.opm) || 0) + (Number(hybridWeights.pwerm) || 0) - 1) > 1e-4 && (
             <p className="mt-3 text-sm text-red-600" data-testid="hybrid-weight-warning">
               OPM + PWERM weights must sum to 1.00.
             </p>
@@ -904,6 +1107,11 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               Scenario probabilities must sum to 1.0000.
             </p>
           )}
+          {scenarioIssue && (
+            <p className="mt-3 text-sm font-medium text-red-600" data-testid="scenario-issue">
+              {scenarioIssue}
+            </p>
+          )}
           {scenariosSaved && <p className="mt-3 text-sm font-medium text-bond-700">Scenarios saved.</p>}
           {!readOnly && (
             <div className="mt-4 flex gap-2">
@@ -919,8 +1127,8 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               </Button>
               <Button
                 type="button"
-                onClick={() => void saveScenarios()}
-                disabled={scenariosBusy || scenarios.length === 0 || probabilityOff}
+                onClick={(e) => hybrid.handleSubmit(saveScenarios)(e)}
+                disabled={scenariosBusy || scenarios.length === 0 || scenariosBlocked}
               >
                 {scenariosBusy ? 'Saving…' : 'Save scenarios'}
               </Button>
@@ -963,7 +1171,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             <Field
               label="DLOC (fraction)"
               hint="0–1."
-              error={dlocQualitativeMissing ? 'Required for the qualitative method.' : null}
+              error={dlocQualitativeMissing ? 'Required for the qualitative method.' : errorFor('dloc')}
             >
               <TextInput
                 type="number"
@@ -973,6 +1181,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                 disabled={readOnly || form.dloc_method === 'control_premium'}
                 value={form.dloc}
                 onChange={(e) => set('dloc')(e.target.value)}
+                onBlur={blurHandler('dloc')}
                 data-testid="dloc"
               />
             </Field>
@@ -983,7 +1192,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               <Field
                 label="Control premium (fraction)"
                 hint="Inverted, not subtracted: 0.25 → a 20% discount."
-                error={controlPremiumMissing ? 'Required for this derivation.' : null}
+                error={controlPremiumMissing ? 'Required for this derivation.' : errorFor('control_premium')}
                 tooltip="A premium and a discount are the same fact from opposite sides, and the conversion is not symmetric: DLOC = 1 − 1/(1+CP). The engine computes the discount, so the DLOC box is read-only here."
               >
                 <TextInput
@@ -994,12 +1203,14 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                   disabled={readOnly}
                   value={form.control_premium}
                   onChange={(e) => set('control_premium')(e.target.value)}
+                  onBlur={blurHandler('control_premium')}
                   data-testid="control-premium"
                 />
               </Field>
               <Field
                 label="Synergy share (fraction)"
                 hint="Removed before inverting. Blank keeps the whole premium."
+                error={errorFor('dloc_synergy_share')}
                 tooltip="The share of an observed acquisition premium attributable to synergies rather than to control. Buyers pay for both; only the control half is evidence for a DLOC."
               >
                 <TextInput
@@ -1010,6 +1221,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                   disabled={readOnly}
                   value={form.dloc_synergy_share}
                   onChange={(e) => set('dloc_synergy_share')(e.target.value)}
+                  onBlur={blurHandler('dloc_synergy_share')}
                 />
               </Field>
             </>
@@ -1130,7 +1342,9 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
             <Field
               label="Qualitative DLOM (fraction)"
               hint="0–1."
-              error={qualitativeMissing ? 'Required for the qualitative method.' : null}
+              error={
+                qualitativeMissing ? 'Required for the qualitative method.' : errorFor('dlom_qualitative')
+              }
             >
               <TextInput
                 type="number"
@@ -1140,6 +1354,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                 disabled={readOnly}
                 value={form.dlom_qualitative}
                 onChange={(e) => set('dlom_qualitative')(e.target.value)}
+                onBlur={blurHandler('dlom_qualitative')}
                 data-testid="dlom-qualitative"
               />
             </Field>
@@ -1193,7 +1408,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                     </Field>
                   </div>
                   <div className="w-32">
-                    <Field label="Weight">
+                    <Field label="Weight" error={legWeightProblem(leg)}>
                       <TextInput
                         type="number"
                         min={0}
@@ -1328,7 +1543,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           <Field
             label="Last full year revenue"
             hint="Whole currency units."
-            error={revenueIssue}
+            error={lastYearRevenueIssue}
             tooltip="Revenue for the last completed fiscal year. Feeds the revenue multiple in the market approach and the stage-of-development conclusion."
           >
             <TextInput
@@ -1341,7 +1556,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
               data-testid="last-year-revenue"
             />
           </Field>
-          <Field label="Revenue year to date" hint="Whole currency units.">
+          <Field label="Revenue year to date" hint="Whole currency units." error={ytdRevenueIssue}>
             <TextInput
               type="number"
               min={0}
