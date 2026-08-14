@@ -34,7 +34,8 @@ describe('CSV export (M4)', () => {
 
   it('renders a header row and CRLF line endings', () => {
     const csv = toCsv(['a', 'b'], [['1', 'x,y']]);
-    expect(csv).toBe('a,b\r\n1,"x,y"\r\n');
+    // Past the BOM, which csv.test.ts asserts separately.
+    expect(csv.replace(/^\ufeff/, '')).toBe('a,b\r\n1,"x,y"\r\n');
   });
 });
 

@@ -582,8 +582,12 @@ describe.skipIf(!dbUp)('M4 — Polish', () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toContain('text/csv');
       expect(res.headers['content-disposition']).toContain('.csv');
+      // The file leads with a UTF-8 BOM, so Excel decodes a non-ASCII company
+      // name as UTF-8 rather than in the system codepage. Asserted on the wire
+      // because that is the only place it matters — see domain/csv.ts.
+      expect(res.body.startsWith('\ufeff')).toBe(true);
       // merged M3/M4 exporter: the rich projection with joined owner/partner/reviewer
-      expect(res.body.split('\r\n')[0]).toBe(
+      expect(res.body.replace(/^\ufeff/, '').split('\r\n')[0]).toBe(
         'id,number,workflow_id,kind,state,company_name,service_name,owner_email,partner_name,source,currency,paid_status,waiting_on_client,reviewer_email,created_at,due_date,published_at',
       );
       expect(res.body).toContain('Searchable Ventures');

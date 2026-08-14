@@ -79,7 +79,9 @@ describe('direction', () => {
 
 describe('comparisonCsv', () => {
   const csv = comparisonCsv(A, B, groups);
-  const lines = csv.trimEnd().split('\r\n');
+  // Past the UTF-8 BOM every export leads with, so the first field of the first
+  // column is the column name rather than the mark in front of it.
+  const lines = csv.replace(/^\ufeff/, '').trimEnd().split('\r\n');
   const header = lines[0]!.split(',');
   const cells = (label: string): Record<string, string> => {
     const line = lines.find((l) => l.includes(label));

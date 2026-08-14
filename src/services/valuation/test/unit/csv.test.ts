@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseCsvSheet } from '../../src/domain/capTable.js';
 import { csvEscape, toCsv } from '../../src/domain/csv.js';
 
 describe('csvEscape', () => {
@@ -92,6 +93,58 @@ describe('toCsv', () => {
         { id: 2, name: null },
       ],
     );
-    expect(csv).toBe('id,name\r\n1,"Acme, Inc."\r\n2,\r\n');
+    // The leading BOM is asserted on its own below; this is about the rows.
+    expect(csv.replace(/^\ufeff/, '')).toBe('id,name\r\n1,"Acme, Inc."\r\n2,\r\n');
+  });
+});
+
+/**
+ * A byte-order mark, so Excel reads the file as UTF-8.
+ *
+ * Every CSV this codebase produces is an `attachment` download or a member of
+ * the evidence bundle — a file a human opens in a spreadsheet, never an API
+ * payload. `charset=utf-8` on the response settles how a *browser* displays it
+ * and has no bearing on what Excel does with the saved file: absent a BOM,
+ * Excel decodes it in the system codepage, and "Ångström Robotics AB" arrives
+ * as "Ã…ngstrÃ¶m Robotics AB" in the file an auditor reads. Company names,
+ * analyst names and the free text in a change log are all reachable.
+ *
+ * That Excel is a first-class consumer here is not a guess: `domain/capTable.ts`
+ * strips a leading BOM on *import* precisely because Excel's "Save as CSV UTF-8"
+ * writes one — so this also makes an export round-trip back into the platform.
+ */
+describe('the byte-order mark on an exported file', () => {
+  it('leads the file, before the header row', () => {
+    const out = toCsv(['name'], [{ name: 'Ångström Robotics AB' }]);
+    expect(out.startsWith('﻿')).toBe(true);
+    expect(out.slice(1).startsWith('name\r\n')).toBe(true);
+  });
+
+  it('appears exactly once, however many rows there are', () => {
+    const out = toCsv(['name'], [{ name: 'a' }, { name: 'b' }, { name: 'c' }]);
+    expect([...out].filter((ch) => ch === '﻿')).toHaveLength(1);
+  });
+
+  it('leaves the non-ASCII payload itself untouched', () => {
+    const name = '北京机器人 — Ångström «Robotics» 🤖';
+    const out = toCsv(['name'], [{ name }]);
+    expect(out).toContain(name);
+  });
+
+  /**
+   * Round-tripped through the real importer rather than a regex: the claim is
+   * that `parseCsvSheet` — the parser every cap-table upload goes through —
+   * reads an export of ours back, header names intact. A BOM left in place
+   * becomes part of the first header name, which matches no column and is
+   * exactly the failure that parser's own BOM strip exists to prevent.
+   */
+  it('is stripped by the importer, so an export reads straight back in', () => {
+    const out = toCsv(
+      ['Security Class', 'Shares'],
+      [{ 'Security Class': 'Ångström Preferred «A»', Shares: '1,000' }],
+    );
+    const { headers, rows } = parseCsvSheet(out);
+    expect(headers[0]).toBe('Security Class');
+    expect(rows[0]!['Security Class']).toBe('Ångström Preferred «A»');
   });
 });

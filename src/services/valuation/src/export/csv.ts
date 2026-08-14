@@ -10,12 +10,13 @@
  * places that fix can land.
  */
 
-import { csvEscape } from '../domain/csv.js';
+import { csvEscape, UTF8_BOM } from '../domain/csv.js';
 
 export const csvField = csvEscape;
 
+/** Leads with the same BOM the other serializer writes — see `UTF8_BOM`. */
 export function toCsv(headers: string[], rows: unknown[][]): string {
   const lines = [headers.map(csvField).join(',')];
   for (const row of rows) lines.push(row.map(csvField).join(','));
-  return lines.join('\r\n') + '\r\n';
+  return UTF8_BOM + lines.join('\r\n') + '\r\n';
 }

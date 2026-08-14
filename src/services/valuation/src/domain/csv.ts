@@ -59,5 +59,22 @@ export function toCsv<T extends object>(
 ): string {
   const header = columns.map(csvEscape).join(',');
   const lines = rows.map((row) => columns.map((c) => csvEscape(row[c])).join(','));
-  return [header, ...lines].join('\r\n') + '\r\n';
+  return UTF8_BOM + [header, ...lines].join('\r\n') + '\r\n';
 }
+
+/**
+ * Leads every CSV this codebase writes, so Excel decodes it as UTF-8.
+ *
+ * `charset=utf-8` on the response settles how a *browser* renders the bytes and
+ * says nothing about what Excel does with the saved file: without a BOM it
+ * decodes in the system codepage, and a company named "Ångström Robotics AB"
+ * reaches the auditor as "Ã…ngstrÃ¶m Robotics AB". Every CSV here is an
+ * `attachment` download or a member of the evidence bundle — a file somebody
+ * opens in a spreadsheet, never an API payload — so there is no consumer this
+ * trades against.
+ *
+ * It also closes the round trip. `domain/capTable.ts` already strips a leading
+ * BOM on import, put there by Excel's own "Save as CSV UTF-8"; an export can now
+ * be read straight back in by the same parser.
+ */
+export const UTF8_BOM = '﻿';
