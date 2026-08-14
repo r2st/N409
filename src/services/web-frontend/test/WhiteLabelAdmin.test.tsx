@@ -77,14 +77,119 @@ describe('PartnerDetailPage white-label admin', () => {
     expect(screen.getByText('Customized')).toBeInTheDocument();
   });
 
-  it('saves only complete subject+body pairs', async () => {
+  /**
+   * R31 — a half-filled row used to be dropped on the way out: the admin
+   * pressed Save, the page reloaded, and their subject was simply gone with
+   * nothing saying it had been discarded. The pair is now a rule, and the rule
+   * is stated on the row it belongs to.
+   */
+  it('refuses a subject with no body, instead of dropping it', async () => {
     const calls = mockApi();
     const user = userEvent.setup();
     renderPage();
 
     await screen.findByTestId('branding-preview');
-    // fill only the subject of another template — it must be dropped on save
     await user.type(screen.getByLabelText('Valuation started subject'), 'Half-filled subject');
+    await user.click(screen.getByRole('button', { name: 'Save email templates' }));
+
+    expect(await screen.findByText('Add a body — a subject on its own is not saved.')).toBeInTheDocument();
+    expect(calls.find((c) => c.method === 'PATCH')).toBeUndefined();
+  });
+
+  it('refuses a body with no subject', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId('branding-preview');
+    await user.type(screen.getByLabelText('Valuation started body'), 'Body with nothing above it');
+    await user.click(screen.getByRole('button', { name: 'Save email templates' }));
+
+    expect(await screen.findByText('Add a subject — a body on its own is not saved.')).toBeInTheDocument();
+    expect(calls.find((c) => c.method === 'PATCH')).toBeUndefined();
+  });
+
+  /**
+   * The message arrives on submit, when focus is on the Save button rather than
+   * on either box — so being reachable from the controls via aria-describedby
+   * is not the same as being announced.
+   */
+  it('announces the pair message rather than only painting it', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId('branding-preview');
+    await user.type(screen.getByLabelText('Valuation started subject'), 'Half-filled subject');
+    await user.click(screen.getByRole('button', { name: 'Save email templates' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Add a body — a subject on its own is not saved.');
+  });
+
+  /**
+   * The message is about the pair, so it is wired to both boxes rather than
+   * announced against whichever one happened to be typed in.
+   */
+  it('points both boxes of the row at the one message', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId('branding-preview');
+    await user.type(screen.getByLabelText('Valuation started subject'), 'Half-filled subject');
+    await user.click(screen.getByRole('button', { name: 'Save email templates' }));
+
+    const message = await screen.findByText('Add a body — a subject on its own is not saved.');
+    const describedBy = message.getAttribute('id')!;
+    expect(screen.getByLabelText('Valuation started subject')).toHaveAttribute(
+      'aria-describedby',
+      describedBy,
+    );
+    expect(screen.getByLabelText('Valuation started body')).toHaveAttribute('aria-describedby', describedBy);
+  });
+
+  /**
+   * A row left entirely blank is still the "use the platform default" case and
+   * is still dropped — that is not a half-filled row, it is an absent one.
+   */
+  it('saves the complete pairs and drops the rows left blank', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId('branding-preview');
+    // No placeholder braces in the typed text: userEvent reads `{` as the start
+    // of a key descriptor, and escaping it here would test the escaping.
+    await user.type(screen.getByLabelText('Valuation started subject'), 'We have started');
+    await user.type(screen.getByLabelText('Valuation started body'), 'Work is under way.');
+    await user.click(screen.getByRole('button', { name: 'Save email templates' }));
+
+    await waitFor(() => {
+      const patch = calls.find((c) => c.method === 'PATCH');
+      expect(patch).toBeTruthy();
+      expect(patch!.body).toEqual({
+        email_templates: {
+          draft_ready: {
+            subject: 'Your draft from {{partner_name}}',
+            body: 'Draft for {{company_name}} is ready.',
+          },
+          valuation_started: {
+            subject: 'We have started',
+            body: 'Work is under way.',
+          },
+        },
+      });
+    });
+  });
+
+  /** Nothing typed at all is the untouched page — it saves what was loaded. */
+  it('saves the untouched page without complaint', async () => {
+    const calls = mockApi();
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId('branding-preview');
     await user.click(screen.getByRole('button', { name: 'Save email templates' }));
 
     await waitFor(() => {

@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import {
+  isEmailAddress,
+  optional,
+  pattern,
+  required,
+  useFormValidation,
+  type Rules,
+} from '../lib/useFormValidation';
 import { displayName, formatDate, formatDateTime, GROUP_LABELS } from '../lib/format';
 import { NAMED_BUCKETS, PARTNER_EMAIL_TEMPLATE_KEYS } from '../lib/types';
 import type { NamedBucketKey, PartnerDetail, ValuationKind, ValuationState } from '../lib/types';
@@ -137,6 +144,14 @@ const BUCKET_LABELS: Record<Exclude<NamedBucketKey, 'all'>, string> = {
   ignored: 'Ignored',
 };
 
+interface TemplatePair {
+  subject: string;
+  body: string;
+}
+
+/** Module-scope so an unset template keeps the same identity between renders. */
+const EMPTY_TEMPLATE: TemplatePair = { subject: '', body: '' };
+
 const TEMPLATE_LABELS: Record<string, string> = {
   valuation_started: 'Valuation started',
   review_needed: 'Review needed (reviewer)',
@@ -225,8 +240,12 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
     void load();
   }, [load]);
 
-  const create = async (e: FormEvent) => {
-    e.preventDefault();
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(
+    { name },
+    { name: required('name', 'Token name') },
+  );
+
+  const create = handleSubmit(async () => {
     setBusy(true);
     setError(null);
     try {
@@ -236,13 +255,14 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
       });
       setIssued({ name: name.trim(), secret: res.secret });
       setName('');
+      reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the token.');
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const revoke = async (token: ApiToken) => {
     if (!window.confirm(`Revoke "${token.name}"? Any integration using it stops working immediately.`))
@@ -294,18 +314,19 @@ function ApiTokenPanel({ partnerId }: { partnerId: string }) {
         </div>
       )}
 
-      <form onSubmit={(e) => void create(e)} className="mt-4 flex flex-wrap items-end gap-3">
-        <Field label="New token name" hint="Names the integration, not the person.">
+      <form onSubmit={create} className="mt-4 flex flex-wrap items-end gap-3" noValidate>
+        <Field label="New token name" hint="Names the integration, not the person." error={errorFor('name')}>
           <TextInput
             aria-label="New token name"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onBlur={blurHandler('name')}
             placeholder="Portfolio sync"
             required
             className="!w-72"
           />
         </Field>
-        <Button type="submit" disabled={busy || name.trim() === ''}>
+        <Button type="submit" disabled={busy}>
           Issue token
         </Button>
       </form>
@@ -480,6 +501,93 @@ export function PartnerDetailPage() {
     void load();
   }, [load]);
 
+  /*
+   * Three forms share this page, each with a different amount of nothing
+   * checking it: the subdomain box carried no constraint at all, the brand
+   * colour carried a `pattern` attribute on a form that had already told the
+   * browser not to look, and the email-template rows silently dropped anything
+   * half-filled at submit time. Every rule below restates one the PATCH route
+   * already enforces — the whole gain is saying so beside the box instead of
+   * after the round trip.
+   *
+   * These sit above the loading branches because they are hooks: the page
+   * returns a spinner until the partner arrives, and a hook called after that
+   * return is a hook that is not always called.
+   */
+  const terms = useFormValidation(
+    { subdomain, ccEmails },
+    {
+      // Case and surrounding whitespace are forgiven server-side, so they are
+      // forgiven here — rejecting "Acme " when the route would have taken it
+      // is pedantry the route itself declined to commit.
+      subdomain: optional('subdomain', (v) =>
+        /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])$/.test(String(v.subdomain).trim().toLowerCase())
+          ? null
+          : 'A subdomain is 3–63 characters of a–z, 0–9 and hyphens, not starting or ending with one.',
+      ),
+      // Named rather than counted: "one of these ten is wrong" sends the admin
+      // back to read all ten.
+      ccEmails: (v) => {
+        const list = String(v.ccEmails)
+          .split(/[\n,]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const bad = list.find((address) => !isEmailAddress(address));
+        if (bad) return `“${bad}” is not an email address.`;
+        return list.length > 10 ? 'At most 10 CC addresses — this is a mailing list, not a mailshot.' : null;
+      },
+    },
+  );
+
+  const branding = useFormValidation(
+    { brandColor, logoUrl },
+    {
+      // Both are optional: blank clears the override back to the platform's
+      // own look, which is why neither carries a `required` rule.
+      brandColor: pattern('brandColor', /#[0-9a-fA-F]{6}/, 'Use a six-digit hex colour, e.g. #1f6f54.'),
+      logoUrl: optional('logoUrl', (v) => {
+        try {
+          new URL(String(v.logoUrl).trim());
+          return null;
+        } catch {
+          return 'Enter a full URL, starting with https://.';
+        }
+      }),
+    },
+  );
+
+  /*
+   * One rule per template rather than per box, because the thing that can be
+   * wrong spans the pair: a subject with no body was being dropped on the way
+   * out, so an admin who filled in half a row was shown a saved page with
+   * their text gone and nothing to say it had been discarded.
+   */
+  const templateValues = useMemo<Record<string, TemplatePair>>(
+    () =>
+      Object.fromEntries(PARTNER_EMAIL_TEMPLATE_KEYS.map((key) => [key, templates[key] ?? EMPTY_TEMPLATE])),
+    [templates],
+  );
+
+  const templateRules = useMemo<Rules<Record<string, TemplatePair>>>(
+    () =>
+      Object.fromEntries(
+        PARTNER_EMAIL_TEMPLATE_KEYS.map((key) => [
+          key,
+          (values: Record<string, TemplatePair>) => {
+            const pair = values[key] ?? EMPTY_TEMPLATE;
+            const subject = pair.subject.trim();
+            const body = pair.body.trim();
+            if (subject && !body) return 'Add a body — a subject on its own is not saved.';
+            if (body && !subject) return 'Add a subject — a body on its own is not saved.';
+            return null;
+          },
+        ]),
+      ),
+    [],
+  );
+
+  const emailTemplates = useFormValidation(templateValues, templateRules);
+
   if (error) return <ErrorNote>{error}</ErrorNote>;
   if (!partner) return <Spinner />;
 
@@ -496,17 +604,15 @@ export function PartnerDetailPage() {
     }
   };
 
-  const saveBranding = (e: FormEvent) => {
-    e.preventDefault();
-    void patch(
+  const saveBranding = branding.handleSubmit(() =>
+    patch(
       { brand_color: brandColor.trim() || null, logo_url: logoUrl.trim() || null },
       'Could not save the branding.',
-    );
-  };
+    ),
+  );
 
-  const saveTerms = (e: FormEvent) => {
-    e.preventDefault();
-    void patch(
+  const saveTerms = terms.handleSubmit(() =>
+    patch(
       {
         subdomain: subdomain.trim() || null,
         cc_emails: ccEmails
@@ -515,8 +621,18 @@ export function PartnerDetailPage() {
           .filter(Boolean),
       },
       'Could not save the commercial terms.',
+    ),
+  );
+
+  const saveTemplates = emailTemplates.handleSubmit(() => {
+    // Only complete overrides are sent; a row left entirely blank is the
+    // "use the platform default" case, and half-filled rows can no longer
+    // reach here.
+    const filled = Object.fromEntries(
+      Object.entries(templates).filter(([, t]) => t.subject.trim() !== '' && t.body.trim() !== ''),
     );
-  };
+    return patch({ email_templates: filled }, 'Could not save the email templates.');
+  });
 
   const removeUser = async (user: PartnerDetail['users'][number]) => {
     const partnerRoles = user.roles.filter((r) => r === 'partner' || r === 'member');
@@ -696,16 +812,18 @@ export function PartnerDetailPage() {
           The address this firm gives its clients, and the two facts about the relationship the platform needs
           to behave correctly.
         </p>
-        <form onSubmit={saveTerms} className="mt-4 space-y-4">
+        <form onSubmit={saveTerms} className="mt-4 space-y-4" noValidate>
           <div className="flex flex-wrap items-end gap-3">
             <Field
               label="Subdomain"
               hint="3–63 characters of a–z, 0–9 and hyphens. Blank keeps them on the platform's own address."
+              error={terms.errorFor('subdomain')}
             >
               <TextInput
                 aria-label="Subdomain"
                 value={subdomain}
                 onChange={(e) => setSubdomain(e.target.value)}
+                onBlur={terms.blurHandler('subdomain')}
                 placeholder="acme"
                 className="!w-56"
               />
@@ -721,11 +839,13 @@ export function PartnerDetailPage() {
           <Field
             label="CC addresses"
             hint="One per line. Copied on this firm's client correspondence — usually a shared mailbox."
+            error={terms.errorFor('ccEmails')}
           >
             <textarea
               aria-label="CC addresses"
               value={ccEmails}
               onChange={(e) => setCcEmails(e.target.value)}
+              onBlur={terms.blurHandler('ccEmails')}
               rows={3}
               placeholder="filings@yourfirm.com"
               className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 font-mono text-xs text-ink-900 placeholder:text-ink-400 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
@@ -775,23 +895,25 @@ export function PartnerDetailPage() {
           </Link>
         </p>
         <div className="mt-4 flex flex-wrap items-start gap-8">
-          <form onSubmit={saveBranding} className="flex flex-wrap items-end gap-3">
-            <Field label="Brand colour" hint="Hex, e.g. #1f6f54.">
+          <form onSubmit={saveBranding} className="flex flex-wrap items-end gap-3" noValidate>
+            <Field label="Brand colour" hint="Hex, e.g. #1f6f54." error={branding.errorFor('brandColor')}>
               <TextInput
                 aria-label="Brand colour"
                 value={brandColor}
                 onChange={(e) => setBrandColor(e.target.value)}
+                onBlur={branding.blurHandler('brandColor')}
                 placeholder="#1f6f54"
                 pattern="#[0-9a-fA-F]{6}"
                 className="!w-32"
               />
             </Field>
-            <Field label="Logo URL">
+            <Field label="Logo URL" error={branding.errorFor('logoUrl')}>
               <TextInput
                 aria-label="Logo URL"
                 type="url"
                 value={logoUrl}
                 onChange={(e) => setLogoUrl(e.target.value)}
+                onBlur={branding.blurHandler('logoUrl')}
                 placeholder="https://…/logo.png"
                 className="!w-80"
               />
@@ -814,21 +936,13 @@ export function PartnerDetailPage() {
           <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{kind}}'}</code>{' '}
           <code className="rounded bg-paper-200 px-1 py-0.5 font-mono text-xs">{'{{partner_name}}'}</code>
         </p>
-        <form
-          className="mt-5 space-y-6"
-          onSubmit={(e) => {
-            e.preventDefault();
-            // Only complete overrides are sent; half-filled rows are dropped.
-            const filled = Object.fromEntries(
-              Object.entries(templates).filter(([, t]) => t.subject.trim() !== '' && t.body.trim() !== ''),
-            );
-            void patch({ email_templates: filled }, 'Could not save the email templates.');
-          }}
-        >
+        <form className="mt-5 space-y-6" onSubmit={saveTemplates} noValidate>
           {PARTNER_EMAIL_TEMPLATE_KEYS.map((key) => {
-            const t = templates[key] ?? { subject: '', body: '' };
+            const t = templates[key] ?? EMPTY_TEMPLATE;
             const set = (field: 'subject' | 'body', value: string) =>
               setTemplates((prev) => ({ ...prev, [key]: { ...t, [field]: value } }));
+            const pairError = emailTemplates.errorFor(key);
+            const errorId = `${key}-template-error`;
             return (
               <div key={key} className="border-b border-paper-200 pb-5 last:border-0 last:pb-0">
                 <div className="mb-2 text-sm font-semibold text-ink-800">
@@ -845,15 +959,35 @@ export function PartnerDetailPage() {
                     placeholder="Subject (platform default)"
                     value={t.subject}
                     onChange={(e) => set('subject', e.target.value)}
+                    onBlur={emailTemplates.blurHandler(key)}
+                    aria-invalid={pairError ? true : undefined}
+                    aria-describedby={pairError ? errorId : undefined}
                   />
                   <textarea
                     aria-label={`${TEMPLATE_LABELS[key] ?? key} body`}
                     placeholder="Body (platform default)"
                     value={t.body}
                     onChange={(e) => set('body', e.target.value)}
+                    onBlur={emailTemplates.blurHandler(key)}
+                    aria-invalid={pairError ? true : undefined}
+                    aria-describedby={pairError ? errorId : undefined}
                     rows={3}
                     className="w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-bond-500 focus:ring-2 focus:ring-bond-100 focus:outline-none"
                   />
+                  {/*
+                   * One message for the pair, because the rule is about the
+                   * pair — neither box is wrong on its own.
+                   *
+                   * `role="alert"` as well as the `aria-describedby` above: the
+                   * message appears on submit, when focus is on the Save button
+                   * and not on either box, so being reachable from the controls
+                   * is not the same as being announced.
+                   */}
+                  {pairError && (
+                    <p id={errorId} role="alert" className="text-xs font-medium text-red-600">
+                      {pairError}
+                    </p>
+                  )}
                 </div>
               </div>
             );

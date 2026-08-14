@@ -7,6 +7,7 @@ import {
   all,
   email,
   integer,
+  isEmailAddress,
   matches,
   minLength,
   numberMin,
@@ -195,11 +196,40 @@ describe('the validators', () => {
     expect(email('e')({ e: value })).toBeNull();
   });
 
+  /**
+   * The predicate behind `email`, exported for the one field holding a *list*
+   * of addresses (the partner CC box). Checking each line against a second,
+   * slightly different regex is how a form and the field it feeds end up
+   * disagreeing about what an address is, so the two share this.
+   */
+  describe('isEmailAddress', () => {
+    it('agrees with the email rule on every shape the rule rejects', () => {
+      for (const value of ['adacorp.com', '@corp.com', 'ada@', 'ada@corp', 'ada lovelace@corp.com']) {
+        expect(isEmailAddress(value)).toBe(false);
+        expect(email('e')({ e: value })).not.toBeNull();
+      }
+    });
+
+    it('agrees with the email rule on every shape the rule accepts', () => {
+      for (const value of ['ada@corp.com', 'ada@mail.corp.co.uk', 'ada+409a@corp.com']) {
+        expect(isEmailAddress(value)).toBe(true);
+        expect(email('e')({ e: value })).toBeNull();
+      }
+    });
+
+    it('trims before deciding, so a line with trailing space is still an address', () => {
+      expect(isEmailAddress('  ada@corp.com  ')).toBe(true);
+    });
+
+    it('treats an empty string as not an address', () => {
+      // The caller filters blanks out first; this is the guard for when it does not.
+      expect(isEmailAddress('')).toBe(false);
+    });
+  });
+
   it('counts a password on the raw value, so spaces are characters', () => {
     expect(minLength('p', 10, 'Password')({ p: 'a b c d e ' })).toBeNull();
-    expect(minLength('p', 10, 'Password')({ p: 'short' })).toBe(
-      'Password must be at least 10 characters.',
-    );
+    expect(minLength('p', 10, 'Password')({ p: 'short' })).toBe('Password must be at least 10 characters.');
   });
 
   it('treats a whitespace-only value as absent', () => {

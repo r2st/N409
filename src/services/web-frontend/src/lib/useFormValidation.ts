@@ -125,12 +125,21 @@ export function required<V>(key: keyof V, label: string): Validator<V> {
  * nothing before or after it, no dot in the domain, or whitespace anywhere. A
  * stricter pattern here would reject valid addresses and the user would have no
  * way to argue with it.
+ *
+ * Exported as a predicate as well as a rule, for the one field that holds a
+ * *list* of addresses: the partner CC box is one address per line, and checking
+ * each of them against a second, slightly different regex is how the form and
+ * the field it feeds end up disagreeing about what an address is.
  */
+export function isEmailAddress(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 export function email<V>(key: keyof V, label = 'Email'): Validator<V> {
   return (values) => {
     const value = String(values[key] ?? '').trim();
     if (!value) return `${label} is required.`;
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? null : `Enter a valid email address.`;
+    return isEmailAddress(value) ? null : `Enter a valid email address.`;
   };
 }
 

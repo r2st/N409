@@ -272,11 +272,199 @@ describe('PartnerDetailPage', () => {
       expect(screen.queryByText('n409_live_supersecret')).toBeNull();
     });
 
-    it('refuses to issue an unnamed token', async () => {
-      mockApi();
+    /**
+     * R31 — the rule used to live in a disabled button. It now submits and
+     * names the box, and still posts nothing.
+     */
+    it('refuses to issue an unnamed token, and says which box', async () => {
+      const calls = mockApi();
       renderPage();
       await screen.findByText('Portfolio sync');
-      expect(screen.getByRole('button', { name: 'Issue token' })).toBeDisabled();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Issue token' }));
+
+      expect(await screen.findByText('Token name is required.')).toBeInTheDocument();
+      expect(calls.find((c) => c.method === 'POST')).toBeUndefined();
+    });
+  });
+
+  /**
+   * R31 — inline validation for the two settings forms on this page.
+   *
+   * Both are restatements of what the PATCH route already enforces. The
+   * subdomain box carried no constraint at all and the brand colour carried a
+   * `pattern` attribute the browser stops honouring on a `noValidate` form, so
+   * both shapes reached the server and came back as a 422 with the admin's
+   * page already scrolled away from the box that caused it.
+   */
+  describe('commercial terms and branding validation', () => {
+    it('refuses a subdomain DNS will not serve', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('Subdomain');
+
+      await userEvent.type(screen.getByLabelText('Subdomain'), 'acme_corp');
+      await userEvent.click(screen.getByRole('button', { name: 'Save terms' }));
+
+      expect(
+        await screen.findByText(
+          'A subdomain is 3–63 characters of a–z, 0–9 and hyphens, not starting or ending with one.',
+        ),
+      ).toBeInTheDocument();
+      expect(calls.find((c) => c.method === 'PATCH')).toBeUndefined();
+    });
+
+    it('refuses a subdomain that ends in a hyphen', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('Subdomain');
+
+      await userEvent.type(screen.getByLabelText('Subdomain'), 'acme-');
+      await userEvent.click(screen.getByRole('button', { name: 'Save terms' }));
+
+      expect(
+        await screen.findByText(
+          'A subdomain is 3–63 characters of a–z, 0–9 and hyphens, not starting or ending with one.',
+        ),
+      ).toBeInTheDocument();
+      expect(calls.find((c) => c.method === 'PATCH')).toBeUndefined();
+    });
+
+    /**
+     * The route lower-cases and trims before checking, so the form has to as
+     * well — rejecting "Acme " here when the PATCH would have taken it is a
+     * rule the platform does not actually have.
+     */
+    it('accepts a subdomain the route would have normalised', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('Subdomain');
+
+      await userEvent.type(screen.getByLabelText('Subdomain'), 'Acme');
+      await userEvent.click(screen.getByRole('button', { name: 'Save terms' }));
+
+      await waitFor(() => {
+        const patch = calls.find((c) => c.method === 'PATCH');
+        expect(patch).toBeTruthy();
+        expect((patch!.body as { subdomain: string }).subdomain).toBe('Acme');
+      });
+    });
+
+    /** Blank keeps the firm on the platform's own address — still legal. */
+    it('keeps a blank subdomain legal and sends it as null', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('Subdomain');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Save terms' }));
+
+      await waitFor(() => {
+        const patch = calls.find((c) => c.method === 'PATCH');
+        expect(patch).toBeTruthy();
+        expect(patch!.body).toEqual({ subdomain: null, cc_emails: [] });
+      });
+    });
+
+    it('names the CC address that is not an address', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('CC addresses');
+
+      await userEvent.type(screen.getByLabelText('CC addresses'), 'filings@yourfirm.com\nnot-an-address');
+      await userEvent.click(screen.getByRole('button', { name: 'Save terms' }));
+
+      expect(await screen.findByText('“not-an-address” is not an email address.')).toBeInTheDocument();
+      expect(calls.find((c) => c.method === 'PATCH')).toBeUndefined();
+    });
+
+    it('refuses more CC addresses than the route accepts', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('CC addresses');
+
+      const many = Array.from({ length: 11 }, (_, i) => `ops${i}@firm.com`).join('\n');
+      await userEvent.type(screen.getByLabelText('CC addresses'), many);
+      await userEvent.click(screen.getByRole('button', { name: 'Save terms' }));
+
+      expect(
+        await screen.findByText('At most 10 CC addresses — this is a mailing list, not a mailshot.'),
+      ).toBeInTheDocument();
+      expect(calls.find((c) => c.method === 'PATCH')).toBeUndefined();
+    });
+
+    it('refuses a brand colour that is not six hex digits', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('Brand colour');
+
+      await userEvent.type(screen.getByLabelText('Brand colour'), 'forest green');
+      await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+      expect(await screen.findByText('Use a six-digit hex colour, e.g. #1f6f54.')).toBeInTheDocument();
+      expect(calls.find((c) => c.method === 'PATCH')).toBeUndefined();
+    });
+
+    it('refuses a logo that is not a URL', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('Logo URL');
+
+      await userEvent.type(screen.getByLabelText('Logo URL'), 'logo.png');
+      await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+      expect(await screen.findByText('Enter a full URL, starting with https://.')).toBeInTheDocument();
+      expect(calls.find((c) => c.method === 'PATCH')).toBeUndefined();
+    });
+
+    /** Blank clears the override back to the platform's own look. */
+    it('keeps both branding boxes optional', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('Brand colour');
+
+      await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+      await waitFor(() => {
+        const patch = calls.find((c) => c.method === 'PATCH');
+        expect(patch).toBeTruthy();
+        expect(patch!.body).toEqual({ brand_color: null, logo_url: null });
+      });
+    });
+
+    it('accepts a well-formed colour and logo together', async () => {
+      const calls = mockApi();
+      renderPage();
+      await screen.findByLabelText('Brand colour');
+
+      await userEvent.type(screen.getByLabelText('Brand colour'), '#1f6f54');
+      await userEvent.type(screen.getByLabelText('Logo URL'), 'https://cdn.example.com/logo.png');
+      await userEvent.click(screen.getByRole('button', { name: 'Save branding' }));
+
+      await waitFor(() => {
+        const patch = calls.find((c) => c.method === 'PATCH');
+        expect(patch).toBeTruthy();
+        expect(patch!.body).toEqual({
+          brand_color: '#1f6f54',
+          logo_url: 'https://cdn.example.com/logo.png',
+        });
+      });
+    });
+
+    /**
+     * The message stays hidden until the box has been left once — validating on
+     * every keystroke tells an admin their colour is wrong while they are still
+     * typing the first hex digit.
+     */
+    it('holds the message back until the box is blurred', async () => {
+      mockApi();
+      renderPage();
+      await screen.findByLabelText('Brand colour');
+
+      await userEvent.type(screen.getByLabelText('Brand colour'), '#1f');
+      expect(screen.queryByText('Use a six-digit hex colour, e.g. #1f6f54.')).not.toBeInTheDocument();
+
+      await userEvent.tab();
+      expect(await screen.findByText('Use a six-digit hex colour, e.g. #1f6f54.')).toBeInTheDocument();
     });
   });
 
