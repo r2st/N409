@@ -145,6 +145,24 @@ describe('BotPromptsPage', () => {
     });
   });
 
+  it('says a prompt has no earlier versions rather than opening an empty panel', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/versions')) return jsonResponse({ versions: [] });
+      if (path.endsWith('/admin/prompts/models')) return jsonResponse({ models: ['a/b'] });
+      if (path.endsWith('/admin/prompts')) return jsonResponse({ prompts });
+      throw new Error(`unexpected fetch ${path}`);
+    });
+    render(<BotPromptsPage />);
+
+    // The history is behind a <details>; opening it is what triggers the load.
+    await userEvent.click(await screen.findByText('Version history'));
+    expect(
+      await screen.findByText(/this prompt has not been edited since it was created/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('shows a forbidden note for non-ops', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       if (String(url).endsWith('/models')) return jsonResponse({ models: [] });

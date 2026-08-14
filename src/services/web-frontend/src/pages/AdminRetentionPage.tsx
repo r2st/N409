@@ -194,6 +194,17 @@ export function AdminRetentionPage() {
               </tr>
             </thead>
             <tbody>
+              {/* No policies at all means nothing is ever archived or purged,
+                  which on a retention screen is a finding rather than a blank
+                  table — an admin reading four column headers over empty space
+                  cannot tell it from a table that failed to render. */}
+              {policies.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-sm text-ink-400">
+                    No retention policies are configured. Nothing is being archived or purged.
+                  </td>
+                </tr>
+              )}
               {policies.map((p) => (
                 <tr key={p.data_type} className="border-b border-paper-200 last:border-0">
                   <td className="px-3 py-2 font-semibold text-ink-800">{p.data_type}</td>

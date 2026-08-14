@@ -144,6 +144,11 @@ function VersionHistory({
       <div className="mt-3 space-y-2">
         {error && <ErrorNote>{error}</ErrorNote>}
         {!versions && !error && <Spinner />}
+        {versions?.length === 0 && (
+          <p className="text-xs text-ink-400">
+            No earlier versions — this prompt has not been edited since it was created.
+          </p>
+        )}
         {versions?.map((v, idx) => {
           const isCurrent = idx === 0;
           return (

@@ -335,6 +335,24 @@ describe('AdminRetentionPage', () => {
     expect(screen.getByText('archived').className).not.toContain('amber');
   });
 
+  it('names an unconfigured policy table instead of leaving four headers over nothing', async () => {
+    // No policies at all means nothing is ever archived or purged, which on a
+    // retention screen is a finding — and indistinguishable, as a bare header
+    // row, from a table that failed to render.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.includes('/retention/policies')) return jsonResponse({ policies: [] });
+      if (path.includes('/retention/holds')) return jsonResponse({ holds: [] });
+      return jsonResponse({ actions: [] });
+    });
+    renderPage();
+    await loaded();
+
+    expect(
+      screen.getByText(/No retention policies are configured. Nothing is being archived or purged./),
+    ).toBeInTheDocument();
+  });
+
   it('says the log is empty rather than rendering an empty list', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
       const path = String(url);

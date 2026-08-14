@@ -8,7 +8,7 @@ import {
   type WorkbookSheet,
 } from '../../lib/m2';
 import { useWorkspace } from './ValuationWorkspace';
-import { Button, ErrorNote, Spinner } from '../../components/ui';
+import { Button, EmptyState, ErrorNote, Spinner } from '../../components/ui';
 
 type CellKey = `${string}|${string}|${string}`;
 const cellKey = (sheet: string, row: string, col: string): CellKey => `${sheet}|${row}|${col}`;
@@ -132,7 +132,23 @@ export function WorkbookTab() {
   const dirty = drafts.size > 0;
 
   if (error && !sheets) return <ErrorNote>{error}</ErrorNote>;
-  if (!sheets || !sheet) return <Spinner />;
+  if (!sheets) return <Spinner />;
+  /**
+   * A workbook with no sheets is a real response — the engine has not run yet,
+   * so there is no assumption register or calculation record to show. It used
+   * to fall into `!sheet` and return the spinner, which is the one reading that
+   * is definitely wrong: the load finished, and the tab span forever telling
+   * the analyst to wait for something that had already arrived empty.
+   */
+  if (sheets.length === 0) {
+    return (
+      <EmptyState title="No workbook yet">
+        The assumption register and calculation record are built when this valuation is calculated. Run the
+        engine from the Methodology tab to populate them.
+      </EmptyState>
+    );
+  }
+  if (!sheet) return <Spinner />;
 
   /**
    * The auditor workbook: the assumption register and calculation record, the

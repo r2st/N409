@@ -71,6 +71,18 @@ describe('WorkbookTab', () => {
     vi.restoreAllMocks();
   });
 
+  it('says the workbook is empty instead of spinning on a finished load', async () => {
+    // Regression: an empty `sheets` left `activeSheet` null, which fell into
+    // the `!sheet` spinner branch — so a load that had already returned looked
+    // exactly like one still in flight, forever.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ sheets: [] }));
+    renderTab();
+
+    expect(await screen.findByText('No workbook yet')).toBeInTheDocument();
+    expect(screen.getByText(/Run the engine from the Methodology tab/)).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
   it('renders the grid with derived rows read-only', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ sheets: SHEETS }));
     renderTab();

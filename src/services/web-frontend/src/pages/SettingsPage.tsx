@@ -7,7 +7,7 @@ import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
 import { displayName, formatDateTime, initials } from '../lib/format';
 import type { ApiToken, User } from '../lib/types';
-import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
+import { Button, EmptyState, ErrorNote, Field, Select, Spinner, TextInput } from '../components/ui';
 import { PhoneInput, phoneFieldError } from '../components/PhoneInput';
 import { MfaCard } from '../components/MfaCard';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -349,7 +349,12 @@ function NotificationPreferencesCard() {
         </div>
       )}
       {!prefs && !error && <Spinner />}
-      {prefs && (
+      {prefs?.length === 0 && (
+        <EmptyState title="No notification events">
+          This account has no notification types to configure yet.
+        </EmptyState>
+      )}
+      {prefs && prefs.length > 0 && (
         <table className="w-full text-sm" aria-label="Notification preferences">
           <thead>
             <tr className="border-b border-paper-300 text-left">

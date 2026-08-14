@@ -74,6 +74,23 @@ describe('SubscriptionSection (feature 7)', () => {
     flags.ops = false;
   });
 
+  it('says so when the plan catalogue is empty, rather than rendering a bare heading', async () => {
+    // An unconfigured Stripe catalogue is a real deployment state, and it used
+    // to render the "Choose a plan" heading over an empty grid.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const key = String(url).replace(/^.*\/api\/v1/, '');
+      if (key === '/billing/plans') return jsonResponse({ plans: [] });
+      if (key === '/me/subscription') {
+        return jsonResponse({ subscription: null, plan: null, usage: null, invoices: [] });
+      }
+      throw new Error(`unexpected fetch ${key}`);
+    });
+    render(<SubscriptionSection />);
+
+    expect(await screen.findByText('No plans available right now')).toBeInTheDocument();
+    expect(screen.getByText(/Contact us and we’ll set your account up directly/)).toBeInTheDocument();
+  });
+
   it('offers subscribable plans when the user has no subscription', async () => {
     mockApi({ subscription: null, plan: null, usage: null, invoices: [] });
     render(<SubscriptionSection />);
@@ -339,7 +356,10 @@ describe('SubscriptionSection (feature 7)', () => {
     it('says so when the reader is entitled to the figures and they did not come back', async () => {
       flags.ops = true;
       mockApi(subscribed(), undefined, {
-        '/admin/billing': { body: { title: 'Service Unavailable', detail: 'Billing is resyncing.' }, status: 503 },
+        '/admin/billing': {
+          body: { title: 'Service Unavailable', detail: 'Billing is resyncing.' },
+          status: 503,
+        },
       });
       render(<SubscriptionSection />);
 

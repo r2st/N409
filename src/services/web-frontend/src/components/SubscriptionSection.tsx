@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isOps } from '../lib/rbac';
-import { Button, ErrorNote, Spinner } from './ui';
+import { Button, EmptyState, ErrorNote, Spinner } from './ui';
 
 interface Plan {
   tier: string;
@@ -178,6 +178,14 @@ export function SubscriptionSection() {
             </div>
           )}
         </div>
+      ) : plans.length === 0 ? (
+        /* A configured Stripe catalogue is what fills this grid, and an
+           unconfigured one is a real deployment state rather than a bug — so
+           the empty response used to render the heading above and then nothing
+           at all, which reads as a page that failed to finish. */
+        <EmptyState title="No plans available right now">
+          Subscription plans aren’t published yet. Contact us and we’ll set your account up directly.
+        </EmptyState>
       ) : (
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
           {plans.map((p) => (

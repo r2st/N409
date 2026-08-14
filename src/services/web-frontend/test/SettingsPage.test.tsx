@@ -241,6 +241,22 @@ describe('SettingsPage — password change', () => {
   });
 });
 
+describe('SettingsPage — notification preferences', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('says there is nothing to configure rather than rendering a headed, empty table', async () => {
+    mockApi((path) =>
+      path.endsWith('/me/notification-preferences') ? jsonResponse({ preferences: [] }) : undefined,
+    );
+    renderSettings();
+    await settled();
+
+    expect(await screen.findByText('No notification events')).toBeInTheDocument();
+    // The three column headers are the tell: they used to render over nothing.
+    expect(screen.queryByRole('table', { name: 'Notification preferences' })).not.toBeInTheDocument();
+  });
+});
+
 describe('SettingsPage — personal API tokens', () => {
   beforeEach(() => vi.restoreAllMocks());
 
