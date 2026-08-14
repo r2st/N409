@@ -108,13 +108,32 @@ def _normalize_class(raw: Any) -> tuple[dict | None, list[str]]:
             participating=participating,
             conversion_ratio=conversion_ratio,
         )
-        # Participation-cap metadata (engine ignores it; the analyst wants it).
+        # The waterfall prices this rather than merely reporting it: a
+        # participating class is uncapped precisely when `participation_cap` is
+        # None (`waterfall.capped_drawing`), and an uncapped class keeps taking
+        # its pro-rata share of every dollar above the preference where a capped
+        # one stops. So None is an assertion, not an absence.
         participation = c.clean_str(raw.get("participation"), limit=40).lower()
         cap = c.to_number(raw.get("participation_cap"))
         if cap is not None:
             cls["participation_cap"] = cap
-        elif participation in {"capped", "uncapped"}:
-            cls["participation_cap"] = None if participation == "uncapped" else cap
+        elif participation == "uncapped":
+            cls["participation_cap"] = None
+        elif participation == "capped":
+            # "capped" with no number is a combination the reading pass is
+            # explicitly allowed to emit — the prompt asks for
+            # `"participation": "capped|uncapped|none|null"` and a separate
+            # `participation_cap` that may be null, and a term sheet naming a
+            # cap the model cannot resolve to a figure lands here. Writing None
+            # said "uncapped" to the waterfall, which is the one thing the
+            # document had ruled out: the class then drew its full share of the
+            # upside with no ceiling, taking proceeds that belong to common and
+            # understating the common FMV this whole valuation concludes.
+            # There is no cap to record, so the analyst has to supply it.
+            issues.append(
+                f"'{name}': participation is capped but no cap amount was read — "
+                f"enter the cap, or the waterfall prices this class as uncapped"
+            )
     elif kind == "option":
         strike = c.to_number(raw.get("strike"))
         if strike is None or strike <= 0:
