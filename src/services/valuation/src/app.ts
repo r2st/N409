@@ -111,6 +111,7 @@ import { registerAdminDocumentRoutes } from './routes/adminDocuments.js';
 import { registerComparableRoutes } from './routes/comparables.js';
 import { registerVolatilityRoutes } from './routes/volatility.js';
 import { registerWaccRoutes } from './routes/wacc.js';
+import { registerRollforwardRoutes } from './routes/rollforward.js';
 import { registerProjectionRoutes } from './routes/projections.js';
 import { registerValuationSelectorRoutes } from './routes/valuationSelector.js';
 import { registerFmvEstimatorRoutes } from './routes/fmvEstimator.js';
@@ -409,6 +410,10 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerComparableRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerVolatilityRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerWaccRoutes(app, { pool, engineUrl: config.ENGINE_URL });
+  // The bridge from the prior 409A's concluded equity value to this one's
+  // (migration 0150) — what `valuation_params.rolling_forward` has always
+  // claimed the engagement was doing.
+  registerRollforwardRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerProjectionRoutes(app, { pool, engineUrl: config.ENGINE_URL });
   registerBridgeRoutes(app, { pool });
   registerAnalyticsRoutes(app, { pool });

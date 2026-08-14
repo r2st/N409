@@ -1,0 +1,442 @@
+import type { FastifyInstance } from 'fastify';
+import type pg from 'pg';
+import { z } from 'zod';
+import { isUlid, problems } from '@n409/shared';
+import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
+import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
+import { requirePrincipal } from '../plugins/auth.js';
+import { findValuationById, type ValuationRow } from '../repos/valuations.js';
+import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
+import {
+  applyEngineInputs,
+  findParams,
+  patchParams,
+  type ValuationParamsRow,
+} from '../repos/params.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
+import { finite, finitePositive } from '../domain/finite.js';
+import {
+  priorRequiredReturn,
+  RollforwardInputError,
+  shapeRollforward,
+  type RollforwardEngineResponse,
+} from '../domain/rollforward.js';
+import {
+  findRollforwardRun,
+  insertRollforwardRun,
+  listRollforwardRuns,
+  markRollforwardRunApplied,
+  type RollforwardRunRow,
+} from '../repos/rollforwardRuns.js';
+
+/**
+ * Roll-forward — the bridge from the prior 409A to this one.
+ *
+ * `engine/v1/rollforward` has carried a prior calibrated equity value to a new
+ * date since it was written, and had no caller; `valuation_params.rolling_forward`
+ * has been a checkbox on the params panel since migration 0001, and nothing
+ * read it. Between them that is a whole feature of the platform that existed
+ * only as a flag an analyst could tick. This is the endpoint that makes the
+ * flag mean something.
+ *
+ * The shape follows routes/volatility.ts, for the same reasons and with two
+ * additions the second engagement forces:
+ *
+ *   * The prior valuation is authorised on its own, to the same standard as
+ *     reading it directly. A caller who cannot see last year's 409A cannot
+ *     learn its concluded equity value by rolling this year's forward from it.
+ *   * Running and adopting are separate calls. A roll-forward that silently
+ *     rewrote the engagement's backsolve anchor would move the concluded value
+ *     of a valuation somebody may already be reviewing, on a button labelled
+ *     "roll forward". Adoption is its own POST, and it is the only thing that
+ *     lets Exhibit B-2 claim the bridge belongs to the calculation.
+ *
+ * Reading is open to anyone who can read the engagement — "why is this year's
+ * number what it is, given last year's" is the question the client asks first.
+ * Running and adopting are operations-only.
+ */
+
+/** Wall clock for the roll-forward itself. In-process arithmetic; generous. */
+const ROLLFORWARD_TIMEOUT_MS = 15_000;
+
+const Adjustment = z
+  .object({
+    label: z.string().trim().min(1).max(120),
+    /** Multiplicative, as a fraction: -0.15 marks the anchor down 15%. */
+    pct: finite().min(-0.99).max(10).nullish(),
+    /** Additive, in the engagement's currency. */
+    amount: finite().min(-1e15).max(1e15).nullish(),
+  })
+  .strict()
+  .refine((a) => a.pct !== null && a.pct !== undefined ? true : a.amount !== null && a.amount !== undefined, {
+    message: 'An adjustment needs a pct or an amount',
+  });
+
+const RunBody = z
+  .object({
+    prior_valuation_id: z.string(),
+    /**
+     * Appreciation applied over the gap. Omitted is the ordinary case: the
+     * prior engagement's own concluded cost of capital is used where it has
+     * one, and the engine's resolution stands where it does not.
+     */
+    annual_accretion: finite().gt(-1).max(10).nullish(),
+    /**
+     * A new priced round, which supersedes the time-decay anchor entirely —
+     * there is nothing to calibrate forward when the market has just priced
+     * the company again.
+     */
+    new_round_post_money: finitePositive().max(1e15).nullish(),
+    value_adjustments: z.array(Adjustment).max(10).optional(),
+  })
+  .strict();
+
+function present(row: RollforwardRunRow) {
+  return {
+    id: row.id,
+    prior_valuation_id: row.prior_valuation_id,
+    prior_calculation_id: row.prior_calculation_id,
+    prior_valuation_number: row.prior_valuation_number,
+    prior_valuation_date: row.prior_valuation_date.toISOString().slice(0, 10),
+    new_valuation_date: row.new_valuation_date.toISOString().slice(0, 10),
+    years_elapsed: row.years_elapsed,
+    prior_equity_value: row.prior_equity_value,
+    rolled_equity_value: row.rolled_equity_value,
+    annual_accretion: row.annual_accretion,
+    new_round_post_money: row.new_round_post_money,
+    calibration_steps: row.calibration_steps,
+    material_changes: row.material_changes,
+    requires_full_revaluation: row.requires_full_revaluation,
+    // Derived here rather than stored, so the count and the rows behind it can
+    // never disagree.
+    material_change_count: row.material_changes.filter((c) => c.material).length,
+    applied_at: row.applied_at,
+    created_at: row.created_at,
+  };
+}
+
+/** The engine `inputs` document as `valuation_params` stores it. */
+function engineInputs(params: ValuationParamsRow | null): Record<string, unknown> {
+  const raw = params?.engine_inputs;
+  return raw !== null && typeof raw === 'object' && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {};
+}
+
+/** The valuation date an engine `inputs` document states, at day resolution. */
+function valuationDateOf(inputs: Record<string, unknown>): string | null {
+  const raw = inputs.valuation_date;
+  if (typeof raw !== 'string') return null;
+  const day = raw.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
+}
+
+/** The backsolve anchor the calculation would read today. */
+function appliedAnchor(inputs: Record<string, unknown>): number | null {
+  const n = Number(inputs.last_round_post_money);
+  return inputs.last_round_post_money !== null &&
+    inputs.last_round_post_money !== undefined &&
+    Number.isFinite(n)
+    ? n
+    : null;
+}
+
+/** The `{ params, inputs }` document a calculation was run with. */
+function calculationInputs(calculation: CalculationRow): Record<string, unknown> {
+  const payload = calculation.inputs as { inputs?: unknown } | null | undefined;
+  const inner = payload?.inputs;
+  return inner !== null && typeof inner === 'object' && !Array.isArray(inner)
+    ? (inner as Record<string, unknown>)
+    : {};
+}
+
+export function registerRollforwardRoutes(
+  app: FastifyInstance,
+  deps: { pool: pg.Pool; engineUrl: string },
+): void {
+  const loadReadable = async (id: string, principal: Principal): Promise<ValuationRow> => {
+    if (!isUlid(id)) throw problems.notFound();
+    const valuation = await findValuationById(deps.pool, id);
+    if (
+      !valuation ||
+      !canReadValuation(principal, { userId: valuation.user_id, partnerId: valuation.partner_id })
+    ) {
+      throw problems.notFound();
+    }
+    return valuation;
+  };
+
+  const loadOps = async (id: string, principal: Principal): Promise<ValuationRow> => {
+    if (!isOps(principal)) throw problems.forbidden('Rolling a valuation forward is operations-only');
+    return loadReadable(id, principal);
+  };
+
+  const audit = async (
+    valuation: ValuationRow,
+    principal: Principal,
+    type: string,
+    payload: Record<string, unknown>,
+  ) =>
+    recordAdminEvent(deps.pool, {
+      type,
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'valuation',
+      subjectId: valuation.id,
+      subjectLabel: valuation.company_name,
+      payload,
+    });
+
+  /**
+   * Every roll-forward run for this engagement, newest first, and the anchor
+   * the calculation would read today.
+   *
+   * The applied anchor is served beside the runs rather than left for the
+   * caller to fetch from the engine-inputs tab, because the only question the
+   * panel exists to answer is whether the two agree.
+   */
+  app.get('/api/v1/valuations/:id/rollforward', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadReadable(id, principal);
+
+    const [runs, paramsRow] = await Promise.all([
+      listRollforwardRuns(deps.pool, valuation.id),
+      findParams(deps.pool, valuation.id),
+    ]);
+    const inputs = engineInputs(paramsRow);
+
+    return {
+      runs: runs.map(present),
+      applied_anchor: appliedAnchor(inputs),
+      // What a run would be struck *to* if one were started now. An engagement
+      // with no valuation date is the reason the button cannot work, and saying
+      // so here is cheaper than a 422 after the press.
+      new_valuation_date: valuationDateOf(inputs),
+      rolling_forward: paramsRow?.rolling_forward ?? false,
+      can_edit: isOps(principal),
+    };
+  });
+
+  /**
+   * Roll a prior valuation forward to this engagement's date.
+   *
+   * Does not touch the engagement's engine inputs — see the module note.
+   */
+  app.post('/api/v1/valuations/:id/rollforward', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    const { id } = req.params as { id: string };
+    const valuation = await loadOps(id, principal);
+
+    const parsed = RunBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw problems.unprocessable('Invalid roll-forward request', { errors: parsed.error.issues });
+    }
+    const body = parsed.data;
+
+    if (body.prior_valuation_id === valuation.id) {
+      throw problems.unprocessable('A valuation cannot be rolled forward from itself');
+    }
+    // Authorised on its own: the prior engagement's concluded equity value is
+    // the substance of this answer, and a caller who cannot read it must not
+    // receive it by way of one they can.
+    const prior = await loadReadable(body.prior_valuation_id, principal);
+    if (prior.currency !== valuation.currency) {
+      throw problems.unprocessable(
+        `The prior valuation is denominated in ${prior.currency} and this one in ${valuation.currency}; ` +
+          'a roll-forward carries one equity value forward and cannot cross currencies',
+      );
+    }
+
+    const [priorCalculation, paramsRow] = await Promise.all([
+      latestSucceededCalculation(deps.pool, prior.id),
+      findParams(deps.pool, valuation.id),
+    ]);
+    if (!priorCalculation) {
+      throw problems.unprocessable(
+        'The prior valuation has no successful calculation to roll forward from — its concluded equity ' +
+          'value is what this bridge starts at',
+      );
+    }
+
+    const priorInputs = calculationInputs(priorCalculation);
+    const priorDate = valuationDateOf(priorInputs);
+    if (priorDate === null) {
+      throw problems.unprocessable('The prior calculation states no valuation date to roll forward from');
+    }
+
+    const updatedInputs = engineInputs(paramsRow);
+    const newDate = valuationDateOf(updatedInputs);
+    if (newDate === null) {
+      throw problems.unprocessable(
+        'This engagement states no valuation date to roll forward to — set one on the engine inputs first',
+      );
+    }
+    if (newDate < priorDate) {
+      throw problems.unprocessable(
+        `This engagement is dated ${newDate}, before the prior valuation's ${priorDate}; a roll-forward ` +
+          'runs forward in time',
+      );
+    }
+
+    /*
+     * The accretion, in the order a reviewer would defend it: what the analyst
+     * asked for, then the cost of capital the prior appraisal itself concluded,
+     * then — by omission — the engine's own resolution. The middle one is the
+     * reason this is resolved here rather than left entirely to the engine: the
+     * engine sees `prior_results` and can read a rate off it, but a request
+     * that states the rate records *which* rate was chosen in the run itself.
+     */
+    const accretion =
+      body.annual_accretion ?? priorRequiredReturn(priorCalculation.results) ?? undefined;
+
+    let response: RollforwardEngineResponse;
+    try {
+      response = await postJson<RollforwardEngineResponse>(
+        'engine',
+        `${deps.engineUrl}/engine/v1/rollforward`,
+        {
+          prior_results: priorCalculation.results ?? {},
+          prior_valuation_date: priorDate,
+          new_valuation_date: newDate,
+          prior_inputs: priorInputs,
+          updated_inputs: updatedInputs,
+          ...(accretion === undefined ? {} : { annual_accretion: accretion }),
+          ...(body.new_round_post_money === null || body.new_round_post_money === undefined
+            ? {}
+            : { new_round_post_money: body.new_round_post_money }),
+          ...(body.value_adjustments && body.value_adjustments.length > 0
+            ? { value_adjustments: body.value_adjustments }
+            : {}),
+        },
+        {
+          timeoutMs: ROLLFORWARD_TIMEOUT_MS,
+          record: { valuationId: valuation.id, name: 'engine rollforward' },
+        },
+      );
+    } catch (err) {
+      if (err instanceof InternalServiceError) {
+        req.log.warn({ err }, 'roll-forward failed');
+        throw toProblem(err);
+      }
+      throw err;
+    }
+
+    let shaped: ReturnType<typeof shapeRollforward>;
+    try {
+      shaped = shapeRollforward(response);
+    } catch (err) {
+      if (err instanceof RollforwardInputError) throw problems.unprocessable(err.message);
+      throw err;
+    }
+
+    const row = await insertRollforwardRun(deps.pool, {
+      valuationId: valuation.id,
+      priorValuationId: prior.id,
+      priorCalculationId: priorCalculation.id,
+      // Denormalised so Exhibit B-2 can cite the prior engagement even after
+      // the row it points at is gone (migration 0150).
+      priorValuationNumber: prior.number,
+      priorValuationDate: shaped.priorValuationDate,
+      newValuationDate: shaped.newValuationDate,
+      yearsElapsed: shaped.yearsElapsed,
+      priorEquityValue: shaped.priorEquityValue,
+      rolledEquityValue: shaped.rolledEquityValue,
+      annualAccretion: shaped.annualAccretion,
+      newRoundPostMoney: body.new_round_post_money ?? null,
+      calibrationSteps: shaped.calibrationSteps,
+      materialChanges: shaped.materialChanges,
+      requiresFullRevaluation: shaped.requiresFullRevaluation,
+      prePopulatedInputs: shaped.prePopulatedInputs,
+      createdBy: principal.id,
+    });
+
+    await audit(valuation, principal, 'rollforward_run', {
+      run_id: row.id,
+      prior_valuation_id: prior.id,
+      prior_valuation_number: prior.number,
+      prior_equity_value: row.prior_equity_value,
+      rolled_equity_value: row.rolled_equity_value,
+      annual_accretion: row.annual_accretion,
+      years_elapsed: row.years_elapsed,
+      requires_full_revaluation: row.requires_full_revaluation,
+      material_changes: row.material_changes.filter((c) => c.material).map((c) => c.field),
+    });
+
+    return reply.status(201).send({
+      run: present(row),
+      applied_anchor: appliedAnchor(updatedInputs),
+    });
+  });
+
+  /**
+   * Adopt a run's rolled value as the engagement's backsolve anchor.
+   *
+   * Writes through `applyEngineInputs` rather than straight into the column, so
+   * the change lands in the engagement's event trail as a params update exactly
+   * as a hand-entered one would.
+   *
+   * Two fields go with it, and the second is the reason this is not a one-line
+   * write. `compute` only treats `last_round_post_money` as the anchor when
+   * there is no round price to calibrate against: given a
+   * `last_round_price_per_share` it root-finds the equity value that reprices
+   * that class and uses the post-money as a starting guess. So adopting a
+   * rolled value while a *stale* price sat beside it would throw the whole
+   * roll-forward away and re-derive a value off last year's round price. The
+   * engine already decided that question when it built `pre_populated_inputs`
+   * — it drops the price unless the new date supplies one — and this follows
+   * its answer rather than forming a second one.
+   */
+  app.post(
+    '/api/v1/valuations/:id/rollforward/:runId/apply',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      const { id, runId } = req.params as { id: string; runId: string };
+      const valuation = await loadOps(id, principal);
+      if (!isUlid(runId)) throw problems.notFound();
+
+      const run = await findRollforwardRun(deps.pool, valuation.id, runId);
+      if (!run) throw problems.notFound();
+
+      const paramsRow = await findParams(deps.pool, valuation.id);
+      const before = appliedAnchor(engineInputs(paramsRow));
+
+      const supersededPrice = run.pre_populated_inputs.last_round_price_per_share === undefined;
+      const actor = { actorType: 'human' as const, actorId: principal.id };
+      await applyEngineInputs(
+        deps.pool,
+        valuation.id,
+        {
+          last_round_post_money: run.rolled_equity_value,
+          // Explicit nulls: the engine-inputs convention for clearing a field,
+          // and a jsonb merge has no other way to remove one.
+          ...(supersededPrice ? { last_round_price_per_share: null, last_round_class: null } : {}),
+        },
+        actor,
+      );
+      // The checkbox that has existed since migration 0001 and meant nothing.
+      // Adopting the bridge is the declaration it was always asking for, so it
+      // is recorded rather than left for somebody to tick separately.
+      if (paramsRow && !paramsRow.rolling_forward) {
+        await patchParams(deps.pool, paramsRow, { rolling_forward: true }, actor);
+      }
+
+      const applied = await markRollforwardRunApplied(deps.pool, valuation.id, runId, principal.id);
+      await audit(valuation, principal, 'rollforward_applied', {
+        run_id: runId,
+        from: before,
+        to: run.rolled_equity_value,
+        cleared_round_price: supersededPrice,
+      });
+
+      return {
+        run: applied ? present(applied) : present(run),
+        applied_anchor: run.rolled_equity_value,
+        // The engagement's figures are now stale against its inputs. Saying so
+        // is the route's job; recalculating on its own would be a second,
+        // unasked-for change to a valuation somebody may be mid-review on.
+        recalculation_required: before === null || Math.abs(before - run.rolled_equity_value) > 1e-9,
+      };
+    },
+  );
+}
