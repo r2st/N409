@@ -521,15 +521,36 @@ def safe_conversion(
         raise EngineInputError("next round price per share must be positive")
 
     # MFN: take the most favourable (largest discount, lowest cap).
-    eff_discount = max(disc, _num(mfn_discount, "mfn_discount")) if mfn_discount is not None else disc
-    cap = valuation_cap
+    #
+    # Both MFN terms are put through the same guard as the primary term they can
+    # replace, and *before* they are compared against it. Neither used to be:
+    #
+    #   * `mfn_discount` skipped the `< 1` check `discount` gets, so an MFN
+    #     discount of 1.5 drove the conversion price negative and surfaced as
+    #     "conversion price resolved to zero" — an error that names neither the
+    #     field at fault nor what was actually wrong with it.
+    #   * `min(valuation_cap, mfn_cap)` compared the *raw* cap, so a cap that
+    #     arrived as a numeric string — which `params` is a free-form dict and
+    #     so routinely does — priced fine on its own but raised a bare
+    #     `TypeError: '<' not supported between float and str` the moment an MFN
+    #     cap was supplied alongside it. That leaves the endpoint as a 422 with
+    #     a Python internal for a detail, which is the failure mode `_int` and
+    #     `_sequence` exist to prevent everywhere else in this engine.
+    if mfn_discount is None:
+        eff_discount = disc
+    else:
+        mfn_disc = _num(mfn_discount, "mfn_discount", minimum=0.0)
+        if mfn_disc >= 1.0:
+            raise EngineInputError("mfn_discount must be < 1")
+        eff_discount = max(disc, mfn_disc)
+
+    cap = _num(valuation_cap, "valuation_cap", minimum=0.0) if valuation_cap is not None else None
     if mfn_cap is not None:
-        cap = mfn_cap if cap is None else min(cap, _num(mfn_cap, "mfn_cap"))
+        mfn_c = _num(mfn_cap, "mfn_cap", minimum=0.0)
+        cap = mfn_c if cap is None else min(cap, mfn_c)
 
     discount_price = round_price * (1.0 - eff_discount)
-    cap_price = None
-    if cap is not None:
-        cap_price = _num(cap, "valuation_cap", minimum=0.0) / shares
+    cap_price = cap / shares if cap is not None else None
     conversion_price = discount_price if cap_price is None else min(discount_price, cap_price)
     if conversion_price <= 0:
         raise EngineInputError("conversion price resolved to zero")
