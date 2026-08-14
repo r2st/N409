@@ -1796,6 +1796,77 @@ describe('discount exhibit', () => {
     expect(plain(discountExhibit(RESULTS, CONTEXT)!.html)).toContain('$1.6453');
   });
 
+  /*
+   * The step table states each rate and, beside it, the money that rate took
+   * out — to four decimal places. So the rate is one the reader multiplies, and
+   * `formatPercent`'s tenth of a percent is not enough to multiply with: a DLOM
+   * of 0.3142 printed "31.4%" against a deduction struck at 0.3142, and a
+   * reviewer with a calculator misses by a tenth of a cent on every line with
+   * no way to tell whether the exhibit is rounded or wrong.
+   */
+  describe('the rates reconcile the figures beside them', () => {
+    const rate = (seen: string, label: string) => {
+      const m = seen.match(new RegExp(`${label} — ([\\d.]+)%`));
+      return m ? Number(m[1]) / 100 : null;
+    };
+    // Anchored on the row label, not the bare phrase: the paragraph above the
+    // table names both discounts, so slicing from the first mention finds the
+    // prose and then the wrong row's figure.
+    const money = (seen: string, after: string) => {
+      const m = seen.slice(seen.indexOf(`Less: ${after}`)).match(/\(\$([\d,]+\.\d{4})\)/);
+      return m ? Number(m[1]!.replace(/,/g, '')) : null;
+    };
+
+    /*
+     * Consistent end to end, as a real run is: the exhibit strikes the DLOM
+     * deduction as the difference to the stored FMV, so a fixture that changes
+     * the discounts without restriking the FMV is a fixture of an impossible
+     * calculation, and the reconciliation would be measuring the fixture.
+     */
+    const BASE = 1.828148; // RESULTS.allocation.common_per_share
+    const awkward = (dloc: number, dlom: number) => ({
+      ...RESULTS,
+      discounts: { ...RESULTS.discounts, dloc, dlom },
+      fmv_per_share: BASE * (1 - dloc) * (1 - dlom),
+    });
+
+    it('states a four-place discount to the precision it was applied at', () => {
+      const seen = plain(discountExhibit(awkward(0.1234, 0.3142), CONTEXT)!.html);
+      expect(seen).toContain('discount for lack of control — 12.34%');
+      expect(seen).toContain('discount for lack of marketability — 31.42%');
+    });
+
+    it('multiplies out: printed rate × printed base equals the printed deduction', () => {
+      const seen = plain(discountExhibit(awkward(0.1234, 0.3142), CONTEXT)!.html);
+
+      // Read off the page, not recomputed: the whole point is that a reader
+      // with only the printed figures can close the table.
+      const base = Number(
+        seen.match(/value per common share \$([\d,]+\.\d{4})/)![1]!.replace(/,/g, ''),
+      );
+      const dloc = rate(seen, 'discount for lack of control')!;
+      const dlom = rate(seen, 'discount for lack of marketability')!;
+      // `toBeCloseTo`, not `toBe`: dividing the parsed percentage back by 100
+      // is the test's own float artifact (31.42 / 100 is not 0.3142).
+      expect(dloc).toBeCloseTo(0.1234, 12);
+      expect(dlom).toBeCloseTo(0.3142, 12);
+
+      // Each deduction, recomputed from nothing but what the page prints.
+      const shownDloc = money(seen, 'discount for lack of control')!;
+      const shownDlom = money(seen, 'discount for lack of marketability')!;
+      expect(shownDloc).toBeCloseTo(base * dloc, 4);
+      expect(shownDlom).toBeCloseTo(base * (1 - dloc) * dlom, 4);
+    });
+
+    it('still reads as a round percentage when the rate is a round one', () => {
+      // The common case must not grow digits: an exhibit that prints "10.0000%"
+      // for a stated tenth is noisier without being more checkable.
+      const seen = plain(discountExhibit(RESULTS, CONTEXT)!.html);
+      expect(seen).toContain('discount for lack of control — 10.0%');
+      expect(seen).toContain('discount for lack of marketability — 25.0%');
+    });
+  });
+
   it('inverts the identity when the allocation reports no per-share value', () => {
     const results = { ...RESULTS, allocation: { method: 'as_converted' } };
     const seen = plain(discountExhibit(results, CONTEXT)!.html);

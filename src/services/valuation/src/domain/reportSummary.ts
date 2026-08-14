@@ -120,6 +120,33 @@ export function formatPercent(fraction: number, digits = 1): string {
   return `${(fraction * 100).toFixed(digits)}%`;
 }
 
+/**
+ * A rate stated to the precision it was actually applied at.
+ *
+ * `formatPercent` rounds to a tenth, which is right for a rate that only has to
+ * be read and wrong for one the reader is invited to multiply. The concluded
+ * discounts are both: Exhibit H labels each deduction with its rate and prints
+ * the money it took out to four decimal places, so "Less: DLOM — 31.4%" sat
+ * beside a figure struck at 0.3142. A reviewer checking the step table with a
+ * calculator misses by a tenth of a cent per share on every line and cannot
+ * tell whether the exhibit is rounded or wrong — on the one schedule that
+ * states the conclusion of the valuation.
+ *
+ * The engine stores these at six decimal places, so four on the percentage is
+ * always enough to be exact. Trailing zeros are trimmed to a minimum of one, so
+ * an ordinary 15% still reads "15.0%" and only a rate that needs the digits
+ * carries them.
+ */
+export function formatExactPercent(fraction: number, minDigits = 1, maxDigits = 4): string {
+  const pct = fraction * 100;
+  for (let d = minDigits; d < maxDigits; d += 1) {
+    // Exact at this many places — the reader multiplying by what they read
+    // reproduces the figure beside it.
+    if (Math.abs(Number(pct.toFixed(d)) - pct) < 1e-9) return `${pct.toFixed(d)}%`;
+  }
+  return `${pct.toFixed(maxDigits)}%`;
+}
+
 interface ResultsShape {
   fmv_per_share?: unknown;
   equity_value?: unknown;
@@ -268,14 +295,15 @@ export function discountChart(results: ResultsShape, currency: string): ChartSpe
   const points: Array<{ label: string; value: number; display: string }> = [];
   if (dloc > 0) {
     points.push({
-      label: `Less DLOC ${formatPercent(dloc)}`,
+      // Exact: the point's own `display` is the money this rate took out.
+      label: `Less DLOC ${formatExactPercent(dloc)}`,
       value: afterDloc - base,
       display: `−${formatCurrency(base - afterDloc, currency, 4)}`,
     });
   }
   if (dlom > 0) {
     points.push({
-      label: `Less DLOM ${formatPercent(dlom)}`,
+      label: `Less DLOM ${formatExactPercent(dlom)}`,
       value: fmv - afterDloc,
       display: `−${formatCurrency(afterDloc - fmv, currency, 4)}`,
     });

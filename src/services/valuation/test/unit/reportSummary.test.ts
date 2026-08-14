@@ -7,6 +7,7 @@ import {
   discountChart,
   formatCurrency,
   formatPercent,
+  formatExactPercent,
   historyChart,
   marketableValuePerShare,
   num,
@@ -88,6 +89,43 @@ describe('formatPercent', () => {
   it('renders a fraction as a percentage', () => {
     expect(formatPercent(0.25)).toBe('25.0%');
     expect(formatPercent(0.1, 0)).toBe('10%');
+  });
+});
+
+/*
+ * A rate the reader is invited to multiply, not merely to read. Exhibit H
+ * labels each deduction with its rate and prints the money it took out to four
+ * places, so "Less: DLOM — 31.4%" sat beside a figure struck at 0.3142: a
+ * reviewer checking the step table with a calculator misses by a tenth of a
+ * cent per share and cannot tell whether the exhibit is rounded or wrong.
+ */
+describe('formatExactPercent', () => {
+  it('keeps a tenth for a rate that needs no more', () => {
+    // The ordinary case must not grow digits — most discounts are round.
+    expect(formatExactPercent(0.15)).toBe('15.0%');
+    expect(formatExactPercent(0.25)).toBe('25.0%');
+    expect(formatExactPercent(0)).toBe('0.0%');
+  });
+
+  it('carries the digits a stored rate actually has', () => {
+    expect(formatExactPercent(0.3142)).toBe('31.42%');
+    expect(formatExactPercent(0.123456)).toBe('12.3456%');
+    expect(formatExactPercent(0.3055)).toBe('30.55%');
+  });
+
+  it('round-trips: what is printed reproduces what was applied', () => {
+    // The property the formatter exists for. Six places is what the engine
+    // stores, so four on the percentage is always enough to be exact.
+    for (const stored of [0.15, 0.3142, 0.123456, 0.000001, 0.999999, 0.0805, 0.07]) {
+      const printed = Number(formatExactPercent(stored).replace('%', '')) / 100;
+      expect(printed).toBeCloseTo(stored, 10);
+    }
+  });
+
+  it('does not run past the places the engine stores', () => {
+    // A float that is not representable at six places is truncated, not chased
+    // to seventeen digits in a client deliverable.
+    expect(formatExactPercent(1 / 3)).toBe('33.3333%');
   });
 });
 

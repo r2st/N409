@@ -6,6 +6,7 @@ import {
   DLOM_LABELS,
   formatCurrency,
   formatPercent,
+  formatExactPercent,
   num,
 } from './reportSummary.js';
 import { buildSpecialtyExhibits } from './specialtyExhibits.js';
@@ -2459,7 +2460,9 @@ export function discountExhibit(
   if (dloc > 0 || controlling) {
     rows.push(
       [
-        `Less: discount for lack of control — ${formatPercent(dloc)}`,
+        // The rate the reader is invited to multiply, not merely to read: the
+        // figure beside it is the money this rate took out, to four places.
+        `Less: discount for lack of control — ${formatExactPercent(dloc)}`,
         `(${formatCurrency(base - afterDloc, currency, 4)})`,
         dlocMethod
           ? (DLOC_METHOD_NAMES[dlocMethod] ?? esc(dlocMethod))
@@ -2469,7 +2472,7 @@ export function discountExhibit(
     );
   }
   rows.push([
-    `Less: discount for lack of marketability — ${formatPercent(dlom)}`,
+    `Less: discount for lack of marketability — ${formatExactPercent(dlom)}`,
     `(${formatCurrency(afterDloc - fmv, currency, 4)})`,
     method ? (DLOM_LABELS[method] ?? esc(method)) : 'No active market exists for the shares',
   ]);
