@@ -52,15 +52,32 @@ interface Remediation {
     total: number;
     published: number;
     rerunnable: number;
+    truncated: boolean;
+    page_limit: number;
     description: string;
   };
   stale_qa_reviews: {
     rows: StaleQaRow[];
     total: number;
     published: number;
+    truncated: boolean;
+    page_limit: number;
     description: string;
   };
   max_rerun: number;
+}
+
+/**
+ * A capped table has to say so, and has to say what the counts above it mean.
+ * The stat cards are platform-wide totals counted in SQL; the table is a page.
+ * Without this the two disagree and the smaller number reads as the truth.
+ */
+function QueueTruncationNote({ shown, total, label }: { shown: number; total: number; label: string }) {
+  return (
+    <p className="border-t border-paper-300 px-4 py-3 text-sm text-ink-600">
+      Showing {shown} of {total} {label}. The totals above are the whole queue; the table is a page.
+    </p>
+  );
 }
 
 function PublishedTag() {
@@ -252,6 +269,13 @@ export function AdminDataRemediationPage() {
                 ))}
               </tbody>
             </table>
+            {backsolves.truncated && (
+              <QueueTruncationNote
+                shown={backsolves.rows.length}
+                total={backsolves.total}
+                label="affected calculations"
+              />
+            )}
           </div>
         )}
       </section>
@@ -311,6 +335,13 @@ export function AdminDataRemediationPage() {
                 ))}
               </tbody>
             </table>
+            {reviews.truncated && (
+              <QueueTruncationNote
+                shown={reviews.rows.length}
+                total={reviews.total}
+                label="affected reviews"
+              />
+            )}
           </div>
         )}
         <p className="mt-3 max-w-3xl text-xs text-ink-400">

@@ -155,4 +155,39 @@ describe('AdminDataRemediationPage', () => {
     renderPage();
     expect(await screen.findByText(/operations-only/i)).toBeInTheDocument();
   });
+
+  /**
+   * The queues are a page and the stat cards are the whole platform. With the
+   * two disagreeing and nothing saying why, the shorter number reads as the
+   * truth — which on a remediation queue means believing fewer engagements are
+   * affected than are.
+   */
+  describe('a capped queue', () => {
+    const truncated = {
+      ...QUEUE,
+      stale_backsolves: { ...QUEUE.stale_backsolves, total: 812, truncated: true, page_limit: 500 },
+      stale_qa_reviews: { ...QUEUE.stale_qa_reviews, total: 96, truncated: true, page_limit: 500 },
+    };
+
+    it('says the table is a page and the totals are not', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(truncated));
+      renderPage();
+      expect(await screen.findByText(/Showing 2 of 812 affected calculations/)).toBeInTheDocument();
+      expect(screen.getByText(/Showing 1 of 96 affected reviews/)).toBeInTheDocument();
+    });
+
+    it('still counts the whole queue on the cards, not the rows on screen', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(truncated));
+      renderPage();
+      // 812, not the 2 rows the page is showing.
+      expect(await screen.findByText('812')).toBeInTheDocument();
+    });
+
+    it('says nothing when the page holds the whole queue', async () => {
+      mockApi();
+      renderPage();
+      await screen.findByText(/#1811 Draft Co/);
+      expect(screen.queryByText(/Showing \d+ of/)).not.toBeInTheDocument();
+    });
+  });
 });

@@ -251,6 +251,69 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
     });
   });
 
+  /**
+   * The hold ledger only grows — holds are released, never deleted — so the
+   * listing is a page. The property that has to survive the cap is that it
+   * cannot hide a *live* hold behind a backlog of released ones, and that
+   * nothing about enforcement depends on the list: the sweep checks
+   * `legal_holds` in SQL, so a hold past the cut still freezes its valuation.
+   */
+  describe('bounded reads', () => {
+    it('caps the ledger, says so, and keeps active holds ahead of released ones', async () => {
+      const place = (reason: string) =>
+        ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/admin/retention/holds',
+          headers: authHeader(admin.token),
+          payload: { scope: 'global', reason },
+        });
+      const release = (id: string) =>
+        ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/admin/retention/holds/${id}/release`,
+          headers: authHeader(admin.token),
+        });
+
+      // Two released holds placed *after* the live one, so newest-first alone
+      // would push the live hold off a two-row page.
+      const live = await place('live freeze');
+      for (const reason of ['done a', 'done b']) {
+        await release((await place(reason)).json().hold.id);
+      }
+
+      const list = (query = '') =>
+        ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/admin/retention/holds${query}`,
+          headers: authHeader(admin.token),
+        });
+
+      const page = (await list('?limit=1')).json();
+      expect(page.holds).toHaveLength(1);
+      expect(page.truncated).toBe(true);
+      expect(page.holds[0].id).toBe(live.json().hold.id);
+      expect(page.holds[0].active).toBe(true);
+
+      const whole = (await list()).json();
+      expect(whole.truncated).toBe(false);
+      expect(whole.holds.length).toBeGreaterThan(1);
+
+      // Released so it does not freeze whatever runs after this.
+      await release(live.json().hold.id);
+    });
+
+    it('refuses a limit outside the ceiling rather than honouring it', async () => {
+      for (const q of ['?limit=0', '?limit=100000']) {
+        const res = await ctx.app.inject({
+          method: 'GET',
+          url: `/api/v1/admin/retention/holds${q}`,
+          headers: authHeader(admin.token),
+        });
+        expect(res.statusCode).toBe(422);
+      }
+    });
+  });
+
   it('gates retention admin to admins', async () => {
     const plain = await seedUser(ctx, { roles: ['valuation_user'] });
     const res = await ctx.app.inject({

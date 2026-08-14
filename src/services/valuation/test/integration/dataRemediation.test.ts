@@ -225,4 +225,109 @@ describe.skipIf(!dbUp)('data remediation', () => {
     );
     expect(rows.length).toBeGreaterThan(0);
   });
+
+  /**
+   * Both queues are latest-per-valuation scans of every calculation and every
+   * QA review on the platform, so both are bounded. What must survive the
+   * bound is the answer to "how many are affected" — a remediation queue that
+   * under-reports its own size reads as a shorter list of problems, which is
+   * the failure mode that matters here.
+   */
+  describe('bounded reads', () => {
+    // The re-run tests above clear rows out of the queue, so this block seeds
+    // its own — two unpublished alongside the published one that stays listed.
+    beforeAll(async () => {
+      for (const name of ['Bounded A Co', 'Bounded B Co']) {
+        await staleCalculation(await createValuation(name), 400_000);
+      }
+    });
+
+    it('counts the whole queue even when the page shows one row', async () => {
+      const whole = (await queue()).json();
+      expect(whole.stale_backsolves.rows.length).toBeGreaterThan(1);
+      expect(whole.stale_backsolves.truncated).toBe(false);
+
+      const page = (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v1/admin/data-remediation?limit=1',
+          headers: authHeader(ops.token),
+        })
+      ).json();
+
+      expect(page.stale_backsolves.rows).toHaveLength(1);
+      expect(page.stale_backsolves.truncated).toBe(true);
+      // The figures are identical to the unbounded read's, which is the point.
+      expect(page.stale_backsolves.total).toBe(whole.stale_backsolves.total);
+      expect(page.stale_backsolves.published).toBe(whole.stale_backsolves.published);
+      expect(page.stale_backsolves.rerunnable).toBe(whole.stale_backsolves.rerunnable);
+    });
+
+    it('keeps published rows first under a cap — they need the human decision', async () => {
+      const page = (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v1/admin/data-remediation?limit=1',
+          headers: authHeader(ops.token),
+        })
+      ).json();
+      expect(page.stale_backsolves.rows[0].published).toBe(true);
+    });
+
+    /**
+     * The regression the cap could have introduced. Published rows sort first,
+     * so a page of one holds only the row the re-run refuses — and if
+     * eligibility were resolved by searching that page, the re-runnable one
+     * would come back "not in the queue" and never be corrected. Eligibility is
+     * resolved against the ids asked for instead.
+     */
+    it('re-runs a row that a capped page would not have shown', async () => {
+      const fresh = await createValuation('Past The Cut Co');
+      await staleCalculation(fresh, 750_000);
+
+      // It is genuinely off a one-row page: that page is the published row.
+      const page = (
+        await app.inject({
+          method: 'GET',
+          url: '/api/v1/admin/data-remediation?limit=1',
+          headers: authHeader(ops.token),
+        })
+      ).json();
+      expect(page.stale_backsolves.rows.map((r: { valuation_id: string }) => r.valuation_id)).not.toContain(
+        fresh,
+      );
+      expect(page.stale_backsolves.truncated).toBe(true);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/data-remediation/rerun',
+        headers: authHeader(ops.token),
+        payload: { valuation_ids: [fresh] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().succeeded).toBe(1);
+    });
+
+    it('still refuses a published id when eligibility is resolved directly', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/admin/data-remediation/rerun',
+        headers: authHeader(ops.token),
+        payload: { valuation_ids: [publishedId] },
+      });
+      expect(res.json().succeeded).toBe(0);
+      expect(res.json().results[0].error).toMatch(/published/i);
+    });
+
+    it('refuses a limit outside the ceiling rather than honouring it', async () => {
+      for (const q of ['?limit=0', '?limit=100000', '?limit=abc']) {
+        const res = await app.inject({
+          method: 'GET',
+          url: `/api/v1/admin/data-remediation${q}`,
+          headers: authHeader(ops.token),
+        });
+        expect(res.statusCode).toBe(422);
+      }
+    });
+  });
 });

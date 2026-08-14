@@ -124,19 +124,78 @@ export interface EngagementListRow extends EngagementRow {
   analyst_email: string | null;
 }
 
+/** Ceiling on one page of the active-engagement pipeline. */
+export const ENGAGEMENT_PAGE_LIMIT = 500;
+
 /**
  * Active engagements (not yet complete) for the pipeline dashboard, joined to
  * their valuation and assigned analyst.
+ *
+ * Bounded: the set is every engagement the firm has not finished, which grows
+ * with the firm and with anything that stalls. Oldest-in-stage first is kept
+ * deliberately under the cap — the rows a pipeline board exists to surface are
+ * the ones that have sat longest, so a capped page is the end that matters
+ * rather than an arbitrary slice.
  */
-export async function listActiveEngagements(pool: pg.Pool): Promise<EngagementListRow[]> {
+export async function listActiveEngagements(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<{ engagements: EngagementListRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? ENGAGEMENT_PAGE_LIMIT, 1), ENGAGEMENT_PAGE_LIMIT);
   const { rows } = await pool.query<EngagementListRow>(
-    `SELECT e.*, v.company_name, v.state AS valuation_state, v.kind, u.email AS analyst_email
-       FROM engagements e
-       JOIN valuations v ON v.id = e.valuation_id
-       LEFT JOIN users u ON u.id = e.assigned_analyst_id
+    `${ACTIVE_ENGAGEMENT_SELECT}
       WHERE e.current_stage <> 'complete'
-      ORDER BY e.stage_entered_at ASC`,
+      ORDER BY e.stage_entered_at ASC, e.id ASC
+      LIMIT $1`,
+    [limit + 1],
   );
-  return rows;
+  return { engagements: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+const ACTIVE_ENGAGEMENT_SELECT = `
+  SELECT e.*, v.company_name, v.state AS valuation_state, v.kind, u.email AS analyst_email
+    FROM engagements e
+    JOIN valuations v ON v.id = e.valuation_id
+    LEFT JOIN users u ON u.id = e.assigned_analyst_id`;
+
+/**
+ * Every active engagement, a page at a time.
+ *
+ * The overdue-reminder sweep must see all of them — a cap there does not slow a
+ * page down, it silently stops sending the alerts the SLA exists to produce, and
+ * the failure is invisible because the endpoint still reports a success count.
+ * So the sweep pages rather than truncates: bounded memory per query, complete
+ * coverage across them. Keyset rather than OFFSET because the set is being
+ * mutated as the sweep advances through it.
+ *
+ * Ordered by `id`, not by `stage_entered_at` as the board is. A sweep needs
+ * every row exactly once and does not care in what order, and `id` is the one
+ * column that can deliver that: it is the primary key, so it is unique and
+ * totally ordered, and it is text, so the cursor survives the round trip
+ * through JavaScript intact. A `timestamptz` does not — Postgres keeps
+ * microseconds, node-postgres hands back a `Date` carrying milliseconds, and
+ * the truncated value sent back as a cursor re-selects the row it was supposed
+ * to advance past. That is not a slow sweep, it is a sweep that never
+ * terminates.
+ */
+export async function* eachActiveEngagement(
+  pool: pg.Pool,
+  opts: { pageSize?: number } = {},
+): AsyncGenerator<EngagementListRow> {
+  const size = Math.min(Math.max(opts.pageSize ?? ENGAGEMENT_PAGE_LIMIT, 1), ENGAGEMENT_PAGE_LIMIT);
+  let after: string | null = null;
+  for (;;) {
+    const params: unknown[] = [size];
+    const cursorSql = after ? `AND e.id > $${params.push(after)}` : '';
+    const { rows }: pg.QueryResult<EngagementListRow> = await pool.query<EngagementListRow>(
+      `${ACTIVE_ENGAGEMENT_SELECT}
+        WHERE e.current_stage <> 'complete' ${cursorSql}
+        ORDER BY e.id ASC
+        LIMIT $1`,
+      params,
+    );
+    for (const row of rows) yield row;
+    if (rows.length < size) return;
+    after = rows[rows.length - 1]!.id;
+  }
+}

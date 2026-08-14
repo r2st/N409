@@ -9,6 +9,7 @@ import { findUserById } from '../repos/users.js';
 import { RETENTION_DATA_TYPES } from '../domain/retention.js';
 import {
   findArchivableValuations,
+  HOLD_PAGE_LIMIT,
   listActions,
   listHolds,
   listPolicies,
@@ -149,7 +150,16 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
 
   app.get('/api/v1/admin/retention/holds', { preHandler: app.authenticate }, async (req) => {
     requireAdmin(req);
-    return { holds: await listHolds(deps.pool) };
+    const parsedQuery = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(HOLD_PAGE_LIMIT).default(HOLD_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    const { holds, truncated } = await listHolds(deps.pool, { limit: parsedQuery.data.limit });
+    return { holds, truncated, page_limit: HOLD_PAGE_LIMIT };
   });
 
   app.post('/api/v1/admin/retention/holds', { preHandler: app.authenticate }, async (req, reply) => {

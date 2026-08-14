@@ -56,9 +56,29 @@ export interface LegalHoldRow {
   released_at: Date | null;
 }
 
-export async function listHolds(pool: pg.Pool): Promise<LegalHoldRow[]> {
-  const { rows } = await pool.query<LegalHoldRow>('SELECT * FROM legal_holds ORDER BY placed_at DESC');
-  return rows;
+/** Ceiling on one page of the legal-hold ledger. */
+export const HOLD_PAGE_LIMIT = 200;
+
+/**
+ * The legal-hold ledger, newest first — a page of it.
+ *
+ * Holds are never deleted, only released, so this table only grows. Capping it
+ * is safe in a way capping a work queue is not: nothing *enforces* a hold from
+ * this list. The purge checks `legal_holds` in SQL (see `purgeCandidates`
+ * below), so a hold past the cut still blocks deletion even though it is not on
+ * the page. Active holds are ordered ahead of released ones so the cap cannot
+ * push a live hold off the end behind a year of released ones.
+ */
+export async function listHolds(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<{ holds: LegalHoldRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? HOLD_PAGE_LIMIT, 1), HOLD_PAGE_LIMIT);
+  const { rows } = await pool.query<LegalHoldRow>(
+    'SELECT * FROM legal_holds ORDER BY active DESC, placed_at DESC LIMIT $1',
+    [limit + 1],
+  );
+  return { holds: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function placeHold(

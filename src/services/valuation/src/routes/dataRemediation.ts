@@ -5,7 +5,12 @@ import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
-import { listStaleBacksolves, listStaleQaReviews } from '../repos/dataRemediation.js';
+import {
+  findRerunnableBacksolves,
+  listStaleBacksolves,
+  listStaleQaReviews,
+  REMEDIATION_PAGE_LIMIT,
+} from '../repos/dataRemediation.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findParams } from '../repos/params.js';
 import { buildCalculationInputs, runCalculation } from './calculations.js';
@@ -55,25 +60,38 @@ export function registerDataRemediationRoutes(
    */
   app.get('/api/v1/admin/data-remediation', { preHandler: app.authenticate }, async (req) => {
     requireOps(req);
+    const parsedQuery = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(REMEDIATION_PAGE_LIMIT).default(REMEDIATION_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    const { limit } = parsedQuery.data;
     const [backsolves, qaReviews] = await Promise.all([
-      listStaleBacksolves(deps.pool),
-      listStaleQaReviews(deps.pool),
+      listStaleBacksolves(deps.pool, { limit }),
+      listStaleQaReviews(deps.pool, { limit }),
     ]);
     return {
       stale_backsolves: {
-        rows: backsolves,
-        total: backsolves.length,
-        published: backsolves.filter((r) => r.published).length,
-        rerunnable: backsolves.filter((r) => !r.published).length,
+        rows: backsolves.rows,
+        total: backsolves.total,
+        published: backsolves.published,
+        rerunnable: backsolves.total - backsolves.published,
+        truncated: backsolves.truncated,
+        page_limit: REMEDIATION_PAGE_LIMIT,
         description:
           'Calculations that took the single-breakpoint backsolve with a live option pool. ' +
           'The stored equity value is low by roughly the pool’s share, and any report rendered ' +
           'from one still says so.',
       },
       stale_qa_reviews: {
-        rows: qaReviews,
-        total: qaReviews.length,
-        published: qaReviews.filter((r) => r.published).length,
+        rows: qaReviews.rows,
+        total: qaReviews.total,
+        published: qaReviews.published,
+        truncated: qaReviews.truncated,
+        page_limit: REMEDIATION_PAGE_LIMIT,
         description:
           'QA reviews of a Chaffee/Finnerty run that carry no DLOM-range check. The check is a ' +
           'publish gate, and with the DLOM parameter left null the old version did not run at all.',
@@ -103,8 +121,11 @@ export function registerDataRemediationRoutes(
       throw problems.unprocessable('Invalid re-run request', { errors: parsed.error.issues });
     }
 
-    const queue = await listStaleBacksolves(deps.pool);
-    const eligible = new Map(queue.filter((r) => !r.published).map((r) => [r.valuation_id, r]));
+    // Eligibility is resolved against the ids asked for, not against a page of
+    // the queue: the list is capped and ordered published-first, so a
+    // re-runnable row can sit past the cut and must not be reported missing.
+    const requested = parsed.data.valuation_ids.map((raw) => raw.toUpperCase()).filter(isUlid);
+    const eligible = await findRerunnableBacksolves(deps.pool, requested);
 
     const results: Array<{ valuation_id: string; ok: boolean; error?: string }> = [];
     for (const rawId of parsed.data.valuation_ids) {

@@ -19,6 +19,8 @@ import {
 import {
   advanceStage,
   assignAnalyst,
+  eachActiveEngagement,
+  ENGAGEMENT_PAGE_LIMIT,
   ensureEngagement,
   listActiveEngagements,
   stageHistory,
@@ -70,7 +72,17 @@ export function registerEngagementRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const now = new Date();
-    const rows = await listActiveEngagements(deps.pool);
+    const parsedQuery = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(ENGAGEMENT_PAGE_LIMIT).default(ENGAGEMENT_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    const { engagements: rows, truncated } = await listActiveEngagements(deps.pool, {
+      limit: parsedQuery.data.limit,
+    });
     return {
       engagements: rows.map((r) => ({
         valuation_id: r.valuation_id,
@@ -84,6 +96,8 @@ export function registerEngagementRoutes(
         sla: slaStatus(r.current_stage, r.stage_entered_at, now),
       })),
       stages: ENGAGEMENT_STAGES,
+      truncated,
+      page_limit: ENGAGEMENT_PAGE_LIMIT,
     };
   });
 
@@ -159,9 +173,12 @@ export function registerEngagementRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const now = new Date();
-    const rows = await listActiveEngagements(deps.pool);
     const reminded: string[] = [];
-    for (const r of rows) {
+    let scanned = 0;
+    // Paged rather than capped: a missed reminder is the whole point of the
+    // sweep going unsent, and it would report success either way.
+    for await (const r of eachActiveEngagement(deps.pool)) {
+      scanned++;
       const sla = slaStatus(r.current_stage, r.stage_entered_at, now);
       if (!sla.overdue || !r.analyst_email) continue;
       await sendTransactionalEmail(
@@ -188,6 +205,6 @@ export function registerEngagementRoutes(
       );
       reminded.push(r.valuation_id);
     }
-    return { reminded_count: reminded.length, reminded };
+    return { reminded_count: reminded.length, reminded, scanned };
   });
 }
