@@ -168,3 +168,84 @@ export async function seedPartner(ctx: TestApp, name: string): Promise<string> {
 }
 
 export const authHeader = (token: string) => ({ authorization: `Bearer ${token}` });
+
+/**
+ * What a rendered report says about itself, without decoding a single glyph.
+ *
+ * Reading the *prose* back out of one of these documents is real work — the
+ * renderer compresses its content streams and embeds a subsetted Unicode face,
+ * so the codes inside them are glyph indices that only the font's `/ToUnicode`
+ * CMap can turn back into letters. `@n409/report`'s own suite does exactly that
+ * against documents rendered with `compress: false`, and that is where
+ * assertions about wording belong.
+ *
+ * Everything here is the other layer, and it is stored in the clear: the
+ * document information dictionary, the tagged structure tree's chapter titles,
+ * and the `/ActualText` spans. That layer is not a convenient proxy for the
+ * page — it is the half of the document that search, copy-out and a screen
+ * reader use, it is invisible on paper, and a report that lost it would look
+ * perfect and be unreadable to anyone not looking at it. Cheap to assert, and
+ * worth asserting on its own account.
+ */
+export interface PdfOutline {
+  /** `/Title` — the authored report title. */
+  title: string | null;
+  /** `/Keywords` — company, kind, and the version this render came from. */
+  keywords: string | null;
+  /** Every `/Sect` element's `/T`: the chapter headings, as tagged. */
+  headings: string[];
+  /** Every `/ActualText` span — the cover fact block, as read aloud. */
+  actualText: string[];
+}
+
+/**
+ * One PDF literal string, as text.
+ *
+ * A writer may store a string either as PDFDocEncoded bytes or, the moment one
+ * character will not fit in a byte, as UTF-16BE behind a byte-order mark — and
+ * which one it picks is a property of the *content*, so a report whose chapter
+ * happens to be titled with an en dash comes back in a different encoding from
+ * the one beside it. Both forms have to be understood or the assertions become
+ * accidentally sensitive to punctuation.
+ */
+function decodePdfString(body: string): string {
+  const unescaped = body.replace(/\\([()\\])/g, '$1');
+  if (!unescaped.startsWith('þÿ')) return unescaped;
+  let out = '';
+  for (let i = 2; i + 1 < unescaped.length; i += 2) {
+    out += String.fromCharCode((unescaped.charCodeAt(i) << 8) | unescaped.charCodeAt(i + 1));
+  }
+  return out;
+}
+
+/** Literal-string bodies of the indirect objects, by object number. */
+function pdfStringObjects(raw: string): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const m of raw.matchAll(/(?:^|\n)(\d+) 0 obj\s*\(([\s\S]*?)\)\s*endobj/g)) {
+    found.set(m[1]!, decodePdfString(m[2]!));
+  }
+  return found;
+}
+
+export function pdfOutline(pdf: Buffer): PdfOutline {
+  const raw = pdf.toString('latin1');
+  const strings = pdfStringObjects(raw);
+
+  // The information dictionary holds indirect references, never inline strings,
+  // so `/Title 33 0 R` is the only `/Title` that takes an object number — the
+  // structure tree's `/S /Title` role cannot be confused for it.
+  const infoValue = (key: string): string | null => {
+    const ref = new RegExp(`/${key} (\\d+) 0 R`).exec(raw)?.[1];
+    return ref ? (strings.get(ref) ?? null) : null;
+  };
+
+  const inlineStrings = (pattern: RegExp): string[] =>
+    Array.from(raw.matchAll(pattern), (m) => decodePdfString(m[1]!));
+
+  return {
+    title: infoValue('Title'),
+    keywords: infoValue('Keywords'),
+    headings: inlineStrings(/\/S \/Sect[^>]*?\/T \(((?:[^()\\]|\\.)*)\)/g),
+    actualText: inlineStrings(/\/ActualText \(((?:[^()\\]|\\.)*)\)/g),
+  };
+}
