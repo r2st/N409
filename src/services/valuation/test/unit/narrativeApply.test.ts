@@ -100,11 +100,15 @@ describe('mapping the agent’s keys onto the report’s', () => {
  * with the rows a database actually holds.
  */
 describe('every deliverable’s own vocabulary', () => {
-  // Both halves of the library: 0114 seeded the base and five kinds, 0141 the
-  // five that were still being drafted with the 409A's guidance. Read together
-  // because that is how the database holds them — testing 0114 alone would
-  // assert the state of a schema no deployment is in.
-  const SEED = ['0114_narrative_prompt_library', '0141_specialty_narrative_prompts']
+  // All three parts of the library: 0114 seeded the base and five kinds, 0141
+  // five more, 0145 the last six. Read together because that is how the
+  // database holds them — testing 0114 alone would assert the state of a
+  // schema no deployment is in.
+  const SEED = [
+    '0114_narrative_prompt_library',
+    '0141_specialty_narrative_prompts',
+    '0145_specialty_narrative_prompts_part_two',
+  ]
     .map((name) => readFileSync(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'))
     .join('\n');
 
@@ -189,9 +193,10 @@ describe('every deliverable’s own vocabulary', () => {
         if (!overridden) stillGeneric.add(kind);
       }
     }
-    // The five 0141 converted are gone from this list; these six are the
-    // remaining gap, and each needs the same treatment.
-    expect([...stillGeneric].sort()).toEqual(['csop', 'emi', 'esop', 'fmv', 'gifts', 'ifrs2']);
+    // 0141 removed five kinds from this list and 0145 the last six. It is
+    // empty, and it is meant to stay empty: a kind that starts renaming a
+    // chapter without owning its guidance fails here.
+    expect([...stillGeneric].sort()).toEqual([]);
   });
 
   /**
@@ -211,6 +216,50 @@ describe('every deliverable’s own vocabulary', () => {
   });
 
   /**
+   * The same for the six 0145 closed. Each has chapters the 409A does not — the
+   * scheme conditions HMRC tests first, the ESOP's repurchase liability, the
+   * normalisation an SMB conclusion is struck on, the §§2701–2704 tests, the
+   * awards an IFRS 2 report measures — and none of them had a library row, so
+   * nothing was drafted and they shipped carrying the skeleton's instructions.
+   */
+  it.each([
+    ['csop' as const, ['scheme_limits']],
+    ['emi' as const, ['scheme_limits']],
+    ['esop' as const, ['repurchase_obligation']],
+    ['fmv' as const, ['earnings_normalization']],
+    ['gifts' as const, ['chapter_14']],
+    ['ifrs2' as const, ['awards']],
+  ])('drafts %s’s own chapters too', (kind, expected) => {
+    const drafted = resolveNarrativeSections(seededRows(), kind).map((s) => s.key);
+    for (const key of expected) expect(drafted, `${kind} does not draft ${key}`).toContain(key);
+  });
+
+  /**
+   * The renames 0145 gave a subject to, checked against the words that make
+   * each one this deliverable's rather than the 409A's. A row seeded with the
+   * base wording under a specialty label would pass the sweep above — it is
+   * `overridden` either way — and these are what catch that.
+   */
+  it.each([
+    ['emi' as const, 'dlom_analysis', 'UMV and AMV', /s\.531|unrestricted market value/],
+    ['esop' as const, 'dlom_analysis', 'Level of Value & Discounts', /409\(h\)|level of value/],
+    ['esop' as const, 'valuation_methodology', 'Valuation Approaches', /S corporation/],
+    ['csop' as const, 'valuation_methodology', 'Valuation Analysis', /Schedule 4|unrestricted/],
+    ['fmv' as const, 'valuation_methodology', 'Valuation Methods', /SDE|capitalization rate/],
+    ['gifts' as const, 'valuation_methodology', 'Valuation of the Underlying Entity', /entity/],
+    ['ifrs2' as const, 'valuation_methodology', 'Valuation Model & Assumptions', /Monte-Carlo/],
+  ])('gives %s’s %s the label and the subject its chapter wants', (kind, key, label, matcher) => {
+    // Read from the migration text rather than the parsed rows: `seededRows`
+    // deliberately drops guidance, and the guidance is the whole point here.
+    const tuple = new RegExp(
+      String.raw`\('01N409NARR\d+',\s*'${kind}',\s*'${key}',\s*'([^']+)',\s*'((?:[^']|'')*)'`,
+    ).exec(SEED);
+    expect(tuple, `no seeded row for ${kind}/${key}`).not.toBeNull();
+    expect(tuple![1]).toBe(label);
+    expect(tuple![2], `${kind}/${key} still reads as a 409A`).toMatch(matcher);
+  });
+
+  /**
    * The other half of 0141. A section the map routes to NULL is drafted on
    * every run and discarded on every run — and asking the model to discuss a
    * marketability discount on a bond, an award or a reporting unit is an
@@ -225,6 +274,26 @@ describe('every deliverable’s own vocabulary', () => {
       expect(drafted).not.toContain('market_approach');
     },
   );
+
+  /**
+   * The sweep that makes the rule general rather than a list. Any section a
+   * kind's map sends to NULL is drafted on every run and thrown away on every
+   * run, and the expensive half of that is not the tokens — it is asking a
+   * model to discuss a marketability discount on an award or an HMRC scheme,
+   * which is an invitation to invent one.
+   */
+  it('never drafts a section its own map suppresses', () => {
+    const rows = seededRows();
+    for (const kind of VALUATION_KINDS) {
+      const map = narrativeSectionMap(kind);
+      for (const { key } of resolveNarrativeSections(rows, kind)) {
+        // The base map's own nulls are the exception: `executive_summary` is
+        // drafted for every kind and consumed outside the deliverable.
+        if (NARRATIVE_SECTION_MAP[key] === null) continue;
+        expect(map[key], `${kind} drafts “${key}”, which its map discards`).not.toBeNull();
+      }
+    }
+  });
 
   it('keeps the sections a specialty kind genuinely does route somewhere', () => {
     const rows = seededRows();

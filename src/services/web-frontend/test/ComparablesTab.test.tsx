@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { ComparablesTab } from '../src/pages/valuation/ComparablesTab';
@@ -18,14 +18,59 @@ const valuation = {
   currency: 'USD',
 } as unknown as Valuation;
 
-const nullMultiples = {
+type MultipleKey = 'ev_revenue_ltm' | 'ev_revenue_ntm' | 'ev_ebitda_ltm' | 'ev_ebitda_ntm';
+
+/**
+ * The wire shape of `GET /valuations/:id/comparables`. Spelled out here rather
+ * than inferred from the fixture so a case can vary one nullable field — the
+ * `figures_source` on an older row, a statistic with nothing retained — without
+ * the fixture's own literal types calling it an error.
+ */
+interface Row {
+  id: string;
+  ticker: string | null;
+  name: string;
+  sic: string | null;
+  source: string;
+  included: boolean;
+  exclude_reason: string | null;
+  ev: number | null;
+  revenue_ltm: number | null;
+  revenue_ntm: number | null;
+  ebitda_ltm: number | null;
+  ebitda_ntm: number | null;
+  score: number | null;
+  multiples: Record<MultipleKey, number | null>;
+  figures_source?: string | null;
+  figures_as_of?: string | null;
+}
+
+interface Stat {
+  key: MultipleKey;
+  label: string;
+  count: number;
+  median: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+interface Set {
+  comparables: Row[];
+  statistics: Record<MultipleKey, Stat>;
+  primary_multiple: MultipleKey;
+  market_method: string | null;
+  market_horizon: string | null;
+  can_edit: boolean;
+}
+
+const nullMultiples: Record<MultipleKey, number | null> = {
   ev_revenue_ltm: null,
   ev_revenue_ntm: null,
   ev_ebitda_ltm: null,
   ev_ebitda_ntm: null,
 };
 
-const SET = {
+const SET: Set = {
   comparables: [
     {
       id: '01JCOMPAAAAAAAAAAAAAAAAAAA',
@@ -119,7 +164,7 @@ const SET = {
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-function mockApi(over: Partial<typeof SET> = {}, onWrite?: (path: string, init: RequestInit) => Response) {
+function mockApi(over: Partial<Set> = {}, onWrite?: (path: string, init: RequestInit) => Response) {
   const body = { ...SET, ...over };
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     const path = String(url);
@@ -131,6 +176,12 @@ function mockApi(over: Partial<typeof SET> = {}, onWrite?: (path: string, init: 
     throw new Error(`unexpected fetch ${path}`);
   });
 }
+
+const problem = (detail: string, status = 422) =>
+  new Response(JSON.stringify({ title: 'Unprocessable', status, detail }), {
+    status,
+    headers: { 'content-type': 'application/problem+json' },
+  });
 
 function renderTab() {
   return render(
@@ -229,5 +280,276 @@ describe('ComparablesTab', () => {
     renderTab();
     expect(await screen.findByText('No comparables recorded')).toBeInTheDocument();
     expect(screen.getByText(/AI comp-selection run/)).toBeInTheDocument();
+  });
+
+  it('puts an excluded row back with one click', async () => {
+    const sent: Array<{ path: string; method: string; body: unknown }> = [];
+    mockApi({}, (path, init) => {
+      sent.push({ path, method: String(init.method), body: JSON.parse(String(init.body)) });
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Zeta Mining');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Include' }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.method).toBe('PATCH');
+    expect(sent[0]!.path).toContain('01JCOMPZZZZZZZZZZZZZZZZZZZ');
+    expect(sent[0]!.body).toEqual({ included: true });
+  });
+
+  it('deletes only the analyst row it was asked to remove', async () => {
+    const sent: Array<{ path: string; method: string }> = [];
+    mockApi({}, (path, init) => {
+      sent.push({ path, method: String(init.method) });
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Beta Systems');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.method).toBe('DELETE');
+    expect(sent[0]!.path).toContain('01JCOMPBBBBBBBBBBBBBBBBBBB');
+  });
+
+  it('re-screens the set against the reference universe', async () => {
+    const sent: string[] = [];
+    mockApi({}, (path) => {
+      sent.push(path);
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Re-screen' }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toContain('/comparables/screen');
+  });
+
+  /**
+   * The refresh reports per ticker rather than collapsing to one error line: a
+   * feed that reached nothing is not a failure, but an analyst who is not told
+   * would believe they are now reading observed market data.
+   */
+  it('reports a wholly successful market refresh as a count', async () => {
+    mockApi({}, (path) => {
+      if (path.includes('/refresh')) {
+        return jsonResponse({
+          refreshed: [{ ticker: 'AAA', as_of: '2026-08-01' }],
+          unavailable: [],
+        });
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh from market' }));
+    expect(await screen.findByText('Refreshed 1 company from observed market data.')).toBeInTheDocument();
+  });
+
+  it('names the tickers a refresh could not reach, and says their figures stand', async () => {
+    mockApi({}, (path) => {
+      if (path.includes('/refresh')) {
+        return jsonResponse({
+          refreshed: [{ ticker: 'AAA', as_of: '2026-08-01' }],
+          unavailable: [
+            { ticker: 'BBB', warning: 'no quote' },
+            { ticker: 'ZZZ', warning: 'delisted' },
+          ],
+        });
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh from market' }));
+    const note = await screen.findByText(/Refreshed 1 of 3\./);
+    expect(note).toHaveTextContent('No live figures for BBB, ZZZ');
+    expect(note).toHaveTextContent('those rows keep the figures they had');
+  });
+
+  it('adds a peer by hand, sending blank optional fields as null', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    mockApi({}, (path, init) => {
+      if (init.method === 'POST' && path.endsWith('/comparables')) {
+        sent.push(JSON.parse(String(init.body)));
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add peer' }));
+    await userEvent.type(screen.getByLabelText('Company name'), 'Gamma Robotics');
+    await userEvent.type(screen.getByLabelText('Enterprise value'), '2,400');
+    await userEvent.click(screen.getByRole('button', { name: 'Add comparable' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({
+      ticker: null,
+      name: 'Gamma Robotics',
+      sic: null,
+      ev: 2400,
+      revenue_ltm: null,
+      ebitda_ltm: null,
+    });
+  });
+
+  /** A figure that is not a number is "not known", never NaN on the wire. */
+  it('sends an unparseable figure as null rather than NaN', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    mockApi({}, (path, init) => {
+      if (init.method === 'POST' && path.endsWith('/comparables')) {
+        sent.push(JSON.parse(String(init.body)));
+      }
+      return jsonResponse({});
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add peer' }));
+    await userEvent.type(screen.getByLabelText('Company name'), 'Delta Corp');
+    await userEvent.type(screen.getByLabelText('LTM revenue'), 'n/a');
+    await userEvent.click(screen.getByRole('button', { name: 'Add comparable' }));
+
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.revenue_ltm).toBeNull();
+  });
+
+  it('keeps the add form open, with its draft, when the write is rejected', async () => {
+    mockApi({}, (path, init) =>
+      init.method === 'POST' && path.endsWith('/comparables')
+        ? problem('A comparable named Gamma Robotics is already in this set.')
+        : jsonResponse({}),
+    );
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getByRole('button', { name: '+ Add peer' }));
+    await userEvent.type(screen.getByLabelText('Company name'), 'Gamma Robotics');
+    await userEvent.click(screen.getByRole('button', { name: 'Add comparable' }));
+
+    expect(
+      await screen.findByText('A comparable named Gamma Robotics is already in this set.'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Company name')).toHaveValue('Gamma Robotics');
+  });
+
+  it('keeps the exclusion form open, with its reason, when the write is rejected', async () => {
+    mockApi({}, () => problem('This valuation is published and cannot be edited.', 409));
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Exclude' })[0]!);
+    await userEvent.type(await screen.findByLabelText(/why is this company not comparable/i), 'acquired');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Exclude' }).at(-1)!);
+
+    expect(await screen.findByText('This valuation is published and cannot be edited.')).toBeInTheDocument();
+    expect(screen.getByLabelText(/why is this company not comparable/i)).toHaveValue('acquired');
+  });
+
+  it('abandons a half-typed exclusion on Cancel', async () => {
+    mockApi();
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Exclude' })[0]!);
+    await userEvent.type(await screen.findByLabelText(/why is this company not comparable/i), 'oops');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByLabelText(/why is this company not comparable/i)).not.toBeInTheDocument();
+  });
+
+  /**
+   * `source` is who put the row in the set; `figures_source` is where its
+   * numbers came from. A multiple cannot be checked without both, and a row
+   * written before the columns existed says nothing rather than guessing.
+   */
+  it('marks where each row’s figures came from, and stays silent on older rows', async () => {
+    mockApi({
+      comparables: [
+        { ...SET.comparables[0]!, figures_source: 'live', figures_as_of: '2026-08-01T00:00:00Z' },
+        { ...SET.comparables[1]!, figures_source: null, figures_as_of: null },
+      ],
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+
+    const market = screen.getByText('Market');
+    expect(market).toHaveAttribute('title', 'Figures as at 2026-08-01');
+    expect(screen.queryByText('Reference')).not.toBeInTheDocument();
+    expect(screen.queryByText('Entered')).not.toBeInTheDocument();
+  });
+
+  it('renders an unrecognised figures source verbatim rather than dropping it', async () => {
+    mockApi({
+      comparables: [{ ...SET.comparables[0]!, figures_source: 'estimate', figures_as_of: null }],
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+    expect(screen.getByText('estimate')).toBeInTheDocument();
+  });
+
+  it('shows the load failure instead of an endless spinner', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      String(url).includes('/comparables')
+        ? problem('You do not have access to this valuation.', 403)
+        : jsonResponse({}),
+    );
+    renderTab();
+    expect(await screen.findByText('You do not have access to this valuation.')).toBeInTheDocument();
+  });
+
+  it('falls back to a plain message when the load fails without a problem body', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    renderTab();
+    expect(await screen.findByText('Could not load the comparable set.')).toBeInTheDocument();
+  });
+
+  it('falls back to a plain message when a write fails without a problem body', async () => {
+    let loaded = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') !== 'GET') throw new TypeError('network down');
+      if (String(url).includes('/comparables')) {
+        loaded = true;
+        return jsonResponse(SET);
+      }
+      throw new Error(`unexpected fetch ${String(url)}`);
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+    expect(loaded).toBe(true);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Re-screen' }));
+    expect(await screen.findByText('Could not re-screen the comparable set.')).toBeInTheDocument();
+  });
+
+  it('states the spread beside the median, and omits it when nothing was retained', async () => {
+    mockApi();
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+    expect(screen.getByText(/10\.00x–14\.00x/)).toBeInTheDocument();
+
+    cleanup();
+    mockApi({
+      statistics: {
+        ...SET.statistics,
+        ev_revenue_ltm: {
+          key: 'ev_revenue_ltm',
+          label: 'EV/LTM Revenue',
+          count: 0,
+          median: null,
+          min: null,
+          max: null,
+        },
+      },
+    });
+    renderTab();
+    await screen.findByText('Alpha Analytics');
+    expect(screen.getByText(/0 of 3 companies/)).toBeInTheDocument();
+    expect(screen.queryByText(/x–/)).not.toBeInTheDocument();
   });
 });
