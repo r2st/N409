@@ -179,11 +179,17 @@ export default defineConfig({
       // billing section and the org-assignment card, four of which were
       // hiding a swallowed load error: measured 95.17 lines/statements,
       // 87.45 branches, 79.73 functions.
+      // Ratcheted again with the round-24 push through the four lowest-covered
+      // files — the cap-table workbook upload, the live-sync panel, the
+      // worklist's filter/sort/export/pager, and the methodology panel's
+      // engagement basics, approach weights, allocation methods and PWERM
+      // grid: measured 97.45 lines/statements, 89.18 branches, 86.41
+      // functions.
       thresholds: {
-        lines: 95,
-        statements: 95,
-        functions: 79,
-        branches: 87,
+        lines: 97,
+        statements: 97,
+        functions: 86,
+        branches: 89,
       },
     },
   },

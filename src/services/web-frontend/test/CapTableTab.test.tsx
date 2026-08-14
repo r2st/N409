@@ -668,9 +668,11 @@ describe('CapTableTab', () => {
       await user.selectOptions(screen.getByLabelText('Sheet'), '1');
       // Carrying "Security" across would map a column the new sheet has not got.
       expect(await screen.findByLabelText('Security class *')).toHaveValue('');
-      expect([...screen.getByLabelText('Shares *').querySelectorAll('option')].map((o) => o.value)).toEqual(
-        ['', 'Holder', 'Granted'],
-      );
+      expect([...screen.getByLabelText('Shares *').querySelectorAll('option')].map((o) => o.value)).toEqual([
+        '',
+        'Holder',
+        'Granted',
+      ]);
     });
 
     it('warns that a long workbook was cut short rather than importing part of it silently', async () => {

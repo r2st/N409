@@ -8,27 +8,25 @@ const VAL_ID = '01N409VAL000000000000000AA';
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-const providers = [
-  {
-    provider: 'carta',
-    label: 'Carta',
-    configured: true,
-    connection: {
-      status: 'connected',
-      external_company_name: 'Acme Inc',
-      sync_frequency: 'manual',
-      last_synced_at: null,
-      last_error: null,
-    },
+const CARTA = {
+  provider: 'carta',
+  label: 'Carta',
+  configured: true,
+  connection: {
+    status: 'connected',
+    external_company_name: 'Acme Inc',
+    sync_frequency: 'manual',
+    last_synced_at: null,
+    last_error: null,
   },
-  { provider: 'pulley', label: 'Pulley', configured: false, connection: null },
-];
+};
+/** No keys on this deployment, so it can only ever be listed. */
+const PULLEY = { provider: 'pulley', label: 'Pulley', configured: false, connection: null };
+
+const providers = [CARTA, PULLEY];
 
 /** Pulley configured but never connected — the branch that offers "Connect Pulley". */
-const pulleyConnectable = [
-  providers[0],
-  { provider: 'pulley', label: 'Pulley', configured: true, connection: null },
-];
+const pulleyConnectable = [CARTA, { ...PULLEY, configured: true }];
 
 const conflictOutcome = {
   applied: false,
@@ -167,10 +165,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
         return jsonResponse({ ok: true });
       }
       return jsonResponse({
-        providers: [
-          { ...providers[0], connection: { ...providers[0].connection, sync_frequency: frequency } },
-          providers[1],
-        ],
+        providers: [{ ...CARTA, connection: { ...CARTA.connection, sync_frequency: frequency } }, PULLEY],
       });
     });
     render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
@@ -207,7 +202,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
         return jsonResponse({ ok: true });
       }
       return jsonResponse({
-        providers: [{ ...providers[0], connection: connected ? providers[0].connection : null }, providers[1]],
+        providers: [{ ...CARTA, connection: connected ? CARTA.connection : null }, PULLEY],
       });
     });
     render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
@@ -223,10 +218,10 @@ describe('CapTableSyncPanel (feature 4)', () => {
         jsonResponse({
           providers: [
             {
-              ...providers[0],
-              connection: { ...providers[0].connection, status: 'error', last_error: 'Token expired' },
+              ...CARTA,
+              connection: { ...CARTA.connection, status: 'error', last_error: 'Token expired' },
             },
-            providers[1],
+            PULLEY,
           ],
         }),
     });
@@ -242,10 +237,7 @@ describe('CapTableSyncPanel (feature 4)', () => {
     mockApi({
       'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
         jsonResponse({
-          providers: [
-            { ...providers[0], connection: { ...providers[0].connection, status: 'revoked' } },
-            providers[1],
-          ],
+          providers: [{ ...CARTA, connection: { ...CARTA.connection, status: 'revoked' } }, PULLEY],
         }),
     });
     render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
