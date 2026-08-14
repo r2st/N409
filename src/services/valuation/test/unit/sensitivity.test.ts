@@ -154,3 +154,54 @@ describe('the term axis floor', () => {
     expect(Math.min(...grid.terms)).toBe(0.1);
   });
 });
+
+describe('an axis carries each of its values once', () => {
+  const opm = {
+    equityValueCents: 42_000_000 * 10_000,
+    strikeCents: 10_000_000 * 10_000,
+    volatility: 0.65,
+    termYears: 3.5,
+    riskFreeRate: 0.042,
+    commonShares: 8_000_000,
+    dlom: 0.25,
+  };
+
+  it('collapses the term steps a short term pushes onto the floor', () => {
+    // Six months takes both the −1yr and the −6mo step down onto 0.1, and the
+    // grid printed 0.1 twice — the same column, priced identically, under the
+    // same heading. A reader counting five columns of stress found four.
+    const grid = sensitivityGrid({ ...opm, termYears: 0.5 });
+    expect(grid.terms).toEqual([0.1, 0.5, 1, 1.5]);
+    expect(grid.rows[0]).toHaveLength(grid.terms.length);
+  });
+
+  it('collapses the rate steps a near-zero rate pushes onto zero', () => {
+    const { tables } = sensitivityTables({ ...opm, riskFreeRate: 0.005 });
+    expect(tables.rfr_vol.rowValues).toEqual([0, 0.005, 0.015, 0.025]);
+    expect(tables.rfr_vol.rows).toHaveLength(tables.rfr_vol.rowValues.length);
+    expect(tables.rfr_term.rowValues).toEqual(tables.rfr_vol.rowValues);
+  });
+
+  it('keeps the applied value on a collapsed axis', () => {
+    // The point of the axis is that the conclusion sits on it. Deduplicating
+    // must not be able to take the one cell that is not hypothetical.
+    const grid = sensitivityGrid({ ...opm, termYears: 0.5 });
+    expect(grid.terms).toContain(0.5);
+    const { tables } = sensitivityTables({ ...opm, riskFreeRate: 0.005 });
+    expect(tables.rfr_vol.rowValues).toContain(0.005);
+  });
+
+  it('leaves an axis with nothing to collapse exactly as it was', () => {
+    const grid = sensitivityGrid(opm);
+    expect(grid.terms).toEqual([2.5, 3, 3.5, 4, 4.5]);
+    expect(grid.volatilities).toEqual([0.52, 0.585, 0.65, 0.715, 0.78]);
+  });
+
+  it('keeps the axis ascending after collapsing', () => {
+    // Both clamps are monotone, so first-occurrence order is already the sorted
+    // order — the dashboard renders the axis in array order and a table whose
+    // columns ran out of order would be worse than one that repeated itself.
+    const grid = sensitivityGrid({ ...opm, termYears: 0.3 });
+    expect([...grid.terms].sort((a, b) => a - b)).toEqual(grid.terms);
+  });
+});

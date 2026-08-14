@@ -124,14 +124,39 @@ function termFloor(termYears: number): number {
   return termYears > 0 ? Math.min(0.1, termYears) : 0.1;
 }
 
+/**
+ * An axis carries each of its values once.
+ *
+ * Two of the three axes are clamped — the term at its floor, the rate at zero —
+ * and clamping is what makes an axis repeat itself: a term of six months takes
+ * both the −1yr and the −6mo step down onto the floor, and a rate of 50bp takes
+ * both the −100bp and −200bp step onto zero. The grid then prints the same
+ * column twice under the same heading, priced identically, and a reader counting
+ * five columns of stress finds four.
+ *
+ * Both report exhibits already deduplicated their own steps before calling in,
+ * separately and for their own reasons, which is the shape of a rule that
+ * belongs one level down: the analyst dashboard is the caller that never got
+ * the workaround, and it keys its table cells on the axis value, so a repeated
+ * value is a repeated React key as well as a repeated column.
+ *
+ * Order is preserved rather than re-sorted. The steps arrive in order and both
+ * clamps are monotone, so first-occurrence order is already ascending; sorting
+ * here would additionally impose an order on a caller-supplied step set that did
+ * not ask for one.
+ */
+function distinct(values: number[]): number[] {
+  return [...new Set(values)];
+}
+
 /** Builds the volatility × term stress table around the base case. */
 export function sensitivityGrid(inputs: OpmInputs, opts: GridOptions = {}): SensitivityGrid {
   const volSteps = opts.volatilitySteps ?? DEFAULT_VOL_STEPS;
   const termSteps = opts.termSteps ?? DEFAULT_TERM_STEPS;
 
-  const volatilities = volSteps.map((s) => round4(inputs.volatility * (1 + s)));
+  const volatilities = distinct(volSteps.map((s) => round4(inputs.volatility * (1 + s))));
   const floor = termFloor(inputs.termYears);
-  const terms = termSteps.map((s) => round4(Math.max(floor, inputs.termYears + s)));
+  const terms = distinct(termSteps.map((s) => round4(Math.max(floor, inputs.termYears + s))));
   const baseFmv = opmFmvPerShareCents(inputs);
 
   const rows = volatilities.map((volatility) =>
@@ -202,11 +227,13 @@ function axisValues(inputs: OpmInputs, axis: SensitivityAxis, steps: number[]): 
   switch (axis) {
     case 'volatility':
       // Multiplicative, like the classic grid.
-      return steps.map((s) => round4(inputs.volatility * (1 + s)));
+      return distinct(steps.map((s) => round4(inputs.volatility * (1 + s))));
     case 'termYears':
-      return steps.map((s) => round4(Math.max(termFloor(inputs.termYears), inputs.termYears + s)));
+      return distinct(
+        steps.map((s) => round4(Math.max(termFloor(inputs.termYears), inputs.termYears + s))),
+      );
     case 'riskFreeRate':
-      return steps.map((s) => round4(Math.max(0, inputs.riskFreeRate + s)));
+      return distinct(steps.map((s) => round4(Math.max(0, inputs.riskFreeRate + s))));
   }
 }
 
