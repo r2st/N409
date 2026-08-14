@@ -254,6 +254,16 @@ export function ScenariosTab() {
     setPreview(null);
     setPreviewError(null);
     if (debounce.current) clearTimeout(debounce.current);
+    // Abandon whatever is already in flight, too. Clearing the timer only stops
+    // a preview that has not been sent yet; one that has still resolves, and
+    // its `seq === requestSeq.current` check still passed, so it landed *after*
+    // the reset and put the scenario's figures and delta badges back on the
+    // cards under knobs the client can see are the baseline's — the sandbox
+    // showing a number for assumptions that are not on screen, which is the one
+    // failure this tab exists to avoid. Bumping the sequence is the same guard
+    // the out-of-order case uses, applied to a request nothing replaced.
+    requestSeq.current++;
+    setComputing(false);
   };
 
   if (bootError) return <ErrorNote>{bootError}</ErrorNote>;
