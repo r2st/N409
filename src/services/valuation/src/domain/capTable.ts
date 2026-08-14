@@ -581,6 +581,33 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
 
   summary.fully_diluted_shares =
     summary.common_shares + summary.preferred_shares + summary.option_shares + summary.warrant_shares;
+  /*
+   * A table of rows that between them hold no shares.
+   *
+   * Each such row is only a `zero_shares` warning on its own, and correctly so:
+   * a retired class or a drained option pool is a real line for a cap table to
+   * carry. But a *table* whose fully diluted count is zero is not a cap table
+   * that happens to have an empty row in it — there is no denominator to divide
+   * an equity value by, and every consumer downstream has had to guard for it
+   * separately (`valuationWorkbook` suppresses the ownership column on
+   * `fd > 0`, the waterfall engine 422s).
+   *
+   * The reason it is reachable at all is the mapping step: point the shares
+   * column at a text column and every row parses to null, which `parseCapTable`
+   * stores as 0. The result was a table of warnings that `valid: true` let
+   * through the PUT and persisted — the one moment at which the importer still
+   * knows the mapping is what went wrong.
+   */
+  if (entries.length > 0 && summary.fully_diluted_shares <= 0) {
+    issues.push({
+      severity: 'error',
+      code: 'no_shares',
+      message:
+        `No row in this cap table holds any shares (${entries.length} ` +
+        `${entries.length === 1 ? 'row' : 'rows'} read). Check that the shares column is mapped ` +
+        'to the right column of the sheet.',
+    });
+  }
   if (summary.option_shares === 0) {
     issues.push({
       severity: 'warning',
