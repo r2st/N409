@@ -81,3 +81,153 @@ describe('SignaturePanel (publish gating)', () => {
     expect(screen.queryByText(/remove/i)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Removing a signature — the way a reviewer undoes a wrong one before publish.
+ */
+describe('SignaturePanel — removing a signature', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const SECOND: Signature = {
+    ...MAIN_SIGNATURE,
+    id: '01SIG0000000000000000000B',
+    role: 'second',
+    signer_name: 'Bo Reviewer',
+    signer_title: null,
+    signature_text: '/s/ Bo Reviewer',
+  };
+
+  it('removes the signature it was asked to and re-reads the list', async () => {
+    const user = userEvent.setup();
+    let removed = false;
+    let deleted: string | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'DELETE') {
+        deleted = String(url);
+        removed = true;
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ signatures: removed ? [] : [MAIN_SIGNATURE] });
+    });
+
+    render(<SignaturePanel valuation={VALUATION} />);
+    await user.click(await screen.findByRole('button', { name: 'remove' }));
+
+    expect(deleted).toContain(`/valuations/${VALUATION.id}/signatures/main`);
+    // Gone, and the publish gate closes again behind it.
+    expect(await screen.findByText('Publish blocked — main signature required')).toBeInTheDocument();
+  });
+
+  /** Two signatures, two remove buttons — the right one has to go. */
+  it('removes the second signature without touching the main one', async () => {
+    const user = userEvent.setup();
+    let deleted: string | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'DELETE') {
+        deleted = String(url);
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ signatures: [MAIN_SIGNATURE, SECOND] });
+    });
+
+    render(<SignaturePanel valuation={VALUATION} />);
+    const buttons = await screen.findAllByRole('button', { name: 'remove' });
+    await user.click(buttons[1]!);
+
+    await waitFor(() => expect(deleted).toContain('/signatures/second'));
+  });
+
+  it('says why a signature could not be removed', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'DELETE')
+        return jsonResponse({ detail: 'The report is already out for review.' }, 409);
+      return jsonResponse({ signatures: [MAIN_SIGNATURE] });
+    });
+
+    render(<SignaturePanel valuation={VALUATION} />);
+    await user.click(await screen.findByRole('button', { name: 'remove' }));
+
+    expect(await screen.findByText('The report is already out for review.')).toBeInTheDocument();
+    // And the signature is still there, because it still is.
+    expect(screen.getByText('/s/ Ada Analyst')).toBeInTheDocument();
+  });
+
+  it('falls back to a plain message when the failure carries none', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'DELETE') throw new Error('offline');
+      return jsonResponse({ signatures: [MAIN_SIGNATURE] });
+    });
+
+    render(<SignaturePanel valuation={VALUATION} />);
+    await user.click(await screen.findByRole('button', { name: 'remove' }));
+
+    expect(await screen.findByText('Could not remove the signature.')).toBeInTheDocument();
+  });
+
+  /** A published valuation's signatures are part of the record. */
+  it('offers no remove once the valuation is published', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ signatures: [MAIN_SIGNATURE] }));
+    render(<SignaturePanel valuation={{ ...VALUATION, state: 'published' } as Valuation} />);
+
+    await screen.findByText('/s/ Ada Analyst');
+    expect(screen.queryByRole('button', { name: 'remove' })).not.toBeInTheDocument();
+  });
+
+  /** A signer with no title reads as a name, not as a trailing comma. */
+  it('renders a signature that carries no title', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ signatures: [SECOND] }));
+    render(<SignaturePanel valuation={VALUATION} />);
+
+    expect(await screen.findByText('Bo Reviewer')).toBeInTheDocument();
+  });
+
+  it('picks the role the signature is filed under', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'POST') {
+        posted = JSON.parse(String(init?.body));
+        return jsonResponse({ signature: SECOND }, 201);
+      }
+      return jsonResponse({ signatures: [] });
+    });
+
+    render(<SignaturePanel valuation={VALUATION} />);
+    await user.selectOptions(await screen.findByLabelText('Role'), 'second');
+    await user.type(screen.getByLabelText('Full name'), 'Bo Reviewer');
+    await user.type(screen.getByLabelText(/Title/), 'Manager');
+    await user.type(screen.getByLabelText(/Type to sign/), '/s/ Bo');
+    await user.click(screen.getByRole('button', { name: 'Sign' }));
+
+    await waitFor(() =>
+      expect(posted).toEqual({
+        role: 'second',
+        signer_name: 'Bo Reviewer',
+        signer_title: 'Manager',
+        signature_text: '/s/ Bo',
+      }),
+    );
+  });
+
+  /** An optional title left blank is null, not an empty string. */
+  it('sends no title when the box is left empty', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'POST') {
+        posted = JSON.parse(String(init?.body));
+        return jsonResponse({ signature: MAIN_SIGNATURE }, 201);
+      }
+      return jsonResponse({ signatures: [] });
+    });
+
+    render(<SignaturePanel valuation={VALUATION} />);
+    await user.type(await screen.findByLabelText('Full name'), 'Ada');
+    await user.type(screen.getByLabelText(/Type to sign/), '/s/ Ada');
+    await user.click(screen.getByRole('button', { name: 'Sign' }));
+
+    await waitFor(() => expect(posted?.signer_title).toBeNull());
+  });
+});

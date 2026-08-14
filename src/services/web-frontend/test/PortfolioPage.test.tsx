@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { PortfolioPage } from '../src/pages/PortfolioPage';
 
@@ -137,5 +138,134 @@ describe('PortfolioPage (feature 6)', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText('No organizations yet')).toBeInTheDocument();
+  });
+});
+
+/** Creating an organization — the form at the top of the page. */
+describe('PortfolioPage — creating an organization', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const renderPage = () =>
+    render(
+      <MemoryRouter>
+        <PortfolioPage />
+      </MemoryRouter>,
+    );
+
+  it('creates the organization and selects it', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    let created = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const key = String(url).replace(/^.*\/api\/v1/, '');
+      if ((init?.method ?? 'GET') === 'POST') {
+        posted = JSON.parse(String(init?.body));
+        created = true;
+        return jsonResponse({ organization: { ...org, id: 'org2', name: 'Beta Fund' } }, 201);
+      }
+      if (key === '/organizations')
+        return jsonResponse({
+          organizations: created ? [org, { ...org, id: 'org2', name: 'Beta Fund' }] : [org],
+        });
+      return jsonResponse({ ...detail, organization: { ...org, id: 'org2', name: 'Beta Fund' } });
+    });
+
+    renderPage();
+    await user.type(await screen.findByPlaceholderText('Acme Holdings'), '  Beta Fund  ');
+    await user.selectOptions(screen.getByLabelText('Organization type'), 'fund');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    // Trimmed on the way out — a name with padding is the same organization.
+    await waitFor(() => expect(posted).toEqual({ name: 'Beta Fund', entity_type: 'fund' }));
+    expect(await screen.findByRole('button', { name: 'Beta Fund' })).toBeInTheDocument();
+  });
+
+  it('clears the box so the next name does not start with the last one', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'POST')
+        return jsonResponse({ organization: { ...org, id: 'org2' } }, 201);
+      if (String(url).endsWith('/organizations')) return jsonResponse({ organizations: [org] });
+      return jsonResponse(detail);
+    });
+
+    renderPage();
+    const box = await screen.findByPlaceholderText('Acme Holdings');
+    await user.type(box, 'Beta Fund');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(box).toHaveValue(''));
+  });
+
+  it('says why the organization could not be created', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'POST /organizations': () => jsonResponse({ detail: 'That name is taken.' }, 409) });
+
+    renderPage();
+    await user.type(await screen.findByPlaceholderText('Acme Holdings'), 'Acme Holdings');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText('That name is taken.')).toBeInTheDocument();
+  });
+
+  it('falls back to a plain message when the failure carries none', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /organizations': () => {
+        throw new Error('offline');
+      },
+    });
+
+    renderPage();
+    await user.type(await screen.findByPlaceholderText('Acme Holdings'), 'Acme');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText('Could not create the organization.')).toBeInTheDocument();
+  });
+
+  /** A name that is only spaces is not a name. */
+  it('will not submit a blank or whitespace-only name', async () => {
+    const user = userEvent.setup();
+    mockApi();
+
+    renderPage();
+    await screen.findByPlaceholderText('Acme Holdings');
+    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+
+    await user.type(screen.getByPlaceholderText('Acme Holdings'), '   ');
+    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+  });
+
+  it('switches the roll-up when another organization is picked', async () => {
+    const user = userEvent.setup();
+    const beta = { ...org, id: 'org2', name: 'Beta Fund' };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const key = String(url).replace(/^.*\/api\/v1/, '');
+      if (key === '/organizations') return jsonResponse({ organizations: [org, beta] });
+      if (key === '/organizations/org2')
+        return jsonResponse({ ...mixedDetail, organization: beta });
+      return jsonResponse(detail);
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Beta Fund' }));
+
+    expect(await screen.findByText('Mixed currencies')).toBeInTheDocument();
+  });
+
+  it('says so when an organization cannot be opened', async () => {
+    const user = userEvent.setup();
+    const beta = { ...org, id: 'org2', name: 'Beta Fund' };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const key = String(url).replace(/^.*\/api\/v1/, '');
+      if (key === '/organizations') return jsonResponse({ organizations: [org, beta] });
+      if (key === '/organizations/org2') return jsonResponse({ detail: 'gone' }, 404);
+      return jsonResponse(detail);
+    });
+
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Beta Fund' }));
+
+    expect(await screen.findByText('Could not load the organization.')).toBeInTheDocument();
   });
 });
