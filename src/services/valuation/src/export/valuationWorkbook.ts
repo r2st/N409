@@ -22,6 +22,7 @@ import {
 import {
   asConvertedShares,
   fullyDilutedShares,
+  investedAmount,
   toWaterfallInputs,
   type CapTableEntry,
   type CapTableValidation,
@@ -181,6 +182,20 @@ function modelSheet(computed: ComputedSheet, currency: string): XlsxSheet {
   return { name: computed.label, titleLines, columns, rows: labelled };
 }
 
+/**
+ * A preferred class's invested capital as every other consumer derives it, or
+ * blank.
+ *
+ * Blank rather than zero for a row that states neither an amount nor a price:
+ * that is `validateCapTable`'s `no_investment` warning, and a `0` in a currency
+ * column reads as a measured figure rather than a missing one. Non-preferred
+ * rows are blank for the same reason `capTableTotals` counts none of them.
+ */
+function preferredInvested(entry: CapTableEntry): number | null {
+  if (entry.class_type !== 'preferred') return entry.invested_amount;
+  return investedAmount(entry) || null;
+}
+
 function capTableSheet(entries: CapTableEntry[], currency: string): XlsxSheet {
   const columns: XlsxColumn[] = [
     { header: 'Security class', width: 28, format: 'text' },
@@ -224,7 +239,16 @@ function capTableSheet(entries: CapTableEntry[], currency: string): XlsxSheet {
       e.class_type,
       e.shares,
       e.price_per_share,
-      e.invested_amount,
+      // What the class paid in, on the same fallback the engine feed and the
+      // Cap table *tab* use: a blank amount column beside a stated price is
+      // `price × shares`. The raw cell left this column empty on the ordinary
+      // Carta export while the Waterfall sheet — two tabs along, in the same
+      // file, off `toWaterfallInputs` — printed the derived figure and totalled
+      // it, so one workbook stated two different invested-capital totals for
+      // one cap table. Preferred only, matching `capTableTotals`: invested
+      // capital is a preference-stack figure, and founders' common issued at
+      // $0.0001 has not "invested" its issue value.
+      preferredInvested(e),
       e.liquidation_multiple,
       e.seniority,
       e.conversion_ratio,
@@ -255,7 +279,7 @@ function capTableSheet(entries: CapTableEntry[], currency: string): XlsxSheet {
       null,
       {
         formula: `SUM(E${firstDataRow}:E${lastDataRow})`,
-        value: entries.reduce((sum, e) => sum + (e.invested_amount ?? 0), 0),
+        value: entries.reduce((sum, e) => sum + (preferredInvested(e) ?? 0), 0),
       },
       null,
       null,

@@ -1,5 +1,6 @@
 import {
   asConvertedShares,
+  investedAmount,
   liquidationPreference,
   type CapTableEntry,
   type CapTableClassType,
@@ -136,7 +137,10 @@ function stackOrder(entries: readonly CapTableEntry[]): CapTableEntry[] {
     if (as !== null && bs !== null && as !== bs) return as - bs;
     if (as !== null && bs === null) return -1;
     if (as === null && bs !== null) return 1;
-    return (b.invested_amount ?? 0) - (a.invested_amount ?? 0);
+    // The cheque as the engine reads it, price fallback included — the raw
+    // column is blank on the export that most often omits a seniority too, so
+    // ordering on it put every priced-only class last regardless of size.
+    return investedAmount(b) - investedAmount(a);
   });
 }
 
@@ -242,7 +246,9 @@ export function buildCapTableGraph(input: GraphInput): CapTableGraph {
        */
       liquidation_preference: liquidationPreference(entry) || null,
       price_per_share: entry.price_per_share,
-      invested_amount: entry.invested_amount,
+      // The same fallback, so the node's two money figures cannot disagree
+      // about whether this class put anything in.
+      invested_amount: investedAmount(entry) || null,
       conversion_ratio: entry.conversion_ratio,
     });
     edges.push({ from: companyId, to: id, kind: 'issued', label: 'issued' });

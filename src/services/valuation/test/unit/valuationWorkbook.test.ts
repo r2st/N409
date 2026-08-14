@@ -369,6 +369,50 @@ describe('valuationWorkbookSheets', () => {
         expect(valueAt(summary, indexOfLabel(summary, 'Fully diluted shares'), 1)).toBe(14_000_000);
       });
     });
+
+    /**
+     * The Invested column, against the Waterfall sheet three tabs along.
+     *
+     * A Carta export carries the round price and leaves "Amount Invested"
+     * blank; `toWaterfallInputs` reads such a row as `price × shares` and the
+     * Waterfall sheet prints and totals that. This column read the raw cell, so
+     * one workbook stated two different invested-capital totals for one cap
+     * table — and the smaller one sat beside the share counts a reader checks
+     * the preference stack against.
+     */
+    describe('a priced class with no stated amount', () => {
+      const PRICED: CapTableEntry[] = ENTRIES.map((e) =>
+        e.security_class === 'Series A Preferred' ? { ...e, invested_amount: null } : e,
+      );
+      const all = () =>
+        valuationWorkbookSheets(input({ capTable: { entries: PRICED, validation: validateCapTable(PRICED) } }));
+
+      it('states the same invested capital as the Waterfall sheet', () => {
+        const ct = sheet(all(), 'Cap table');
+        const wf = sheet(all(), 'Waterfall');
+        const row = indexOfLabel(ct, 'Series A Preferred');
+        // 2,000,000 × $1.50, which is what the engine is fed.
+        expect(valueAt(ct, row, 4)).toBe(3_000_000);
+        expect(wf.rows[0]?.[3]).toBe(3_000_000);
+      });
+
+      it('totals to the same figure the stack below it does', () => {
+        const ct = sheet(all(), 'Cap table');
+        const wf = sheet(all(), 'Waterfall');
+        const ctTotal = formulaAt(ct, indexOfLabel(ct, 'Total (fully diluted)'), 4).value;
+        const wfTotal = formulaAt(wf, indexOfLabel(wf, 'Total preference stack', 1), 3).value;
+        expect(ctTotal).toBe(7_000_000);
+        expect(wfTotal).toBe(7_000_000);
+      });
+
+      it('leaves a row with neither an amount nor a price blank, not zero', () => {
+        // `no_investment` is a warning about a missing figure; a 0 in a
+        // currency column reads as a measured one.
+        const ct = sheet(all(), 'Cap table');
+        expect(valueAt(ct, indexOfLabel(ct, 'Common'), 4)).toBeNull();
+        expect(valueAt(ct, indexOfLabel(ct, 'Option pool'), 4)).toBeNull();
+      });
+    });
   });
 
   describe('waterfall', () => {
