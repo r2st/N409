@@ -21,7 +21,7 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
   const [links, setLinks] = useState<Access[] | null>(null);
   const [label, setLabel] = useState('');
   const [days, setDays] = useState('30');
-  const [minted, setMinted] = useState<string | null>(null);
+  const [minted, setMinted] = useState<{ id: string; url: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -42,11 +42,14 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
     setError(null);
     setBusy(true);
     try {
-      const r = await api<{ url: string }>(`/valuations/${valuationId}/auditor-access`, {
-        method: 'POST',
-        body: { label: label.trim() || undefined, expires_in_days: Number(days) },
-      });
-      setMinted(r.url);
+      const r = await api<{ url: string; access: { id: string } }>(
+        `/valuations/${valuationId}/auditor-access`,
+        {
+          method: 'POST',
+          body: { label: label.trim() || undefined, expires_in_days: Number(days) },
+        },
+      );
+      setMinted({ id: r.access.id, url: r.url });
       setLabel('');
       await load();
     } catch (err) {
@@ -56,9 +59,27 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
     }
   };
 
+  /**
+   * Revoking is the control that cuts an outside firm off from the valuation,
+   * so it is the one that must never fail quietly. It did: the DELETE was
+   * unguarded, and a rejected call left the row sitting there marked "Active"
+   * with nothing said. The analyst who clicked Revoke had every reason to
+   * believe the auditor was locked out while the link kept working.
+   */
   const revoke = async (id: string) => {
-    await api(`/valuations/${valuationId}/auditor-access/${id}`, { method: 'DELETE' });
-    await load();
+    setError(null);
+    setBusy(true);
+    try {
+      await api(`/valuations/${valuationId}/auditor-access/${id}`, { method: 'DELETE' });
+      // The banner still offers the raw URL of the link that was just revoked,
+      // under a heading telling the reader to copy it while they can.
+      setMinted((m) => (m?.id === id ? null : m));
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not revoke the link.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -79,7 +100,7 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
             Link created — copy it now, it won't be shown again:
           </p>
           <code className="mt-2 block overflow-x-auto rounded bg-surface px-3 py-2 font-mono text-xs text-ink-700">
-            {minted}
+            {minted.url}
           </code>
         </div>
       )}
@@ -130,7 +151,8 @@ export function AuditorAccessPanel({ valuationId }: { valuationId: string }) {
                     <td className="px-3 py-2 text-right">
                       {active && (
                         <button
-                          onClick={() => revoke(a.id)}
+                          onClick={() => void revoke(a.id)}
+                          disabled={busy}
                           className="text-sm font-semibold text-red-600 hover:text-red-700"
                         >
                           Revoke
