@@ -1279,6 +1279,73 @@ describe('Exhibit F-2 — allocation sensitivity', () => {
     expect(s).not.toBeNull();
   });
 
+  /*
+   * The axis the exhibit prints has to be the axis it swept, and the cell it
+   * calls the conclusion has to be the conclusion. Both used to fail on inputs
+   * the guard above lets through.
+   */
+  describe('the axis it actually swept', () => {
+    const withAssumptions = (patch: Record<string, unknown>) => ({
+      ...RESULTS,
+      assumptions: { ...(RESULTS.assumptions as Record<string, unknown>), ...patch },
+    });
+    // The header row only: the "Applied" footer names a term too, and counting
+    // it as a heading would hide a repeated column rather than reveal one.
+    const termHeadings = (html: string) =>
+      (html.match(/<thead>.*?<\/thead>/s)?.[0].match(/\d+\.\d{2} yrs/g) ?? []) as string[];
+
+    it('marks exactly one cell as the base case', () => {
+      expect(f2()!.html.match(/\(base\)/g)).toHaveLength(1);
+    });
+
+    it('does not print the same term twice when the downward steps clamp', () => {
+      // The grid floors a stressed term at 0.1 years. A company expecting an
+      // exit in six months has both downward steps land on that floor, and the
+      // identical column was printed twice under the identical heading.
+      const s = f2(withAssumptions({ time_to_exit_years: 0.5 }))!;
+      const headings = termHeadings(s.html);
+      expect(headings).toContain('0.10 yrs');
+      expect(new Set(headings).size).toBe(headings.length);
+      expect(s.html.match(/\(base\)/g)).toHaveLength(1);
+    });
+
+    it('marks one applied column, not one per collapsed step', () => {
+      // At a six-week term all three lower steps collapse onto the floor, and
+      // the footer claimed the applied volatility and term in every one.
+      const s = f2(withAssumptions({ time_to_exit_years: 0.1 }))!;
+      const seen = plain(s.html);
+      expect(seen.match(/65\.0% at 0\.10 yrs/g)).toHaveLength(1);
+      expect(s.html.match(/\(base\)/g)).toHaveLength(1);
+    });
+
+    it('keeps a term below the floor on its own grid', () => {
+      // Otherwise the conclusion is not a cell of the table testing it, and the
+      // exhibit prints no base case at all.
+      const s = f2(withAssumptions({ time_to_exit_years: 0.05 }))!;
+      expect(termHeadings(s.html)).toContain('0.05 yrs');
+      expect(s.html.match(/\(base\)/g)).toHaveLength(1);
+      expect(plain(s.html)).toContain('65.0% at 0.05 yrs');
+    });
+
+    it('finds the base case for a volatility that is not on a 4-decimal axis', () => {
+      // The axis rounds to four places, so the applied sigma is priced a hair
+      // off the base and its delta rounds to zero along with a neighbour's:
+      // marking by delta printed "(base)" twice, and neither was the conclusion.
+      const s = f2(withAssumptions({ volatility: 0.65432 }))!;
+      expect(s.html.match(/\(base\)/g)).toHaveLength(1);
+    });
+
+    it('sweeps a term axis that is ordered and free of repeats', () => {
+      for (const time_to_exit_years of [3.5, 1, 0.75, 0.6, 0.5, 0.25, 0.1, 0.05]) {
+        const headings = termHeadings(f2(withAssumptions({ time_to_exit_years }))!.html);
+        expect(new Set(headings).size).toBe(headings.length);
+        const asNumbers = headings.map(Number.parseFloat);
+        expect(asNumbers).toEqual([...asNumbers].sort((a, b) => a - b));
+        expect(asNumbers).toContain(Number(time_to_exit_years.toFixed(2)));
+      }
+    });
+  });
+
   it('emits only markup the report renderer understands', () => {
     const html = f2()!.html;
     expect(sanitizeHtml(html)).toBe(html);
@@ -1374,6 +1441,47 @@ describe('Exhibit F-3 — risk-free rate sensitivity', () => {
     const seen = plain(f3(nearZero)!.html);
     expect(seen.match(/0\.00%/g)).toHaveLength(2); // one row heading per table
     expect(seen).toContain('0.45%');
+  });
+
+  /*
+   * Both sentences of this exhibit used to state the step set as a constant —
+   * "moved 100 and 200 basis points either way", "the full ±200 basis-point
+   * range" — over an axis that is clamped at zero and deduplicated. The reader's
+   * whole recourse is to check the claim against the grid printed between the
+   * two sentences, so the claim has to come from the grid.
+   */
+  describe('the range it claims is the range it swept', () => {
+    const atRate = (risk_free_rate: number) => ({
+      ...RESULTS,
+      assumptions: { ...(RESULTS.assumptions as Record<string, unknown>), risk_free_rate },
+    });
+
+    it('says ±200 basis points when it swept 200 either way', () => {
+      const seen = plain(f3()!.html);
+      expect(seen).toContain('with the rate moved ±200 basis points');
+      expect(seen).toContain('moving the rate ±200 basis points');
+    });
+
+    it('states the short side honestly when the downward steps clamp', () => {
+      // 45bp cannot be stressed 200bp downward, and the table says so — it runs
+      // 0.00% to 2.45%. The prose claimed a range twice as wide on that side.
+      const seen = plain(f3(atRate(0.0045))!.html);
+      expect(seen).toContain('45 basis points downward and 200 upward');
+      expect(seen).not.toContain('±200 basis points');
+    });
+
+    it('claims no downward range at all at a zero rate', () => {
+      const seen = plain(f3(atRate(0))!.html);
+      expect(seen).toContain('200 basis points upward');
+      expect(seen).not.toContain('downward');
+    });
+
+    it('reports the range to the basis point the axis is rounded to', () => {
+      // `axisValues` rounds every rate to four decimals before it is priced or
+      // printed, so a range quoted finer than that would not be checkable.
+      const seen = plain(f3(atRate(0.0125))!.html);
+      expect(seen).toContain('125 basis points downward and 200 upward');
+    });
   });
 
   it('is absent wherever F-2 is absent — the two stress one model', () => {

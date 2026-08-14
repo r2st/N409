@@ -1860,6 +1860,34 @@ function sensitivityBasis(
   };
 }
 
+/** The step set the term axis is stressed over: ±6 months and ±1 year. */
+const TERM_STEPS = [-1, -0.5, 0, 0.5, 1];
+
+/**
+ * The term axis, clamped and then deduplicated — and always containing the term
+ * the conclusion adopted.
+ *
+ * `sensitivityGrid` floors a stressed term at 0.1 years, because a Black-Scholes
+ * call struck a fortnight out is not a stress of the conclusion. On a company
+ * expecting an exit inside a year both downward steps land on that floor, and
+ * the exhibit printed the identical column twice under the identical heading —
+ * two columns of the same five numbers, which reads as a coincidence worth
+ * examining rather than as an axis that ran out of room. At a six-week term all
+ * three lower steps collapsed and the "Applied" footer claimed three columns at
+ * once.
+ *
+ * Deduplicating the resulting *terms* rather than the steps is F-3's shape, and
+ * keeping the applied term among them is what the risk-free axis gets for free
+ * (its step of zero is never clamped away): without it a term below the floor
+ * leaves the conclusion off its own grid, and no cell is the base case.
+ */
+function termStepsFor(termYears: number): number[] {
+  const floor = Math.min(0.1, termYears);
+  const terms = new Set(TERM_STEPS.map((s) => Math.max(floor, termYears + s)));
+  terms.add(termYears);
+  return [...terms].map((t) => t - termYears).sort((a, b) => a - b);
+}
+
 /**
  * Exhibit F-2 — the concluded value across a volatility × term grid.
  *
@@ -1890,18 +1918,32 @@ export function sensitivityExhibit(
   if (basis === null) return null;
   const { volatility, termYears } = basis;
 
-  const grid = sensitivityGrid(basis);
+  const grid = sensitivityGrid(basis, { termSteps: termStepsFor(termYears) });
 
   const money = (scaled: number) => formatCurrency(scaled / SENSITIVITY_SCALE, ctx.currency, 4);
   const signedPercent = (d: number) => `${d > 0 ? '+' : ''}${formatPercent(d, 1)}`;
 
+  /*
+   * The applied cell by position, as F-3 marks its own and for the same reason
+   * — `deltaFromBase === 0` is not the base case, it is a delta that rounded to
+   * four places, and two things make it pick the wrong number of cells here.
+   * A volatility carrying more than four decimals is not on its own axis after
+   * `round4`, so the cell at the applied sigma is priced a hair off the base and
+   * its delta rounds to zero along with a neighbour's: two cells then print
+   * "(base)" and neither is the conclusion. A grid flat enough across the term
+   * does the same on the other axis. Both axes now carry the applied value, so
+   * the position is exact and there is exactly one of it.
+   */
+  const baseRow = appliedIndex(grid.volatilities, volatility);
+  const baseCol = appliedIndex(grid.terms, termYears);
+
   const head = ['Volatility', ...grid.terms.map((t) => `${t.toFixed(2)} yrs`)];
   const rows = grid.rows.map((row, i) => [
     formatPercent(grid.volatilities[i]!, 1),
-    ...row.map((cell) =>
+    ...row.map((cell, j) =>
       // The base case is the conclusion, so it is marked rather than left for
       // the reader to locate by matching a number against an earlier page.
-      cell.deltaFromBase === 0
+      i === baseRow && j === baseCol
         ? `<strong>${money(cell.fmvPerShareCents)}</strong> (base)`
         : `${money(cell.fmvPerShareCents)} (${signedPercent(cell.deltaFromBase)})`,
     ),
@@ -1926,8 +1968,8 @@ export function sensitivityExhibit(
       rows,
       foot: [
         'Applied',
-        ...grid.terms.map((t) =>
-          Math.abs(t - termYears) < 0.005 ? `${formatPercent(volatility, 1)} at ${t.toFixed(2)} yrs` : '',
+        ...grid.terms.map((t, j) =>
+          j === baseCol ? `${formatPercent(volatility, 1)} at ${t.toFixed(2)} yrs` : '',
         ),
       ],
     }),
@@ -1961,6 +2003,31 @@ function appliedIndex(values: readonly number[], applied: number): number {
     if (Math.abs(values[i]! - applied) < Math.abs(values[best]! - applied)) best = i;
   }
   return best;
+}
+
+/**
+ * How far the risk-free axis actually ran, in words.
+ *
+ * Both sentences of this exhibit used to state the step set as a constant —
+ * "moved 100 and 200 basis points either way", "the full ±200 basis-point
+ * range" — while the axis beneath them is clamped at zero and deduplicated. A
+ * valuation struck at 45bp is stressed 45bp downward and 200 upward, and the
+ * table printed exactly that while the prose either side of it claimed a range
+ * that is twice as wide on one side and describes cells the reader cannot find.
+ * The whole point of the schedule is that the reader can check the claim
+ * against the grid, so the claim is derived from the grid.
+ *
+ * Reported to the nearest basis point because the axis is: `axisValues` rounds
+ * every rate to four decimal places before it is printed or priced.
+ */
+function rfrRangePhrase(values: readonly number[], applied: number): string {
+  const bp = (x: number) => Math.round(x * 10_000);
+  const down = bp(applied - Math.min(...values));
+  const up = bp(Math.max(...values) - applied);
+  if (down === up) return `±${up} basis points`;
+  if (down <= 0) return `${up} basis points upward`;
+  if (up <= 0) return `${down} basis points downward`;
+  return `${down} basis points downward and ${up} upward`;
 }
 
 /**
@@ -2034,6 +2101,7 @@ export function rfrSensitivityExhibit(
 
   const volCol = appliedIndex(tables.rfr_vol.colValues, volatility);
   const termCol = appliedIndex(tables.rfr_term.colValues, termYears);
+  const range = rfrRangePhrase(rfrValues, riskFreeRate);
 
   // The rate's effect in isolation: the applied volatility held, the rate moved.
   const isolated = tables.rfr_vol.rows.map((row) => row[volCol]!.fmvPerShareCents);
@@ -2048,17 +2116,17 @@ export function rfrSensitivityExhibit(
         `<strong>${formatPercent(riskFreeRate, 2)}</strong> — the constant-maturity Treasury yield ` +
         `matched to the ${termYears.toFixed(2)}-year expected term at the valuation date. Unlike the ` +
         'volatility and the term of Exhibit F-2 the rate is observed rather than estimated, so what is ' +
-        'tested below is not the rate itself but the maturity it was matched to: the tables restate the ' +
-        'concluded value per share with the rate moved 100 and 200 basis points either way, against the ' +
-        'volatility and against the term in turn.',
+        `tested below is not the rate itself but the maturity it was matched to: the tables restate the ` +
+        `concluded value per share with the rate moved ${range}, against the volatility and against the ` +
+        `term in turn.`,
     ),
     P('<strong>Risk-free rate against expected volatility</strong>'),
     grid(tables.rfr_vol, (v) => formatPercent(v, 1), volCol),
     P('<strong>Risk-free rate against expected term</strong>'),
     grid(tables.rfr_term, (t) => `${t.toFixed(2)} yrs`, termCol),
     P(
-      `Holding the volatility and term at the values the conclusion adopts, the full ±200 basis-point ` +
-        `range moves the concluded value from <strong>${money(low)}</strong> to ` +
+      `Holding the volatility and term at the values the conclusion adopts, moving the rate ${range} ` +
+        `shifts the concluded value from <strong>${money(low)}</strong> to ` +
         `<strong>${money(high)}</strong> — a spread of ${formatPercent(spread, 2)} of the concluded ` +
         `${money(concluded)}. <strong>No cell other than the base case is adopted by this valuation.</strong>`,
     ),

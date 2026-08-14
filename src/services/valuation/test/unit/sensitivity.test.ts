@@ -4,6 +4,7 @@ import {
   normCdf,
   opmFmvPerShareCents,
   sensitivityGrid,
+  sensitivityTables,
 } from '../../src/domain/sensitivity.js';
 
 describe('OPM sensitivity math (M4 #19)', () => {
@@ -111,5 +112,45 @@ describe('OPM sensitivity math (M4 #19)', () => {
     };
     expect(opmFmvPerShareCents(base)).toBeGreaterThan(0);
     expect(opmFmvPerShareCents({ ...base, dlom: 1.5 })).toBeGreaterThan(0);
+  });
+});
+
+describe('the term axis floor', () => {
+  const opm = {
+    equityValueCents: 42_000_000 * 10_000,
+    strikeCents: 10_000_000 * 10_000,
+    volatility: 0.65,
+    termYears: 3.5,
+    riskFreeRate: 0.042,
+    commonShares: 8_000_000,
+    dlom: 0.25,
+  };
+
+  it('floors a downward step at 0.1 years rather than striking a fortnight out', () => {
+    const grid = sensitivityGrid({ ...opm, termYears: 0.5 });
+    expect(Math.min(...grid.terms)).toBe(0.1);
+  });
+
+  it('never floors above the applied term itself', () => {
+    // A term shorter than the floor is not a degenerate stress — it is the
+    // valuation's own assumption, and the one point on the axis that is not
+    // hypothetical. Flooring it away swept a grid that did not contain the term
+    // its own base case was priced at.
+    const grid = sensitivityGrid({ ...opm, termYears: 0.05 }, { termSteps: [0, 0.5] });
+    expect(grid.terms).toContain(0.05);
+    expect(grid.base.termYears).toBe(0.05);
+    expect(grid.rows[0]![0]!.deltaFromBase).toBe(0);
+  });
+
+  it('applies the same floor to the risk-free tables', () => {
+    // F-3 stresses the rate against the term through `sensitivityTables`, so a
+    // floor that differed there would put two different term axes in one report.
+    const { tables } = sensitivityTables({ ...opm, termYears: 0.05 }, { termSteps: [0, 0.5] });
+    expect(tables.rfr_term.colValues).toContain(0.05);
+  });
+
+  it('keeps the 0.1 floor for a non-positive term rather than sweeping backwards', () => {
+    const grid = sensitivityGrid({ ...opm, termYears: 0 }, { termSteps: [-1, 0, 1] });
+    expect(Math.min(...grid.terms)).toBe(0.1);
   });
 });

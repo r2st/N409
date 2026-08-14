@@ -108,13 +108,30 @@ const DEFAULT_VOL_STEPS = [-0.2, -0.1, 0, 0.1, 0.2];
 const DEFAULT_TERM_STEPS = [-1, -0.5, 0, 0.5, 1];
 const DEFAULT_RFR_STEPS = [-0.02, -0.01, 0, 0.01, 0.02];
 
+/**
+ * Stressed terms are floored so a downward step cannot strike the option a
+ * fortnight out, which is a degenerate call rather than a stress of anything.
+ *
+ * The floor never rises above the applied term itself. It used to, and a
+ * company expecting an exit inside five weeks was then swept over an axis that
+ * did not contain the term its own conclusion was priced at — so the report's
+ * F-2 had no base case to mark and its "Applied" footer named a column that was
+ * not the applied one. A term shorter than the floor is not a degenerate stress;
+ * it is the valuation's own assumption, and the one point on this axis that is
+ * not hypothetical.
+ */
+function termFloor(termYears: number): number {
+  return termYears > 0 ? Math.min(0.1, termYears) : 0.1;
+}
+
 /** Builds the volatility × term stress table around the base case. */
 export function sensitivityGrid(inputs: OpmInputs, opts: GridOptions = {}): SensitivityGrid {
   const volSteps = opts.volatilitySteps ?? DEFAULT_VOL_STEPS;
   const termSteps = opts.termSteps ?? DEFAULT_TERM_STEPS;
 
   const volatilities = volSteps.map((s) => round4(inputs.volatility * (1 + s)));
-  const terms = termSteps.map((s) => round4(Math.max(0.1, inputs.termYears + s)));
+  const floor = termFloor(inputs.termYears);
+  const terms = termSteps.map((s) => round4(Math.max(floor, inputs.termYears + s)));
   const baseFmv = opmFmvPerShareCents(inputs);
 
   const rows = volatilities.map((volatility) =>
@@ -187,7 +204,7 @@ function axisValues(inputs: OpmInputs, axis: SensitivityAxis, steps: number[]): 
       // Multiplicative, like the classic grid.
       return steps.map((s) => round4(inputs.volatility * (1 + s)));
     case 'termYears':
-      return steps.map((s) => round4(Math.max(0.1, inputs.termYears + s)));
+      return steps.map((s) => round4(Math.max(termFloor(inputs.termYears), inputs.termYears + s)));
     case 'riskFreeRate':
       return steps.map((s) => round4(Math.max(0, inputs.riskFreeRate + s)));
   }
