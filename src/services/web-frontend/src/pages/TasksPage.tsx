@@ -229,6 +229,21 @@ function TaskQueue({ options, capped }: { options: UserOption[]; capped: boolean
                       {displayName(o)}
                     </option>
                   ))}
+                  {/*
+                   * The roster this picker lists is neither complete nor
+                   * permanent: `/users/options` drops deleted accounts and caps
+                   * at PICKER_LIMIT (hence `capped`), while `assignee_id` is
+                   * whoever the task was given to whenever that happened. A
+                   * controlled `<select>` whose value matches no option selects
+                   * nothing, so a task assigned to somebody off the list read as
+                   * *Unassigned* — the one state the row also offers to fix,
+                   * with "Pick up" sitting next to it. Carrying the id as its own
+                   * option keeps the select honest; the label falls back to the
+                   * id exactly as `reviewerName` does on the other tab.
+                   */}
+                  {task.assignee_id && !options.some((o) => o.id === task.assignee_id) && (
+                    <option value={task.assignee_id}>{task.assignee_id} (not in list)</option>
+                  )}
                   <PickerOverflowNote truncated={capped} />
                 </Select>
                 <Select
