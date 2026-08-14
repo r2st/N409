@@ -50,6 +50,14 @@ import {
   narrativeProfilePayload,
   type ProfileDraft,
 } from '../domain/companyProfile.js';
+import {
+  mapAgentTags,
+  tagCataloguePayload,
+  ValuationTagError,
+  type MappedTagSet,
+} from '../domain/valuationTags.js';
+import { listValuationTags, upsertValuationTags } from '../repos/valuationTags.js';
+import { presentValuationTag } from './valuationTags.js';
 
 /**
  * How long one AI pipeline call may take, end to end.
@@ -259,6 +267,13 @@ export async function runAiPipeline(
     profilePayload = narrativeProfilePayload(profile);
   }
 
+  // The tag vocabulary, for the one agent whose prompt needs a platform
+  // constant rather than the engagement's own material. Shipped from here
+  // because the AI service holds no copy of it: the catalogue is the analyst's
+  // tooltip and the model's specification at once, and a second copy would be
+  // silently wrong the first time a tag was added on this side.
+  const tagCatalogue = pipeline === 'tagging' ? tagCataloguePayload() : null;
+
   const payload = {
     valuation: {
       id: valuation.id,
@@ -273,6 +288,7 @@ export async function runAiPipeline(
     ...(narrativeSections ? { narrative_sections: narrativeSections } : {}),
     ...(researchPayload ? { market_research: researchPayload } : {}),
     ...(profilePayload ? { company_profile: profilePayload } : {}),
+    ...(tagCatalogue ? { tag_catalogue: tagCatalogue } : {}),
     options: { anonymize: args.anonymize },
     ...(args.extraPayload ?? {}),
   };
@@ -578,6 +594,93 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
       };
     },
   );
+
+  /**
+   * Apply the latest successful `tagging` run to the engagement's tags —
+   * 409.ai parity gap #23, and the caller `mapAgentTags` was written for.
+   *
+   * Everything the agent proposes lands as `suggested`, never as `accepted`,
+   * and that is the whole shape of this route. A tag is a claim — the filter
+   * reads it, the precedent query reasons from it, and `going_concern_doubt`
+   * says which checklist a file needs — so a model's classification entering the
+   * firm's records unreviewed is a claim nobody made. The analyst accepts it
+   * through PATCH, which is where exclusivity is enforced and where the decision
+   * gets a name against it.
+   *
+   * Safe to run twice, and that is `upsertValuationTag`'s asymmetric conflict
+   * clause rather than anything here: an `ai` write onto a row a human has
+   * already decided refreshes the model's reasoning and leaves the status alone.
+   * Without it, re-running the agent after a review would reopen every question
+   * the review closed — a tag rejected in March comes back as a suggestion in
+   * April — which is the failure that makes people stop re-running agents.
+   *
+   * `unknown` is returned rather than logged. Slugs the model proposed that the
+   * catalogue does not carry are a request to extend the vocabulary, and the
+   * operator holding the response is the person who can act on it.
+   */
+  app.post('/api/v1/valuations/:id/ai/tagging/apply', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
+    const { id } = req.params as { id: string };
+    const valuation = await loadValuation(id);
+
+    const job = await latestSucceededJob(deps.pool, id, 'tagging');
+    if (!job) {
+      throw problems.unprocessable('No successful tagging run to apply — run the tagging agent first');
+    }
+
+    let mapped: MappedTagSet;
+    try {
+      mapped = mapAgentTags(job.result);
+    } catch (err) {
+      if (err instanceof ValuationTagError) throw problems.unprocessable(err.message);
+      throw err;
+    }
+
+    await upsertValuationTags(
+      deps.pool,
+      id,
+      mapped.tags.map((tag) => ({
+        slug: tag.slug,
+        source: 'ai' as const,
+        status: 'suggested' as const,
+        confidence: tag.confidence,
+        rationale: tag.rationale,
+        evidence: tag.evidence,
+      })),
+      // The operator who ran the apply, not the model. `created_by` answers
+      // "who caused this row to exist", and `source` already records that the
+      // reasoning behind it is a model's — conflating the two would lose the
+      // one fact an audit of this table is asking for.
+      principal.id,
+    );
+
+    await recordAdminEvent(deps.pool, {
+      type: 'valuation_tags_ai_applied',
+      actor: { actorType: 'human', actorId: principal.id },
+      subjectType: 'valuation',
+      subjectId: valuation.id,
+      subjectLabel: valuation.company_name,
+      payload: {
+        slugs: mapped.tags.map((t) => t.slug),
+        unknown: mapped.unknown,
+        source_job_id: job.id,
+      },
+    });
+
+    // Re-read rather than returning what was written: the upsert leaves a
+    // human's decision alone, so the rows that came back from it are not
+    // necessarily the state of the engagement. Returning the write would report
+    // every tag as `suggested` including the ones an analyst had already
+    // accepted, which is a lie about what just happened.
+    const rows = await listValuationTags(deps.pool, id);
+    return {
+      tags: rows.map(presentValuationTag),
+      applied: mapped.tags.map((t) => t.slug),
+      unknown: mapped.unknown,
+      source_job_id: job.id,
+    };
+  });
 
   /**
    * Anonymize a cap table (or any client text) on this engagement — 409.ai

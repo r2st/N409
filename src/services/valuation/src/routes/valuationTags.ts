@@ -13,10 +13,8 @@ import {
 } from '../repos/valuationTags.js';
 import {
   EXCLUSIVE_TAG_CATEGORIES,
-  TAG_CATALOGUE,
-  TAG_CATEGORIES,
-  TAG_CATEGORY_LABELS,
   TAGS_BY_SLUG,
+  tagCataloguePayload,
   type TagStatus,
 } from '../domain/valuationTags.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
@@ -50,19 +48,14 @@ const AddBody = z
 
 const DecideBody = z.object({ status: z.enum(['accepted', 'rejected']) }).strict();
 
-/** The catalogue as the UI renders it: grouped, with the definitions. */
-function catalogue() {
-  return TAG_CATEGORIES.map((category) => ({
-    category,
-    label: TAG_CATEGORY_LABELS[category],
-    exclusive: EXCLUSIVE_TAG_CATEGORIES.has(category),
-    tags: TAG_CATALOGUE.filter((t) => t.category === category).map((t) => ({
-      slug: t.slug,
-      label: t.label,
-      definition: t.definition,
-    })),
-  }));
-}
+/**
+ * The catalogue as the UI renders it: grouped, with the definitions.
+ *
+ * The same structure the `tagging` agent is given as its specification — see
+ * `tagCataloguePayload`. The analyst's tooltip and the model's instruction are
+ * one string by construction, so the two cannot come to mean different things.
+ */
+const catalogue = tagCataloguePayload;
 
 /**
  * A stored tag, with the catalogue entry resolved onto it.
@@ -73,7 +66,7 @@ function catalogue() {
  * a decision disappear silently. It is presented, labelled by its slug, and
  * excluded from nothing except a filter it can no longer participate in.
  */
-function present(row: ValuationTagRow) {
+export function presentValuationTag(row: ValuationTagRow) {
   const def = TAGS_BY_SLUG.get(row.slug);
   return {
     slug: row.slug,
@@ -119,7 +112,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
     await loadValuation(principal, id);
     const rows = await listValuationTags(deps.pool, id);
     return {
-      tags: rows.map(present),
+      tags: rows.map(presentValuationTag),
       accepted: rows.filter((r) => r.status === 'accepted').map((r) => r.slug),
       categories: catalogue(),
     };
@@ -166,7 +159,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
       subjectLabel: valuation.company_name,
       payload: { slug: def.slug, source: 'manual', status: 'accepted' },
     });
-    return { tag: present(row) };
+    return { tag: presentValuationTag(row) };
   });
 
   /**
@@ -216,7 +209,7 @@ export function registerValuationTagRoutes(app: FastifyInstance, deps: { pool: p
       subjectLabel: valuation.company_name,
       payload: { slug: existing.slug, source: existing.source, status },
     });
-    return { tag: present(row) };
+    return { tag: presentValuationTag(row) };
   });
 
   /**

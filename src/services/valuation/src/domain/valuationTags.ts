@@ -390,6 +390,34 @@ export const EXCLUSIVE_TAG_CATEGORIES: ReadonlySet<TagCategory> = new Set<TagCat
   'revenue',
 ]);
 
+/**
+ * The catalogue as a consumer reads it: grouped, with the definitions.
+ *
+ * One function, two consumers, and that is the point. The UI renders this to
+ * build the tag picker and its tooltips, and `runAiPipeline` ships the identical
+ * structure to the `tagging` agent as its specification. The AI service holds no
+ * vocabulary of its own precisely so these cannot diverge — a second copy would
+ * be correct the day it was written and silently wrong the first time a tag was
+ * added here, with no symptom but tags that felt thin.
+ */
+export function tagCataloguePayload(): Array<{
+  category: TagCategory;
+  label: string;
+  exclusive: boolean;
+  tags: Array<{ slug: string; label: string; definition: string }>;
+}> {
+  return TAG_CATEGORIES.map((category) => ({
+    category,
+    label: TAG_CATEGORY_LABELS[category],
+    exclusive: EXCLUSIVE_TAG_CATEGORIES.has(category),
+    tags: TAG_CATALOGUE.filter((t) => t.category === category).map((t) => ({
+      slug: t.slug,
+      label: t.label,
+      definition: t.definition,
+    })),
+  }));
+}
+
 /** An input problem the analyst has to fix — the route maps it to a 422. */
 export class ValuationTagError extends Error {}
 

@@ -60,6 +60,15 @@ export const AI_PIPELINES = [
   // search provider and refuses the engagement's own; this agent reads the
   // engagement's confidential documents and never leaves the redactor.
   'company_profile',
+  // Engagement tagging (migrations 0153/0154) — 409.ai parity gap #23. Classes
+  // the engagement against the fixed vocabulary in domain/valuationTags.ts so
+  // the list filter and the precedent query have something to read.
+  //
+  // The only agent whose prompt needs a *platform* constant rather than the
+  // engagement's own data: `runAiPipeline` ships `tag_catalogue` for this
+  // pipeline and no other. The AI service deliberately holds no copy of the
+  // vocabulary — two copies drift, and the drift is silent.
+  'tagging',
   // Web-grounded research (migrations 0116/0117). These are prompt-registry
   // entries rather than runnable pipelines: they carry the system prompt and
   // the Sonar tier for a research topic, and routes/research.ts reads them.
