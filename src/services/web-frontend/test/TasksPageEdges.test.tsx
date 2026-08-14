@@ -416,7 +416,7 @@ describe('TasksPage — refusals and edges', () => {
      * `drafted`.
      */
     it('names the state approval advances to, per starting state', async () => {
-      mockApi({ reviews: [{ ...review, state: 'draft' }] });
+      mockApi({ reviews: [{ ...review, state: 'reviewed' }] });
       const user = userEvent.setup();
       renderPage();
 
