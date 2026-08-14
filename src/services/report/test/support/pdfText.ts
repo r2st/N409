@@ -20,20 +20,70 @@
  * Everything here goes through it, so it is exercised by every assertion in the
  * suite about what the report says.
  *
- * All of this needs `{ compress: false }` at render time.
+ * Compression is handled here rather than switched off at the call site. A
+ * report rendered with `{ compress: false }` is not the document anybody
+ * receives, and the difference is not cosmetic: `/FlateDecode` covers the
+ * `/ToUnicode` CMaps too, so a decoder that cannot inflate cannot read a
+ * delivered PDF *at all* — it has no glyph table to decode against and returns
+ * the subset's glyph indices as text. Every reader here inflates, so the bytes
+ * asserted on can be the bytes a client downloads.
  */
 
-/** Bodies of the indirect objects, by object number. */
-function objects(raw: string): Map<string, string> {
-  const found = new Map<string, string>();
-  for (const m of raw.matchAll(/(?:^|\n)(\d+) 0 obj\n([\s\S]*?)\nendobj/g)) found.set(m[1]!, m[2]!);
+import { inflateSync } from 'node:zlib';
+
+/** One indirect object: its dictionary, and its stream payload once decoded. */
+interface PdfObject {
+  dict: string;
+  stream: string | null;
+}
+
+/**
+ * The indirect objects, by object number, in the order the file writes them.
+ *
+ * Bounded by `/Length` rather than by a search for `endstream`, because a
+ * deflated stream is arbitrary bytes: `endstream`, `endobj` and the header of
+ * the next object all occur inside compressed payloads, and a parser that
+ * scans for them cuts the stream short on roughly one document in ten.
+ */
+function objects(pdf: Buffer): Map<string, PdfObject> {
+  const raw = pdf.toString('latin1');
+  const found = new Map<string, PdfObject>();
+  for (const m of raw.matchAll(/(?:^|[\r\n])(\d+) 0 obj\r?\n/g)) {
+    const bodyStart = m.index + m[0].length;
+    const endobj = raw.indexOf('endobj', bodyStart);
+    const streamAt = raw.indexOf('stream', bodyStart);
+    // `endstream` also starts with `stream`; the keyword we want is the one
+    // that opens the payload, and it is the first either way.
+    if (streamAt < 0 || (endobj >= 0 && endobj < streamAt)) {
+      found.set(m[1]!, { dict: raw.slice(bodyStart, endobj < 0 ? undefined : endobj), stream: null });
+      continue;
+    }
+    const dict = raw.slice(bodyStart, streamAt);
+    const dataStart = streamAt + (raw.startsWith('stream\r\n', streamAt) ? 8 : 7);
+    const declared = /\/Length (\d+)/.exec(dict);
+    // A stream with no direct `/Length` is legal (it may be an indirect
+    // reference). Nothing pdfkit writes takes that shape, so falling back to
+    // the first `endstream` is a best effort rather than a supported path.
+    const end = declared
+      ? dataStart + Number(declared[1])
+      : Math.max(dataStart, raw.indexOf('endstream', dataStart));
+    const bytes = pdf.subarray(dataStart, end);
+    let stream: string;
+    try {
+      stream = dict.includes('/FlateDecode') ? inflateSync(bytes).toString('latin1') : bytes.toString('latin1');
+    } catch {
+      // Truncated or not actually deflate — an embedded font subset that the
+      // renderer wrote raw, say. Nothing here can read it, and nothing needs to.
+      stream = '';
+    }
+    found.set(m[1]!, { dict, stream });
+  }
   return found;
 }
 
 /** The stream payload of an object, or null if it does not carry one. */
-function streamBody(object: string | undefined): string | null {
-  const m = object ? /stream\r?\n([\s\S]*?)\r?\nendstream/.exec(object) : null;
-  return m ? m[1]! : null;
+function streamBody(object: PdfObject | undefined): string | null {
+  return object?.stream ?? null;
 }
 
 /** UTF-16BE hex — one `<...>` of a CMap's destination — as a string. */
@@ -104,16 +154,17 @@ function parseCMap(cmap: string): Map<number, string> {
  * pdfkit numbers fonts across the whole document rather than per page, so one
  * table serves every page.
  */
-function fontMaps(raw: string): Map<string, Map<number, string>> {
-  const objs = objects(raw);
+function fontMaps(objs: Map<string, PdfObject>): Map<string, Map<number, string>> {
   const maps = new Map<string, Map<number, string>>();
-  for (const dict of raw.matchAll(/\/Font\s*<<([\s\S]*?)>>/g)) {
-    for (const entry of dict[1]!.matchAll(/\/(F\d+)\s+(\d+) 0 R/g)) {
-      const name = entry[1]!;
-      if (maps.has(name)) continue;
-      const toUnicode = /\/ToUnicode (\d+) 0 R/.exec(objs.get(entry[2]!) ?? '');
-      const cmap = toUnicode ? streamBody(objs.get(toUnicode[1]!)) : null;
-      maps.set(name, cmap ? parseCMap(cmap) : new Map());
+  for (const obj of objs.values()) {
+    for (const dict of obj.dict.matchAll(/\/Font\s*<<([\s\S]*?)>>/g)) {
+      for (const entry of dict[1]!.matchAll(/\/(F\d+)\s+(\d+) 0 R/g)) {
+        const name = entry[1]!;
+        if (maps.has(name)) continue;
+        const toUnicode = /\/ToUnicode (\d+) 0 R/.exec(objs.get(entry[2]!)?.dict ?? '');
+        const cmap = toUnicode ? streamBody(objs.get(toUnicode[1]!)) : null;
+        maps.set(name, cmap ? parseCMap(cmap) : new Map());
+      }
     }
   }
   return maps;
@@ -178,9 +229,16 @@ function streamLines(stream: string, fonts: Map<string, Map<number, string>>): L
  * `/ToUnicode` CMap per face, and treating those as pages had a footer
  * assertion reporting a missing footer on a page that does not exist.
  */
-function pageStreams(raw: string): string[] {
-  const objs = objects(raw);
-  return Array.from(raw.matchAll(/\/Contents (\d+) 0 R/g), (m) => streamBody(objs.get(m[1]!)) ?? '');
+function pageStreams(objs: Map<string, PdfObject>): string[] {
+  const streams: string[] = [];
+  for (const obj of objs.values()) {
+    // `/Type /Page` and not `/Type /Pages` — the tree node names a `/Count`,
+    // not a content stream, and the page list is what this walks.
+    if (!/\/Type \/Page[^s]/.test(obj.dict)) continue;
+    const contents = /\/Contents (\d+) 0 R/.exec(obj.dict);
+    if (contents) streams.push(streamBody(objs.get(contents[1]!)) ?? '');
+  }
+  return streams;
 }
 
 /**
@@ -202,11 +260,11 @@ export interface PdfReader {
 }
 
 export function readPdf(pdf: Buffer): PdfReader {
-  const raw = pdf.toString('latin1');
-  const fonts = fontMaps(raw);
+  const objs = objects(pdf);
+  const fonts = fontMaps(objs);
   const lines = (stream: string): Line[] => streamLines(stream, fonts);
   return {
-    streams: pageStreams(raw),
+    streams: pageStreams(objs),
     lines,
     text: (stream) => lines(stream).map((line) => line.text).join(''),
     decode: (hex, font) => decodeGlyphs(hex, fonts.get(font)),
@@ -234,7 +292,15 @@ export function extractText(pdf: Buffer): string {
   return pageTexts(pdf).join('');
 }
 
-/** How many pages the document has. */
+/**
+ * How many pages the document has.
+ *
+ * Counted over the parsed object dictionaries rather than over the whole file:
+ * a compressed content stream is arbitrary bytes and can spell `/Type /Page`
+ * by accident, which reads as an extra page that does not exist.
+ */
 export function pageCount(pdf: Buffer): number {
-  return (pdf.toString('latin1').match(/\/Type \/Page[^s]/g) ?? []).length;
+  let pages = 0;
+  for (const obj of objects(pdf).values()) if (/\/Type \/Page[^s]/.test(obj.dict)) pages += 1;
+  return pages;
 }

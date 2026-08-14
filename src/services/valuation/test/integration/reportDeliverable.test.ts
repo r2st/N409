@@ -1,8 +1,8 @@
-import { inflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation, patchValuation, type ValuationRow } from '../../src/repos/valuations.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { readable } from './support/pdfText.js';
 
 /**
  * What actually reaches the deliverable.
@@ -15,8 +15,9 @@ import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from 
  * schedule and no reconciliation, while every one of those figures sat in the
  * calculation's jsonb.
  *
- * Assertions are on the PDF bytes with compression off, which is how this
- * repository asserts rendered output.
+ * Assertions are on the bytes this route actually serves — compressed, and set
+ * in a subsetted Unicode face. See `./support/pdfText.ts` for why that matters
+ * and what has to happen to read one back.
  */
 
 const dbUp = await isDbAvailable();
@@ -136,34 +137,6 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
   afterAll(async () => ctx?.teardown());
 
   const opsGet = (url: string) => ctx.app.inject({ method: 'GET', url, headers: authHeader(ops.token) });
-
-  /**
-   * Readable text of a rendered PDF.
-   *
-   * The renderer compresses its content streams and writes each run as a hex
-   * string of WinAnsi bytes, so neither step alone recovers anything: inflate
-   * every FlateDecode stream, then decode the hex tokens — which is what
-   * @n409/report's own `extractText` does, against a document rendered with
-   * compression off. This route offers no such switch, and it should not: the
-   * bytes asserted here are the bytes a client downloads.
-   */
-  function readable(pdf: Buffer): string {
-    const raw = pdf.toString('latin1');
-    let all = raw;
-    for (const m of raw.matchAll(/stream\r?\n/g)) {
-      const start = m.index + m[0].length;
-      const end = pdf.indexOf(Buffer.from('endstream'), start);
-      if (end < 0) continue;
-      try {
-        all += inflateSync(pdf.subarray(start, end)).toString('latin1');
-      } catch {
-        // Not a deflate stream (an embedded font, an image) — nothing to read.
-      }
-    }
-    return Array.from(all.matchAll(/<([0-9a-fA-F]+)>/g))
-      .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-      .join('');
-  }
 
   /** Render the current version and return what a reader would see in it. */
   async function pdfText(id: string): Promise<string> {

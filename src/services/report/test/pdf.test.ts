@@ -506,3 +506,55 @@ describe('section charts', () => {
     expect(pushed, 'no filler length left the chart short of room').toBeGreaterThan(0);
   });
 });
+
+/**
+ * The document a client downloads is compressed, and until the reader below
+ * learned to inflate, nothing in this repository could read one: `/FlateDecode`
+ * covers the `/ToUnicode` CMaps as well as the page content, so a decoder
+ * without zlib has no glyph table and hands back the subset's glyph indices as
+ * if they were letters. Two suites asserted on that noise for weeks.
+ *
+ * These compare the delivered bytes against the same document rendered with
+ * compression off, which is what the rest of this file reads — so the two
+ * readings cannot drift apart without a failure here.
+ */
+describe('reading back the compressed document a client receives', () => {
+  it('says the same words as the uncompressed render', async () => {
+    const [compressed, plain] = await Promise.all([
+      renderReportPdf(SAMPLE),
+      renderReportPdf(SAMPLE, { compress: false }),
+    ]);
+    expect(compressed.length).toBeLessThan(plain.length);
+    expect(extractText(compressed)).toBe(extractText(plain));
+    expect(extractText(compressed)).toContain('fair market value');
+  });
+
+  it('counts the same pages', async () => {
+    const [compressed, plain] = await Promise.all([
+      renderReportPdf(SAMPLE),
+      renderReportPdf(SAMPLE, { compress: false }),
+    ]);
+    expect(pageCount(compressed)).toBe(pageCount(plain));
+  });
+
+  it('reads a document long enough to hold a stream that spells a keyword', async () => {
+    // A deflated stream is arbitrary bytes: over enough of them `endstream`,
+    // `endobj` and `/Type /Page` all turn up by accident. A reader bounded by
+    // those rather than by `/Length` truncates a page or invents one, and only
+    // on documents big enough for the coincidence to happen.
+    const long = {
+      ...SAMPLE,
+      sections: Array.from({ length: 40 }, (_, i) => ({
+        heading: `Section ${i + 1}`,
+        html: `<p>${'Body text that compresses well and repeats. '.repeat(40)}</p>`,
+      })),
+    };
+    const [compressed, plain] = await Promise.all([
+      renderReportPdf(long),
+      renderReportPdf(long, { compress: false }),
+    ]);
+    expect(pageCount(compressed)).toBeGreaterThan(5);
+    expect(pageCount(compressed)).toBe(pageCount(plain));
+    expect(extractText(compressed)).toBe(extractText(plain));
+  });
+});
