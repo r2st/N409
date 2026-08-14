@@ -261,17 +261,21 @@ export function CompanyTab() {
         method: 'POST',
         body: { overwrite },
       });
-      setDraft((d) =>
-        d === null
-          ? d
-          : {
-              ...d,
-              business_description: res.profile.business_description ?? '',
-              industry: res.profile.industry ?? '',
-              sic_code: res.profile.sic_code ?? '',
-              naics_code: res.profile.naics_code ?? '',
-            },
+      // Only the fields the apply says it *wrote*. Merging all four merged the
+      // skipped ones too, and a skipped field is precisely one the server
+      // declined to touch: with the overwrite box clear, an analyst who had
+      // typed an industry without saving it got the stored value pushed over
+      // their entry, under a note that read "Left alone: Industry (already
+      // filled in)". Held back is held back on the form as well as in the row.
+      const written = new Set<AgentField>(
+        res.applied_fields.filter((f): f is AgentField => AGENT_FIELDS.includes(f)),
       );
+      setDraft((d) => {
+        if (d === null) return d;
+        const next = { ...d };
+        for (const field of written) next[field] = res.profile[field] ?? '';
+        return next;
+      });
       // The applied fields are already saved — the apply wrote them — so this
       // must not read as an unsaved change waiting on Save.
       setSaved(false);
