@@ -486,9 +486,21 @@ export const CLASS_VOLATILITY_SCHEDULE = 'H-1-CLASS-VOLATILITY';
  * the mix and Exhibit H has printed the qualified label since it did, so the
  * body was contradicting the schedule it sends the reader to.
  * `{{allocated_level}}` resolves against that same measurement.
+ *
+ * v62 puts the income and market pointers behind `EXHIBIT_IF`, which every
+ * other conditional schedule has been behind since the marker existed. Both
+ * chapters print in every report — an approach considered and given no weight
+ * still gets a paragraph saying so — but Exhibits C and D are built only where
+ * the engine ran the approach. So the ordinary early-stage engagement, a company
+ * concluded on a priced round with no reliable forecast and no comparable
+ * public peers, shipped with two chapters naming two schedules that were not in
+ * the file. The asset chapter was written against exactly this hazard and the
+ * two beside it were not, which is why `reportReview` graded the stock skeleton
+ * a `dangling_exhibit_reference` failure on the commonest shape of 409A this
+ * platform values.
  */
 const TEMPLATE_409A: ReportTemplate = {
-  version: '409a.v61',
+  version: '409a.v62',
   name: 'IRC 409A Valuation Report',
   sections: [
     {
@@ -633,7 +645,15 @@ const TEMPLATE_409A: ReportTemplate = {
           'The income approach measures value as the present worth of the future economic benefits of the business. We applied the discounted cash flow method: management’s projected free cash flows over the explicit forecast period are discounted to present value at a rate reflecting the risk of achieving them, and a terminal value representing the cash flows beyond that period is discounted alongside them.',
         ) +
         P(
-          'State the source and reliability of the projections, the derivation of the discount rate, and the basis for the terminal growth rate. The forecast, the discount factors and the bridge from enterprise to equity value are set out in <strong>Exhibit C</strong>.' +
+          'State the source and reliability of the projections, the derivation of the discount rate, and the basis for the terminal growth rate.' +
+            // Dropped where the approach was described and not applied, which is
+            // the ordinary case for a company concluded on a priced round: the
+            // chapter is still worth keeping to say the approach was considered,
+            // and it must not then name a schedule nobody built.
+            EXHIBIT_IF(
+              'C',
+              ' The forecast, the discount factors and the bridge from enterprise to equity value are set out in <strong>Exhibit C</strong>.',
+            ) +
             // Only where the stream was built rather than supplied by hand.
             EXHIBIT_IF(
               'C-1',
@@ -649,7 +669,14 @@ const TEMPLATE_409A: ReportTemplate = {
           'The market approach measures value by reference to prices at which comparable businesses or interests have changed hands. We considered the guideline public company method and the guideline transaction method, applying multiples observed for the selected comparables to the corresponding metric of {{company_name}}.',
         ) +
         P(
-          'Identify the guideline companies or transactions selected, the basis for selecting them, the metric and period chosen, and any adjustments made for differences in size, growth, margin or stage. The observed multiples and the resulting indication are set out in <strong>Exhibit D</strong>.',
+          'Identify the guideline companies or transactions selected, the basis for selecting them, the metric and period chosen, and any adjustments made for differences in size, growth, margin or stage.' +
+            // As with the income chapter above: an approach considered and given
+            // no weight builds no Exhibit D, and the chapter explaining that is
+            // the last place that should send the reader looking for one.
+            EXHIBIT_IF(
+              'D',
+              ' The observed multiples and the resulting indication are set out in <strong>Exhibit D</strong>.',
+            ),
         ),
     },
     {

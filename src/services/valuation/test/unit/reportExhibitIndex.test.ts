@@ -37,6 +37,21 @@ const ALL_EXHIBITS = SCHEDULE_CATALOGUE.map(scheduleTitle);
 /** What a going concern with no asset approach and a judged sigma actually gets. */
 const TYPICAL = ALL_EXHIBITS.filter((h) => !h.startsWith('Exhibit E ') && !h.startsWith('Exhibit F-1 '));
 
+/**
+ * What a backsolve-only 409A gets — and the shape `TYPICAL` above does not test.
+ *
+ * `TYPICAL` drops the two schedules the skeleton already guards, so it can only
+ * ever confirm the guards that exist. The ordinary early-stage engagement is
+ * narrower than that: a company with a priced round and no reliable forecast is
+ * concluded on the round, which means `results.approaches` carries `opm` alone
+ * and `incomeExhibit`/`marketExhibit` both return null. Neither Exhibit C nor
+ * Exhibit D is built, and the Income Approach and Market Approach chapters are
+ * in the skeleton unconditionally.
+ */
+const BACKSOLVE_ONLY = ALL_EXHIBITS.filter(
+  (h) => !/^(?:Exhibit (?:C|C-1|D|D-1|E|F-1|G)|Appendix (?:I|II|II-1|III)) /.test(h),
+);
+
 const content = (sections: { key: string; html: string }[]): ReportContent => ({
   title: 'Report',
   sections: sections.map((s) => ({ key: s.key, heading: s.key, html: s.html })),
@@ -306,6 +321,25 @@ describe('the 409A skeleton, resolved', () => {
     // The check the seeded sample engagements failed: six dangling references
     // on a report whose every figure was right.
     expect(danglingReferences(resolveExhibitReferences(drafted(), TYPICAL), TYPICAL)).toEqual([]);
+  });
+
+  it('names no schedule a backsolve-only engagement did not produce', () => {
+    // The Income Approach and Market Approach chapters print in every report,
+    // and a valuation concluded on a priced round runs neither analysis — so
+    // both chapters sent the reader to a schedule that is not in the file.
+    const body = resolveExhibitReferences(drafted(), BACKSOLVE_ONLY);
+    expect(danglingReferences(body, BACKSOLVE_ONLY)).toEqual([]);
+  });
+
+  it('keeps the authoring instruction in a chapter whose schedule was dropped', () => {
+    // Dropping the pointer must not take the chapter with it: an approach that
+    // was considered and not applied is still worth a paragraph saying so, which
+    // is exactly why the asset chapter is written the way it is.
+    const body = resolveExhibitReferences(drafted(), BACKSOLVE_ONLY);
+    expect(html(body, 'income_approach')).toContain('the basis for the terminal growth rate');
+    expect(html(body, 'income_approach')).not.toContain('Exhibit C');
+    expect(html(body, 'market_approach')).toContain('the basis for selecting them');
+    expect(html(body, 'market_approach')).not.toContain('Exhibit D');
   });
 
   it('still names them all when the calculation produced them all', () => {
