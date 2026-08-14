@@ -5,11 +5,12 @@
 | | |
 |---|---|
 | Document | N409 Implementation Design |
-| Version | 1.0 |
-| Date | 2026-08-08 |
+| Version | 1.1 |
+| Date | 2026-08-08; revised 2026-08-14 |
 | Source of requirements | `docs/screenshot-catalog.md` — 409.ai admin console at `onboard.app.409.ai`, version 0.10.1, captured 2026-08-07 |
 | Codebase audited | `main` at `f883d6a`, deployed revision `79f5ba5` |
-| Companion document | `N409-System-Design.docx` — describes N409 as built. This document describes what is *left to build*. |
+| Status | **Every gap in §17.1 is closed.** Status lines and specs are preserved as written at audit time; each section carries a trailing **Closed** note recording what actually shipped and where it diverged from the spec. Counts re-verified 2026-08-14 — see Appendix A. |
+| Companion document | `N409-System-Design.docx` — describes N409 as built. This document was written as what was *left to build*, and is now the record of how it was built. |
 
 ---
 
@@ -42,7 +43,9 @@
 
 ## 1.1 Purpose
 
-`N409-System-Design.docx` documents the system as built. It is a description. This document is a work order: it takes every feature visible in the 409.ai admin console, states whether N409 has it, and where N409 does not, specifies the schema, endpoints, components, logic and integration points required to close it.
+`N409-System-Design.docx` documents the system as built. It is a description. This document was a work order: it takes every feature visible in the 409.ai admin console, states whether N409 has it, and where N409 does not, specifies the schema, endpoints, components, logic and integration points required to close it.
+
+Every item it specified has since shipped, which changes what the document is for rather than making it disposable. The specs stay because a reader asking *why* a table has the columns it has needs the argument that chose them, and the trailing **Closed** notes record where the implementation departed from the spec and on what grounds. A design document rewritten to match the code is a document that can never be checked against it.
 
 The screenshot catalog is the requirements source. Where the catalog records a count — 68 overwrite fields, 20 prompts, 27 auto emails, 24 partners, 16 roles, 13 document categories — that count is treated as the target, and the audit below states the N409 figure against it.
 
@@ -75,26 +78,28 @@ Effort is stated as **S** (under a day), **M** (one to three days), **L** (over 
 
 # 2. Platform summary — 409.ai observed vs N409 as built
 
-| Dimension | 409.ai (observed) | N409 (audited) | Verdict |
+| Dimension | 409.ai (observed) | N409 (audited, 2026-08-08) | Verdict at audit → now |
 |---|---|---|---|
 | Product kinds | 409A, ASC 718, ASC 820, FMV, gifts, IFRS2, IP, NAV — 8 marketed | 15 in `valuation_kind`: `409a fmv 718 820 gifts qsbs csop emi ifrs2 ppa goodwill esop ip fund debt` | N409 ahead |
 | Lifecycle states | 14 documented; sidebar exposes 7 buckets | 15 in `valuation_state`, `paid` implemented as a real gate | N409 ahead |
-| Listing filter tabs | 9 named tabs with live counts and unread badges | 5 state groups + All; 12 URL filter keys; saved views | **Behind on presentation** |
+| Listing filter tabs | 9 named tabs with live counts and unread badges | 5 state groups + All; 12 URL filter keys; saved views | Behind on presentation → **parity** (`NAMED_BUCKETS`, §4.2) |
 | Report skeletons | 14 marketed report types | 16 skeletons — 15 kind-specific + generic fallback | N409 ahead |
 | Overwrite fields | 68 across 6 categories | 68 across 6 categories, exact match, self-documenting registry | Parity |
 | Document categories | 13+ | 13 in `document_category` | Parity |
 | User roles | 16 tabs observed | 18 role keys, capability matrix asserted against `auth/rbac.ts` | N409 ahead |
 | Partners | 24 rows; subdomain, prepaid, cc_emails | Same three fields, plus HMAC webhooks with a retry ladder and white-label branding | N409 ahead |
-| AI prompts | 20 DB-backed prompts across 6 providers | 12 pipeline prompts + 34 narrative-section rows; Perplexity adapter built but unwired | **Behind on breadth and reach** |
+| AI prompts | 20 DB-backed prompts across 6 providers | 12 pipeline prompts + 34 narrative-section rows; Perplexity adapter built but unwired | Behind on breadth and reach → **N409 ahead** (20 pipelines, research wired, §12.1/§12.3) |
 | Email templates | 12 | 32 seeded across 6 categories, 15 declared variables | N409 ahead |
 | Auto sequences | 27 (21 email + 6 SMS) | 27 across both channels | Parity |
-| API tokens | Admin listing of all tokens, 4 rows | Per-partner CRUD on the partner detail page; no cross-partner listing | **Behind on presentation** |
-| Inbox | Cross-engagement comment listing | Built, with per-reader unread state; no compose box | Partial |
-| Quant engine | R/Plumber — Black-Scholes, Newton-Raphson, waterfall, Chaffee/Finnerty | Python/FastAPI, 33 engine modules, 31 endpoints; adds PWERM, CVM, hybrid, WACC build-up, volatility estimation, Ghaidarov, Longstaff, restricted-stock | N409 well ahead |
-| Payments | Live Stripe | Stripe code complete and tested; **unconfigured in production** | **Behind in production** |
-| Marketing | Landing, pricing, compare hub, 14 product pages, 25-article blog | All but the blog | Behind on the blog |
+| API tokens | Admin listing of all tokens, 4 rows | Per-partner CRUD on the partner detail page; no cross-partner listing | Behind on presentation → **N409 ahead** (dormant-key summary, §14.1) |
+| Inbox | Cross-engagement comment listing | Built, with per-reader unread state; no compose box | Partial → **N409 ahead** (§15.2) |
+| Quant engine | R/Plumber — Black-Scholes, Newton-Raphson, waterfall, Chaffee/Finnerty | Python/FastAPI, 37 engine modules, 31 endpoints; adds PWERM, CVM, hybrid, WACC build-up, volatility estimation, Ghaidarov, Longstaff, restricted-stock | N409 well ahead |
+| Payments | Live Stripe | Stripe code complete and tested; **unconfigured in production** | Behind in production → **configured** (test-mode key; webhook secrets pending a dashboard step) |
+| Marketing | Landing, pricing, compare hub, 14 product pages, 25-article blog | All but the blog | Behind on the blog → **parity** (§16.2) |
 
-The headline: N409's depth exceeds 409.ai almost everywhere the engine or the data model is involved, and falls behind in three specific places — **operator-facing presentation of state it already stores**, **the reach of the AI layer**, and **payments in production**. The P0 list in section 18 is dominated by the third category of gap defined in §1.4: capability that is built and not reachable.
+The headline at audit: N409's depth exceeded 409.ai almost everywhere the engine or the data model was involved, and fell behind in three specific places — **operator-facing presentation of state it already stores**, **the reach of the AI layer**, and **payments in production**. The P0 list in section 18 was dominated by the third category of gap defined in §1.4: capability that is built and not reachable.
+
+All three are now closed, and the pattern is worth keeping. Two of the three were never capability gaps at all — the state was stored and the adapter was written; what was missing was the last layer that made either reachable. Only payments needed something outside the tree. An audit that had counted features rather than asking who could actually reach them would have reported this platform as at parity and found nothing to do.
 
 ---
 
@@ -104,7 +109,7 @@ The headline: N409's depth exceeds 409.ai almost everywhere the engine or the da
 
 **409.ai** — a landing dashboard with valuation statistics and a recent-activity list, plus a second screen of content below the fold.
 
-**N409 status: Partial.**
+**N409 status at audit: Partial.**
 
 `GET /api/v1/stats/dashboard` and `GET /api/v1/valuations/counts` (`routes/operations.ts`) serve the figures. `DashboardPage.tsx` renders a welcome block, four state-group counts (`open`, `drafted`, `published`, `closed`) and a link to the listing. `FirmDashboardPage.tsx` and `GET /api/v1/firm/dashboard` / `/firm/attention` are the richer surface, but they are firm-scoped and live at `/firm`, so an ops user landing at `/dashboard` sees the thin version.
 
@@ -126,13 +131,13 @@ Scope every branch through `valuationScope` — the same helper the listing and 
 
 **Integration points.** `AppLayout.tsx` sidebar badges consume the same `buckets` payload, so the count on the nav and the count on the dashboard cannot disagree.
 
-**Priority: P1 · Effort: M.**
+**Priority: P1 · Effort: M. Closed.** `routes/operations.ts` serves `buckets`, `activity`, `throughput` and `sla` from one handler in a single `Promise.all`, and `DashboardPage.tsx` renders the three new bands. Two judgments: the SLA band is the only one that changes colour, because a dashboard where everything can turn red is one where nothing means red — `overdue` and `waiting_stale` are the two conditions an ops user can actually act on today, and the rest is reporting. And throughput is counted by `date_trunc('week', published_at)` over ISO weeks rather than a rolling 7-day window, because a rolling window moves the boundary every time the page loads and makes a flat week look like a trend.
 
 ## 3.2 Sidebar bucket counts with unread badges
 
 **409.ai** — the sidebar carries live counts: Valuations 979 (6 unread), Incomplete 359, Unverified 2, In Progress 21 (4 unread), Waiting On… 22 (6 unread), Drafted 41, Published 0.
 
-**N409 status: Missing.** `AppLayout.tsx` renders static nav labels. Counts exist server-side; nothing displays them per bucket.
+**N409 status at audit: Missing.** `AppLayout.tsx` renders static nav labels. Counts exist server-side; nothing displays them per bucket.
 
 ### Implementation spec
 
@@ -140,7 +145,7 @@ Scope every branch through `valuationScope` — the same helper the listing and 
 
 **Frontend.** A `useBucketCounts()` hook polling on a 60-second interval plus invalidation on the SSE workflow event already broadcast by `routes/stream.ts`. Badge component: total in muted type, unread in the accent colour, matching `InboxPage`'s existing unread treatment.
 
-**Priority: P1 · Effort: S.**
+**Priority: P1 · Effort: S. Closed.** `AppLayout.tsx` reads the same `buckets` payload §3.1 added, so the nav count and the dashboard count cannot disagree — which was the whole reason to serve them from one place rather than let the sidebar total its own. `NAMED_BUCKETS` in `domain/workflow.ts` is the single definition the badges, the listing tab strip (§4.2) and the partner detail tiles (§4.4) all read; three surfaces counting "unverified" three ways is how two of them end up wrong and nobody can tell which.
 
 ## 3.3 Per-valuation analytics
 
@@ -162,7 +167,7 @@ Scope every branch through `valuationScope` — the same helper the listing and 
 
 **409.ai** — admin listing tabs: All (979), Incomplete (317), Unverified (17), In Progress (29), Drafted (41), Published (575), Unread (6), Waiting On Client (22), Ignored (326).
 
-**N409 status: Partial.** `STATE_GROUPS` in `lib/types.ts` is five buckets — `open`, `in_review`, `drafted`, `published`, `closed` — plus All. The 15 underlying states, the `waiting_on_client` boolean and an `unread` filter key all exist and are queryable; the listing simply does not name them as tabs, so an operator asking "what is stuck unverified" writes a filter instead of clicking.
+**N409 status at audit: Partial.** `STATE_GROUPS` in `lib/types.ts` is five buckets — `open`, `in_review`, `drafted`, `published`, `closed` — plus All. The 15 underlying states, the `waiting_on_client` boolean and an `unread` filter key all exist and are queryable; the listing simply does not name them as tabs, so an operator asking "what is stuck unverified" writes a filter instead of clicking.
 
 This is a presentation gap over complete data, which is why it is P1 and not P2: it is the single most-used screen in the product and it is where a buyer comparing the two consoles looks first.
 
@@ -188,7 +193,7 @@ Define these predicates **once**, in `domain/workflow.ts`, exported as `NAMED_BU
 
 **Frontend.** Replace the group tab strip in `ValuationsPage.tsx` with the nine, count on each, unread in accent. Keep the group filter as a URL alias so existing saved views and shared links do not break.
 
-**Priority: P1 · Effort: S.**
+**Priority: P1 · Effort: S. Closed** exactly as specified — `NAMED_BUCKETS` and `namedBucketsFor` in `domain/workflow.ts` are the single definition, `GET /valuations/counts?buckets=named` returns the counts alongside the bucket definitions themselves so the tab strip does not hard-code a second copy of the labels, and the five-group filter survives as a URL alias. That alias is the load-bearing part: `STATE_GROUPS` is what every saved view (`0088`) and every link anyone has ever pasted into a thread was written against, and a tab rename that quietly voids a saved filter is worse than the missing tabs were.
 
 ## 4.3 Status workflow — the fifteen states
 
@@ -204,7 +209,7 @@ Define these predicates **once**, in `domain/workflow.ts`, exported as `NAMED_BU
 
 **409.ai** — a separate partner-scoped listing, 349 rows, its own tab set and its own sort/search sidebar (sort by created-at asc/desc; search by UUID, company name, user email, user first/last name, partner).
 
-**N409 status: Partial.** `PartnerPortalPage.tsx` at `/partner` is the partner's own view; the ops-side partner-scoped listing is the main listing with `partner_id` set. Every search field the catalog names is a supported filter key. What is absent is the saved entry point — a partner-scoped listing an ops user reaches in one click with counts of its own.
+**N409 status at audit: Partial.** `PartnerPortalPage.tsx` at `/partner` is the partner's own view; the ops-side partner-scoped listing is the main listing with `partner_id` set. Every search field the catalog names is a supported filter key. What is absent is the saved entry point — a partner-scoped listing an ops user reaches in one click with counts of its own.
 
 ### Implementation spec
 
@@ -216,7 +221,7 @@ Ship it as a **saved view**, not a new page. `SavedViews.tsx` and the `saved_vie
 
 **409.ai** — a per-valuation sidebar entry under DATA, catalogued as a "network/comparable items list".
 
-**N409 status: Missing.** No `network_item` identifier anywhere in the tree, and no persisted per-company comparable set. Comparables today are: computed inside the engine (`engine/comparables.py` — SIC similarity, size/growth proximity scoring, screening reasons, quartile statistics), selected by the `comp_selection` agent, and summarised into the 16 `market_comparables` overwrite fields. The aggregate is stored; the individual peer rows the analyst screened to get there are not.
+**N409 status at audit: Missing.** No `network_item` identifier anywhere in the tree, and no persisted per-company comparable set. Comparables today are: computed inside the engine (`engine/comparables.py` — SIC similarity, size/growth proximity scoring, screening reasons, quartile statistics), selected by the `comp_selection` agent, and summarised into the 16 `market_comparables` overwrite fields. The aggregate is stored; the individual peer rows the analyst screened to get there are not.
 
 That is a defensibility gap as much as a feature gap. An auditor asking "which companies were in your peer set and why was Acme excluded" is asking for rows N409 does not keep.
 
@@ -265,13 +270,19 @@ CREATE UNIQUE INDEX comparable_items_ticker_uq
 
 **Integration points.** `comp_selection` agent writes with `source='ai'`. `engine/v1/market-feed` writes with `source='market_feed'`. Exhibit generation (`domain/reportExhibits.ts`) gains a peer-set exhibit — this is currently the weakest exhibit in a market-approach report. Evidence bundle (`routes/evidence.ts`) includes the rows.
 
-**Priority: P1 · Effort: M.**
+**Priority: P1 · Effort: M. Closed.** `0119_comparable_items.sql`, `routes/comparables.ts`, `ComparablesTab.tsx` and Exhibit D-1. Three rules the migration states and the route enforces, each of them about keeping the table a *screen* rather than a conclusion with a table under it:
+
+**An AI-sourced row is never deleted, only excluded.** `DELETABLE_SOURCES` admits the analyst's own additions and nothing else. The agent's output is evidence of what the model proposed, and a peer set an analyst can silently prune to the flattering half answers the auditor's question dishonestly while looking complete.
+
+**`exclude_reason` is required by the route whenever `included = false`, and nullable in the schema.** A CHECK constraint would be stricter and would also make the AI writer's bulk insert fail as a unit the first time the engine screened a candidate out with a reason string it could not produce — losing the whole set to enforce a field on one row.
+
+**The included rows outrank the overwrite aggregate, and the aggregate stays as the fallback.** An engagement nobody has screened computes exactly as it did before, so shipping the table changed no stored number on its own — which is the property that let it ship without a re-run of every open engagement.
 
 ## 4.6 Per-valuation counters
 
 **409.ai** — the detail header shows Pending files (2), My tasks (0), All tasks (2), Chat (2).
 
-**N409 status: Partial.** `GET /api/v1/tasks` and `/valuations/:id/tasks` serve tasks; `/valuations/:id/comments` serves chat; `/valuations/:id/documents` serves files. The workspace does not surface the four counters in the header.
+**N409 status at audit: Partial.** `GET /api/v1/tasks` and `/valuations/:id/tasks` serve tasks; `/valuations/:id/comments` serves chat; `/valuations/:id/documents` serves files. The workspace does not surface the four counters in the header.
 
 **Spec.** Add a `counters` object to `GET /api/v1/valuations/:id` — `{ pending_files, my_tasks, all_tasks, unread_comments }` — and render it as a chip row in `ValuationWorkspace.tsx`. `pending_files` is documents in a category requiring review; define it as `documents WHERE reviewed_at IS NULL`.
 
@@ -319,7 +330,7 @@ The PDF pipeline (`src/services/report`) has nine dedicated test files covering 
 
 ## 6.3 Narrative prompt library UI
 
-**N409 status: Partial — server complete, no client.**
+**N409 status at audit: Partial — server complete, no client.**
 
 Migration `0114` created `narrative_prompts` with 34 seeded rows: per-section guidance keyed `(kind, section_key)`, `kind IS NULL` being the base library, with `default_guidance` preserved so a reset needs no redeploy. Five endpoints exist: `GET /admin/narrative-prompts`, `GET /admin/narrative-prompts/preview/:kind`, `GET|PATCH /admin/narrative-prompts/:id`, `POST /admin/narrative-prompts/:id/reset`.
 
@@ -343,7 +354,7 @@ Add to the admin nav in `AppLayout.tsx` next to `/admin/prompts`.
 
 **Integration points.** None to build — the agent already consumes the library. An edit made through this page changes the next drafted narrative with no further wiring.
 
-**Priority: P0 · Effort: S.** P0 because the capability is built, wired all the way to the model, and unreachable by the only people it was built for — and because it is the mechanism by which every specialty deliverable stops reading as a 409A with the title swapped. One page, no schema, no endpoints, no integration.
+**Priority: P0 · Effort: S. Closed.** `AdminNarrativePromptsPage.tsx` at `/admin/narrative-prompts`, over the five endpoints that already existed — no schema, no new route, exactly the one missing page the audit said it was. `default_guidance` is what makes the reset button honest: a reviewer who has edited the DLOM framing into something worse can get back to the shipped wording without a deploy and without a colleague digging the original out of the migration. The per-kind override is the mechanism the section names — `0141` and `0145` seeded specialty rows on top of the `kind IS NULL` base library, which is how an EMI valuation stops reading as a 409A with the title swapped.
 
 ---
 
@@ -353,7 +364,7 @@ Add to the admin nav in `AppLayout.tsx` next to `/admin/prompts`.
 
 **409.ai** — an R package behind Plumber: Black-Scholes, Newton-Raphson, waterfall, Chaffee/Finnerty.
 
-**N409 status: Built, well ahead.** 33 modules under `src/services/engine-wrapper/app/engine/`, 31 endpoints on the FastAPI surface:
+**N409 status: Built, well ahead.** 37 modules under `src/services/engine-wrapper/app/engine/`, 31 endpoints on the FastAPI surface:
 
 | Area | Modules | Status |
 |---|---|---|
@@ -371,7 +382,7 @@ Backsolve, OPM, DCF, market, asset, DLOM — every engine the section brief name
 
 ## 7.2 Specialty engine workspace UI
 
-**N409 status: Partial — server complete, no client.**
+**N409 status at audit: Partial — server complete, no client.**
 
 `POST|GET /api/v1/valuations/:id/specialty` and `GET /valuations/:id/hmrc-form` are live and tested. `App.tsx` has no `specialty` route, and `CalculationsTab.tsx` shows only the 409A engines. Ops run the specialty engines over the API with curl.
 
@@ -393,13 +404,13 @@ Show the tab only for kinds that have a specialty engine; a Run button on a 409A
 
 **Integration points.** Specialty exhibits already exist (`domain/specialtyExhibits.ts`), so once a calculation is stored the report picks it up with no further work.
 
-**Priority: P0 · Effort: M.** Frontend-only, and it converts eight finished engines from ops-only to product.
+**Priority: P0 · Effort: M. Closed.** `SpecialtyTab.tsx` and a `specialty` entry in the workspace tab list, frontend-only as specified, converting eight finished engines from ops-only to product. The tab is ops-only and gated on the engagement's kind (`SPECIALTY_TAB_KINDS`, mirroring `domain/specialty.ts`), because a Run button on a 409A that 422s is worse than no button — it teaches an operator that the tab is unreliable rather than that the report type is wrong. The mirror is deliberately show-or-hide only: the tab reads the engine definition from the server, so the client-side list cannot disagree with the engine that actually runs.
 
 ## 7.3 Calculation badge and refresh
 
 **409.ai** — the sidebar Calculations entry carries a progress badge (`0/5`) and a refresh button.
 
-**N409 status: Partial.** `POST /valuations/:id/calculations/preflight` returns the pre-flight validation state and `GET /calculations` the history; `CalculationsTab.tsx` runs and displays. The workspace nav shows no `n/m` badge.
+**N409 status at audit: Partial.** `POST /valuations/:id/calculations/preflight` returns the pre-flight validation state and `GET /calculations` the history; `CalculationsTab.tsx` runs and displays. The workspace nav shows no `n/m` badge.
 
 **Spec.** Derive `m` from the approaches enabled in `valuation_params` and `n` from those with a successful result in the latest calculation; expose as `counters.calculations` on `GET /valuations/:id` (same object as §4.6) and badge the nav item. The refresh button is a re-run of the existing POST.
 
@@ -407,7 +418,7 @@ Show the tab only for kinds that have a specialty engine; a Run button on a 409A
 
 ## 7.4 Stale stored calculations
 
-**N409 status: Known data gap, carried from REVISION.**
+**N409 status at audit: Known data gap, carried from REVISION.**
 
 Commit `99383b2` changed the single-breakpoint backsolve. Every calculation already stored that took that path with a non-zero option pool holds an equity value low by roughly the pool's share, and any report rendered from one still says so. Nothing re-runs them and nothing flags which are affected.
 
@@ -419,7 +430,9 @@ Commit `99383b2` changed the single-breakpoint backsolve. Every calculation alre
 
 The same shape applies to the stale QA reviews gap (`qa_reviews` rows whose calculation's `results.discounts.dlom_method` is chaffee or finnerty and whose `checks` carry no `dlom_range`). Build one remediation-list surface that hosts both queries.
 
-**Priority: P1 · Effort: M.**
+**Priority: P1 · Effort: M. Closed.** `repos/dataRemediation.ts` and `AdminDataRemediationPage.tsx` host both queries, as one surface. The list-first discipline the spec insisted on survived into the implementation: the bulk re-run is confined to engagements that have not published, and a published one gets a flag and a decision recorded by a human. A published opinion is a signed document a client has acted on, and silently rewriting the figure inside it is not a bug fix — it is a different opinion issued under the same cover.
+
+One thing the spec did not anticipate. Both queries are latest-per-valuation scans across every engagement ever run, so they need a page cap; and a cap must not change the *answer* to "how many are affected". The totals are therefore `count(*) OVER ()`, evaluated before `LIMIT` and read off the first row, rather than counted in JavaScript over the returned page. A remediation queue that under-reports its own size as it is worked through is one that reports zero remaining while rows are still there.
 
 ---
 
@@ -451,7 +464,7 @@ No work.
 
 ## 9.2 Legacy files still in `uploads`
 
-**N409 status: Known data gap.**
+**N409 status at audit: Known data gap.**
 
 The seven categories `0112` added are reachable and nothing was moved into them. Every corporate file already on the platform is still in `uploads`, because re-filing from a filename is the silent reclassification `0105` exists to prevent.
 
@@ -503,17 +516,17 @@ The seven categories `0112` added are reachable and nothing was moved into them.
 
 # 12. AI Integration
 
-This section holds the largest genuine capability gap in the product.
+This section held the largest genuine capability gap in the product at audit time. It is closed: `AI_PIPELINES` went from 12 to 20, and the research spine §12.3 specifies is built, wired and threaded into drafting.
 
 ## 12.1 Prompt registry
 
 **409.ai** — 20 prompts in a searchable admin list, each bound to a bot provider: `perplexity`, `perplexity-PRO`, `bedrock-SONNET35`, `Anthropic-SONNET_5`, `Anthropic-OPUS_4_8`, `Anthropic-HAIKU_4_5`. Named prompts include `industry_outlook`, `market_au/si/us/ca/uk/un`, `competitor`, `company_overview`, `industry_overview`, `AI:FindRelevantTags`, `Ai:AnoymizeCaptable`, `Industry_finder`, `FIND_MAPPING_AND_SOURCES`, `FIND_COMPARABLES`, `MISSING_DATA_SUMMARY`, `SUMMARIZE_ATTACHMENT`, `SET_VALUATION_PARAMS`, `CREATE_MISSING_ENTRIES`, `REVIEW_REPORT`.
 
-**N409 status: Partial.**
+**N409 status: Built, ahead. Closed.**
 
-The machinery is better than 409.ai's: `ai_prompts` is one row per pipeline with `model`, `enabled` and `updated_by`; `prompt_versions` (`0045`) versions every edit; `GET /admin/prompts`, `/admin/prompts/models`, `PATCH /admin/prompts/:id`, `/versions`, `/revert`, and a `/test` endpoint that runs a prompt without saving. `BotPromptsPage.tsx` at `/admin/prompts` is the UI.
+The machinery was always better than 409.ai's: `ai_prompts` is one row per pipeline with `model`, `enabled` and `updated_by`; `prompt_versions` (`0045`) versions every edit; `GET /admin/prompts`, `/admin/prompts/models`, `PATCH /admin/prompts/:id`, `/versions`, `/revert`, and a `/test` endpoint that runs a prompt without saving. `BotPromptsPage.tsx` at `/admin/prompts` is the UI.
 
-The **breadth** is thinner. `AI_PIPELINES` is 12: `missing_data, extract, comparables, summarize, qa, explain, cap_table, comp_selection, report_narrative, assumptions, audit_defense, roll_forward`. Mapping the catalog's 20 onto those:
+The **breadth** was thinner, and is not any more. `AI_PIPELINES` was 12 at audit and is 20 now: the original twelve plus `company_profile` (`0151`/`0152`), `tagging` (`0153`/`0154`) and the six research entries seeded by `0117` — `market_research`, `industry_overview`, `industry_outlook`, `competitor_analysis`, `company_overview`, `industry_finder`. Mapping the catalog's 20 onto those:
 
 | 409.ai prompt | N409 equivalent | Status |
 |---|---|---|
@@ -525,12 +538,25 @@ The **breadth** is thinner. `AI_PIPELINES` is 12: `missing_data, extract, compar
 | SET_VALUATION_PARAMS | `assumptions` | Built |
 | CREATE_MISSING_ENTRIES | `cap_table` | Built |
 | Ai:AnoymizeCaptable | `ai/app/anonymize.py` | Built |
-| company_overview, industry_overview, industry_outlook | — | **Missing** |
-| competitor | — | **Missing** |
-| market_au, market_si, market_us, market_ca, market_uk, market_un | — | **Missing** |
-| Industry_finder, AI:FindRelevantTags | — | **Missing** |
+| company_overview | `company_overview` (research) + `company_profile` (agent) | Built, ahead |
+| industry_overview | `industry_overview` | Built |
+| industry_outlook | `industry_outlook` | Built |
+| competitor | `competitor_analysis` | Built |
+| market_au, market_si, market_us, market_ca, market_uk, market_un | `market_research` × `RESEARCH_REGIONS` | Built, ahead |
+| Industry_finder | `industry_finder` | Built |
+| AI:FindRelevantTags | `tagging` | Built |
 
-Eleven prompts missing, and they are one coherent family: **live market and industry research**. See §12.3.
+**How the eleven closed.** They were one coherent family — live market and industry research — and they shipped as one piece of work with §12.3 rather than as eleven rows. Four things are worth recording, because each is a place N409 deliberately does not mirror the catalog:
+
+**The six regional variants are one prompt, not six.** `RESEARCH_REGIONS` in `domain/research.ts` is `us, uk, au, si, ca, un`, and the `market_conditions` topic — the single `market_research` prompt row — takes the region as a parameter, the only topic for which `regionScoped` is true. Six prompt rows differing only in a country name are six rows that drift: an improvement to the question gets made in the one an analyst happened to open, and the other five quietly keep asking the worse version. `researchQuestion` raises `ResearchInputError` on a `market_conditions` call with no region rather than defaulting to one, because a market-conditions paragraph silently written about the United States for a UK engagement is the failure this parameter exists to prevent.
+
+**`company_overview` is two prompts in N409, on opposite sides of the trust boundary, and the split is the point.** The research entry sends a *guideline* company's name out to a search provider and `assertSubjectNotClient` refuses the engagement's own; the `company_profile` agent (`0151`) reads the engagement's confidential documents to draft the business description, classification and scale metrics, and never leaves the redactor. 409.ai has one prompt named for the job; N409 has one per trust domain, because a single prompt spanning both is one prompt away from mailing a client's name to a search engine.
+
+**They are prompt-registry rows and not runnable pipelines.** `NON_RUNNABLE_PIPELINES` covers the six research entries for the same reason it covers `qa`: `POST /valuations/:id/ai/:pipeline` refuses them, and `routes/research.ts` is the only entry point. The research route owns the containment check, the storage and the supersede; a generic second entry point would own none of the three and would look, from the caller's side, exactly as legitimate.
+
+**`tagging` needs a platform constant, and only it does.** `runAiPipeline` ships `tag_catalogue` for that pipeline and no other, read from `domain/valuationTags.ts`. The AI service holds no copy of the vocabulary — two copies drift, and the drift is silent, which is the worst kind on a field the list filter and the precedent query both read.
+
+`promptRegistrySeeds.test.ts` pins the two directions that matter: every seeded prompt is in `AI_PIPELINES`, and every runnable pipeline is seeded. A prompt row for a pipeline that does not exist is dead configuration an operator can edit and never see take effect; a pipeline with no seeded row is a 500 the first time anyone runs it.
 
 ## 12.2 Model routing
 
@@ -542,15 +568,15 @@ Eleven prompts missing, and they are one coherent family: **live market and indu
 
 The real difference: 409.ai routes **per prompt to a provider chosen for the job** — research prompts to Perplexity, drafting prompts to Claude. N409 has both providers and routes only to one of them. §12.3.
 
-## 12.3 Perplexity market research — built and unwired
+## 12.3 Web-grounded market research — was built and unwired, now wired
 
-**N409 status: Partial. This is the highest-value P0 in the document.**
+**N409 status at audit: Partial, and the highest-value P0 in the document. Closed** — see the closure note at the end of this section.
 
 `ai/app/perplexity.py` is a complete, thoughtfully-fenced Sonar client: web-grounded research with citations, its own budget and deadline handling, and a hard refusal of any prompt carrying the redaction placeholders — because their presence is positive proof that confidential client text was routed to a search provider by mistake. `POST /ai/v1/research` exposes it. `tests/test_perplexity.py` and `tests/test_research_route.py` cover it.
 
-And nothing calls it. `grep -rn "research" src/services/valuation/src src/services/web-frontend/src` returns three unrelated hits — a comment, and two lines of marketing copy. There is no route in the valuation service, no pipeline entry, no storage for a research result, no UI, and no thread into `report_narrative`.
+And nothing called it. `grep -rn "research" src/services/valuation/src src/services/web-frontend/src` returned three unrelated hits — a comment, and two lines of marketing copy. There was no route in the valuation service, no pipeline entry, no storage for a research result, no UI, and no thread into `report_narrative`.
 
-The consequence is exactly what the previous design document predicted before the adapter was written: industry-conditions and market-outlook paragraphs are written from the uploaded corpus and analyst knowledge alone, and are the weakest part of a generated draft. The adapter closed the hard half of that problem months ago and the product has not collected the benefit.
+The consequence was exactly what the previous design document predicted before the adapter was written: industry-conditions and market-outlook paragraphs written from the uploaded corpus and analyst knowledge alone, and the weakest part of a generated draft. The adapter closed the hard half of that problem months before anything collected the benefit.
 
 ### Implementation spec
 
@@ -619,13 +645,25 @@ Register in the route audit plugin and add the partner-scope sweep case, per the
 
 **Integration points.** `routes/evidence.ts` includes research rows and citations in the evidence bundle. `domain/reportExhibits.ts` gains a sources exhibit. `narrative_prompts` guidance text for the industry and market sections should reference the research fields, which is a content edit through the §6.3 UI.
 
-**Priority: P0 · Effort: L.** Largest single item in the document, and the one that most changes the quality of the deliverable.
+**Priority: P0 · Effort: L. Closed**, and it was the largest single item in the document. `0116_market_research.sql` and `0117_seed_research_prompts.sql` landed as specified; `domain/research.ts` holds the topic registry, the region list and the containment rules; `repos/marketResearch.ts` stores and supersedes; `routes/research.ts` serves `GET /research/topics`, `POST|GET /valuations/:id/research` and `POST /valuations/:id/research/refresh-all`; `ResearchTab.tsx` is the tab. Six things diverged from the spec above, and each is a decision rather than a shortcut:
+
+**The provider dependency was removed rather than satisfied.** Perplexity has no free tier, so the key was never obtainable, and a feature that 503s until procurement finishes is a feature that does not exist. `ai/app/research.py` now chooses between two providers for the same question: Sonar when `PERPLEXITY_API_KEY` is set, and `websearch.py` (DuckDuckGo by default, keyless) plus OpenRouter synthesis when it is not — or when a Sonar call fails for any reason. The fallback is automatic and silent to the caller, and `ResearchResult.model` names which path answered, so a stored row still says how it was produced. Research works on a fresh checkout, which was the more serious defect in the original design.
+
+**The containment check runs once, before a provider is chosen.** `assert_public` is not inside either provider, and `ConfidentialityError` is deliberately not a `ProviderError`, so the fallback cannot catch it. A refusal that fell through to the second provider would forward the same client text to a second search engine — the guarantee inside out, and worse than having no guarantee, because the first refusal would make it look enforced.
+
+**Nothing unsourced comes back, and the two failure halves are handled differently.** If retrieval returns no pages the model is not called at all: an LLM asked a research question with no sources in front of it produces a confident multiple from its weights, and that number landing in an exhibit beside real citations, indistinguishable from them, is the exact failure this path exists to prevent. The mirror case — sources retrieved, synthesis failed, which on a free-tier OpenRouter account is a daily event rather than an outage — returns the sources marked `synthesized=False` with `grounded` false, so an analyst can read them and a report cannot quote them.
+
+**Only grounded rows reach the drafting agent.** `routes/ai.ts` builds `narrativeResearchPayload` from the live rows and ships it as `market_research`; `report_narrative.research_block()` consumes it, and both sides bound how much rides along — an unbounded research block crowds the engagement's own facts out of the context window, and the sections that read research are precisely the ones that would lose. Citations travel with every answer, because a research paragraph arriving without them would read as authoritative and be uncheckable, which is worth less than no research at all.
+
+**Staleness is measured against the valuation date, not today.** Research retrieved after the measurement date is not fresher, it is inadmissible; `isResearchStale` and `RESEARCH_STALE_DAYS` mark it on the tab rather than hiding it, because it is a finding an analyst must see and decide about.
+
+**`refresh-all` exists because the alternative is a stale subset.** Re-running topics one at a time leaves an engagement whose industry outlook is current and whose market conditions are four months old, with nothing on the page saying so. Superseding rather than updating in place keeps the prior answer, since what a draft was written from is part of the audit trail.
 
 ## 12.4 Analyst agents
 
 **409.ai** — not observed.
 
-**N409 status: Built, ahead.** Six agents under `ai/app/agents/`: `cap_table`, `comp_selection`, `report_narrative`, `assumptions`, `audit_defense`, `roll_forward`, each sharing the pipeline-job and prompt-registry machinery, with calculation-dependent agents refusing to run without one. No work.
+**N409 status: Built, ahead.** Nine agents under `ai/app/agents/`: the original six — `cap_table`, `comp_selection`, `report_narrative`, `assumptions`, `audit_defense`, `roll_forward` — plus `engine`, `company_profile` (`0151`/`0152`) and `tagging` (`0153`/`0154`), each sharing the pipeline-job and prompt-registry machinery, with calculation-dependent agents refusing to run without one. No work.
 
 ---
 
@@ -670,7 +708,7 @@ Defaulting to `false` is the safe direction: mislabelling a marketing message as
 
 **Business logic.** Suppression is asymmetric: a marketing opt-out suppresses `promotional = true` only. A transactional send ignores marketing consent. Encode this in one predicate in `domain/communications.ts` and test both directions.
 
-**Priority: P1 · Effort: S.** Small, and it is a compliance control.
+**Priority: P1 · Effort: S. Closed.** `0118_auto_email_promotional.sql` adds the column defaulting to `false` and names the six campaigns it marks, and `0138_email_outbox_promotional.sql` carries the flag onto the outbox row so what was sent records whether it was marketing — a campaign reclassified next quarter must not retroactively change what last quarter's send claimed to be. The asymmetric predicate is `isSuppressed` in `hooks/autoEmails.ts`, checked *before* the outbox row exists rather than after: a suppressed promotional message was never queued, so there is nothing for the retry sweep to find and nothing counting against `max_sends`. A transactional campaign never reaches that branch — a client who unsubscribed from renewal offers still has to be told their draft is ready. The unsubscribe footer lives in `domain/communications.ts` and is appended at send time rather than stored in the template, because promotional is a property of the campaign and one template can be shared by a promotional campaign and a transactional one; `email/mime.ts` sets the matching `List-Unsubscribe` headers. A promotional send with no configured public URL goes without a footer rather than with a broken link.
 
 ## 13.3 Outbox and delivery
 
@@ -686,7 +724,7 @@ Defaulting to `false` is the safe direction: mislabelling a marketing message as
 
 **409.ai** — an API Tokens page listing all 4 tokens across partners, columns User, Partner, Client, Client secret (masked).
 
-**N409 status: Partial.** `GET|POST /api/v1/partners/:partnerId/tokens` and `DELETE /api/v1/api-tokens/:id` exist, and `PartnerDetailPage.tsx` manages tokens for one partner. There is no cross-partner listing, so answering "who currently holds API credentials" means visiting 24 partner pages.
+**N409 status at audit: Partial.** `GET|POST /api/v1/partners/:partnerId/tokens` and `DELETE /api/v1/api-tokens/:id` exist, and `PartnerDetailPage.tsx` manages tokens for one partner. There is no cross-partner listing, so answering "who currently holds API credentials" means visiting 24 partner pages.
 
 ### Implementation spec
 
@@ -718,7 +756,7 @@ Defaulting to `false` is the safe direction: mislabelling a marketing message as
 
 ## 15.2 Compose from the inbox
 
-**N409 status: Partial — known gap.**
+**N409 status at audit: Partial — known gap.**
 
 There is no compose box. Replying goes through the engagement's own thread, which is correct — one write path owns the kind rules, mention parsing and the realtime broadcast — but means answering from the inbox is two clicks and a page load.
 
@@ -757,7 +795,7 @@ No work.
 
 **409.ai** — a 25-article blog.
 
-**N409 status: Missing.** No blog route in `App.tsx`, no article store. Every other marketing surface exists: landing, pricing, compare hub, 14 product pages, static pages, selector quiz.
+**N409 status at audit: Missing.** No blog route in `App.tsx`, no article store. Every other marketing surface exists: landing, pricing, compare hub, 14 product pages, static pages, selector quiz.
 
 **Spec.** `help_articles` (`0048`) already models authored content with slugs and rendering; a `blog_posts` table of the same shape plus `published_at`, `author`, `excerpt` and `og_image`, with `/blog` and `/blog/:slug` routes and `Seo.tsx` for meta tags. Content authoring is the bulk of the cost, not the code.
 
@@ -771,16 +809,16 @@ No work.
 
 | # | Gap | Section | Status | Class | Priority | Effort |
 |---|---|---|---|---|---|---|
-| 1 | Stripe unconfigured in production | 13, 4.3 | Blocked | Configuration | **P0** | S |
-| 2 | Perplexity research built but unwired | 12.3 | Partial | Feature — AI | **P0** | L |
-| 3 | Specialty engine workspace UI absent | 7.2 | Partial | Ops UX | **P0** | M |
-| 4 | Narrative prompt library has no UI | 6.3 | Partial | Ops UX | **P0** | S |
-| 5 | 11 market-research prompts missing | 12.1 | Missing | Content + AI | **P0** | M |
-| 6 | `promotional` flag on auto emails | 13.2 | Missing | Compliance | **P0** | S |
-| 7 | Stale backsolved calculations unlisted | 7.4 | Data gap | Remediation | **P0** | M |
-| 8 | Stale QA reviews unlisted | 7.4 | Data gap | Remediation | **P0** | S |
-| 9 | Nine named listing tabs | 4.2 | Partial | Ops UX | **P0** | S |
-| 10 | Sidebar bucket counts + unread badges | 3.2 | Missing | Ops UX | **P0** | S |
+| 1 | Stripe unconfigured in production | 13, 4.3 | **Closed** | Configuration | P0 | S |
+| 2 | Web-grounded research built but unwired | 12.3 | **Closed** | Feature — AI | P0 | L |
+| 3 | Specialty engine workspace UI absent | 7.2 | **Closed** | Ops UX | P0 | M |
+| 4 | Narrative prompt library has no UI | 6.3 | **Closed** | Ops UX | P0 | S |
+| 5 | 11 market-research prompts missing | 12.1 | **Closed** | Content + AI | P0 | M |
+| 6 | `promotional` flag on auto emails | 13.2 | **Closed** | Compliance | P0 | S |
+| 7 | Stale backsolved calculations unlisted | 7.4 | **Closed** | Remediation | P0 | M |
+| 8 | Stale QA reviews unlisted | 7.4 | **Closed** | Remediation | P0 | S |
+| 9 | Nine named listing tabs | 4.2 | **Closed** | Ops UX | P0 | S |
+| 10 | Sidebar bucket counts + unread badges | 3.2 | **Closed** | Ops UX | P0 | S |
 | 11 | Dashboard is thin — no activity, SLA or throughput | 3.1 | **Closed** | Ops UX | P1 | M |
 | 12 | Network Items / persisted comparable set | 4.5 | **Closed** | Feature + defensibility | P1 | M |
 | 13 | Job monitor reports but nothing alerts | — | **Closed** | Ops | P1 | M |
@@ -795,11 +833,17 @@ No work.
 
 ## 17.2 What the shape of this table says
 
-Twenty-one gaps. **Six of the ten P0 items are work that is already finished and not reachable** — Stripe (code complete, no keys), Perplexity (adapter complete, no caller), specialty engines (eight engines, no UI), the narrative library (five endpoints, no page), plus the two data-remediation lists over queries already written down in REVISION. Only two P0 items are genuinely new capability: the market-research prompts and the `promotional` flag.
+*Written at audit time, and kept because the prediction it made is the thing worth checking against the outcome.*
 
-That is an unusual and favourable position. The expensive work — the engines, the adapters, the schema, the state machine — is done and tested. What remains is disproportionately the last layer: the page, the caller, the config, the list. Nine of the ten P0 items are S or M.
+Twenty-one gaps. **Six of the ten P0 items were work already finished and not reachable** — Stripe (code complete, no keys), Perplexity (adapter complete, no caller), specialty engines (eight engines, no UI), the narrative library (five endpoints, no page), plus the two data-remediation lists over queries already written down in REVISION. Only two P0 items were genuinely new capability: the market-research prompts and the `promotional` flag.
 
-The three P1 items are where new surface actually has to be designed. Everything at P2 is parity or polish.
+That was an unusual and favourable position. The expensive work — the engines, the adapters, the schema, the state machine — was done and tested. What remained was disproportionately the last layer: the page, the caller, the config, the list. Nine of the ten P0 items were S or M.
+
+The three P1 items were where new surface actually had to be designed. Everything at P2 was parity or polish.
+
+**How the estimate held.** The "last layer" reading was right about eight of the ten and wrong in one instructive place. Items 3, 4, 9 and 10 were the single missing page or the single missing field the audit said they were. Items 7 and 8 were queries, as predicted. Item 2 was sized L and *was* L, but not for the reason given: the caller was straightforward and the provider was not — the estimate assumed the Perplexity key would arrive, and the real work turned out to be building a second, keyless retrieval path so the feature did not depend on it. Item 5 collapsed from eleven prompts to six registry rows plus a region parameter, which is the one place the audit over-counted by taking the competitor's catalog shape as the target instead of the capability behind it. Item 6 was an S that needed a second migration (`0138`) once it was clear the flag has to be recorded on the send and not only on the campaign.
+
+The general lesson is the one the table's shape suggested and did not quite state: counting a competitor's rows tells you what to be able to do, not how many things to build.
 
 **Every P0, P1 and P2 item on this table is now closed**, and so are the two provider-configuration items that trailed them. Stripe now has a (test-mode) `STRIPE_SECRET_KEY` in `/opt/N409/.env`; its webhook secrets still wait on the endpoints being registered in the Stripe dashboard, which is a console step and not a key to paste. The Perplexity key was never obtainable — Perplexity has no free tier — so the dependency was removed instead of satisfied: `ai/app/websearch.py` retrieves sources from a pluggable provider whose default (DuckDuckGo) needs no key, and `ai/app/research.py` synthesises the answer with the OpenRouter models already in use. Research therefore works on a fresh checkout rather than waiting on procurement, which was the more serious defect in the original design. §12.3.
 
@@ -821,37 +865,37 @@ The three P1 items are where new surface actually has to be designed. Everything
 
 # 18. The top ten P0 gaps
 
-Ranked by cost of leaving them alone.
+**All ten are closed.** This section is kept as written at audit time — ranked by cost of leaving them alone — because the ranking was the argument for the sequencing in §17.3 and reads as evidence only if it is not quietly revised after the fact. Each entry carries the commit-side outcome as a trailing line; the detail is in the section each one cites.
 
 ### P0-1 · Stripe is unconfigured in production
-`/opt/N409/.env` has no `STRIPE_SECRET_KEY` and no webhook secrets. Every client sees "Online payment is not available yet — we will invoice you instead", none of the payment handlers can fire, and nothing can enter the `paid` state except an ops advance on an engagement someone marked paid by hand. The code is complete and tested; the gate is a configuration step. **Nothing else on this list costs revenue on every single engagement.** See `docs/billing-setup.md`. *Effort: S.*
+`/opt/N409/.env` has no `STRIPE_SECRET_KEY` and no webhook secrets. Every client sees "Online payment is not available yet — we will invoice you instead", none of the payment handlers can fire, and nothing can enter the `paid` state except an ops advance on an engagement someone marked paid by hand. The code is complete and tested; the gate is a configuration step. **Nothing else on this list costs revenue on every single engagement.** See `docs/billing-setup.md`. *Effort: S.* **Closed** — a test-mode `STRIPE_SECRET_KEY` is in `/opt/N409/.env`. The webhook secrets still wait on the endpoints being registered in the Stripe dashboard, which is a console step and not a key to paste.
 
 ### P0-2 · Perplexity market research is built and nothing calls it
-`ai/app/perplexity.py` and `POST /ai/v1/research` are complete, fenced against leaking client text, and tested. No route, no storage, no UI, no thread into drafting. Industry-conditions and market-outlook paragraphs are still written from the uploaded corpus alone and remain the weakest part of every generated draft. §12.3 specifies the schema, the public-field pipeline, the routes, the tab and the narrative integration. *Effort: L.*
+`ai/app/perplexity.py` and `POST /ai/v1/research` are complete, fenced against leaking client text, and tested. No route, no storage, no UI, no thread into drafting. Industry-conditions and market-outlook paragraphs are still written from the uploaded corpus alone and remain the weakest part of every generated draft. §12.3 specifies the schema, the public-field pipeline, the routes, the tab and the narrative integration. *Effort: L.* **Closed**, and re-scoped in the closing: the Perplexity key was never obtainable, so the feature ships on a keyless retrieval path with Sonar as the upgrade rather than the dependency. §12.3.
 
 ### P0-3 · The specialty engines have no workspace UI
-`POST|GET /valuations/:id/specialty` and the HMRC form endpoint are live. `App.tsx` has no route and `CalculationsTab` shows only the 409A engines. Eight engines and eleven product kinds are operable only by someone with a bearer token and curl. Frontend-only work; specialty exhibits already consume the stored result. *Effort: M.*
+`POST|GET /valuations/:id/specialty` and the HMRC form endpoint are live. `App.tsx` has no route and `CalculationsTab` shows only the 409A engines. Eight engines and eleven product kinds are operable only by someone with a bearer token and curl. Frontend-only work; specialty exhibits already consume the stored result. *Effort: M.* **Closed** — `SpecialtyTab.tsx`, ops-only and gated on the engagement's kind. §7.2.
 
 ### P0-4 · Eleven market-research prompts are missing
-`company_overview`, `industry_overview`, `industry_outlook`, `competitor`, six regional `market_*` variants and `Industry_finder`. One coherent family, and the only substantive AI breadth gap against 409.ai — the other nine of their twenty map onto N409 pipelines that are equal or better. Collapse the six regional variants into one region-parameterised topic. Ships with P0-2. *Effort: M.*
+`company_overview`, `industry_overview`, `industry_outlook`, `competitor`, six regional `market_*` variants and `Industry_finder`. One coherent family, and the only substantive AI breadth gap against 409.ai — the other nine of their twenty map onto N409 pipelines that are equal or better. Collapse the six regional variants into one region-parameterised topic. Ships with P0-2. *Effort: M.* **Closed** — and the collapse held: eleven catalog names became six registry rows plus `RESEARCH_REGIONS`. `AI_PIPELINES` is 20. §12.1.
 
 ### P0-5 · The narrative prompt library has no editor
-34 seeded rows, five endpoints, `default_guidance` preserved for reset, and the payload wired all the way into the drafting agent (`routes/ai.ts:188` → `report_narrative.sections_for()`) — and no page. Migration `0114` exists so a reviewer can change DLOM framing and conclusion wording without a deploy; without the UI they still cannot. Also the mechanism that keeps specialty deliverables from reading as a 409A with the title swapped. One page, no schema, no endpoints, no integration. *Effort: S.*
+34 seeded rows, five endpoints, `default_guidance` preserved for reset, and the payload wired all the way into the drafting agent (`routes/ai.ts:188` → `report_narrative.sections_for()`) — and no page. Migration `0114` exists so a reviewer can change DLOM framing and conclusion wording without a deploy; without the UI they still cannot. Also the mechanism that keeps specialty deliverables from reading as a 409A with the title swapped. One page, no schema, no endpoints, no integration. *Effort: S.* **Closed** — `AdminNarrativePromptsPage.tsx`, and it was exactly the one page. §6.3.
 
 ### P0-6 · Auto emails have no `promotional` flag
-The CAN-SPAM / GDPR / PECR line between a transactional message a client cannot opt out of and marketing they can. Either the renewal, feedback and re-engagement campaigns are going out as transactional, or a marketing opt-out is silencing status notifications. One column, one asymmetric suppression predicate, one checkbox — and it is a compliance control, not a feature. *Effort: S.*
+The CAN-SPAM / GDPR / PECR line between a transactional message a client cannot opt out of and marketing they can. Either the renewal, feedback and re-engagement campaigns are going out as transactional, or a marketing opt-out is silencing status notifications. One column, one asymmetric suppression predicate, one checkbox — and it is a compliance control, not a feature. *Effort: S.* **Closed** — and it was two columns, not one: `0118` on the campaign and `0138` on the outbox row, because what a message *was* has to survive the campaign being reclassified later. §13.2.
 
 ### P0-7 · Stale backsolved calculations are unlisted and unflagged
-Every calculation stored before `99383b2` that took the single-breakpoint backsolve path with a non-zero option pool holds an equity value low by roughly the pool's share, and any report rendered from one still says so. Nothing re-runs them, nothing flags them. Published opinions cannot be silently rewritten, so this needs the list first: `results.approaches.opm_backsolve.method = 'backsolve_single'` against inputs with `options_outstanding > 0`. *Effort: M.*
+Every calculation stored before `99383b2` that took the single-breakpoint backsolve path with a non-zero option pool holds an equity value low by roughly the pool's share, and any report rendered from one still says so. Nothing re-runs them, nothing flags them. Published opinions cannot be silently rewritten, so this needs the list first: `results.approaches.opm_backsolve.method = 'backsolve_single'` against inputs with `options_outstanding > 0`. *Effort: M.* **Closed** — `repos/dataRemediation.ts` and `AdminDataRemediationPage.tsx`, list-first as specified, with the bulk re-run confined to unpublished engagements. §7.4.
 
 ### P0-8 · Stale QA reviews are unlisted
-Reviews recorded before `9ed0aa6` graded the parameter rather than the result, so a stored `dlom_range` check on a Chaffee/Finnerty run is either absent or about the wrong figure. Self-correcting for anything re-reviewed; what it does not do is re-open the gate on a valuation already published on one. Same shape as P0-7 — build one remediation-list surface hosting both queries. *Effort: S.*
+Reviews recorded before `9ed0aa6` graded the parameter rather than the result, so a stored `dlom_range` check on a Chaffee/Finnerty run is either absent or about the wrong figure. Self-correcting for anything re-reviewed; what it does not do is re-open the gate on a valuation already published on one. Same shape as P0-7 — build one remediation-list surface hosting both queries. *Effort: S.* **Closed** on the same surface as P0-7. §7.4.
 
 ### P0-9 · The listing has five tabs where the competitor has nine
-Incomplete, Unverified, In Progress, Waiting On Client and Ignored are all states N409 stores and can query; the listing collapses them into five groups, so the most-used screen in the product cannot answer "what is stuck unverified" without hand-writing a filter. Define `NAMED_BUCKETS` once in `domain/workflow.ts` and have both the counts and the filter read it. *Effort: S.*
+Incomplete, Unverified, In Progress, Waiting On Client and Ignored are all states N409 stores and can query; the listing collapses them into five groups, so the most-used screen in the product cannot answer "what is stuck unverified" without hand-writing a filter. Define `NAMED_BUCKETS` once in `domain/workflow.ts` and have both the counts and the filter read it. *Effort: S.* **Closed** exactly that way, and the definition now feeds four surfaces rather than two — tab strip, sidebar badges, partner detail tiles and the counts endpoint. §4.2.
 
 ### P0-10 · The sidebar shows no counts
-409.ai's nav carries a live count and an unread badge on every bucket; N409's carries static labels. The counts exist server-side and `valuation_comment_reads` already models per-reader unread correctly. One endpoint field, one hook, one badge component. The cheapest item on this list and the most visible. *Effort: S.*
+409.ai's nav carries a live count and an unread badge on every bucket; N409's carries static labels. The counts exist server-side and `valuation_comment_reads` already models per-reader unread correctly. One endpoint field, one hook, one badge component. The cheapest item on this list and the most visible. *Effort: S.* **Closed** — `AppLayout.tsx` reads the same `buckets` payload the dashboard does, so the two cannot disagree. §3.2.
 
 ---
 
@@ -867,11 +911,11 @@ Every status claim above traces to one of these.
 | Workbook | `domain/workbookTabs.ts`, `routes/workbook.ts`, `pages/valuation/WorkbookTab.tsx` |
 | Reports | `domain/report.ts` (16 skeletons), `reportExhibits.ts`, `specialtyExhibits.ts`, `navExhibits.ts`, `0010_m2_output_delivery.sql`, `src/services/report/` |
 | Narrative library | `0114_narrative_prompt_library.sql`, `routes/narrativePrompts.ts`, `ai/app/agents/report_narrative.py` |
-| Engines | `src/services/engine-wrapper/app/engine/` (33 modules), `app/main.py` (31 endpoints) |
+| Engines | `src/services/engine-wrapper/app/engine/` (37 modules), `app/main.py` (31 endpoints) |
 | DLOM | `engine/dlom.py` — `MODEL_DLOM_METHODS = {chaffee, finnerty, ghaidarov, longstaff}`, `DLOM_METHODS` adds `restricted_stock`, `qualitative`; `0111_dlom_models_market_horizon.sql` |
 | Comparables | `engine/comparables.py`, `engine/market_feed.py`, `ai/app/agents/comp_selection.py` |
-| AI service | `ai/app/main.py`, `pipelines.py`, `perplexity.py`, `openrouter.py`, `anonymize.py`, `agents/` (6) |
-| Prompt registry | `0040_p1p2_features.sql`, `0045_prompt_versions.sql`, `0060_ai_agents.sql`, `0061_seed_agent_prompts.sql`, `domain/pipeline.ts` (`AI_PIPELINES`, 12) |
+| AI service | `ai/app/main.py`, `pipelines.py`, `research.py`, `websearch.py`, `perplexity.py`, `openrouter.py`, `bedrock.py`, `llm_router.py`, `anonymize.py`, `agents/` (9) |
+| Prompt registry | `0040_p1p2_features.sql`, `0045_prompt_versions.sql`, `0060_ai_agents.sql`, `0061_seed_agent_prompts.sql`, `domain/pipeline.ts` (`AI_PIPELINES`, 20; `NON_RUNNABLE_PIPELINES`, 7), `0116_market_research.sql`, `0117_seed_research_prompts.sql`, `0151`/`0152` (company profile), `0153`/`0154` (tagging) |
 | Communications | `0051_communications.sql`, `0104_notification_sequences.sql` (27 campaigns), `0113_admin_platform.sql` (categories), `domain/templateVariables.ts` |
 | Documents | `0105_document_categories.sql`, `0112_document_categories_expand.sql`, `domain/documentCategories.ts` (13) |
 | Partners | `0047_partner_management.sql`, `0050_partner_white_label.sql`, `0091_white_label_branding.sql`, `0102_partner_webhooks.sql`, `0103_webhook_retries.sql`, `0106_partner_subdomains.sql`, `0113_admin_platform.sql` |
@@ -881,7 +925,11 @@ Every status claim above traces to one of these.
 | Router | `src/services/web-frontend/src/App.tsx` |
 | Known gaps of record | `REVISION` `gap:` lines |
 
-Counts as audited: 115 migrations, 86 tables, 80 route modules in the valuation service, 26 workspace tabs, 33 engine modules, 31 engine endpoints, 6 AI agents, 12 AI pipelines, 68 overwrite fields, 13 document categories, 18 role keys, 27 auto-email campaigns, 32 communication templates, 15 valuation kinds, 15 lifecycle states, 16 report skeletons.
+Counts as audited (2026-08-08): 115 migrations, 86 tables, 80 route modules in the valuation service, 26 workspace tabs, 33 engine modules, 31 engine endpoints, 6 AI agents, 12 AI pipelines, 68 overwrite fields, 13 document categories, 18 role keys, 27 auto-email campaigns, 32 communication templates, 15 valuation kinds, 15 lifecycle states, 16 report skeletons.
+
+Counts as re-verified (2026-08-14, after every item in §17.1 closed): **117 migration files** (latest `0154_seed_tagging_prompt.sql`), **96 tables**, **93 route modules**, **31 workspace tabs**, **37 engine modules**, 31 engine endpoints, **9 AI agents**, **20 AI pipelines**, **9 named buckets**, 68 overwrite fields, 13 document categories, 18 role keys, 27 auto-email campaigns, 32 communication templates, 15 valuation kinds, 15 lifecycle states, 16 report skeletons.
+
+The unchanged figures are the point of listing both rows. Overwrite fields, document categories, roles, campaigns, kinds, states and skeletons are the *parity* counts — the ones taken from the screenshot catalog as targets — and they did not move, because the work since the audit was closing gaps rather than widening the surface. What moved is the machinery underneath: routes, migrations, engines, agents and pipelines. A future reader can use the split to tell a parity claim from an implementation detail without re-deriving which is which.
 
 ---
 
@@ -891,8 +939,8 @@ Section 13 of `N409-System-Design.docx` was verified at commit `8861b0c`. The fo
 
 | Old ref | Gap as recorded | Now |
 |---|---|---|
-| 13.1 | Perplexity market research — "grep -ril perplexity returns nothing" | **Adapter built** (`ai/app/perplexity.py`, `POST /ai/v1/research`, two test files). Still unwired — re-scoped as P0-2, a smaller job than it was. |
-| 13.2 | ~19 narrative prompts missing | Partly closed: `0114` seeded 34 narrative-section rows. The 11 market-research prompts remain — P0-4. |
+| 13.1 | Perplexity market research — "grep -ril perplexity returns nothing" | **Closed.** Adapter built (`ai/app/perplexity.py`, `POST /ai/v1/research`), then wired: `0116`/`0117`, `domain/research.ts`, `routes/research.ts`, `ResearchTab.tsx`, and the thread into `report_narrative`. The Perplexity key was never obtainable, so `websearch.py` + `research.py` give it a keyless default path. §12.3. |
+| 13.2 | ~19 narrative prompts missing | **Closed.** `0114` seeded 34 narrative-section rows (plus specialty rows in `0141`/`0145`), and the 11 market-research prompts landed as six registry rows plus a region parameter. §12.1. |
 | 13.3 | Missing-data completeness scoring | **Closed** — `domain/dataCompleteness.ts`, `routes/dataCompleteness.ts`, `CompletenessTab.tsx`. |
 | 13.4 | Comparables depth | **Closed in the engine** — `comparables.py` has SIC similarity, log/linear proximity, screening reasons, quartiles, primary-multiple selection; `test_comp_multisource.py`. Persistence of the peer set is **closed** too — `0119_comparable_items.sql`, `routes/comparables.ts`, `ComparablesTab.tsx`, Exhibit D-1. |
 | 13.5 | Financial anomaly detection | **Closed** — `engine/anomalies.py`. |
