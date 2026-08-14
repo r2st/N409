@@ -92,6 +92,8 @@ const EXHIBIT_BLURBS: Record<string, string> = {
   B: 'Each indication, its weight, and the weighted total equity value.',
   'B-1':
     'At what level of value each weighted approach arrived — control or marketable minority — and what that means for the discount for lack of control.',
+  'B-2':
+    'For a re-valuation without a new priced round: the prior appraisal’s concluded equity value, the calibration that carries it to this date, and every change examined on the way.',
   C: 'The cash-flow stream, discount factors and present values.',
   'C-1': 'The forecast the DCF discounts, and the assumptions that built it.',
   D: 'The multiples selected and the indication they produce.',

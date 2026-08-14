@@ -45,6 +45,7 @@ import { resolveExhibitReferences } from '../domain/reportExhibitIndex.js';
 import { findParams } from '../repos/params.js';
 import { findCurrentVolatilityEstimate } from '../repos/volatilityEstimates.js';
 import { findCurrentProjection } from '../repos/projections.js';
+import { findAppliedRollforwardRun } from '../repos/rollforwardRuns.js';
 import { sameCompanyFilter } from '../domain/valuationHistory.js';
 import { fitsInt4, int4Version } from '../domain/int4.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
@@ -285,6 +286,7 @@ export async function summaryFor(
     fundReport,
     debtReport,
     research,
+    rollforward,
   ] = await Promise.all([
     calculation ? historyFor(pool, valuation, calculation.created_at) : Promise.resolve([]),
     // The peer set behind the market approach (design §4.5). Empty for every
@@ -323,6 +325,11 @@ export async function summaryFor(
     // The public sources behind the market discussion (migration 0116). Live
     // rows only: a superseded answer is not what this report was drafted from.
     listMarketResearch(pool, valuation.id),
+    // The bridge from the prior 409A (migration 0150). The *applied* run only,
+    // so Exhibit B-2 describes the anchor the allocation actually ran on; null
+    // for every engagement valued from scratch, and the exhibit is then not
+    // rendered.
+    findAppliedRollforwardRun(pool, valuation.id),
   ]);
   // `.cells` only: the page is bounded well above every address the workbook
   // model defines (see WORKBOOK_CELL_LIMIT), and `computeWorkbook` reads only
@@ -354,6 +361,7 @@ export async function summaryFor(
     requiredReturnTable: paramsRow?.required_return_table ?? null,
     volatility,
     projection,
+    rollforward,
   };
   return {
     summary: buildReportSummary(calculation, { ...context, history }) ?? undefined,

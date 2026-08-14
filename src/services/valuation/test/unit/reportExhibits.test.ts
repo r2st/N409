@@ -14,6 +14,7 @@ import {
   marketExhibit,
   peerSetExhibit,
   pwermExhibit,
+  rollforwardExhibit,
   sensitivityExhibit,
   rfrSensitivityExhibit,
   financialsExhibit,
@@ -29,6 +30,7 @@ import { computeWorkbook } from '../../src/domain/workbook.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
 import type { ProjectionRow } from '../../src/repos/projections.js';
 import type { VolatilityEstimateRow } from '../../src/repos/volatilityEstimates.js';
+import type { RollforwardRunRow } from '../../src/repos/rollforwardRuns.js';
 
 const CONTEXT = {
   currency: 'USD',
@@ -131,6 +133,35 @@ function calculation(over: Partial<CalculationRow> = {}): CalculationRow {
     ...over,
   } as CalculationRow;
 }
+
+/** An adopted roll-forward run, as migration 0150 stores it (Exhibit B-2). */
+const ROLLFORWARD: RollforwardRunRow = {
+  id: '01J0ROLLFORWARD0000000001',
+  valuation_id: '01J000000000000000000001',
+  prior_valuation_id: '01J000000000000000000002',
+  prior_calculation_id: '01J000000000000000000003',
+  prior_valuation_number: 'V-2025-0042',
+  prior_valuation_date: new Date('2025-06-30T00:00:00Z'),
+  new_valuation_date: new Date('2026-06-30T00:00:00Z'),
+  years_elapsed: 1.0,
+  prior_equity_value: 33_600_000,
+  rolled_equity_value: 42_000_000,
+  annual_accretion: 0.25,
+  new_round_post_money: null,
+  calibration_steps: [
+    { step: 'prior_equity_value', value: 33_600_000 },
+    { step: 'time_accretion', annual_rate: 0.25, years: 1.0, factor: 1.25, value: 42_000_000 },
+  ],
+  material_changes: [
+    { field: 'revenue', material: false, detail: 'revenue moved +4.0% (below 20% threshold)', delta_pct: 0.04 },
+  ],
+  requires_full_revaluation: false,
+  pre_populated_inputs: { valuation_date: '2026-06-30', last_round_post_money: 42_000_000 },
+  applied_at: new Date('2026-07-01T00:00:00Z'),
+  applied_by: null,
+  created_by: null,
+  created_at: new Date('2026-07-01T00:00:00Z'),
+};
 
 /** Cell text of a rendered exhibit, tags stripped — what a reader sees. */
 function plain(html: string): string {
@@ -372,6 +403,8 @@ describe('the schedule catalogue', () => {
     ]),
     // Appendix III.
     developmentStage: 3,
+    // Exhibit B-2.
+    rollforward: ROLLFORWARD,
   };
 
   const maximal = () =>
@@ -631,6 +664,167 @@ describe('Exhibit B-1 — level of value', () => {
     );
     expect(seen).toContain('—');
     expect(seen).toContain('Market (comparables)');
+  });
+});
+
+// ── Exhibit B-2 ──────────────────────────────────────────────────────────────
+
+describe('Exhibit B-2 — roll-forward from the prior valuation', () => {
+  const b2 = (run: RollforwardRunRow | null = ROLLFORWARD, results: Record<string, unknown> = RESULTS) =>
+    rollforwardExhibit(results, { ...CONTEXT, rollforward: run });
+
+  it('prints the calibration trail step by step, not just its two ends', () => {
+    // The substance of a roll-forward disclosure is the arithmetic between the
+    // prior conclusion and the anchor; the two numbers alone are what the
+    // deliverable already had, in two different documents.
+    const s = b2()!;
+    expect(s.heading).toBe('Exhibit B-2 — Roll-Forward from the Prior Valuation');
+    const seen = plain(s.html);
+    expect(seen).toContain('Prior concluded equity value');
+    expect(seen).toContain('V-2025-0042');
+    expect(seen).toContain('2025-06-30');
+    expect(seen).toContain('$33,600,000');
+    expect(seen).toContain('Calibration to 2026-06-30');
+    expect(seen).toContain('25.0% per annum over 1.00 years');
+    expect(seen).toContain('factor 1.2500x');
+    expect(seen).toContain('Rolled equity value');
+    expect(seen).toContain('$42,000,000');
+  });
+
+  it('names a new priced round as superseding the anchor rather than accreting it', () => {
+    const priced = {
+      ...ROLLFORWARD,
+      new_round_post_money: 60_000_000,
+      rolled_equity_value: 60_000_000,
+      annual_accretion: 0,
+      calibration_steps: [
+        { step: 'prior_equity_value', value: 33_600_000 },
+        { step: 'new_round_post_money', value: 60_000_000 },
+      ],
+    } satisfies RollforwardRunRow;
+    const seen = plain(b2(priced)!.html);
+    expect(seen).toContain('New priced round, post-money');
+    expect(seen).toContain('supersedes the calibration anchor');
+    expect(seen).not.toContain('per annum over');
+  });
+
+  it('labels an analyst adjustment with the label it was entered under', () => {
+    const adjusted = {
+      ...ROLLFORWARD,
+      calibration_steps: [
+        ...ROLLFORWARD.calibration_steps,
+        { step: 'adjustment', label: 'Secondary transaction mark', value: 39_000_000 },
+      ],
+    } satisfies RollforwardRunRow;
+    expect(plain(b2(adjusted)!.html)).toContain('Secondary transaction mark');
+  });
+
+  it('keeps the immaterial findings — they are the record the question was asked', () => {
+    // "Revenue moved 4%, below the 20% threshold" is not noise. It is the
+    // difference between a roll-forward somebody defended and one nobody
+    // looked at, and dropping it would leave a reader unable to tell them
+    // apart.
+    const seen = plain(b2()!.html);
+    expect(seen).toContain('Not material');
+    expect(seen).toContain('revenue moved +4.0%');
+  });
+
+  it('says so plainly when a material change was found', () => {
+    const material = {
+      ...ROLLFORWARD,
+      requires_full_revaluation: true,
+      material_changes: [
+        { field: 'revenue', material: true, detail: 'revenue moved +82.0%', delta_pct: 0.82 },
+      ],
+    } satisfies RollforwardRunRow;
+    const seen = plain(b2(material)!.html);
+    expect(seen).toContain('Material');
+    expect(seen).toContain('One or more of the changes above is material');
+    // And the caveat that follows from it: the calibrated value is evidence,
+    // not the conclusion.
+    expect(seen).toContain('not as the conclusion');
+  });
+
+  it('states that nothing was found when the change list is empty', () => {
+    const clean = { ...ROLLFORWARD, material_changes: [] } satisfies RollforwardRunRow;
+    const seen = plain(b2(clean)!.html);
+    expect(seen).toContain('No difference between the two engagements');
+    expect(seen).not.toContain('Not material');
+  });
+
+  it('reconciles the anchor against the value the valuation actually concluded', () => {
+    // The reader's first question. The two are different measurements and the
+    // exhibit has to say so, or the anchor reads as an alternative conclusion.
+    const seen = plain(b2()!.html);
+    expect(seen).toContain('The equity value concluded by this valuation is $42,000,000');
+    expect(seen).toContain('are not the same measurement');
+  });
+
+  it('signs the difference between the anchor and the conclusion', () => {
+    const seen = plain(b2(ROLLFORWARD, { ...RESULTS, equity_value: 46_200_000 })!.html);
+    expect(seen).toContain('+10.0%');
+  });
+
+  it('is absent for an engagement valued from scratch', () => {
+    expect(b2(null)).toBeNull();
+  });
+
+  it('is absent for a run nobody adopted', () => {
+    // An unapplied run describes an anchor the calculation did not use. A
+    // schedule claiming the conclusion bridges from it would be describing a
+    // different valuation — so the builder checks as well as the loader.
+    const proposed = { ...ROLLFORWARD, applied_at: null } satisfies RollforwardRunRow;
+    expect(b2(proposed)).toBeNull();
+  });
+
+  it('is absent when the run carries no trail to print', () => {
+    const empty = { ...ROLLFORWARD, calibration_steps: [] } satisfies RollforwardRunRow;
+    expect(b2(empty)).toBeNull();
+  });
+
+  it('survives a results document with no concluded equity value', () => {
+    const s = b2(ROLLFORWARD, {});
+    expect(s).not.toBeNull();
+    expect(plain(s!.html)).toContain('Rolled equity value');
+    expect(plain(s!.html)).not.toContain('The equity value concluded by this valuation');
+  });
+
+  it('escapes a prior valuation number and an adjustment label', () => {
+    // Both originate off the engagement and land inside table cells.
+    const hostile = {
+      ...ROLLFORWARD,
+      prior_valuation_number: 'V-2025 <script>',
+      calibration_steps: [
+        ...ROLLFORWARD.calibration_steps,
+        { step: 'adjustment', label: 'Down round & <b>haircut</b>', value: 30_000_000 },
+      ],
+    } satisfies RollforwardRunRow;
+    const html = b2(hostile)!.html;
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('Down round &amp; &lt;b&gt;haircut&lt;/b&gt;');
+  });
+
+  it('follows Exhibit B and leaves the lettering alone', () => {
+    const headings = buildExhibits(calculation(), { ...CONTEXT, rollforward: ROLLFORWARD }).map(
+      (s) => s.heading,
+    );
+    expect(headings).toEqual([
+      'Exhibit A — Capitalization Table',
+      'Exhibit B — Reconciliation of Valuation Approaches',
+      'Exhibit B-2 — Roll-Forward from the Prior Valuation',
+      'Exhibit C — Income Approach (Discounted Cash Flow)',
+      'Exhibit D — Market Approach (Guideline Multiples)',
+      'Exhibit F — Allocation of Equity Value',
+      'Exhibit F-2 — Allocation Sensitivity',
+      'Exhibit F-3 — Risk-Free Rate Sensitivity',
+      'Exhibit H — Discounts and Concluded Value',
+    ]);
+  });
+
+  it('emits only markup the report renderer understands', () => {
+    const html = b2()!.html;
+    expect(sanitizeHtml(html)).toBe(html);
   });
 });
 

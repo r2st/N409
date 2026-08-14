@@ -10,6 +10,7 @@ import { sensitivityGrid, sensitivityTables, type OpmInputs } from './sensitivit
 import { VOLATILITY_CONFIDENCE_NOTES, VOLATILITY_METHOD_LABELS } from './volatility.js';
 import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
 import type { ProjectionRow, ProjectionYear } from '../repos/projections.js';
+import type { RollforwardRunRow } from '../repos/rollforwardRuns.js';
 
 /**
  * The supporting exhibits of the deliverable — the schedules a reviewer checks
@@ -81,6 +82,13 @@ export interface ExhibitContext {
    * entered the stream by hand, and Exhibit C-1 is then not rendered.
    */
   projection?: ProjectionRow | null;
+  /**
+   * The bridge from the prior 409A (migration 0150), when one was adopted. The
+   * *applied* run only — a roll-forward nobody adopted describes an anchor the
+   * calculation did not run on. Absent for every engagement valued from
+   * scratch, and Exhibit B-2 is then not rendered.
+   */
+  rollforward?: RollforwardRunRow | null;
 }
 
 /** One row of the peer set, as Exhibit D-1 prints it. */
@@ -102,6 +110,7 @@ export type ScheduleId =
   | 'A'
   | 'B'
   | 'B-1'
+  | 'B-2'
   | 'C'
   | 'C-1'
   | 'D'
@@ -156,6 +165,7 @@ export const SCHEDULE_CATALOGUE: readonly ScheduleDescriptor[] = [
   { id: 'A', kind: 'Exhibit', name: 'Capitalization Table', always: true },
   { id: 'B', kind: 'Exhibit', name: 'Reconciliation of Valuation Approaches', always: true },
   { id: 'B-1', kind: 'Exhibit', name: 'Level of Value', always: false },
+  { id: 'B-2', kind: 'Exhibit', name: 'Roll-Forward from the Prior Valuation', always: false },
   { id: 'C', kind: 'Exhibit', name: 'Income Approach (Discounted Cash Flow)', always: false },
   { id: 'C-1', kind: 'Exhibit', name: 'Basis of the Cash-Flow Forecast', always: false },
   { id: 'D', kind: 'Exhibit', name: 'Market Approach (Guideline Multiples)', always: false },
@@ -651,6 +661,165 @@ export function levelOfValueExhibit(
   }
 
   return section(SCHEDULE['B-1'], parts);
+}
+
+// ── Exhibit B-2 — the bridge from last year's conclusion to this one's ───────
+
+/** `2026-06-30`, however the driver handed the date back. */
+function isoDay(value: Date | string): string {
+  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+}
+
+/**
+ * One line of the calibration trail, as the exhibit reads it.
+ *
+ * The engine names its steps; this names what each one *is* to a reader, and
+ * the mapping is exhaustive rather than defaulting, so a step the engine grows
+ * later reads as itself instead of silently printing under someone else's
+ * label.
+ */
+function calibrationRow(
+  step: RollforwardRunRow['calibration_steps'][number],
+  run: RollforwardRunRow,
+  currency: string,
+): string[] {
+  const value = formatCurrency(step.value, currency, 0);
+  switch (step.step) {
+    case 'prior_equity_value':
+      return [
+        'Prior concluded equity value',
+        `${run.prior_valuation_number ? `${esc(run.prior_valuation_number)}, ` : ''}` +
+          `valued as of ${isoDay(run.prior_valuation_date)}`,
+        value,
+      ];
+    case 'time_accretion': {
+      const rate = step.annual_rate ?? run.annual_accretion;
+      const years = step.years ?? run.years_elapsed;
+      return [
+        `Calibration to ${isoDay(run.new_valuation_date)}`,
+        `${formatPercent(rate, 1)} per annum over ${years.toFixed(2)} years` +
+          (step.factor === undefined ? '' : ` (factor ${step.factor.toFixed(4)}x)`),
+        value,
+      ];
+    }
+    case 'new_round_post_money':
+      return [
+        'New priced round, post-money',
+        'An arm’s-length price at the new date supersedes the calibration anchor',
+        value,
+      ];
+    case 'adjustment':
+      return [esc(step.label ?? 'Adjustment'), 'Analyst adjustment to the calibrated value', value];
+    default:
+      return [esc(step.step), '', value];
+  }
+}
+
+/**
+ * Exhibit B-2 — the prior 409A's concluded equity value, carried to this date.
+ *
+ * When a company re-values without a new priced round, the prior appraisal's
+ * backsolve equity value is the one figure on the engagement that was
+ * calibrated to an arm's-length transaction. A new valuation that does not
+ * start from it has thrown away its best evidence, and — the part that shows up
+ * in an audit — has no answer to "why is this different from last year's".
+ *
+ * The AICPA practice aid treats the calibration roll-forward as the expected
+ * treatment for exactly this case, and the platform's own params table has
+ * carried a `rolling_forward` flag since its first migration. Neither produced
+ * a word in the deliverable until this schedule.
+ *
+ * Three things are printed and the third is the one a reviewer turns to first:
+ *
+ *   * the calibration trail, step by step, because the substance of the
+ *     disclosure is the arithmetic between the two numbers and not the numbers;
+ *   * every difference the engine detected between the two engagements' inputs,
+ *     material or not — an immaterial one is the record that the question was
+ *     asked;
+ *   * how the rolled anchor compares to the equity value this valuation
+ *     actually concluded. They are not the same figure and are not meant to be:
+ *     the anchor is an input to the allocation, the conclusion comes out of the
+ *     weighted approaches in Exhibit B. Where they diverge materially, that
+ *     divergence is the finding.
+ */
+export function rollforwardExhibit(
+  results: Record<string, unknown>,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const run = ctx.rollforward;
+  if (!run) return null;
+  // Adopted or nothing. An unapplied run describes an anchor the calculation
+  // did not use, and a schedule claiming the conclusion bridges from it would
+  // be describing a different valuation. The loader filters for this too; both
+  // check, because either one alone is a single point of failure for a claim
+  // the report makes in the client's name.
+  if (run.applied_at === null) return null;
+  const { currency } = ctx;
+
+  const steps = run.calibration_steps.map((s) => calibrationRow(s, run, currency));
+  if (steps.length === 0) return null;
+
+  const changes = run.material_changes.map((c) => [
+    esc(c.field.replace(/_/g, ' ')),
+    c.material ? 'Material' : 'Not material',
+    esc(c.detail),
+  ]);
+
+  const concluded = num(results.equity_value);
+  const drift =
+    concluded !== null && run.rolled_equity_value > 0
+      ? (concluded - run.rolled_equity_value) / run.rolled_equity_value
+      : null;
+
+  return section(SCHEDULE['B-2'], [
+    P(
+      `This valuation is a roll-forward of a prior appraisal rather than an independent re-derivation ` +
+        `of value from a new market transaction. The prior concluded equity value of ` +
+        `<strong>${formatCurrency(run.prior_equity_value, currency, 0)}</strong> as of ` +
+        `${isoDay(run.prior_valuation_date)} was calibrated to the last arm’s-length round, and is ` +
+        `carried forward to ${isoDay(run.new_valuation_date)} — ${run.years_elapsed.toFixed(2)} years ` +
+        'later — as the anchor for the allocation. The steps below are that bridge.',
+    ),
+    table({
+      head: ['Step', 'Basis', 'Equity value'],
+      rows: steps,
+      foot: [
+        'Rolled equity value',
+        `Anchor adopted for this valuation as of ${isoDay(run.new_valuation_date)}`,
+        formatCurrency(run.rolled_equity_value, currency, 0),
+      ],
+    }),
+    changes.length > 0
+      ? P(
+          'The following differences between the two engagements were examined in deciding whether a ' +
+            'roll-forward remained appropriate. A change marked material is one that, on its own, would ' +
+            'warrant a full re-derivation of value rather than a calibration.',
+        )
+      : P(
+          'No difference between the two engagements’ inputs was found that would warrant a full ' +
+            're-derivation of value in place of this calibration.',
+        ),
+    changes.length > 0 ? table({ head: ['Item', 'Assessment', 'Detail'], rows: changes }) : null,
+    run.requires_full_revaluation
+      ? P(
+          '<strong>One or more of the changes above is material.</strong> The calibrated value is ' +
+            'therefore presented as evidence considered alongside the approaches in Exhibit B, and not ' +
+            'as the conclusion; the concluded value is the weighted result of those approaches.',
+        )
+      : null,
+    concluded !== null
+      ? P(
+          `The equity value concluded by this valuation is ` +
+            `<strong>${formatCurrency(concluded, currency, 0)}</strong>, against the rolled anchor of ` +
+            `${formatCurrency(run.rolled_equity_value, currency, 0)}` +
+            (drift === null
+              ? '.'
+              : ` — a difference of ${drift > 0 ? '+' : ''}${formatPercent(drift, 1)}.`) +
+            ' The two are not the same measurement: the anchor is an input to the allocation, and the ' +
+            'concluded value is the weighted result of the approaches reconciled in Exhibit B.',
+        )
+      : null,
+  ]);
 }
 
 // ── Exhibit C — income approach ──────────────────────────────────────────────
@@ -2999,6 +3168,10 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     // that table are what this one classifies, and the sentence B opens with
     // depends on the same reading.
     levelOfValueExhibit(results, ctx),
+    // And B-2 after B-1, for the same reason: it qualifies B's total from the
+    // other side — where the anchor under it came from, when the anchor was
+    // last year's conclusion rather than a fresh round.
+    rollforwardExhibit(results, ctx),
     incomeExhibit(inputs, results, ctx),
     // Immediately after C, because it is C's supporting detail — the same
     // relationship D-1 has with D and F-1 with F.
