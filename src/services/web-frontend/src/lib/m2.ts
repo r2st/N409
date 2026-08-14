@@ -245,7 +245,13 @@ function stripRawText(html: string): string {
 /** Sticky, so the tag head is matched in place rather than searched for. */
 const TAG_HEAD = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b/y;
 const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
-const SAFE_URL = /^(https?:\/\/|mailto:)/i;
+/**
+ * Absolute http(s), mailto, or a site-relative path — kept identical to the
+ * server copy in `valuation/src/domain/report.ts`, which carries the reasoning.
+ * `\/(?!\/)` admits `/pricing` and rejects `//evil.example`, which is an
+ * off-site link wearing a relative path's clothes.
+ */
+const SAFE_URL = /^(https?:\/\/|mailto:|\/(?!\/))/i;
 
 /**
  * Whitelist tags, drop every attribute — except <a>, which keeps a validated

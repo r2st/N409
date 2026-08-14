@@ -151,7 +151,21 @@ function stripRawText(html: string): string {
 /** Sticky, so the tag head is matched in place rather than searched for. */
 const TAG_HEAD = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b/y;
 const HREF = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
-const SAFE_URL = /^(https?:\/\/|mailto:)/i;
+/**
+ * Absolute http(s), mailto, or a site-relative path.
+ *
+ * The relative arm was added for the blog: an article that cannot link to the
+ * pricing page or to the product it is about is a dead end, and the policy
+ * silently turned every such link into a bare `<a>` — text that looks like a
+ * link, does nothing, and gives the author no signal that it was dropped.
+ *
+ * `\/(?!\/)` is the whole guard. A single leading slash is our own origin,
+ * which is strictly less dangerous than the external https URLs already
+ * allowed. Two is protocol-relative — `//evil.example` is an off-site link
+ * wearing a relative path's clothes, and it is the one case a naive `^\/`
+ * would wave through.
+ */
+const SAFE_URL = /^(https?:\/\/|mailto:|\/(?!\/))/i;
 
 /**
  * Reduces arbitrary editor HTML to the whitelist: script/style bodies are

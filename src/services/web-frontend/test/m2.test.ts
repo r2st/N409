@@ -120,4 +120,13 @@ describe('sanitizeHtml on input with no closing bracket', () => {
     expect(sanitizeHtml('<a href="https://ok.example">x</a>')).toBe('<a href="https://ok.example">x</a>');
     expect(sanitizeHtml('<p onclick="boom()">x</p>')).toBe('<p>x</p>');
   });
+
+  // Kept in step with the server policy in valuation/src/domain/report.ts: a
+  // blog article has to be able to link to /pricing, and a protocol-relative
+  // URL is the off-site link that a naive relative-path rule would admit.
+  it('keeps a site-relative href and rejects a protocol-relative one', () => {
+    expect(sanitizeHtml('<a href="/pricing">x</a>')).toBe('<a href="/pricing">x</a>');
+    expect(sanitizeHtml('<a href="//evil.example/x">x</a>')).toBe('<a>x</a>');
+    expect(sanitizeHtml('<a href="pricing">x</a>')).toBe('<a>x</a>');
+  });
 });

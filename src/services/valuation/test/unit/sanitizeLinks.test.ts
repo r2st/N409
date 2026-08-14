@@ -12,11 +12,34 @@ describe('sanitizeHtml link support', () => {
     expect(sanitizeHtml('<a href=mailto:a@b.co>mail</a>')).toBe('<a href="mailto:a@b.co">mail</a>');
   });
 
-  it('strips javascript:, data:, and relative hrefs down to a bare anchor', () => {
+  it('strips javascript: and data: hrefs down to a bare anchor', () => {
     expect(sanitizeHtml('<a href="javascript:alert(1)">x</a>')).toBe('<a>x</a>');
     expect(sanitizeHtml('<a href="data:text/html,evil">x</a>')).toBe('<a>x</a>');
-    expect(sanitizeHtml('<a href="/local/path">x</a>')).toBe('<a>x</a>');
     expect(sanitizeHtml('<a>x</a>')).toBe('<a>x</a>');
+  });
+
+  // Blog articles link to /pricing and to the product page they are about. The
+  // policy used to drop those to a bare anchor, which reads as a link, goes
+  // nowhere, and tells the author nothing.
+  it('keeps a site-relative href', () => {
+    expect(sanitizeHtml('<a href="/pricing">x</a>')).toBe('<a href="/pricing">x</a>');
+    expect(sanitizeHtml('<a href="/blog/what-is-a-409a-valuation#dlom">x</a>')).toBe(
+      '<a href="/blog/what-is-a-409a-valuation#dlom">x</a>',
+    );
+  });
+
+  // The one case a bare `^\/` would wave through: protocol-relative URLs are
+  // off-site links that look like paths.
+  it('rejects a protocol-relative href', () => {
+    expect(sanitizeHtml('<a href="//evil.example/x">x</a>')).toBe('<a>x</a>');
+    expect(sanitizeHtml('<a href="//evil.example">x</a>')).toBe('<a>x</a>');
+  });
+
+  // Not a path at all — a relative href has to start at the site root, so a
+  // bare word cannot resolve against whatever page happens to render it.
+  it('rejects a document-relative href', () => {
+    expect(sanitizeHtml('<a href="pricing">x</a>')).toBe('<a>x</a>');
+    expect(sanitizeHtml('<a href="../admin">x</a>')).toBe('<a>x</a>');
   });
 
   it('escapes quotes inside a kept href', () => {
