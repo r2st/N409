@@ -180,11 +180,9 @@ describe('recent items — a store that is present but not what we wrote', () =>
   it('still returns the new list when the store refuses the write', () => {
     // Private mode and a full quota both throw from `setItem`. Recents are a
     // convenience; losing them must not fail the jump the user just made.
-    const setItem = vi
-      .spyOn(Storage.prototype, 'setItem')
-      .mockImplementation(() => {
-        throw new DOMException('QuotaExceededError');
-      });
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('QuotaExceededError');
+    });
     try {
       expect(pushRecent('a')).toEqual(['a']);
     } finally {

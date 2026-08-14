@@ -126,9 +126,7 @@ describe('CompanyTab — a row with nothing in it', () => {
   });
 
   it('clears the saved marker as soon as a field is edited again', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
-      jsonResponse({ profile: BLANK_PROFILE }),
-    );
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => jsonResponse({ profile: BLANK_PROFILE }));
     renderTab();
 
     await userEvent.click(await screen.findByRole('button', { name: /Save profile/i }));

@@ -62,7 +62,9 @@ describe('moneyFormatter', () => {
     // the fix that added one. A throw here unmounts to the error boundary and
     // takes the page down over a single cell.
     const format = moneyFormatter('$$$');
-    expect(format(1234.5)).toBe(`$$$ ${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1234.5)}`);
+    expect(format(1234.5)).toBe(
+      `$$$ ${new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1234.5)}`,
+    );
   });
 
   it('keeps the caller’s fraction digits in the fallback instead of forcing two', () => {

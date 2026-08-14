@@ -105,7 +105,9 @@ function mockApi(o: Overrides = {}) {
       return o.saveStatus ? problem(o.saveStatus, 'Scenario limit reached.') : jsonResponse({}, 201);
     }
     if (init?.method === 'DELETE') {
-      return o.deleteStatus ? problem(o.deleteStatus, 'That scenario is gone.') : new Response(null, { status: 204 });
+      return o.deleteStatus
+        ? problem(o.deleteStatus, 'That scenario is gone.')
+        : new Response(null, { status: 204 });
     }
     return o.listStatus ? problem(o.listStatus, 'nope') : jsonResponse(o.list ?? emptyList);
   });

@@ -29,8 +29,7 @@ const entry = (over: Partial<CapTableEntry> = {}): CapTableEntry => ({
   ...over,
 });
 
-const codes = (entries: CapTableEntry[]): string[] =>
-  validateCapTable(entries).issues.map((i) => i.code);
+const codes = (entries: CapTableEntry[]): string[] => validateCapTable(entries).issues.map((i) => i.code);
 
 describe('parseNumericCell — the values a sheet library can hand back', () => {
   it('refuses a non-finite number rather than storing it as a share count', () => {
@@ -98,7 +97,11 @@ describe('parseCapTable — a mapping with holes in it', () => {
   });
 
   it('matches a source column regardless of its case', () => {
-    const entries = parseCapTable(rows, { security_class: 'class', shares: 'SHARES', price_per_share: 'price' });
+    const entries = parseCapTable(rows, {
+      security_class: 'class',
+      shares: 'SHARES',
+      price_per_share: 'price',
+    });
     expect(entries[0]!.security_class).toBe('Series A Preferred');
     expect(entries[0]!.shares).toBe(2_000_000);
     expect(entries[0]!.price_per_share).toBe(1.25);
@@ -115,10 +118,11 @@ describe('parseCapTable — a mapping with holes in it', () => {
   });
 
   it('classifies from the name when the type cell says something unknown', () => {
-    const entries = parseCapTable(
-      [{ Class: 'Series B Preferred', Shares: '10', Type: 'Equity-ish' }],
-      { security_class: 'Class', shares: 'Shares', class_type: 'Type' },
-    );
+    const entries = parseCapTable([{ Class: 'Series B Preferred', Shares: '10', Type: 'Equity-ish' }], {
+      security_class: 'Class',
+      shares: 'Shares',
+      class_type: 'Type',
+    });
     expect(entries[0]!.class_type).toBe('preferred');
   });
 });
@@ -149,7 +153,12 @@ describe('validateCapTable — the paths a clean sheet never takes', () => {
 
   it('says so when it defaults a missing liquidation preference to 1x', () => {
     const result = validateCapTable([
-      entry({ security_class: 'Series A', class_type: 'preferred', shares: 1_000_000, invested_amount: 5_000_000 }),
+      entry({
+        security_class: 'Series A',
+        class_type: 'preferred',
+        shares: 1_000_000,
+        invested_amount: 5_000_000,
+      }),
       entry({ security_class: 'Option Pool', class_type: 'option', shares: 1 }),
     ]);
     const note = result.issues.find((i) => i.code === 'default_liq_pref');
@@ -161,7 +170,12 @@ describe('validateCapTable — the paths a clean sheet never takes', () => {
 
   it('warns that the stack is understated when a preferred row carries neither figure', () => {
     const result = validateCapTable([
-      entry({ security_class: 'Series A', class_type: 'preferred', shares: 1_000_000, liquidation_multiple: 1 }),
+      entry({
+        security_class: 'Series A',
+        class_type: 'preferred',
+        shares: 1_000_000,
+        liquidation_multiple: 1,
+      }),
       entry({ security_class: 'Option Pool', class_type: 'option', shares: 1 }),
     ]);
     expect(result.issues.map((i) => i.code)).toContain('no_investment');

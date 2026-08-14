@@ -306,9 +306,7 @@ describe('validateIntake — rule shapes the standard schema does not use', () =
   });
 
   it('refuses a date answered as something other than a string', () => {
-    expect(check({ round_date: 20260801 })[0]?.message).toBe(
-      'Round date must be a valid date (YYYY-MM-DD).',
-    );
+    expect(check({ round_date: 20260801 })[0]?.message).toBe('Round date must be a valid date (YYYY-MM-DD).');
     expect(check({ round_date: '2026-08-01' })).toEqual([]);
     // Surrounding whitespace is the client's, not an invalid date.
     expect(check({ round_date: ' 2026-08-01 ' })).toEqual([]);
@@ -336,9 +334,9 @@ describe('validateIntake — rule shapes the standard schema does not use', () =
     // Same day is not before it.
     expect(check({ round_date: '2020-06-01', incorporated_on: '2020-06-01' }, [rule])).toEqual([]);
     // An impossible date is no comparison at all — the field's own error stands.
-    expect(check({ round_date: '2020-02-30', incorporated_on: '2020-06-01' }, [rule]).map((i) => i.message)).toEqual(
-      ['Round date must be a valid date (YYYY-MM-DD).'],
-    );
+    expect(
+      check({ round_date: '2020-02-30', incorporated_on: '2020-06-01' }, [rule]).map((i) => i.message),
+    ).toEqual(['Round date must be a valid date (YYYY-MM-DD).']);
   });
 
   it('evaluates the inclusive operators the server may send', () => {
