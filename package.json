@@ -22,6 +22,7 @@
     "test:unit": "npm run build && npm run test:unit --workspaces --if-present",
     "migrate": "npm run migrate -w @n409/valuation",
     "dev:db": "docker compose up -d postgres redis",
+    "db:drop-test": "node tools/drop-test-dbs.mjs",
     "e2e": "npm run e2e:db && playwright test --config e2e/playwright.config.ts",
     "e2e:db": "node e2e/reset-db.mjs",
     "e2e:headed": "npm run e2e:db && playwright test --config e2e/playwright.config.ts --headed",

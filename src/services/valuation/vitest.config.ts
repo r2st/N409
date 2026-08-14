@@ -12,6 +12,10 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     environment: 'node',
     fileParallelism: false,
+    // Collects the throwaway databases a killed or interrupted run leaked.
+    // See test/globalSetup.ts — it is a no-op without a reachable Postgres, so
+    // it costs a unit-only run nothing.
+    globalSetup: ['test/globalSetup.ts'],
     testTimeout: 30000,
     hookTimeout: 60000,
     coverage: {

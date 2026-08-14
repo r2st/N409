@@ -16,6 +16,18 @@ npm run migrate         # apply SQL migrations (also runs on service boot)
 npm test                # build + all workspace tests (integration tests need the DB)
 npm run dev -w @n409/valuation   # valuation API on :3001 (needs JWT_SECRET, see .env.example)
 ```
+
+Each integration test file runs against its own throwaway `n409_test_*` database and drops it
+in `afterAll` — which does not run if the worker is killed or the run is interrupted, leaving a
+migrated ~12 MB database behind. The valuation suite sweeps those at the start of every run
+(anything idle and over an hour old), so they no longer accumulate. To collect them by hand:
+```bash
+npm run db:drop-test                        # idle and older than 60 minutes
+npm run db:drop-test -- --dry-run           # list them, drop nothing
+npm run db:drop-test -- --all               # every idle one, whatever its age
+```
+Neither the sweep nor the script will touch a database something is connected to, so both are
+safe to run while another suite is in flight.
 Monorepo layout: `src/packages/shared` (logger/OTel/problem+json/health/ULIDs),
 `src/services/{valuation,web,ai,engine-wrapper,report}`, `infra/terraform`, CI in
 `.github/workflows/ci.yml`.
