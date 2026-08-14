@@ -33,6 +33,15 @@ import { InternalServiceError, postJson, toProblem } from '../clients/internal.j
 import { decodeFromStorage } from '../storage/documentEncryption.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { recordAdminEvent } from '../events/adminRecord.js';
+import { listComparableItems, replaceMachineComparables } from '../repos/comparableItems.js';
+import { summarizeSet } from '../domain/comparables.js';
+import {
+  AiComparablesError,
+  mapAgentComparables,
+  type MappedComparableSet,
+} from '../domain/aiComparables.js';
+import { presentComparable } from './comparables.js';
 
 /**
  * How long one AI pipeline call may take, end to end.
@@ -386,6 +395,70 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiPipelineDeps): vo
     const params = await applyEngineInputs(deps.pool, id, applied, actorFor(principal));
     return { params, applied_inputs: applied, rejected_inputs: rejected, source_job_id: job!.id };
   });
+
+  /**
+   * Apply the latest successful `comp_selection` run to the peer set.
+   *
+   * The manual twin of `/ai/extract/apply`, and the half of AI comparable
+   * discovery that was missing: the agent has suggested, verified and refined a
+   * guideline set since it was written, and the answer stayed in `ai_jobs`.
+   * `COMPARABLE_SOURCES` has carried `'ai'` with no caller that writes one, so
+   * the market approach never saw a comp the agent found unless somebody
+   * retyped it.
+   *
+   * `replaceMachineComparables` is what makes this safe to run twice: it carries
+   * the analyst's include/exclude decisions forward by ticker and leaves their
+   * own rows alone, so re-applying a re-run of the agent refreshes the data
+   * without re-admitting a comp somebody excluded on purpose.
+   */
+  app.post(
+    '/api/v1/valuations/:id/ai/comp_selection/apply',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requirePrincipal(req);
+      if (!isOps(principal)) throw problems.forbidden('AI pipelines are operations-only');
+      const { id } = req.params as { id: string };
+      const valuation = await loadValuation(id);
+
+      const job = await latestSucceededJob(deps.pool, id, 'comp_selection');
+      if (!job) {
+        throw problems.unprocessable(
+          'No successful comparable-selection run to apply — run the comp_selection agent first',
+        );
+      }
+
+      let mapped: MappedComparableSet;
+      try {
+        // The moment the figures were observed is the moment the engine was
+        // asked for them, which is the run — not now. Stamping a row applied
+        // six weeks later with today's date would date month-old multiples to
+        // this morning.
+        mapped = mapAgentComparables(job.result, job.completed_at ?? job.created_at);
+      } catch (err) {
+        if (err instanceof AiComparablesError) throw problems.unprocessable(err.message);
+        throw err;
+      }
+
+      const written = await replaceMachineComparables(deps.pool, id, 'ai', mapped.rows);
+      await recordAdminEvent(deps.pool, {
+        type: 'comparables_ai_applied',
+        actor: { actorType: 'human', actorId: principal.id },
+        subjectType: 'valuation',
+        subjectId: valuation.id,
+        subjectLabel: valuation.company_name,
+        payload: { ...mapped.summary, written: written.length, source_job_id: job.id },
+      });
+
+      const items = await listComparableItems(deps.pool, id);
+      return {
+        comparables: items.map(presentComparable),
+        statistics: summarizeSet(items),
+        applied: mapped.summary,
+        written: written.length,
+        source_job_id: job.id,
+      };
+    },
+  );
 
   app.get('/api/v1/valuations/:id/ai', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
