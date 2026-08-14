@@ -37,6 +37,29 @@ export class InternalServiceError extends Error {
      * is free (see `isRetryable`).
      */
     readonly abandoned: boolean = false,
+    /**
+     * True when `detail` is text of unknown provenance rather than a sentence
+     * the upstream authored for a caller to read.
+     *
+     * `detail` is used two ways and they want opposite things. The log and the
+     * network-call record want everything there is — the comment at the throw
+     * site is explicit that the raw body "is often the whole answer", a
+     * traceback or a proxy's HTML page, and that keeping it beats re-running
+     * the call. `toProblem` puts it in an HTTP response body, and a traceback
+     * in a 422 is a file path and a module layout handed to whoever asked.
+     *
+     * The two are not hypothetical: the engine's own request-validation handler
+     * answers with `detail` as pydantic's error *list*, whose entries carry an
+     * `input` field echoing the offending payload. That is not a string, so the
+     * parse below falls through to the raw body — and the raw body then rode
+     * into a user-facing problem detail, request id and all.
+     *
+     * So the flag, rather than a blanket redaction: a `detail` string in a
+     * problem document is written to be read by a caller and stays exactly as
+     * it is (the engine's "volatility is required" is the whole point of the
+     * pipe). Anything else is kept for the log and withheld from the response.
+     */
+    readonly opaque: boolean = false,
   ) {
     super(`${service}: ${detail}`);
   }
@@ -265,18 +288,30 @@ async function postJsonOnce<T>(
       emit({ response: null, status: null, error: `did not respond within ${seconds}s` });
       throw new InternalServiceError(service, null, `did not respond within ${seconds}s`, [], true);
     }
+    // A transport failure's message is written for whoever is holding the
+    // stack, not for a client: `getaddrinfo ENOTFOUND engine-wrapper` and
+    // `connect ECONNREFUSED 10.0.1.4:3003` both name internal topology. Kept
+    // for the log and the call record, withheld from the response.
     const reason = err instanceof Error ? err.message : 'unreachable';
     emit({ response: null, status: null, error: reason });
-    throw new InternalServiceError(service, null, reason);
+    throw new InternalServiceError(service, null, reason, [], false, true);
   }
   const text = await res.text();
   if (!res.ok) {
     let detail = text.slice(0, 500);
+    // Until a problem document says otherwise, `detail` is whatever bytes the
+    // upstream happened to send — see the `opaque` field on the error.
+    let opaque = true;
     let issues: UpstreamIssue[] = [];
     try {
       const parsed = JSON.parse(text) as { detail?: unknown; title?: unknown; issues?: unknown };
-      if (typeof parsed.detail === 'string') detail = parsed.detail;
-      else if (typeof parsed.title === 'string') detail = parsed.title;
+      if (typeof parsed.detail === 'string') {
+        detail = parsed.detail;
+        opaque = false;
+      } else if (typeof parsed.title === 'string') {
+        detail = parsed.title;
+        opaque = false;
+      }
       issues = parseIssues(parsed.issues);
     } catch {
       /* keep raw text */
@@ -286,7 +321,7 @@ async function postJsonOnce<T>(
     // proxy's HTML error page — and re-reading it later beats re-running the
     // call that produced it.
     emit({ response: safeParse(text), status: res.status, error: detail });
-    throw new InternalServiceError(service, res.status, detail, issues);
+    throw new InternalServiceError(service, res.status, detail, issues, false, opaque);
   }
   let parsed: T;
   try {
@@ -308,13 +343,24 @@ function safeParse(text: string): unknown {
   }
 }
 
+/**
+ * The upstream's own words when it wrote them for a caller, and nothing when
+ * it did not. See `InternalServiceError.opaque`.
+ */
+function describedBy(err: InternalServiceError): string | null {
+  return err.opaque ? null : err.detail;
+}
+
 /** Converts an InternalServiceError to the client-facing ApiProblem. */
 export function toProblem(err: InternalServiceError): ApiProblem {
+  const said = describedBy(err);
   if (err.status !== null && err.status >= 400 && err.status < 500) {
     // Field-level issues ride along as a problem extension so the UI can
-    // anchor each message to the input that caused it.
+    // anchor each message to the input that caused it. They survive an opaque
+    // body because `parseIssues` builds them field by field from a known
+    // shape — nothing unrecognised is copied through.
     return problems.unprocessable(
-      `${err.service} rejected the request: ${err.detail}`,
+      said === null ? `${err.service} rejected the request.` : `${err.service} rejected the request: ${said}`,
       err.issues.length > 0 ? { issues: err.issues } : undefined,
     );
   }
@@ -322,6 +368,6 @@ export function toProblem(err: InternalServiceError): ApiProblem {
     status: 502,
     title: 'Bad Gateway',
     type: 'urn:n409:problem:upstream',
-    detail: `${err.service} is unavailable: ${err.detail}`,
+    detail: said === null ? `${err.service} is unavailable.` : `${err.service} is unavailable: ${said}`,
   });
 }
