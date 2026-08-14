@@ -72,11 +72,25 @@ export async function upsertSubscription(
          plan_tier = EXCLUDED.plan_tier,
          status = EXCLUDED.status,
          stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, subscriptions.stripe_customer_id),
-         current_period_start = EXCLUDED.current_period_start,
-         current_period_end = EXCLUDED.current_period_end,
-         -- New billing period resets usage.
+         -- COALESCE for the same reason as the customer id above, and it is
+         -- load-bearing here rather than tidy. Not every caller knows the
+         -- billing period: a Checkout Session object carries no period fields
+         -- at all, and Stripe guarantees nothing about whether
+         -- checkout.session.completed is delivered before or after the
+         -- customer.subscription.created for the same checkout. Assigning
+         -- EXCLUDED unconditionally let the session event blank a period the
+         -- subscription event had already written — and then, because the
+         -- usage reset below keys off the period having changed, hand the
+         -- subscriber a fresh quota for free. A subscription's period never
+         -- becomes unknown, so "no period in this event" always means "leave
+         -- the one on file alone".
+         current_period_start = COALESCE(EXCLUDED.current_period_start, subscriptions.current_period_start),
+         current_period_end = COALESCE(EXCLUDED.current_period_end, subscriptions.current_period_end),
+         -- New billing period resets usage — compared against the value that
+         -- is actually being written, not the one that was passed in.
          valuations_used = CASE
-           WHEN EXCLUDED.current_period_start IS DISTINCT FROM subscriptions.current_period_start
+           WHEN COALESCE(EXCLUDED.current_period_start, subscriptions.current_period_start)
+                IS DISTINCT FROM subscriptions.current_period_start
            THEN 0 ELSE subscriptions.valuations_used END,
          canceled_at = CASE WHEN EXCLUDED.status = 'canceled' THEN now() ELSE NULL END
        RETURNING *`,
