@@ -501,6 +501,108 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
   });
 
   /**
+   * A figure the prose froze, and the calculation has since moved past.
+   *
+   * The unit tests fix the rule; this fixes the wiring, which is the half that
+   * can be wrong on its own — the check is fed from `listCalculations`, and it
+   * can only see a superseded run if that query carries `results` and the route
+   * excludes the run being reviewed from what it passes as "earlier".
+   */
+  describe('the QA gate on a body left behind by a recalculation', () => {
+    /** The `report_coherence` verdict, and the findings behind it. */
+    async function coherence(id: string) {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/qa`,
+        headers: authHeader(ops.token),
+        payload: {},
+      });
+      expect(res.statusCode).toBe(201);
+      return (res.json().review.checks as Array<{ key: string; status: string; detail: string }>).find(
+        (c) => c.key === 'report_coherence',
+      );
+    }
+
+    /** A conclusion chapter stating `literal` where the skeleton had a marker. */
+    async function putConclusion(id: string, literal: string): Promise<void> {
+      const res = await ctx.app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${id}/report`,
+        headers: authHeader(ops.token),
+        payload: {
+          content: {
+            title: 'IRC 409A Valuation Report',
+            sections: [
+              {
+                key: 'conclusion',
+                heading: 'Conclusion of Value',
+                // The derivation paragraph keeps its markers, which is the case
+                // `frozen_figure` passes over: the chapter has not lost every
+                // computed figure, only the one the document exists to state.
+                html:
+                  `<p>The fair market value of one share is <strong>${literal}</strong> per share. ` +
+                  'It derives from a concluded total equity value of {{equity_value}}, less a ' +
+                  'discount for lack of marketability of {{dlom}}.</p>',
+              },
+            ],
+          },
+        },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+
+    it('reports the prose still stating what an earlier run concluded', async () => {
+      const v = await seed('Frozen Conclusion, Inc.', true);
+      // Correct on the day it was typed: the only succeeded run concludes 1.2345.
+      await putConclusion(v.id, '$1.2345');
+      const before = await coherence(v.id);
+      expect(before?.detail ?? '').not.toMatch(/earlier run/);
+
+      // The engine runs again and concludes something else.
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: v.id,
+          engineVersion: '1.4.0',
+          status: 'succeeded',
+          inputs: { params: {}, inputs: ENGINE_INPUTS },
+          results: { ...RESULTS, fmv_per_share: 2.5 },
+          equityValue: RESULTS.equity_value,
+          fmvPerShare: 2.5,
+          createdBy: client.id,
+        },
+        { ...actor, actorId: client.id },
+      );
+
+      const after = await coherence(v.id);
+      expect(after?.status).toBe('warn');
+      // Names both figures: the one on the page and the one behind the schedules.
+      expect(after?.detail).toContain('$1.2345');
+      expect(after?.detail).toContain('$2.5000');
+    });
+
+    it('says nothing about a body that still restates itself from the calculation', async () => {
+      const v = await seed('Live Conclusion, Inc.', true);
+      await putConclusion(v.id, '{{fmv_per_share}}');
+      await createCalculation(
+        ctx.pool,
+        {
+          valuationId: v.id,
+          engineVersion: '1.4.0',
+          status: 'succeeded',
+          inputs: { params: {}, inputs: ENGINE_INPUTS },
+          results: { ...RESULTS, fmv_per_share: 2.5 },
+          equityValue: RESULTS.equity_value,
+          fmvPerShare: 2.5,
+          createdBy: client.id,
+        },
+        { ...actor, actorId: client.id },
+      );
+      expect((await coherence(v.id))?.detail ?? '').not.toMatch(/earlier run/);
+    });
+  });
+
+  /**
    * Where every figure in the deliverable comes from.
    *
    * The tests above assert that the schedules are *present*. These assert that
