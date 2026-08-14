@@ -199,12 +199,29 @@ async function resolveMarket(
     const prices = Array.isArray(res.prices) ? res.prices : [];
     const closes = prices.map((p) => Number(p.close)).filter((c) => Number.isFinite(c) && c > 0);
     if (res.source !== 'fallback' && closes.length >= 2) {
+      /*
+       * A sample standard deviation needs two returns, so three closes. Two
+       * closes clear the length check and then divide by zero:
+       * `historicalVolatility` returns NaN, NaN is not nullish so it survives
+       * the `??` defaults below and every `volatility === undefined` refusal,
+       * and Black-Scholes lands a `null` fair value in the response — the same
+       * silent-NaN failure the exercise-history ceiling above exists to
+       * prevent. A flat series is the same shape of problem from the other
+       * end: a real 0 that no option can be priced against.
+       *
+       * Neither is a reason to discard the last close, which is a fact the feed
+       * did give us. Report the underlying, withhold the volatility, and let
+       * the per-grant refusal name the award it is missing for.
+       */
+      const computed = closes.length >= 3 ? historicalVolatility(closes, 252) : NaN;
+      const usable = Number.isFinite(computed) && computed > 0;
       return {
         ticker,
         underlying: closes[closes.length - 1]!,
-        volatility: historicalVolatility(closes, 252),
+        volatility: usable ? computed : null,
         source: res.source,
         as_of: prices[prices.length - 1]?.date ?? end,
+        ...(usable ? {} : { warning: 'not enough price history to derive a volatility' }),
       };
     }
     return {
