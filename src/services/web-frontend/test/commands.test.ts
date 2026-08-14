@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import {
   buildCommands,
   pushRecent,
@@ -158,5 +158,46 @@ describe('recent items', () => {
   it('survives a corrupt store', () => {
     localStorage.setItem('n409.palette.recent', '{not json');
     expect(readRecent()).toEqual([]);
+  });
+});
+
+describe('recent items — a store that is present but not what we wrote', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('ignores well-formed JSON that is not a list', () => {
+    // Same key, different shape: an older build, or another tab's extension.
+    localStorage.setItem('n409.palette.recent', '{"a":1}');
+    expect(readRecent()).toEqual([]);
+    localStorage.setItem('n409.palette.recent', '"a"');
+    expect(readRecent()).toEqual([]);
+  });
+
+  it('drops non-string entries rather than jumping to one', () => {
+    localStorage.setItem('n409.palette.recent', JSON.stringify(['a', 7, null, 'b']));
+    expect(readRecent()).toEqual(['a', 'b']);
+  });
+
+  it('still returns the new list when the store refuses the write', () => {
+    // Private mode and a full quota both throw from `setItem`. Recents are a
+    // convenience; losing them must not fail the jump the user just made.
+    const setItem = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new DOMException('QuotaExceededError');
+      });
+    try {
+      expect(pushRecent('a')).toEqual(['a']);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+});
+
+describe('scoreCommand — labels that split into nothing', () => {
+  it('handles a label with repeated separators when matching initials', () => {
+    // `'Value  -  Bridge'.split(/[\s-]+/)` is fine, but a leading separator
+    // yields an empty first word, whose initial is nothing at all.
+    expect(scoreCommand('vb', ' Value Bridge')).not.toBeNull();
+    expect(scoreCommand('zz', ' Value Bridge')).toBeNull();
   });
 });

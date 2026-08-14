@@ -60,6 +60,14 @@ describe('country data (gap #27)', () => {
   it('derives a flag emoji from the ISO code', () => {
     expect(flagEmoji('US')).toBe('🇺🇸');
   });
+
+  it('renders nothing rather than mojibake for a code that is not two letters', () => {
+    // A partner-supplied country on an imported row is not guaranteed to be
+    // alpha-2; the arithmetic below would otherwise emit arbitrary code points.
+    expect(flagEmoji('')).toBe('');
+    expect(flagEmoji('USA')).toBe('');
+    expect(flagEmoji('U')).toBe('');
+  });
 });
 
 describe('phoneFieldError', () => {

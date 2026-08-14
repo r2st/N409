@@ -148,3 +148,22 @@ describe('attentionItems', () => {
     expect(attentionItems([], NOW)).toEqual([]);
   });
 });
+
+describe('classifyAttention — a due date that is not a date', () => {
+  const NOW = new Date(2026, 7, 1, 9, 0, 0);
+
+  it('ignores a due date it cannot read rather than ranking it as overdue', () => {
+    // `due_date` is a `date` column, but the same field is filled by the
+    // partner API and by imports, and an unreadable one must not sort to the
+    // top of "what needs a human today" as if it were years past.
+    for (const bad of ['not-a-date', '2026/08/01', '', '26-08-01']) {
+      expect(classifyAttention(v({ due_date: bad }), NOW)).toBeNull();
+    }
+  });
+
+  it('still reads a due date carrying a time part', () => {
+    expect(classifyAttention(v({ due_date: '2026-07-31T00:00:00Z' }), NOW)).toMatchObject({
+      reason: 'overdue',
+    });
+  });
+});

@@ -245,3 +245,145 @@ describe('issuesByField', () => {
     expect(grouped.get('missing')).toBeUndefined();
   });
 });
+
+/**
+ * The rule shapes the fixtures above do not carry, and the answer shapes a
+ * form control cannot produce but a resumed draft or a direct API caller can.
+ *
+ * Every message here is the one `domain/intake.ts` produces for the same
+ * answer — the two evaluators are the same code twice, and a case that only
+ * exercises one of them is not pinning the parity that arrangement exists for.
+ */
+describe('validateIntake — rule shapes the standard schema does not use', () => {
+  const BOUNDED: IntakeSection[] = [
+    {
+      key: 'bounds',
+      title: 'Bounds',
+      description: '',
+      fields: [
+        {
+          key: 'discount_rate',
+          label: 'Discount rate',
+          type: 'number',
+          required: false,
+          rules: { min: 1, max: 100 },
+        },
+        { key: 'round_date', label: 'Round date', type: 'date', required: false },
+        { key: 'incorporated_on', label: 'Incorporation date', type: 'date', required: false },
+        { key: 'free_choice', label: 'Free choice', type: 'select', required: false },
+      ],
+    },
+  ];
+
+  const check = (answers: Record<string, unknown>, rules: IntakeCrossRule[] = []) =>
+    validateIntake(BOUNDED, rules, answers, { today: new Date('2026-08-01T00:00:00Z') });
+
+  it('names the floor when it is not zero, rather than saying "cannot be negative"', () => {
+    expect(check({ discount_rate: 0.5 })[0]?.message).toBe('Discount rate must be at least 1.');
+    expect(check({ discount_rate: 1 })).toEqual([]);
+  });
+
+  it('enforces the ceiling', () => {
+    expect(check({ discount_rate: 101 })[0]?.message).toBe('Discount rate must be at most 100.');
+    expect(check({ discount_rate: 100 })).toEqual([]);
+  });
+
+  it('reads a number typed as a string, and refuses one that is not a number', () => {
+    // Answers arrive as JSON from a saved draft, where a number input's value
+    // is a string. Refusing those would flag every resumed questionnaire.
+    expect(check({ discount_rate: '25' })).toEqual([]);
+    expect(check({ discount_rate: ' 25 ' })).toEqual([]);
+    expect(check({ discount_rate: 'twenty five' })[0]?.message).toBe('Discount rate must be a number.');
+    expect(check({ discount_rate: true })[0]?.message).toBe('Discount rate must be a number.');
+  });
+
+  it('refuses a number that is not finite', () => {
+    // `Infinity` cannot survive JSON, but `1e999` parses back out as it.
+    expect(check({ discount_rate: Number.POSITIVE_INFINITY })[0]?.message).toBe(
+      'Discount rate must be a number.',
+    );
+    expect(check({ discount_rate: Number.NaN })[0]?.message).toBe('Discount rate must be a number.');
+  });
+
+  it('refuses a date answered as something other than a string', () => {
+    expect(check({ round_date: 20260801 })[0]?.message).toBe(
+      'Round date must be a valid date (YYYY-MM-DD).',
+    );
+    expect(check({ round_date: '2026-08-01' })).toEqual([]);
+    // Surrounding whitespace is the client's, not an invalid date.
+    expect(check({ round_date: ' 2026-08-01 ' })).toEqual([]);
+  });
+
+  it('accepts any string for a select the schema gave no options for', () => {
+    expect(check({ free_choice: 'anything at all' })).toEqual([]);
+    expect(check({ free_choice: '   ' })).toEqual([]);
+  });
+
+  it('compares two dates, not their text', () => {
+    const rule: IntakeCrossRule = {
+      key: 'round_before_incorporation',
+      field: 'round_date',
+      severity: 'error',
+      left: 'round_date',
+      op: 'lt',
+      right: 'incorporated_on',
+      message: 'The round closed before the company was incorporated.',
+    };
+    expect(check({ round_date: '2019-01-01', incorporated_on: '2020-06-01' }, [rule])).toEqual([
+      { field: 'round_date', severity: 'error', message: rule.message },
+    ]);
+    expect(check({ round_date: '2021-01-01', incorporated_on: '2020-06-01' }, [rule])).toEqual([]);
+    // Same day is not before it.
+    expect(check({ round_date: '2020-06-01', incorporated_on: '2020-06-01' }, [rule])).toEqual([]);
+    // An impossible date is no comparison at all — the field's own error stands.
+    expect(check({ round_date: '2020-02-30', incorporated_on: '2020-06-01' }, [rule]).map((i) => i.message)).toEqual(
+      ['Round date must be a valid date (YYYY-MM-DD).'],
+    );
+  });
+
+  it('evaluates the inclusive operators the server may send', () => {
+    const withOp = (op: IntakeCrossRule['op']): IntakeCrossRule => ({
+      key: `rate_${op}`,
+      field: 'discount_rate',
+      severity: 'warning',
+      left: 'discount_rate',
+      op,
+      right: 25,
+      message: `fired: ${op}`,
+    });
+    expect(check({ discount_rate: 25 }, [withOp('gte')]).map((i) => i.message)).toEqual(['fired: gte']);
+    expect(check({ discount_rate: 25 }, [withOp('lte')]).map((i) => i.message)).toEqual(['fired: lte']);
+    expect(check({ discount_rate: 25 }, [withOp('gt')])).toEqual([]);
+    expect(check({ discount_rate: 25 }, [withOp('lt')])).toEqual([]);
+  });
+
+  it('skips a rule whose guard field is unanswered', () => {
+    const rule: IntakeCrossRule = {
+      key: 'guarded',
+      field: 'discount_rate',
+      severity: 'warning',
+      left: 'discount_rate',
+      op: 'gt',
+      right: 0,
+      when: { field: 'free_choice', equals: ['yes'] },
+      message: 'fired',
+    };
+    expect(check({ discount_rate: 10 }, [rule])).toEqual([]);
+    expect(check({ discount_rate: 10, free_choice: 'yes' }, [rule]).map((i) => i.message)).toEqual(['fired']);
+  });
+});
+
+describe('isValidIsoDate — the shape check before the calendar check', () => {
+  it('refuses anything that is not YYYY-MM-DD', () => {
+    expect(isValidIsoDate('')).toBe(false);
+    expect(isValidIsoDate('01/02/2023')).toBe(false);
+    expect(isValidIsoDate('2023-1-2')).toBe(false);
+    expect(isValidIsoDate('2023-01-02T00:00:00Z')).toBe(false);
+    expect(isValidIsoDate('not a date')).toBe(false);
+  });
+
+  it('accepts a well-formed day at either end of the range', () => {
+    expect(isValidIsoDate('1900-01-01')).toBe(true);
+    expect(isValidIsoDate('2999-12-31')).toBe(true);
+  });
+});
