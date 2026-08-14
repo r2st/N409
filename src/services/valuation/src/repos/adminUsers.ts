@@ -64,18 +64,44 @@ export async function listUsers(
     params,
   );
 
+  /*
+   * Page first, then join — not the other way round.
+   *
+   * The single-statement form joined `partners`, `user_roles` and `roles`
+   * across every matching user, grouped the lot, sorted it, and only then
+   * threw all but 25 rows away. LIMIT cannot be pushed under a GROUP BY, so
+   * the aggregate's cost was the size of the *table*, not the size of the
+   * page: a console listing 25 of 40,000 accounts built 40,000 role arrays to
+   * print 25 of them, and the work grew with every sign-up. The partial index
+   * on `users (created_at DESC) WHERE deleted_at IS NULL` (0148) can serve the
+   * ordering directly, but only for a plan that reads `users` alone — which is
+   * what the CTE is.
+   *
+   * The tiebreaker is not cosmetic. `created_at DESC` alone leaves ties in
+   * whatever order the plan happens to produce, and this query is paginated:
+   * two users created in the same millisecond (a SCIM import, a seeded test
+   * fixture) could appear on both page one and page two, or on neither. The
+   * ids are ULIDs, so `id DESC` continues the ordering the timestamp started
+   * rather than cutting across it.
+   */
   const paged = [...params, filters.perPage, (filters.page - 1) * filters.perPage];
   const { rows } = await pool.query<AdminUserRow>(
-    `SELECT u.*, p.name AS partner_name,
+    `WITH page AS (
+       SELECT u.id, u.created_at
+         FROM users u
+         ${whereSql}
+        ORDER BY u.created_at DESC, u.id DESC
+        LIMIT $${paged.length - 1} OFFSET $${paged.length}
+     )
+     SELECT u.*, p.name AS partner_name,
             coalesce(array_agg(r.key ORDER BY r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
-     FROM users u
+     FROM page
+     JOIN users u ON u.id = page.id
      LEFT JOIN partners p ON p.id = u.partner_id
      LEFT JOIN user_roles ur ON ur.user_id = u.id
      LEFT JOIN roles r ON r.id = ur.role_id
-     ${whereSql}
      GROUP BY u.id, p.name
-     ORDER BY u.created_at DESC
-     LIMIT $${paged.length - 1} OFFSET $${paged.length}`,
+     ORDER BY u.created_at DESC, u.id DESC`,
     paged,
   );
   return { items: rows, total: Number(countRows[0]!.count) };
