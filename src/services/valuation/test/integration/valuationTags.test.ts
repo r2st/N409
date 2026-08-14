@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { newUlid } from '@n409/shared';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import {
   acceptedTagSlugs,
@@ -266,7 +267,12 @@ describe.skipIf(!dbUp)('engagement tags', () => {
         ],
         ops.id,
       );
-      await upsertValuationTags(ctx.pool, b, [{ slug: 'saas', source: 'manual', status: 'accepted' }], ops.id);
+      await upsertValuationTags(
+        ctx.pool,
+        b,
+        [{ slug: 'saas', source: 'manual', status: 'accepted' }],
+        ops.id,
+      );
 
       const map = await acceptedTagsFor(ctx.pool, [a, b, empty]);
       expect(map.get(a)).toEqual(['fintech', 'saas']);
@@ -287,8 +293,18 @@ describe.skipIf(!dbUp)('engagement tags', () => {
       const a = await newEngagement('Usage A');
       const b = await newEngagement('Usage B');
       const unreadable = await newEngagement('Usage C');
-      await upsertValuationTags(ctx.pool, a, [{ slug: 'biotech', source: 'manual', status: 'accepted' }], ops.id);
-      await upsertValuationTags(ctx.pool, b, [{ slug: 'biotech', source: 'manual', status: 'accepted' }], ops.id);
+      await upsertValuationTags(
+        ctx.pool,
+        a,
+        [{ slug: 'biotech', source: 'manual', status: 'accepted' }],
+        ops.id,
+      );
+      await upsertValuationTags(
+        ctx.pool,
+        b,
+        [{ slug: 'biotech', source: 'manual', status: 'accepted' }],
+        ops.id,
+      );
       await upsertValuationTags(
         ctx.pool,
         unreadable,
@@ -439,7 +455,17 @@ describe.skipIf(!dbUp)('engagement tags', () => {
     });
 
     it("drops an engagement's tags with the engagement", async () => {
-      const id = await newEngagement('Cascade Co');
+      // `ON DELETE CASCADE` on the valuation reference. Not a formality: the
+      // filter's index is (slug, valuation_id), so an orphaned tag row would
+      // keep answering a precedent query with an engagement that is gone.
+      // Inserted directly rather than through the API: an engagement created
+      // over HTTP carries `valuation_events`, which are append-only by trigger
+      // and so pin their engagement in place for good.
+      const id = newUlid();
+      await ctx.pool.query(
+        `INSERT INTO valuations (id, kind, company_name, user_id) VALUES ($1, '409a', $2, $3)`,
+        [id, 'Cascade Co', client.id],
+      );
       await upsertValuationTag(ctx.pool, id, { slug: 'saas', source: 'manual', status: 'accepted' }, ops.id);
       await ctx.pool.query('DELETE FROM valuations WHERE id = $1', [id]);
       const { rows } = await ctx.pool.query('SELECT 1 FROM valuation_tags WHERE valuation_id = $1', [id]);
@@ -688,11 +714,16 @@ describe.skipIf(!dbUp)('engagement tags', () => {
       const id = await newEngagement('Audited Co');
       await addTag(id, { slug: 'saas' });
       await decide(id, 'saas', 'rejected');
-      await upsertValuationTag(ctx.pool, id, { slug: 'fintech', source: 'manual', status: 'accepted' }, ops.id);
+      await upsertValuationTag(
+        ctx.pool,
+        id,
+        { slug: 'fintech', source: 'manual', status: 'accepted' },
+        ops.id,
+      );
       await removeTag(id, 'fintech');
 
       const { rows } = await ctx.pool.query<{ type: string }>(
-        `SELECT type FROM admin_events WHERE subject_id = $1 ORDER BY created_at, type`,
+        `SELECT type FROM admin_events WHERE subject_id = $1 ORDER BY occurred_at, type`,
         [id],
       );
       const types = rows.map((r) => r.type);
@@ -787,9 +818,13 @@ describe.skipIf(!dbUp)('engagement tags', () => {
     });
 
     it('is unfiltered when nothing in the list is a tag', async () => {
+      // Not an empty conjunction that matches nothing — the filter collapses to
+      // absent, so the caller gets their whole readable list rather than a
+      // silently empty page.
       const filtered = await listIds('tags=web3_native');
-      const all = await listIds('state=');
+      const all = await listIds('');
       expect(filtered.length).toBe(all.length);
+      expect(filtered.length).toBeGreaterThan(0);
     });
 
     it("still applies the caller's own visibility", async () => {

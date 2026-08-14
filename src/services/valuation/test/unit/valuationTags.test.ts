@@ -364,8 +364,7 @@ describe('presentValuationTag', () => {
 
 // ── The list filter's query parsing ──────────────────────────────────────────
 
-const parseTags = (query: Record<string, string>) =>
-  toRepoFilters(ValuationFilterQuery.parse(query)).tags;
+const parseTags = (query: Record<string, string>) => toRepoFilters(ValuationFilterQuery.parse(query)).tags;
 
 describe('the tags list filter', () => {
   it('splits a comma-separated list', () => {
