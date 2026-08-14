@@ -254,6 +254,28 @@ function seniorityCell(value: unknown): string {
 }
 
 /**
+ * The conversion ratio the allocation used, on an engine `share_classes` entry.
+ *
+ * Same convention as `capTable.ts`'s `asConvertedShares`, which is the
+ * canonical statement of it but reads the *stored* cap-table row rather than
+ * the engine payload this exhibit transcribes. Only preferred converts; common
+ * and options are already in common-equivalent units, which is why the engine
+ * attaches a ratio to no other kind and `_segments` puts an exercised option
+ * pool into the residual at its bare share count.
+ *
+ * Absent means 1:1 — the engine's own default, and what every calculation
+ * stored before the field existed meant. A ratio at or below zero counts 1:1
+ * too: the engine refuses such a table outright, so it never reached a price,
+ * and quoting an as-converted count of zero against it would read as a class
+ * that converts into nothing rather than as the broken row it is.
+ */
+function conversionRatio(c: Record<string, unknown>): number {
+  if (text(c.kind) !== 'preferred') return 1;
+  const r = num(c.conversion_ratio);
+  return r === null || r <= 0 ? 1 : r;
+}
+
+/**
  * The cap table the allocation actually ran on.
  *
  * Two shapes reach the engine and both belong here, because which one was used
@@ -275,6 +297,7 @@ export function capitalizationExhibit(
     const rows = classes.map((c) => {
       const kind = text(c.kind) ?? '—';
       const count = num(c.shares);
+      const conversion = conversionRatio(c);
       const preference = num(c.preference);
       const cap = num(c.participation_cap);
       const participation =
@@ -289,6 +312,15 @@ export function capitalizationExhibit(
         esc(text(c.name) ?? '—'),
         kind === 'option' ? 'Options' : kind === 'preferred' ? 'Preferred' : 'Common',
         count === null ? '—' : shares(count),
+        // The count the residual is actually split on, with the ratio that
+        // produced it wherever it is not 1:1. Printed for every class, not only
+        // the converting ones, so the column totals to the basis the allocation
+        // ran on rather than to a mixture of two bases.
+        count === null
+          ? '—'
+          : conversion === 1
+            ? shares(count)
+            : `${shares(count * conversion)} (${ratio(conversion)})`,
         kind === 'option'
           ? `Strike ${formatCurrency(num(c.strike) ?? 0, currency, 4)}`
           : preference === null
@@ -304,21 +336,37 @@ export function capitalizationExhibit(
       ];
     });
     const totalShares = classes.reduce((sum, c) => sum + (num(c.shares) ?? 0), 0);
+    const totalAsConverted = classes.reduce((sum, c) => sum + (num(c.shares) ?? 0) * conversionRatio(c), 0);
     const totalPreference = classes.reduce((sum, c) => sum + (num(c.preference) ?? 0), 0);
+    const converts = classes.some((c) => conversionRatio(c) !== 1);
     return section(SCHEDULE.A, [
       P(
         `The capitalization of ${esc(ctx.companyName)}${ctx.valuationDate ? ` as of ${ctx.valuationDate}` : ''}, ` +
           'as allocated by the option-pricing waterfall. Liquidation preference is the aggregate ' +
           'preference of the class; seniority 1 is the most senior rank, and classes sharing a rank ' +
-          'rank pari passu.',
+          'rank pari passu. The residual above the preference stack is shared on the as-converted ' +
+          'basis, so it is the as-converted column — outstanding shares at each class&rsquo;s ' +
+          'conversion ratio — that the allocation divides.' +
+          (converts
+            ? ' A class converting at other than 1:1 carries its ratio beside the converted count.'
+            : ' No class on this table converts at other than 1:1.'),
       ),
       table({
-        head: ['Class', 'Type', 'Shares', 'Liquidation preference', 'Seniority', 'Participating'],
+        head: [
+          'Class',
+          'Type',
+          'Shares',
+          'As-converted',
+          'Liquidation preference',
+          'Seniority',
+          'Participating',
+        ],
         rows,
         foot: [
           'Total',
           '',
           shares(totalShares),
+          shares(totalAsConverted),
           formatCurrency(totalPreference, currency, 0),
           '',
           `${classes.length} classes`,
@@ -821,9 +869,7 @@ export function rollforwardExhibit(
           `The equity value concluded by this valuation is ` +
             `<strong>${formatCurrency(concluded, currency, 0)}</strong>, against the rolled anchor of ` +
             `${formatCurrency(run.rolled_equity_value, currency, 0)}` +
-            (drift === null
-              ? '.'
-              : ` — a difference of ${drift > 0 ? '+' : ''}${formatPercent(drift, 1)}.`) +
+            (drift === null ? '.' : ` — a difference of ${drift > 0 ? '+' : ''}${formatPercent(drift, 1)}.`) +
             ' The two are not the same measurement: the anchor is an input to the allocation, and the ' +
             'concluded value is the weighted result of the approaches reconciled in Exhibit B.',
         )
@@ -3303,7 +3349,8 @@ export function opmCalculationsExhibit(
   const dec = (v: unknown, dp = 4) => (num(v) === null ? '—' : (num(v) as number).toFixed(dp));
 
   const inputs: string[][] = [];
-  if (equity !== null) inputs.push(['Underlying (S) — equity value allocated', formatCurrency(equity, currency, 0)]);
+  if (equity !== null)
+    inputs.push(['Underlying (S) — equity value allocated', formatCurrency(equity, currency, 0)]);
   if (sigma !== null) inputs.push(['Volatility (σ)', formatPercent(sigma, 1)]);
   if (t !== null) inputs.push(['Time to liquidity (T)', `${t.toFixed(2)} years`]);
   if (rf !== null) inputs.push(['Risk-free rate (r)', formatPercent(rf, 2)]);

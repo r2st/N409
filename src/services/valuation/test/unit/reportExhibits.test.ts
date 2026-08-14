@@ -198,7 +198,12 @@ const ROLLFORWARD: RollforwardRunRow = {
     { step: 'time_accretion', annual_rate: 0.25, years: 1.0, factor: 1.25, value: 42_000_000 },
   ],
   material_changes: [
-    { field: 'revenue', material: false, detail: 'revenue moved +4.0% (below 20% threshold)', delta_pct: 0.04 },
+    {
+      field: 'revenue',
+      material: false,
+      detail: 'revenue moved +4.0% (below 20% threshold)',
+      delta_pct: 0.04,
+    },
   ],
   requires_full_revaluation: false,
   pre_populated_inputs: { valuation_date: '2026-06-30', last_round_post_money: 42_000_000 },
@@ -523,6 +528,64 @@ describe('capitalization exhibit', () => {
   it('states a participation cap, which decides how much preferred can take', () => {
     const seen = plain(capitalizationExhibit(INPUTS, CONTEXT)!.html);
     expect(seen).toContain('Yes, capped at $20,000,000');
+  });
+
+  /**
+   * The residual is split on the as-converted count, so a class converting at
+   * other than 1:1 holds a different share of it than its outstanding count
+   * suggests. The exhibit says it is "the capitalization ... as allocated by
+   * the option-pricing waterfall", so the count the waterfall divided has to
+   * appear on it — and so does the ratio, or the reader cannot check the one
+   * against the other.
+   */
+  it('states the as-converted count and the ratio behind it', () => {
+    const classes = INPUTS.share_classes.map((c) =>
+      c.name === 'Series A' ? { ...c, conversion_ratio: 2 } : c,
+    );
+    const seen = plain(capitalizationExhibit({ ...INPUTS, share_classes: classes }, CONTEXT)!.html);
+    expect(seen).toContain('As-converted');
+    // 4,000,000 outstanding converting 2:1, both counts stated.
+    expect(seen).toContain('4,000,000');
+    expect(seen).toContain('8,000,000 (2.0000x)');
+    // Total as-converted is 8,000,000 common + 8,000,000 converted + 1,500,000
+    // options = 17,500,000, against 13,500,000 outstanding.
+    expect(seen).toContain('13,500,000');
+    expect(seen).toContain('17,500,000');
+  });
+
+  it('does not clutter a 1:1 table with a ratio every row shares', () => {
+    const seen = plain(capitalizationExhibit(INPUTS, CONTEXT)!.html);
+    expect(seen).not.toContain('1.0000x');
+    expect(seen).toContain('No class on this table converts at other than 1:1');
+    // Both share columns total the same figure when nothing converts.
+    expect(seen.match(/13,500,000/g)).toHaveLength(2);
+  });
+
+  /**
+   * A ratio at or below zero is a table the engine refuses outright, so it
+   * never reached a price. Counting it as written would quote an as-converted
+   * count of zero — a class that converts into nothing — instead of leaving the
+   * row reading as the ordinary 1:1 it is stored as.
+   */
+  it('counts an unusable conversion ratio 1:1 rather than into nothing', () => {
+    for (const bad of [0, -2, 'two', null]) {
+      const classes = INPUTS.share_classes.map((c) =>
+        c.name === 'Series A' ? { ...c, conversion_ratio: bad } : c,
+      );
+      const seen = plain(capitalizationExhibit({ ...INPUTS, share_classes: classes }, CONTEXT)!.html);
+      expect(seen).toContain('13,500,000');
+      expect(seen).not.toContain('0 (');
+    }
+  });
+
+  /** Only preferred converts — the engine attaches a ratio to no other kind. */
+  it('ignores a conversion ratio sitting on common or an option pool', () => {
+    const classes = INPUTS.share_classes.map((c) =>
+      c.kind === 'preferred' ? c : { ...c, conversion_ratio: 3 },
+    );
+    const seen = plain(capitalizationExhibit({ ...INPUTS, share_classes: classes }, CONTEXT)!.html);
+    expect(seen).not.toContain('3.0000x');
+    expect(seen.match(/13,500,000/g)).toHaveLength(2);
   });
 
   it('marks an uncapped participating class as uncapped', () => {
@@ -2851,8 +2914,10 @@ describe('Appendix II-1 — core operating metrics', () => {
   });
 
   it('states a contraction rather than hiding it behind a negative multiple', () => {
-    const out = operatingMetricsExhibit(cells({ 'operating_metrics.arr.fy_current': 3_000_000 }), CONTEXT)!
-      .html;
+    const out = operatingMetricsExhibit(
+      cells({ 'operating_metrics.arr.fy_current': 3_000_000 }),
+      CONTEXT,
+    )!.html;
     // Net new ARR is -1.0M and says so; the burn multiple it would imply
     // (3.0M / -1.0M = -3) is withheld, because a negative burn multiple reads
     // as the efficient end of a scale this company is at the wrong end of.
@@ -2997,8 +3062,7 @@ describe('Appendix III in the assembled exhibit list', () => {
  * appendix against the engine rather than against itself.
  */
 describe('Appendix IV — the option pricing behind the allocation', () => {
-  const html = (results: Record<string, unknown> = RESULTS) =>
-    opmCalculationsExhibit(results, CONTEXT)!.html;
+  const html = (results: Record<string, unknown> = RESULTS) => opmCalculationsExhibit(results, CONTEXT)!.html;
   const seen = (results?: Record<string, unknown>) => plain(html(results));
 
   /** `RESULTS` with the allocation replaced wholesale. */
