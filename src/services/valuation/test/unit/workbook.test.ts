@@ -21,8 +21,13 @@ function valueOf(sheets: ReturnType<typeof computeWorkbook>, sheet: string, row:
 }
 
 describe('workbook template', () => {
-  it('defines the three sheets with input and derived rows', () => {
-    expect(WORKBOOK_SHEETS.map((s) => s.key)).toEqual(['income_statement', 'balance_sheet', 'assumptions']);
+  it('defines the four sheets with input and derived rows', () => {
+    expect(WORKBOOK_SHEETS.map((s) => s.key)).toEqual([
+      'income_statement',
+      'balance_sheet',
+      'operating_metrics',
+      'assumptions',
+    ]);
     for (const sheet of WORKBOOK_SHEETS) {
       expect(sheet.rows.length).toBeGreaterThan(0);
       expect(sheet.columns.length).toBeGreaterThan(0);
@@ -35,21 +40,32 @@ describe('workbook template', () => {
   it('derived formulas only reference rows defined earlier in the sheet (topological order)', () => {
     // computeWorkbook resolves rows in definition order; a formula reading a
     // later row would silently see null. Guard: with ALL inputs set, every
-    // derived row that has all operands must resolve to a number.
+    // derived row must resolve to a number in every column but the first.
+    //
+    // The first column is exempt because a year-over-year row has no prior
+    // period to reference there, and so does every row chaining off one — net
+    // new ARR, and the burn multiple that divides by it. Exempting column 0
+    // wholesale rather than naming those rows is deliberate: a list of names is
+    // a thing that goes stale silently, and it is exactly what this test used
+    // to carry (`revenue_growth`, alone) before the operating series added
+    // three more.
+    //
+    // Inputs vary by column rather than being a flat 100 everywhere, because a
+    // flat series has zero net new ARR in every period — which makes the burn
+    // multiple legitimately null throughout and would hide a real ordering bug
+    // behind a well-behaved guard.
     const cells: WorkbookCellInput[] = [];
     for (const sheet of WORKBOOK_SHEETS) {
       for (const row of sheet.rows) {
         if (row.kind !== 'input') continue;
-        for (const col of sheet.columns) cells.push(cell(sheet.key, row.key, col.key, 100));
+        sheet.columns.forEach((col, i) => cells.push(cell(sheet.key, row.key, col.key, 100 * (i + 1))));
       }
     }
     const computed = computeWorkbook(cells);
     for (const sheet of computed) {
       for (const row of sheet.rows) {
         if (row.kind !== 'derived') continue;
-        // growth needs a previous column, so skip the first column for it
-        const startIdx = row.key === 'revenue_growth' ? 1 : 0;
-        for (const c of row.cells.slice(startIdx)) {
+        for (const c of row.cells.slice(1)) {
           expect(c.value, `${sheet.key}/${row.key}/${c.column_key}`).toBeTypeOf('number');
         }
       }
@@ -127,6 +143,74 @@ describe('computeWorkbook', () => {
         for (const c of row.cells) expect(c.value).toBeNull();
       }
     }
+  });
+});
+
+/**
+ * The operating series (gap #13). Appendix II-1 transcribes this sheet without
+ * doing arithmetic of its own, so every ratio the deliverable prints is one of
+ * these — which is why they are pinned here rather than only through the
+ * rendered page.
+ */
+describe('operating metrics sheet', () => {
+  const base = (over: Partial<Record<string, number>> = {}) =>
+    computeWorkbook([
+      cell('operating_metrics', 'arr', 'fy_minus_1', 4_000_000),
+      cell('operating_metrics', 'arr', 'fy_current', over.arr ?? 6_000_000),
+      cell('operating_metrics', 'customers', 'fy_current', over.customers ?? 120),
+      cell('operating_metrics', 'employees', 'fy_minus_1', 30),
+      cell('operating_metrics', 'employees', 'fy_current', over.employees ?? 48),
+      cell('operating_metrics', 'net_burn', 'fy_current', over.net_burn ?? 3_000_000),
+    ]);
+
+  const at = (sheets: ReturnType<typeof computeWorkbook>, row: string) =>
+    valueOf(sheets, 'operating_metrics', row, 'fy_current');
+
+  it('derives the growth, per-unit and efficiency rows', () => {
+    const sheets = base();
+    expect(at(sheets, 'net_new_arr')).toBe(2_000_000);
+    expect(at(sheets, 'arr_growth')).toBeCloseTo(0.5, 10);
+    expect(at(sheets, 'arr_per_customer')).toBe(50_000);
+    expect(at(sheets, 'arr_per_employee')).toBe(125_000);
+    expect(at(sheets, 'burn_multiple')).toBe(1.5);
+    expect(at(sheets, 'headcount_growth')).toBeCloseTo(0.6, 10);
+  });
+
+  it('has no growth row in the first period, where there is no prior', () => {
+    const sheets = base();
+    expect(valueOf(sheets, 'operating_metrics', 'arr_growth', 'fy_minus_2')).toBeNull();
+    expect(valueOf(sheets, 'operating_metrics', 'net_new_arr', 'fy_minus_2')).toBeNull();
+  });
+
+  it('refuses a per-unit figure on a non-positive denominator', () => {
+    // Not "a very large ARR per customer": zero customers with revenue is a
+    // broken input, and a finite number here invites a reader to interpret it.
+    expect(at(base({ customers: 0 }), 'arr_per_customer')).toBeNull();
+    expect(at(base({ employees: -5 }), 'arr_per_employee')).toBeNull();
+  });
+
+  it('refuses a burn multiple where recurring revenue did not grow', () => {
+    // Flat: the quotient is undefined, not infinite.
+    expect(at(base({ arr: 4_000_000 }), 'burn_multiple')).toBeNull();
+    // Contracting: 3.0M / -1.0M = -3, and a negative burn multiple reads as the
+    // efficient end of a scale it is the wrong end of.
+    const shrank = base({ arr: 3_000_000 });
+    expect(at(shrank, 'net_new_arr')).toBe(-1_000_000);
+    expect(at(shrank, 'burn_multiple')).toBeNull();
+  });
+
+  it('carries a negative burn through as cash generated', () => {
+    // The sign convention is consumption-positive, so a company throwing off
+    // cash has a negative burn — and a negative burn multiple that means what
+    // it says, which is why this one is not withheld.
+    expect(at(base({ net_burn: -500_000 }), 'burn_multiple')).toBe(-0.25);
+  });
+
+  it('accepts writes to its inputs and refuses them to its derived rows', () => {
+    expect(validateCellRef('operating_metrics', 'arr', 'fy_current')).toBeNull();
+    expect(validateCellRef('operating_metrics', 'net_burn', 'fy_minus_2')).toBeNull();
+    expect(validateCellRef('operating_metrics', 'burn_multiple', 'fy_current')).toMatch(/derived/);
+    expect(validateCellRef('operating_metrics', 'arr_growth', 'fy_current')).toMatch(/derived/);
   });
 });
 

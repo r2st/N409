@@ -58,19 +58,21 @@ describe('the 409.ai comparison document', () => {
   });
 
   /**
-   * The two schedules the document still reports as missing. If either is built,
-   * this fails — which is the point: the round that ships one has to say so
-   * here, rather than leaving the next round to plan against a closed gap.
+   * The two schedules the document reported as missing until this round.
+   *
+   * The case has flipped rather than been deleted, and it still does the same
+   * job from the other side. It used to fail when either appendix was built
+   * while the document still called it a gap; it now fails if either is removed
+   * while the document still calls it closed. Both directions are the same
+   * defect — a reader planning work against a claim the code has refuted.
    */
-  it('is right that the OPM and time-series appendices do not exist yet', async () => {
+  it('is right that the OPM and time-series appendices now ship', async () => {
     const text = await doc();
-    expect(text).toContain('**GAP #11 — OPEN**');
-    expect(text).toContain('**GAP #13 — OPEN**');
+    expect(text).toContain('**GAP #11 — CLOSED**');
+    expect(text).toContain('**GAP #13 — CLOSED**');
     const names = SCHEDULE_CATALOGUE.map((s) => s.name);
-    // `\b` and not `includes('opm')`: "Stage of Development" contains it, which
-    // is how the first draft of this case failed.
-    expect(names.some((n) => /\bOPM\b/.test(n))).toBe(false);
-    expect(names.some((n) => /time series/i.test(n))).toBe(false);
+    expect(names.some((n) => /Option Pricing Model/.test(n))).toBe(true);
+    expect(names.some((n) => /Operating Metrics/.test(n))).toBe(true);
   });
 
   /** The open list and the headline count are one claim written twice. */
@@ -80,7 +82,7 @@ describe('the 409.ai comparison document', () => {
     // §2 marks #23 open in a differently-shaped cell.
     const openInAiTable = new Set([...text.matchAll(/\*\*#(\d+) — OPEN\*\*/g)].map((m) => m[1]));
     const all = new Set([...open, ...openInAiTable]);
-    expect([...all].sort()).toEqual(['11', '13', '23']);
-    expect(text).toContain('31 identified, 28 closed, 3 open');
+    expect([...all].sort()).toEqual(['23']);
+    expect(text).toContain('31 identified, 30 closed, 1 open');
   });
 });

@@ -100,9 +100,9 @@ describe('sampleReportOutline', () => {
     expect(SAMPLE_EXHIBITS.map((e) => e.always)).toEqual(SCHEDULE_CATALOGUE.map((s) => s.always));
   });
 
-  it('promises the three appendices the deliverable actually carries', () => {
+  it('promises every appendix the deliverable actually carries', () => {
     const byId = new Map(SAMPLE_EXHIBITS.map((e) => [e.id, e]));
-    for (const id of ['I', 'II', 'III']) {
+    for (const id of ['I', 'II', 'III', 'IV']) {
       expect(byId.has(id), `Appendix ${id} is missing from the sample page`).toBe(true);
       // An appendix nobody has entered the data for is not rendered, so the
       // page must not present one as guaranteed.
@@ -111,6 +111,7 @@ describe('sampleReportOutline', () => {
     expect(byId.get('I')!.title).toContain('WACC');
     expect(byId.get('II')!.title).toContain('Historical');
     expect(byId.get('III')!.title).toContain('Required Rates of Return');
+    expect(byId.get('IV')!.title).toContain('Option Pricing Model');
   });
 
   it('explains every schedule — the exhibit copy is complete and stays closed', () => {

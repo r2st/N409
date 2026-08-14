@@ -12,12 +12,14 @@ import {
   incomeExhibit,
   levelOfValueExhibit,
   marketExhibit,
+  opmCalculationsExhibit,
   peerSetExhibit,
   pwermExhibit,
   rollforwardExhibit,
   sensitivityExhibit,
   rfrSensitivityExhibit,
   financialsExhibit,
+  operatingMetricsExhibit,
   waccExhibit,
   scheduleTitle,
   SCHEDULE_CATALOGUE,
@@ -96,15 +98,58 @@ const RESULTS = {
     common_per_share: 1.828148,
     common_shares: 8_000_000,
     common_value: 14_625_184,
+    /*
+     * The tranche values are the call spreads of `option_schedule` below —
+     * C(from) − C(to), and C(40M) − 0 for the open-ended tranche — rather than
+     * the round numbers that were here while the fixture only had to sum to
+     * the equity value. Appendix IV's entire claim is that Exhibit F's value
+     * column *is* that column of spreads, so the fixture the two schedules are
+     * read out of has to be one where it holds.
+     */
     breakpoints: [
-      { from: 0, to: 10_000_000, participants: { 'Series A': 1 }, value: 9_400_000 },
+      { from: 0, to: 10_000_000, participants: { 'Series A': 1 }, value: 7_706_565.52 },
       {
         from: 10_000_000,
         to: 40_000_000,
         participants: { Common: 0.666667, 'Series A': 0.333333 },
-        value: 21_000_000,
+        value: 12_879_706.07,
       },
-      { from: 40_000_000, to: null, participants: { Common: 1 }, value: 11_600_000 },
+      { from: 40_000_000, to: null, participants: { Common: 1 }, value: 21_413_728.41 },
+    ],
+    /*
+     * The option-pricing working `engine/waterfall.py` records beside the
+     * breakpoints (Appendix IV), one row per distinct strike.
+     *
+     * Transcribed from the engine's own `bs_call_terms` at the rounding
+     * `allocate_waterfall` applies — six decimals on the dimensionless terms,
+     * two on the money — rather than typed by hand. A plausible-looking set
+     * the appendix happened to agree with would pass the same assertions and
+     * prove nothing about the deliverable.
+     *
+     * The zero strike carries no d₁/d₂ because at that strike they do not
+     * exist: a call struck at zero is the underlying, and `bs_call_terms`
+     * reports the probabilities as their limit of 1 rather than as blanks.
+     */
+    option_schedule: [
+      { strike: 0, d1: null, d2: null, n_d1: 1.0, n_d2: 1.0, discount_factor: null, call: 42_000_000.0 },
+      {
+        strike: 10_000_000,
+        d1: 1.909034,
+        d2: 0.692996,
+        n_d1: 0.971871,
+        n_d2: 0.755844,
+        discount_factor: 0.863294,
+        call: 34_293_434.48,
+      },
+      {
+        strike: 40_000_000,
+        d1: 0.769026,
+        d2: -0.447013,
+        n_d1: 0.779061,
+        n_d2: 0.327433,
+        discount_factor: 0.863294,
+        call: 21_413_728.41,
+      },
     ],
     classes: {
       Common: { kind: 'common', shares: 8_000_000, value: 14_625_184, per_share: 1.828148 },
@@ -184,6 +229,7 @@ describe('buildExhibits', () => {
       'Exhibit F-2 — Allocation Sensitivity',
       'Exhibit F-3 — Risk-Free Rate Sensitivity',
       'Exhibit H — Discounts and Concluded Value',
+      'Appendix IV — Option Pricing Model Calculations',
     ]);
   });
 
@@ -236,8 +282,8 @@ describe('buildExhibits', () => {
  * the renderer printed fifteen, and the index test's list was missing Appendix
  * III — and nothing failed, because no test rendered every schedule at once.
  *
- * This is that test. It builds the engagement that produces all fifteen and
- * requires the headings to be the catalogue, in the catalogue's order. A
+ * This is that test. It builds the engagement that produces every one of them
+ * and requires the headings to be the catalogue, in the catalogue's order. A
  * builder added without an entry fails here; an entry whose title no longer
  * matches its builder fails here; and the public page, being derived from the
  * catalogue, cannot then be describing a different document.
@@ -396,10 +442,11 @@ describe('the schedule catalogue', () => {
       created_by: null,
       created_at: new Date('2026-06-30T00:00:00Z'),
     } as ProjectionRow,
-    // Appendix II.
+    // Appendix II, and Appendix II-1 from the same resolved workbook.
     financials: computeWorkbook([
       { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 6_000_000 },
       { sheet: 'balance_sheet', row_key: 'cash', column_key: 'fy_current', value: 3_000_000 },
+      { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_current', value: 5_400_000 },
     ]),
     // Appendix III.
     developmentStage: 3,
@@ -440,10 +487,11 @@ describe('the schedule catalogue', () => {
     const bare = buildExhibits(calculation(), CONTEXT).map((s) => s.heading);
     for (const s of SCHEDULE_CATALOGUE) {
       expect(bare.includes(scheduleTitle(s)), `${scheduleTitle(s)} always=${s.always}`).toBe(
-        // C, D, F-2 and F-3 survive the bare fixture because INPUTS carries an
-        // income approach, a market approach and a full OPM assumption set;
-        // none of the four is guaranteed in general.
-        s.always || s.id === 'C' || s.id === 'D' || s.id === 'F-2' || s.id === 'F-3',
+        // C, D, F-2, F-3 and IV survive the bare fixture because INPUTS carries
+        // an income approach, a market approach and a full OPM assumption set,
+        // and RESULTS carries the option schedule any OPM run now records;
+        // none of the five is guaranteed in general.
+        s.always || s.id === 'C' || s.id === 'D' || s.id === 'F-2' || s.id === 'F-3' || s.id === 'IV',
       );
     }
     expect(SCHEDULE_CATALOGUE.filter((s) => s.always).map((s) => s.id)).toEqual(['A', 'B', 'F', 'H']);
@@ -819,6 +867,7 @@ describe('Exhibit B-2 — roll-forward from the prior valuation', () => {
       'Exhibit F-2 — Allocation Sensitivity',
       'Exhibit F-3 — Risk-Free Rate Sensitivity',
       'Exhibit H — Discounts and Concluded Value',
+      'Appendix IV — Option Pricing Model Calculations',
     ]);
   });
 
@@ -1632,6 +1681,7 @@ describe('peer set exhibit', () => {
       'Exhibit F-2 — Allocation Sensitivity',
       'Exhibit F-3 — Risk-Free Rate Sensitivity',
       'Exhibit H — Discounts and Concluded Value',
+      'Appendix IV — Option Pricing Model Calculations',
     ]);
   });
 
@@ -2264,8 +2314,15 @@ describe('dlomDerivationExhibit', () => {
     const headings = buildExhibits(calculation({ results: MODEL } as Partial<CalculationRow>), CONTEXT).map(
       (s) => s.heading,
     );
-    expect(headings.at(-2)).toBe('Exhibit H — Discounts and Concluded Value');
-    expect(headings.at(-1)).toBe('Exhibit H-1 — Marketability Discount: Derivation');
+    // Position relative to Exhibit H, not from the end of the list: the
+    // appendices sort after every exhibit, so an appendix the fixture happens
+    // to earn — IV, which any OPM run now carries — lands behind H-1.
+    expect(headings.indexOf('Exhibit H-1 — Marketability Discount: Derivation')).toBe(
+      headings.indexOf('Exhibit H — Discounts and Concluded Value') + 1,
+    );
+    expect(headings.findLast((h) => h.startsWith('Exhibit '))).toBe(
+      'Exhibit H-1 — Marketability Discount: Derivation',
+    );
   });
 
   it('escapes a class name rather than emitting it as markup', () => {
@@ -2685,6 +2742,201 @@ describe('Appendix II — historical financial statements', () => {
 });
 
 /**
+ * Appendix II-1 — the operating series, and gap #13 in the 409.ai comparison.
+ *
+ * The assertions worth having here are the ones that separate this appendix
+ * from Appendix II, which reads the same workbook: that it prints the metrics
+ * sheet and not the statements, that every ratio on it comes from
+ * `computeWorkbook` rather than from arithmetic in the exhibit module, and that
+ * the two guards it carries — the forecast columns and the undefined burn
+ * multiple — hold.
+ */
+describe('Appendix II-1 — core operating metrics', () => {
+  const HEADING = 'Appendix II-1 — Core Operating Metrics';
+
+  /**
+   * The cells of one labelled row, in printed order.
+   *
+   * Worth the helper rather than `toContain` on the whole table: half of what
+   * this appendix promises is *which period* a figure belongs to, and a
+   * substring match on the table cannot tell a dash in the right column from a
+   * dash in the wrong one.
+   */
+  const rowCells = (html: string, label: string): string[] | null => {
+    const m = new RegExp(`<tr><td>${label}</td>(.*?)</tr>`).exec(html);
+    return m ? [...m[1]!.matchAll(/<td>(.*?)<\/td>/g)].map((c) => c[1]!) : null;
+  };
+
+  /** A workbook with two reported periods of the operating series. */
+  const cells = (over: Record<string, number> = {}) =>
+    computeWorkbook([
+      { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_minus_1', value: 4_000_000 },
+      { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_current', value: 6_000_000 },
+      { sheet: 'operating_metrics', row_key: 'customers', column_key: 'fy_current', value: 120 },
+      { sheet: 'operating_metrics', row_key: 'employees', column_key: 'fy_minus_1', value: 30 },
+      { sheet: 'operating_metrics', row_key: 'employees', column_key: 'fy_current', value: 48 },
+      { sheet: 'operating_metrics', row_key: 'net_burn', column_key: 'fy_current', value: 3_000_000 },
+      ...Object.entries(over).map(([k, value]) => {
+        const [sheet, row_key, column_key] = k.split('.');
+        return { sheet, row_key, column_key, value };
+      }),
+    ]);
+
+  it('prints the entered series under the catalogued heading', () => {
+    const out = operatingMetricsExhibit(cells(), CONTEXT)!;
+    expect(out.heading).toBe(HEADING);
+    expect(out.html).toContain('Annual recurring revenue');
+    expect(out.html).toContain('Customers');
+    expect(out.html).toContain('Employees (FTE)');
+    expect(out.html).toContain('Net cash burn');
+    expect(out.html).toContain('$6,000,000');
+  });
+
+  it('carries the ratios the workbook computed, not ones re-derived here', () => {
+    const out = operatingMetricsExhibit(cells(), CONTEXT)!.html;
+    // net new ARR 6.0M - 4.0M = 2.0M; ARR growth 50%; ARR/customer 6.0M/120 =
+    // $50,000; ARR/employee 6.0M/48 = $125,000; burn multiple 3.0M/2.0M = 1.5;
+    // headcount growth (48-30)/30 = 60%.
+    expect(out).toContain('$2,000,000');
+    expect(out).toContain('50.0%');
+    expect(out).toContain('$50,000');
+    expect(out).toContain('$125,000');
+    expect(out).toContain('1.5');
+    expect(out).toContain('60.0%');
+  });
+
+  it('is not the statements appendix — it prints neither statement', () => {
+    // The whole reason gap #13 was left open was the suspicion that this page
+    // would restate Appendix II. It reads the same workbook and must not.
+    const both = computeWorkbook([
+      { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 6_000_000 },
+      { sheet: 'balance_sheet', row_key: 'cash', column_key: 'fy_current', value: 3_000_000 },
+      { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_current', value: 5_400_000 },
+    ]);
+    const out = operatingMetricsExhibit(both, CONTEXT)!.html;
+    expect(out).toContain('$5,400,000');
+    expect(out).not.toContain('Cash &amp; equivalents');
+    expect(out).not.toContain('Gross profit');
+    // And the GAAP revenue figure must not reach this page under any label.
+    expect(out).not.toContain('$6,000,000');
+  });
+
+  it('omits the forecast periods — this is a record, not a plan', () => {
+    const out = operatingMetricsExhibit(cells({ 'operating_metrics.arr.fy_plus_1': 99_000_000 }), CONTEXT)!;
+    expect(out.html).toContain('FY (current)');
+    expect(out.html).not.toContain('FY+1');
+    expect(out.html).not.toContain('99,000,000');
+  });
+
+  it('withholds the burn multiple in a period where recurring revenue did not grow', () => {
+    /*
+     * ARR 2M → 4M → 4M, with burn in both of the later periods. FY-1 grew, so
+     * the multiple is 1.0M / 2.0M = 0.5; FY (current) was flat, so burn per
+     * dollar of net new ARR is undefined and the cell is a dash rather than a
+     * figure the page invented. The row survives because FY-1 filled it, which
+     * is what makes the dash legible as "not this period" rather than as the
+     * whole measure being absent.
+     */
+    const out = operatingMetricsExhibit(
+      computeWorkbook([
+        { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_minus_2', value: 2_000_000 },
+        { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_minus_1', value: 4_000_000 },
+        { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_current', value: 4_000_000 },
+        { sheet: 'operating_metrics', row_key: 'net_burn', column_key: 'fy_minus_1', value: 1_000_000 },
+        { sheet: 'operating_metrics', row_key: 'net_burn', column_key: 'fy_current', value: 3_000_000 },
+      ]),
+      CONTEXT,
+    )!.html;
+    expect(rowCells(out, 'Burn multiple')).toEqual(['—', '0.5', '—']);
+  });
+
+  it('states a contraction rather than hiding it behind a negative multiple', () => {
+    const out = operatingMetricsExhibit(cells({ 'operating_metrics.arr.fy_current': 3_000_000 }), CONTEXT)!
+      .html;
+    // Net new ARR is -1.0M and says so; the burn multiple it would imply
+    // (3.0M / -1.0M = -3) is withheld, because a negative burn multiple reads
+    // as the efficient end of a scale this company is at the wrong end of.
+    expect(rowCells(out, 'Net new ARR')?.at(-1)).toMatch(/1,000,000/);
+    expect(rowCells(out, 'Net new ARR')?.at(-1)).toMatch(/^[-−(]/);
+    expect(rowCells(out, 'Burn multiple')).toBeNull();
+  });
+
+  it('drops a series the company does not track, and dashes a gap in one it does', () => {
+    const out = operatingMetricsExhibit(
+      computeWorkbook([
+        { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_current', value: 6_000_000 },
+      ]),
+      CONTEXT,
+    )!.html;
+    expect(out).not.toContain('Customers');
+    expect(out).not.toContain('Employees (FTE)');
+    expect(out).toContain('Annual recurring revenue');
+    expect(out).toContain('—');
+    expect(out).not.toContain('$0');
+  });
+
+  it('is null when nothing operating has been entered', () => {
+    expect(operatingMetricsExhibit(computeWorkbook([]), CONTEXT)).toBeNull();
+    expect(operatingMetricsExhibit(undefined, CONTEXT)).toBeNull();
+    // A workbook with statements but no operating series: Appendix II prints,
+    // this one does not.
+    const statementsOnly = computeWorkbook([
+      { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 6_000_000 },
+    ]);
+    expect(financialsExhibit(statementsOnly, CONTEXT)).not.toBeNull();
+    expect(operatingMetricsExhibit(statementsOnly, CONTEXT)).toBeNull();
+  });
+
+  it('is null when the only figures entered are forecast', () => {
+    const forecastOnly = computeWorkbook([
+      { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_plus_2', value: 9_000_000 },
+    ]);
+    expect(operatingMetricsExhibit(forecastOnly, CONTEXT)).toBeNull();
+  });
+
+  it('survives a workbook that is not the shape it expects', () => {
+    for (const bad of [
+      'not a workbook',
+      [{ key: 'operating_metrics' }],
+      [{ key: 'operating_metrics', columns: 'no', rows: [] }],
+      [{ key: 'operating_metrics', columns: [], rows: 'no' }],
+      [{ key: 'operating_metrics', columns: [{ key: 'fy_current' }], rows: [{ label: 'x' }] }],
+    ]) {
+      expect(() =>
+        operatingMetricsExhibit(bad as unknown as ReturnType<typeof computeWorkbook>, CONTEXT),
+      ).not.toThrow();
+    }
+  });
+
+  it('renders an unrecognised currency code rather than sinking the appendix', () => {
+    const out = operatingMetricsExhibit(cells(), { ...CONTEXT, currency: 'ZZZ' })!;
+    expect(out.html).toMatch(/ZZZ\s6,000,000/);
+  });
+
+  it('follows Appendix II in the assembled deliverable', () => {
+    const calc = {
+      status: 'succeeded',
+      inputs: { params: {}, inputs: {} },
+      results: { equity_value: 1, fmv_per_share: 1 },
+    } as unknown as CalculationRow;
+    const financials = computeWorkbook([
+      { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 6_000_000 },
+      { sheet: 'operating_metrics', row_key: 'arr', column_key: 'fy_current', value: 5_400_000 },
+    ]);
+    const headings = buildExhibits(calc, { ...CONTEXT, financials }).map((s) => s.heading);
+    expect(headings).toContain(HEADING);
+    expect(headings.indexOf(HEADING)).toBe(
+      headings.indexOf('Appendix II — Historical Financial Statements') + 1,
+    );
+  });
+
+  it('renders only tags the report whitelist allows', () => {
+    const out = operatingMetricsExhibit(cells(), CONTEXT)!;
+    expect(sanitizeHtml(out.html)).toBe(out.html);
+  });
+});
+
+/**
  * Appendix III's own behaviour is pinned in `requiredReturns.test.ts`, next to
  * the ladder it prints. What belongs here is only its place in the assembled
  * deliverable: that the stage reaches it through `buildExhibits`, and that the
@@ -2720,8 +2972,190 @@ describe('Appendix III in the assembled exhibit list', () => {
   });
 
   it('comes last — the appendices follow the exhibits, in their stated order', () => {
+    // Of the appendices this engagement receives: the fixture has no
+    // allocation, so it has no Appendix IV behind it.
     const all = headings({ developmentStage: 3 });
     expect(all[all.length - 1]).toBe(APPENDIX_III);
+  });
+});
+
+// ── Appendix IV ──────────────────────────────────────────────────────────────
+
+/**
+ * Appendix IV — the arithmetic between Exhibit F's disclosed inputs and its
+ * undisclosed value column.
+ *
+ * Exhibit F states the breakpoints, the volatility, the horizon and the rate,
+ * and then prints a column of tranche values. Everything a reviewer needs to
+ * *check* that column was in the calculation and none of it was on the page.
+ *
+ * The claim the appendix makes is a strong one and it is worth testing as such:
+ * Exhibit F's value column *is* the column of Black-Scholes call spreads struck
+ * at consecutive breakpoints. `RESULTS` is a fixture where that is true — the
+ * schedule came out of the engine's own `bs_call_terms` and the breakpoint
+ * values are its spreads — so the reconciliation test below is checking the
+ * appendix against the engine rather than against itself.
+ */
+describe('Appendix IV — the option pricing behind the allocation', () => {
+  const html = (results: Record<string, unknown> = RESULTS) =>
+    opmCalculationsExhibit(results, CONTEXT)!.html;
+  const seen = (results?: Record<string, unknown>) => plain(html(results));
+
+  /** `RESULTS` with the allocation replaced wholesale. */
+  const withAllocation = (allocation: unknown) => ({ ...RESULTS, allocation });
+
+  it('is titled as the catalogue titles it', () => {
+    expect(opmCalculationsExhibit(RESULTS, CONTEXT)!.heading).toBe(
+      'Appendix IV — Option Pricing Model Calculations',
+    );
+  });
+
+  it('states the four inputs every call in the schedule was priced from', () => {
+    // Without these the table below is six columns of numbers a reader cannot
+    // reproduce — which is the state Exhibit F was already in.
+    const text = seen();
+    expect(text).toContain('$42,000,000'); // S, the equity value allocated
+    expect(text).toContain('65.0%'); // sigma
+    expect(text).toContain('3.50 years'); // T
+    expect(text).toContain('4.20%'); // r
+  });
+
+  it('carries the working at the precision a hand-check needs', () => {
+    const text = seen();
+    // d1/d2 to four places, the probabilities to six — the engine records six
+    // on both and the appendix prints each at the precision it is read at.
+    expect(text).toContain('1.9090'); // d1 at K = 10M
+    expect(text).toContain('0.6930'); // d2 at K = 10M
+    expect(text).toContain('0.971871'); // N(d1)
+    expect(text).toContain('0.755844'); // N(d2)
+    // A negative d2 is ordinary — the tranche is out of the money — and must
+    // print as a negative number rather than as a blank or an absolute value.
+    expect(text).toContain('-0.4470');
+  });
+
+  it('prices each strike once, not once per tranche endpoint', () => {
+    // Consecutive tranches share a boundary, so a row-per-tranche layout would
+    // print every interior call twice and invite the reader to check whether
+    // the two copies agree — a question about the typesetting rather than
+    // about the valuation.
+    const text = seen();
+    expect(text.match(/1\.9090/g)).toHaveLength(1);
+    expect(text.match(/0\.7690/g)).toHaveLength(1);
+  });
+
+  it('reconciles every tranche to a call spread, and to Exhibit F’s own column', () => {
+    // The assertion the appendix exists for. Each figure is C(from) − C(to) as
+    // computed from the schedule, and each is also printed by Exhibit F as the
+    // value of that tranche — so the two schedules in the deliverable state the
+    // same three numbers, and a reader can verify the second from the first.
+    const appendix = seen();
+    const exhibitF = plain(allocationExhibit(RESULTS, CONTEXT)!.html);
+    for (const tranche of ['$7,706,566', '$12,879,706', '$21,413,728']) {
+      expect(appendix, `Appendix IV is missing the tranche ${tranche}`).toContain(tranche);
+      expect(exhibitF, `Exhibit F is missing the tranche ${tranche}`).toContain(tranche);
+    }
+  });
+
+  it('closes the open-ended tranche at zero rather than at a missing strike', () => {
+    // The last tranche runs to infinity, where the call is worth nothing. Read
+    // as "no strike priced there" it would be dropped, and the appendix would
+    // silently account for less than the equity value.
+    const text = seen();
+    expect(text).toContain('and above');
+    expect(text).toContain('$0');
+  });
+
+  it('leaves d₁ and d₂ blank at the zero strike rather than fabricating them', () => {
+    // A call struck at zero is the underlying; d1 and d2 genuinely do not exist
+    // there, and a 0.0000 in a column a reviewer recomputes is worse than a
+    // blank. The probabilities are printed, because 1 is their limit and not a
+    // convention.
+    const text = seen();
+    expect(text).toContain('1.000000');
+    expect(text).toContain('—');
+    // The first call is the whole equity value, which is why the tranche values
+    // below it sum to the amount allocated.
+    expect(text).toContain('$42,000,000');
+  });
+
+  it('drops a tranche whose endpoints were never priced, and keeps the rest', () => {
+    // A breakpoint outside the schedule cannot be reconciled. Printing the row
+    // with a blank spread would assert a tranche value of nothing; omitting it
+    // says only what the schedule supports.
+    const allocation = RESULTS.allocation;
+    const text = seen(
+      withAllocation({
+        ...allocation,
+        breakpoints: [
+          ...allocation.breakpoints,
+          { from: 55_000_000, to: 70_000_000, participants: { Common: 1 }, value: 1_000_000 },
+        ],
+      }),
+    );
+    expect(text).toContain('$7,706,566'); // the priced tranches survive
+    expect(text).not.toContain('$55,000,000');
+  });
+
+  it('prints the schedule even where there are no breakpoints to reconcile', () => {
+    // The per-strike table is the appendix's substance; the reconciliation is
+    // the convenience. A results document with a schedule and no readable
+    // breakpoints still supports the first.
+    const text = seen(withAllocation({ ...RESULTS.allocation, breakpoints: 'not a list' }));
+    expect(text).toContain('0.971871');
+    expect(text).not.toContain('Tranche value');
+  });
+
+  it('is absent where there is no option pricing to show', () => {
+    // A current-value or PWERM allocation has no call spreads, and a
+    // calculation stored before the engine recorded them has nothing to
+    // transcribe. In both cases the honest appendix is no appendix.
+    expect(opmCalculationsExhibit({}, CONTEXT)).toBeNull();
+    expect(opmCalculationsExhibit({ equity_value: 1 }, CONTEXT)).toBeNull();
+    for (const allocation of [
+      null,
+      { method: 'current_value' },
+      { method: 'opm_waterfall', breakpoints: RESULTS.allocation.breakpoints },
+      { method: 'opm_waterfall', option_schedule: [] },
+      { method: 'opm_waterfall', option_schedule: 'not a list' },
+      { method: 'opm_waterfall', option_schedule: [null, 'nonsense'] },
+    ]) {
+      expect(opmCalculationsExhibit(withAllocation(allocation), CONTEXT)).toBeNull();
+    }
+  });
+
+  it('says nothing it cannot support when the four inputs are missing', () => {
+    // The schedule is what makes the appendix; the input table is drawn from
+    // `assumptions`, which an older results document may not carry.
+    const out = opmCalculationsExhibit({ allocation: RESULTS.allocation }, CONTEXT)!;
+    expect(out.html).toContain('0.971871');
+    for (const leak of ['NaN', 'undefined', '$null', 'Infinity']) {
+      expect(out.html, `leaked ${leak}`).not.toContain(leak);
+    }
+  });
+
+  it('emits only markup the report renderer understands', () => {
+    // Not covered by the whole-deliverable sweep for free: this page is the one
+    // that prints subscripts and an <em>-set formula.
+    const out = html();
+    for (const tag of out.matchAll(/<\/?([a-z]+)/g)) {
+      expect(ALLOWED_TAGS.has(tag[1]!), `<${tag[1]}>`).toBe(true);
+    }
+    expect(sanitizeHtml(out)).toBe(out);
+  });
+
+  it('comes last in the assembled deliverable', () => {
+    // The most granular support on the file, and the only reader who wants it
+    // has already read Exhibit F and wants to check it.
+    const headings = buildExhibits(calculation(), CONTEXT).map((s) => s.heading);
+    expect(headings[headings.length - 1]).toBe('Appendix IV — Option Pricing Model Calculations');
+  });
+
+  it('is left out of the deliverable when the allocation was not an OPM', () => {
+    const results = withAllocation({ method: 'current_value', classes: {} });
+    const headings = buildExhibits(calculation({ results } as Partial<CalculationRow>), CONTEXT).map(
+      (s) => s.heading,
+    );
+    expect(headings).not.toContain('Appendix IV — Option Pricing Model Calculations');
   });
 });
 
@@ -2987,5 +3421,33 @@ describe('the new schedules survive the PDF renderer', () => {
     expect(text).toContain('Common — aggregate (applied)');
     expect(text).toContain('the aggregate common line of the schedule below');
     expect(text).toContain('0.5550');
+  }, 60_000);
+
+  it('prints Appendix IV’s option schedule and its reconciliation into the document text', async () => {
+    const sections = buildExhibits(calculation(), CONTEXT);
+    expect(sections.map((s) => s.heading)).toContain('Appendix IV — Option Pricing Model Calculations');
+
+    const pdf = await renderReportPdf(pdfInput(sections), { compress: false });
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    const text = pdfText(pdf);
+
+    expect(text).toContain('Appendix IV');
+    expect(text).toContain('Option Pricing Model Calculations');
+    // The working, read back out of the rendered file rather than out of the
+    // HTML: this is the page a reviewer recomputes, so what matters is that the
+    // digits survive into the artefact the client is actually sent.
+    expect(text).toContain('1.9090');
+    expect(text).toContain('0.971871');
+    expect(text).toContain('-0.4470');
+    // And the reconciliation — the same three tranche values Exhibit F prints.
+    for (const tranche of ['$7,706,566', '$12,879,706', '$21,413,728']) {
+      expect(text).toContain(tranche);
+    }
+    // The subscripts in the column heads and in the formula are the one place
+    // the page depends on the PDF font carrying something beyond ASCII. If they
+    // dropped, the header row would read "d" twice and "N(d)" twice.
+    expect(text).toContain('d₁');
+    expect(text).toContain('N(d₂)');
+    expect(text).toContain('e^(−rT)');
   }, 60_000);
 });

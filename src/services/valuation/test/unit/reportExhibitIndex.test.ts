@@ -61,7 +61,9 @@ describe('renderedScheduleIds', () => {
         'H-1',
         'I',
         'II',
+        'II-1',
         'III',
+        'IV',
       ]),
     );
   });

@@ -38,8 +38,7 @@ production report have since been closed, in this platform's own shape rather th
 architecture — most visibly, research is contained behind a public-fields whitelist instead of sending the
 subject company's name to a search provider.
 
-**Gap count: 31 identified, 28 closed, 3 open** (#11 OPM appendix, #13 core time-series appendix,
-#23 AI auto-tagging). All three are P2.
+**Gap count: 31 identified, 30 closed, 1 open** (#23 AI auto-tagging). It is P2.
 
 ---
 
@@ -146,8 +145,8 @@ builders' headings and the public sample page all derive from it, so a schedule 
 | **Appendix I — Discount Rate Build-Up (WACC)** | ✅ (`appendix-wacc-inputs`) | ✅ | **GAP #12 — CLOSED** |
 | **Appendix II — Historical Financial Statements** | ✅ (`appendix-historical-financials`) | ✅ | **GAP #10 — CLOSED** |
 | **Appendix III — Required Rates of Return by Stage of Development** | ✅ (in `asset-approach--5`) | ✅ | **GAP #5 — CLOSED** |
-| **Appendix: OPM Calculations** | ✅ (`appendix-opm-calculations`) | ❌ OPM detail is in Exhibit F's sub-tables; no standalone appendix | **GAP #11 — OPEN** |
-| **Core Time Series Data** | ✅ (`core-time-series--22/23`) | ❌ No time-series appendix | **GAP #13 — OPEN** |
+| **Appendix IV — Option Pricing Model Calculations** | ✅ (`appendix-opm-calculations`) | ✅ Per-strike d₁/d₂/N(d)/call, and the tranche spreads Exhibit F apportions | **GAP #11 — CLOSED** |
+| **Appendix II-1 — Core Operating Metrics** | ✅ (`core-time-series--22/23`) | ✅ ARR, customers, headcount and net burn over the reported periods, with the derived efficiency ratios | **GAP #13 — CLOSED** |
 
 ---
 
@@ -220,18 +219,31 @@ builders' headings and the public sample page all derive from it, so a schedule 
 
 ## 6. Remaining Work
 
-Three gaps are open. All were P2 in the original roadmap and none blocks parity.
+One gap is open. It was P2 in the original roadmap and does not block parity.
 
 | Gap # | Item | Effort | Notes |
 |-------|------|--------|-------|
-| **#11** | Appendix: OPM Calculations | Small | Exhibit F already carries the inputs, the aggregate, the Monte Carlo params, the breakpoints and the by-class table. Decide first whether a standalone appendix adds anything a reader cannot get from F — this may be a "won't do" rather than a "not yet". |
-| **#13** | Core Time Series Appendix | Medium | Needs a decision on the source: `workbook_cells` holds the financial history that Appendix II already prints, so this is only distinct if it means a *metric* time series (ARR, headcount, burn) that nothing currently stores. |
 | **#23** | AI Auto-tagging | Small | No `valuation_tags` table and no consumer for one. Worth a use case before a prompt. |
+
+### How #11 and #13 were resolved
+
+Both were held open on a question rather than on effort, and both questions had an answer.
+
+- **#11** — "does a standalone OPM appendix add anything Exhibit F does not?" It does: F prints a column of
+  tranche values, and the call spreads those values *are* were computed and discarded. Appendix IV
+  transcribes `allocation.option_schedule` — one row per strike, with d₁, d₂, N(d₁), N(d₂) and C(K) — and
+  reconciles the spreads back to F's column. It transcribes; it does not re-derive.
+- **#13** — "is a core time series distinct from the financial history Appendix II already prints?" It is,
+  for the companies a 409A is written for. A GAAP revenue line cannot separate growth bought with
+  customers from growth bought with headcount and discounting, and cannot say what either cost in cash.
+  Appendix II-1 is the operating series — ARR, customers, headcount, net burn — as a fourth workbook sheet
+  (`operating_metrics`), with the efficiency ratios derived by `computeWorkbook` rather than by the
+  exhibit, so nothing on the page can disagree with the rows above it.
 
 ### Closed since 2026-08-09
 
-#1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #12, #14, #15, #16, #17, #18, #19, #20, #21, #22, #24, #25, #26,
-#27, #28, #29, #30, #31 — 28 of 31.
+#1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17, #18, #19, #20, #21, #22, #24,
+#25, #26, #27, #28, #29, #30, #31 — 30 of 31.
 
 ### Data model changes from the original §7 — status
 

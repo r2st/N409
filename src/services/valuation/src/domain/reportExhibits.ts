@@ -125,7 +125,9 @@ export type ScheduleId =
   | 'H-1'
   | 'I'
   | 'II'
-  | 'III';
+  | 'II-1'
+  | 'III'
+  | 'IV';
 
 export interface ScheduleDescriptor {
   id: ScheduleId;
@@ -180,7 +182,14 @@ export const SCHEDULE_CATALOGUE: readonly ScheduleDescriptor[] = [
   { id: 'H-1', kind: 'Exhibit', name: 'Marketability Discount: Derivation', always: false },
   { id: 'I', kind: 'Appendix', name: 'Discount Rate Build-Up (WACC)', always: false },
   { id: 'II', kind: 'Appendix', name: 'Historical Financial Statements', always: false },
+  // `II-1` rather than `V`, and the suffix is load-bearing in two ways. It puts
+  // the operating series immediately behind the statements it explains, the
+  // same relationship D-1 has with D and F-1 with F; and it adds a schedule
+  // without renumbering one, so no prose already authored against "Appendix
+  // III" or "Appendix IV" starts pointing at the wrong page.
+  { id: 'II-1', kind: 'Appendix', name: 'Core Operating Metrics', always: false },
   { id: 'III', kind: 'Appendix', name: 'Required Rates of Return by Stage of Development', always: false },
+  { id: 'IV', kind: 'Appendix', name: 'Option Pricing Model Calculations', always: false },
 ];
 
 /** `Exhibit D-1 — Guideline Company Set`, as the heading is printed. */
@@ -2962,6 +2971,108 @@ export function financialsExhibit(
   ]);
 }
 
+// ── Appendix II-1 — the operating series behind the statements ───────────────
+
+/** The sheet this appendix prints. Its own key, so a rename is one edit. */
+const OPERATING_SHEET_KEY = 'operating_metrics';
+
+/**
+ * The core operating time series — 409.ai's `core-time-series` pages, and the
+ * last of the report-structure gaps.
+ *
+ * ## Why this is not Appendix II again
+ *
+ * Appendix II prints what the company *reported*: revenue, cost, the balance
+ * sheet. For a mature business that is the whole evidential record, and a
+ * second appendix restating it in other units would be padding. For the
+ * companies a 409A is actually written for it is not, and the difference is the
+ * reason this page exists.
+ *
+ * A GAAP revenue line cannot distinguish a business that grew 60% by adding
+ * customers from one that grew 60% by adding headcount and discounting, and the
+ * two do not carry the same risk. Nor can it tell a reviewer how much cash the
+ * growth cost. Those are the questions the discount rate, the stage conclusion
+ * in Appendix III and the volatility in Exhibit F-1 are all answers to, and
+ * before this appendix the file supported them with prose.
+ *
+ * ## What is here, and what is not
+ *
+ * Four entered series — ARR, customers, headcount, net burn — and five ratios
+ * derived from them by `computeWorkbook`, never by this module. That is the
+ * same rule Appendix II follows and it matters more here, because every ratio
+ * on this page is one a reader could compute themselves and check: a printed
+ * "ARR per employee" that does not equal the two rows above it divided is a
+ * defect a reviewer will find in about four seconds.
+ *
+ * Reported periods only, via `isProjectionColumn`, for exactly the reason
+ * Appendix II excludes them: management's operating plan is a forecast, it is
+ * evidence of a different kind, and an appendix presenting next year's ARR
+ * target in the same table as three years of history invites a reader to treat
+ * them as the same thing.
+ *
+ * Rendered only where something was entered. A company that tracks none of this
+ * — and many at the seed end do not — gets no appendix, rather than a page of
+ * dashes implying the analyst failed to collect it.
+ */
+export function operatingMetricsExhibit(
+  sheets: readonly ComputedSheet[] | undefined,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  // Same defensive read as `financialsExhibit`: the caller resolved this
+  // workbook, and a shape that is not the one this module expects must drop the
+  // appendix rather than throw out of a PDF render.
+  const sheet = list(sheets)
+    .filter((s): s is ComputedSheet => {
+      const r = record(s);
+      return r !== null && Array.isArray(r.columns) && Array.isArray(r.rows);
+    })
+    .find((s) => s.key === OPERATING_SHEET_KEY);
+  if (!sheet) return null;
+
+  const columns = sheet.columns.filter((c) => record(c) !== null && !isProjectionColumn(c.key));
+  if (columns.length === 0) return null;
+  const keep = new Set(columns.map((c) => c.key));
+
+  const rows = sheet.rows
+    .filter((row) => record(row) !== null && Array.isArray(row.cells))
+    .map((row) => ({
+      row,
+      cells: row.cells.filter((c) => record(c) !== null && keep.has(c.column_key)),
+    }))
+    // A row that is empty across every reported period is dropped, for the
+    // reason Appendix II drops one: the workbook's schema is fixed, and a
+    // company that does not track customer counts should not be shown a
+    // customer row full of dashes. A row with one figure in it stays.
+    .filter(({ cells }) => cells.some((c) => c.value !== null))
+    .map(({ row, cells }) => [
+      esc(text(row.label) ?? '—'),
+      ...cells.map((c) => financialCell(num(c.value), row.format, ctx.currency)),
+    ]);
+  if (rows.length === 0) return null;
+
+  return section(SCHEDULE['II-1'], [
+    P(
+      'The series below are the operating measures the analysis reads alongside the reported ' +
+        'statements in <strong>Appendix II</strong>. They are what the statements cannot show on their ' +
+        'own: whether growth came from more customers or from larger ones, what it cost in cash, and ' +
+        'how the two moved against headcount. The stage concluded in <strong>Appendix III</strong> and ' +
+        'the company-specific risk premium in <strong>Appendix I</strong> are both read against this ' +
+        'trajectory.',
+    ),
+    table({ head: ['', ...columns.map((c) => esc(text(c.label) ?? '—'))], rows }),
+    P(
+      'Recurring revenue, customer count, headcount and net cash burn are entered from the company’s ' +
+        'own reporting; every other line is computed from them and cannot disagree with the rows above ' +
+        'it. Net cash burn is stated as consumption, so a period in which the company generated cash ' +
+        'carries a negative figure. The burn multiple is burn per dollar of net new recurring revenue ' +
+        'and is shown only for periods in which recurring revenue grew — in a period of contraction the ' +
+        'ratio is negative, which would read as efficiency, and the contraction itself is stated in the ' +
+        'net new ARR line. Periods are the company’s fiscal years; management’s operating plan is not ' +
+        'reproduced here.',
+    ),
+  ]);
+}
+
 // ── Appendix III — what a company at this stage is expected to return ────────
 
 /**
@@ -3149,6 +3260,143 @@ export function waccExhibit(
   ]);
 }
 
+// ── Appendix IV — the option pricing behind the allocation ───────────────────
+
+/**
+ * The Black-Scholes working Exhibit F's tranche values come out of.
+ *
+ * Exhibit F discloses the breakpoints, the volatility and the time to
+ * liquidity, and then prints a column of tranche values. Everything a reviewer
+ * needs to *check* that column is in the calculation and none of it was on the
+ * page: each tranche is a call spread, C(from) − C(to), and the calls were
+ * computed, used and discarded. This appendix is the page the legacy
+ * deliverable devotes to them, and it is the difference between a reader
+ * accepting the allocation and a reader verifying it.
+ *
+ * Transcription, not re-derivation — the same rule Appendix I follows.
+ * `allocation.option_schedule` is what `engine/waterfall.py` priced; a second
+ * Black-Scholes implementation here would be a page asserting arithmetic that
+ * is only probably the arithmetic behind the conclusion.
+ *
+ * Null unless the run allocated by the OPM breakpoint method and recorded a
+ * schedule. A current-value or PWERM allocation has no call spreads to show, and
+ * a calculation stored before the engine recorded them has nothing to
+ * transcribe — in both cases the honest appendix is no appendix.
+ */
+export function opmCalculationsExhibit(
+  results: Record<string, unknown>,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const allocation = record(results.allocation);
+  const schedule = list(allocation?.option_schedule)
+    .map(record)
+    .filter((row): row is Record<string, unknown> => row !== null);
+  if (schedule.length === 0) return null;
+
+  const { currency } = ctx;
+  const assumptions = record(results.assumptions);
+  const sigma = num(assumptions?.volatility);
+  const rf = num(assumptions?.risk_free_rate);
+  const t = num(assumptions?.time_to_exit_years) ?? num(assumptions?.expected_time_to_exit_years);
+  const equity = num(results.equity_value);
+
+  const dec = (v: unknown, dp = 4) => (num(v) === null ? '—' : (num(v) as number).toFixed(dp));
+
+  const inputs: string[][] = [];
+  if (equity !== null) inputs.push(['Underlying (S) — equity value allocated', formatCurrency(equity, currency, 0)]);
+  if (sigma !== null) inputs.push(['Volatility (σ)', formatPercent(sigma, 1)]);
+  if (t !== null) inputs.push(['Time to liquidity (T)', `${t.toFixed(2)} years`]);
+  if (rf !== null) inputs.push(['Risk-free rate (r)', formatPercent(rf, 2)]);
+
+  /*
+   * One row per strike, priced once, rather than one row per tranche with its
+   * two endpoints repeated. Consecutive tranches share a boundary, so the
+   * per-tranche form would print every interior call twice and invite the
+   * reader to check whether the two copies agree — a question about the
+   * typesetting rather than about the valuation.
+   */
+  const rows = schedule.map((row) => {
+    const strike = num(row.strike);
+    return [
+      strike === null ? '—' : formatCurrency(strike, currency, 0),
+      dec(row.d1),
+      dec(row.d2),
+      dec(row.n_d1, 6),
+      dec(row.n_d2, 6),
+      formatCurrency(num(row.call) ?? 0, currency, 0),
+    ];
+  });
+
+  /*
+   * The tranche reconciliation, restated from the schedule above rather than
+   * copied from Exhibit F's own column. The point of the appendix is that the
+   * two agree, and a reader who has to flip pages to check that is being asked
+   * to do the work this page exists to have already done.
+   */
+  const calls = new Map<number, number>();
+  for (const row of schedule) {
+    const strike = num(row.strike);
+    const call = num(row.call);
+    if (strike !== null && call !== null) calls.set(strike, call);
+  }
+  const breakpoints = list(allocation?.breakpoints)
+    .map(record)
+    .filter((b): b is Record<string, unknown> => b !== null);
+  const spreads = breakpoints
+    .map((b, i) => {
+      const from = num(b.from);
+      const to = num(b.to);
+      const lower = from === null ? undefined : calls.get(from);
+      // The final tranche runs to infinity, where the call is worth nothing.
+      const upper = to === null ? 0 : calls.get(to);
+      if (lower === undefined || upper === undefined) return null;
+      return [
+        String(i + 1),
+        from === null ? '—' : formatCurrency(from, currency, 0),
+        to === null ? 'and above' : formatCurrency(to, currency, 0),
+        formatCurrency(lower, currency, 0),
+        formatCurrency(upper, currency, 0),
+        formatCurrency(lower - upper, currency, 0),
+      ];
+    })
+    .filter((r): r is string[] => r !== null);
+
+  return section(SCHEDULE.IV, [
+    P(
+      'Under the breakpoint method each share class holds a payoff that is piecewise linear in exit ' +
+        'value, so its expected value is the sum of Black-Scholes call spreads struck at consecutive ' +
+        'breakpoints. The tranche values in <strong>Exhibit F</strong> are those spreads. This appendix ' +
+        'states the option pricing they come from: the four inputs, the call value at each breakpoint, ' +
+        'and the differences between them.',
+    ),
+    inputs.length > 0 ? table({ head: ['Option pricing input', 'Value'], rows: inputs }) : null,
+    table({
+      head: ['Strike (K)', 'd₁', 'd₂', 'N(d₁)', 'N(d₂)', 'Call value C(K)'],
+      rows,
+    }),
+    P(
+      // `e^(−rT)` rather than `e<sup>−rT</sup>`: `sup` is not in the renderer's
+      // ALLOWED_TAGS, so the marked-up form would be stripped to `e−rT` — a
+      // formula that reads as a subtraction, in the one paragraph on the page
+      // whose whole job is to let a reader recompute the column beside it.
+      'Each row above is <em>C = S·N(d₁) − K·e^(−rT)·N(d₂)</em>, with ' +
+        '<em>d₁ = [ln(S/K) + (r + σ²/2)T] / σ√T</em> and <em>d₂ = d₁ − σ√T</em>. A strike of zero is ' +
+        'the whole equity value by definition, which is why the first call equals S and why the class ' +
+        'values below it sum to the amount allocated.',
+    ),
+    spreads.length > 0
+      ? table({
+          head: ['Tranche', 'From', 'To', 'C(from)', 'C(to)', 'Tranche value'],
+          rows: spreads,
+        })
+      : null,
+    P(
+      'The tranche values in the final column are the figures <strong>Exhibit F</strong> apportions ' +
+        'across the classes participating in each tranche.',
+    ),
+  ]);
+}
+
 export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitContext): ReportPdfSection[] {
   if (!calculation || calculation.status !== 'succeeded' || !calculation.results) return [];
   // A specialty run (routes/specialty.ts) records its engine's result under
@@ -3200,6 +3448,13 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     // sequence with them.
     waccExhibit(results, ctx),
     financialsExhibit(ctx.financials, ctx),
+    // Immediately after II, because it is II's supporting detail — the same
+    // relationship D-1 has with D.
+    operatingMetricsExhibit(ctx.financials, ctx),
     requiredReturnExhibit(ctx),
+    // Last of the appendices: it is the most granular support on the file, and
+    // the only reader who wants it has already read Exhibit F and wants to
+    // check it.
+    opmCalculationsExhibit(results, ctx),
   ].filter((s): s is ReportPdfSection => s !== null);
 }

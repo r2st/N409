@@ -163,6 +163,10 @@ describe('valuationWorkbookSheets', () => {
       'Summary',
       'Income statement',
       'Balance sheet',
+      // The operating series (Appendix II-1) is a workbook sheet like any
+      // other, so the export carries it — with live formulas for the ratios,
+      // which is the half of it a client actually models against.
+      'Operating metrics',
       'Assumptions',
       'Cap table',
       'Waterfall',
@@ -172,7 +176,13 @@ describe('valuationWorkbookSheets', () => {
 
   it('omits cap-table, waterfall and grant sheets when there is nothing to show', () => {
     const names = valuationWorkbookSheets(input({ capTable: null, grants: [] })).map((s) => s.name);
-    expect(names).toEqual(['Summary', 'Income statement', 'Balance sheet', 'Assumptions']);
+    expect(names).toEqual([
+      'Summary',
+      'Income statement',
+      'Balance sheet',
+      'Operating metrics',
+      'Assumptions',
+    ]);
   });
 
   it('omits the cap-table sheets when the table exists but is empty', () => {

@@ -133,6 +133,22 @@ const xRatio = (a: string, b: string): string => `IF(OR(COUNT(${a},${b})<2,${b}=
 const xGrowth = (cur: string, prior: string): string =>
   `IF(OR(COUNT(${cur},${prior})<2,${prior}=0),"",(${cur}-${prior})/${prior})`;
 
+/** a / b, blank unless the denominator is strictly positive. See `perUnit`. */
+const xRatioPositive = (a: string, b: string): string => `IF(OR(COUNT(${a},${b})<2,${b}<=0),"",${a}/${b})`;
+
+/**
+ * a / b where a non-positive denominator means "not a rate", rather than zero.
+ *
+ * `ratio` above only refuses a denominator of exactly 0, which is right for a
+ * margin: revenue can legitimately be negative in a restatement and the
+ * resulting margin, however odd, is arithmetic the reader can follow. It is
+ * wrong for a per-unit figure. ARR per customer with a negative customer count
+ * is not a small number, it is a broken input, and printing it invites a reader
+ * to interpret nonsense as a finding.
+ */
+const perUnit = (a: number | null, b: number | null): number | null =>
+  a === null || b === null || b <= 0 ? null : a / b;
+
 export const WORKBOOK_SHEETS: readonly WorkbookSheetDef[] = [
   {
     key: 'income_statement',
@@ -328,6 +344,90 @@ export const WORKBOOK_SHEETS: readonly WorkbookSheetDef[] = [
         'currency',
         (c) => sub(c.value('total_current_assets'), c.value('total_current_liabilities')),
         (x) => xMinus(x.cell('total_current_assets'), x.cell('total_current_liabilities')),
+      ),
+    ],
+  },
+  {
+    key: 'operating_metrics',
+    label: 'Operating metrics',
+    description: 'The core operating series behind the statements; efficiency ratios are derived.',
+    columns: FISCAL_PERIODS,
+    rows: [
+      input('arr', 'Annual recurring revenue'),
+      input('customers', 'Customers', 'number'),
+      input('employees', 'Employees (FTE)', 'number'),
+      // Positive means cash consumed. Stated as burn rather than as free cash
+      // flow because that is the sign convention every one of these documents
+      // is written in, and a series whose sign silently flips against the deck
+      // it was read from is worse than no series.
+      input('net_burn', 'Net cash burn'),
+      derived(
+        'net_new_arr',
+        'Net new ARR',
+        'currency',
+        (c) => sub(c.value('arr'), c.prev('arr')),
+        (x) => {
+          const prior = x.prev('arr');
+          return prior === null ? null : xMinus(x.cell('arr'), prior);
+        },
+      ),
+      derived(
+        'arr_growth',
+        'ARR growth (YoY)',
+        'percent',
+        (c) => {
+          const prev = c.prev('arr');
+          return ratio(sub(c.value('arr'), prev), prev);
+        },
+        (x) => {
+          const prior = x.prev('arr');
+          return prior === null ? null : xGrowth(x.cell('arr'), prior);
+        },
+      ),
+      derived(
+        'arr_per_customer',
+        'ARR per customer',
+        'currency',
+        (c) => perUnit(c.value('arr'), c.value('customers')),
+        (x) => xRatioPositive(x.cell('arr'), x.cell('customers')),
+      ),
+      derived(
+        'arr_per_employee',
+        'ARR per employee',
+        'currency',
+        (c) => perUnit(c.value('arr'), c.value('employees')),
+        (x) => xRatioPositive(x.cell('arr'), x.cell('employees')),
+      ),
+      /*
+       * Burn per dollar of net new ARR — the standard efficiency measure, and
+       * the one row here whose guard is doing real work.
+       *
+       * It is defined only where the company added ARR. With no net new ARR the
+       * quotient is not a large multiple, it is undefined; with *negative* net
+       * new ARR the quotient comes out negative, and a negative burn multiple
+       * reads as the efficient end of the scale when it describes a company
+       * that shrank while spending. Both cases are a dash, and the contraction
+       * they hide is visible one row up in `net_new_arr`, stated as what it is.
+       */
+      derived(
+        'burn_multiple',
+        'Burn multiple',
+        'number',
+        (c) => perUnit(c.value('net_burn'), c.value('net_new_arr')),
+        (x) => xRatioPositive(x.cell('net_burn'), x.cell('net_new_arr')),
+      ),
+      derived(
+        'headcount_growth',
+        'Headcount growth (YoY)',
+        'percent',
+        (c) => {
+          const prev = c.prev('employees');
+          return ratio(sub(c.value('employees'), prev), prev);
+        },
+        (x) => {
+          const prior = x.prev('employees');
+          return prior === null ? null : xGrowth(x.cell('employees'), prior);
+        },
       ),
     ],
   },

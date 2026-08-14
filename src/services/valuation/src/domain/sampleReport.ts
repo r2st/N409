@@ -110,7 +110,10 @@ const EXHIBIT_BLURBS: Record<string, string> = {
   'H-1': 'The option-model inputs and the study data supporting the DLOM.',
   I: 'The discount rate the income approach applied, built up component by component — risk-free rate, equity risk premium, size premium and company-specific risk.',
   II: 'The historical income statement and balance sheet the analysis rests on, as reported.',
+  'II-1':
+    'The operating series behind those statements — recurring revenue, customers, headcount and net cash burn, with the efficiency ratios they imply.',
   III: 'The rates of return investors require of a company at this stage of development, against which the concluded discount rate is tested.',
+  IV: 'The Black-Scholes working behind the allocation: the call value at each breakpoint, and the spreads between them that are Exhibit F’s tranche values.',
 };
 
 /**
