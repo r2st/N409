@@ -419,4 +419,96 @@ describe('ValuationDetailPage', () => {
       expect(screen.queryByText('CLONED VALUATION')).not.toBeInTheDocument();
     });
   });
+  describe('timeline entries with a payload that does not carry what it usually does', () => {
+    /**
+     * `events.payload` is `jsonb` with no schema, written by whichever service
+     * raised the event. A row from before a payload key existed, or from a
+     * service that omitted it, must render as a gap rather than as the string
+     * "undefined" beside an arrow.
+     */
+    it('renders a state change whose payload names neither end', async () => {
+      stubFetches([], {
+        events: () => jsonResponse({ events: [event({ type: 'state_changed', payload: {} })] }),
+      });
+      renderPage();
+
+      expect(await screen.findByText('State changed')).toBeInTheDocument();
+      expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/null/)).not.toBeInTheDocument();
+    });
+
+    it('renders a review decision that is not an approval, with no states to show', async () => {
+      stubFetches([], {
+        events: () =>
+          jsonResponse({ events: [event({ type: 'review_decision', payload: { decision: 'reject' } })] }),
+      });
+      renderPage();
+
+      expect(await screen.findByText('Changes requested')).toBeInTheDocument();
+      expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    });
+
+    it('renders an overwrite that names no field', async () => {
+      stubFetches([], {
+        events: () =>
+          jsonResponse({
+            events: [
+              event({ id: '01N409EVENT0000000000000A1', type: 'overwrite_applied', payload: {} }),
+              event({
+                id: '01N409EVENT0000000000000A2',
+                type: 'overwrite_reverted',
+                payload: { field_key: 'dlom' },
+              }),
+            ],
+          }),
+      });
+      renderPage();
+
+      expect(await screen.findByText('Override applied')).toBeInTheDocument();
+      expect(screen.getByText('Override reverted')).toBeInTheDocument();
+      expect(screen.getByText('dlom')).toBeInTheDocument();
+      expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+    });
+
+    it('shows nothing extra for an event whose payload is null', async () => {
+      stubFetches([], {
+        events: () => jsonResponse({ events: [event({ type: 'state_changed', payload: null })] }),
+      });
+      renderPage();
+
+      expect(await screen.findByText('State changed')).toBeInTheDocument();
+      expect(screen.queryByText('→')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('the evidence bundle', () => {
+    it('explains a refused export where the other actions report theirs', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.includes('/evidence-bundle')) {
+          return jsonResponse({ title: 'Conflict', detail: 'Nothing to bundle until a report exists.' }, 409);
+        }
+        if (url.includes('/events')) return jsonResponse({ events: [] });
+        return jsonResponse({
+          events: [],
+          comments: [],
+          rounds: [],
+          transactions: [],
+          payments: [],
+          signatures: [],
+          options: [],
+          links: [],
+          organizations: [],
+          quote: { configured: false, amount_cents: 0, currency: 'USD', kind: '409a' },
+        });
+      });
+      renderPage();
+
+      await userEvent.click(await screen.findByRole('button', { name: /Export Evidence Bundle/i }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Nothing to bundle until a report exists.');
+      // And the button comes back, so the export can be retried.
+      expect(screen.getByRole('button', { name: /Export Evidence Bundle/i })).toBeEnabled();
+    });
+  });
 });
