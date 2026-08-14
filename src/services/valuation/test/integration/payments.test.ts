@@ -222,8 +222,9 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
     });
 
     it('404s a payment id that is not an id', async () => {
-      // Before the shape check the path went to the repo, where a ULID column
-      // compared against arbitrary text is a 500 rather than a 404.
+      // 404 rather than a 500 from the `ulid` domain rejecting the comparison,
+      // and rather than a 422 that would tell a caller the id was merely the
+      // wrong shape for a receipt that may not be theirs.
       const vid = await createValuation('Receipt Bad Id Co');
       const res = await ctx.app.inject({
         method: 'GET',
