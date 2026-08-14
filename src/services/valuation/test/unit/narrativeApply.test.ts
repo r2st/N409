@@ -100,24 +100,29 @@ describe('mapping the agent’s keys onto the report’s', () => {
  * with the rows a database actually holds.
  */
 describe('every deliverable’s own vocabulary', () => {
-  const SEED = readFileSync(
-    new URL('../../migrations/0114_narrative_prompt_library.sql', import.meta.url),
-    'utf8',
-  );
+  // Both halves of the library: 0114 seeded the base and five kinds, 0141 the
+  // five that were still being drafted with the 409A's guidance. Read together
+  // because that is how the database holds them — testing 0114 alone would
+  // assert the state of a schema no deployment is in.
+  const SEED = ['0114_narrative_prompt_library', '0141_specialty_narrative_prompts']
+    .map((name) => readFileSync(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'))
+    .join('\n');
 
   /**
    * The seeded rows, as `resolveNarrativeSections` takes them. Ids are prefixed
    * `01N409NARR`, which is what makes them findable; a row's `enabled` is the
    * trailing `false` on its tuple, and its absence means the column default.
+   * Every seeded tuple opens `(id, kind, section_key, label,` on one line, so
+   * the label comes off the same match rather than a second parse.
    */
   const seededRows = (): NarrativePromptLike[] => {
-    const starts = [...SEED.matchAll(/\('01N409NARR\d+',\s*(NULL|'[^']*'),\s*'([^']+)'/g)];
+    const starts = [...SEED.matchAll(/\('01N409NARR\d+',\s*(NULL|'[^']*'),\s*'([^']+)',\s*'([^']+)'/g)];
     return starts.map((m, i) => {
       const tuple = SEED.slice(m.index, starts[i + 1]?.index ?? SEED.length);
       return {
         kind: m[1] === 'NULL' ? null : (m[1]!.slice(1, -1) as ValuationKind),
         section_key: m[2]!,
-        label: '',
+        label: m[3]!,
         guidance: '',
         sort_order: 0,
         enabled: !/,\s*false\s*\)/.test(tuple),
@@ -155,6 +160,84 @@ describe('every deliverable’s own vocabulary', () => {
           .toBe(true);
       }
     }
+  });
+
+  /**
+   * Routing a section into a chapter of another name gets the prose to the
+   * right page. It does not make the prose right: the guidance behind it is
+   * still the base library's, which is the 409A's. A fund's Valuation
+   * Techniques chapter was drafted from "which approaches were used and how
+   * they were weighted", and a debt report's Credit Assessment from "what the
+   * company does, its stage and traction, and the industry it competes in" —
+   * both filed under a heading that wanted something else entirely.
+   *
+   * So: wherever a kind renames a section, it must also own that section's
+   * guidance. The exceptions are named rather than implied, because the list
+   * shrinking is the point and a silent addition to it is the regression.
+   */
+  it('gives a renamed chapter its own guidance, not the 409A’s', () => {
+    const rows = seededRows();
+    const stillGeneric = new Set<ValuationKind>();
+    for (const kind of VALUATION_KINDS) {
+      const map = narrativeSectionMap(kind);
+      for (const { key, overridden } of resolveNarrativeSections(rows, kind)) {
+        const target = Object.hasOwn(map, key) ? map[key] : key;
+        const base = Object.hasOwn(NARRATIVE_SECTION_MAP, key) ? NARRATIVE_SECTION_MAP[key] : key;
+        // Only a rename matters here — an identity route keeps the base
+        // section's own subject, which is what the base guidance describes.
+        if (target === null || target === base) continue;
+        if (!overridden) stillGeneric.add(kind);
+      }
+    }
+    // The five 0141 converted are gone from this list; these six are the
+    // remaining gap, and each needs the same treatment.
+    expect([...stillGeneric].sort()).toEqual(['csop', 'emi', 'esop', 'fmv', 'gifts', 'ifrs2']);
+  });
+
+  /**
+   * The chapters only these five skeletons have. Before 0141 no library row
+   * named any of them, so nothing was drafted and they shipped carrying the
+   * skeleton's instructions to the analyst.
+   */
+  it.each([
+    ['718' as const, ['measurement_objective', 'awards', 'expense_recognition']],
+    ['fund' as const, ['standard_of_value', 'unit_of_account', 'lp_economics']],
+    ['debt' as const, ['instrument_terms', 'standard_of_value', 'sensitivity']],
+    ['goodwill' as const, ['reporting_units', 'qualitative_assessment']],
+    ['ip' as const, ['asset_description']],
+  ])('drafts %s’s own chapters', (kind, expected) => {
+    const drafted = resolveNarrativeSections(seededRows(), kind).map((s) => s.key);
+    for (const key of expected) expect(drafted, `${kind} does not draft ${key}`).toContain(key);
+  });
+
+  /**
+   * The other half of 0141. A section the map routes to NULL is drafted on
+   * every run and discarded on every run — and asking the model to discuss a
+   * marketability discount on a bond, an award or a reporting unit is an
+   * invitation to invent one.
+   */
+  it.each(['718' as const, 'fund' as const, 'debt' as const, 'goodwill' as const, 'ip' as const])(
+    'stops asking %s for the equity sections it has no chapter for',
+    (kind) => {
+      const drafted = resolveNarrativeSections(seededRows(), kind).map((s) => s.key);
+      expect(drafted).not.toContain('allocation_methodology');
+      expect(drafted).not.toContain('dlom_analysis');
+      expect(drafted).not.toContain('market_approach');
+    },
+  );
+
+  it('keeps the sections a specialty kind genuinely does route somewhere', () => {
+    const rows = seededRows();
+    // Debt is the one kind whose issuer discussion and income approach are not
+    // suppressed but redirected — a blanket "specialty kinds drop these" rule
+    // would have deleted the credit assessment and the discount-rate build-up.
+    const debt = resolveNarrativeSections(rows, 'debt').map((s) => s.key);
+    expect(debt).toContain('company_overview');
+    expect(debt).toContain('income_approach');
+    // And they carry debt's subject, not a startup's.
+    const credit = resolveNarrativeSections(rows, 'debt').find((s) => s.key === 'company_overview');
+    expect(credit?.label).toBe('Credit Assessment');
+    expect(credit?.overridden).toBe(true);
   });
 
   it('routes the sections whose two names disagreed', () => {

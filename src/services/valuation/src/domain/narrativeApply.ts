@@ -267,6 +267,13 @@ const NARRATIVE_SECTION_MAP_BY_KIND: Partial<
     allocation_methodology: null,
     dlom_analysis: null,
     conclusion: 'nav_conclusion',
+    // A fund report classifies and discloses the same two things an ASC 820
+    // report does, so the library keys them the same way (0141) — but this
+    // skeleton names the chapters `hierarchy` and `significant_inputs`. Keyed
+    // to the 820 spelling rather than to this one so a firm editing "Fair
+    // Value Hierarchy" for both is editing rows that look alike.
+    fair_value_hierarchy: 'hierarchy',
+    unobservable_inputs: 'significant_inputs',
   },
   /*
    * A debt instrument. The issuer discussion is a credit assessment, and the

@@ -155,6 +155,52 @@ describe.skipIf(!dbUp)('narrative prompt library', () => {
     expect((await sectionsFor('ifrs2')).map((s) => s.key)).toContain('vesting_conditions');
   });
 
+  /**
+   * The five 0141 converted. Each has chapters the 409A does not, and each was
+   * previously previewing the base eight — which is to say the preview screen
+   * showed an analyst that an ASC 718 report would be drafted with a
+   * marketability discount and a PWERM allocation on it.
+   */
+  it.each([
+    ['718', ['measurement_objective', 'awards', 'expense_recognition']],
+    ['fund', ['unit_of_account', 'fair_value_hierarchy', 'lp_economics']],
+    ['debt', ['instrument_terms', 'standard_of_value', 'sensitivity']],
+    ['goodwill', ['reporting_units', 'qualitative_assessment']],
+    ['ip', ['asset_description']],
+  ])('previews %s with its own chapters and none of the equity ones', async (kind, expected) => {
+    const keys = (await sectionsFor(kind)).map((s) => s.key);
+    for (const key of expected) expect(keys, `${kind} is missing ${key}`).toContain(key);
+    for (const gone of ['allocation_methodology', 'dlom_analysis', 'market_approach']) {
+      expect(keys, `${kind} still drafts ${gone}`).not.toContain(gone);
+    }
+  });
+
+  it('rewrites the sections a specialty kind redirects rather than dropping them', async () => {
+    // Debt keeps both, because its skeleton files them under other headings —
+    // the issuer discussion is a credit assessment and the income approach is
+    // the discount-rate build-up. Keeping the key but not the 409A's wording is
+    // the whole point of the override.
+    const debt = await sectionsFor('debt');
+    const credit = debt.find((s) => s.key === 'company_overview');
+    expect(credit?.label).toBe('Credit Assessment');
+    expect(credit?.overridden).toBe(true);
+    expect(credit?.guidance).toMatch(/capital structure/);
+    expect(credit?.guidance).not.toMatch(/stage and traction/);
+
+    const rate = debt.find((s) => s.key === 'income_approach');
+    expect(rate?.label).toBe('Discount Rate');
+    expect(rate?.guidance).toMatch(/credit spread/);
+  });
+
+  it('a 0141 suppression resets to the base wording like any other', async () => {
+    // The reset path is what makes a suppression reversible, and these rows
+    // were seeded with the base library's own text so turning one on gives the
+    // standard wording rather than a stub.
+    const row = await findRow('fund', 'dlom_analysis');
+    expect(row.enabled).toBe(false);
+    expect(row.default_guidance).toMatch(/DLOM method chosen/);
+  });
+
   it('suppresses the equity-allocation sections on the kinds that have none', async () => {
     // A PPA allocates a purchase price across assets; an IFRS 2 measurement
     // values an award. Neither allocates equity value to common shares.
