@@ -10,7 +10,44 @@ and **Internal** (service-to-service, incl. the R engine). Conventions below; en
   internal = mTLS + service JWT.
 - Pagination: `?page`, `?per_page` (cursor for large lists); filtering mirrors the admin UI.
 - Errors: RFC 9457 problem+json `{type,title,status,detail,instance}`. Rate-limited (429 + Retry-After).
+  The `type` vocabulary is [§1.1](#11-problem-types) — that is the field to branch on.
 - Webhooks are signed (HMAC) with retry + replay protection.
+
+### 1.1 Problem types
+
+`type` is the stable identifier; `title` is a constant reason phrase and `detail` is prose that
+may change between releases. **Branch on `type`, never on `title` or `detail`.** An unrecognized
+`type` should be handled by its status class, so new members can be added without breaking a
+client.
+
+| `type` | Status | Raised when |
+|--------|--------|-------------|
+| `urn:n409:problem:bad-request` | 400 | The request is malformed in a way no other type names. |
+| `urn:n409:problem:malformed-body` | 400 | The body is not parseable as its declared content-type. |
+| `urn:n409:problem:empty-body` | 400 | A JSON content-type was declared with no body. |
+| `urn:n409:problem:unauthorized` | 401 | No session or bearer credential, or it has expired. |
+| `urn:n409:problem:forbidden` | 403 | Authenticated, but the principal may not do this. |
+| `urn:n409:problem:not-found` | 404 | No such resource, or it is outside the caller's scope. |
+| `urn:n409:problem:method-not-allowed` | 405 | The path exists; the verb does not. |
+| `urn:n409:problem:not-acceptable` | 406 | No representation matches the `Accept` header. |
+| `urn:n409:problem:conflict` | 409 | State conflict — including an `Idempotency-Key` replayed against a different body. |
+| `urn:n409:problem:plan-limit` | 409 | The organisation's plan does not allow another of these. |
+| `urn:n409:problem:payload-too-large` | 413 | The body is over the route's limit. |
+| `urn:n409:problem:unsupported-media-type` | 415 | Nothing can parse the declared content-type. |
+| `urn:n409:problem:validation` | 422 | The body or query parsed but failed its validator; `errors` carries the issues. |
+| `urn:n409:problem:rate-limited` | 429 | Limiter exhausted; `retry_after_seconds` and `Retry-After` say when to return. |
+| `urn:n409:problem:internal` | 5xx | Unhandled server-side failure. Carries no `detail` by design. |
+| `urn:n409:problem:unavailable` | 503 | This service is up but cannot serve the request yet. |
+| `urn:n409:problem:upstream` | 502/503/504 | A service this one depends on failed or timed out. |
+| `urn:n409:problem:accounting-unavailable` | 503 | The accounting integration is unreachable or unconfigured. |
+| `urn:n409:problem:captable-sync-unavailable` | 503 | The cap-table integration is unreachable or unconfigured. |
+| `urn:n409:problem:hris-unavailable` | 503 | The HRIS integration is unreachable or unconfigured. |
+| `urn:n409:problem:billing-unavailable` | 503 | Billing is unreachable. |
+| `urn:n409:problem:payments-unconfigured` | 503 | No payment provider key is set in this deployment. |
+| `urn:n409:problem:stripe` | 4xx/5xx | Stripe refused the operation; `detail` carries its reason. |
+
+This table is not prose: `problemTypes.test.ts` fails if the code raises a type the table omits,
+or if the table names one no code raises.
 
 ## 2. Client / Admin API
 
