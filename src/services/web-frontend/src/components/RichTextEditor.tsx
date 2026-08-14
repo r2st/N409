@@ -53,7 +53,11 @@ export function RichTextEditor({
   // Links + tables (gap 9). The sanitizer keeps only http(s)/mailto hrefs,
   // so a bad URL degrades to plain text rather than a live javascript: link.
   const insertLink = () => {
-    const url = window.prompt('Link URL (https://… or mailto:…)');
+    // Trimmed before it is judged. A pasted URL routinely arrives with a
+    // trailing space, and untrimmed it matched no scheme — so `example.com `
+    // became the href `https://example.com%20`, and a prompt answered with
+    // nothing but spaces built a link to `https://` and three of them.
+    const url = window.prompt('Link URL (https://… or mailto:…)')?.trim();
     if (!url) return;
     const withScheme = /^(https?:\/\/|mailto:)/i.test(url) ? url : `https://${url}`;
     exec('createLink', withScheme);
