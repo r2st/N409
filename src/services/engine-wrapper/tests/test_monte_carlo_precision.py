@@ -28,7 +28,14 @@ import math
 import pytest
 
 from app.engine.errors import EngineInputError
-from app.engine.monte_carlo import MAX_PATHS, MAX_SCENARIOS, allocate_monte_carlo
+from app.engine.monte_carlo import (
+    DEFAULT_SEED,
+    MAX_PATHS,
+    MAX_SCENARIOS,
+    NORMAL_95,
+    allocate_monte_carlo,
+)
+from app.engine.waterfall import allocate_waterfall
 
 # One common class, so `common_per_share` is the whole equity value per share
 # and any error in the estimator shows up undiluted by a preference stack.
@@ -254,3 +261,80 @@ class TestTheCapTableItNeeds:
     def test_a_non_positive_equity_value_is_refused(self):
         with pytest.raises(EngineInputError, match="equity_value must be positive"):
             allocate_monte_carlo(0.0, {"share_classes": COMMON_ONLY}, t=2.0, r=0.03, sigma=0.5)
+
+
+class TestTheIntervalBesideTheFigure:
+    """The precision as a reader judges it, rather than as a number to convert."""
+
+    def test_the_interval_is_the_mean_plus_and_minus_1_96_standard_errors(self):
+        out = mc()
+        lo, hi = out["common_per_share_ci95"]
+        se = out["standard_error_per_share"]
+        mean = out["common_per_share"]
+        assert out["confidence_level"] == 0.95
+        assert lo == pytest.approx(mean - NORMAL_95 * se, abs=1e-6)
+        assert hi == pytest.approx(mean + NORMAL_95 * se, abs=1e-6)
+
+    def test_the_interval_narrows_as_the_square_root_of_the_path_count(self):
+        # The same 1/sqrt(n) the standard error obeys, since the interval is a
+        # fixed multiple of it. Four times the paths, half the width.
+        def width(paths):
+            lo, hi = mc(paths=paths)["common_per_share_ci95"]
+            return hi - lo
+
+        assert width(16_000) == pytest.approx(width(4_000) / 2, rel=0.15)
+
+    def test_a_payoff_with_no_randomness_left_reports_a_point_interval(self):
+        # sigma at the vanishing point: every draw lands on the same exit value,
+        # so there is nothing for the interval to be wide about.
+        out = mc(sigma=1e-9, scenarios=identical(3, sigma=1e-9))
+        lo, hi = out["common_per_share_ci95"]
+        assert hi - lo == pytest.approx(0.0, abs=1e-6)
+
+    def test_the_interval_does_not_reach_below_zero(self):
+        # The payoff is a sum of call spreads and cannot be negative, so an
+        # interval crossing zero would report a value the model cannot produce.
+        # Reachable on a thin common slice: a preference stack that swallows the
+        # equity leaves common worth almost nothing with an error beside it that
+        # is not almost nothing.
+        out = mc(
+            classes=[
+                {
+                    "name": "Series A",
+                    "kind": "preferred",
+                    "shares": 1_000_000,
+                    "preference": 40_000_000,
+                    "seniority": 1,
+                },
+                {"name": "Common", "kind": "common", "shares": 4_000_000},
+            ],
+            paths=2_000,
+            sigma=1.5,
+        )
+        lo, _ = out["common_per_share_ci95"]
+        assert lo >= 0.0
+
+    def test_the_interval_brackets_the_closed_form_it_generalises(self):
+        # The single-scenario case reduces to the OPM, so the exact answer must
+        # sit inside the interval the simulation claims for itself. This is the
+        # property that makes the interval worth printing: it is checkable.
+        out = mc(classes=STACKED, paths=20_000)
+        exact = allocate_waterfall(EQUITY, STACKED, 2.0, 0.03, 0.55)
+        common = next(c for c in exact["classes"].values() if c["kind"] == "common")
+        lo, hi = out["common_per_share_ci95"]
+        assert lo <= common["per_share"] <= hi
+
+
+class TestTheSeedTheCallerChose:
+    def test_a_seed_of_zero_is_the_callers_seed_and_not_the_default(self):
+        # `_num(...) or DEFAULT_SEED` turned an explicit 0 into 409 and ran a
+        # stream nobody asked for. The run stayed reproducible — the seed it
+        # reported was the one it used — but an engagement pinned to seed 0 and
+        # re-derived under seed 0 anywhere else would not have reconciled.
+        zero = mc(seed=0)
+        assert zero["seed"] == 0
+        assert zero["common_per_share"] != mc(seed=DEFAULT_SEED)["common_per_share"]
+
+    def test_an_absent_seed_still_defaults(self):
+        inputs = {"share_classes": COMMON_ONLY, "monte_carlo": {"paths": 2_000}}
+        assert allocate_monte_carlo(EQUITY, inputs, t=2.0, r=0.03, sigma=0.55)["seed"] == DEFAULT_SEED
