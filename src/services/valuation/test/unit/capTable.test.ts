@@ -432,6 +432,52 @@ describe('capTable', () => {
       });
     });
 
+    /*
+     * The other figure the workbook tab and this summary both compute, and the
+     * other one they disagreed on: a preferred class priced but with no stated
+     * amount invested. Carta's "Amount Invested" is optional and plenty of
+     * sheets carry only a round price, so this is an ordinary export rather
+     * than a malformed one.
+     */
+    describe('a priced class with no stated invested amount', () => {
+      const priced = (): CapTableEntry[] => [
+        good[0]!,
+        { ...good[1]!, invested_amount: null, price_per_share: 1.5, shares: 2_000_000 },
+        good[2]!,
+      ];
+
+      it('derives the preference from price × shares', () => {
+        // 2,000,000 × 1.5 × 1× = 3,000,000, not nothing.
+        expect(validateCapTable(priced()).summary.total_preference_stack).toBe(3_000_000);
+      });
+
+      it('agrees with the workbook tab, which reported it as having raised nothing', () => {
+        const totals = capTableTotals(priced());
+        expect(totals.invested_capital).toBe(3_000_000);
+        expect(totals.liquidation_preference).toBe(3_000_000);
+      });
+
+      it('agrees with the engine feed, which has derived it all along', () => {
+        expect(toWaterfallInputs(priced()).preferred[0]!.invested_amount).toBe(3_000_000);
+      });
+
+      it('carries the multiple through the derived base', () => {
+        const twoX = priced();
+        twoX[1] = { ...twoX[1]!, liquidation_multiple: 2 };
+        expect(validateCapTable(twoX).summary.total_preference_stack).toBe(6_000_000);
+        expect(capTableTotals(twoX).liquidation_preference).toBe(6_000_000);
+      });
+
+      it('still reports nothing when there is neither an amount nor a price', () => {
+        const bare = priced();
+        bare[1] = { ...bare[1]!, price_per_share: null };
+        const v = validateCapTable(bare);
+        expect(v.summary.total_preference_stack).toBe(0);
+        expect(v.issues.some((i) => i.code === 'no_investment')).toBe(true);
+        expect(capTableTotals(bare).liquidation_preference).toBe(0);
+      });
+    });
+
     describe('negative money in the preference stack', () => {
       it.each([
         ['a negative invested amount', { invested_amount: -5_000_000 }, 'negative_investment'],

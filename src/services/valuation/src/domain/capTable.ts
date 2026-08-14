@@ -440,6 +440,27 @@ export function asConvertedShares(entry: CapTableEntry): number {
 }
 
 /**
+ * What a class paid in — the base a liquidation preference multiplies.
+ *
+ * A stated `invested_amount` wins; absent one it is `price_per_share × shares`,
+ * which is the same derivation `toWaterfallInputs` feeds the engine. Real
+ * exports leave the amount column blank far more often than they leave the
+ * price blank — Carta's "Amount Invested" is optional and a fund
+ * administrator's sheet frequently carries only a round price — so the fallback
+ * is the common path, not a repair for malformed input.
+ *
+ * Shared because the workbook tab had its own version that skipped the fallback
+ * and reported such a class as having invested nothing and holding no
+ * preference, while the engine allocated it a real one off the same row.
+ */
+export function investedAmount(entry: CapTableEntry): number {
+  const stated = Number(entry.invested_amount);
+  if (entry.invested_amount !== null && Number.isFinite(stated)) return stated;
+  const price = Number(entry.price_per_share);
+  return entry.price_per_share !== null && Number.isFinite(price) ? price * finiteOr(entry.shares, 0) : 0;
+}
+
+/**
  * The fully-diluted, as-converted count for a whole table.
  *
  * Prefer this over a stored `CapTableSummary.fully_diluted_shares` anywhere the
@@ -580,7 +601,7 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
         });
       }
       // Preference stack: invested × multiple, else shares × price × multiple.
-      const invested = e.invested_amount ?? (e.price_per_share !== null ? e.price_per_share * e.shares : 0);
+      const invested = investedAmount(e);
       // The two money columns were the last unchecked inputs to the preference
       // stack, and `parseNumericCell` hands them straight through: it reads a
       // fully parenthesised `(5,000,000)` as −5,000,000, which is the correct
@@ -711,7 +732,7 @@ export function toWaterfallInputs(entries: CapTableEntry[]): WaterfallInputs {
     .map((e, i) => ({
       security_class: e.security_class,
       shares: e.shares,
-      invested_amount: e.invested_amount ?? (e.price_per_share !== null ? e.price_per_share * e.shares : 0),
+      invested_amount: investedAmount(e),
       liquidation_multiple: e.liquidation_multiple ?? 1,
       seniority: e.seniority ?? i + 1,
       conversion_ratio: e.conversion_ratio ?? 1,
