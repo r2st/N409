@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, apiDownload, ApiError, ifMatch } from '../lib/api';
 import { required, useFormValidation } from '../lib/useFormValidation';
 import { useAuth } from '../lib/auth';
@@ -28,12 +28,26 @@ function Meta({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+/**
+ * How much of the spine the Activity sidebar asks for.
+ *
+ * The panel used to request the whole event history and render every row into
+ * one `<ol>`. On an engagement rolled forward for years that is thousands of
+ * rows with their payloads, fetched and laid out to fill a sidebar nobody
+ * scrolls to the bottom of. The newest slice is what the panel is for; the
+ * Change History tab is where the rest lives, and is where the note below
+ * sends anyone who wants it.
+ */
+const ACTIVITY_LIMIT = 100;
+
 /** Overview tab — engagement facts, role-gated editing, workflow, funding, audit. */
 export function ValuationDetailPage() {
   const { valuation, reload, commentTick } = useWorkspace();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [events, setEvents] = useState<ValuationEvent[] | null>(null);
+  /** True when the engagement has older activity than this panel asked for. */
+  const [eventsTruncated, setEventsTruncated] = useState(false);
   const [eventsError, setEventsError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -48,8 +62,14 @@ export function ValuationDetailPage() {
 
   const loadEvents = useCallback(async () => {
     try {
-      const { events: ev } = await api<{ events: ValuationEvent[] }>(`/valuations/${valuation.id}/events`);
+      // Ask for what the panel renders. The endpoint caps this anyway, but a
+      // sidebar that asks for everything and then scrolls forever is not the
+      // thing to build on top of the cap.
+      const { events: ev, truncated } = await api<{ events: ValuationEvent[]; truncated: boolean }>(
+        `/valuations/${valuation.id}/events?limit=${ACTIVITY_LIMIT}`,
+      );
       setEvents(ev);
+      setEventsTruncated(truncated);
       setEventsError(null);
     } catch (err) {
       // Emphatically not `setEvents([])`: an engagement with a full audit trail
@@ -308,6 +328,21 @@ export function ValuationDetailPage() {
         {eventsError && <ErrorNote>{eventsError}</ErrorNote>}
         {!events && !eventsError && <Spinner />}
         {events && events.length === 0 && <p className="text-sm text-ink-400">No activity yet.</p>}
+        {/*
+          Above the list, not below it: the list runs oldest-first, so what the
+          cap dropped sits off the *top*. A timeline that begins mid-history
+          without saying so reads as the whole record on the one panel whose job
+          is to be the record.
+        */}
+        {eventsTruncated && (
+          <p className="mb-4 text-xs text-ink-500">
+            Showing the {ACTIVITY_LIMIT} most recent entries.{' '}
+            <Link to={`/valuations/${valuation.id}/audit-trail`} className="underline">
+              See the full change history
+            </Link>
+            .
+          </p>
+        )}
         {events && events.length > 0 && (
           <ol className="relative space-y-5 border-l border-paper-300 pl-5">
             {events.map((ev) => (

@@ -16,7 +16,7 @@ import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
 import { isTagSlug } from '../domain/valuationTags.js';
-import { listEvents } from '../events/record.js';
+import { EVENT_PAGE_LIMIT, listEvents } from '../events/record.js';
 import {
   createValuation,
   findValuationById,
@@ -358,10 +358,43 @@ export function registerValuationRoutes(
     return { valuation: updated };
   });
 
+  /**
+   * The raw event spine, newest end first-class.
+   *
+   * `valuation_events` is append-only and never pruned: a param patch, a
+   * calculation, a document, a comment and an AI job each write one, so an
+   * engagement rolled forward across a few years holds thousands, each with a
+   * `payload` JSONB beside it. This selected all of them — every row, every
+   * payload — for a sidebar panel, on a table the audit-trail route on the
+   * same spine had already decided to cap at MAX_TRAIL_EVENTS. One door was
+   * bounded and the one next to it was not.
+   *
+   * Capped at the newest `limit`, because the newest is what an activity panel
+   * is for, and `truncated` says when the cap bit rather than letting the
+   * timeline quietly stop somewhere. The full history is the audit-trail route,
+   * which is paginated and filterable and is where a reader who wants all of it
+   * should be.
+   */
   app.get('/api/v1/valuations/:id/events', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await loadAuthorized(deps.pool, principal, id);
-    return { events: await listEvents(deps.pool, id) };
+
+    const parsed = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(EVENT_PAGE_LIMIT).default(EVENT_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+
+    // One more than asked for, so "there are older events" is answered by the
+    // same query rather than by a second COUNT over the same rows.
+    const { limit } = parsed.data;
+    const rows = await listEvents(deps.pool, id, { limit: limit + 1 });
+    return {
+      events: rows.slice(-limit),
+      truncated: rows.length > limit,
+      page_limit: EVENT_PAGE_LIMIT,
+    };
   });
 }

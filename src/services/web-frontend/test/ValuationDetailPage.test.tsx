@@ -239,6 +239,49 @@ describe('ValuationDetailPage', () => {
       expect(screen.getByText('wacc.beta')).toBeInTheDocument();
     });
 
+    it('asks for a page of the spine rather than all of it', async () => {
+      // The panel used to request the whole event history — every row on an
+      // append-only table nothing prunes — and render all of it into one list.
+      const recorded: Recorded[] = [];
+      stubFetches(recorded);
+      renderPage();
+      await screen.findByText('No activity yet.');
+
+      const call = recorded.find((r) => r.url.includes('/events'));
+      expect(call).toBeDefined();
+      expect(call!.url).toMatch(/[?&]limit=\d+/);
+    });
+
+    it('says so when the engagement has more history than the panel shows', async () => {
+      stubFetches([], {
+        events: () =>
+          jsonResponse({
+            events: [event({ type: 'state_changed', payload: { from: 'pending', to: 'started' } })],
+            truncated: true,
+          }),
+      });
+      renderPage();
+
+      // A timeline that begins mid-history without saying so reads as the whole
+      // record, on the one panel whose job is to be the record.
+      expect(await screen.findByText(/most recent entries/)).toBeInTheDocument();
+      const link = screen.getByRole('link', { name: /full change history/i });
+      expect(link).toHaveAttribute('href', '/valuations/01TESTVALUATION0000000000A/audit-trail');
+    });
+
+    it('stays quiet when the panel is showing everything there is', async () => {
+      stubFetches([], {
+        events: () =>
+          jsonResponse({
+            events: [event({ type: 'state_changed', payload: { from: 'pending', to: 'started' } })],
+            truncated: false,
+          }),
+      });
+      renderPage();
+      expect(await screen.findByText('pending → started')).toBeInTheDocument();
+      expect(screen.queryByText(/most recent entries/)).not.toBeInTheDocument();
+    });
+
     it('reports a failed load instead of claiming there is no activity', async () => {
       stubFetches([], {
         events: () => jsonResponse({ title: 'Forbidden', detail: 'Not your engagement.' }, 403),

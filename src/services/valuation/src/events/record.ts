@@ -51,6 +51,16 @@ export async function recordEvent(
 }
 
 /**
+ * Ceiling on one read of the raw spine (`GET /valuations/:id/events`).
+ *
+ * Smaller than the audit trail's MAX_TRAIL_EVENTS because this route hands
+ * back whole rows — `payload` included, unsummarised — where the trail hands
+ * back a described entry. It is a bound on one response, not on the history:
+ * the trail route pages through all of it.
+ */
+export const EVENT_PAGE_LIMIT = 1_000;
+
+/**
  * Filters pushed down to SQL. A long-running valuation accumulates thousands
  * of events; readers that only care about a slice (the client timeline, one
  * event type, a date window) should not drag the whole spine into memory.
