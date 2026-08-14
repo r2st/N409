@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { SCHEDULE_CATALOGUE, scheduleTitle } from '../../src/domain/reportExhibits.js';
+import { TAG_CATALOGUE, TAG_CATEGORIES } from '../../src/domain/valuationTags.js';
 
 /**
  * `docs/N409-vs-409ai-Report-Comparison.md` against the code it describes.
@@ -79,10 +80,34 @@ describe('the 409.ai comparison document', () => {
   it('counts its own open gaps correctly', async () => {
     const text = await doc();
     const open = new Set([...text.matchAll(/\*\*GAP #(\d+) — OPEN\*\*/g)].map((m) => m[1]));
-    // §2 marks #23 open in a differently-shaped cell.
+    // §2 marks its gaps in a differently-shaped cell.
     const openInAiTable = new Set([...text.matchAll(/\*\*#(\d+) — OPEN\*\*/g)].map((m) => m[1]));
     const all = new Set([...open, ...openInAiTable]);
-    expect([...all].sort()).toEqual(['23']);
-    expect(text).toContain('31 identified, 30 closed, 1 open');
+    expect([...all].sort()).toEqual([]);
+    expect(text).toContain('31 identified, 31 closed, 0 open');
+  });
+
+  /**
+   * #23, the last of the thirty-one, and the one the document was most likely
+   * to go on being wrong about — it had been open long enough to read as
+   * permanent.
+   *
+   * Flipped rather than deleted, the same way #11 and #13 were: it used to fail
+   * if the tagging agent shipped while the document still called it a gap, and
+   * it now fails if the agent is removed while the document still calls it
+   * closed. The catalogue assertion is the one that matters, because the
+   * document's claim is not "tagging exists" — it is that the vocabulary is
+   * *closed*, which is the whole divergence from 409.ai's free-text prompt and
+   * the only reason the tags are queryable.
+   */
+  it('is right that AI auto-tagging now ships against a closed vocabulary', async () => {
+    const text = await doc();
+    expect(text).toContain('**#23 — CLOSED**');
+    expect(TAG_CATALOGUE.length).toBeGreaterThan(0);
+    expect(text).toContain(`closed** 40-tag vocabulary`);
+    // The count in the prose is a claim about the code, so it is checked
+    // against the code rather than proof-read.
+    expect(TAG_CATALOGUE.length).toBe(40);
+    expect(TAG_CATEGORIES).toHaveLength(6);
   });
 });

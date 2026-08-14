@@ -38,7 +38,7 @@ production report have since been closed, in this platform's own shape rather th
 architecture — most visibly, research is contained behind a public-fields whitelist instead of sending the
 subject company's name to a search provider.
 
-**Gap count: 31 identified, 30 closed, 1 open** (#23 AI auto-tagging). It is P2.
+**Gap count: 31 identified, 31 closed, 0 open.**
 
 ---
 
@@ -165,7 +165,7 @@ builders' headings and the public sample page all derive from it, so a schedule 
 | **AI valuation parameter setting** | ✅ `SET_VALUATION_PARAMS` | ✅ `extract` auto-applies engine inputs to params | **#20 — CLOSED** | `routes/ai.ts` (`autoApply`) |
 | **AI report review/QA** | ✅ `REVIEW_REPORT` | ✅ `qa` pipeline, wired to the publish gate so the deterministic checks and the review row always ride along | **#21 — CLOSED** | `domain/pipeline.ts`, `domain/publishGate.ts` |
 | **AI cap table anonymization** | ✅ | ✅ `POST /valuations/:id/ai/anonymize`, plus the `anonymize` option on every pipeline | **#22 — CLOSED** | `routes/ai.ts` |
-| **AI tag/classification** | ✅ `AI:FindRelevantTags` | ❌ No tagging model, no `valuation_tags` table | **#23 — OPEN** | — |
+| **AI tag/classification** | ✅ `AI:FindRelevantTags` (free text, perplexity-PRO) | ✅ `tagging` agent → `POST /ai/tagging/apply` → `valuation_tags`, against a **closed** 40-tag vocabulary; consumed by `GET /valuations?tags=` | **#23 — CLOSED** | `ai/app/agents/tagging.py`, `domain/valuationTags.ts`, `repos/valuationTags.ts`, `routes/valuationTags.ts` |
 | — | — | **N409 only:** analyst agents with no 409.ai counterpart — `cap_table`, `assumptions`, `audit_defense`, `roll_forward`, `report_narrative` | — | `ai/app/agents/` |
 
 ---
@@ -219,11 +219,39 @@ builders' headings and the public sample page all derive from it, so a schedule 
 
 ## 6. Remaining Work
 
-One gap is open. It was P2 in the original roadmap and does not block parity.
+No gap is open.
 
-| Gap # | Item | Effort | Notes |
-|-------|------|--------|-------|
-| **#23** | AI Auto-tagging | Small | No `valuation_tags` table and no consumer for one. Worth a use case before a prompt. |
+### How #23 was resolved
+
+It stayed open longest of the thirty-one, and the reason was recorded here rather than in a backlog: there
+was no `valuation_tags` table *and no consumer for one*. That was the right order to refuse it in. A tag
+nothing reads is a field an analyst fills in once and never sees again, and shipping the prompt first would
+have produced exactly that.
+
+So the table landed with its consumer. `GET /valuations?tags=saas,pre_revenue` filters the engagement list on
+accepted tags — AND across slugs, because "pre-revenue medtech with a participating stack" is the question and
+the OR of those three tags is most of the book of work — and the same predicate answers "what did we conclude
+last time we valued a company like this one".
+
+The one substantive divergence from 409.ai is that **the vocabulary is closed**. `AI:FindRelevantTags` returns
+free text, and free text is what makes a tag list unqueryable: `saas`, `SaaS`, `B2B SaaS` and
+`software-as-a-service` are one fact and four tags, and a filter over them returns a quarter of the matches
+while looking exactly like a filter that worked. `TAG_CATALOGUE` is 40 tags across six categories, each
+carrying the definition that is both the analyst's tooltip and the model's specification. Anything outside it
+is surfaced as `unknown` rather than normalised — normalising is the tempting half-fix and a trap, because
+`slugify('B2B SaaS')` is still not `saas`, and the near-misses it does catch teach a reader to trust the ones
+it does not.
+
+That catalogue exists once, in `domain/valuationTags.ts`. The AI service holds no copy: the valuation service
+ships it in the payload as the agent's specification, and a tagging run that arrives without one is refused
+with a 422 rather than attempted, because free text from an uninstructed model is dropped in its entirety
+downstream and presents as "the documents did not classify this engagement".
+
+The rest is about not silently undoing a human. An AI tag lands `suggested` and needs an analyst to accept it;
+a rejected tag stays rejected through a re-run, so a tag declined in March does not return every month; an
+AI-sourced row is rejected rather than deleted, so the record of what the model proposed survives; and stage
+and revenue admit one accepted tag each, enforced by demoting the incumbent rather than refusing the new tag,
+because a company that was `seed` and is now `series_a` has not made an error.
 
 ### How #11 and #13 were resolved
 
