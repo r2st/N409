@@ -31,10 +31,20 @@ export default defineConfig({
       // Enforced coverage floor (audit P2-2). Set at the current measured level
       // (a point or two below) so CI can't silently regress — the TS analogue of
       // the Python services' `--cov-fail-under=80`. Ratchet upward over time.
+      //
+      // Measured at the ratchet below: statements/lines 97.51, functions 98.34,
+      // branches 90.75. The first three had been left at a floor ten points
+      // under what the suite actually reaches, which is not a floor — a change
+      // could have dropped a tenth of the service's statements and still gone
+      // green. Branches is the one that stays where it is: it is the binding
+      // constraint with under a point of headroom, and the ~1,400 uncovered
+      // branches behind that number are a long tail across 326 files rather
+      // than a few neglected ones (the worst single file holds 28), so moving
+      // it takes new tests spread widely rather than one more suite.
       thresholds: {
-        lines: 87,
-        statements: 87,
-        functions: 89,
+        lines: 96,
+        statements: 96,
+        functions: 97,
         branches: 90,
       },
     },
