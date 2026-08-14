@@ -94,16 +94,24 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
   const revenueCents = params?.last_year_revenue_cents ?? params?.ytd_revenue_cents ?? null;
   const annualRevenue = revenueCents !== null ? Number(revenueCents) / 100 : null;
 
-  // Valuation date for the safe-harbor clock: adopted resolution date, else the
+  // Valuation date for the safe-harbor clock: board resolution date, else the
   // published/completed timestamp, else today. completed_at rides the row's
   // index signature (typed unknown), so coerce defensively.
+  //
+  // Every one of these goes through `toIso`, including the two that are `date`
+  // columns. `String(aDate).slice(0, 10)` yields "Mon Jan 05", not "2026-01-05"
+  // — pg hands a `date` back as a Date object and no type parser is registered
+  // — and `monthsBetween` parses that to an Invalid Date and returns 0, which
+  // silently disables the 12-month staleness trigger for exactly the
+  // engagements that have a board resolution. A malformed date here does not
+  // fail, it just stops alerting.
   const toIso = (v: unknown): string | null => {
     if (v instanceof Date) return v.toISOString().slice(0, 10);
     if (typeof v === 'string' && v) return v.slice(0, 10);
     return null;
   };
   const valuationDate =
-    (resolution?.valuation_date ? String(resolution.valuation_date).slice(0, 10) : null) ??
+    toIso(resolution?.valuation_date) ??
     toIso(valuation.published_at) ??
     toIso(valuation.completed_at) ??
     new Date().toISOString().slice(0, 10);
@@ -113,7 +121,9 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
     fmv_per_share: calc?.fmv_per_share ? Number(calc.fmv_per_share) : null,
     annual_revenue: annualRevenue,
     fully_diluted_shares: capTable?.validation?.summary?.fully_diluted_shares ?? null,
-    last_round_date: params?.last_round_date ? String(params.last_round_date).slice(0, 10) : null,
+    // Same column type, same trap: the funding-round trigger compares this
+    // string against the baseline's, and two malformed strings compare wrong.
+    last_round_date: toIso(params?.last_round_date),
   };
 }
 
