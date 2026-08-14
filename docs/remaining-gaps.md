@@ -35,9 +35,11 @@
   legality checks (`domain/workflow.ts`, `routes/workflow.ts`).
 - [x] **Bulk actions** — set_state / advance / restart / assign_reviewer over
   checkbox selection, per-id results.
-- [x] **Clone & roll-forward** — `POST /valuations/:id/clone` copies the
-  engagement + methodology params, `roll_forward` flags the copy for re-dating
-  (`routes/operations.ts`, `repos/valuations.ts:cloneValuation`).
+- [x] **Clone** — `POST /valuations/:id/clone` copies the engagement +
+  methodology params, `roll_forward` flags the copy for re-dating
+  (`routes/operations.ts`, `repos/valuations.ts:cloneValuation`). The flag names
+  a *clone*, not the engine's calibration roll-forward, which is unwired — see
+  §2.
 - [x] **State-change hooks** — auto email workflows + in-app notifications fire
   on every transition (`hooks/stateChange.ts`, `domain/emailWorkflows.ts`).
 
@@ -137,7 +139,7 @@
 | **AI model routing** | OpenRouter with ordered fallback across 3 free models; model recorded per job | No **prompt registry** (prompts hard-coded in `pipelines.py` vs 409.ai's 27 DB-backed prompts with CRUD); no multi-provider routing (Perplexity research, Bedrock, Anthropic direct); no **cap-table anonymization** privacy step. |
 | **Document ingestion formats** | PDF (pypdf, first 40 pages) + text-like (csv/tsv/txt/md/json) | No **XLSX/DOCX** extraction — cap tables and financials usually arrive as Excel. Corpus capped at 60k chars. |
 | **Report templates ↔ reports** | Templates versioned and managed; reports carry a `template_version` | Only a single built-in 409a section layout in code (`domain/report.ts`); template bodies aren't merged into new reports per kind, non-409a kinds have no bespoke layouts, and `template_version` isn't bumped on regeneration (the `409a.v0 → v53` behavior). |
-| **Clone / roll-forward** | Engagement + params copied, roll-forward flagged | Documents, funding rounds, and the workbook are not carried over; the engine has no roll-forward math (R package's `FRODO`/`ROLL_FRODO`). |
+| **Clone / roll-forward** | Engagement + params copied, roll-forward flagged. **The engine's calibration roll-forward now exists** — `engine/rollforward.py` behind `POST /engine/v1/rollforward`: carries the prior calibrated equity value forward at the prior required return over the elapsed period, applies a new round or explicit value adjustments, detects material changes (new round, revenue move past a threshold, cap-table change, a gap over a year) and emits `pre_populated_inputs` ready for `compute`. | Documents, funding rounds, and the workbook are not carried over. **And nothing calls the roll-forward endpoint** — it and `/engine/v1/market-data` are the only two engine routes with no caller in `src/services/valuation`. The platform's own "roll-forward" is `cloneValuation(rollForward: true)`, which copies last year's data and flags the copy for re-dating; it performs none of the calibration above. So no calculation stores a roll-forward result, which is also why there is no roll-forward exhibit in the report: the bridge from the prior 409A's concluded equity value to this one — the schedule an auditor asks for first on a re-valuation without a new priced round — has nothing to render from. Wiring it needs somewhere to persist the calibration trail and the material-change list, not just a route. |
 | **Attribution** | `source`/`gclid` captured; by-source donut on the dashboard | No Google Ads round-trip / conversion reporting. |
 | **Read/unread on valuations** | Columns exist (`admin_read_at`, `user_read_at`, `last_comment_at`); notifications cover the alerting need | Nothing writes the read markers, and the worklist has no per-row unread indicator or "Unread" scope (409.ai §3.2). |
 
