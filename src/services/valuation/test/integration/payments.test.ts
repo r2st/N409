@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { inflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   createPayment,
@@ -15,6 +14,11 @@ import {
   STANDARD_DELIVERY_DAYS,
 } from '../../src/domain/pricing.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+// The receipt is drawn with the same embedded Unicode face as the 409A
+// deliverable, so its text only comes back through the face's /ToUnicode CMap.
+// A local decoder here read glyph indices as Latin-1 and failed on text the
+// receipt does say; there is one reader for this service now.
+import { readable } from './support/pdfText.js';
 
 /**
  * Payment UI backend (P0 #2 phase A): the quote endpoint and the signed
@@ -123,25 +127,6 @@ describe.skipIf(!dbUp)('payments quote + webhook', () => {
   });
 
   describe('receipt pdf', () => {
-    /** Readable text of a rendered PDF — inflate the streams, decode the hex runs. */
-    function readable(pdf: Buffer): string {
-      const raw = pdf.toString('latin1');
-      let all = raw;
-      for (const m of raw.matchAll(/stream\r?\n/g)) {
-        const start = m.index + m[0].length;
-        const end = pdf.indexOf(Buffer.from('endstream'), start);
-        if (end < 0) continue;
-        try {
-          all += inflateSync(pdf.subarray(start, end)).toString('latin1');
-        } catch {
-          // Not a deflate stream — nothing to read.
-        }
-      }
-      return Array.from(all.matchAll(/<([0-9a-fA-F]+)>/g))
-        .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-        .join('');
-    }
-
     const settledPayment = async (company: string, sessionId: string) => {
       const vid = await createValuation(company);
       const payment = await createPayment(ctx.pool, {
