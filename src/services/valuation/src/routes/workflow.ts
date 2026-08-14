@@ -5,7 +5,12 @@ import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { VALUATION_STATES, type ValuationState } from '../domain/valuation.js';
 import { BULK_ACTIONS, canRestart, canTransition, nextState, RESTART_STATE } from '../domain/workflow.js';
-import { findValuationById, patchValuation, type ValuationRow } from '../repos/valuations.js';
+import {
+  findValuationById,
+  findValuationsByIds,
+  patchValuation,
+  type ValuationRow,
+} from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { assertPublishGate } from '../domain/publishGate.js';
@@ -114,6 +119,19 @@ async function loadValuation(pool: pg.Pool, id: string): Promise<ValuationRow> {
   return valuation;
 }
 
+/**
+ * `loadValuation` against a map the caller has already filled, so a bulk action
+ * raises the same 404 for a malformed or unknown id as the single-id routes do
+ * — the per-row `error` string in the bulk response is that message, and it
+ * must not change shape just because the read moved out of the loop.
+ */
+function fromPrefetch(rows: ReadonlyMap<string, ValuationRow>, id: string): ValuationRow {
+  if (!isUlid(id)) throw problems.notFound();
+  const valuation = rows.get(id);
+  if (!valuation) throw problems.notFound();
+  return valuation;
+}
+
 export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps): void {
   const applyState = async (
     valuation: ValuationRow,
@@ -191,10 +209,29 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
       }
     }
 
+    /*
+     * One read for the whole selection, not one per id.
+     *
+     * The loop below is unavoidably sequential — each body writes, and the
+     * transitions are recorded in the order the operator sent them — but the
+     * *reads* are not. A 200-id bulk action (the schema's cap) opened 200
+     * round trips before the first write, all of them the same single-row
+     * `SELECT * FROM valuations WHERE id = $1`, and the whole batch is
+     * latency-bound on that: at a 1ms round trip the reads alone cost more
+     * than the engine work behind most of the actions.
+     *
+     * `dedupeIds` above is what makes this exactly equivalent: every id is
+     * loaded once either way, so prefetching cannot serve a row that the
+     * per-id read would have re-read after a write to it. Batched reads also
+     * bypass the five-second `findValuationById` row cache, so what the loop
+     * sees is strictly fresher than before, never staler.
+     */
+    const prefetched = await findValuationsByIds(deps.pool, ids.filter(isUlid));
+
     const results: Array<{ id: string; ok: boolean; error?: string; state?: ValuationState }> = [];
     for (const id of ids) {
       try {
-        const valuation = await loadValuation(deps.pool, id);
+        const valuation = fromPrefetch(prefetched, id);
         switch (action) {
           case 'set_state': {
             if (!canTransition(valuation.state, state!)) {

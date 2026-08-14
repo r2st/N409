@@ -11,6 +11,7 @@ import {
   type ValuationSnapshot,
 } from '../domain/emailWorkflows.js';
 import { createNotification } from '../repos/notifications.js';
+import { findUsersByIds } from '../repos/users.js';
 import { channelsFor, preferenceOverrides } from '../repos/notificationPreferences.js';
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../repos/emailOutbox.js';
 import { applyTemplateOverrides, valuationTemplateVars } from '../domain/communications.js';
@@ -40,18 +41,37 @@ export function logTransport(log: FastifyBaseLogger): EmailTransport {
   };
 }
 
-async function resolveRecipient(
+/** The user id a recipient role resolves to on this engagement, if any. */
+function userIdFor(v: ValuationSnapshot, recipient: Recipient): string | null {
+  return recipient === 'owner' ? v.user_id : v.assigned_reviewer_id;
+}
+
+/**
+ * Every recipient of this transition, in one read.
+ *
+ * A transition addresses at most two roles, and each was a separate
+ * `SELECT ... WHERE id = $1` — so an owner-and-reviewer transition paid two
+ * round trips for two rows of the same table, and an engagement whose owner
+ * *is* its reviewer paid two for one row. It is not the largest N in the
+ * service, but it is on the path of every state change on the platform, and
+ * `findUsersByIds` already de-duplicates ids and answers in a single query.
+ *
+ * Roles with no user (no reviewer assigned) map to null rather than being
+ * dropped: the callers below distinguish "this transition has no reviewer" —
+ * skip the spec — from "the reviewer's row is missing", which is the same
+ * skip, and neither should turn into an unaddressed email.
+ */
+async function resolveRecipients(
   pool: pg.Pool,
   v: ValuationSnapshot,
-  recipient: Recipient,
-): Promise<{ id: string; email: string } | null> {
-  const userId = recipient === 'owner' ? v.user_id : v.assigned_reviewer_id;
-  if (!userId) return null;
-  const { rows } = await pool.query<{ id: string; email: string }>(
-    'SELECT id, email FROM users WHERE id = $1',
-    [userId],
+  recipients: readonly Recipient[],
+): Promise<Map<Recipient, { id: string; email: string } | null>> {
+  const wanted = recipients.map((r) => [r, userIdFor(v, r)] as const);
+  const users = await findUsersByIds(
+    pool,
+    wanted.map(([, id]) => id).filter((id): id is string => id !== null),
   );
-  return rows[0] ?? null;
+  return new Map(wanted.map(([r, id]) => [r, (id !== null ? users.get(id) : null) ?? null]));
 }
 
 export async function onStateChanged(
@@ -101,13 +121,12 @@ export async function onStateChanged(
     }
   }
 
-  const recipients = new Map<Recipient, { id: string; email: string } | null>();
-  for (const r of new Set<Recipient>([
-    ...emailSpecs.map((s) => s.recipient),
-    ...notifySpecs.map((s) => s.recipient),
-  ])) {
-    recipients.set(r, await resolveRecipient(deps.pool, valuation, r));
-  }
+  const recipients = await resolveRecipients(deps.pool, valuation, [
+    ...new Set<Recipient>([
+      ...emailSpecs.map((s) => s.recipient),
+      ...notifySpecs.map((s) => s.recipient),
+    ]),
+  ]);
 
   // Per-user channel preferences (P2 #11): the workflow templateKey / notify
   // type doubles as the preference event type. Absent rows mean channel on.

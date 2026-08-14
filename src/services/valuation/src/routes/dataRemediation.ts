@@ -11,8 +11,8 @@ import {
   listStaleQaReviews,
   REMEDIATION_PAGE_LIMIT,
 } from '../repos/dataRemediation.js';
-import { findValuationById } from '../repos/valuations.js';
-import { findParams } from '../repos/params.js';
+import { findValuationsByIds } from '../repos/valuations.js';
+import { findParamsByValuationIds } from '../repos/params.js';
 import { buildCalculationInputs, runCalculation } from './calculations.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import type { EventActor } from '../events/record.js';
@@ -127,6 +127,22 @@ export function registerDataRemediationRoutes(
     const requested = parsed.data.valuation_ids.map((raw) => raw.toUpperCase()).filter(isUlid);
     const eligible = await findRerunnableBacksolves(deps.pool, requested);
 
+    /*
+     * The engagement and its params for the whole batch, in two reads.
+     *
+     * Only the eligible ids: an id the queue rejected is answered from
+     * `eligible` alone and never reaches the loop body, so fetching it would
+     * be work for a row nobody looks at. `MAX_RERUN` is 25, so this replaces
+     * up to fifty single-row round trips with two — in front of a loop where
+     * each surviving iteration then calls the engine, which is exactly where
+     * an operator's wall-clock should be going.
+     */
+    const eligibleIds = [...eligible];
+    const [valuations, params] = await Promise.all([
+      findValuationsByIds(deps.pool, eligibleIds),
+      findParamsByValuationIds(deps.pool, eligibleIds),
+    ]);
+
     const results: Array<{ valuation_id: string; ok: boolean; error?: string }> = [];
     for (const rawId of parsed.data.valuation_ids) {
       const id = rawId.toUpperCase();
@@ -139,8 +155,8 @@ export function registerDataRemediationRoutes(
         continue;
       }
       try {
-        const valuation = await findValuationById(deps.pool, id);
-        const paramsRow = valuation ? await findParams(deps.pool, id) : null;
+        const valuation = valuations.get(id);
+        const paramsRow = valuation ? (params.get(id) ?? null) : null;
         if (!valuation || !paramsRow) {
           results.push({ valuation_id: id, ok: false, error: 'Valuation or params missing' });
           continue;
