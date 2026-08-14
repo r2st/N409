@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../../lib/api';
-import { Button, ErrorNote, Field, Select } from '../ui';
+import { Button, ErrorNote, Field, PickerOverflowNote, Select } from '../ui';
 
 interface Organization {
   id: string;
@@ -31,10 +31,14 @@ export function OrgAssignmentCard({ valuationId }: { valuationId: string }) {
   // an organization on the Portfolio page" prose — telling an owner of six
   // organizations that they have none. Failure and emptiness are now distinct.
   const [listFailed, setListFailed] = useState(false);
+  const [listCapped, setListCapped] = useState(false);
 
   useEffect(() => {
-    api<{ organizations: Organization[] }>('/organizations')
-      .then((r) => setOrgs(r.organizations))
+    api<{ organizations: Organization[]; truncated: boolean }>('/organizations')
+      .then((r) => {
+        setOrgs(r.organizations);
+        setListCapped(r.truncated);
+      })
       .catch(() => setListFailed(true));
   }, []);
 
@@ -84,6 +88,7 @@ export function OrgAssignmentCard({ valuationId }: { valuationId: string }) {
                   {o.name}
                 </option>
               ))}
+              <PickerOverflowNote truncated={listCapped} />
             </Select>
           </Field>
           <Field label="Entity role">

@@ -63,9 +63,27 @@ export interface LpTermsRow {
 
 // ── Funds ─────────────────────────────────────────────────────────────────
 
-export async function listFunds(pool: pg.Pool): Promise<FundRow[]> {
-  const { rows } = await pool.query<FundRow>('SELECT * FROM fund_portfolios ORDER BY created_at DESC');
-  return rows;
+/** Ceiling on one page of a list that grows with the business. */
+export const FUND_PAGE_LIMIT = 200;
+
+/**
+ * Every portfolio, newest first — a page of them.
+ *
+ * Bounded because nothing else bounded it: the table grows with the number of
+ * funds under management and the page that reads it is a picker plus a table,
+ * neither of which is improved by a thousandth row. `truncated` is returned so
+ * the caller can say the list is partial rather than imply it is complete.
+ */
+export async function listFunds(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<{ funds: FundRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? FUND_PAGE_LIMIT, 1), FUND_PAGE_LIMIT);
+  const { rows } = await pool.query<FundRow>(
+    'SELECT * FROM fund_portfolios ORDER BY created_at DESC LIMIT $1',
+    [limit + 1],
+  );
+  return { funds: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function findFund(pool: pg.Pool, id: string): Promise<FundRow | null> {

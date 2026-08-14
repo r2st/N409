@@ -16,6 +16,7 @@ import {
   findPosition,
   latestMarks,
   linkFundToValuation,
+  FUND_PAGE_LIMIT,
   listFunds,
   listMarks,
   listPositions,
@@ -174,7 +175,11 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
   app.get('/api/v1/funds', { preHandler: app.authenticate }, async (req) => {
     requireOps(requirePrincipal(req));
-    return { funds: await listFunds(deps.pool) };
+    const parsed = z
+      .object({ limit: z.coerce.number().int().min(1).max(FUND_PAGE_LIMIT).default(FUND_PAGE_LIMIT) })
+      .safeParse(req.query ?? {});
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    return listFunds(deps.pool, { limit: parsed.data.limit });
   });
 
   app.get('/api/v1/funds/:id', { preHandler: app.authenticate }, async (req) => {

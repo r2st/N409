@@ -141,4 +141,69 @@ describe.skipIf(!dbUp)('admin API token listing', () => {
     const res = await list(admin.token, '?revoked=maybe');
     expect(res.statusCode).toBe(422);
   });
+
+  /**
+   * The listing reads a page; the figures still describe the platform.
+   *
+   * This is the whole reason the read could not just be given a `LIMIT`. Every
+   * figure here used to be counted in JavaScript over the rows that came back —
+   * `tokens.length`, `tokens.filter(live)`, `tokens.filter(dormant)` — so a cap
+   * on the query would have capped the answers with it, and a credential
+   * inventory that under-reports how many live tokens exist is a worse failure
+   * than the slow query it replaced. The counts moved into SQL; these cases pin
+   * the two apart.
+   */
+  describe('bounded reads', () => {
+    it('counts the whole platform even when the page shows one row', async () => {
+      const whole = (await list(admin.token, '?revoked=true')).json() as {
+        tokens: unknown[];
+        total: number;
+        live: number;
+        dormant: number;
+      };
+      expect(whole.tokens.length).toBeGreaterThan(1);
+
+      const page = (await list(admin.token, '?revoked=true&limit=1')).json() as {
+        tokens: unknown[];
+        total: number;
+        live: number;
+        dormant: number;
+        truncated: boolean;
+      };
+      expect(page.tokens).toHaveLength(1);
+      expect(page.truncated).toBe(true);
+      // The figures are identical to the unbounded read's, which is the point.
+      expect(page.total).toBe(whole.total);
+      expect(page.live).toBe(whole.live);
+      expect(page.dormant).toBe(whole.dormant);
+    });
+
+    it('does not claim truncation when the page holds everything', async () => {
+      const whole = (await list(admin.token, '?revoked=true')).json() as {
+        tokens: unknown[];
+        truncated: boolean;
+      };
+      expect(whole.truncated).toBe(false);
+      const exact = (await list(admin.token, `?revoked=true&limit=${whole.tokens.length}`)).json() as {
+        tokens: unknown[];
+        truncated: boolean;
+      };
+      expect(exact.tokens).toHaveLength(whole.tokens.length);
+      expect(exact.truncated).toBe(false);
+    });
+
+    it('keeps the live-first ordering under a cap, so the page is the useful end', async () => {
+      // A capped listing that handed back revoked rows first would be a page of
+      // exactly the credentials nobody needs to see.
+      const page = (await list(admin.token, '?revoked=true&limit=2')).json() as {
+        tokens: Array<{ revoked_at: string | null }>;
+      };
+      expect(page.tokens.every((t) => t.revoked_at === null)).toBe(true);
+    });
+
+    it('refuses a limit above the ceiling rather than honouring it', async () => {
+      expect((await list(admin.token, '?limit=100000')).statusCode).toBe(422);
+      expect((await list(admin.token, '?limit=0')).statusCode).toBe(422);
+    });
+  });
 });

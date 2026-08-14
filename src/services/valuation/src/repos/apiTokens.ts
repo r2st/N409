@@ -73,8 +73,9 @@ export interface AdminApiTokenRow extends ApiTokenRow {
  */
 export async function listAllApiTokens(
   pool: pg.Pool,
-  opts: { includeRevoked?: boolean } = {},
-): Promise<AdminApiTokenRow[]> {
+  opts: { includeRevoked?: boolean; limit?: number } = {},
+): Promise<{ tokens: AdminApiTokenRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? TOKEN_PAGE_LIMIT, 1), TOKEN_PAGE_LIMIT);
   const { rows } = await pool.query<AdminApiTokenRow>(
     `SELECT t.id, t.partner_id, t.created_by, t.name, t.token_prefix,
             t.created_at, t.last_used_at, t.revoked_at,
@@ -85,10 +86,50 @@ export async function listAllApiTokens(
        LEFT JOIN partners p ON p.id = t.partner_id
        LEFT JOIN users u ON u.id = t.created_by
       WHERE ($1::boolean OR t.revoked_at IS NULL)
-      ORDER BY (t.revoked_at IS NULL) DESC, t.created_at DESC`,
-    [opts.includeRevoked === true],
+      ORDER BY (t.revoked_at IS NULL) DESC, t.created_at DESC
+      LIMIT $2`,
+    [opts.includeRevoked === true, limit + 1],
   );
-  return rows;
+  return { tokens: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+/** Ceiling on one page of the platform token listing. */
+export const TOKEN_PAGE_LIMIT = 500;
+
+export interface ApiTokenStats {
+  total: number;
+  live: number;
+  dormant: number;
+}
+
+/**
+ * The three figures the credential listing reports, counted in the database.
+ *
+ * They used to be `rows.length`, `rows.filter(...)` and so on over the whole
+ * table, which is the reason the listing could not simply be capped: bounding
+ * the read would have silently bounded the counts with it, and a security
+ * listing that under-reports how many live credentials exist is worse than a
+ * slow one. Counting here decouples the two, so the rows can be a page while
+ * the figures stay platform-wide.
+ *
+ * `dormant` keeps the definition the route had. A token that has never been
+ * used counts as dormant only once it is older than the window — a key minted
+ * this morning has not had its chance yet — so the age is measured from
+ * `last_used_at` when there is one and from `created_at` when there is not.
+ */
+export async function apiTokenStats(pool: pg.Pool, dormantAfterMs: number): Promise<ApiTokenStats> {
+  const { rows } = await pool.query<{ total: string; live: string; dormant: string }>(
+    `SELECT count(*)::text AS total,
+            count(*) FILTER (WHERE revoked_at IS NULL)::text AS live,
+            count(*) FILTER (
+              WHERE revoked_at IS NULL
+                AND coalesce(last_used_at, created_at) < now() - ($1::bigint * interval '1 millisecond')
+            )::text AS dormant
+       FROM api_tokens`,
+    [Math.trunc(dormantAfterMs)],
+  );
+  const row = rows[0]!;
+  return { total: Number(row.total), live: Number(row.live), dormant: Number(row.dormant) };
 }
 
 /** A user's personal tokens — partner tokens they minted for an org are excluded. */

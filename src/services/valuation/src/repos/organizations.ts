@@ -34,18 +34,32 @@ export async function createOrganization(
   return rows[0]!;
 }
 
-/** Organizations a user owns; ops (no ownerUserId) see all. */
+/** Ceiling on one page of the organization list. */
+export const ORG_PAGE_LIMIT = 200;
+
+/**
+ * Organizations a user owns; ops (no ownerUserId) see all.
+ *
+ * The owner-scoped read is bounded by how many organizations one person set up.
+ * The ops read is bounded by nothing at all — it is every organization on the
+ * platform — and it feeds a `<select>`, so it is capped on the same terms as
+ * the other pickers and reports whether it had to cut anything.
+ */
 export async function listOrganizations(
   pool: pg.Pool,
   ownerUserId: string | null,
-): Promise<OrganizationRow[]> {
+  opts: { limit?: number } = {},
+): Promise<{ organizations: OrganizationRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? ORG_PAGE_LIMIT, 1), ORG_PAGE_LIMIT);
   const { rows } = ownerUserId
     ? await pool.query<OrganizationRow>(
-        'SELECT * FROM organizations WHERE owner_user_id = $1 ORDER BY created_at DESC',
-        [ownerUserId],
+        'SELECT * FROM organizations WHERE owner_user_id = $1 ORDER BY created_at DESC LIMIT $2',
+        [ownerUserId, limit + 1],
       )
-    : await pool.query<OrganizationRow>('SELECT * FROM organizations ORDER BY created_at DESC');
-  return rows;
+    : await pool.query<OrganizationRow>('SELECT * FROM organizations ORDER BY created_at DESC LIMIT $1', [
+        limit + 1,
+      ]);
+  return { organizations: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function findOrganization(pool: pg.Pool, id: string): Promise<OrganizationRow | null> {

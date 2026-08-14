@@ -5,11 +5,13 @@ import { isUlid, problems } from '@n409/shared';
 import { canManageTokens } from '../auth/operations.js';
 import { canManageUsers } from '../auth/rbac.js';
 import {
+  apiTokenStats,
   createApiToken,
   findApiTokenById,
   listAllApiTokens,
   listApiTokens,
   revokeApiToken,
+  TOKEN_PAGE_LIMIT,
 } from '../repos/apiTokens.js';
 import { requirePrincipal } from '../plugins/auth.js';
 
@@ -66,24 +68,31 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!canManageUsers(principal)) {
       throw problems.forbidden('The platform token listing is administrator-only');
     }
-    const parsed = z.object({ revoked: z.enum(['true', 'false']).optional() }).safeParse(req.query ?? {});
+    const parsed = z
+      .object({
+        revoked: z.enum(['true', 'false']).optional(),
+        limit: z.coerce.number().int().min(1).max(TOKEN_PAGE_LIMIT).default(TOKEN_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid query', { errors: parsed.error.issues });
 
-    const tokens = await listAllApiTokens(deps.pool, {
-      includeRevoked: parsed.data.revoked === 'true',
-    });
-    const now = Date.now();
+    // The rows are a page; the figures are the platform. Counting in SQL rather
+    // than over `tokens` is what lets the read be bounded without the security
+    // figures quietly shrinking to match — see `apiTokenStats`. "Dormant" is the
+    // number this list exists to surface: a live credential nobody is using.
+    const [{ tokens, truncated }, stats] = await Promise.all([
+      listAllApiTokens(deps.pool, {
+        includeRevoked: parsed.data.revoked === 'true',
+        limit: parsed.data.limit,
+      }),
+      apiTokenStats(deps.pool, DORMANT_AFTER_MS),
+    ]);
     return {
       tokens,
-      total: tokens.length,
-      live: tokens.filter((t) => t.revoked_at === null).length,
-      // Dormant is the figure a credential list exists to surface: a live token
-      // nobody has used is the one to ask about. Never used counts as dormant
-      // once it is older than the window, not immediately — a key minted this
-      // morning has not had a chance yet.
-      dormant: tokens.filter(
-        (t) => t.revoked_at === null && now - (t.last_used_at ?? t.created_at).getTime() > DORMANT_AFTER_MS,
-      ).length,
+      truncated,
+      total: stats.total,
+      live: stats.live,
+      dormant: stats.dormant,
       dormant_after_days: DORMANT_AFTER_MS / 86_400_000,
     };
   });

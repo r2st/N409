@@ -11,6 +11,7 @@ import {
   findOrganization,
   organizationParentWouldCycle,
   listOrganizations,
+  ORG_PAGE_LIMIT,
   listPortfolioEntities,
   setEntityRelationship,
   updateOrganization,
@@ -84,7 +85,13 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
 
   app.get('/api/v1/organizations', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    return { organizations: await listOrganizations(deps.pool, isOps(principal) ? null : principal.id) };
+    const parsed = z
+      .object({ limit: z.coerce.number().int().min(1).max(ORG_PAGE_LIMIT).default(ORG_PAGE_LIMIT) })
+      .safeParse(req.query ?? {});
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+    return listOrganizations(deps.pool, isOps(principal) ? null : principal.id, {
+      limit: parsed.data.limit,
+    });
   });
 
   app.get('/api/v1/organizations/:id', { preHandler: app.authenticate }, async (req) => {

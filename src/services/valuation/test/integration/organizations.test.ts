@@ -215,4 +215,62 @@ describe.skipIf(!dbUp)('organizations / portfolio (feature 6)', () => {
     expect(loop.statusCode).toBe(422);
     expect(loop.json().detail).toMatch(/loop/i);
   });
+
+  /**
+   * The ops read of this list is every organization on the platform, and it
+   * fills a `<select>` on the engagement page. Capped, and honest about it —
+   * an organization missing from an assignment picker reads as one that cannot
+   * be assigned.
+   */
+  describe('bounded reads', () => {
+    it('caps the list and says so', async () => {
+      for (let i = 0; i < 3; i += 1) {
+        const res = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/organizations',
+          headers: authHeader(owner.token),
+          payload: { name: `Capped Holdings ${i}`, entity_type: 'holding_company' },
+        });
+        expect(res.statusCode, res.body).toBe(201);
+      }
+
+      const capped = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/organizations?limit=2',
+        headers: authHeader(owner.token),
+      });
+      expect(capped.statusCode).toBe(200);
+      const body = capped.json() as { organizations: unknown[]; truncated: boolean };
+      expect(body.organizations).toHaveLength(2);
+      expect(body.truncated).toBe(true);
+    });
+
+    it('does not claim truncation when everything fits', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/organizations',
+        headers: authHeader(owner.token),
+      });
+      expect((res.json() as { truncated: boolean }).truncated).toBe(false);
+    });
+
+    it('refuses a limit past the ceiling rather than honouring it', async () => {
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/organizations?limit=100000',
+        headers: authHeader(owner.token),
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('still scopes a non-ops caller to their own organizations when capped', async () => {
+      // The cap must not become a way to see somebody else's rows.
+      const res = await ctx.app.inject({
+        method: 'GET',
+        url: '/api/v1/organizations?limit=200',
+        headers: authHeader(other.token),
+      });
+      expect((res.json() as { organizations: unknown[] }).organizations).toEqual([]);
+    });
+  });
 });

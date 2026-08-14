@@ -34,6 +34,8 @@ interface AdminToken {
 
 interface TokenListing {
   tokens: AdminToken[];
+  /** The listing is a page; `total`/`live`/`dormant` still describe the platform. */
+  truncated: boolean;
   total: number;
   live: number;
   dormant: number;
@@ -207,6 +209,12 @@ export function AdminApiTokensPage() {
               })}
             </tbody>
           </table>
+          {data.truncated && (
+            <p className="border-t border-paper-300 px-4 py-3 text-sm text-ink-600">
+              Showing the {data.tokens.length} most recently issued of {data.total} tokens. The counts above
+              are platform-wide; the table is not.
+            </p>
+          )}
         </div>
       )}
     </div>
