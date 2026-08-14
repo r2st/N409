@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import math
 
-from .bs import bs_call, bs_call_delta
+from .bs import bs_call, bs_call_delta, bs_call_terms
 from .errors import EngineInputError
 
 _KINDS = ("preferred", "common", "option")
@@ -448,6 +448,37 @@ def allocate_waterfall(
         for seg, tranche in zip(segments, tranches, strict=True)
     ]
 
+    # The option-pricing working behind those tranche values, one row per
+    # distinct strike (report Appendix IV).
+    #
+    # Every tranche above is a call spread — C(from) − C(to) — so the schedule
+    # states the whole allocation once each strike is priced, and a reviewer can
+    # recompute any row from the four inputs and check the differences add up.
+    # Without it the exhibit asks the reader to accept a column of tranche
+    # values on trust: the breakpoints are disclosed, the volatility and horizon
+    # are disclosed, and the arithmetic joining them is not.
+    #
+    # Recorded here rather than derived in the renderer because the report must
+    # transcribe the numbers the conclusion came from, not a second
+    # implementation's opinion of them — the same argument Appendix I's
+    # build-up makes. It costs one pass over the strikes and is deliberately
+    # *not* pushed down into `_allocate`, which Newton calls on every backsolve
+    # iteration and which has no reader.
+    strikes = sorted({seg["from"] for seg in segments} | {s["to"] for s in segments if s["to"] is not None})
+    option_schedule = [
+        {
+            k: (round(v, 6) if isinstance(v, float) and k != "call" else v)
+            for k, v in bs_call_terms(equity_value, strike, t, r, sigma).items()
+        }
+        for strike in strikes
+    ]
+    for row in option_schedule:
+        # The call value is money and rounds like the tranche values it
+        # explains; d1, d2 and the probabilities are dimensionless and keep the
+        # six decimals a hand-check needs.
+        row["strike"] = round(row["strike"], 2)
+        row["call"] = round(row["call"], 2)
+
     by_class = {
         c["name"]: {
             "kind": c["kind"],
@@ -467,6 +498,7 @@ def allocate_waterfall(
     return {
         "method": "opm_waterfall",
         "breakpoints": breakpoints,
+        "option_schedule": option_schedule,
         "classes": by_class,
         "common_value": round(common_value, 2),
         "common_shares": common_shares,

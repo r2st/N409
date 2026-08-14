@@ -82,6 +82,55 @@ def bs_call(s: float, k: float, t: float, r: float, sigma: float) -> float:
     return s * norm_cdf(d1) - k * discount_factor(r, t) * norm_cdf(d2)
 
 
+def bs_call_terms(s: float, k: float, t: float, r: float, sigma: float) -> dict:
+    """``bs_call``'s answer with the working shown: ``d1``, ``d2``, ``N(d1)``,
+    ``N(d2)``, the discount factor, and the call value they produce.
+
+    Exists so the report can print the option-pricing schedule a reviewer checks
+    by hand — the appendix the legacy deliverable devotes a page to — without
+    re-deriving it. A second implementation in the renderer would be a page
+    asserting arithmetic that is only *probably* the arithmetic the conclusion
+    came from, and the first time the two disagreed the document would be wrong
+    in the most expensive possible way: internally consistent, externally
+    unfounded, and signed.
+
+    Every branch mirrors ``bs_call``, for the same reason ``bs_call_delta``'s do:
+    a schedule whose ``call`` came off a different degenerate branch than the
+    allocation's would tabulate a number that never entered the conclusion.
+    ``d1``/``d2`` are None on the degenerate branches because they genuinely do
+    not exist there — a zero-volatility call is intrinsic value, not a
+    probability-weighted one — and printing a fabricated 0.0 in a column a
+    reviewer recomputes is worse than printing nothing.
+    """
+    terms: dict = {"strike": k, "d1": None, "d2": None, "n_d1": None, "n_d2": None}
+    if s <= 0:
+        return {**terms, "discount_factor": None, "call": 0.0}
+    if k <= 0:
+        # A call struck at or below zero is the underlying. N(d1) = 1 is the
+        # limit rather than a convention, and stating it keeps the first tranche
+        # of every waterfall — always struck at zero — from printing a row of
+        # dashes where the reader expects the whole equity value.
+        return {**terms, "n_d1": 1.0, "n_d2": 1.0, "discount_factor": None, "call": s}
+    if t <= 0 or sigma <= 0:
+        df = discount_factor(r, max(t, 0.0))
+        return {**terms, "discount_factor": df, "call": max(s - k * df, 0.0)}
+    sqrt_t = math.sqrt(t)
+    # The difference of logs, not the log of the quotient — see `bs_call`.
+    d1 = (math.log(s) - math.log(k) + (r + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
+    d2 = d1 - sigma * sqrt_t
+    df = discount_factor(r, t)
+    n_d1, n_d2 = norm_cdf(d1), norm_cdf(d2)
+    return {
+        "strike": k,
+        "d1": d1,
+        "d2": d2,
+        "n_d1": n_d1,
+        "n_d2": n_d2,
+        "discount_factor": df,
+        "call": s * n_d1 - k * df * n_d2,
+    }
+
+
 def bs_call_delta(s: float, k: float, t: float, r: float, sigma: float) -> float:
     """``∂C/∂S`` — ``N(d1)``, degenerating to the intrinsic indicator as t or sigma → 0.
 
