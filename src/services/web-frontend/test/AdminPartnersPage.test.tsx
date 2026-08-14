@@ -111,6 +111,40 @@ describe('AdminPartnersPage', () => {
     });
   });
 
+  /**
+   * R30 — the key cannot be changed once the partner exists, so a typo here is
+   * permanent. The shape the box declares is now checked at the box rather
+   * than left to whichever browser is being used and then to a 422.
+   */
+  it('refuses a key that is not the lowercase identifier the hint promises', async () => {
+    const user = userEvent.setup();
+    const fetchSpy = mockApi();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: '+ New partner' }));
+    await user.type(screen.getByLabelText('Partner name'), 'Ledgy');
+    await user.type(screen.getByLabelText('Partner key'), 'Ledgy Ltd');
+    await user.click(screen.getByRole('button', { name: 'Create partner' }));
+
+    expect(
+      await screen.findByText('Key must be lowercase letters, digits and dashes only.'),
+    ).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('names the empty box rather than going dead when nothing is typed', async () => {
+    const user = userEvent.setup();
+    const fetchSpy = mockApi();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: '+ New partner' }));
+    await user.click(screen.getByRole('button', { name: 'Create partner' }));
+
+    expect(await screen.findByText('Name is required.')).toBeInTheDocument();
+    expect(screen.getByText('Key is required.')).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  });
+
   it('renames a partner via PATCH', async () => {
     const user = userEvent.setup();
     const fetchSpy = mockApi({

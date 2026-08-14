@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { api, apiDownload, ApiError } from '../lib/api';
+import { email as emailRule, minLength, useFormValidation } from '../lib/useFormValidation';
 import { useAuth } from '../lib/auth';
 import { canManageUsers } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
@@ -131,7 +131,7 @@ interface UserList {
   total: number;
 }
 
-interface EditorState {
+type EditorState = {
   mode: 'invite' | 'create' | 'edit';
   id?: string;
   email: string;
@@ -140,7 +140,7 @@ interface EditorState {
   last_name: string;
   partner_id: string;
   roles: Set<string>;
-}
+};
 
 const emptyEditor = (mode: 'invite' | 'create'): EditorState => ({
   mode,
@@ -151,6 +151,9 @@ const emptyEditor = (mode: 'invite' | 'create'): EditorState => ({
   partner_id: '',
   roles: new Set(['valuation_user']),
 });
+
+/** What the rules read while the editor is closed. */
+const CLOSED_EDITOR: EditorState = emptyEditor('create');
 
 /** Pending / accepted / revoked / expired, in display terms. */
 function invitationStatus(i: Invitation): { label: string; tone: string } {
@@ -232,6 +235,22 @@ export function AdminUsersPage() {
     loadInvitations();
   }, [loadInvitations]);
 
+  /*
+   * The password rule is installed only for `create`. Invite sends a link and
+   * the person picks their own; edit does not carry a password at all, and a
+   * `minLength` there would refuse every save of an existing user over a box
+   * that is not on screen.
+   *
+   * "At least one role" was a disabled button. An admin who unticked the last
+   * role saw the save go dead with the reason two sections up the form, which
+   * is where a message next to the roles belongs instead.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(editor ?? CLOSED_EDITOR, {
+    email: emailRule('email'),
+    ...(editor?.mode === 'create' ? { password: minLength<EditorState>('password', 10, 'Password') } : {}),
+    roles: (values) => (values.roles.size > 0 ? null : 'Pick at least one role.'),
+  });
+
   // The API enforces this too — the redirect just keeps the nav honest.
   if (!canManageUsers(user)) return <Navigate to="/dashboard" replace />;
 
@@ -257,8 +276,7 @@ export function AdminUsersPage() {
     });
   };
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  const save = handleSubmit(async () => {
     if (!editor) return;
     // Mirrors the API rule: partner/member roles are scoped to an organisation.
     if (!editor.partner_id && ['partner', 'member'].some((r) => editor.roles.has(r))) {
@@ -309,7 +327,7 @@ export function AdminUsersPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const remove = async (u: AdminUser) => {
     if (!window.confirm(`Deactivate ${u.email}? They will no longer be able to sign in.`)) return;
@@ -555,25 +573,27 @@ export function AdminUsersPage() {
               We'll email a link that lets them set their own password. It expires after 7 days.
             </p>
           )}
-          <form onSubmit={save} className="space-y-5">
+          <form onSubmit={save} className="space-y-5" noValidate>
             {editorError && <ErrorNote>{editorError}</ErrorNote>}
             <div className="grid gap-5 sm:grid-cols-2">
-              <Field label="Email">
+              <Field label="Email" error={errorFor('email')}>
                 <TextInput
                   type="email"
                   required
                   value={editor.email}
                   onChange={(e) => setEditor({ ...editor, email: e.target.value })}
+                  onBlur={blurHandler('email')}
                 />
               </Field>
               {editor.mode === 'create' && (
-                <Field label="Password" hint="At least 10 characters.">
+                <Field label="Password" hint="At least 10 characters." error={errorFor('password')}>
                   <TextInput
                     type="password"
                     required
                     minLength={10}
                     value={editor.password}
                     onChange={(e) => setEditor({ ...editor, password: e.target.value })}
+                    onBlur={blurHandler('password')}
                   />
                 </Field>
               )}
@@ -608,7 +628,7 @@ export function AdminUsersPage() {
                 </Select>
               </Field>
             </div>
-            <fieldset>
+            <fieldset aria-describedby={errorFor('roles') ? 'roles-error' : undefined}>
               <legend className="mb-2 block text-[0.8rem] font-semibold text-ink-700">Roles</legend>
               <div className="flex flex-wrap gap-x-5 gap-y-2">
                 {roleDefs.map((r) => (
@@ -630,9 +650,14 @@ export function AdminUsersPage() {
                   </label>
                 ))}
               </div>
+              {errorFor('roles') && (
+                <p id="roles-error" className="mt-2 text-xs font-medium text-red-600">
+                  {errorFor('roles')}
+                </p>
+              )}
             </fieldset>
             <div className="flex gap-2">
-              <Button type="submit" disabled={busy || editor.roles.size === 0}>
+              <Button type="submit" disabled={busy}>
                 {busy
                   ? 'Saving…'
                   : editor.mode === 'invite'

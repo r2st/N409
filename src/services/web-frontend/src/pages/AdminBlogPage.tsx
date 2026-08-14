@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { all, optional, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
 import { RichTextEditor } from '../components/RichTextEditor';
@@ -32,7 +32,7 @@ interface BlogPost {
   updated_at: string;
 }
 
-interface EditorState {
+type EditorState = {
   id?: string;
   slug: string;
   title: string;
@@ -43,7 +43,13 @@ interface EditorState {
   author: string;
   og_image: string;
   published: boolean;
-}
+};
+
+/**
+ * The slug shape the box declares as `pattern`. It is the public URL, so a
+ * capital letter or a space here is a 404 for everyone the link is sent to.
+ */
+const SLUG = /[a-z0-9-]+/;
 
 const emptyEditor = (): EditorState => ({
   slug: '',
@@ -59,6 +65,9 @@ const emptyEditor = (): EditorState => ({
   // somebody may already have indexed.
   published: false,
 });
+
+/** What the rules read while no post is open. */
+const CLOSED_EDITOR: EditorState = emptyEditor();
 
 export function AdminBlogPage() {
   const [posts, setPosts] = useState<BlogPost[] | null>(null);
@@ -97,8 +106,33 @@ export function AdminBlogPage() {
       published: p.published,
     });
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * `useFormValidation` is a hook, so it runs whether or not a post is open;
+   * `CLOSED_EDITOR` is what it reads when none is. Nothing is ever revealed on
+   * a form that is not on screen, so the blank failing `required` costs
+   * nothing.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(editor ?? CLOSED_EDITOR, {
+    title: required('title', 'Title'),
+    slug: all(
+      required('slug', 'Slug'),
+      pattern('slug', SLUG, 'Slug must be lowercase letters, digits and dashes only.'),
+    ),
+    /*
+     * The hint has always said "an https URL or a site-relative path" and
+     * nothing checked it. What a bad value produces is not an error but a
+     * wrong link preview: `og:image` is emitted verbatim, so "images/card.png"
+     * resolves against whatever page shares the link.
+     */
+    og_image: optional('og_image', (values) => {
+      const value = values.og_image.trim();
+      return value.startsWith('https://') || value.startsWith('/')
+        ? null
+        : 'Card image must be an https:// URL or a path starting with “/”.';
+    }),
+  });
+
+  const save = handleSubmit(async () => {
     if (!editor) return;
     setBusy(true);
     setEditorError(null);
@@ -128,7 +162,7 @@ export function AdminBlogPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const togglePublished = async (p: BlogPost) => {
     try {
@@ -186,24 +220,30 @@ export function AdminBlogPage() {
       {editor && (
         <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
           <h2 className="overline mb-5 text-ink-400">{editor.id ? `Edit “${editor.title}”` : 'New post'}</h2>
-          <form onSubmit={(e) => void save(e)} className="space-y-5">
+          <form onSubmit={save} className="space-y-5" noValidate>
             {editorError && <ErrorNote>{editorError}</ErrorNote>}
             <div className="grid gap-5 sm:grid-cols-2">
-              <Field label="Title">
+              <Field label="Title" error={errorFor('title')}>
                 <TextInput
                   required
                   maxLength={200}
                   value={editor.title}
                   onChange={(e) => setEditor({ ...editor, title: e.target.value })}
+                  onBlur={blurHandler('title')}
                 />
               </Field>
-              <Field label="Slug" hint="Lowercase letters, digits and dashes; this is the public URL.">
+              <Field
+                label="Slug"
+                hint="Lowercase letters, digits and dashes; this is the public URL."
+                error={errorFor('slug')}
+              >
                 <TextInput
                   required
                   maxLength={120}
                   pattern="[a-z0-9-]+"
                   value={editor.slug}
                   onChange={(e) => setEditor({ ...editor, slug: e.target.value })}
+                  onBlur={blurHandler('slug')}
                 />
               </Field>
               <Field
@@ -237,11 +277,16 @@ export function AdminBlogPage() {
                   onChange={(e) => setEditor({ ...editor, keywords: e.target.value })}
                 />
               </Field>
-              <Field label="Card image" hint="An https URL or a site-relative path. Optional.">
+              <Field
+                label="Card image"
+                hint="An https URL or a site-relative path. Optional."
+                error={errorFor('og_image')}
+              >
                 <TextInput
                   maxLength={500}
                   value={editor.og_image}
                   onChange={(e) => setEditor({ ...editor, og_image: e.target.value })}
+                  onBlur={blurHandler('og_image')}
                 />
               </Field>
               <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm text-ink-700">
@@ -261,7 +306,7 @@ export function AdminBlogPage() {
               />
             </Field>
             <div className="flex gap-2">
-              <Button type="submit" disabled={busy || !editor.title.trim() || !editor.slug.trim()}>
+              <Button type="submit" disabled={busy}>
                 {busy ? 'Saving…' : editor.id ? 'Save changes' : 'Create post'}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setEditor(null)}>

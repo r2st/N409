@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
 import type { Partner } from '../lib/types';
 import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
@@ -11,8 +12,7 @@ export function AdminPartnersPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [key, setKey] = useState('');
+  const [draft, setDraft] = useState({ name: '', key: '' });
   const [creating, setCreating] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -35,21 +35,37 @@ export function AdminPartnersPage() {
     void load();
   }, [load]);
 
-  const create = async () => {
+  /*
+   * The key cannot be changed later, so a typo here is permanent — which is
+   * why the shape the box declares is worth saying at the box rather than
+   * leaving to the browser and then to a 422.
+   */
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(draft, {
+    name: required('name', 'Name'),
+    key: all(
+      required('key', 'Key'),
+      pattern('key', /[a-z0-9-]+/, 'Key must be lowercase letters, digits and dashes only.'),
+    ),
+  });
+
+  const create = handleSubmit(async () => {
     setBusy(true);
     setFormError(null);
     try {
-      await api('/partners', { method: 'POST', body: { name: name.trim(), key: key.trim() } });
-      setName('');
-      setKey('');
+      await api('/partners', {
+        method: 'POST',
+        body: { name: draft.name.trim(), key: draft.key.trim() },
+      });
+      setDraft({ name: '', key: '' });
       setCreating(false);
+      reset();
       await load();
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'Could not create the partner.');
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const patch = async (id: string, body: Record<string, unknown>, failure: string) => {
     setBusy(true);
@@ -107,31 +123,35 @@ export function AdminPartnersPage() {
       {creating && (
         <form
           className="mt-6 flex flex-wrap items-end gap-3 rounded-lg border border-paper-300 bg-surface px-5 py-4 shadow-card"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void create();
-          }}
+          onSubmit={create}
+          noValidate
         >
-          <Field label="Name">
+          <Field label="Name" error={errorFor('name')}>
             <TextInput
               aria-label="Partner name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={draft.name}
+              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+              onBlur={blurHandler('name')}
               placeholder="SeedLegals"
               required
             />
           </Field>
-          <Field label="Key" hint="Lowercase identifier used by integrations; cannot be changed later.">
+          <Field
+            label="Key"
+            hint="Lowercase identifier used by integrations; cannot be changed later."
+            error={errorFor('key')}
+          >
             <TextInput
               aria-label="Partner key"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
+              value={draft.key}
+              onChange={(e) => setDraft((d) => ({ ...d, key: e.target.value }))}
+              onBlur={blurHandler('key')}
               placeholder="seedlegals"
               pattern="[a-z0-9-]+"
               required
             />
           </Field>
-          <Button type="submit" disabled={busy || !name.trim() || !key.trim()}>
+          <Button type="submit" disabled={busy}>
             Create partner
           </Button>
         </form>

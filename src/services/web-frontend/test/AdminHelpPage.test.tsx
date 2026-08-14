@@ -218,20 +218,67 @@ describe('AdminHelpPage', () => {
     await screen.findByText('article is referenced by a help link');
   });
 
+  /**
+   * R30 — this was a disabled button, which said the article could not be
+   * created without saying what was missing from it.
+   */
   it('blocks the submit until both the title and the slug carry content', async () => {
-    mockApi();
+    const writes: string[] = [];
+    mockApi((path) => {
+      writes.push(path);
+      return jsonResponse({ ok: true });
+    });
     renderPage();
     await screen.findByRole('table', { name: /help articles/i });
 
     await userEvent.click(screen.getByRole('button', { name: /New article/i }));
-    const submit = screen.getByRole('button', { name: /Create article/i });
-    expect(submit).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: /Create article/i }));
+
+    expect(await screen.findByText('Title is required.')).toBeInTheDocument();
+    expect(screen.getByText('Slug is required.')).toBeInTheDocument();
+    expect(writes).toHaveLength(0);
 
     await userEvent.type(screen.getByLabelText('Title'), 'Only a title');
-    expect(submit).toBeDisabled();
+    expect(screen.queryByText('Title is required.')).not.toBeInTheDocument();
+  });
 
-    await userEvent.type(screen.getByLabelText(/^Slug/), 'only-a-title');
-    expect(submit).toBeEnabled();
+  it('refuses a slug that could not be part of a URL', async () => {
+    const writes: string[] = [];
+    mockApi((path) => {
+      writes.push(path);
+      return jsonResponse({ ok: true });
+    });
+    renderPage();
+    await screen.findByRole('table', { name: /help articles/i });
+
+    await userEvent.click(screen.getByRole('button', { name: /New article/i }));
+    await userEvent.type(screen.getByLabelText('Title'), 'Rolling forward');
+    await userEvent.type(screen.getByLabelText(/^Slug/), 'Rolling Forward');
+    await userEvent.click(screen.getByRole('button', { name: /Create article/i }));
+
+    expect(
+      await screen.findByText('Slug must be lowercase letters, digits and dashes only.'),
+    ).toBeInTheDocument();
+    expect(writes).toHaveLength(0);
+  });
+
+  it('refuses a sort order beyond the ceiling the box declares', async () => {
+    const writes: string[] = [];
+    mockApi((path) => {
+      writes.push(path);
+      return jsonResponse({ ok: true });
+    });
+    renderPage();
+    await screen.findByRole('table', { name: /help articles/i });
+
+    await userEvent.click(screen.getByRole('button', { name: /New article/i }));
+    await userEvent.type(screen.getByLabelText('Title'), 'Rolling forward');
+    await userEvent.type(screen.getByLabelText(/^Slug/), 'rolling-forward');
+    await userEvent.type(screen.getByLabelText(/^Sort order/), '99999');
+    await userEvent.click(screen.getByRole('button', { name: /Create article/i }));
+
+    expect(await screen.findByText('Sort order must be at most 10000.')).toBeInTheDocument();
+    expect(writes).toHaveLength(0);
   });
 
   it('abandons the draft on cancel', async () => {

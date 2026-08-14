@@ -400,7 +400,9 @@ describe('AdminUsersPage — the console', () => {
     await userEvent.type(screen.getByLabelText('First name'), '  Dee  ');
     await userEvent.click(screen.getByRole('button', { name: 'Create user' }));
 
-    await waitFor(() => expect(calls.some((c) => c.path.endsWith('/users') && c.method === 'POST')).toBe(true));
+    await waitFor(() =>
+      expect(calls.some((c) => c.path.endsWith('/users') && c.method === 'POST')).toBe(true),
+    );
     expect(calls.find((c) => c.path.endsWith('/users') && c.method === 'POST')?.body).toMatchObject({
       email: 'direct@acme.com',
       password: 'a-long-enough-one',
@@ -463,15 +465,36 @@ describe('AdminUsersPage — the console', () => {
     expect(editorBody(calls, 'PATCH')).toMatchObject({ partner_id: 'p1' });
   });
 
-  it('will not save a user with no role at all', async () => {
-    mockApi();
+  /**
+   * R30 — this was a disabled button, and the roles it was about are two
+   * sections further down the form than the button is. The message sits with
+   * the checkboxes instead.
+   */
+  it('will not save a user with no role at all, and says so at the roles', async () => {
+    const calls = mockApi();
     renderPage();
 
     const tr = (await screen.findByText('ada@acme.com')).closest('tr') as HTMLElement;
     await userEvent.click(within(tr).getByRole('button', { name: 'Edit' }));
     await userEvent.click(screen.getByRole('checkbox', { name: 'Client' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
-    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(await screen.findByText('Pick at least one role.')).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('refuses an email that is not one, before the API has to', async () => {
+    const calls = mockApi();
+    renderPage();
+
+    const tr = (await screen.findByText('ada@acme.com')).closest('tr') as HTMLElement;
+    await userEvent.click(within(tr).getByRole('button', { name: 'Edit' }));
+    await userEvent.clear(screen.getByLabelText('Email'));
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@acme');
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByText('Enter a valid email address.')).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
   });
 
   it('toggles a role off as well as on', async () => {
@@ -590,7 +613,9 @@ describe('AdminUsersPage — the console', () => {
 
     const tr = (await screen.findByText('newcomer@acme.com')).closest('tr') as HTMLElement;
     expect(within(tr).getByText('Pending')).toBeInTheDocument();
-    expect(within(tr).getByText(/valuation_user · Bellweather Law · invited by admin@409.ai/)).toBeInTheDocument();
+    expect(
+      within(tr).getByText(/valuation_user · Bellweather Law · invited by admin@409.ai/),
+    ).toBeInTheDocument();
     expect(within(tr).getByText(/^expires /)).toBeInTheDocument();
     expect(within(tr).getByRole('button', { name: 'Resend' })).toBeInTheDocument();
     expect(within(tr).getByRole('button', { name: 'Revoke' })).toBeInTheDocument();

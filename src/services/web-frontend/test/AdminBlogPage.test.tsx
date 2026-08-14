@@ -54,28 +54,23 @@ interface Call {
   body: Record<string, unknown> | undefined;
 }
 
-function mockApi(
-  opts: { posts?: () => Response; write?: () => Response } = {},
-): Call[] {
+function mockApi(opts: { posts?: () => Response; write?: () => Response } = {}): Call[] {
   const calls: Call[] = [];
-  vi.spyOn(globalThis, 'fetch').mockImplementation(
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      const method = (init?.method ?? 'GET').toUpperCase();
-      calls.push({
-        url,
-        method,
-        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
-      });
-      if (method !== 'GET') return opts.write ? opts.write() : json({});
-      return opts.posts ? opts.posts() : json({ posts: [PUBLISHED, DRAFT] });
-    },
-  );
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = (init?.method ?? 'GET').toUpperCase();
+    calls.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    });
+    if (method !== 'GET') return opts.write ? opts.write() : json({});
+    return opts.posts ? opts.posts() : json({ posts: [PUBLISHED, DRAFT] });
+  });
   return calls;
 }
 
-const problem = (status: number, detail: string) => () =>
-  json({ status, title: 'Error', detail }, status);
+const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
 const renderPage = () =>
   render(
@@ -185,18 +180,65 @@ describe('AdminBlogPage', () => {
       expect(screen.getByLabelText(/^Category/)).toHaveValue('General');
     });
 
-    it('cannot be created without a title and a slug', async () => {
+    /**
+     * R30 — this was a disabled button, which said "you cannot create this"
+     * without saying what was missing. The rules name the box instead.
+     */
+    it('cannot be created without a title and a slug, and says which is missing', async () => {
       const user = userEvent.setup();
-      mockApi();
+      const calls = mockApi();
       renderPage();
       await ready();
       await openNew(user);
-      const submit = screen.getByRole('button', { name: 'Create post' });
-      expect(submit).toBeDisabled();
+
+      await user.click(screen.getByRole('button', { name: 'Create post' }));
+      expect(await screen.findByText('Title is required.')).toBeInTheDocument();
+      expect(screen.getByText('Slug is required.')).toBeInTheDocument();
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+
       await user.type(screen.getByLabelText(/^Title/), 'Down rounds');
-      expect(submit).toBeDisabled();
+      expect(screen.queryByText('Title is required.')).not.toBeInTheDocument();
+    });
+
+    it('refuses a slug that could not be a URL, at the box', async () => {
+      const user = userEvent.setup();
+      const calls = mockApi();
+      renderPage();
+      await ready();
+      await openNew(user);
+
+      await user.type(screen.getByLabelText(/^Title/), 'Down rounds');
+      await user.type(screen.getByLabelText(/^Slug/), 'Down Rounds!');
+      await user.click(screen.getByRole('button', { name: 'Create post' }));
+
+      expect(
+        await screen.findByText('Slug must be lowercase letters, digits and dashes only.'),
+      ).toBeInTheDocument();
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+    });
+
+    /**
+     * The hint has always promised "an https URL or a site-relative path" and
+     * nothing checked it. A bare "images/card.png" is not an error anywhere —
+     * it is emitted verbatim as `og:image` and resolves against whatever page
+     * the link was shared on.
+     */
+    it('refuses a card image that is neither an https URL nor a path', async () => {
+      const user = userEvent.setup();
+      const calls = mockApi();
+      renderPage();
+      await ready();
+      await openNew(user);
+
+      await user.type(screen.getByLabelText(/^Title/), 'Down rounds');
       await user.type(screen.getByLabelText(/^Slug/), 'down-rounds');
-      expect(submit).toBeEnabled();
+      await user.type(screen.getByLabelText(/^Card image/), 'images/card.png');
+      await user.click(screen.getByRole('button', { name: 'Create post' }));
+
+      expect(
+        await screen.findByText('Card image must be an https:// URL or a path starting with “/”.'),
+      ).toBeInTheDocument();
+      expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
     });
 
     it('constrains the slug to what can be a URL', async () => {
@@ -334,9 +376,7 @@ describe('AdminBlogPage', () => {
       mockApi();
       renderPage();
       await ready();
-      await user.click(
-        within(postRow('SAFE notes and the cap table')).getByRole('button', { name: 'Edit' }),
-      );
+      await user.click(within(postRow('SAFE notes and the cap table')).getByRole('button', { name: 'Edit' }));
       expect(screen.getByLabelText(/^Card image/)).toHaveValue('');
     });
 
@@ -425,9 +465,7 @@ describe('AdminBlogPage', () => {
       renderPage();
       await ready();
       await user.click(within(postRow('What is a 409A?')).getByRole('button', { name: 'Delete' }));
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'This post is referenced by a campaign.',
-      );
+      expect(await screen.findByRole('alert')).toHaveTextContent('This post is referenced by a campaign.');
     });
   });
 });

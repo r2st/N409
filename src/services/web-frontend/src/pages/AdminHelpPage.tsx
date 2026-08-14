@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
+import { all, numberRange, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDate } from '../lib/format';
 import { Button, EmptyState, ErrorNote, Field, Spinner, TextInput } from '../components/ui';
 import { RichTextEditor } from '../components/RichTextEditor';
 import type { HelpArticle } from './HelpPage';
 
-interface EditorState {
+type EditorState = {
   id?: string;
   slug: string;
   title: string;
@@ -16,7 +16,7 @@ interface EditorState {
   body_html: string;
   sort_order: number;
   published: boolean;
-}
+};
 
 const emptyEditor = (): EditorState => ({
   slug: '',
@@ -27,6 +27,18 @@ const emptyEditor = (): EditorState => ({
   sort_order: 0,
   published: true,
 });
+
+/**
+ * What the rules read while the editor is closed.
+ *
+ * `useFormValidation` is a hook, so it runs whether or not there is an article
+ * open; a blank article fails `required` harmlessly, because nothing is ever
+ * revealed on a form that is not on screen.
+ */
+const CLOSED_EDITOR: EditorState = emptyEditor();
+
+/** The slug shape the box declares as `pattern`, which is also the URL's. */
+const SLUG = /[a-z0-9-]+/;
 
 /** P2 #10 — ops CRUD over the knowledge base: articles appear in the help
  * widget and /help immediately, no deploy needed. */
@@ -65,8 +77,16 @@ export function AdminHelpPage() {
       published: a.published,
     });
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(editor ?? CLOSED_EDITOR, {
+    title: required('title', 'Title'),
+    slug: all(
+      required('slug', 'Slug'),
+      pattern('slug', SLUG, 'Slug must be lowercase letters, digits and dashes only.'),
+    ),
+    sort_order: numberRange('sort_order', 0, 10000, 'Sort order'),
+  });
+
+  const save = handleSubmit(async () => {
     if (!editor) return;
     setBusy(true);
     setEditorError(null);
@@ -92,7 +112,7 @@ export function AdminHelpPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const togglePublished = async (a: HelpArticle) => {
     try {
@@ -148,24 +168,30 @@ export function AdminHelpPage() {
           <h2 className="overline mb-5 text-ink-400">
             {editor.id ? `Edit "${editor.title}"` : 'New article'}
           </h2>
-          <form onSubmit={(e) => void save(e)} className="space-y-5">
+          <form onSubmit={save} className="space-y-5" noValidate>
             {editorError && <ErrorNote>{editorError}</ErrorNote>}
             <div className="grid gap-5 sm:grid-cols-2">
-              <Field label="Title">
+              <Field label="Title" error={errorFor('title')}>
                 <TextInput
                   required
                   maxLength={200}
                   value={editor.title}
                   onChange={(e) => setEditor({ ...editor, title: e.target.value })}
+                  onBlur={blurHandler('title')}
                 />
               </Field>
-              <Field label="Slug" hint="Lowercase letters, digits and dashes; part of the URL.">
+              <Field
+                label="Slug"
+                hint="Lowercase letters, digits and dashes; part of the URL."
+                error={errorFor('slug')}
+              >
                 <TextInput
                   required
                   maxLength={100}
                   pattern="[a-z0-9-]+"
                   value={editor.slug}
                   onChange={(e) => setEditor({ ...editor, slug: e.target.value })}
+                  onBlur={blurHandler('slug')}
                 />
               </Field>
               <Field label="Category">
@@ -182,13 +208,18 @@ export function AdminHelpPage() {
                   onChange={(e) => setEditor({ ...editor, keywords: e.target.value })}
                 />
               </Field>
-              <Field label="Sort order" hint="Lower numbers list first within the category.">
+              <Field
+                label="Sort order"
+                hint="Lower numbers list first within the category."
+                error={errorFor('sort_order')}
+              >
                 <TextInput
                   type="number"
                   min={0}
                   max={10000}
                   value={editor.sort_order}
                   onChange={(e) => setEditor({ ...editor, sort_order: Number(e.target.value) || 0 })}
+                  onBlur={blurHandler('sort_order')}
                 />
               </Field>
               <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm text-ink-700">
@@ -208,7 +239,7 @@ export function AdminHelpPage() {
               />
             </Field>
             <div className="flex gap-2">
-              <Button type="submit" disabled={busy || !editor.title.trim() || !editor.slug.trim()}>
+              <Button type="submit" disabled={busy}>
                 {busy ? 'Saving…' : editor.id ? 'Save changes' : 'Create article'}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setEditor(null)}>
