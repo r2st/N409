@@ -119,7 +119,11 @@ describe('seeded blog library', () => {
       .map(({ sql }) => sql.slice(sql.indexOf(INSERT)).match(ID_LINE)?.length ?? 0)
       .reduce((a, b) => a + b, 0);
     expect(posts).toHaveLength(declared);
-    expect(posts.length).toBeGreaterThanOrEqual(11);
+    // The floor tracks the library rather than the day it launched: a batch
+    // migration that silently stops being read — renamed, or written in a form
+    // the parser does not match — would otherwise leave every assertion below
+    // running over the posts that remain.
+    expect(posts.length).toBeGreaterThanOrEqual(51);
   });
 
   it('gives every post a unique id and slug', () => {
@@ -171,6 +175,36 @@ describe('seeded blog library', () => {
       // An article with no subheadings is a wall of text nobody scans, and it
       // is also the shape that ranks worst.
       expect(p.body.match(/<h2>/g)?.length ?? 0, `${p.slug} has no <h2>`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('gives every post keywords to rank on', () => {
+    for (const p of posts) {
+      // The column has no default and the API does not require content, so an
+      // empty string is a valid write — and a post seeded with one is invisible
+      // to the search surface these were written for.
+      expect(p.keywords.trim().length, `${p.slug} has no keywords`).toBeGreaterThan(20);
+      // Lowercase throughout: they are search terms, not prose, and a mixed-case
+      // list is the sign of a title pasted into the column.
+      expect(p.keywords, p.slug).toBe(p.keywords.toLowerCase());
+    }
+  });
+
+  it('staggers publication so the index sorts into an order', () => {
+    // `published_at` is seeded as `now() - interval 'N days'`. Two posts sharing
+    // an N sort by `created_at` — which is `now()` for every row in a batch —
+    // and the index order then depends on insertion order rather than on
+    // anything an author chose. See the header of 0142.
+    const days = seedFiles().flatMap(({ file, sql }) =>
+      [...sql.matchAll(/now\(\) - interval '(\d+) days'/g)].map((m) => ({ file, days: m[1]! })),
+    );
+    // 0122's single launch post is stamped `now()` with no interval; every
+    // batch since has staggered, and this is the assertion that keeps it so.
+    expect(days.length).toBeGreaterThanOrEqual(posts.length - 1);
+    const seen = new Map<string, string>();
+    for (const { file, days: d } of days) {
+      expect(seen.get(d), `two posts published ${d} days ago (${seen.get(d)}, ${file})`).toBeUndefined();
+      seen.set(d, file);
     }
   });
 

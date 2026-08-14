@@ -54,12 +54,39 @@ describe('seeded blog library links', () => {
     ...slugs.map((s) => `/blog/${s}`),
   ]);
 
+  /** Each row runs from its id to the `\n)` that closes it — both terminators. */
+  const rows = (): { slug: string; body: string }[] =>
+    [...sql.matchAll(/'[0-9A-HJKMNP-TV-Z]{26}',\s*'([a-z0-9-]+)',([\s\S]*?)(?=\n\))/g)].map((m) => ({
+      slug: m[1]!,
+      body: m[2]!,
+    }));
+
   it('finds links to check', () => {
     // Without this the suite passes on an empty set, which is exactly the state
-    // it exists to prevent — articles that link nowhere convert nobody. One
-    // link per seeded post is the floor, not the target.
-    expect(slugs.length).toBeGreaterThanOrEqual(11);
+    // it exists to prevent — articles that link nowhere convert nobody.
+    expect(slugs.length).toBeGreaterThanOrEqual(51);
     expect(links.length).toBeGreaterThanOrEqual(slugs.length);
+  });
+
+  it('gives every post a way out of itself', () => {
+    // The aggregate floor above is satisfied by one article carrying fifty
+    // links, which is not what it is for. A piece that ends without a route to
+    // a product, a guide or another article is a reader who read and left, and
+    // it is also the shape a crawler treats as a dead end.
+    const orphans = rows()
+      .filter(({ body }) => !/href="\//.test(body))
+      .map(({ slug }) => slug);
+    expect(orphans).toEqual([]);
+  });
+
+  it('points more than one article at each of the money pages', () => {
+    // The library exists to feed the pages that convert. A product page that no
+    // article links to ranks on its own or not at all, and the batches are
+    // large enough now that this is checked rather than assumed.
+    for (const path of ['/pricing', '/sample-report', '/contact']) {
+      const from = rows().filter(({ body }) => body.includes(`href="${path}"`));
+      expect(from.length, `only ${from.length} article(s) link to ${path}`).toBeGreaterThanOrEqual(2);
+    }
   });
 
   it('resolves every internal link to a real route', () => {
