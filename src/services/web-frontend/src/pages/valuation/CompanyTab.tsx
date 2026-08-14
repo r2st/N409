@@ -173,9 +173,16 @@ export function CompanyTab() {
     setFieldError(null);
     setSaved(false);
 
+    // Two refusals, not one: `10000001` is a whole number, and telling the
+    // analyst who typed it that it is not sends them looking for a typo that
+    // isn't there. The ceiling matches the API's own `max(10_000_000)`.
     const employeeCount = draft.employee_count.trim();
-    if (employeeCount !== '' && (!/^\d+$/.test(employeeCount) || Number(employeeCount) > 10_000_000)) {
+    if (employeeCount !== '' && !/^\d+$/.test(employeeCount)) {
       setFieldError('Employee count must be a whole number.');
+      return;
+    }
+    if (employeeCount !== '' && Number(employeeCount) > 10_000_000) {
+      setFieldError('Employee count must be 10,000,000 or fewer.');
       return;
     }
 

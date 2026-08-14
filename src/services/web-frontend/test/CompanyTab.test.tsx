@@ -169,7 +169,12 @@ describe('CompanyTab', () => {
     expect(fetchSpy.mock.calls).toHaveLength(before);
   });
 
-  it('rejects an implausible headcount', async () => {
+  /**
+   * A headcount over the ceiling *is* a whole number, so it gets its own
+   * refusal — being told to enter a whole number when you just did sends the
+   * analyst hunting for a typo that is not there.
+   */
+  it('rejects an implausible headcount, and says why', async () => {
     const fetchSpy = mockApi(null);
     renderTab();
     await screen.findByLabelText('Employees');
@@ -178,8 +183,79 @@ describe('CompanyTab', () => {
     await userEvent.type(screen.getByLabelText('Employees'), '10000001');
     await userEvent.click(screen.getByRole('button', { name: /Save profile/i }));
 
-    await screen.findByText('Employee count must be a whole number.');
+    await screen.findByText('Employee count must be 10,000,000 or fewer.');
     expect(fetchSpy.mock.calls).toHaveLength(before);
+  });
+
+  /** The ceiling itself is allowed — the API's own bound is inclusive. */
+  it('accepts the ceiling headcount', async () => {
+    let body: Record<string, unknown> | null = null;
+    mockApi(null, (init) => {
+      body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return jsonResponse({ profile: null });
+    });
+    renderTab();
+    await screen.findByLabelText('Employees');
+
+    await userEvent.type(screen.getByLabelText('Employees'), '10000000');
+    await userEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+    await waitFor(() => expect(body).not.toBeNull());
+    expect(body!.employee_count).toBe(10_000_000);
+  });
+
+  /**
+   * Every input on this form is wired through one curried `set('key')` helper,
+   * so the key literal spelled at the call site is the only thing tying a box
+   * to the column it writes. A key copy-pasted onto the wrong box does not
+   * announce itself — the box appears not to accept typing while a different
+   * field quietly takes the text — and the form is long enough that the two
+   * are rarely on screen together. Type a distinct value into each and assert
+   * the PATCH that goes out.
+   */
+  it('wires every input to the column it is labelled with', async () => {
+    let body: Record<string, unknown> | null = null;
+    mockApi(null, (init) => {
+      body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return jsonResponse({ profile: null });
+    });
+    renderTab();
+    await screen.findByLabelText(/^Legal name/);
+
+    const typed: Array<[string | RegExp, string, string]> = [
+      [/^Legal name/, 'legal_name', 'Newco Ltd'],
+      ['Website', 'website', 'https://newco.example'],
+      ['Industry', 'industry', 'Marketplace — freight'],
+      ['Employees', 'employee_count', '7'],
+      [/^Business description/, 'business_description', 'Digital freight brokerage.'],
+      [/^SIC code/, 'sic_code', '4731'],
+      [/^NAICS code/, 'naics_code', '488510'],
+      ['Address line 1', 'address_line1', '9 Wharf Rd'],
+      ['Address line 2', 'address_line2', 'Unit 3'],
+      ['City', 'city', 'Oakland'],
+      ['State / region', 'region', 'CA'],
+      ['Postal code', 'postal_code', '94607'],
+      ['Country', 'country', 'US'],
+      [/^Summary/, 'cap_table_summary', 'Common 5m, seed 1m.'],
+    ];
+    for (const [label, , value] of typed) {
+      await userEvent.type(screen.getByLabelText(label), value);
+    }
+    // A date input takes a value rather than keystrokes.
+    await userEvent.clear(screen.getByLabelText('Founded'));
+    await userEvent.type(screen.getByLabelText('Founded'), '2021-11-02');
+    await userEvent.selectOptions(screen.getByLabelText('Revenue range'), '10m_50m');
+
+    await userEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+    await waitFor(() => expect(body).not.toBeNull());
+    for (const [, column, value] of typed) {
+      expect(body![column], `${column} did not receive what was typed into its box`).toBe(
+        column === 'employee_count' ? Number(value) : value,
+      );
+    }
+    expect(body!.founded_on).toBe('2021-11-02');
+    expect(body!.revenue_range).toBe('10m_50m');
   });
 
   it('confirms the save and withdraws the confirmation once the form is edited again', async () => {
