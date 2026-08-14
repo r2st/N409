@@ -3,7 +3,15 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
 import { CapTableTab } from '../src/pages/valuation/CapTableTab';
-import type { Valuation } from '../src/lib/types';
+import type { User, Valuation } from '../src/lib/types';
+
+let mockUser: User;
+vi.mock('../src/lib/auth', () => ({
+  useAuth: () => ({ user: mockUser }),
+}));
+
+const OPS_USER = { id: 'u-ops', email: 'ops@example.com', roles: ['admin'] } as unknown as User;
+const CLIENT_USER = { id: 'u-cl', email: 'client@example.com', roles: ['valuation_user'] } as unknown as User;
 
 /**
  * The cap table is the input the whole waterfall stands on: every preference,
@@ -145,7 +153,10 @@ function renderTab() {
 }
 
 describe('CapTableTab', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    mockUser = OPS_USER;
+  });
 
   describe('the stored table', () => {
     it('reports the three figures the waterfall is built on', async () => {
@@ -809,6 +820,176 @@ describe('CapTableTab', () => {
       renderTab();
       await screen.findByText('No cap table imported yet');
       expect(screen.queryByText('Structure explorer')).toBeNull();
+    });
+  });
+
+  /**
+   * The anonymizer (409.ai parity gap #22). The redaction is the AI service's
+   * and is proved there; what these pin is the operator's side of it — that a
+   * client cannot reach it, that the request carries what was ticked and typed,
+   * and that the result reports what it struck in words rather than as the API's
+   * category keys.
+   */
+  describe('the anonymizer', () => {
+    const DOCS = [
+      { id: 'doc-1', filename: 'Acme Cap Table.csv' },
+      { id: 'doc-2', filename: 'Board consent.pdf' },
+    ];
+    const documents = () =>
+      [/\/documents$/, () => json({ documents: DOCS })] as [RegExp, () => Response];
+
+    const RESULT = {
+      text: '[NAME],Common,2500000',
+      documents: [],
+      anonymization: { applied: true, enforced: false, redacted: { names: 1, emails: 2 } },
+      known_entities: { companies: 2, people: 1 },
+    };
+
+    const open = async () => {
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole('button', { name: 'Show anonymizer' }));
+      return user;
+    };
+
+    it('is not offered to a client', async () => {
+      mockUser = CLIENT_USER;
+      mockApi([capTable({ cap_table: STORED, can_edit: false }), formats()]);
+      renderTab();
+      await screen.findByText('Current cap table');
+      expect(screen.queryByText('Anonymize')).toBeNull();
+    });
+
+    it('sends the ticked documents and the typed names, split on lines and commas', async () => {
+      const fetchMock = mockApi([
+        [/\/ai\/anonymize$/, () => json(RESULT)],
+        documents(),
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await open();
+
+      await user.click(await screen.findByLabelText('Acme Cap Table.csv'));
+      await user.type(screen.getByLabelText(/other names to strike/i), 'Ada Lovelace\nGrace Hopper');
+      await user.click(screen.getByRole('button', { name: 'Anonymize' }));
+
+      await screen.findByTestId('anonymize-summary');
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes('/ai/anonymize'))!;
+      const body = JSON.parse(String((call[1] as RequestInit).body));
+      expect(body.document_ids).toEqual(['doc-1']);
+      expect(body.known_people).toEqual(['Ada Lovelace', 'Grace Hopper']);
+    });
+
+    it('will not run with nothing selected and nothing pasted', async () => {
+      mockApi([documents(), capTable({ cap_table: STORED, can_edit: true }), formats()]);
+      renderTab();
+      await open();
+      expect(screen.getByRole('button', { name: 'Anonymize' })).toBeDisabled();
+    });
+
+    it('says what it struck in words, and how many entities it was matching against', async () => {
+      mockApi([
+        [/\/ai\/anonymize$/, () => json(RESULT)],
+        documents(),
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await open();
+      await user.type(screen.getByLabelText(/paste a cap table/i), 'Ada Lovelace,Common,2500000');
+      await user.click(screen.getByRole('button', { name: 'Anonymize' }));
+
+      const summary = await screen.findByTestId('anonymize-summary');
+      expect(summary).toHaveTextContent('1 person name');
+      expect(summary).toHaveTextContent('2 email addresses');
+      // "Nothing was struck" means one thing against a list of three entities
+      // and quite another against an empty one, so the count is always stated.
+      expect(summary).toHaveTextContent('2 known companies');
+      expect(summary).toHaveTextContent('1 known person');
+      expect(screen.getByText('[NAME],Common,2500000')).toBeInTheDocument();
+    });
+
+    it('distinguishes a clean sheet from an unmatched one', async () => {
+      mockApi([
+        [
+          /\/ai\/anonymize$/,
+          () =>
+            json({
+              ...RESULT,
+              text: 'nothing identifying here',
+              anonymization: { applied: true, enforced: false, redacted: {} },
+            }),
+        ],
+        documents(),
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await open();
+      await user.type(screen.getByLabelText(/paste a cap table/i), 'nothing identifying here');
+      await user.click(screen.getByRole('button', { name: 'Anonymize' }));
+      expect(await screen.findByTestId('anonymize-summary')).toHaveTextContent('Nothing was struck.');
+    });
+
+    it('shows both filenames for a redacted document', async () => {
+      mockApi([
+        [
+          /\/ai\/anonymize$/,
+          () =>
+            json({
+              ...RESULT,
+              text: '',
+              documents: [
+                {
+                  id: 'doc-1',
+                  original_filename: 'Acme Cap Table.csv',
+                  filename: '[COMPANY] Cap Table.csv',
+                  text: '[NAME],Common,2500000',
+                },
+              ],
+            }),
+        ],
+        documents(),
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await open();
+      await user.click(await screen.findByLabelText('Acme Cap Table.csv'));
+      await user.click(screen.getByRole('button', { name: 'Anonymize' }));
+
+      // The redacted name is what may be forwarded; the original is what the
+      // operator ticked and is how they recognise which output is which.
+      await screen.findByText('[COMPANY] Cap Table.csv');
+      expect(screen.getByText(/from Acme Cap Table\.csv/)).toBeInTheDocument();
+    });
+
+    it('reports a failure rather than leaving the button spinning', async () => {
+      mockApi([
+        [/\/ai\/anonymize$/, () => json({ status: 503, detail: 'redactor unavailable' }, 503)],
+        documents(),
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await open();
+      await user.type(screen.getByLabelText(/paste a cap table/i), 'Ada Lovelace');
+      await user.click(screen.getByRole('button', { name: 'Anonymize' }));
+      await screen.findByText(/redactor unavailable|could not anonymize/i);
+      expect(screen.getByRole('button', { name: 'Anonymize' })).toBeEnabled();
+    });
+
+    it('still offers the paste box when the document list cannot be loaded', async () => {
+      mockApi([
+        [/\/documents$/, () => json({ status: 500, detail: 'boom' }, 500)],
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      await open();
+      // A documents outage costs the list and nothing else — pasting is a
+      // complete way to use this panel.
+      expect(await screen.findByLabelText(/paste a cap table/i)).toBeInTheDocument();
     });
   });
 });

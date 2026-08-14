@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { api, ApiError, apiUpload, type Problem } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
 import { formatAmount, formatNumber } from '../../lib/format';
+import { isOps } from '../../lib/rbac';
+import type { ValuationDocument } from '../../lib/pipeline';
 import { useWorkspace } from './ValuationWorkspace';
 import {
   Button,
   EmptyState,
   ErrorNote,
   Field,
+  inputClass,
   LoadingBlock,
   Select,
   Skeleton,
@@ -230,6 +234,7 @@ function EntriesTable({ entries, currency }: { entries: Entry[]; currency: strin
 
 export function CapTableTab() {
   const { valuation } = useWorkspace();
+  const { user } = useAuth();
   const currency = valuation.currency ?? 'USD';
   const [stored, setStored] = useState<CapTable | null>(null);
   const [canEdit, setCanEdit] = useState(false);
@@ -573,7 +578,217 @@ export function CapTableTab() {
       )}
 
       {stored && <StructureExplorer valuationId={valuation.id} />}
+
+      {isOps(user) && <AnonymizePanel valuationId={valuation.id} />}
     </div>
+  );
+}
+
+interface AnonymizedDocument {
+  id: string;
+  original_filename: string;
+  filename: string;
+  text: string;
+}
+interface AnonymizeResult {
+  text: string;
+  documents: AnonymizedDocument[];
+  anonymization: { applied: boolean; enforced?: boolean; redacted: Record<string, number> };
+  known_entities: { companies: number; people: number };
+}
+
+/**
+ * Reads as the sentence an operator would say, not as the API's field names.
+ *
+ * Both forms are spelled out rather than derived, because half of these do not
+ * take a bare "s" — "addresses", "companies" — and a summary reading "2 email
+ * addresss" undermines a panel whose whole job is to be trusted with the
+ * careful handling of somebody's cap table.
+ */
+const CATEGORY_LABELS: Record<string, [one: string, many: string]> = {
+  companies: ['company name', 'company names'],
+  names: ['person name', 'person names'],
+  emails: ['email address', 'email addresses'],
+  phones: ['phone number', 'phone numbers'],
+  ssns: ['SSN', 'SSNs'],
+  eins: ['EIN', 'EINs'],
+  addresses: ['address', 'addresses'],
+};
+
+const plural = (n: number, [one, many]: [string, string]) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Cap-table anonymization (409.ai parity gap #22).
+ *
+ * Two jobs, and the second is the one that justifies putting it on this tab
+ * rather than burying it in an admin screen. The first is to produce a demo or
+ * sample from a real engagement without its client in it. The second is to let
+ * an operator see, on *this* sheet, what redaction actually catches — before
+ * running a pipeline that will send it out. Both need the redacted text where it
+ * can be read and copied, which is why the output is a plain preformatted block
+ * and not a download.
+ *
+ * Collapsed by default, in the shape of the structure explorer above it: the
+ * table is what a visit to this tab is usually for, and this is a deliberate
+ * second question.
+ *
+ * The issuer and the client contact are struck without being named here, so the
+ * "other names" box asks only for what the platform cannot know — the holders,
+ * who appear on a cap table as bare names in a column with nothing for a pattern
+ * to key on. The result says how many entities were applied, because "0
+ * redactions" means something very different when the list was empty.
+ */
+function AnonymizePanel({ valuationId }: { valuationId: string }) {
+  const [open, setOpen] = useState(false);
+  const [documents, setDocuments] = useState<ValuationDocument[] | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [text, setText] = useState('');
+  const [names, setNames] = useState('');
+  const [result, setResult] = useState<AnonymizeResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || documents) return;
+    api<{ documents: ValuationDocument[] }>(`/valuations/${valuationId}/documents`)
+      .then((d) => setDocuments(d.documents))
+      // Not fatal: pasted text is a complete way to use this panel, so a
+      // documents outage should cost the list and nothing else.
+      .catch(() => setDocuments([]));
+  }, [open, documents, valuationId]);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]));
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await api<AnonymizeResult>(`/valuations/${valuationId}/ai/anonymize`, {
+        method: 'POST',
+        body: {
+          text,
+          document_ids: selected,
+          // Split on commas and newlines both: a list pasted out of a holder
+          // column arrives one per line.
+          known_people: names
+            .split(/[,\n]/)
+            .map((n) => n.trim())
+            .filter((n) => n !== ''),
+        },
+      });
+      setResult(res);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not anonymize this cap table.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const struck = result ? Object.entries(result.anonymization.redacted) : [];
+  const total = struck.reduce((sum, [, n]) => sum + n, 0);
+
+  return (
+    <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="overline text-ink-400">Anonymize</h3>
+          <p className="mt-1 text-sm text-ink-500">
+            Strike the identities out of a cap table — for a sample report, or to see what redaction catches
+            before anything is sent to a model. The company and the client contact are struck automatically.
+          </p>
+        </div>
+        {/* Named rather than a bare "Show": this sits directly under the
+            structure explorer's own toggle, and two adjacent buttons reading
+            "Show" tell a screen-reader user nothing about which is which. */}
+        <Button variant="secondary" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? 'Hide anonymizer' : 'Show anonymizer'}
+        </Button>
+      </div>
+
+      {open && (
+        <div className="mt-5 space-y-4">
+          {error && <ErrorNote>{error}</ErrorNote>}
+
+          {documents && documents.length > 0 && (
+            <fieldset className="space-y-1.5">
+              <legend className="overline text-ink-400">Documents</legend>
+              {documents.map((doc) => (
+                <label key={doc.id} className="flex items-center gap-2 text-sm text-ink-700">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(doc.id)}
+                    onChange={() => toggle(doc.id)}
+                  />
+                  <span>{doc.filename}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
+
+          <Field label="Or paste a cap table">
+            <textarea
+              className={`${inputClass} h-32 font-mono text-xs`}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Holder,Class,Shares…"
+            />
+          </Field>
+
+          <Field
+            label="Other names to strike"
+            hint="Holders and founders — one per line, or comma-separated. The company and the client contact are already included."
+          >
+            <textarea
+              className={`${inputClass} h-20`}
+              value={names}
+              onChange={(e) => setNames(e.target.value)}
+            />
+          </Field>
+
+          <Button onClick={run} disabled={busy || (text.trim() === '' && selected.length === 0)}>
+            {busy ? 'Anonymizing…' : 'Anonymize'}
+          </Button>
+
+          {result && (
+            <div className="space-y-3">
+              <p className="text-sm text-ink-600" data-testid="anonymize-summary">
+                {total === 0
+                  ? 'Nothing was struck.'
+                  : `Struck ${struck
+                      .map(([category, n]) => plural(n, CATEGORY_LABELS[category] ?? [category, category]))
+                      .join(', ')}.`}{' '}
+                <span className="text-ink-400">
+                  Matched against {plural(result.known_entities.companies, ['known company', 'known companies'])}{' '}
+                  and {plural(result.known_entities.people, ['known person', 'known people'])}.
+                </span>
+              </p>
+
+              {result.text !== '' && (
+                <pre className="max-h-64 overflow-auto rounded-md border border-paper-300 bg-paper-50 p-3 font-mono text-xs whitespace-pre-wrap text-ink-800">
+                  {result.text}
+                </pre>
+              )}
+
+              {result.documents.map((doc) => (
+                <div key={doc.id}>
+                  {/* Both filenames: the redacted one is what may be
+                      forwarded, the original is what the operator ticked. */}
+                  <p className="text-xs text-ink-500">
+                    <span className="font-semibold text-ink-700">{doc.filename}</span> — from{' '}
+                    {doc.original_filename}
+                  </p>
+                  <pre className="mt-1 max-h-64 overflow-auto rounded-md border border-paper-300 bg-paper-50 p-3 font-mono text-xs whitespace-pre-wrap text-ink-800">
+                    {doc.text}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
