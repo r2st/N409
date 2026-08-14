@@ -3444,6 +3444,51 @@ export function waccExhibit(
             ? `Market capitalisation tier ${esc(sizeTier)}`
             : 'Excess return of small capitalisations';
 
+  /*
+   * The blend weights are the last row whose basis could assert a derivation
+   * nobody did, and it did so arithmetically rather than in prose. `compute_
+   * wacc` derives Wd from the target debt-to-equity *unless* `debt_weight` is
+   * supplied, and this line stated the D/E either way — so a run weighted 20/80
+   * by hand against a target D/E of 1.00 printed "Weight — debt 20.0%" beside
+   * "Target debt-to-equity 1.00", which implies 50%. A reviewer checking the
+   * one page built for checking finds a row that contradicts itself.
+   *
+   * The beta is the reason this is worth separating rather than suppressing:
+   * relevering always follows the D/E, so a run that supplies both is struck on
+   * two capital structures at once. That is a legitimate choice — a target
+   * structure for risk, an observed one for the blend — but it is a disclosure,
+   * so the D/E moves onto the beta row where it is always true and the weight
+   * rows say which structure they came from.
+   */
+  /*
+   * The engine's own marker where it recorded one; otherwise the arithmetic,
+   * which is decidable: Wd derived from a D/E is exactly D/(1+D), so a debt
+   * weight that is not that number cannot have come from it. Results stored
+   * before `weights_source` existed are the ones most likely to carry the
+   * contradiction, and defaulting them to "implied by" would keep printing it.
+   */
+  const derivedDebtWeight = (() => {
+    const de = num(wacc.target_debt_to_equity);
+    return de === null || de <= 0 ? 0 : de / (1 + de);
+  })();
+  const weightsOverridden =
+    text(wacc.weights_source) === 'override' ||
+    (wacc.weights_source === undefined &&
+      num(weights.debt) !== null &&
+      // Both sides are stored rounded to four places, and the D/E's error
+      // carries through D/(1+D) at a gain below one, so a genuinely derived
+      // weight sits within 1e-4 of this. Compare no tighter than that: the
+      // cost of being loose is a hand-set weight within 0.02pp of the implied
+      // one described as implied, which is true in every way that matters.
+      Math.abs((num(weights.debt) as number) - derivedDebtWeight) > 2e-4);
+  const targetDe =
+    num(wacc.target_debt_to_equity) === null
+      ? 'the subject’s target debt-to-equity'
+      : `a target debt-to-equity of ${dec(wacc.target_debt_to_equity, 2)}`;
+  const equityWeightBasis = weightsOverridden
+    ? 'Capital structure supplied by the analyst, not implied by the target debt-to-equity'
+    : `Implied by ${targetDe}`;
+
   const equity: string[][] = [
     ['Risk-free rate', pct(capm.risk_free_rate), rfBasis],
     [
@@ -3452,7 +3497,7 @@ export function waccExhibit(
       'Expected return on equities over the risk-free rate',
     ],
     ['Unlevered beta', dec(capm.beta_unlevered), betaBasis],
-    ['Relevered beta', dec(capm.beta_relevered), 'Re-levered to the subject’s target debt-to-equity'],
+    ['Relevered beta', dec(capm.beta_relevered), `Re-levered to ${targetDe}`],
     ['Size premium', pct(capm.size_premium), sizeBasis],
     [
       'Company-specific risk premium',
@@ -3465,11 +3510,7 @@ export function waccExhibit(
     ['Cost of equity', pct(wacc.cost_of_equity), 'Modified CAPM — the build-up above'],
     ['Cost of debt (pre-tax)', pct(wacc.cost_of_debt), ''],
     ['Cost of debt (after tax)', pct(wacc.after_tax_cost_of_debt), `Tax rate ${pct(wacc.tax_rate, 1)}`],
-    [
-      'Weight — equity',
-      pct(weights.equity, 1),
-      `Target debt-to-equity ${dec(wacc.target_debt_to_equity, 2)}`,
-    ],
+    ['Weight — equity', pct(weights.equity, 1), equityWeightBasis],
     ['Weight — debt', pct(weights.debt, 1), ''],
   ];
 

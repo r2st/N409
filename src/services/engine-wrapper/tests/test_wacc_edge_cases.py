@@ -515,3 +515,48 @@ def test_every_ordinary_build_up_still_returns_a_finite_wacc():
             out = compute_wacc(**{**BASE, "target_debt_to_equity": de, "equity_risk_premium": erp})
             assert math.isfinite(out["wacc"])
             assert math.isfinite(out["cost_of_equity"])
+
+
+# ── Where the blend weights came from ─────────────────────────────────────────
+#
+# `debt_weight` is free to disagree with `target_debt_to_equity` — that is what
+# it is for — but the beta is always re-levered to the D/E, so a run supplying
+# both is struck on two capital structures at once. Nothing on the result said
+# which one the blend used, and Appendix I stated the D/E as the weights' basis
+# either way: "Weight — debt 20.0%" beside "Target debt-to-equity 1.00", which
+# implies 50%. A basis line that contradicts its own row, on the one page whose
+# purpose is letting a reviewer retrace the derivation.
+
+
+def test_weights_derived_from_leverage_say_so():
+    out = compute_wacc(**{**BASE, "target_debt_to_equity": 1.0})
+    assert out["weights_source"] == "target_debt_to_equity"
+    assert out["weights"]["debt"] == pytest.approx(0.5)
+
+
+def test_an_explicit_debt_weight_is_marked_as_supplied():
+    out = compute_wacc(**{**BASE, "target_debt_to_equity": 1.0, "debt_weight": 0.2})
+    assert out["weights_source"] == "override"
+
+
+def test_an_all_equity_run_with_no_leverage_is_still_derived():
+    # The unlevered default must not read as an analyst's judgement.
+    out = compute_wacc(**BASE)
+    assert out["weights_source"] == "target_debt_to_equity"
+    assert out["weights"] == {"equity": 1.0, "debt": 0.0}
+
+
+def test_a_debt_weight_agreeing_with_the_leverage_is_still_an_override():
+    # Provenance is about what the caller supplied, not what it worked out to.
+    out = compute_wacc(**{**BASE, "target_debt_to_equity": 1.0, "debt_weight": 0.5})
+    assert out["weights_source"] == "override"
+
+
+def test_the_beta_follows_the_leverage_not_the_supplied_weight():
+    # The divergence the marker exists to disclose: same relevered beta, two
+    # different blends. If the weight ever started re-levering the beta these
+    # would stop matching and the disclosure would be describing the wrong risk.
+    levered = compute_wacc(**{**BASE, "target_debt_to_equity": 1.0})
+    supplied = compute_wacc(**{**BASE, "target_debt_to_equity": 1.0, "debt_weight": 0.2})
+    assert supplied["capm"]["beta_relevered"] == levered["capm"]["beta_relevered"]
+    assert supplied["weights"]["debt"] != levered["weights"]["debt"]

@@ -2979,7 +2979,11 @@ describe('Appendix I — the WACC build-up', () => {
     after_tax_cost_of_debt: 0.0672,
     tax_rate: 0.21,
     target_debt_to_equity: 0.15,
-    weights: { equity: 0.87, debt: 0.13 },
+    // 0.15/1.15, as the engine rounds it — not a hand-rounded 0.13. The
+    // appendix now reads the pair to decide whether the weights were derived
+    // from the D/E or supplied, so a fixture that is not what the engine would
+    // have written would be testing a state that cannot occur.
+    weights: { equity: 0.8696, debt: 0.1304 },
     capm: {
       risk_free_rate: 0.0421,
       beta_unlevered: 1.24,
@@ -3017,6 +3021,71 @@ describe('Appendix I — the WACC build-up', () => {
   it('names the size tier the premium was taken from', () => {
     // "3.89%" is a number; "Decile 10b" is what a reviewer checks it against.
     expect(html()).toContain('Decile 10b');
+  });
+
+  /*
+   * The blend weights were the last row whose basis asserted a derivation
+   * nobody did, and it did so arithmetically rather than in prose. Wd derived
+   * from a target D/E is exactly D/(1+D); `compute_wacc` takes a `debt_weight`
+   * that overrides it, and this row stated the D/E either way. A run weighted
+   * 20/80 by hand against a target D/E of 1.00 printed "Weight — debt 20.0%"
+   * beside "Target debt-to-equity 1.00" — a basis implying 50%, contradicting
+   * its own row on the one page built for checking.
+   */
+  describe('where the blend weights came from', () => {
+    it('says the weights follow the leverage when they do', () => {
+      const out = plain(html());
+      expect(out).toContain('Implied by a target debt-to-equity of 0.15');
+      expect(out).not.toContain('supplied by the analyst, not implied');
+    });
+
+    it('does not claim a hand-set weighting was implied by the leverage', () => {
+      const out = plain(
+        html({
+          weights_source: 'override',
+          target_debt_to_equity: 1.0,
+          weights: { equity: 0.8, debt: 0.2 },
+        }),
+      );
+      expect(out).toContain('Capital structure supplied by the analyst, not implied by the target');
+      // The 0.2/1.00 pair must never appear as premise and conclusion.
+      expect(out).not.toContain('Implied by a target debt-to-equity of 1.00');
+    });
+
+    it('reads the arithmetic when the result predates the marker', () => {
+      // Results stored before `weights_source` existed carry the contradiction
+      // most often, and defaulting them to "implied by" would keep printing it.
+      // A debt weight that is not D/(1+D) cannot have come from that D/E.
+      const out = plain(html({ target_debt_to_equity: 1.0, weights: { equity: 0.8, debt: 0.2 } }));
+      expect(out).toContain('Capital structure supplied by the analyst, not implied by the target');
+    });
+
+    it('does not read a rounded-but-derived weight as an override', () => {
+      // Both figures are stored rounded to four places and the D/E's error
+      // carries through D/(1+D), so a derived weight can miss by ~1e-4.
+      const out = plain(html({ target_debt_to_equity: 0.3, weights: { equity: 0.7692, debt: 0.2308 } }));
+      expect(out).toContain('Implied by a target debt-to-equity of 0.30');
+    });
+
+    it('keeps the debt-to-equity on the row where it is always true', () => {
+      // Relevering follows the D/E whatever the blend does, so the beta row can
+      // state it unconditionally — and a reader can see the two structures.
+      const out = plain(
+        html({
+          weights_source: 'override',
+          target_debt_to_equity: 1.0,
+          weights: { equity: 0.8, debt: 0.2 },
+        }),
+      );
+      expect(out).toContain('Re-levered to a target debt-to-equity of 1.00');
+    });
+
+    it('falls back to prose when there is no debt-to-equity to name', () => {
+      const out = plain(html({ target_debt_to_equity: undefined, weights: { equity: 1, debt: 0 } }));
+      expect(out).toContain('Re-levered to the subject’s target debt-to-equity');
+      expect(out).not.toContain('of NaN');
+      expect(out).not.toContain('of —');
+    });
   });
 
   it('shows the relevering, both betas', () => {

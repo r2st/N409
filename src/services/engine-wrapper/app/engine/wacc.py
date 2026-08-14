@@ -273,7 +273,10 @@ def compute_wacc(
     re-levered to ``target_debt_to_equity`` for the subject.
 
     ``debt_weight`` (Wd = D/(D+E)) sets the WACC blend; if omitted it is
-    derived from ``target_debt_to_equity``.
+    derived from ``target_debt_to_equity``. Supplying it does not re-lever the
+    beta, which always follows ``target_debt_to_equity``, so the two may
+    describe different capital structures — ``weights_source`` records which
+    one the blend used so a disclosure can say so.
     """
     tax_rate = _tax_rate(tax_rate, "tax_rate")
     target_de = _num(target_debt_to_equity, "target_debt_to_equity", nonneg=True)
@@ -319,12 +322,23 @@ def compute_wacc(
     cost_of_equity = rf + relevered * erp + sp + csrp
 
     # ── WACC blend ────────────────────────────────────────────────────────────
+    # Which of the two capital structures the blend weights came from, recorded
+    # for the same reason `risk_free_rate_source` is: Appendix I states each
+    # row's basis, and it had no way to know. `debt_weight` is free to disagree
+    # with `target_debt_to_equity` — that is what it is for — but the beta is
+    # always re-levered to the D/E, so a run that supplies both is struck on two
+    # structures at once. With no marker the appendix printed the weight beside
+    # "Target debt-to-equity 1.00", which implies Wd = 50%: a basis line
+    # arithmetically contradicting the 20% on the same row, on the one page
+    # whose purpose is letting a reviewer retrace the derivation.
     if debt_weight is not None:
         wd = _num(debt_weight, "debt_weight", nonneg=True)
         if not 0.0 <= wd <= 1.0:
             raise EngineInputError("debt_weight must be in [0, 1]")
+        weights_source = "override"
     else:
         wd = target_de / (1.0 + target_de) if target_de > 0 else 0.0
+        weights_source = "target_debt_to_equity"
     we = 1.0 - wd
     kd = _num(cost_of_debt, "cost_of_debt", nonneg=True)
     after_tax_kd = kd * (1.0 - tax_rate)
@@ -363,6 +377,7 @@ def compute_wacc(
             "company_specific_premium": round(csrp, 6),
         },
         "weights": {"equity": round(we, 4), "debt": round(wd, 4)},
+        "weights_source": weights_source,
         "tax_rate": round(tax_rate, 4),
         "target_debt_to_equity": round(target_de, 4),
         "forecast_horizon_years": forecast_horizon_years,
