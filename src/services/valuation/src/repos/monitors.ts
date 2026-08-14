@@ -66,21 +66,84 @@ export async function markChecked(pool: pg.Pool, monitorId: string): Promise<voi
   await pool.query('UPDATE valuation_monitors SET last_checked_at = now() WHERE id = $1', [monitorId]);
 }
 
+/**
+ * Stamp a whole page of monitors as checked in one statement.
+ *
+ * The scan stamped each monitor individually — an UPDATE per monitor whether or
+ * not anything fired, which made the no-alerts case (the common one) cost a
+ * round trip per monitor and nothing else.
+ */
+export async function markCheckedMany(pool: pg.Pool, monitorIds: readonly string[]): Promise<void> {
+  if (monitorIds.length === 0) return;
+  await pool.query('UPDATE valuation_monitors SET last_checked_at = now() WHERE id = ANY($1::ulid[])', [
+    monitorIds as readonly string[],
+  ]);
+}
+
 export interface MonitorListRow extends MonitorRow {
   company_name: string;
   kind: string;
   user_id: string;
 }
 
-export async function listEnabledMonitors(pool: pg.Pool): Promise<MonitorListRow[]> {
+/** Ceiling on one page of the monitoring dashboard. */
+export const MONITOR_PAGE_LIMIT = 500;
+
+const ENABLED_MONITOR_SELECT = `
+  SELECT m.*, v.company_name, v.kind, v.user_id
+    FROM valuation_monitors m
+    JOIN valuations v ON v.id = m.valuation_id
+   WHERE m.enabled = true`;
+
+/**
+ * Every enabled monitor, newest first — a page of them.
+ *
+ * The dashboard reading this evaluates four snapshot queries' worth of data per
+ * monitor, so the page is what bounds the work behind it as much as the rows on
+ * it. Newest-first is kept: a monitor enabled today is the one an operator just
+ * set up and is looking for.
+ */
+export async function listEnabledMonitors(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<{ monitors: MonitorListRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? MONITOR_PAGE_LIMIT, 1), MONITOR_PAGE_LIMIT);
   const { rows } = await pool.query<MonitorListRow>(
-    `SELECT m.*, v.company_name, v.kind, v.user_id
-       FROM valuation_monitors m
-       JOIN valuations v ON v.id = m.valuation_id
-      WHERE m.enabled = true
-      ORDER BY m.created_at DESC`,
+    `${ENABLED_MONITOR_SELECT} ORDER BY m.created_at DESC, m.id DESC LIMIT $1`,
+    [limit + 1],
   );
-  return rows;
+  return { monitors: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+/**
+ * Every enabled monitor, a page at a time.
+ *
+ * For the scan, which must reach all of them: a revaluation trigger that fires
+ * and is never emailed is the failure the monitor exists to prevent, and a
+ * capped scan would report `scanned: 500` and look healthy. Keyset on `id` for
+ * the reason `eachActiveEngagement` spells out — a `timestamptz` cursor loses
+ * microseconds on the way through JavaScript and stops advancing.
+ */
+export async function* eachEnabledMonitor(
+  pool: pg.Pool,
+  opts: { pageSize?: number } = {},
+): AsyncGenerator<MonitorListRow[]> {
+  const size = Math.min(Math.max(opts.pageSize ?? MONITOR_PAGE_LIMIT, 1), MONITOR_PAGE_LIMIT);
+  let after: string | null = null;
+  for (;;) {
+    const params: unknown[] = [size];
+    const cursorSql: string = after ? `AND m.id > $${params.push(after)}` : '';
+    const { rows }: pg.QueryResult<MonitorListRow> = await pool.query<MonitorListRow>(
+      `${ENABLED_MONITOR_SELECT} ${cursorSql} ORDER BY m.id ASC LIMIT $1`,
+      params,
+    );
+    // Yielded a page at a time rather than a row at a time: the scan batches
+    // its snapshot, dedupe and reviewer reads across a page, and handing it
+    // rows one by one would put those queries back inside a loop.
+    if (rows.length > 0) yield rows;
+    if (rows.length < size) return;
+    after = rows[rows.length - 1]!.id;
+  }
 }
 
 /** Set of alert signatures already emailed for a monitor (dedupe). */
@@ -90,6 +153,33 @@ export async function notifiedSignatures(pool: pg.Pool, monitorId: string): Prom
     [monitorId],
   );
   return new Set(rows.map((r) => r.signature));
+}
+
+/**
+ * The same dedupe set for a whole page of monitors, in one query.
+ *
+ * The scan asked per monitor, so the read count grew with the number of
+ * monitors enabled — and it asked *inside* the loop, after the triggers were
+ * evaluated, so it was one round trip per firing monitor on a path that already
+ * sends email. Monitors with no alerts yet are absent from the map; the caller
+ * reads them as an empty set.
+ */
+export async function notifiedSignaturesFor(
+  pool: pg.Pool,
+  monitorIds: readonly string[],
+): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>();
+  if (monitorIds.length === 0) return out;
+  const { rows } = await pool.query<{ monitor_id: string; signature: string }>(
+    'SELECT monitor_id, signature FROM monitor_alerts WHERE monitor_id = ANY($1::ulid[])',
+    [monitorIds as readonly string[]],
+  );
+  for (const r of rows) {
+    const set = out.get(r.monitor_id) ?? new Set<string>();
+    set.add(r.signature);
+    out.set(r.monitor_id, set);
+  }
+  return out;
 }
 
 /** Record a fired alert (idempotent on signature). Returns true if newly inserted. */

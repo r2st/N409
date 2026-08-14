@@ -35,8 +35,8 @@ const red = {
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-const mockApi = (monitors: unknown[]) =>
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ monitors }));
+const mockApi = (monitors: unknown[], truncated = false) =>
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ monitors, truncated }));
 
 const renderPage = () =>
   render(
@@ -102,6 +102,27 @@ describe('MonitorsPage', () => {
 
     expect(await screen.findByText('No valuations are being monitored')).toBeInTheDocument();
     expect(screen.getByText('0 monitored · 0 need attention')).toBeInTheDocument();
+  });
+
+  /**
+   * The list is a page now. "2 need attention" over a capped list is a figure
+   * about the page, and an operator who reads it as the platform stops looking
+   * — which on a revaluation dashboard is the whole failure.
+   */
+  it('says the attention count covers only the page when the list is capped', async () => {
+    mockApi([green, red], true);
+    renderPage();
+
+    expect(await screen.findByText('2 monitored · 1 need attention')).toBeInTheDocument();
+    expect(screen.getByText(/more exist than are listed/)).toBeInTheDocument();
+  });
+
+  it('says nothing about a cap when the page holds every monitor', async () => {
+    mockApi([green, red]);
+    renderPage();
+
+    await screen.findByText('Drifted Labs');
+    expect(screen.queryByText(/more exist than are listed/)).not.toBeInTheDocument();
   });
 
   it('surfaces a load failure instead of spinning forever', async () => {

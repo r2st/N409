@@ -29,7 +29,7 @@ import {
   nextInvoiceSequence,
   upsertSubscription,
 } from '../repos/billing.js';
-import { createNotification } from '../repos/notifications.js';
+import { createNotifications } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
 import {
@@ -260,24 +260,29 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
   ): Promise<void> {
     try {
       const amount = Number.isFinite(amountDueCents) && amountDueCents > 0 ? amountDueCents : 0;
-      await createNotification(deps.pool, {
-        userId,
-        type: 'subscription_payment_failed',
-        title: 'Your subscription payment did not go through',
-        body:
-          (amount
-            ? `A payment of ${formatMoneyCents(amount, 'usd')} was declined. `
-            : 'A payment was declined. ') +
-          'Update your card from the billing page to keep your plan active.',
-      });
-      for (const opsId of await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES)) {
-        await createNotification(deps.pool, {
+      const opsIds = await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES);
+      // One insert for the subscriber and the whole billing-admin group. The
+      // subscriber's notification is first, and stays a distinct row with its
+      // own wording — they need to update a card, ops need to know a renewal
+      // failed.
+      await createNotifications(deps.pool, [
+        {
+          userId,
+          type: 'subscription_payment_failed',
+          title: 'Your subscription payment did not go through',
+          body:
+            (amount
+              ? `A payment of ${formatMoneyCents(amount, 'usd')} was declined. `
+              : 'A payment was declined. ') +
+            'Update your card from the billing page to keep your plan active.',
+        },
+        ...opsIds.map((opsId) => ({
           userId: opsId,
           type: 'subscription_payment_failed',
           title: 'A subscription renewal failed',
           body: 'A subscriber’s payment was declined and the account is now past due.',
-        });
-      }
+        })),
+      ]);
     } catch (err) {
       log.warn({ err, userId }, 'dunning notification failed');
     }

@@ -23,11 +23,15 @@ interface MonitorSummary {
 
 export function MonitorsPage() {
   const [monitors, setMonitors] = useState<MonitorSummary[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void api<{ monitors: MonitorSummary[] }>('/monitors')
-      .then((r) => setMonitors(r.monitors))
+    void api<{ monitors: MonitorSummary[]; truncated: boolean }>('/monitors')
+      .then((r) => {
+        setMonitors(r.monitors);
+        setTruncated(r.truncated);
+      })
       .catch(() => setError('Could not load monitored valuations.'));
   }, []);
 
@@ -46,6 +50,15 @@ export function MonitorsPage() {
         <p className="mt-1 text-sm text-ink-400">
           {monitors.length} monitored · {attention} need attention
         </p>
+        {/* The count above is the page, not the platform. Saying so matters
+            here more than on most lists: "3 need attention" reads as the whole
+            answer, and an operator who trusts it stops looking. */}
+        {truncated && (
+          <p className="mt-1 text-sm text-ink-600">
+            Showing the {monitors.length} most recently enabled monitors — more exist than are listed, and the
+            attention count covers only these.
+          </p>
+        )}
       </div>
 
       {monitors.length === 0 ? (

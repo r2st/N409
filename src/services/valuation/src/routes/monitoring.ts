@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
+import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import {
@@ -15,7 +16,7 @@ import {
 } from '../repos/calculations.js';
 import { findParams, findParamsByValuationIds, type ValuationParamsRow } from '../repos/params.js';
 import { findCapTable, findCapTablesByValuationIds, type CapTableRow } from '../repos/capTables.js';
-import { findUserById } from '../repos/users.js';
+import { findUsersByIds } from '../repos/users.js';
 import {
   findResolutionByValuation,
   findResolutionsByValuationIds,
@@ -32,11 +33,13 @@ import {
 } from '../domain/monitoring.js';
 import {
   disableMonitor,
+  eachEnabledMonitor,
   enableMonitor,
   findMonitor,
   listEnabledMonitors,
-  markChecked,
-  notifiedSignatures,
+  markCheckedMany,
+  MONITOR_PAGE_LIMIT,
+  notifiedSignaturesFor,
   recordAlert,
 } from '../repos/monitors.js';
 import { recordEvent } from '../events/record.js';
@@ -164,7 +167,17 @@ export function registerMonitoringRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const now = new Date();
-    const monitors = await listEnabledMonitors(deps.pool);
+    const parsedQuery = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(MONITOR_PAGE_LIMIT).default(MONITOR_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    const { monitors, truncated } = await listEnabledMonitors(deps.pool, {
+      limit: parsedQuery.data.limit,
+    });
     // One query for every monitored valuation instead of one per monitor.
     const valuations = await findValuationsByIds(
       deps.pool,
@@ -188,7 +201,7 @@ export function registerMonitoringRoutes(
         triggers,
       });
     }
-    return { monitors: out };
+    return { monitors: out, truncated, page_limit: MONITOR_PAGE_LIMIT };
   });
 
   // Monitor state + live triggers for one valuation.
@@ -247,61 +260,86 @@ export function registerMonitoringRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const now = new Date();
-    const monitors = await listEnabledMonitors(deps.pool);
-    const valuations = await findValuationsByIds(
-      deps.pool,
-      monitors.map((m) => m.valuation_id),
-    );
-    const snapshots = await buildSnapshots(deps.pool, [...valuations.values()]);
     let alertsSent = 0;
-    for (const m of monitors) {
-      const valuation = valuations.get(m.valuation_id);
-      if (!valuation) continue;
-      const current = snapshots.get(valuation.id)!;
-      const triggers = evaluateTriggers(m.baseline, current, now);
-      await markChecked(deps.pool, m.id);
-      if (triggers.length === 0) continue;
+    let scanned = 0;
+    // Paged, not capped: a trigger that fires and is never emailed is the
+    // failure the monitor exists to prevent, and a capped scan would still
+    // report a healthy-looking count.
+    for await (const monitors of eachEnabledMonitor(deps.pool)) {
+      scanned += monitors.length;
+      const valuations = await findValuationsByIds(
+        deps.pool,
+        monitors.map((m) => m.valuation_id),
+      );
+      const snapshots = await buildSnapshots(deps.pool, [...valuations.values()]);
+      // Both of these were read inside the loop below, once per monitor and
+      // once per firing trigger respectively. Batched per page: the dedupe sets
+      // for every monitor in one query, and every assigned reviewer in one more
+      // — the reviewer lookup was also re-reading the same user for each
+      // trigger on the same engagement.
+      const notified = await notifiedSignaturesFor(
+        deps.pool,
+        monitors.map((m) => m.id),
+      );
+      const reviewers = await findUsersByIds(
+        deps.pool,
+        [...valuations.values()].map((v) => v.assigned_reviewer_id).filter((id): id is string => !!id),
+      );
+      await markCheckedMany(
+        deps.pool,
+        monitors.filter((m) => valuations.has(m.valuation_id)).map((m) => m.id),
+      );
 
-      const alreadyNotified = await notifiedSignatures(deps.pool, m.id);
-      const fresh = triggers.filter((t) => !alreadyNotified.has(t.signature));
-      for (const t of fresh) {
-        const inserted = await recordAlert(deps.pool, {
-          monitorId: m.id,
-          valuationId: m.valuation_id,
-          triggerType: t.type,
-          level: t.level,
-          signature: t.signature,
-        });
-        if (!inserted) continue;
-        await withTransaction(deps.pool, (client) =>
-          recordEvent(client, {
-            valuationId: m.valuation_id,
-            type: MONITOR_EVENT_TYPES.triggerFired,
-            actor: { actorType: 'human', actorId: principal.id },
-            payload: { trigger: t.type, level: t.level, signature: t.signature },
-          }),
-        );
-        // Alert the assigned reviewer if there is one with an email.
+      for (const m of monitors) {
+        const valuation = valuations.get(m.valuation_id);
+        if (!valuation) continue;
+        const current = snapshots.get(valuation.id)!;
+        const triggers = evaluateTriggers(m.baseline, current, now);
+        if (triggers.length === 0) continue;
+
+        const alreadyNotified = notified.get(m.id) ?? new Set<string>();
+        const fresh = triggers.filter((t) => !alreadyNotified.has(t.signature));
+        // Alert the assigned reviewer if there is one with an email. Read once
+        // per engagement from the batch, not once per trigger.
         const reviewer = valuation.assigned_reviewer_id
-          ? await findUserById(deps.pool, valuation.assigned_reviewer_id)
+          ? (reviewers.get(valuation.assigned_reviewer_id) ?? null)
           : null;
-        if (reviewer) {
-          await sendTransactionalEmail(
-            { pool: deps.pool, transport: deps.transport, log: app.log },
-            {
-              toUserId: reviewer.id,
-              toEmail: reviewer.email,
-              templateKey: 'monitoring_alert',
-              subject: `Revaluation trigger: ${m.company_name}`,
-              body: `A monitoring trigger fired for ${m.company_name}:\n\n${t.message}\n\nConsider a fresh valuation.`,
-              vars: { company_name: m.company_name, message: t.message },
-            },
+
+        for (const t of fresh) {
+          const inserted = await recordAlert(deps.pool, {
+            monitorId: m.id,
+            valuationId: m.valuation_id,
+            triggerType: t.type,
+            level: t.level,
+            signature: t.signature,
+          });
+          if (!inserted) continue;
+          await withTransaction(deps.pool, (client) =>
+            recordEvent(client, {
+              valuationId: m.valuation_id,
+              type: MONITOR_EVENT_TYPES.triggerFired,
+              actor: { actorType: 'human', actorId: principal.id },
+              payload: { trigger: t.type, level: t.level, signature: t.signature },
+            }),
           );
-          alertsSent++;
+          if (reviewer) {
+            await sendTransactionalEmail(
+              { pool: deps.pool, transport: deps.transport, log: app.log },
+              {
+                toUserId: reviewer.id,
+                toEmail: reviewer.email,
+                templateKey: 'monitoring_alert',
+                subject: `Revaluation trigger: ${m.company_name}`,
+                body: `A monitoring trigger fired for ${m.company_name}:\n\n${t.message}\n\nConsider a fresh valuation.`,
+                vars: { company_name: m.company_name, message: t.message },
+              },
+            );
+            alertsSent++;
+          }
         }
       }
     }
-    return { scanned: monitors.length, alerts_sent: alertsSent };
+    return { scanned, alerts_sent: alertsSent };
   });
 
   // One-click roll-forward into a fresh valuation pre-populated from this one.

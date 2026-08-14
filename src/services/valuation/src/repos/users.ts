@@ -72,6 +72,33 @@ export async function findUserById(pool: pg.Pool, id: string): Promise<UserWithR
   return rows[0] ?? null;
 }
 
+/**
+ * Several users by id, keyed by id — one query for a set the caller already
+ * knows the whole of.
+ *
+ * The shape that wants this is a sweep holding a list of rows that each name a
+ * user: the monitoring scan looking up an assigned reviewer per firing trigger,
+ * re-reading the same reviewer for every trigger on the same engagement. Ids
+ * are de-duplicated here so the caller does not have to.
+ */
+export async function findUsersByIds(
+  pool: pg.Pool,
+  ids: readonly string[],
+): Promise<Map<string, UserWithRoles>> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const { rows } = await pool.query<UserWithRoles>(
+    `SELECT u.*, coalesce(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
+     FROM users u
+     LEFT JOIN user_roles ur ON ur.user_id = u.id
+     LEFT JOIN roles r ON r.id = ur.role_id
+     WHERE u.id = ANY($1::ulid[])
+     GROUP BY u.id`,
+    [unique],
+  );
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
 export async function createUser(
   pool: pg.Pool,
   args: {

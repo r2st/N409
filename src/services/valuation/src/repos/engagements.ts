@@ -186,7 +186,7 @@ export async function* eachActiveEngagement(
   let after: string | null = null;
   for (;;) {
     const params: unknown[] = [size];
-    const cursorSql = after ? `AND e.id > $${params.push(after)}` : '';
+    const cursorSql: string = after ? `AND e.id > $${params.push(after)}` : '';
     const { rows }: pg.QueryResult<EngagementListRow> = await pool.query<EngagementListRow>(
       `${ACTIVE_ENGAGEMENT_SELECT}
         WHERE e.current_stage <> 'complete' ${cursorSql}

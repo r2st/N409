@@ -10,6 +10,12 @@ import {
 import { findParams, findParamsByValuationIds } from '../../src/repos/params.js';
 import { findCapTable, findCapTablesByValuationIds } from '../../src/repos/capTables.js';
 import { findResolutionByValuation, findResolutionsByValuationIds } from '../../src/repos/boardApprovals.js';
+import {
+  eachEnabledMonitor,
+  findMonitor,
+  notifiedSignatures,
+  notifiedSignaturesFor,
+} from '../../src/repos/monitors.js';
 
 const dbUp = await isDbAvailable();
 
@@ -137,12 +143,52 @@ describe.skipIf(!dbUp)('monitoring — snapshot batching', () => {
     const before = await countQueries(scan);
     await seedMonitoredValuation('BatchCo F');
     const after = await countQueries(scan);
-    // An extra monitor costs exactly one extra query: its own `markChecked`
-    // write, which is per-monitor by nature (each row records when it was last
-    // looked at, and a monitor that errors mid-scan must stay unmarked). The
-    // four snapshot reads it used to also cost are gone — under the old form
-    // this delta was 5.
-    expect(after - before).toBe(1);
+    // An extra monitor now costs nothing at all. The four snapshot reads went
+    // first (this delta was 5, then 1); what closed the last one was batching
+    // the `markChecked` stamp, which was an UPDATE per monitor issued whether
+    // or not anything fired — so the common case, a quiet scan, was paying a
+    // round trip per monitor to record that nothing happened.
+    expect(after - before).toBe(0);
+  });
+
+  /**
+   * The scan pages rather than truncating, so it must still reach every
+   * monitor — and the dedupe read that decides whether an alert is new has to
+   * be batched per page, not asked per monitor.
+   */
+  it('reaches every monitor across page boundaries, and stamps them all', async () => {
+    await pool.query('UPDATE valuation_monitors SET last_checked_at = NULL');
+    const seen: string[] = [];
+    for await (const page of eachEnabledMonitor(pool, { pageSize: 2 })) {
+      expect(page.length).toBeLessThanOrEqual(2);
+      for (const m of page) seen.push(m.valuation_id);
+    }
+    for (const id of monitored) expect(seen).toContain(id);
+    expect(new Set(seen).size).toBe(seen.length);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/monitors/scan',
+      headers: authHeader(ops.token),
+    });
+    expect(res.json().scanned).toBe(monitored.length);
+    const { rows } = await pool.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM valuation_monitors WHERE enabled AND last_checked_at IS NULL',
+    );
+    expect(Number(rows[0]!.count)).toBe(0);
+  });
+
+  it('reads the alert dedupe set once per page, not once per monitor', async () => {
+    const ids = monitored.slice(0, 3);
+    const batch = await notifiedSignaturesFor(pool, ids);
+    for (const id of ids) {
+      const monitor = await findMonitor(pool, id);
+      const single = await notifiedSignatures(pool, monitor!.id);
+      expect([...(batch.get(monitor!.id) ?? new Set())].sort()).toEqual([...single].sort());
+    }
+    // A monitor with no alerts is absent from the map rather than mapped to
+    // undefined-shaped junk, which is what lets the caller read `?? new Set()`.
+    expect(await notifiedSignaturesFor(pool, [])).toEqual(new Map());
   });
 
   describe('batch repo helpers agree with the per-valuation form', () => {

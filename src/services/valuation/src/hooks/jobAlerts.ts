@@ -4,7 +4,7 @@ import { JOB_SOURCES, JOB_SOURCE_LABELS } from '../domain/jobQueue.js';
 import { evaluateJobAlerts, observeQueues } from '../domain/jobAlerts.js';
 import { dbNow, jobStats, oldestActiveJobs } from '../repos/jobs.js';
 import { listJobAlertRules, reconcileJobAlerts, type ReconcileResult } from '../repos/jobAlerts.js';
-import { createNotification } from '../repos/notifications.js';
+import { createNotifications } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
 import { JOB_ALERT_ROLES } from '../domain/roles.js';
@@ -75,8 +75,9 @@ export async function runJobAlertScan(deps: {
           threshold: alert.threshold,
         },
       });
-      for (const userId of recipients) {
-        await createNotification(deps.pool, {
+      await createNotifications(
+        deps.pool,
+        recipients.map((userId) => ({
           userId,
           type: 'job_alert',
           title:
@@ -84,8 +85,8 @@ export async function runJobAlertScan(deps: {
               ? `${JOB_SOURCE_LABELS[alert.source]} queue looks stalled`
               : `${JOB_SOURCE_LABELS[alert.source]} queue is failing`,
           body: alert.detail,
-        });
-      }
+        })),
+      );
     }
     for (const alert of result.resolved) {
       deps.log?.info({ source: alert.source, kind: alert.kind }, 'job queue alert resolved');
@@ -109,14 +110,15 @@ export async function runJobAlertScan(deps: {
       // Recovery is notified too. An alert that arrives and never says it is
       // over leaves an operator checking a page to find out, which is the habit
       // the alert was supposed to replace.
-      for (const userId of recipients) {
-        await createNotification(deps.pool, {
+      await createNotifications(
+        deps.pool,
+        recipients.map((userId) => ({
           userId,
           type: 'job_alert_resolved',
           title: `${JOB_SOURCE_LABELS[alert.source]} queue recovered`,
           body: alert.detail,
-        });
-      }
+        })),
+      );
     }
   }
 

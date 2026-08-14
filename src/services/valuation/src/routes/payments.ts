@@ -38,7 +38,7 @@ import {
 } from '../payments/stripe.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { collectedTotals, disputeStatusOf, refundState, type DisputeStatus } from '../domain/payments.js';
-import { createNotification } from '../repos/notifications.js';
+import { createNotifications } from '../repos/notifications.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
@@ -382,15 +382,19 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
     try {
       const opsIds = await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES);
       const recipients = new Set([...(args.ownerId ? [args.ownerId] : []), ...opsIds]);
-      for (const userId of recipients) {
-        await createNotification(deps.pool, {
+      // One insert, not one per recipient. This runs inside a Stripe webhook
+      // handler working against a redelivery deadline, and the recipient list
+      // is a role lookup that grows with the billing team.
+      await createNotifications(
+        deps.pool,
+        [...recipients].map((userId) => ({
           userId,
           valuationId: args.valuationId,
           type: args.type,
           title: args.title,
           body: args.body,
-        });
-      }
+        })),
+      );
     } catch (err) {
       log.warn({ err, valuationId: args.valuationId }, 'billing alert notification failed');
     }
@@ -517,8 +521,10 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // Ops only: a client who has just disputed a charge does not need us to
       // tell them they did, and the notification would read as an accusation.
       try {
-        for (const userId of await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES)) {
-          await createNotification(deps.pool, {
+        const opsIds = await listUserIdsWithRoles(deps.pool, BILLING_ALERT_ROLES);
+        await createNotifications(
+          deps.pool,
+          opsIds.map((userId) => ({
             userId,
             valuationId: payment.valuation_id,
             type: 'payment_disputed',
@@ -526,8 +532,8 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
             body:
               `A dispute was raised against the ${payment.currency} payment for this engagement. ` +
               `Submit evidence in Stripe before the response deadline.`,
-          });
-        }
+          })),
+        );
       } catch (err) {
         log.warn({ err, paymentId: payment.id }, 'dispute alert notification failed');
       }
