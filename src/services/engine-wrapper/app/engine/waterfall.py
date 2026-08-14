@@ -358,6 +358,35 @@ def _segments(classes: list[dict]) -> list[dict]:
             capped_at_cap.remove(cls)
         else:
             pool[cls["name"]] = cls["shares"]
+            # The exercise proceeds, credited against what sits beneath the pool.
+            #
+            # `p_cur` is the value absorbed *below* the residual — what the pool
+            # does not see. Strike money is paid *into* the company on exercise,
+            # so it is the opposite of absorbed and belongs here with the
+            # opposite sign. Every threshold struck from here on is struck
+            # against `x - p_cur`, so crediting it once puts it into all of them.
+            #
+            # Leaving it out cost nothing on a table with one pool, which is why
+            # this survived: the pool's own payoff and common's are both exactly
+            # right in that case, and value conserves in every case, because the
+            # segment slopes sum to one whatever the breakpoints are. It goes
+            # wrong the moment a *second* event is struck after an exercise,
+            # because that threshold is then computed as though the strike money
+            # had never arrived — and it is late by exactly the proceeds.
+            #
+            # Two identical option pools are the sharpest version. Both are at
+            # the money at the same exit value, and the second was placed a full
+            # `strike x pool` further up, so a single grant of 1,500,000 options
+            # at $1.00 was worth $8,301,075 written as one pool and $8,242,653
+            # written as three of 500,000 — $58,422 moved to common by nothing
+            # but how the cap table had been typed, with the three pools coming
+            # back at three different values apiece.
+            #
+            # It reached conversions too: a non-participating class whose
+            # threshold is computed after a pool has exercised was converting
+            # later than it should, and holding a preference it should already
+            # have given up.
+            p_cur -= cls["strike"] * cls["shares"]
             pending_options.remove(cls)
         b_cur = max(x_next, b_cur)
 
