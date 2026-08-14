@@ -53,6 +53,65 @@ describe.skipIf(!dbUp)('marketing blog', () => {
     });
   });
 
+  describe('the seeded library', () => {
+    it('is a library rather than a post', async () => {
+      // Migrations 0142–0144. A resources section a prospect compares against
+      // a competitor's is judged on having more than one thing in it.
+      const posts = (await publicList()).json().posts as Array<{ category: string }>;
+      expect(posts.length).toBeGreaterThanOrEqual(31);
+      // And it has to be filterable, which needs more than one category.
+      expect(new Set(posts.map((p) => p.category)).size).toBeGreaterThanOrEqual(5);
+    });
+
+    it('keeps every internal link the articles were written with', async () => {
+      // The sanitiser used to drop site-relative hrefs to a bare <a>. These
+      // rows go through it on the way in, so this is the end-to-end check that
+      // an article's links survive the round trip.
+      const res = await publicPost('opm-pwerm-and-the-hybrid-method');
+      expect(res.statusCode).toBe(200);
+      const body = (res.json().post as { body_html: string }).body_html;
+      expect(body).toContain('href="/409a-valuation-guide"');
+      expect(body).toContain('href="/blog/dlom-finnerty-chaffe-and-what-auditors-check"');
+    });
+  });
+
+  describe('reading time', () => {
+    it('is derived on the article and on the index, which carries no body', async () => {
+      const article = (await publicPost('opm-pwerm-and-the-hybrid-method')).json().post as {
+        body_html: string;
+        read_minutes: number;
+      };
+      // ~900 words at 220/min. Asserting a band rather than a figure: the
+      // point is that it is derived from the body, not that it is exactly 4.
+      expect(article.read_minutes).toBeGreaterThanOrEqual(2);
+      expect(article.read_minutes).toBeLessThanOrEqual(10);
+
+      const summary = ((await publicList()).json().posts as Array<Record<string, unknown>>).find(
+        (p) => p.slug === 'opm-pwerm-and-the-hybrid-method',
+      )!;
+      expect(summary).not.toHaveProperty('body_html');
+      expect(summary.read_minutes).toBe(article.read_minutes);
+    });
+
+    it('counts words rather than markup', async () => {
+      const res = await create({
+        slug: 'reading-time-probe',
+        title: 'Probe',
+        // Six words, wrapped in enough markup to double the byte count.
+        body_html: '<p><strong>one</strong> two three</p><h2>four five six</h2>',
+        category: 'Methodology',
+        published: true,
+        published_at: '2026-01-01T00:00:00.000Z',
+      });
+      expect(res.statusCode).toBe(201);
+      const post = (await publicPost('reading-time-probe')).json().post as {
+        read_minutes: number;
+      };
+      // Rounds to zero minutes; a "0 min read" badge is worse than no badge.
+      expect(post.read_minutes).toBe(1);
+    });
+  });
+
   describe('public reading', () => {
     it('needs no session at all', async () => {
       // Not "authentication that usually fails" — genuinely none, so nothing

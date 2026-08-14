@@ -33,6 +33,8 @@ interface PostSummary {
   excerpt: string;
   category: string;
   author: string;
+  /** Server-derived: the index does not carry the body it would count. */
+  read_minutes?: number;
   og_image: string | null;
   published: boolean;
   published_at: string | null;
@@ -54,15 +56,32 @@ function DraftTag() {
   );
 }
 
+/** Category counts in publication order, so the filter row is stable. */
+function categoriesOf(posts: PostSummary[]): { name: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const p of posts) counts.set(p.category, (counts.get(p.category) ?? 0) + 1);
+  return [...counts].map(([name, count]) => ({ name, count }));
+}
+
 export function BlogIndexPage() {
   const [posts, setPosts] = useState<PostSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Client-side, not a query parameter: the whole published index is one
+  // response the page already holds, so filtering it is a render, not a fetch.
+  const [category, setCategory] = useState<string | null>(null);
 
   useEffect(() => {
     api<{ posts: PostSummary[] }>('/blog/posts')
       .then((res) => setPosts(res.posts))
       .catch(() => setError('Could not load the blog just now.'));
   }, []);
+
+  const categories = posts ? categoriesOf(posts) : [];
+  // A category that empties out — every post in it unpublished — would leave a
+  // selected filter showing nothing, so fall back rather than trusting state.
+  const shown =
+    posts && category ? posts.filter((p) => p.category === category) : (posts ?? []);
+  const visible = posts && category && shown.length === 0 ? posts : shown;
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-16">
@@ -96,9 +115,44 @@ export function BlogIndexPage() {
         <p className="mt-8 text-sm text-ink-400">Nothing published yet — check back shortly.</p>
       )}
 
+      {/* Past a dozen pieces a flat list stops being browsable. One row of
+          counts is enough — a reader who wants ASC 718 should not scroll past
+          the UK share schemes to find it. */}
+      {categories.length > 1 && (
+        <div className="mt-8 flex flex-wrap gap-2" role="group" aria-label="Filter by category">
+          <button
+            type="button"
+            onClick={() => setCategory(null)}
+            aria-pressed={category === null}
+            className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+              category === null
+                ? 'bg-bond-600 text-bond-fg'
+                : 'bg-paper-100 text-ink-600 hover:bg-paper-200'
+            }`}
+          >
+            All {posts!.length}
+          </button>
+          {categories.map(({ name, count }) => (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setCategory(name)}
+              aria-pressed={category === name}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                category === name
+                  ? 'bg-bond-600 text-bond-fg'
+                  : 'bg-paper-100 text-ink-600 hover:bg-paper-200'
+              }`}
+            >
+              {name} {count}
+            </button>
+          ))}
+        </div>
+      )}
+
       {posts && posts.length > 0 && (
         <ul className="mt-10 divide-y divide-paper-300 border-t border-paper-300">
-          {posts.map((post) => (
+          {visible.map((post) => (
             <li key={post.slug} className="py-7">
               <div className="flex flex-wrap items-center gap-2 text-xs text-ink-400">
                 <span className="font-semibold text-bond-700">{post.category}</span>
@@ -108,6 +162,12 @@ export function BlogIndexPage() {
                     <time dateTime={post.published_at}>{formatDate(post.published_at)}</time>
                   </>
                 )}
+                {post.read_minutes ? (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span>{post.read_minutes} min read</span>
+                  </>
+                ) : null}
                 {post.author && (
                   <>
                     <span aria-hidden>·</span>
@@ -240,6 +300,12 @@ export function BlogPostPage() {
             <time dateTime={post.published_at}>{formatDate(post.published_at)}</time>
           </>
         )}
+        {post.read_minutes ? (
+          <>
+            <span aria-hidden>·</span>
+            <span>{post.read_minutes} min read</span>
+          </>
+        ) : null}
         {post.author && (
           <>
             <span aria-hidden>·</span>

@@ -69,6 +69,44 @@ const PatchBody = PostBody.partial().refine((v) => Object.keys(v).length > 0, {
 });
 
 /**
+ * Reading time in whole minutes, at 220 words a minute.
+ *
+ * Derived here rather than stored, because it is a function of the body and a
+ * stored copy is one an edit can leave behind. It is on the summary as well as
+ * the article, which is the whole reason it is computed server-side: the index
+ * deliberately does not carry `body_html`, so the page has nothing to count.
+ *
+ * Counted with a scan rather than `replace(/<[^>]*>/g, ' ')`. That tail runs to
+ * the end of the input from every `<` when there is no `>` left, which is the
+ * quadratic shape `domain/report.ts` documents at length after it cost 2.3
+ * seconds of a single-process service on one 100KB body. A body is authored
+ * HTML that has already been sanitised, so it is unlikely to hold that shape —
+ * but "unlikely" is not a reason to reintroduce the pattern.
+ */
+function readMinutes(html: string): number {
+  let words = 0;
+  let inTag = false;
+  let inWord = false;
+  for (let i = 0; i < html.length; i++) {
+    const c = html[i]!;
+    if (inTag) {
+      if (c === '>') inTag = false;
+      continue;
+    }
+    if (c === '<') {
+      inTag = true;
+      inWord = false;
+    } else if (c === ' ' || c === '\n' || c === '\t' || c === '\r') {
+      inWord = false;
+    } else if (!inWord) {
+      inWord = true;
+      words++;
+    }
+  }
+  return Math.max(1, Math.round(words / 220));
+}
+
+/**
  * What a public reader gets. Everything a page needs to render and nothing
  * about who edited the row.
  */
@@ -78,6 +116,7 @@ function toPublic(post: BlogPostRow) {
     title: post.title,
     excerpt: post.excerpt,
     body_html: post.body_html,
+    read_minutes: readMinutes(post.body_html),
     category: post.category,
     keywords: post.keywords,
     author: post.author,

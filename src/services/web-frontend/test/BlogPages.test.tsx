@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { HelmetProvider } from 'react-helmet-async';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { BlogIndexPage, BlogPostPage } from '../src/pages/marketing/BlogPages';
@@ -128,6 +129,39 @@ describe('blog index', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('down'));
     renderIndex();
     expect(await screen.findByText(/Could not load the blog/)).toBeInTheDocument();
+  });
+
+  it('shows the reading time the server derived', async () => {
+    mockApi({ posts: [{ ...POST, read_minutes: 7 }] });
+    renderIndex();
+    expect(await screen.findByText('7 min read')).toBeInTheDocument();
+  });
+
+  // A library of thirty articles in one flat list is a library nobody reads
+  // past the fold.
+  it('filters the index by category, and counts each one', async () => {
+    const tax = { ...POST, slug: 'qsbs', title: 'QSBS', category: 'Tax' };
+    mockApi({ posts: [POST, tax, { ...tax, slug: 'ordinary-loss', title: '1244' }] });
+    renderIndex();
+
+    await screen.findByRole('link', { name: POST.title });
+    expect(screen.getByRole('button', { name: 'All 3' })).toHaveAttribute('aria-pressed', 'true');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Tax 2' }));
+    expect(screen.queryByRole('link', { name: POST.title })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'QSBS' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '1244' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'All 3' }));
+    expect(screen.getByRole('link', { name: POST.title })).toBeInTheDocument();
+  });
+
+  it('offers no filter row when every post shares one category', async () => {
+    // One button reading "All 1" next to one reading "Methodology 1" is noise.
+    mockApi({ posts: [POST, { ...POST, slug: 'second', title: 'Second' }] });
+    renderIndex();
+    await screen.findByRole('link', { name: POST.title });
+    expect(screen.queryByRole('group', { name: /category/i })).not.toBeInTheDocument();
   });
 });
 
