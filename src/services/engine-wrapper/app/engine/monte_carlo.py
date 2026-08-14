@@ -211,16 +211,36 @@ def allocate_monte_carlo(
     n = len(classes)
     common_at = [i for i, c in enumerate(classes) if c["kind"] == "common"]
     common_shares = sum(c["shares"] for c in classes if c["kind"] == "common")
-    if common_shares <= 0:
+    if common_shares <= 0:  # pragma: no cover - `_normalize` already refuses both ways in
+        # Kept as a divide-by-zero backstop for `common_per_share`, but not
+        # reachable: `_normalize` requires at least one class of kind "common"
+        # and requires every class's `shares` to be positive, so the sum here
+        # cannot be zero. Both refusals are pinned in
+        # `test_monte_carlo_precision.TestTheCapTableItNeeds`.
         raise EngineInputError("share_classes must include at least one common class with shares")
 
     rng = random.Random(seed)
     totals = [0.0] * n
-    # Second moment of the *common* payoff only — it is the figure the
-    # conclusion rests on, and the one whose precision a reviewer asks about.
-    common_sum = 0.0
-    common_sq = 0.0
-    samples = 0
+    # Precision of the *common* payoff only — it is the figure the conclusion
+    # rests on, and the one whose precision a reviewer asks about.
+    #
+    # Accumulated per scenario rather than into one pooled pair of moments,
+    # because the scenarios are not draws from a common distribution: each has
+    # its own horizon, volatility and weight. The estimator is
+    # `Σ pᵢ·mean(scenario i)`, and the scenarios are drawn independently, so its
+    # variance is `Σ pᵢ²·Var(mean(scenario i))` — a sum of per-scenario terms
+    # that no pooled moment can be unwound into.
+    #
+    # Pooling them got both halves of `Var = E[c²] − E[c]²` wrong, and by
+    # different factors: weighting each draw by `pᵢ` and then dividing by the
+    # count of *all* draws made the reported mean `1/len(scenarios)` of the true
+    # probability-weighted mean, so the subtracted term was off by that squared.
+    # The residue was large and positive — two identical scenarios, which are by
+    # construction the same distribution as one, reported a standard error that
+    # did not fall as `1/√n`, and a deterministic payoff (σ→0) reported a
+    # substantial error around a figure that was exact. Single-scenario runs
+    # were unaffected, which is why the closed-form oracle never caught it.
+    estimator_variance = 0.0
     per_scenario: list[dict] = []
 
     for scenario in scenarios:
@@ -230,6 +250,7 @@ def allocate_monte_carlo(
         discount = math.exp(-r * s_t)
         s_totals = [0.0] * n
         s_common = 0.0
+        s_common_sq = 0.0
         for _ in range(pairs):
             z = rng.gauss(0.0, 1.0)
             # The antithetic pair. Both are real draws from the same
@@ -241,12 +262,18 @@ def allocate_monte_carlo(
                 payoff(exit_value, s_totals)
                 common = sum(s_totals[i] - before[i] for i in common_at) * discount
                 s_common += common
-                common_sum += prob * common
-                common_sq += prob * common * common
-                samples += 1
+                s_common_sq += common * common
         count = pairs * 2
         for i in range(n):
             totals[i] += prob * discount * s_totals[i] / count
+        # This scenario's contribution to the estimator's variance. The two
+        # draws in an antithetic pair are deliberately correlated, so counting
+        # them as two independent samples overstates the error the pairing
+        # actually leaves — the reported figure is conservative in that one
+        # direction, which is the safe direction for a precision claim.
+        s_mean = s_common / count
+        s_variance = max(0.0, s_common_sq / count - s_mean * s_mean)
+        estimator_variance += prob * prob * s_variance / count
         per_scenario.append(
             {
                 "name": scenario["name"],
@@ -258,11 +285,9 @@ def allocate_monte_carlo(
         )
 
     common_value = sum(totals[i] for i in common_at)
-    mean = common_sum / samples if samples else 0.0
-    variance = max(0.0, common_sq / samples - mean * mean) if samples else 0.0
     # Standard error of the *mean*, which is what the conclusion uses. Reported
     # per share, because that is the unit the reader is judging it in.
-    standard_error = math.sqrt(variance / samples) / common_shares if samples else 0.0
+    standard_error = math.sqrt(estimator_variance) / common_shares
 
     by_class = {
         c["name"]: {
