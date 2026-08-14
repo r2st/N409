@@ -277,8 +277,11 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
       // to `public, max-age=0` and would win over ours) so setHeaders is the
       // single authority on cache policy.
       cacheControl: false,
-      setHeaders: (res, filePath) => {
-        res.setHeader('cache-control', cacheControlFor(filePath));
+      // @fastify/static v10 hands this the Fastify reply, where v8 handed it the
+      // raw ServerResponse. Same hook, different object: `reply.header` rather
+      // than `res.setHeader`.
+      setHeaders: (reply, filePath) => {
+        void reply.header('cache-control', cacheControlFor(filePath));
       },
     });
 

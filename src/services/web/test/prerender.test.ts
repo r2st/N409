@@ -128,4 +128,41 @@ describe('serving prerendered marketing routes', () => {
     }
     await app.close();
   });
+
+  it('does not let a percent-encoded separator escape the static root', async () => {
+    // The plain `..` case above is the one a reader thinks of; the four
+    // advisories that took @fastify/static from 8.3.0 to 10.1.3 were all about
+    // the encoded and non-canonical spellings of it — `%2e%2e`, `%2f`, a
+    // backslash, a doubly-encoded `%252e` — reaching the file layer after the
+    // routing layer had already decided the path was fine
+    // (GHSA-83w8-p2f5-377r, GHSA-8pvw-jcv7-9cmj). This is the estate's only
+    // static server, so it is the only place they could have applied.
+    const app = buildApp({ staticRoot: root });
+    const crafted = [
+      '/%2e%2e/%2e%2e/etc/passwd',
+      '/..%2f..%2fetc/passwd',
+      '/pricing/..%2f..%2f..%2fetc%2fpasswd',
+      '/%252e%252e/%252e%252e/etc/passwd',
+      '/..\\..\\etc\\passwd',
+      '/pricing/%2e%2e%2f%2e%2e%2fetc%2fpasswd',
+    ];
+    for (const url of crafted) {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.body, url).not.toContain('root:');
+      // Whatever it answers, it must not be a file from outside the root: the
+      // SPA fallback (index.html) and a refusal are both acceptable outcomes.
+      if (res.statusCode === 200) expect(res.body, url).toContain('HOME-DOC');
+    }
+    await app.close();
+  });
+
+  it('serves a real prerendered route, so the traversal cases are not passing on a dead server', async () => {
+    // The assertions above are all negative. If `buildApp` stopped serving
+    // static files entirely they would pass for the wrong reason.
+    const app = buildApp({ staticRoot: root });
+    const res = await app.inject({ method: 'GET', url: '/pricing' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('PRICING-DOC');
+    await app.close();
+  });
 });
