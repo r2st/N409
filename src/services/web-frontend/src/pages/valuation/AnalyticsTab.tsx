@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { ordinal } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
-import { LineChart } from '../../components/charts';
+import { CHART_COLORS, LineChart } from '../../components/charts';
 import { EmptyState, ErrorNote, LoadingBlock, Skeleton, SkeletonText } from '../../components/ui';
 
 interface Point {
@@ -100,14 +100,19 @@ export function AnalyticsTab() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <LineChart title="FMV per share" points={points('fmv_per_share')} format={money} color="#2f7d5b" />
-        <LineChart title="DLOM" points={points('dlom')} format={pct} color="#a05252" />
-        <LineChart title="Volatility" points={points('volatility')} format={pct} color="#3b5b7d" />
+        <LineChart
+          title="FMV per share"
+          points={points('fmv_per_share')}
+          format={money}
+          color={CHART_COLORS.green}
+        />
+        <LineChart title="DLOM" points={points('dlom')} format={pct} color={CHART_COLORS.red} />
+        <LineChart title="Volatility" points={points('volatility')} format={pct} color={CHART_COLORS.blue} />
         <LineChart
           title="Revenue multiple"
           points={points('market_multiple')}
           format={mult}
-          color="#b98d4f"
+          color={CHART_COLORS.brass}
         />
       </div>
 
@@ -143,9 +148,10 @@ export function AnalyticsTab() {
                 {benchmark.percentile !== null && (
                   <>
                     {' '}
-                    sits at the <strong>{ordinal(Math.round(benchmark.percentile * 100))} percentile</strong>{' '}
-                    of the{' '}
-                    {benchmark.count} comparables.
+                    sits at the <strong>
+                      {ordinal(Math.round(benchmark.percentile * 100))} percentile
+                    </strong>{' '}
+                    of the {benchmark.count} comparables.
                   </>
                 )}
               </p>

@@ -99,8 +99,28 @@ export function Heatmap({ title, rowLabel, colLabel, rowValues, colValues, cells
   );
 }
 
-// ledger palette: bond green, brass, ink tones
-const PALETTE = ['#2f7d5b', '#b98d4f', '#3b5b7d', '#8d5a7d', '#5b8d8a', '#7d6e3b', '#a05252', '#6b7280'];
+/**
+ * The ledger series ramp — bond green, brass, then the muted tones.
+ *
+ * Every entry is a token reference rather than a hex literal, because a hex in
+ * a TSX attribute is the one colour in the app that cannot follow the theme.
+ * The values (and their lifted dark-mode counterparts) live in the `chart`
+ * block of index.css; see the comment there for why the dark ramp is not the
+ * light one. `CHART_COLORS` is exported so callers that want a *specific*
+ * series — the analytics tab pairs a metric with a hue — name it the same way.
+ */
+export const CHART_COLORS = {
+  green: 'var(--color-chart-1)',
+  brass: 'var(--color-chart-2)',
+  blue: 'var(--color-chart-3)',
+  plum: 'var(--color-chart-4)',
+  teal: 'var(--color-chart-5)',
+  olive: 'var(--color-chart-6)',
+  red: 'var(--color-chart-7)',
+  slate: 'var(--color-chart-8)',
+} as const;
+
+const PALETTE = Object.values(CHART_COLORS);
 
 /**
  * The numbers behind a chart, as a table only assistive technology reads.
@@ -199,7 +219,8 @@ export function WaterfallChart({
   const W = 100 / bars.length;
   const H = 100;
   const y = (v: number) => ((hi - v) / span) * H;
-  const color = (kind: string) => (kind === 'total' ? '#3b5b7d' : kind === 'up' ? '#2f7d5b' : '#a05252');
+  const color = (kind: string) =>
+    kind === 'total' ? CHART_COLORS.blue : kind === 'up' ? CHART_COLORS.green : CHART_COLORS.red;
 
   return (
     <div className="rounded-lg border border-paper-300 bg-surface p-5 shadow-card">
@@ -269,7 +290,7 @@ export function LineChart({
   title,
   points,
   format,
-  color = '#2f7d5b',
+  color = CHART_COLORS.green,
 }: {
   title: string;
   points: LinePoint[];

@@ -152,7 +152,7 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
           money arrived. */}
       {quote?.test_mode && (
         <p
-          className="mt-4 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800"
+          className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800"
           data-testid="stripe-test-mode"
         >
           Stripe is in test mode. Checkout opens a real page but no money moves — only test cards are

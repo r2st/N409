@@ -6,6 +6,7 @@ import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import { useWorkspace } from './ValuationWorkspace';
 import { HrisSyncPanel } from '../../components/valuation/HrisSyncPanel';
+import { CHART_COLORS } from '../../components/charts';
 import {
   Button,
   EmptyState,
@@ -113,10 +114,16 @@ function VestingTimeline({ timeline, total }: { timeline: VestingPoint[]; total:
         role="img"
         aria-label="Vesting timeline"
       >
-        <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="#d6d3ce" />
-        <polyline points={points} fill="none" stroke="#16a34a" strokeWidth={2} />
+        <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="var(--color-paper-300)" />
+        <polyline points={points} fill="none" stroke={CHART_COLORS.green} strokeWidth={2} />
         {timeline.map((p) => (
-          <circle key={p.monthOffset} cx={x(p.monthOffset)} cy={y(p.cumulativeVested)} r={2} fill="#16a34a" />
+          <circle
+            key={p.monthOffset}
+            cx={x(p.monthOffset)}
+            cy={y(p.cumulativeVested)}
+            r={2}
+            fill={CHART_COLORS.green}
+          />
         ))}
       </svg>
       <div className="tnum flex justify-between text-xs text-ink-400">

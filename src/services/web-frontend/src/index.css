@@ -112,6 +112,28 @@
   --color-skeleton: #e8e5dc;
   --color-skeleton-sheen: #f8f6f2;
 
+  /*
+   * chart — the categorical series ramp (components/charts.tsx `PALETTE`, the
+   * line-chart `color` prop, the vesting curve).
+   *
+   * These were eight hex literals in the TSX, which is the one place a colour
+   * cannot follow the theme. Half of them failed WCAG's 3:1 non-text contrast
+   * against the dark card: `--color-chart-3` at #3b5b7d sat at 2.4:1 on
+   * `--color-surface` #111825, so the volatility line on the analytics tab was
+   * a dark stroke on a dark ground. They keep their light-mode values here and
+   * lift to their -400-weight equivalents in the dark block below.
+   *
+   * Ordering is the ledger palette: bond green, brass, then the muted tones.
+   */
+  --color-chart-1: #2f7d5b;
+  --color-chart-2: #b98d4f;
+  --color-chart-3: #3b5b7d;
+  --color-chart-4: #8d5a7d;
+  --color-chart-5: #5b8d8a;
+  --color-chart-6: #7d6e3b;
+  --color-chart-7: #a05252;
+  --color-chart-8: #6b7280;
+
   --shadow-card: 0 1px 2px rgb(11 18 32 / 0.05), 0 1px 3px rgb(11 18 32 / 0.06);
   --shadow-lift: 0 4px 12px rgb(11 18 32 / 0.08), 0 1px 3px rgb(11 18 32 / 0.06);
 }
@@ -239,6 +261,20 @@
   --color-slate-600: #aab3c6;
   --color-slate-700: #c8cfdd;
   --color-slate-900: #eef1f7;
+
+  /*
+   * Chart series lifted to their -400 weights. Every step now clears 3:1
+   * against `--color-surface` (#111825) — the WCAG floor for a graphical
+   * object, which is what a 2px stroke or a 7px donut arc is.
+   */
+  --color-chart-1: #43cca0;
+  --color-chart-2: #d9b46b;
+  --color-chart-3: #6f9fd0;
+  --color-chart-4: #c98fb6;
+  --color-chart-5: #7fc4c0;
+  --color-chart-6: #c0ab6a;
+  --color-chart-7: #e08b8b;
+  --color-chart-8: #9aa4b9;
 
   --color-skeleton: #1b2331;
   --color-skeleton-sheen: #2b3549;

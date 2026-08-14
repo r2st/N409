@@ -224,7 +224,7 @@ export function NetworkTab() {
               aria-pressed={service === ''}
               className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${
                 service === ''
-                  ? 'bg-ink-900 text-white ring-ink-900'
+                  ? 'bg-ink-900 text-paper-50 ring-ink-900'
                   : 'bg-surface text-ink-600 ring-paper-300 hover:bg-paper-100'
               }`}
             >
@@ -238,7 +238,7 @@ export function NetworkTab() {
                 aria-pressed={service === key}
                 className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${
                   service === key
-                    ? 'bg-ink-900 text-white ring-ink-900'
+                    ? 'bg-ink-900 text-paper-50 ring-ink-900'
                     : 'bg-surface text-ink-600 ring-paper-300 hover:bg-paper-100'
                 }`}
               >

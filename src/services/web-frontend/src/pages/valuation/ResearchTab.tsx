@@ -150,7 +150,7 @@ function TopicCard({
         )}
         {row?.synthesized === false && (
           <span
-            className="rounded-full bg-rose-50 px-2 py-0.5 text-[0.65rem] font-semibold text-rose-800 ring-1 ring-rose-200 ring-inset"
+            className="rounded-full bg-red-50 px-2 py-0.5 text-[0.65rem] font-semibold text-red-800 ring-1 ring-red-200 ring-inset"
             title="The search returned these sources but the synthesis model was unavailable. Nothing has been written from them, so this topic is excluded from report drafting and from the sources exhibit. Run it again."
           >
             not summarised
