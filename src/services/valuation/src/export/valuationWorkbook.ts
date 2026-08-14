@@ -116,6 +116,22 @@ function num(value: string | number | null | undefined): number | null {
 }
 
 /**
+ * The concluded per-share figure, at the precision the report states it to.
+ *
+ * A cell override rather than a column format because none of the three sheets
+ * that state this figure gives it a column: the waterfall puts it under
+ * `Invested`, and the calculation and summary sheets have one value column
+ * carrying engine versions and timestamps beside it. The cap table's price and
+ * the grants' strike do have columns of their own and are formatted there.
+ *
+ * `null` stays null — an unvalued engagement writes an empty cell, not a
+ * four-decimal zero.
+ */
+function perShare(value: number | null): XlsxValue {
+  return value === null ? null : { value, format: 'pershare' };
+}
+
+/**
  * Spreadsheet row number of a sheet's first data row: the title lines, then the
  * header, then data. Every formula on every sheet is written against this, so it
  * is derived from the title lines rather than hardcoded — a sheet that gains a
@@ -201,7 +217,7 @@ function capTableSheet(entries: CapTableEntry[], currency: string): XlsxSheet {
     { header: 'Security class', width: 28, format: 'text' },
     { header: 'Type', width: 12, format: 'text' },
     { header: 'Shares', width: 16, format: 'integer' },
-    { header: `Price per share (${currency})`, width: 18, format: 'currency' },
+    { header: `Price per share (${currency})`, width: 18, format: 'pershare' },
     { header: `Invested (${currency})`, width: 18, format: 'currency' },
     { header: 'Liquidation multiple', width: 18, format: 'number' },
     { header: 'Seniority', width: 11, format: 'integer' },
@@ -364,7 +380,7 @@ function waterfallSheet(entries: CapTableEntry[], currency: string, fmvPerShare:
   rows.push([null, 'Option pool', inputs.option_pool_shares]);
   if (fmvPerShare !== null) {
     rows.push([]);
-    rows.push([null, `Concluded FMV per share (${currency})`, null, fmvPerShare]);
+    rows.push([null, `Concluded FMV per share (${currency})`, null, perShare(fmvPerShare)]);
   }
 
   return { name: 'Waterfall', titleLines, columns, rows };
@@ -380,7 +396,7 @@ function grantsSheet(grants: readonly WorkbookGrant[], asOf: Date, currency: str
     { header: 'Email', width: 26, format: 'text' },
     { header: 'Grant date', width: 13, format: 'date' },
     { header: 'Options', width: 14, format: 'integer' },
-    { header: `Exercise price (${currency})`, width: 18, format: 'currency' },
+    { header: `Exercise price (${currency})`, width: 18, format: 'pershare' },
     { header: 'Vesting template', width: 18, format: 'text' },
     { header: 'Vesting start', width: 13, format: 'date' },
     { header: 'Term (months)', width: 14, format: 'integer' },
@@ -648,7 +664,7 @@ function calculationSheet(calculation: WorkbookCalculation, currency: string): X
     ['Status', calculation.status],
     ['Run at', asDate(calculation.created_at)],
     [`Concluded equity value (${currency})`, num(calculation.equity_value)],
-    [`Concluded FMV per share (${currency})`, num(calculation.fmv_per_share)],
+    [`Concluded FMV per share (${currency})`, perShare(num(calculation.fmv_per_share))],
   ];
 
   const results = flattenForAudit(calculation.results);
@@ -686,7 +702,7 @@ function summarySheet(input: ValuationWorkbookInput): XlsxSheet {
     ['Currency', v.currency],
     ['Created', asDate(v.created_at)],
     ['Published', asDate(v.published_at)],
-    ['Concluded FMV per share', input.fmvPerShare],
+    ['Concluded FMV per share', perShare(input.fmvPerShare)],
     ['Generated at', input.generatedAt],
   ];
 

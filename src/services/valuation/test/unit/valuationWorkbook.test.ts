@@ -144,7 +144,21 @@ function formulaAt(s: XlsxSheet, rowIndex: number, colIndex: number): XlsxFormul
 }
 
 function valueAt(s: XlsxSheet, rowIndex: number, colIndex: number): XlsxValue {
-  return s.rows[rowIndex]?.[colIndex];
+  return unwrap(s.rows[rowIndex]?.[colIndex]);
+}
+
+/**
+ * The value inside a cell that carries its own format.
+ *
+ * A per-share figure is written as `{ value, format: 'pershare' }` so it can
+ * state four decimals in a column formatted for something else. Assertions
+ * about the *value* should not have to know that, and an assertion about the
+ * format has its own accessor.
+ */
+function unwrap(cell: XlsxValue): XlsxValue {
+  return typeof cell === 'object' && cell !== null && !(cell instanceof Date) && 'format' in cell
+    ? cell.value
+    : cell;
 }
 
 /**
@@ -495,7 +509,7 @@ describe('valuationWorkbookSheets', () => {
   describe('summary', () => {
     it('carries provenance and the cap-table roll-up', () => {
       const s = sheet(valuationWorkbookSheets(input()), 'Summary');
-      const byField = new Map(s.rows.map((r) => [String(r[0] ?? ''), r[1]]));
+      const byField = new Map(s.rows.map((r) => [String(r[0] ?? ''), unwrap(r[1])]));
       expect(byField.get('Valuation number')).toBe('V-2026-0042');
       expect(byField.get('Company')).toBe('Acme, Inc.');
       expect(byField.get('Concluded FMV per share')).toBe(1.42);
@@ -522,7 +536,7 @@ describe('valuationWorkbookSheets', () => {
         ),
         'Summary',
       );
-      const byField = new Map(s.rows.map((r) => [String(r[0] ?? ''), r[1]]));
+      const byField = new Map(s.rows.map((r) => [String(r[0] ?? ''), unwrap(r[1])]));
       expect(byField.get('Published')).toBeNull();
       expect(byField.get('Created')).toBeNull();
     });
@@ -735,7 +749,7 @@ describe('audit sheets', () => {
 
   it('records provenance and the concluded numbers on the calculation sheet', () => {
     const rows = sheet(audited(), 'Calculation').rows;
-    const valueOf = (label: string) => rows.find((r) => r[0] === label)?.[1];
+    const valueOf = (label: string) => unwrap(rows.find((r) => r[0] === label)?.[1]);
     expect(valueOf('Engine version')).toBe('2.4.1');
     expect(valueOf('Status')).toBe('succeeded');
     expect(valueOf('Run at')).toEqual(new Date('2026-03-01T12:00:00Z'));
@@ -776,5 +790,80 @@ describe('audit sheets', () => {
     );
     const labels = sheet(sheets, 'Calculation').rows.map((r) => String(r[0]));
     expect(labels).toContain('Concluded FMV per share (GBP)');
+  });
+});
+
+/**
+ * The workbook and the report state the same per-share figure the same way.
+ *
+ * The exhibits print every per-share number to four decimals — the concluded
+ * FMV, the strike on an option row — because that is what a §409A concludes to
+ * and what a grant is priced at. Every one of them reached this workbook through
+ * a two-decimal format, so the file an auditor reconciles against the opinion
+ * showed $1.49 beside the opinion's $1.4947. The exact value was always in the
+ * cell; what disagreed was the figure on screen and in print, which is the one
+ * anybody reads.
+ */
+describe('per-share figures carry the precision the report states them to', () => {
+  const FMV = 1.4947;
+
+  /** The format a cell resolves to: its own override, else its column's. */
+  function formatAt(s: XlsxSheet, rowIndex: number, colIndex: number): string | undefined {
+    const cell = s.rows[rowIndex]?.[colIndex];
+    if (typeof cell === 'object' && cell !== null && !(cell instanceof Date) && 'format' in cell) {
+      return cell.format;
+    }
+    return s.columns[colIndex]?.format;
+  }
+
+  it('states the concluded FMV to four decimals on the waterfall', () => {
+    const wf = sheet(valuationWorkbookSheets(input({ fmvPerShare: FMV })), 'Waterfall');
+    const i = indexOfLabel(wf, 'Concluded FMV per share', 1);
+    expect(formatAt(wf, i, 3)).toBe('pershare');
+  });
+
+  it('states the concluded FMV to four decimals on the summary sheet', () => {
+    const s = sheet(valuationWorkbookSheets(input({ fmvPerShare: FMV })), 'Summary');
+    const i = indexOfLabel(s, 'Concluded FMV per share');
+    expect(formatAt(s, i, 1)).toBe('pershare');
+  });
+
+  /**
+   * The neighbours are the point: this cell shares its column with the engine
+   * version and the run timestamp, so it can only be right if the override
+   * leaves them alone.
+   */
+  it('states the concluded FMV to four decimals without restyling the column', () => {
+    const s = sheet(
+      valuationWorkbookSheets(input({ calculation: CALCULATION, fmvPerShare: FMV })),
+      'Calculation',
+    );
+    expect(formatAt(s, indexOfLabel(s, 'Concluded FMV per share'), 1)).toBe('pershare');
+    expect(formatAt(s, indexOfLabel(s, 'Engine version'), 1)).toBe('number');
+    expect(formatAt(s, indexOfLabel(s, 'Concluded equity value'), 1)).toBe('number');
+  });
+
+  it('prices cap table and grant rows to four decimals', () => {
+    const sheets = valuationWorkbookSheets(input({ fmvPerShare: FMV }));
+    const ct = sheet(sheets, 'Cap table');
+    const price = ct.columns.findIndex((c) => c.header.startsWith('Price per share'));
+    expect(ct.columns[price]?.format).toBe('pershare');
+
+    const g = sheet(sheets, 'Grants');
+    const strike = g.columns.findIndex((c) => c.header.startsWith('Exercise price'));
+    expect(g.columns[strike]?.format).toBe('pershare');
+  });
+
+  /** Aggregates are money, not per-share money, and must stay at two decimals. */
+  it('leaves aggregate money columns at two decimals', () => {
+    const sheets = valuationWorkbookSheets(input({ fmvPerShare: FMV }));
+    const ct = sheet(sheets, 'Cap table');
+    expect(ct.columns[ct.columns.findIndex((c) => c.header.startsWith('Invested'))]?.format).toBe(
+      'currency',
+    );
+    const wf = sheet(sheets, 'Waterfall');
+    expect(wf.columns[wf.columns.findIndex((c) => c.header.startsWith('Preference'))]?.format).toBe(
+      'currency',
+    );
   });
 });

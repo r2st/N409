@@ -19,7 +19,16 @@
 import { buildZip, type ZipEntry } from './zip.js';
 
 /** Number format applied to a column. Indexes into STYLE_FORMATS. */
-export type XlsxFormat = 'text' | 'number' | 'integer' | 'currency' | 'percent' | 'date';
+/**
+ * `pershare` is `currency` at four decimals rather than two.
+ *
+ * Not a cosmetic variant: the report states every per-share figure — the
+ * concluded FMV, an option strike — to four decimals, because that is the
+ * precision a §409A opinion concludes to and a grant's strike is set at. Shown
+ * through `currency`, $1.4947 reads as $1.49 in the one file an auditor
+ * reconciles against the opinion.
+ */
+export type XlsxFormat = 'text' | 'number' | 'integer' | 'currency' | 'percent' | 'date' | 'pershare';
 
 /** A formula cell: `formula` is the A1-style expression without a leading '='. */
 export interface XlsxFormula {
@@ -28,7 +37,29 @@ export interface XlsxFormula {
   value?: number | null;
 }
 
-export type XlsxValue = string | number | boolean | Date | null | undefined | XlsxFormula;
+/**
+ * A cell that carries its own format, overriding the column's.
+ *
+ * Needed because the figures whose precision matters most do not get a column
+ * to themselves. The concluded FMV per share sits in the waterfall's invested
+ * column, and on the calculation and summary sheets it shares a single "value"
+ * column with engine version strings and timestamps — so there is no column
+ * format that is right for it and right for its neighbours.
+ */
+export interface XlsxStyledValue {
+  value: string | number | boolean | Date | null | undefined;
+  format: XlsxFormat;
+}
+
+export type XlsxValue =
+  | string
+  | number
+  | boolean
+  | Date
+  | null
+  | undefined
+  | XlsxFormula
+  | XlsxStyledValue;
 
 export interface XlsxColumn {
   header: string;
@@ -131,6 +162,7 @@ const STYLE = {
   currency: 6,
   percent: 7,
   date: 8,
+  pershare: 9,
 } as const;
 
 const FORMAT_STYLE: Record<XlsxFormat, number> = {
@@ -140,6 +172,7 @@ const FORMAT_STYLE: Record<XlsxFormat, number> = {
   currency: STYLE.currency,
   percent: STYLE.percent,
   date: STYLE.date,
+  pershare: STYLE.pershare,
 };
 
 /**
@@ -159,7 +192,15 @@ function isFormula(v: XlsxValue): v is XlsxFormula {
   return typeof v === 'object' && v !== null && !(v instanceof Date) && 'formula' in v;
 }
 
+function isStyled(v: XlsxValue): v is XlsxStyledValue {
+  return typeof v === 'object' && v !== null && !(v instanceof Date) && 'format' in v;
+}
+
 function cellXml(ref: string, value: XlsxValue, styleIndex: number): string {
+  // Resolved before anything else, so the wrapper is transparent: the cell it
+  // carries is written by exactly the rules below, only against its own style.
+  if (isStyled(value)) return cellXml(ref, value.value, FORMAT_STYLE[value.format]);
+
   const s = styleIndex === 0 ? '' : ` s="${styleIndex}"`;
 
   if (value === null || value === undefined || value === '') return '';
@@ -248,11 +289,12 @@ function sheetXml(sheet: XlsxSheet): string {
  */
 const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<numFmts count="4">
+<numFmts count="5">
 <numFmt numFmtId="164" formatCode="#,##0.00"/>
 <numFmt numFmtId="165" formatCode="#,##0"/>
 <numFmt numFmtId="166" formatCode="0.00%"/>
 <numFmt numFmtId="167" formatCode="yyyy\\-mm\\-dd"/>
+<numFmt numFmtId="168" formatCode="#,##0.0000"/>
 </numFmts>
 <fonts count="3">
 <font><sz val="11"/><name val="Calibri"/></font>
@@ -269,7 +311,7 @@ const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <border><left/><right/><top/><bottom style="thin"><color rgb="FFBFBFBF"/></bottom><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="9">
+<cellXfs count="10">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
@@ -279,6 +321,7 @@ const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 <xf numFmtId="166" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 <xf numFmtId="167" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="168" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;

@@ -84,6 +84,19 @@ function rowFor(s: XlsxSheet, label: string): XlsxValue[] {
   return row;
 }
 
+/**
+ * The value inside a cell carrying its own number format.
+ *
+ * The concluded per-share figure states four decimals in a column formatted for
+ * everything else on the sheet, so it is written as `{ value, format }`.
+ * Assertions about the value read through it.
+ */
+function cellValue(cell: XlsxValue): XlsxValue {
+  return typeof cell === 'object' && cell !== null && !(cell instanceof Date) && 'format' in cell
+    ? cell.value
+    : cell;
+}
+
 describe('flattenForAudit', () => {
   it('renders null and undefined as an empty cell rather than the word', () => {
     // A cell reading "null" in a signed workbook is worse than a blank one: it
@@ -347,8 +360,11 @@ describe('audit sheets', () => {
       expect(rowFor(s, 'Engine version')[1]).toBe('2.4.1');
       expect(rowFor(s, 'Status')[1]).toBe('succeeded');
       // Numeric strings out of pg become numbers, or the auditor cannot sum them.
-      expect(rowFor(s, 'Concluded equity value (USD)')[1]).toBe(12_000_000);
-      expect(rowFor(s, 'Concluded FMV per share (USD)')[1]).toBe(1.42);
+      expect(cellValue(rowFor(s, 'Concluded equity value (USD)')[1])).toBe(12_000_000);
+      expect(cellValue(rowFor(s, 'Concluded FMV per share (USD)')[1])).toBe(1.42);
+      // …and the per-share figure keeps the four decimals the report states it
+      // to, which is the whole reason it carries a format of its own here.
+      expect(rowFor(s, 'Concluded FMV per share (USD)')[1]).toMatchObject({ format: 'pershare' });
     });
 
     it('renders an unparseable or empty concluded figure as blank, never as NaN', () => {

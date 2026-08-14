@@ -339,3 +339,59 @@ describe('buildXlsx', () => {
     expect(actual).toBe(declared);
   });
 });
+
+/**
+ * Per-share money, at the precision the opinion states it to.
+ *
+ * `currency` is `#,##0.00`, which is right for an invested amount and wrong for
+ * the figure a §409A exists to conclude: the report states $1.4947 and a
+ * two-decimal cell shows $1.49. The value in the file is exact either way — this
+ * is about what the sheet *reads as*, which is what an auditor reconciles.
+ */
+describe('per-share money', () => {
+  const numFmtOf = (zip: Buffer, styleIndex: number): string => {
+    const styles = unzipEntry(zip, 'xl/styles.xml');
+    const cellXfs = styles.slice(styles.indexOf('<cellXfs'), styles.indexOf('</cellXfs>'));
+    const xf = [...cellXfs.matchAll(/<xf [^>]*\/>/g)][styleIndex];
+    if (!xf) throw new Error(`no cellXfs entry at index ${styleIndex}`);
+    const id = /numFmtId="(\d+)"/.exec(xf[0])?.[1];
+    const fmt = new RegExp(`<numFmt numFmtId="${id}" formatCode="([^"]+)"`).exec(styles);
+    return fmt?.[1] ?? `builtin:${id}`;
+  };
+
+  it('renders a pershare cell to four decimals', () => {
+    const zip = buildXlsx([
+      { name: 'S', columns: [{ header: 'FMV', format: 'pershare' }], rows: [[1.4947]] },
+    ]);
+    const sheet = unzipEntry(zip, 'xl/worksheets/sheet1.xml');
+    const style = /<c r="A2" s="(\d+)"><v>1.4947<\/v><\/c>/.exec(sheet)?.[1];
+    expect(style, `A2 was not written as a styled number: ${sheet}`).toBeDefined();
+    expect(numFmtOf(zip, Number(style))).toBe('#,##0.0000');
+  });
+
+  /**
+   * The concluded figure shares a column with invested amounts on the waterfall
+   * sheet and with engine version strings on the calculation sheet, so it can
+   * only carry its own format if a cell may override the column's.
+   */
+  it('lets a cell override the format its column declares', () => {
+    const zip = buildXlsx([
+      {
+        name: 'S',
+        columns: [{ header: 'Amount', format: 'currency' }],
+        rows: [[2_000_000], [{ value: 1.4947, format: 'pershare' }]],
+      },
+    ]);
+    const sheet = unzipEntry(zip, 'xl/worksheets/sheet1.xml');
+    const plain = /<c r="A2" s="(\d+)"><v>2000000<\/v><\/c>/.exec(sheet)?.[1];
+    const overridden = /<c r="A3" s="(\d+)"><v>1.4947<\/v><\/c>/.exec(sheet)?.[1];
+    expect(numFmtOf(zip, Number(plain))).toBe('#,##0.00');
+    expect(numFmtOf(zip, Number(overridden))).toBe('#,##0.0000');
+  });
+
+  it('still opens as a valid archive with the added style', () => {
+    assertArchiveIntact(
+      buildXlsx([{ name: 'S', columns: [{ header: 'FMV', format: 'pershare' }], rows: [[1.4947]] }]),
+    );
+  });
+});
