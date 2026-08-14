@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isPrivateAddress as isPrivateLiteral } from './privateAddress.js';
 
 /**
  * Partner webhook events (partner API enhancements). Pure: event vocabulary,
@@ -257,49 +258,22 @@ const BLOCKED_TLDS: readonly string[] = ['.local', '.internal', '.localhost'];
  * True for an address that is not routable on the public internet: loopback,
  * RFC1918 private space, link-local (which is where every cloud metadata
  * service lives), shared/CGNAT space, multicast, and the reserved blocks.
- * Accepts a bare IPv4 or IPv6 literal; anything unparseable is treated as
+ * Accepts a bare IPv4 or IPv6 literal, with or without the brackets a URL's
+ * `hostname` keeps around a v6 one; anything unparseable is treated as
  * blocked, because an address this cannot classify is not one to fetch.
+ *
+ * The classification itself is `domain/privateAddress.ts`, shared with the
+ * logo fetcher. This used to be its own second implementation, and it matched
+ * IPv6 on the text of the address: `::1` and `fe80::` were caught, but
+ * `::ffff:7f00:1` was not — which is the form `new URL()` normalises
+ * `http://[::ffff:127.0.0.1]/` into, so that target registered as public. 6to4
+ * and NAT64 wrappings of a private v4 address had the same hole, and those two
+ * arrive from DNS rather than from the URL, so no attacker had to type them.
  */
 export function isPrivateAddress(address: string): boolean {
   const ip = address.trim().replace(/^\[|\]$/g, '');
   if (ip === '') return true;
-
-  // IPv4-mapped and -compatible IPv6 (::ffff:127.0.0.1) are IPv4 targets
-  // wearing a v6 hat; classify them as the v4 address they carry.
-  const mapped = /^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
-  if (mapped?.[1]) return isPrivateAddress(mapped[1]);
-
-  if (ip.includes(':')) return isPrivateIpv6(ip);
-  return isPrivateIpv4(ip);
-}
-
-function isPrivateIpv4(ip: string): boolean {
-  const parts = ip.split('.');
-  if (parts.length !== 4) return true;
-  const octets = parts.map((p) => (/^\d{1,3}$/.test(p) ? Number(p) : Number.NaN));
-  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
-  const [a, b] = octets as [number, number, number, number];
-
-  if (a === 0) return true; // "this network"
-  if (a === 10) return true; // RFC1918
-  if (a === 127) return true; // loopback
-  if (a === 169 && b === 254) return true; // link-local — cloud metadata
-  if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
-  if (a === 192 && b === 168) return true; // RFC1918
-  if (a === 192 && b === 0) return true; // IETF protocol assignments
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
-  if (a >= 224) return true; // multicast + reserved + broadcast
-  return false;
-}
-
-function isPrivateIpv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  if (lower === '::' || lower === '::1') return true; // unspecified, loopback
-  if (lower.startsWith('fe80')) return true; // link-local
-  if (/^f[cd]/.test(lower)) return true; // unique-local (fc00::/7)
-  if (lower.startsWith('ff')) return true; // multicast
-  return false;
+  return isPrivateLiteral(ip);
 }
 
 /**

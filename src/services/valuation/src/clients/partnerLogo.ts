@@ -22,6 +22,16 @@
 
 import { isIP } from 'node:net';
 import { lookup } from 'node:dns/promises';
+import { isPrivateAddress, isPrivateIpv4, isPrivateIpv6 } from '../domain/privateAddress.js';
+
+/*
+ * Re-exported rather than re-implemented. These used to live here, and a
+ * second copy of them grew in domain/partnerWebhooks.ts for the other
+ * outbound-request guard — see the note at the top of domain/privateAddress.ts
+ * for what the copies disagreed about. Kept exported from here because this is
+ * where the SSRF note lives and where callers look for them.
+ */
+export { isPrivateAddress, isPrivateIpv4, isPrivateIpv6 };
 
 const MAX_LOGO_BYTES = 1024 * 1024;
 const TIMEOUT_MS = 3_000;
@@ -51,114 +61,6 @@ export type HostResolver = (hostname: string) => Promise<string[]>;
 
 const defaultResolver: HostResolver = async (hostname) =>
   (await lookup(hostname, { all: true, verbatim: true })).map((a) => a.address);
-
-/**
- * True for an IPv4 literal that is not routable on the public internet.
- *
- * Deliberately wider than "RFC 1918": the interesting targets from inside a
- * host are the loopback and link-local ranges, and 169.254.169.254 — the cloud
- * instance-metadata address every provider serves credentials from — is in
- * neither of the classic private blocks.
- */
-export function isPrivateIpv4(address: string): boolean {
-  const parts = address.split('.');
-  if (parts.length !== 4) return true; // not an address we can reason about
-  const [a, b] = parts.map((p) => Number(p)) as [number, number, number, number];
-  if (!Number.isInteger(a) || !Number.isInteger(b)) return true;
-  if (a === 0) return true; // "this network" / unspecified
-  if (a === 10) return true; // RFC 1918
-  if (a === 127) return true; // loopback
-  if (a === 169 && b === 254) return true; // link-local, incl. instance metadata
-  if (a === 172 && b >= 16 && b <= 31) return true; // RFC 1918
-  if (a === 192 && b === 168) return true; // RFC 1918
-  if (a === 100 && b >= 64 && b <= 127) return true; // RFC 6598 carrier NAT
-  if (a === 192 && b === 0) return true; // IETF protocol assignments / TEST-NET-1
-  if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
-  if (a === 198 && b === 51) return true; // TEST-NET-2
-  if (a === 203 && b === 0) return true; // TEST-NET-3
-  if (a >= 224) return true; // multicast, reserved, broadcast
-  return false;
-}
-
-/**
- * An IPv6 literal as its 16 bytes, or null if it is not one.
- *
- * Expanded rather than pattern-matched on the text, because the same address
- * has many spellings and the URL parser picks its own: `::ffff:127.0.0.1`
- * comes back out of `new URL()` as `::ffff:7f00:1`. A guard that matched the
- * dotted form and not the hex one would have refused the string an attacker
- * would never bother to type.
- */
-function ipv6Bytes(address: string): Uint8Array | null {
-  let addr = address;
-  // A trailing dotted quad ("::ffff:127.0.0.1") is two groups; rewrite it to hex
-  // before counting, so the `::` expansion below has the right group total.
-  const dotted = /^(.*:)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(addr);
-  if (dotted) {
-    const quad = dotted[2]!.split('.').map(Number);
-    if (quad.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
-    const hi = ((quad[0]! << 8) | quad[1]!).toString(16);
-    const lo = ((quad[2]! << 8) | quad[3]!).toString(16);
-    addr = `${dotted[1]}${hi}:${lo}`;
-  }
-
-  const halves = addr.split('::');
-  if (halves.length > 2) return null;
-  const split = (part: string) => (part === '' ? [] : part.split(':'));
-  let groups: string[];
-  if (halves.length === 2) {
-    const head = split(halves[0]!);
-    const tail = split(halves[1]!);
-    const missing = 8 - head.length - tail.length;
-    if (missing < 1) return null; // `::` stands for at least one group
-    groups = [...head, ...Array<string>(missing).fill('0'), ...tail];
-  } else {
-    groups = split(addr);
-  }
-  if (groups.length !== 8) return null;
-  const bytes = new Uint8Array(16);
-  for (let i = 0; i < 8; i += 1) {
-    if (!/^[0-9a-f]{1,4}$/.test(groups[i]!)) return null;
-    const value = Number.parseInt(groups[i]!, 16);
-    bytes[i * 2] = value >> 8;
-    bytes[i * 2 + 1] = value & 0xff;
-  }
-  return bytes;
-}
-
-/** True for an IPv6 literal that is not routable on the public internet. */
-export function isPrivateIpv6(address: string): boolean {
-  const bytes = ipv6Bytes(address.toLowerCase().split('%')[0]!); // drop any zone index
-  if (!bytes) return true; // unparseable — refuse rather than guess
-
-  const allZeroUntil = (n: number) => bytes.slice(0, n).every((b) => b === 0);
-  if (allZeroUntil(15) && (bytes[15] === 0 || bytes[15] === 1)) return true; // :: and ::1
-
-  // IPv4-mapped (::ffff:a.b.c.d) and 6to4 (2002:aabb:ccdd::) both carry a v4
-  // address inside a v6 one; judge them by the address they really reach.
-  if (allZeroUntil(10) && bytes[10] === 0xff && bytes[11] === 0xff) {
-    return isPrivateIpv4(`${bytes[12]}.${bytes[13]}.${bytes[14]}.${bytes[15]}`);
-  }
-  if (bytes[0] === 0x20 && bytes[1] === 0x02) {
-    return isPrivateIpv4(`${bytes[2]}.${bytes[3]}.${bytes[4]}.${bytes[5]}`);
-  }
-  // 64:ff9b::/96 NAT64, likewise.
-  if (bytes[0] === 0x00 && bytes[1] === 0x64 && bytes[2] === 0xff && bytes[3] === 0x9b) return true;
-
-  const head = (bytes[0]! << 8) | bytes[1]!;
-  if ((head & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
-  if ((head & 0xffc0) === 0xfe80) return true; // fe80::/10 link local
-  if ((head & 0xff00) === 0xff00) return true; // ff00::/8 multicast
-  return false;
-}
-
-/** True when this literal address must not be dialled from inside the estate. */
-export function isPrivateAddress(address: string): boolean {
-  const kind = isIP(address);
-  if (kind === 4) return isPrivateIpv4(address);
-  if (kind === 6) return isPrivateIpv6(address);
-  return true; // not an address at all — refuse rather than guess
-}
 
 /**
  * Whether this URL may be dialled: http(s), and every address its host resolves
