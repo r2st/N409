@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { isUlid, newUlid, problems, TtlCache } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
-import { likeContains } from '../db/like.js';
+import { likeContains, userFullNameSql } from '../db/like.js';
 import { diffRecords } from '../domain/auditTrail.js';
 import {
   EVENT_TYPES,
@@ -430,7 +430,7 @@ export function buildValuationWhere(
             SELECT 1 FROM users su
             WHERE su.id = ${ownerRef}
               AND (su.email ILIKE ${like}
-                   OR concat_ws(' ', su.first_name, su.last_name) ILIKE ${like})
+                   OR ${userFullNameSql('su')} ILIKE ${like})
           ))`,
       );
     }

@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
-import { likeContains } from '../db/like.js';
+import { likeContains, userSearchSql } from '../db/like.js';
 import { stateGroupOf } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, namedBucketsFor } from '../domain/workflow.js';
 import { assignRoles, type UserWithRoles } from './users.js';
@@ -43,7 +43,12 @@ function buildUserWhere(filters: UserListFilters): { whereSql: string; params: u
   };
 
   if (!filters.includeDeleted) where.push('u.deleted_at IS NULL');
-  if (filters.q) add(`concat_ws(' ', u.email, u.first_name, u.last_name) ILIKE ?`, likeContains(filters.q));
+  if (filters.q) {
+    // Not through `add`: the predicate uses its one bound parameter twice, and
+    // `add` substitutes a single placeholder. See `userSearchSql`.
+    params.push(likeContains(filters.q));
+    where.push(userSearchSql(`$${params.length}`, 'u'));
+  }
   if (filters.partnerId) add('u.partner_id = ?', filters.partnerId);
   if (filters.role)
     add(
@@ -454,7 +459,7 @@ export async function listUserOptions(
   let search = '';
   if (opts.q) {
     params.push(likeContains(opts.q));
-    search = `AND concat_ws(' ', u.email, u.first_name, u.last_name) ILIKE $${params.length}`;
+    search = `AND ${userSearchSql(`$${params.length}`, 'u')}`;
   }
   params.push(limit + 1);
   const { rows } = await pool.query<UserOptionRow>(

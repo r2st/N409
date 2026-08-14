@@ -1,6 +1,6 @@
 import type pg from 'pg';
 import { isUlid } from '@n409/shared';
-import { likeContains } from '../db/like.js';
+import { likeContains, userSearchSql } from '../db/like.js';
 import type { ValuationScope } from '../auth/rbac.js';
 import type { ValuationRow } from './valuations.js';
 
@@ -183,8 +183,7 @@ export async function searchDocuments(
 export async function searchUsers(pool: pg.Pool, q: string, limit = 10): Promise<UserSearchHit[]> {
   const { rows } = await pool.query<UserSearchHit>(
     `SELECT id, email, first_name, last_name, partner_id FROM users
-     WHERE email ILIKE $1
-        OR (coalesce(first_name, '') || ' ' || coalesce(last_name, '')) ILIKE $1
+     WHERE ${userSearchSql('$1')}
         ${isUlid(q.toUpperCase()) ? 'OR id = $3' : ''}
      ORDER BY created_at DESC LIMIT $2`,
     isUlid(q.toUpperCase()) ? [likeContains(q), limit, q.toUpperCase()] : [likeContains(q), limit],
