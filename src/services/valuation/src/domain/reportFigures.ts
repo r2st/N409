@@ -1,5 +1,11 @@
 import type { CalculationRow } from '../repos/calculations.js';
-import { formatCurrency, formatPercent, marketableValuePerShare, num } from './reportSummary.js';
+import {
+  formatCurrency,
+  formatExactPercent,
+  formatPercent,
+  marketableValuePerShare,
+  num,
+} from './reportSummary.js';
 import { fillTemplateVars, type ReportContent } from './report.js';
 
 /**
@@ -117,12 +123,33 @@ export function reportFigures(calculation: CalculationRow | null, currency: stri
   const shares = num(results.fully_diluted_common);
   put('fully_diluted_common', shares !== null ? INT.format(Math.round(shares)) : null);
 
+  /*
+   * The two concluded rates, to the precision they were actually applied at.
+   *
+   * Exhibit H states each rate beside the money it took out, so it prints them
+   * exactly; the body was printing the same two rates rounded to a tenth, and
+   * the conclusion chapter then invited the reader to reproduce a figure it had
+   * just made unreproducible — "allocated to a marketable value of $2.1804 per
+   * share, less a discount for lack of control of 10.0% and a discount for lack
+   * of marketability of 31.4%" concludes at $1.4718, and the report concluded at
+   * $1.4713. Five pages later Exhibit H says 31.42% and closes exactly.
+   *
+   * Neither figure was wrong. The document simply stated its own concluded
+   * discount two ways, and the version in the sentence that states the
+   * conclusion was the one that did not reconcile.
+   */
   const dloc = num(results.discounts?.dloc);
-  put('dloc', dloc !== null ? formatPercent(dloc) : null);
+  put('dloc', dloc !== null ? formatExactPercent(dloc) : null);
   const dlom = num(results.discounts?.dlom);
-  put('dlom', dlom !== null ? formatPercent(dlom) : null);
+  put('dlom', dlom !== null ? formatExactPercent(dlom) : null);
   if (dloc !== null && dlom !== null) {
-    put('combined_discount', formatPercent(1 - (1 - dloc) * (1 - dlom)));
+    // Wider than the four places the two component rates need: the combined
+    // rate is a product, so it carries the digits of both. Four decimal places
+    // on each input is six on the percentage of the product, and this is the
+    // rate the conclusion chapter asks the reader to apply to the allocated
+    // value — the one place in the document where the whole discount is stated
+    // as a single number.
+    put('combined_discount', formatExactPercent(1 - (1 - dloc) * (1 - dlom), 1, 6));
   }
 
   /*

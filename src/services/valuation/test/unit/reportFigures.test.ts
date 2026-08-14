@@ -73,18 +73,56 @@ describe('reportFigures', () => {
     expect(figures.equity_value).toBe('$42,664,610');
     expect(figures.marketable_value_per_share).toBe('$2.1514');
     expect(figures.fully_diluted_common).toBe('9,250,000');
+    // Exactly, not to a tenth: the conclusion chapter states both rates in a
+    // sentence that derives the concluded value from them, and Exhibit H states
+    // the same two beside the money each took out. A rate rounded for reading
+    // does not reconcile in either place.
     expect(figures.dloc).toBe('8.0%');
-    expect(figures.dlom).toBe('24.5%');
+    expect(figures.dlom).toBe('24.48%');
     expect(figures.volatility).toBe('62.0%');
     expect(figures.time_to_exit_years).toBe('4.00');
     expect(figures.risk_free_rate).toBe('4.21%');
   });
 
   it('computes the combined discount rather than adding the two', () => {
-    // 8% then 24.5% multiplicatively is 30.5%, not 32.5%. On a per-share figure
-    // that gap is the difference between two defensible conclusions, and the
-    // prose states it in words where nothing else does.
-    expect(reportFigures(calculation(), 'USD').combined_discount).toBe('30.5%');
+    // 8% then 24.48% multiplicatively is 30.5216%, not 32.48%. On a per-share
+    // figure that gap is the difference between two defensible conclusions, and
+    // the prose states it in words where nothing else does.
+    expect(reportFigures(calculation(), 'USD').combined_discount).toBe('30.5216%');
+  });
+
+  /**
+   * The conclusion chapter is a derivation, not a summary: it names the
+   * allocated value, both discounts and the combined rate, and ends on the
+   * concluded figure. A reader with a calculator has to arrive at the same
+   * place, and until the rates were stated exactly they did not — the body
+   * rounded them for reading while Exhibit H, five pages later, printed them to
+   * the precision they were applied at.
+   */
+  it('states discounts a reader can reproduce the conclusion from', () => {
+    const figures = reportFigures(calculation(), 'USD');
+    const pct = (s: string) => Number(s.replace('%', '')) / 100;
+    // The allocated value as the engine holds it, not as the page rounds it —
+    // so what is under test is the precision of the rates and nothing else.
+    const base = RESULTS.allocation.common_per_share;
+
+    // Applied in turn, as Exhibit H applies them.
+    const stepwise = base * (1 - pct(figures.dloc!)) * (1 - pct(figures.dlom!));
+    expect(stepwise).toBeCloseTo(1.4947, 4);
+
+    // And as the conclusion sentence states them, in one move.
+    const combined = base * (1 - pct(figures.combined_discount!));
+    expect(combined).toBeCloseTo(1.4947, 4);
+  });
+
+  it('keeps the body and Exhibit H stating one rate rather than two', () => {
+    // The two are formatted by different modules against the same result, and
+    // the only thing keeping them in step is that both call `formatExactPercent`.
+    const results = { ...RESULTS, discounts: { ...RESULTS.discounts, dloc: 0.1234, dlom: 0.3142 } };
+    const figures = reportFigures(calculation({ results } as Partial<CalculationRow>), 'USD');
+    expect(figures.dloc).toBe('12.34%');
+    expect(figures.dlom).toBe('31.42%');
+    expect(figures.combined_discount).toBe('39.882772%');
   });
 
   it('carries the market movement adjustment', () => {
@@ -210,7 +248,8 @@ describe('the 409A skeleton and the figures it names', () => {
     expect(conclusion.html).toContain('$1.4947');
     expect(conclusion.html).toContain('$42,664,610');
     expect(conclusion.html).toContain('8.0%');
-    expect(conclusion.html).toContain('24.5%');
+    expect(conclusion.html).toContain('24.48%');
+    expect(conclusion.html).toContain('30.5216%');
     // The defect itself: the chapter that states the conclusion said "$ …".
     expect(conclusion.html).not.toContain('$ …');
   });
