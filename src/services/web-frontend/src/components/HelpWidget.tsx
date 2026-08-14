@@ -58,16 +58,25 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
 ];
 
-/** Crude tag-strip for widget previews — article HTML is already sanitized
- * server-side; the widget only shows a plain-text digest. */
+/**
+ * Crude tag-strip for widget previews — article HTML is already sanitized
+ * server-side; the widget only shows a plain-text digest.
+ *
+ * Tags come off before any entity is decoded, so a decoded `&lt;` can never
+ * become markup this pass has already gone by. `&amp;` is decoded *last* for
+ * the mirror-image reason: decoding it first turns the `&amp;lt;` an author
+ * wrote to display "&lt;" into `&lt;`, which the next rule then decodes again
+ * into "<". An article about writing HTML — which is what the entities are
+ * there for — was the one whose digest came out wrong.
+ */
 export function htmlToText(html: string): string {
   return html
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -179,7 +188,18 @@ export function HelpWidget() {
   const topics = useMemo(() => filterTopics(allTopics, query), [allTopics, query]);
   // Trap focus in the panel while open; Esc closes and focus returns to the
   // launcher (audit F-3 P2).
-  const closePanel = useCallback(() => setOpen(false), []);
+  //
+  // Closing throws away everything the panel was showing — `ContactForm`
+  // unmounts and its draft goes with it — so the view has to go back with it.
+  // It did not, and reopening the widget landed on an emptied contact form
+  // rather than on help: the analyst who closed the panel mid-message got it
+  // back with the subject and body wiped and no sign of why. Closing on the
+  // confirmation was the same shape, offering "Thanks — we're on it." as the
+  // answer to a question asked much later.
+  const closePanel = useCallback(() => {
+    setOpen(false);
+    setView('topics');
+  }, []);
   const panelRef = useFocusTrap<HTMLDivElement>(open, closePanel);
 
   return (
@@ -200,7 +220,7 @@ export function HelpWidget() {
               </h2>
               <button
                 aria-label="Close help"
-                onClick={() => setOpen(false)}
+                onClick={closePanel}
                 className="rounded-md p-1 text-chrome-dim hover:bg-chrome-800 hover:text-chrome-fg"
               >
                 <svg
@@ -264,7 +284,7 @@ export function HelpWidget() {
                         {t.slug && (
                           <Link
                             to={`/help/${t.slug}`}
-                            onClick={() => setOpen(false)}
+                            onClick={closePanel}
                             className="mt-1.5 inline-block text-xs font-semibold text-bond-600 hover:text-bond-700"
                           >
                             Read the full article →
@@ -293,7 +313,7 @@ export function HelpWidget() {
               <div className="space-y-2">
                 <Link
                   to="/help"
-                  onClick={() => setOpen(false)}
+                  onClick={closePanel}
                   className="block text-center text-xs font-semibold text-bond-600 hover:text-bond-700"
                 >
                   View all articles →
@@ -319,7 +339,7 @@ export function HelpWidget() {
 
       <button
         aria-label={open ? 'Close help' : 'Open help'}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? closePanel() : setOpen(true))}
         className="fixed right-4 bottom-4 z-50 flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-chrome-900 text-chrome-fg shadow-lift transition-transform hover:scale-105"
       >
         {open ? (
