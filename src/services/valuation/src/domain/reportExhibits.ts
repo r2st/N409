@@ -2350,6 +2350,63 @@ function methodWeightingBlock(
 }
 
 /**
+ * The aggregate common claim, as a row of the class-volatility schedule.
+ *
+ * The per-class rows above it are each a single class. The interest a §409A
+ * concludes on is *common*, and on any cap table carrying more than one common
+ * class — founders' common beside ordinary common, a second common series from
+ * a recap — no row above is the claim being valued, so the figure the discount
+ * was struck on appears nowhere a reader can find it. The engine already
+ * computes it: `waterfall.class_volatility` reports `common_volatility`, the
+ * value-weighted mean over the common classes, which is exact rather than
+ * approximate because each class contributes σ·S·δ and summing the numerators
+ * and the values is the same operation as taking the elasticity of the summed
+ * claim. It was on `results.class_volatility` and reached no reader.
+ *
+ * The delta and the gearing beside it are the sum of the printed column and the
+ * ratio of the two printed volatilities — column arithmetic a reader can redo
+ * against the rows above, not a second derivation of the volatility itself,
+ * which is taken from the engine as it recorded it.
+ *
+ * Null when the waterfall reported no `common_volatility`. That happens when
+ * the common classes are collectively worth nothing — so far out of the money
+ * that no tranche reaches them — and the engine reports a null rather than an
+ * infinity for exactly the reason this prints no row: there is no defined
+ * return volatility for a claim with no value.
+ */
+function commonAggregateRow(
+  classVol: Record<string, unknown>,
+  entries: ReadonlyArray<{ name: string; value: Record<string, unknown> | null }>,
+  enterprise: number,
+  applied: boolean,
+): string[] | null {
+  const volatility = num(classVol.common_volatility);
+  if (volatility === null) return null;
+  const common = entries.filter((c) => text(c.value?.kind) === 'common');
+  if (common.length === 0) return null;
+
+  let delta: number | null = 0;
+  for (const c of common) {
+    const d = num(c.value?.delta);
+    if (d === null) {
+      delta = null;
+      break;
+    }
+    delta += d;
+  }
+
+  return [
+    // Marked where it is the figure the discount actually used, so a reader
+    // meets it as the conclusion of the schedule rather than as one more row.
+    applied ? '<strong>Common — aggregate (applied)</strong>' : '<strong>Common — aggregate</strong>',
+    'common',
+    delta === null ? '—' : `<strong>${delta.toFixed(4)}</strong>`,
+    enterprise > 0 ? `<strong>${ratio(volatility / enterprise, 2)}</strong>` : '—',
+    `<strong>${formatPercent(volatility)}</strong>`,
+  ];
+}
+
+/**
  * How the DLOM was arrived at, and the class volatilities that bear on it.
  *
  * Exhibit H applies the discount; nothing said where it came from. A reviewer
@@ -2416,21 +2473,21 @@ export function dlomDerivationExhibit(
     const classes = record(classVol.classes);
     const enterprise = num(classVol.enterprise_volatility);
     if (classes && enterprise !== null) {
-      const rows = Object.entries(classes)
+      const entries = Object.entries(classes)
         .map(([name, raw]) => ({ name, value: record(raw) }))
-        .filter((c) => c.value !== null)
-        .map((c) => {
-          const vol = num(c.value?.volatility);
-          const elasticity = num(c.value?.elasticity);
-          const delta = num(c.value?.delta);
-          return [
-            esc(c.name),
-            text(c.value?.kind) ?? '—',
-            delta === null ? '—' : delta.toFixed(4),
-            elasticity === null ? '—' : ratio(elasticity, 2),
-            vol === null ? '—' : formatPercent(vol),
-          ];
-        });
+        .filter((c) => c.value !== null);
+      const rows = entries.map((c) => {
+        const vol = num(c.value?.volatility);
+        const elasticity = num(c.value?.elasticity);
+        const delta = num(c.value?.delta);
+        return [
+          esc(c.name),
+          text(c.value?.kind) ?? '—',
+          delta === null ? '—' : delta.toFixed(4),
+          elasticity === null ? '—' : ratio(elasticity, 2),
+          vol === null ? '—' : formatPercent(vol),
+        ];
+      });
       // Whether the discount above was struck on the enterprise figure or on
       // common's own changes what this paragraph has to say — under the class
       // basis the σ printed above *is* the geared one, and telling the reader it
@@ -2443,16 +2500,26 @@ export function dlomDerivationExhibit(
         'spread of call options — so each carries its own return volatility: σ_class = σ × (equity ' +
         'value ÷ class value) × ∂(class value)/∂(equity value). Common ranks behind the preference ' +
         'stack and is therefore the most geared.';
+      const aggregate = commonAggregateRow(classVol, entries, enterprise, struckOn === 'class');
+      if (aggregate) rows.push(aggregate);
+      /*
+       * Where the aggregate row prints, the schedule has a line the reader can
+       * match against the volatility stated above it, and the paragraph says so
+       * — a cap table with two common classes has no single class row that is
+       * the interest being valued, which is the case that sent a reader looking
+       * for a figure the table did not contain.
+       */
+      const foundIn = aggregate ? 'the aggregate common line of the schedule below' : 'the schedule below';
       body.push(
         P(
           struckOn === 'class'
-            ? `The volatility above is common’s own, taken from the schedule below. ${gearing} ` +
+            ? `The volatility above is common’s own, taken from ${foundIn}. ${gearing} ` +
                 'An option-based discount struck on a class takes that class’s volatility, which is ' +
                 'why the figure above exceeds the enterprise volatility the allocation ran on.'
             : struckOn === 'enterprise'
               ? `The volatility above describes the enterprise, not the class the discount was ` +
                 `struck on. ${gearing} The volatility that belongs in an option-based discount ` +
-                'struck on a particular class is that class’s own, and on the schedule below that ' +
+                `struck on a particular class is that class’s own, and on ${foundIn} that ` +
                 'figure is higher for common than the one applied.'
               : `The volatility above describes the enterprise. ${gearing} The volatility that ` +
                 'belongs in an option-based discount struck on a particular class is that class’s own.',

@@ -262,6 +262,9 @@ describe('the schedule catalogue', () => {
     },
     class_volatility: {
       enterprise_volatility: 0.62,
+      // The aggregate common claim — the figure an option-based DLOM struck on
+      // the class basis actually used, printed as its own line in Exhibit H-1.
+      common_volatility: 0.7422,
       time_to_exit_years: 4,
       risk_free_rate: 0.0421,
       equity_value: 42_000_000,
@@ -1627,6 +1630,128 @@ describe('dlomDerivationExhibit', () => {
     });
   });
 
+  /**
+   * The aggregate common claim — `class_volatility.common_volatility`.
+   *
+   * The per-class rows are each one class. The interest a §409A concludes on is
+   * common, and on a cap table with two common classes no row above is that
+   * claim: the schedule printed 76.1% and 71.4% while the discount was struck
+   * on 74.2%, a figure a reader could not find anywhere on the page. The engine
+   * had computed it and nothing printed it.
+   */
+  describe('the aggregate common line', () => {
+    /** Two common classes, so no single row is the interest being valued. */
+    const TWO_COMMON = {
+      ...MODEL,
+      discounts: {
+        ...MODEL.discounts,
+        dlom_detail: { ...MODEL.discounts.dlom_detail, volatility_basis: 'class' },
+      },
+      class_volatility: {
+        ...MODEL.class_volatility,
+        common_volatility: 0.7422,
+        classes: {
+          Common: { kind: 'common', value: 12_000_000, delta: 0.34, elasticity: 1.19, volatility: 0.7378 },
+          'Founders Common': {
+            kind: 'common',
+            value: 7_900_045,
+            delta: 0.215,
+            elasticity: 1.2064,
+            volatility: 0.7482,
+          },
+          'Series A': {
+            kind: 'preferred',
+            value: 6_215_857,
+            delta: 0.1422,
+            elasticity: 0.9762,
+            volatility: 0.6052,
+          },
+        },
+      },
+    };
+
+    it('prints the volatility the discount was actually struck on', () => {
+      const text = plain(dlomDerivationExhibit(TWO_COMMON, CONTEXT)!.html);
+      expect(text).toContain('Common — aggregate (applied)');
+      // 74.22% — between the two common classes, and equal to neither of them.
+      expect(text).toContain('74.2%');
+      expect(text).toContain('73.8%');
+      expect(text).toContain('74.8%');
+    });
+
+    it('foots the delta column and gears against the enterprise figure', () => {
+      const text = plain(dlomDerivationExhibit(TWO_COMMON, CONTEXT)!.html);
+      // 0.34 + 0.215, which is the column above added up — arithmetic a reader
+      // can redo, not a second derivation of the volatility.
+      expect(text).toContain('0.5550');
+      // 0.7422 ÷ 0.62.
+      expect(text).toContain('1.20x');
+    });
+
+    it('sends the reader to that line by name', () => {
+      const text = plain(dlomDerivationExhibit(TWO_COMMON, CONTEXT)!.html);
+      expect(text).toContain('taken from the aggregate common line of the schedule below');
+    });
+
+    it('marks it applied only when the discount was struck on the class basis', () => {
+      const onEnterprise = {
+        ...TWO_COMMON,
+        discounts: {
+          ...TWO_COMMON.discounts,
+          dlom_detail: { ...TWO_COMMON.discounts.dlom_detail, volatility_basis: 'enterprise' },
+        },
+      };
+      const text = plain(dlomDerivationExhibit(onEnterprise, CONTEXT)!.html);
+      // Still printed — it is what shows the reader the gearing the discount
+      // did not carry — but not claimed to be the figure that was used.
+      expect(text).toContain('Common — aggregate');
+      expect(text).not.toContain('Common — aggregate (applied)');
+      expect(text).toContain('and on the aggregate common line of the schedule below that figure');
+    });
+
+    it('prints no line when the waterfall reported no aggregate figure', () => {
+      // Every calculation stored before the engine recorded it, and every run
+      // whose common classes are collectively worth nothing — the engine
+      // reports a null there rather than an infinity. The paragraph falls back
+      // to sending the reader to the schedule as a whole.
+      const noAggregate = {
+        ...TWO_COMMON,
+        class_volatility: { ...TWO_COMMON.class_volatility, common_volatility: undefined },
+      };
+      const text = plain(dlomDerivationExhibit(noAggregate, CONTEXT)!.html);
+      expect(text).not.toContain('Common — aggregate');
+      expect(text).toContain('taken from the schedule below');
+    });
+
+    it('prints no line when the cap table carries no common class', () => {
+      const preferredOnly = {
+        ...TWO_COMMON,
+        class_volatility: {
+          ...TWO_COMMON.class_volatility,
+          classes: { 'Series A': TWO_COMMON.class_volatility.classes['Series A'] },
+        },
+      };
+      expect(plain(dlomDerivationExhibit(preferredOnly, CONTEXT)!.html)).not.toContain('Common — aggregate');
+    });
+
+    it('dashes the delta rather than inventing one when a class recorded none', () => {
+      const partial = {
+        ...TWO_COMMON,
+        class_volatility: {
+          ...TWO_COMMON.class_volatility,
+          classes: {
+            ...TWO_COMMON.class_volatility.classes,
+            'Founders Common': { kind: 'common', value: 7_900_045, volatility: 0.7482 },
+          },
+        },
+      };
+      const text = plain(dlomDerivationExhibit(partial, CONTEXT)!.html);
+      // The volatility is the engine's and still prints; the column sum is not
+      // available, and a partial total would be a figure that does not foot.
+      expect(text).toMatch(/Common — aggregate \(applied\) common — 1\.20x 74\.2%/);
+    });
+  });
+
   it('discloses a Longstaff conclusion as an upper bound', () => {
     const longstaff = {
       ...RESULTS,
@@ -2512,5 +2637,47 @@ describe('the new schedules survive the PDF renderer', () => {
     expect(text).toContain('Control, marketable');
     expect(text).toContain('75% minority, 25% control');
     expect(text).toContain('discounts a second time');
+  }, 60_000);
+
+  it('prints the aggregate common line of Exhibit H-1 into the document text', async () => {
+    const results = {
+      ...LEVELLED_RESULTS,
+      discounts: {
+        ...LEVELLED_RESULTS.discounts,
+        dlom_detail: {
+          method: 'finnerty',
+          dlom: 0.25,
+          volatility: 0.7422,
+          volatility_basis: 'class',
+          time_to_liquidity_years: 4,
+        },
+      },
+      class_volatility: {
+        enterprise_volatility: 0.62,
+        common_volatility: 0.7422,
+        delta_total: 1,
+        classes: {
+          Common: { kind: 'common', value: 12_000_000, delta: 0.34, elasticity: 1.19, volatility: 0.7378 },
+          'Founders Common': {
+            kind: 'common',
+            value: 7_900_045,
+            delta: 0.215,
+            elasticity: 1.2064,
+            volatility: 0.7482,
+          },
+        },
+      },
+    };
+    const sections = buildExhibits(calculation({ results } as Partial<CalculationRow>), CONTEXT);
+    const pdf = await renderReportPdf(pdfInput(sections), { compress: false });
+    const text = pdfText(pdf);
+
+    expect(text).toContain('Exhibit H-1');
+    // The line that was missing: on a two-common cap table neither class row is
+    // the interest the discount was struck on, so without it 74.2% appears
+    // nowhere on the page that states 74.2% as the input.
+    expect(text).toContain('Common — aggregate (applied)');
+    expect(text).toContain('the aggregate common line of the schedule below');
+    expect(text).toContain('0.5550');
   }, 60_000);
 });
