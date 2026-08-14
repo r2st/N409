@@ -92,6 +92,40 @@ function used(): Map<string, string[]> {
     if (file.endsWith('config.ts')) {
       for (const m of text.matchAll(/^\s{2}([A-Z][A-Z0-9_]{2,}):\s*z\b/gm)) note(m[1]!, rel);
     }
+
+    // ── Indirect reads ────────────────────────────────────────────────────
+    //
+    // The three idioms above all name the variable next to the call that reads
+    // it. Plenty of this codebase does not, and every one of those was
+    // invisible here — ten variables were undocumented behind these four
+    // shapes, including both Bedrock ceilings and all seven marketing links on
+    // the public site, whose failure mode is a silently missing button.
+
+    // Python numeric helpers: env_int("FOO", 4) / env_float("FOO", 1.5)
+    for (const m of text.matchAll(/\benv_(?:int|float|str|bool)\(\s*["']([A-Z][A-Z0-9_]{2,})["']/g)) {
+      note(m[1]!, rel);
+    }
+    // A module constant holding the name: SEARXNG_URL_VAR = "SEARXNG_URL"
+    for (const m of text.matchAll(/^[A-Z][A-Z0-9_]*_VAR\s*=\s*["']([A-Z][A-Z0-9_]{2,})["']/gm)) {
+      note(m[1]!, rel);
+    }
+    // A lookup table from provider name to key name (websearch.py PROVIDER_KEYS).
+    if (file.endsWith('websearch.py')) {
+      for (const m of text.matchAll(/^\s+["'][a-z]+["']:\s*["']([A-Z][A-Z0-9_]{2,})["'],/gm)) {
+        note(m[1]!, rel);
+      }
+    }
+    // The Vite build's client-visible list, which reads `env[name]` in a loop.
+    if (file.endsWith('vite.config.ts')) {
+      const start = text.indexOf('const names = [');
+      if (start !== -1) {
+        for (const m of text
+          .slice(start, text.indexOf('];', start))
+          .matchAll(/["']([A-Z][A-Z0-9_]{2,})["']/g)) {
+          note(m[1]!, rel);
+        }
+      }
+    }
   }
   return found;
 }
@@ -110,10 +144,26 @@ describe('.env.example is the deployment contract', () => {
     ).toEqual([]);
   });
 
+  it('documents nothing the services no longer read', () => {
+    // The other direction, and the one an operator pays for: a variable left in
+    // this file after the code that read it went away is an instruction to
+    // configure something that does nothing. The research-provider rework is
+    // exactly the shape that leaves them behind — a removed provider's key is
+    // still a plausible-looking line in a file nobody re-reads.
+    //
+    // Scoped to the deployed services, so a name that only `tools/` or `e2e/`
+    // reads would fail this — which is correct: `.env.example` is the
+    // deployment contract, and a dev-script variable does not belong in it.
+    const read = new Set(used().keys());
+    const stale = [...documented()].filter((name) => !read.has(name));
+
+    expect(stale, 'variables in .env.example that no deployed code reads').toEqual([]);
+  });
+
   it('finds the variables it is supposed to be checking', () => {
-    // A regex that silently stopped matching would make the test above pass
+    // A regex that silently stopped matching would make the tests above pass
     // for the wrong reason — an empty "missing" list because nothing was
-    // scanned at all. These three cover the three idioms.
+    // scanned at all. One name per idiom, so a broken pattern names itself.
     const names = new Set(used().keys());
     expect(names.has('STRIPE_WEBHOOK_SECRET')).toBe(true); // Zod schema
     expect(names.has('OPENROUTER_MODEL')).toBe(true); // Python os.environ
@@ -122,6 +172,10 @@ describe('.env.example is the deployment contract', () => {
     // because the one-line form of this regex missed the whole idiom, and the
     // count assertion below is far too coarse to notice two absentees.
     expect(names.has('VIRUS_SCAN_FAIL_CLOSED')).toBe(true);
+    expect(names.has('BEDROCK_MAX_TOKENS')).toBe(true); // Python env_int helper
+    expect(names.has('SEARXNG_URL')).toBe(true); // name held in a _VAR constant
+    expect(names.has('TAVILY_API_KEY')).toBe(true); // provider lookup table
+    expect(names.has('CALENDLY_URL')).toBe(true); // Vite clientEnv list
     expect(names.size).toBeGreaterThan(50);
   });
 
