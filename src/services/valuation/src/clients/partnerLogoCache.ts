@@ -27,6 +27,24 @@ import { fetchPartnerLogo } from './partnerLogo.js';
 const HIT_TTL_MS = 60_000;
 const MISS_TTL_MS = 10_000;
 
+/**
+ * Ceiling on held URLs.
+ *
+ * The original comment here said growth was "bounded by the partner count",
+ * and that was not quite what the map does: the key is the *URL*, not the
+ * partner, so every logo swap mints a new key and the superseded one stays for
+ * as long as the process lives. Expiry alone never removed it either — an
+ * expired entry was skipped on read and left in place, so the map only ever
+ * grew. Neither is fast growth, but "slow and monotonic" is the shape that
+ * shows up as a restart every few months rather than as a bug.
+ *
+ * Far above any real partner roster, so eviction is a backstop and not
+ * something a normal deployment reaches. Least-recently-used, which `touch`
+ * below maintains for free by re-inserting: the Map's own iteration order then
+ * *is* LRU order, with no second index and no sort.
+ */
+const MAX_ENTRIES = 512;
+
 interface Entry {
   logo: Buffer | null;
   expiresAt: number;
@@ -34,7 +52,26 @@ interface Entry {
 
 const cache = new Map<string, Entry>();
 
-/** Number of URLs held. Unbounded growth is bounded by the partner count. */
+/**
+ * In-flight fetches, keyed the same way — the half the cache was missing.
+ *
+ * A cache with no in-flight map only helps the *second* render. The shape this
+ * exists for is a firm re-rendering a batch of reports, and those go out
+ * together: on a cold entry every one of them missed, and every one of them
+ * ran its own DNS lookup and HTTP GET for the same image, concurrently, each
+ * with the same 3s ceiling. So the exact workload the cache was written for
+ * was the one it did the least for, and a partner whose logo host had gone
+ * slow could still stall a whole batch at once.
+ *
+ * Collapsing them means the first render pays and the rest await its result.
+ * A rejection is not cached: the entry is only written on success, and the
+ * slot is cleared either way so a throw cannot wedge the URL permanently.
+ * (`fetchPartnerLogo` reports failure as `null`, which *is* cached — see the
+ * negative TTL above. This is the belt for the case where it throws instead.)
+ */
+const inflight = new Map<string, Promise<Buffer | null>>();
+
+/** Number of URLs held. Bounded by MAX_ENTRIES. */
 export function partnerLogoCacheSize(): number {
   return cache.size;
 }
@@ -42,6 +79,22 @@ export function partnerLogoCacheSize(): number {
 /** Drops every entry. For tests, and for an explicit operational flush. */
 export function clearPartnerLogoCache(): void {
   cache.clear();
+  inflight.clear();
+}
+
+/** Writes `key` at the back of the LRU order, dropping the dead and the oldest. */
+function store(key: string, entry: Entry, at: number): void {
+  cache.delete(key);
+  cache.set(key, entry);
+  if (cache.size <= MAX_ENTRIES) return;
+  // Expired first: dropping those is free, and at this size the scan is too.
+  for (const [k, e] of cache) if (e.expiresAt <= at) cache.delete(k);
+  // Then oldest-touched, until the ceiling holds. Never the incoming key —
+  // it is at the back, so the iteration reaches it last.
+  for (const k of cache.keys()) {
+    if (cache.size <= MAX_ENTRIES) break;
+    cache.delete(k);
+  }
 }
 
 export async function fetchPartnerLogoCached(
@@ -54,7 +107,23 @@ export async function fetchPartnerLogoCached(
   const hit = cache.get(logoUrl);
   if (hit && hit.expiresAt > at) return hit.logo;
 
-  const logo = await fetchLogo(logoUrl);
-  cache.set(logoUrl, { logo, expiresAt: at + (logo ? HIT_TTL_MS : MISS_TTL_MS) });
-  return logo;
+  const pending = inflight.get(logoUrl);
+  if (pending) return pending;
+
+  const load = fetchLogo(logoUrl).then(
+    (logo) => {
+      inflight.delete(logoUrl);
+      // `now()` again rather than `at`: the fetch took time, and a TTL counted
+      // from before it means a slow host gets a shorter cache than a fast one.
+      const settledAt = now();
+      store(logoUrl, { logo, expiresAt: settledAt + (logo ? HIT_TTL_MS : MISS_TTL_MS) }, settledAt);
+      return logo;
+    },
+    (err: unknown) => {
+      inflight.delete(logoUrl);
+      throw err;
+    },
+  );
+  inflight.set(logoUrl, load);
+  return load;
 }
