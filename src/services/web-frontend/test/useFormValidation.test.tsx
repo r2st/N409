@@ -11,6 +11,7 @@ import {
   minLength,
   numberMin,
   numberRange,
+  pattern,
   required,
   useFormValidation,
 } from '../src/lib/useFormValidation';
@@ -245,6 +246,45 @@ describe('the validators', () => {
     it('has no ceiling, unlike numberRange', () => {
       expect(numberRange('v', 1, 10, 'Shares')({ v: '11' })).toBe('Shares must be at most 10.');
       expect(numberMin('v', 1, 'Shares')({ v: '11' })).toBeNull();
+    });
+  });
+
+  describe('pattern', () => {
+    const slug = pattern('k', /[a-z0-9_]+/, 'Slug only.');
+
+    it('accepts a value the whole expression matches', () => {
+      expect(slug({ k: 'payment_reminder_1' })).toBeNull();
+    });
+
+    it('anchors, so a match buried inside a longer value is still a failure', () => {
+      // `pattern` on an input matches the whole value. Handing the same source
+      // to a bare `RegExp.test` would accept these on the strength of the
+      // matching run inside them.
+      expect(slug({ k: 'Payment Reminder!' })).toBe('Slug only.');
+      expect(slug({ k: 'payment reminder' })).toBe('Slug only.');
+      expect(slug({ k: 'UPPER_case' })).toBe('Slug only.');
+    });
+
+    it('leaves the empty case to the required rule', () => {
+      // Otherwise a box nobody has typed in reads as malformed.
+      expect(slug({ k: '' })).toBeNull();
+      expect(slug({ k: '   ' })).toBeNull();
+    });
+
+    it('pairs with required through all, which reports the empty case first', () => {
+      const rule = all<{ k: string }>(required('k', 'Key'), slug);
+      expect(rule({ k: '' })).toBe('Key is required.');
+      expect(rule({ k: 'Nope!' })).toBe('Slug only.');
+      expect(rule({ k: 'fine_1' })).toBeNull();
+    });
+
+    it('does not carry a g flag into repeated calls, which would alternate', () => {
+      // A /g regex keeps `lastIndex` between `test` calls, so the same value
+      // would pass, fail, pass on successive renders.
+      const global = pattern('k', /[a-z]+/g, 'Letters only.');
+      expect(global({ k: 'abc' })).toBeNull();
+      expect(global({ k: 'abc' })).toBeNull();
+      expect(global({ k: 'abc' })).toBeNull();
     });
   });
 

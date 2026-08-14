@@ -849,4 +849,173 @@ describe('CommunicationsPage', () => {
       expect(await screen.findByText('Scan failed.')).toBeInTheDocument();
     });
   });
+
+  /**
+   * R29 — both editors carried `required` and `pattern` and left the checking
+   * to the browser. Everything asserted here is a constraint one of the
+   * controls still declares as an attribute; the point is that the page now
+   * refuses it itself, and names the box rather than showing a tooltip.
+   */
+  describe('editor validation', () => {
+    it('refuses a template key that is not a slug', async () => {
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await screen.findByText('draft_ready');
+
+      await user.click(screen.getByRole('button', { name: 'New template' }));
+      await user.type(screen.getByRole('textbox', { name: /key/i }), 'Payment Reminder!');
+      await user.type(screen.getByRole('textbox', { name: /subject/i }), 'Due');
+      await user.type(screen.getByRole('textbox', { name: /body/i }), 'Text.');
+      await user.click(screen.getByRole('button', { name: 'Create template' }));
+
+      expect(
+        await screen.findByText('Use lower-case letters, digits and underscores only.'),
+      ).toBeInTheDocument();
+      expect(wrote(calls, 'POST', '/admin/communication-templates')).toBeUndefined();
+    });
+
+    it('will not create a template with an empty body', async () => {
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await screen.findByText('draft_ready');
+
+      await user.click(screen.getByRole('button', { name: 'New template' }));
+      await user.type(screen.getByRole('textbox', { name: /key/i }), 'invoice_due');
+      await user.type(screen.getByRole('textbox', { name: /subject/i }), 'Invoice due');
+      await user.click(screen.getByRole('button', { name: 'Create template' }));
+
+      expect(await screen.findByText('Body is required.')).toBeInTheDocument();
+      expect(wrote(calls, 'POST', '/admin/communication-templates')).toBeUndefined();
+    });
+
+    it('does not demand a subject for an SMS template, which has no subject box', async () => {
+      // The subject field is not rendered on the SMS channel, so a rule that
+      // ignored the channel would fail the form on a box nobody can see.
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await screen.findByText('draft_ready');
+
+      await user.click(screen.getByRole('button', { name: 'New template' }));
+      await user.type(screen.getByRole('textbox', { name: /key/i }), 'sms_due');
+      await user.selectOptions(screen.getByRole('combobox', { name: /channel/i }), 'sms');
+      await user.type(screen.getByRole('textbox', { name: /body/i }), 'Payment pending.');
+      await user.click(screen.getByRole('button', { name: 'Create template' }));
+
+      await waitFor(() =>
+        expect(wrote(calls, 'POST', '/admin/communication-templates')?.body).toMatchObject({
+          key: 'sms_due',
+          channel: 'sms',
+          body: 'Payment pending.',
+        }),
+      );
+    });
+
+    it('still saves a template that is complete', async () => {
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await screen.findByText('draft_ready');
+
+      await user.click(screen.getByRole('button', { name: 'New template' }));
+      await user.type(screen.getByRole('textbox', { name: /key/i }), 'invoice_due');
+      await user.type(screen.getByRole('textbox', { name: /subject/i }), 'Invoice due');
+      await user.type(screen.getByRole('textbox', { name: /body/i }), 'Your invoice is due.');
+      await user.click(screen.getByRole('button', { name: 'Create template' }));
+
+      await waitFor(() =>
+        expect(wrote(calls, 'POST', '/admin/communication-templates')?.body).toMatchObject({
+          key: 'invoice_due',
+        }),
+      );
+    });
+
+    it('will not create a campaign with no template chosen', async () => {
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await autoEmailsTab(user);
+
+      await user.click(screen.getByRole('button', { name: 'New campaign' }));
+      await user.type(screen.getByRole('textbox', { name: /name/i }), 'invoice_nudge');
+      await user.click(screen.getByRole('button', { name: 'Create campaign' }));
+
+      expect(await screen.findByText('Template is required.')).toBeInTheDocument();
+      expect(wrote(calls, 'POST', '/admin/auto-emails')).toBeUndefined();
+    });
+
+    it('refuses an emptied max-sends box rather than saving a campaign that never sends', async () => {
+      // The box is `number` state fed by `Number(e.target.value)`, so clearing
+      // it lands 0 — a campaign with max_sends 0 sends nothing and says
+      // nothing about why.
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await autoEmailsTab(user);
+
+      await user.click(screen.getByRole('button', { name: 'New campaign' }));
+      await user.type(screen.getByRole('textbox', { name: /name/i }), 'invoice_nudge');
+      await user.selectOptions(screen.getByRole('combobox', { name: /template/i }), 'draft_ready');
+      await user.clear(screen.getByRole('spinbutton', { name: /max sends/i }));
+      await user.click(screen.getByRole('button', { name: 'Create campaign' }));
+
+      expect(await screen.findByText('Max sends must be at least 1.')).toBeInTheDocument();
+      expect(wrote(calls, 'POST', '/admin/auto-emails')).toBeUndefined();
+    });
+
+    it('caps max sends at the ten the control declares', async () => {
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await autoEmailsTab(user);
+
+      await user.click(screen.getByRole('button', { name: 'New campaign' }));
+      await user.type(screen.getByRole('textbox', { name: /name/i }), 'invoice_nudge');
+      await user.selectOptions(screen.getByRole('combobox', { name: /template/i }), 'draft_ready');
+      await user.clear(screen.getByRole('spinbutton', { name: /max sends/i }));
+      await user.type(screen.getByRole('spinbutton', { name: /max sends/i }), '50');
+      await user.click(screen.getByRole('button', { name: 'Create campaign' }));
+
+      expect(await screen.findByText('Max sends must be at most 10.')).toBeInTheDocument();
+      expect(wrote(calls, 'POST', '/admin/auto-emails')).toBeUndefined();
+    });
+
+    it('leaves the repeat box optional, but floors it once it is filled', async () => {
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await autoEmailsTab(user);
+
+      await user.click(screen.getByRole('button', { name: 'New campaign' }));
+      await user.type(screen.getByRole('textbox', { name: /name/i }), 'invoice_nudge');
+      await user.selectOptions(screen.getByRole('combobox', { name: /template/i }), 'draft_ready');
+      await user.type(screen.getByRole('spinbutton', { name: /repeat every/i }), '0');
+      await user.click(screen.getByRole('button', { name: 'Create campaign' }));
+
+      expect(await screen.findByText('Repeat must be at least 1.')).toBeInTheDocument();
+      expect(wrote(calls, 'POST', '/admin/auto-emails')).toBeUndefined();
+    });
+
+    it('creates the campaign when the repeat box is left blank', async () => {
+      const user = userEvent.setup();
+      const { calls } = mockApi();
+      renderPage();
+      await autoEmailsTab(user);
+
+      await user.click(screen.getByRole('button', { name: 'New campaign' }));
+      await user.type(screen.getByRole('textbox', { name: /name/i }), 'invoice_nudge');
+      await user.selectOptions(screen.getByRole('combobox', { name: /template/i }), 'draft_ready');
+      await user.click(screen.getByRole('button', { name: 'Create campaign' }));
+
+      await waitFor(() =>
+        expect(wrote(calls, 'POST', '/admin/auto-emails')?.body).toMatchObject({
+          name: 'invoice_nudge',
+          template_key: 'draft_ready',
+          repeat_hours: null,
+        }),
+      );
+    });
+  });
 });

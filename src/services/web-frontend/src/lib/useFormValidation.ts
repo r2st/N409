@@ -210,6 +210,28 @@ export function integer<V>(key: keyof V, label: string): Validator<V> {
 }
 
 /**
+ * Matches a regular expression.
+ *
+ * For the boxes carrying a `pattern` attribute — the template and campaign keys,
+ * which are slugs the workflow code looks up by exact string. `message` is
+ * written out by the caller rather than derived, because "must match
+ * /^[a-z0-9_]+$/" is not something to put in front of anyone.
+ *
+ * The expression is anchored here rather than at each call site: `pattern` on an
+ * input matches the whole value, and a bare `[a-z0-9_]+` translated literally to
+ * `RegExp.test` would accept "Payment Reminder!" on the strength of the "ayment"
+ * inside it.
+ */
+export function pattern<V>(key: keyof V, re: RegExp, message: string): Validator<V> {
+  const anchored = new RegExp(`^(?:${re.source})$`, re.flags.replace('g', ''));
+  return (values) => {
+    const value = String(values[key] ?? '').trim();
+    if (!value) return null; // the field's own required rule owns the empty case
+    return anchored.test(value) ? null : message;
+  };
+}
+
+/**
  * Applies `validator` only when the field has been filled in.
  *
  * For the boxes that are genuinely optional but must be well-formed if used —

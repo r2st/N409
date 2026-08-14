@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  all,
+  numberMin,
+  numberRange,
+  optional,
+  pattern,
+  required,
+  useFormValidation,
+} from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import {
   TEMPLATE_CATEGORIES,
@@ -212,8 +221,31 @@ function TemplateEditor({
     ...new Set([...subject.matchAll(/\{\{(\w+)\}\}/g), ...body.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]!)),
   ].filter((name) => !declared.has(name));
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * `key` is only editable while the template is new — an existing one has the
+   * box disabled, and the PATCH does not carry it — so the slug rules apply to
+   * the new case only. Applying them always would lock an operator out of
+   * editing a template whose key predates the pattern.
+   *
+   * A subject is required for email and meaningless for SMS, and the box is not
+   * rendered at all in the SMS case; a rule that ignored `channel` would fail
+   * the form on a field nobody can see.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { key, subject, body, channel },
+    {
+      key: isNew
+        ? all(
+            required('key', 'Key'),
+            pattern('key', /[a-z0-9_]+/, 'Use lower-case letters, digits and underscores only.'),
+          )
+        : undefined,
+      subject: (v) => (v.channel === 'email' ? required<typeof v>('subject', 'Subject')(v) : null),
+      body: required('body', 'Body'),
+    },
+  );
+
+  const submit = handleSubmit(async () => {
     setBusy(true);
     setError(null);
     try {
@@ -234,7 +266,7 @@ function TemplateEditor({
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   /**
    * Previews what is on screen, not what is stored — the editor's content is
@@ -266,14 +298,20 @@ function TemplateEditor({
 
   return (
     <form
-      onSubmit={(e) => void submit(e)}
+      onSubmit={submit}
       className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+      noValidate
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Key" hint="Matches a workflow templateKey to override built-in content">
+        <Field
+          label="Key"
+          hint="Matches a workflow templateKey to override built-in content"
+          error={errorFor('key')}
+        >
           <TextInput
             value={key}
             onChange={(e) => setKey(e.target.value)}
+            onBlur={blurHandler('key')}
             disabled={!isNew}
             required
             pattern="[a-z0-9_]+"
@@ -314,23 +352,33 @@ function TemplateEditor({
         </Field>
       </div>
       {channel === 'email' && (
-        <Field label="Subject" hint="Click a variable below to insert it at the cursor">
+        <Field
+          label="Subject"
+          hint="Click a variable below to insert it at the cursor"
+          error={errorFor('subject')}
+        >
           <TextInput
             ref={subjectRef}
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
             onFocus={() => setFocused('subject')}
+            onBlur={blurHandler('subject')}
             required
           />
         </Field>
       )}
-      <Field label="Body" hint="Unknown placeholders are left verbatim at send time — see the warning below">
+      <Field
+        label="Body"
+        hint="Unknown placeholders are left verbatim at send time — see the warning below"
+        error={errorFor('body')}
+      >
         <textarea
           ref={bodyRef}
           className={`${inputClass} min-h-28 font-mono text-xs`}
           value={body}
           onChange={(e) => setBody(e.target.value)}
           onFocus={() => setFocused('body')}
+          onBlur={blurHandler('body')}
           required
         />
       </Field>
@@ -602,8 +650,29 @@ function AutoEmailEditor({
 
   const channelTemplates = templates.filter((t) => t.channel === channel);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * The three hour/count boxes are `number` state fed by `Number(e.target.value)`,
+   * so clearing one lands 0 in it rather than an empty string — which is why
+   * "Max sends" needs the floor restated: emptying the box used to leave a
+   * campaign that sends zero times and reports no error.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(
+    { name, templateKey, delayHours, repeatHours, maxSends },
+    {
+      name: isNew
+        ? all(
+            required('name', 'Name'),
+            pattern('name', /[a-z0-9_]+/, 'Use lower-case letters, digits and underscores only.'),
+          )
+        : undefined,
+      templateKey: required('templateKey', 'Template'),
+      delayHours: numberMin('delayHours', 0, 'Delay'),
+      repeatHours: optional('repeatHours', numberMin('repeatHours', 1, 'Repeat')),
+      maxSends: numberRange('maxSends', 1, 10, 'Max sends'),
+    },
+  );
+
+  const submit = handleSubmit(async () => {
     setBusy(true);
     setError(null);
     const body = {
@@ -629,18 +698,20 @@ function AutoEmailEditor({
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <form
-      onSubmit={(e) => void submit(e)}
+      onSubmit={submit}
       className="mt-4 space-y-4 rounded-lg border border-paper-300 bg-surface p-5 shadow-card"
+      noValidate
     >
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Name">
+        <Field label="Name" error={errorFor('name')}>
           <TextInput
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onBlur={blurHandler('name')}
             disabled={!isNew}
             required
             pattern="[a-z0-9_]+"
@@ -659,8 +730,13 @@ function AutoEmailEditor({
             <option value="sms">SMS (preview)</option>
           </Select>
         </Field>
-        <Field label="Template">
-          <Select value={templateKey} onChange={(e) => setTemplateKey(e.target.value)} required>
+        <Field label="Template" error={errorFor('templateKey')}>
+          <Select
+            value={templateKey}
+            onChange={(e) => setTemplateKey(e.target.value)}
+            onBlur={blurHandler('templateKey')}
+            required
+          >
             <option value="">Choose a template…</option>
             {channelTemplates.map((t) => (
               <option key={t.key} value={t.key}>
@@ -690,29 +766,36 @@ function AutoEmailEditor({
             ))}
           </Select>
         </Field>
-        <Field label="Delay (hours)">
+        <Field label="Delay (hours)" error={errorFor('delayHours')}>
           <TextInput
             type="number"
             min={0}
             value={delayHours}
             onChange={(e) => setDelayHours(Number(e.target.value))}
+            onBlur={blurHandler('delayHours')}
           />
         </Field>
-        <Field label="Repeat every (hours)" hint="Blank = send once">
+        <Field
+          label="Repeat every (hours)"
+          hint="Blank = send once"
+          error={errorFor('repeatHours')}
+        >
           <TextInput
             type="number"
             min={1}
             value={repeatHours}
             onChange={(e) => setRepeatHours(e.target.value === '' ? '' : Number(e.target.value))}
+            onBlur={blurHandler('repeatHours')}
           />
         </Field>
-        <Field label="Max sends">
+        <Field label="Max sends" error={errorFor('maxSends')}>
           <TextInput
             type="number"
             min={1}
             max={10}
             value={maxSends}
             onChange={(e) => setMaxSends(Number(e.target.value))}
+            onBlur={blurHandler('maxSends')}
           />
         </Field>
       </div>
