@@ -100,8 +100,25 @@ export function MarketingHeader() {
         <nav className="hidden items-center gap-1 md:flex" aria-label="Marketing">
           <div
             className="relative"
-            onMouseEnter={() => setProductsOpen(true)}
-            onMouseLeave={() => setProductsOpen(false)}
+            /* Pointer *type*, not plain mouse events.
+
+               A tap on a touch screen fires the compatibility mouse events off
+               the same gesture: `mouseenter` first, then `click`. Against a
+               hover-to-open trigger whose click toggles, that is open followed
+               immediately by close — so the products menu could not be opened
+               by tapping it at all. This nav is the one that shows from 768px
+               up, which is an iPad in portrait, so the whole product catalogue
+               was unreachable there except through the footer.
+
+               Hovering is a mouse affordance and stays one. A touch pointer
+               gets the click toggle on its own, which is the behaviour it
+               would have had if the trigger had never listened for hover. */
+            onPointerEnter={(e) => {
+              if (e.pointerType === 'mouse') setProductsOpen(true);
+            }}
+            onPointerLeave={(e) => {
+              if (e.pointerType === 'mouse') setProductsOpen(false);
+            }}
             /* Tabbing off the end of the panel is the keyboard equivalent of
                moving the mouse away, and closes it the same way. `relatedTarget`
                is where focus is going; null means it left the document. */
