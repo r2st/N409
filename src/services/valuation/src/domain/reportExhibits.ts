@@ -6,7 +6,7 @@ import { esc, P, section, table } from './exhibitHtml.js';
 import { MULTIPLE_LABELS, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
 import { requiredReturnRows } from './requiredReturns.js';
-import { sensitivityGrid } from './sensitivity.js';
+import { sensitivityGrid, sensitivityTables, type OpmInputs } from './sensitivity.js';
 import { VOLATILITY_CONFIDENCE_NOTES, VOLATILITY_METHOD_LABELS } from './volatility.js';
 import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
 import type { ProjectionRow, ProjectionYear } from '../repos/projections.js';
@@ -110,6 +110,7 @@ export type ScheduleId =
   | 'F'
   | 'F-1'
   | 'F-2'
+  | 'F-3'
   | 'G'
   | 'H'
   | 'H-1'
@@ -163,6 +164,7 @@ export const SCHEDULE_CATALOGUE: readonly ScheduleDescriptor[] = [
   { id: 'F', kind: 'Exhibit', name: 'Allocation of Equity Value', always: true },
   { id: 'F-1', kind: 'Exhibit', name: 'Selected Volatility', always: false },
   { id: 'F-2', kind: 'Exhibit', name: 'Allocation Sensitivity', always: false },
+  { id: 'F-3', kind: 'Exhibit', name: 'Risk-Free Rate Sensitivity', always: false },
   { id: 'G', kind: 'Exhibit', name: 'Probability-Weighted Expected Return Scenarios', always: false },
   { id: 'H', kind: 'Exhibit', name: 'Discounts and Concluded Value', always: true },
   { id: 'H-1', kind: 'Exhibit', name: 'Marketability Discount: Derivation', always: false },
@@ -1538,6 +1540,69 @@ function aggregatePreference(inputs: Record<string, unknown>): number | null {
 }
 
 /**
+ * `sensitivity.ts` is denominated in cents because the dashboard it was written
+ * for deals in cents. A 409A concludes to four decimal places — the convention
+ * `fmv_per_share` and Exhibit H both use — so passing cents would round $1.2345
+ * to $1.23 and print a grid that disagrees with the conclusion it is testing.
+ * The module's arithmetic is homogeneous in the two money inputs, so feeding it
+ * ten-thousandths instead makes its integer rounding land on the fourth
+ * decimal, and dividing back out is exact.
+ */
+const SENSITIVITY_SCALE = 10_000;
+
+/**
+ * The OPM as the sensitivity schedules re-strike it, or nothing.
+ *
+ * Every input or nothing. A grid struck on a defaulted volatility or a guessed
+ * term would be a table of numbers with no relationship to the conclusion above
+ * it, which is worse than the omission — and the allocation paths that do not
+ * run an OPM (current-value, as-converted) legitimately have no sigma, so this
+ * is the ordinary case rather than an error.
+ *
+ * Shared by F-2 and F-3 because the two schedules stress the same model on
+ * different axes: they must either both be printable from a given calculation
+ * or both be absent, and a second copy of this guard is how they would come to
+ * disagree about which.
+ */
+function sensitivityBasis(
+  inputs: Record<string, unknown>,
+  results: Record<string, unknown>,
+): OpmInputs | null {
+  const assumptions = record(results.assumptions);
+  const volatility = num(assumptions?.volatility);
+  const termYears = num(assumptions?.time_to_exit_years);
+  const riskFreeRate = num(assumptions?.risk_free_rate);
+  const equityValue = num(results.equity_value);
+  const commonShares = num(results.fully_diluted_common);
+  const strike = aggregatePreference(inputs);
+  const dlom = num(record(results.discounts)?.dlom) ?? 0;
+
+  if (
+    volatility === null ||
+    termYears === null ||
+    riskFreeRate === null ||
+    equityValue === null ||
+    commonShares === null ||
+    strike === null ||
+    volatility <= 0 ||
+    termYears <= 0 ||
+    commonShares <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    equityValueCents: equityValue * SENSITIVITY_SCALE,
+    strikeCents: strike * SENSITIVITY_SCALE,
+    volatility,
+    termYears,
+    riskFreeRate,
+    commonShares,
+    dlom,
+  };
+}
+
+/**
  * Exhibit F-2 — the concluded value across a volatility × term grid.
  *
  * Every other schedule in this file reports what the model *did*. This one
@@ -1563,57 +1628,13 @@ export function sensitivityExhibit(
   results: Record<string, unknown>,
   ctx: ExhibitContext,
 ): ReportPdfSection | null {
-  const assumptions = record(results.assumptions);
-  const volatility = num(assumptions?.volatility);
-  const termYears = num(assumptions?.time_to_exit_years);
-  const riskFreeRate = num(assumptions?.risk_free_rate);
-  const equityValue = num(results.equity_value);
-  const commonShares = num(results.fully_diluted_common);
-  const strike = aggregatePreference(inputs);
-  const dlom = num(record(results.discounts)?.dlom) ?? 0;
+  const basis = sensitivityBasis(inputs, results);
+  if (basis === null) return null;
+  const { volatility, termYears } = basis;
 
-  /*
-   * Every input or nothing. A grid struck on a defaulted volatility or a
-   * guessed term would be a table of numbers with no relationship to the
-   * conclusion above it, which is worse than the omission — and the allocation
-   * paths that do not run an OPM (current-value, as-converted) legitimately
-   * have no sigma, so this is the ordinary case rather than an error.
-   */
-  if (
-    volatility === null ||
-    termYears === null ||
-    riskFreeRate === null ||
-    equityValue === null ||
-    commonShares === null ||
-    strike === null ||
-    volatility <= 0 ||
-    termYears <= 0 ||
-    commonShares <= 0
-  ) {
-    return null;
-  }
+  const grid = sensitivityGrid(basis);
 
-  /*
-   * `sensitivity.ts` is denominated in cents because the dashboard it was
-   * written for deals in cents. A 409A concludes to four decimal places — the
-   * convention `fmv_per_share` and Exhibit H both use — so passing cents would
-   * round $1.2345 to $1.23 and print a grid that disagrees with the conclusion
-   * it is testing. The module's arithmetic is homogeneous in the two money
-   * inputs, so feeding it ten-thousandths instead makes its integer rounding
-   * land on the fourth decimal, and dividing back out is exact.
-   */
-  const SCALE = 10_000;
-  const grid = sensitivityGrid({
-    equityValueCents: equityValue * SCALE,
-    strikeCents: strike * SCALE,
-    volatility,
-    termYears,
-    riskFreeRate,
-    commonShares,
-    dlom,
-  });
-
-  const money = (scaled: number) => formatCurrency(scaled / SCALE, ctx.currency, 4);
+  const money = (scaled: number) => formatCurrency(scaled / SENSITIVITY_SCALE, ctx.currency, 4);
   const signedPercent = (d: number) => `${d > 0 ? '+' : ''}${formatPercent(d, 1)}`;
 
   const head = ['Volatility', ...grid.terms.map((t) => `${t.toFixed(2)} yrs`)];
@@ -1658,6 +1679,130 @@ export function sensitivityExhibit(
         `${money(base)}. <strong>No cell other than the base case is adopted by this valuation.</strong> ` +
         'The table is presented so that the sensitivity of the conclusion to its two least observable ' +
         'inputs can be judged, not to offer a range of defensible values.',
+    ),
+  ]);
+}
+
+// ── Exhibit F-3 — the same conclusion against the discount rate of the option ─
+
+/** The step set the risk-free axis is stressed over: ±100bp and ±200bp. */
+const RFR_STEPS = [-0.02, -0.01, 0, 0.01, 0.02];
+
+/**
+ * Index of the axis value the conclusion actually adopted.
+ *
+ * By position rather than by `deltaFromBase === 0`, which is what F-2 can
+ * afford to do and this exhibit cannot: the concluded value barely moves across
+ * a risk-free axis, so two neighbouring cells can round to the same delta and
+ * both would claim to be the base. The applied cell is the one whose axis value
+ * is the applied one, and there is exactly one of those.
+ */
+function appliedIndex(values: readonly number[], applied: number): number {
+  let best = 0;
+  for (let i = 1; i < values.length; i++) {
+    if (Math.abs(values[i]! - applied) < Math.abs(values[best]! - applied)) best = i;
+  }
+  return best;
+}
+
+/**
+ * Exhibit F-3 — the concluded value against the risk-free rate.
+ *
+ * F-2 stresses the two inputs nobody can observe. This one stresses the third
+ * input of the same option model, and it is here for a different reason: the
+ * risk-free rate *is* observable — a constant-maturity Treasury yield at the
+ * valuation date — so the question a reviewer asks is not "what if it is wrong"
+ * but "what if you matched the wrong maturity". Term-matching is a choice, the
+ * curve between two and ten years is not flat, and the deliverable never said
+ * what the choice was worth.
+ *
+ * Two tables rather than one, because the rate does not act alone: it enters
+ * Black-Scholes through the discounted strike, so its effect depends on how far
+ * out the strike sits (the term) and on how much of the option's value is time
+ * value rather than intrinsic (the volatility). Stressing it against each in
+ * turn is what shows whether the two interact.
+ *
+ * The usual outcome — and the one worth being able to demonstrate — is that a
+ * 200bp move in the rate is worth a fraction of what a 10% move in sigma is.
+ * That is a robustness statement about the conclusion, and it can only be made
+ * by printing it. As in F-2, no cell but the applied one is adopted.
+ */
+export function rfrSensitivityExhibit(
+  inputs: Record<string, unknown>,
+  results: Record<string, unknown>,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const basis = sensitivityBasis(inputs, results);
+  if (basis === null) return null;
+  const { volatility, termYears, riskFreeRate } = basis;
+
+  /*
+   * A rate near zero clamps the downward steps onto 0, and the table would then
+   * print the same row twice under two different headings. Deduplicating the
+   * resulting *rates* rather than the steps keeps the applied row and drops
+   * only the repeats — a 2021-dated valuation struck at 45bp gets a short
+   * table, which is the honest one.
+   */
+  const rfrSteps = [...new Set(RFR_STEPS.map((s) => Math.max(0, riskFreeRate + s)))]
+    .map((rate) => rate - riskFreeRate)
+    .sort((a, b) => a - b);
+
+  const { base, tables } = sensitivityTables(basis, { rfrSteps });
+  const money = (scaled: number) => formatCurrency(scaled / SENSITIVITY_SCALE, ctx.currency, 4);
+  // Two decimals, not F-2's one: the moves this exhibit reports are small by
+  // construction, and "+0.0%" against four different cells says nothing.
+  const signedPercent = (d: number) => `${d > 0 ? '+' : ''}${formatPercent(d, 2)}`;
+
+  const rfrValues = tables.rfr_vol.rowValues;
+  const baseRfrRow = appliedIndex(rfrValues, riskFreeRate);
+
+  /** One stress table, rates down the side and `label(v)` across the top. */
+  const grid = (
+    table_: typeof tables.rfr_vol,
+    label: (value: number) => string,
+    appliedCol: number,
+  ): string =>
+    table({
+      head: ['Risk-free rate', ...table_.colValues.map(label)],
+      rows: table_.rows.map((row, i) => [
+        formatPercent(table_.rowValues[i]!, 2),
+        ...row.map((cell, j) =>
+          i === baseRfrRow && j === appliedCol
+            ? `<strong>${money(cell.fmvPerShareCents)}</strong> (base)`
+            : `${money(cell.fmvPerShareCents)} (${signedPercent(cell.deltaFromBase)})`,
+        ),
+      ]),
+    });
+
+  const volCol = appliedIndex(tables.rfr_vol.colValues, volatility);
+  const termCol = appliedIndex(tables.rfr_term.colValues, termYears);
+
+  // The rate's effect in isolation: the applied volatility held, the rate moved.
+  const isolated = tables.rfr_vol.rows.map((row) => row[volCol]!.fmvPerShareCents);
+  const low = Math.min(...isolated);
+  const high = Math.max(...isolated);
+  const concluded = base.fmvPerShareCents;
+  const spread = concluded > 0 ? (high - low) / concluded : 0;
+
+  return section(SCHEDULE['F-3'], [
+    P(
+      `The allocation discounts the preference stack at the risk-free rate, applied here at ` +
+        `<strong>${formatPercent(riskFreeRate, 2)}</strong> — the constant-maturity Treasury yield ` +
+        `matched to the ${termYears.toFixed(2)}-year expected term at the valuation date. Unlike the ` +
+        'volatility and the term of Exhibit F-2 the rate is observed rather than estimated, so what is ' +
+        'tested below is not the rate itself but the maturity it was matched to: the tables restate the ' +
+        'concluded value per share with the rate moved 100 and 200 basis points either way, against the ' +
+        'volatility and against the term in turn.',
+    ),
+    P('<strong>Risk-free rate against expected volatility</strong>'),
+    grid(tables.rfr_vol, (v) => formatPercent(v, 1), volCol),
+    P('<strong>Risk-free rate against expected term</strong>'),
+    grid(tables.rfr_term, (t) => `${t.toFixed(2)} yrs`, termCol),
+    P(
+      `Holding the volatility and term at the values the conclusion adopts, the full ±200 basis-point ` +
+        `range moves the concluded value from <strong>${money(low)}</strong> to ` +
+        `<strong>${money(high)}</strong> — a spread of ${formatPercent(spread, 2)} of the concluded ` +
+        `${money(concluded)}. <strong>No cell other than the base case is adopted by this valuation.</strong>`,
     ),
   ]);
 }
@@ -2869,6 +3014,10 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     // And F-2 after F-1: F-1 argues the volatility, F-2 shows what the
     // conclusion does if that argument is wrong.
     sensitivityExhibit(inputs, results, ctx),
+    // And F-3 after F-2: the same model, the same base case, the third of its
+    // three market inputs — read after the two the reader was told are
+    // estimates, because the point of it is that this one is not.
+    rfrSensitivityExhibit(inputs, results, ctx),
     pwermExhibit(results, ctx),
     discountExhibit(results, ctx),
     // Immediately after H, because it is H's supporting detail — the same

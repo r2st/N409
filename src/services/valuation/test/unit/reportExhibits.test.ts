@@ -15,6 +15,7 @@ import {
   peerSetExhibit,
   pwermExhibit,
   sensitivityExhibit,
+  rfrSensitivityExhibit,
   financialsExhibit,
   waccExhibit,
   scheduleTitle,
@@ -23,7 +24,7 @@ import {
 } from '../../src/domain/reportExhibits.js';
 import { ALLOWED_TAGS, sanitizeHtml } from '../../src/domain/report.js';
 import { renderedScheduleIds } from '../../src/domain/reportExhibitIndex.js';
-import { sensitivityGrid } from '../../src/domain/sensitivity.js';
+import { sensitivityGrid, sensitivityTables } from '../../src/domain/sensitivity.js';
 import { computeWorkbook } from '../../src/domain/workbook.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
 import type { ProjectionRow } from '../../src/repos/projections.js';
@@ -150,6 +151,7 @@ describe('buildExhibits', () => {
       // F-2 needs only what an OPM run already has — sigma, the term, the
       // rate, the preference stack — so it is present wherever an OPM is.
       'Exhibit F-2 — Allocation Sensitivity',
+      'Exhibit F-3 — Risk-Free Rate Sensitivity',
       'Exhibit H — Discounts and Concluded Value',
     ]);
   });
@@ -405,10 +407,10 @@ describe('the schedule catalogue', () => {
     const bare = buildExhibits(calculation(), CONTEXT).map((s) => s.heading);
     for (const s of SCHEDULE_CATALOGUE) {
       expect(bare.includes(scheduleTitle(s)), `${scheduleTitle(s)} always=${s.always}`).toBe(
-        // C, D and F-2 survive the bare fixture because INPUTS carries an
+        // C, D, F-2 and F-3 survive the bare fixture because INPUTS carries an
         // income approach, a market approach and a full OPM assumption set;
-        // none of the three is guaranteed in general.
-        s.always || s.id === 'C' || s.id === 'D' || s.id === 'F-2',
+        // none of the four is guaranteed in general.
+        s.always || s.id === 'C' || s.id === 'D' || s.id === 'F-2' || s.id === 'F-3',
       );
     }
     expect(SCHEDULE_CATALOGUE.filter((s) => s.always).map((s) => s.id)).toEqual(['A', 'B', 'F', 'H']);
@@ -941,6 +943,117 @@ describe('Exhibit F-2 — allocation sensitivity', () => {
   });
 });
 
+// ── Exhibit F-3 ──────────────────────────────────────────────────────────────
+
+describe('Exhibit F-3 — risk-free rate sensitivity', () => {
+  const f3 = (results: Record<string, unknown> = RESULTS, inputs: Record<string, unknown> = INPUTS) =>
+    rfrSensitivityExhibit(inputs, results, CONTEXT);
+
+  it('stresses the rate against both of the other option inputs', () => {
+    const s = f3()!;
+    expect(s.heading).toBe('Exhibit F-3 — Risk-Free Rate Sensitivity');
+    const seen = plain(s.html);
+    expect(seen).toContain('Risk-free rate against expected volatility');
+    expect(seen).toContain('Risk-free rate against expected term');
+    // The applied rate, 200bp either side of it, and the two column axes.
+    expect(seen).toContain('4.20%');
+    expect(seen).toContain('2.20%');
+    expect(seen).toContain('6.20%');
+    expect(seen).toContain('65.0%');
+    expect(seen).toContain('3.50 yrs');
+  });
+
+  it('marks exactly one cell per table as the applied case', () => {
+    // Not `deltaFromBase === 0`, which is what F-2 can afford: the conclusion
+    // barely moves across a risk-free axis, so neighbouring cells round to the
+    // same delta and would each claim to be the base if position were not what
+    // decided it.
+    const html = f3()!.html;
+    expect(html.match(/\(base\)/g)).toHaveLength(2);
+  });
+
+  it('prices the option higher as the rate rises — rho on a call is positive', () => {
+    // A higher rate discounts the preference strike harder, so common is worth
+    // more. A table that fell would mean the exhibit stresses something other
+    // than the model it describes.
+    const { tables } = sensitivityTables({
+      equityValueCents: 42_000_000 * 10_000,
+      strikeCents: 10_000_000 * 10_000,
+      volatility: 0.65,
+      termYears: 3.5,
+      riskFreeRate: 0.042,
+      commonShares: 8_000_000,
+      dlom: 0.25,
+    });
+    for (const table_ of [tables.rfr_vol, tables.rfr_term]) {
+      for (let col = 0; col < table_.colValues.length; col++) {
+        for (let row = 1; row < table_.rows.length; row++) {
+          expect(table_.rows[row]![col]!.fmvPerShareCents).toBeGreaterThan(
+            table_.rows[row - 1]![col]!.fmvPerShareCents,
+          );
+        }
+      }
+    }
+  });
+
+  it('reports the rate’s effect in isolation, not the whole table’s range', () => {
+    // The closing sentence is the one figure a reviewer takes away, and it is
+    // about the rate: the volatility and term are held at the applied values.
+    // Mixing in the vol axis would attribute sigma's spread to the rate.
+    const seen = plain(f3()!.html);
+    expect(seen).toContain('Holding the volatility and term at the values the conclusion adopts');
+    expect(seen).toContain('No cell other than the base case is adopted');
+  });
+
+  it('moves the conclusion far less than volatility does', () => {
+    // The robustness statement the exhibit exists to make. 200bp of rate is
+    // worth a fraction of 20% of sigma, and if that ever stopped being true of
+    // this model the exhibit's framing would be wrong.
+    const opm = {
+      equityValueCents: 42_000_000 * 10_000,
+      strikeCents: 10_000_000 * 10_000,
+      volatility: 0.65,
+      termYears: 3.5,
+      riskFreeRate: 0.042,
+      commonShares: 8_000_000,
+      dlom: 0.25,
+    };
+    const { tables } = sensitivityTables(opm);
+    const rfrEffect = Math.abs(tables.rfr_vol.rows.at(-1)![2]!.deltaFromBase);
+    const volEffect = Math.abs(tables.rfr_vol.rows[2]!.at(-1)!.deltaFromBase);
+    expect(rfrEffect).toBeLessThan(volEffect);
+  });
+
+  it('does not print the same rate twice when the downward steps clamp at zero', () => {
+    // A 2021-dated valuation struck at 45bp cannot be stressed 200bp downward.
+    // Clamping without deduplicating would print 0.00% as three separate rows
+    // carrying three identical sets of figures.
+    const nearZero = { ...RESULTS, assumptions: { ...RESULTS.assumptions, risk_free_rate: 0.0045 } };
+    const seen = plain(f3(nearZero)!.html);
+    expect(seen.match(/0\.00%/g)).toHaveLength(2); // one row heading per table
+    expect(seen).toContain('0.45%');
+  });
+
+  it('is absent wherever F-2 is absent — the two stress one model', () => {
+    // Same guard, deliberately shared: a report carrying one sensitivity
+    // schedule and not the other would be describing an OPM it could and could
+    // not re-strike at the same time.
+    for (const [results, inputs] of [
+      [{ ...RESULTS, assumptions: {} }, INPUTS],
+      [{ ...RESULTS, fully_diluted_common: 0 }, INPUTS],
+      [RESULTS, {}],
+    ] as Array<[Record<string, unknown>, Record<string, unknown>]>) {
+      expect(rfrSensitivityExhibit(inputs, results, CONTEXT)).toBeNull();
+      expect(sensitivityExhibit(inputs, results, CONTEXT)).toBeNull();
+    }
+  });
+
+  it('emits only markup the report renderer understands', () => {
+    const html = f3()!.html;
+    expect(sanitizeHtml(html)).toBe(html);
+  });
+});
+
 describe('PWERM scenario exhibit', () => {
   const results = {
     equity_value: 30_000_000,
@@ -1323,6 +1436,7 @@ describe('peer set exhibit', () => {
       'Exhibit D-1 — Guideline Company Set',
       'Exhibit F — Allocation of Equity Value',
       'Exhibit F-2 — Allocation Sensitivity',
+      'Exhibit F-3 — Risk-Free Rate Sensitivity',
       'Exhibit H — Discounts and Concluded Value',
     ]);
   });

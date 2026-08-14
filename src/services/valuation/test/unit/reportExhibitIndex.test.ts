@@ -54,6 +54,7 @@ describe('renderedScheduleIds', () => {
         'F',
         'F-1',
         'F-2',
+        'F-3',
         'G',
         'H',
         'H-1',

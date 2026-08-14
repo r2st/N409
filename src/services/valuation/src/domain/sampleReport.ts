@@ -101,6 +101,8 @@ const EXHIBIT_BLURBS: Record<string, string> = {
   'F-1': 'The guideline companies, lookback window and the selected volatility.',
   'F-2':
     'What the concluded value per share does across a range of volatility and time to exit — the two inputs of the allocation model that are estimated rather than observed.',
+  'F-3':
+    'What the concluded value per share does as the risk-free rate moves — the test of the Treasury maturity the allocation was matched to.',
   G: 'Each exit scenario, its probability, and the per-share value it implies.',
   H: 'DLOC, DLOM and the concluded fair market value per share.',
   'H-1': 'The option-model inputs and the study data supporting the DLOM.',
