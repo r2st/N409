@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
+import { newUlid } from '@n409/shared';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -114,6 +115,16 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
         'audit-trail.json',
         'change-log.csv',
         'calculations.json',
+        // The engine's own step record per run (migration 0126). It answers
+        // "how", which the result document structurally cannot, and no list
+        // query carries the column — the bundle is the one caller for which
+        // that is the point.
+        'calculation-traces.json',
+        // The grid the analyst typed, with the data-quality pass over it.
+        // `calculations.inputs` is the payload *derived* from it, so a bundle
+        // without this gave the auditor the derived figures and never the ones
+        // they came from.
+        'workbook.json',
         'documents.json',
         'comments.json',
         'signatures.json',
@@ -221,6 +232,124 @@ describe.skipIf(!dbUp)('evidence bundle export', () => {
     expect(manifest.audit_summary.changed_fields).toContain('dlom');
     expect(manifest.counts.field_changes).toBeGreaterThanOrEqual(1);
     expect(manifest.files).toContain('change-log.csv');
+  });
+
+  /**
+   * The two artifacts an auditor asks for that the bundle used to omit.
+   *
+   * Both were computed and persisted and reached nobody: the engine's step
+   * trace is written on every traced run and read only by the analyst's
+   * inspector, and the entered workbook is the grid every derived figure in
+   * `calculations.inputs` came from. A bundle answering "what is the number"
+   * without either cannot answer "how did you get it" or "from what".
+   */
+  it('carries the engine step trace and the workbook the figures came from', async () => {
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/valuations/${valuationId}/workbook`,
+      headers: authHeader(ops.token),
+      payload: {
+        cells: [
+          { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 6_000_000 },
+          // A cost line entered negative — the finding the anomaly pass most
+          // deserved to exist for, since the model subtracts these rows and so
+          // *adds back* a negative one, overstating every margin below it.
+          { sheet: 'income_statement', row_key: 'cogs', column_key: 'fy_current', value: -2_000_000 },
+        ],
+      },
+    });
+    expect(patched.statusCode).toBe(200);
+
+    // A traced run, written directly: this engagement has no engine behind it,
+    // and what is under test is that the column reaches the bundle, not how it
+    // came to be filled (calculationInspector.test.ts covers that end).
+    const tracedCalculationId = newUlid();
+    await pool.query(
+      `INSERT INTO calculations (id, valuation_id, engine_version, status, inputs, results, diagnostics, trace)
+       VALUES ($1, $2, 'py-stub', 'succeeded', '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, $3::jsonb)`,
+      [
+        tracedCalculationId,
+        valuationId,
+        JSON.stringify([
+          {
+            seq: 1,
+            key: 'approach.asset',
+            label: 'Asset approach',
+            status: 'skipped',
+            inputs: { weight: 0 },
+            outputs: null,
+            note: 'zero weight — excluded from the conclusion',
+            elapsed_ms: 0.01,
+          },
+          {
+            seq: 2,
+            key: 'approach.market',
+            label: 'Market approach (comparables)',
+            status: 'reused',
+            inputs: null,
+            outputs: { equity_value: 28_000_000 },
+            note: 'carried over from the previous run',
+            elapsed_ms: 0.02,
+          },
+          {
+            seq: 3,
+            key: 'weighting',
+            label: 'Weighted equity value',
+            status: 'computed',
+            inputs: { weight_total: 1 },
+            outputs: { equity_value: 28_000_000 },
+            note: null,
+            elapsed_ms: 0.5,
+          },
+        ]),
+      ],
+    );
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/evidence-bundle`,
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(200);
+    successfulExports += 1;
+    const entries = zipEntries(res.rawPayload);
+
+    const workbook = JSON.parse(entries.get('workbook.json')!);
+    const income = workbook.sheets.find((s: { key: string }) => s.key === 'income_statement');
+    expect(income).toBeDefined();
+    // The grid itself, not the engine payload derived from it.
+    expect(JSON.stringify(income)).toContain('6000000');
+    // And the checks that ran over it, which is what makes the grid reviewable
+    // rather than merely present.
+    expect(workbook.anomalies.empty).toBe(false);
+    const negativeCost = workbook.anomalies.anomalies.find(
+      (a: { row_key: string | null }) => a.row_key === 'cogs',
+    );
+    expect(negativeCost).toBeDefined();
+    expect(negativeCost.severity).toBe('error');
+
+    const traces = JSON.parse(entries.get('calculation-traces.json')!);
+    expect(traces).toHaveLength(1);
+    // The two step statuses a results document structurally cannot express: an
+    // approach excluded on purpose and one whose figure is older than the
+    // inputs printed beside it. They are the reason the trace is worth
+    // packaging at all, so they are what the assertion names.
+    expect(traces[0].id).toBe(tracedCalculationId);
+    expect(traces[0].trace.map((s: { status: string }) => s.status)).toEqual([
+      'skipped',
+      'reused',
+      'computed',
+    ]);
+    expect(traces[0].trace[0].note).toBe('zero weight — excluded from the conclusion');
+
+    const manifest = JSON.parse(entries.get('manifest.json')!);
+    expect(manifest.counts.workbook_cells).toBe(2);
+    expect(manifest.counts.workbook_anomalies).toBeGreaterThanOrEqual(1);
+    expect(manifest.counts.calculation_traces).toBe(traces.length);
+    // A trace count above the calculation count would read as a mismatch.
+    expect(manifest.counts.calculation_traces).toBeLessThanOrEqual(manifest.counts.calculations);
+    expect(manifest.files).toContain('calculation-traces.json');
+    expect(manifest.files).toContain('workbook.json');
   });
 
   it('client cannot reach another user’s bundle (404, not 403 leak)', async () => {

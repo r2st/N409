@@ -8,7 +8,10 @@ import { changeLogCsv, describeEvent, summarizeAuditTrail } from '../domain/audi
 import { listEvents, recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
 import { findValuationById } from '../repos/valuations.js';
-import { listCalculations } from '../repos/calculations.js';
+import { listCalculations, listCalculationTraces } from '../repos/calculations.js';
+import { listWorkbookCells, WORKBOOK_CELL_LIMIT } from '../repos/workbook.js';
+import { computeWorkbook } from '../domain/workbook.js';
+import { detectFinancialAnomalies } from '../domain/financialAnomalies.js';
 import { listDocuments } from '../repos/documents.js';
 import { COMMENT_PAGE_LIMIT, listComments } from '../repos/comments.js';
 import { listSignatures } from '../repos/signatures.js';
@@ -61,21 +64,33 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
       ]);
     // Audit-defense additions (IMPROVEMENTS_RESEARCH §5.3/§4.3/§5.7): the
     // methodology decision log, QA review history, and saved scenarios.
-    const [decisions, qaReviews, scenarios, research, comparables] = await Promise.all([
-      listDecisions(deps.pool, id),
-      listQaReviews(deps.pool, id),
-      listScenarios(deps.pool, id),
-      // Every research row including superseded ones (migration 0116). An
-      // auditor asking "what did you read, and what did you read before that"
-      // is asking exactly what the supersede chain records; a bundle that
-      // shipped only the live rows would answer half the question.
-      listMarketResearch(deps.pool, id, { includeSuperseded: true }),
-      // The peer set behind the market approach (migration 0119), included and
-      // excluded rows alike. The excluded ones are the half an auditor asks
-      // about, so a bundle carrying only the retained comps would be answering
-      // the easy question.
-      listComparableItems(deps.pool, id),
-    ]);
+    const [decisions, qaReviews, scenarios, research, comparables, traces, workbookCells] = await Promise.all(
+      [
+        listDecisions(deps.pool, id),
+        listQaReviews(deps.pool, id),
+        listScenarios(deps.pool, id),
+        // Every research row including superseded ones (migration 0116). An
+        // auditor asking "what did you read, and what did you read before that"
+        // is asking exactly what the supersede chain records; a bundle that
+        // shipped only the live rows would answer half the question.
+        listMarketResearch(deps.pool, id, { includeSuperseded: true }),
+        // The peer set behind the market approach (migration 0119), included and
+        // excluded rows alike. The excluded ones are the half an auditor asks
+        // about, so a bundle carrying only the retained comps would be answering
+        // the easy question.
+        listComparableItems(deps.pool, id),
+        // The engine's own step record for each run (migration 0126). It is the
+        // only artifact that answers "how" rather than "what", and it says the
+        // two things `results` structurally cannot: which approaches were
+        // skipped, and which carried a figure reused from an earlier run.
+        listCalculationTraces(deps.pool, id),
+        // The entered workbook. `calculations.inputs` holds the engine payload
+        // derived from it, not the grid an analyst typed and Appendix II prints
+        // — an auditor reconciling the report to the source has been given the
+        // derived figures and never the ones they were derived from.
+        listWorkbookCells(deps.pool, id),
+      ],
+    );
 
     // Review tasks carry the approve / request-changes workflow; decisions
     // themselves are `review_decision` events (already in events.json).
@@ -130,11 +145,31 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const auditEntries = events.map(describeEvent);
     const auditSummary = summarizeAuditTrail(auditEntries);
 
+    /*
+     * The workbook as the analyst left it, resolved through the same reader the
+     * workbook route and Appendix II use, with the data-quality pass over it.
+     *
+     * The findings are not a grade and are not being published to the client:
+     * several of them are ordinary for an early-stage company, and the severity
+     * says how loudly to ask rather than whether to proceed (see
+     * domain/financialAnomalies.ts). What they answer here is the question an
+     * auditor actually asks about the statements a valuation rests on — was
+     * anything about them queried, and by what — which is unanswerable from a
+     * bundle that carries the grid without the checks that ran over it.
+     */
+    const workbook = computeWorkbook(workbookCells.cells);
+    const anomalies = detectFinancialAnomalies(workbook);
+
     const entries: ZipEntry[] = [
       { name: 'events.json', data: toJson(events) },
       { name: 'audit-trail.json', data: toJson({ summary: auditSummary, entries: auditEntries }) },
       { name: 'change-log.csv', data: changeLogCsv(auditEntries) },
       { name: 'calculations.json', data: toJson(calculations) },
+      { name: 'calculation-traces.json', data: toJson(traces) },
+      {
+        name: 'workbook.json',
+        data: toJson({ sheets: workbook, anomalies, truncated: workbookCells.truncated }),
+      },
       { name: 'documents.json', data: toJson(documentManifest) },
       { name: 'comments.json', data: toJson(comments) },
       { name: 'signatures.json', data: toJson(signatures) },
@@ -185,6 +220,11 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         events: events.length,
         field_changes: auditEntries.reduce((n, e) => n + e.changes.length, 0),
         calculations: calculations.length,
+        // Runs that carry one, not steps: a bundle whose trace count exceeds
+        // its calculation count would read as a mismatch rather than as depth.
+        calculation_traces: traces.length,
+        workbook_cells: workbookCells.cells.length,
+        workbook_anomalies: anomalies.anomalies.length,
         documents: documents.length,
         comments: comments.length,
         signatures: signatures.length,
@@ -200,7 +240,13 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         report_versions: versions.length,
       },
       /** Lists this bundle carries only a page of, and the page size. */
-      truncated: commentsTruncated ? { comments: COMMENT_PAGE_LIMIT } : {},
+      truncated: {
+        ...(commentsTruncated ? { comments: COMMENT_PAGE_LIMIT } : {}),
+        // Same reason as comments: a grid that came back at the cap is a grid
+        // with rows the auditor is not being shown, and a bundle that says
+        // nothing about it reads as complete.
+        ...(workbookCells.truncated ? { workbook_cells: WORKBOOK_CELL_LIMIT } : {}),
+      },
       files: ['manifest.json', ...entries.map((e) => e.name)],
     };
     entries.unshift({ name: 'manifest.json', data: toJson(manifest) });

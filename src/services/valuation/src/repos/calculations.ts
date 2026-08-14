@@ -172,6 +172,45 @@ export async function listCalculations(
 }
 
 /**
+ * Every trace this valuation still holds, for the evidence bundle.
+ *
+ * The comment on `CALCULATION_COLUMNS` explains why no list query carries the
+ * column: it is the engine's whole working state per run, and pulling it across
+ * the wire for a list view would be all of that for nobody. An audit-defense
+ * export is the one caller for which it is exactly the point — "how did you get
+ * this number" is what the trace answers, step by step, including the two
+ * things a results document structurally cannot say (an approach that was
+ * *skipped* and one whose figure was *reused* from an earlier run are both
+ * simply absent from `results.approaches`). So it is a second, deliberate
+ * query rather than a widening of the shared column list.
+ *
+ * Same `LIMIT 20` and same ordering as `listCalculations`, so the traces in a
+ * bundle describe the runs in the same bundle rather than a longer or shorter
+ * history nobody can line up against `calculations.json`.
+ */
+export async function listCalculationTraces(
+  pool: pg.Pool,
+  valuationId: string,
+): Promise<Array<{ id: string; created_at: Date; engine_version: string; trace: CalculationStep[] }>> {
+  const { rows } = await pool.query<{
+    id: string;
+    created_at: Date;
+    engine_version: string;
+    trace: CalculationStep[];
+  }>(
+    `SELECT id, created_at, engine_version, trace
+       FROM (
+         SELECT id, created_at, engine_version, trace
+           FROM calculations WHERE valuation_id = $1 ORDER BY created_at DESC LIMIT 20
+       ) recent
+      WHERE trace IS NOT NULL
+      ORDER BY created_at DESC`,
+    [valuationId],
+  );
+  return rows;
+}
+
+/**
  * One run with its trace — the inspector's only reader of the column.
  *
  * Scoped by valuation as well as by id so a calculation id from one engagement
