@@ -4,6 +4,7 @@ import {
   HOCKEY_STICK_FLOOR,
   REVENUE_DECLINE_FRACTION,
   REVENUE_JUMP_MULTIPLE,
+  WORKING_CAPITAL_YEARS,
   type FinancialAnomaly,
 } from '../../src/domain/financialAnomalies.js';
 import { computeWorkbook, type WorkbookCellInput } from '../../src/domain/workbook.js';
@@ -388,6 +389,239 @@ describe('financial statement anomalies', () => {
       // A modelled forward balance sheet is optional in a way a historical one
       // is not; requiring it would fire on nearly every engagement.
       expect(checks(report.anomalies)).not.toContain('missing_balance_sheet');
+    });
+  });
+
+  describe('a stock against the flow it comes from', () => {
+    it('catches receivables above a year of revenue', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'cogs', 'fy_current', 400_000],
+          // A cumulative balance beside a single period of revenue — 511 days.
+          ['balance_sheet', 'accounts_receivable', 'fy_current', 1_400_000],
+          ['balance_sheet', 'cash', 'fy_current', 200_000],
+        ]),
+      );
+      const found = report.anomalies.find((a) => a.check === 'receivables_exceed_revenue');
+      expect(found).toBeDefined();
+      expect(found?.severity).toBe('warning');
+      expect(found?.sheet).toBe('balance_sheet');
+      expect(found?.row_key).toBe('accounts_receivable');
+      expect(found?.value).toBe(1_400_000);
+      // The figure a reviewer checks against the ledger is the collection
+      // period, not the ratio it was derived from.
+      expect(found?.summary).toContain('511 days');
+    });
+
+    it('leaves a merely slow collection cycle alone', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          // 219 days. Unusual, entirely possible with two enterprise customers,
+          // and a warning here would be one a reader learns to skip.
+          ['balance_sheet', 'accounts_receivable', 'fy_current', 600_000],
+          ['balance_sheet', 'cash', 'fy_current', 200_000],
+        ]),
+      );
+      expect(checks(report.anomalies)).not.toContain('receivables_exceed_revenue');
+    });
+
+    it('catches payables above a year of cash costs', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'cogs', 'fy_current', 300_000],
+          ['income_statement', 'operating_expenses', 'fy_current', 300_000],
+          ['balance_sheet', 'accounts_payable', 'fy_current', 900_000],
+          ['balance_sheet', 'cash', 'fy_current', 100_000],
+        ]),
+      );
+      const found = report.anomalies.find((a) => a.check === 'payables_exceed_costs');
+      expect(found).toBeDefined();
+      expect(found?.row_key).toBe('accounts_payable');
+      expect(found?.value).toBe(900_000);
+    });
+
+    it('measures payables against cash costs only, not against the D&A added back to reach EBITDA', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'cogs', 'fy_current', 200_000],
+          ['income_statement', 'operating_expenses', 'fy_current', 200_000],
+          // Nobody is invoiced for depreciation, so a large charge must not
+          // widen the bar — on an asset-heavy company it would widen it a lot.
+          ['income_statement', 'depreciation_amortization', 'fy_current', 2_000_000],
+          ['balance_sheet', 'accounts_payable', 'fy_current', 900_000],
+          ['balance_sheet', 'ppe_net', 'fy_current', 8_000_000],
+        ]),
+      );
+      expect(checks(report.anomalies)).toContain('payables_exceed_costs');
+    });
+
+    it('draws the line where WORKING_CAPITAL_YEARS says, not a shade either side', () => {
+      const revenue = 1_000_000;
+      const at = (receivables: number) =>
+        checks(
+          detectFinancialAnomalies(
+            grid([
+              ['income_statement', 'revenue', 'fy_current', revenue],
+              ['balance_sheet', 'accounts_receivable', 'fy_current', receivables],
+              ['balance_sheet', 'cash', 'fy_current', 100_000],
+            ]),
+          ).anomalies,
+        );
+      // Exactly one year of revenue is the last figure that still describes a
+      // business, so the bar is strictly above it.
+      expect(at(revenue * WORKING_CAPITAL_YEARS)).not.toContain('receivables_exceed_revenue');
+      expect(at(revenue * WORKING_CAPITAL_YEARS + 1)).toContain('receivables_exceed_revenue');
+    });
+
+    it('says nothing where one of the two statements is not entered', () => {
+      const report = detectFinancialAnomalies(
+        grid([['balance_sheet', 'accounts_receivable', 'fy_current', 1_400_000]]),
+      );
+      // No revenue to read the balance against — the finding would be about the
+      // missing statement, and `missing_balance_sheet` already owns that.
+      expect(checks(report.anomalies)).not.toContain('receivables_exceed_revenue');
+    });
+  });
+
+  describe('a period copied from the one beside it', () => {
+    it('catches a column identical line for line', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_minus_1', 1_000_000],
+          ['income_statement', 'cogs', 'fy_minus_1', 400_000],
+          ['income_statement', 'operating_expenses', 'fy_minus_1', 450_000],
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'cogs', 'fy_current', 400_000],
+          ['income_statement', 'operating_expenses', 'fy_current', 450_000],
+        ]),
+      );
+      const found = report.anomalies.find((a) => a.check === 'duplicate_period');
+      expect(found).toBeDefined();
+      expect(found?.severity).toBe('warning');
+      // The later period is the copy; that is the column to open.
+      expect(found?.column_key).toBe('fy_current');
+      expect(found?.row_key).toBeNull();
+      expect(found?.summary).toContain('3 entered lines');
+    });
+
+    it('leaves one repeating line alone — a flat rent is not a copied column', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_minus_1', 1_000_000],
+          ['income_statement', 'operating_expenses', 'fy_minus_1', 450_000],
+          ['income_statement', 'revenue', 'fy_current', 1_300_000],
+          ['income_statement', 'operating_expenses', 'fy_current', 450_000],
+        ]),
+      );
+      expect(checks(report.anomalies)).not.toContain('duplicate_period');
+    });
+
+    it('needs at least two matching lines before a match means anything', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_minus_1', 1_000_000],
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'cogs', 'fy_minus_1', 400_000],
+          ['income_statement', 'cogs', 'fy_current', 400_000],
+          ['balance_sheet', 'cash', 'fy_minus_1', 500_000],
+          ['balance_sheet', 'cash', 'fy_current', 500_000],
+        ]),
+      );
+      const found = report.anomalies.filter((a) => a.check === 'duplicate_period');
+      // Two lines on the income statement is a finding; one on the balance
+      // sheet is a company whose cash happened not to move.
+      expect(found.map((a) => a.sheet)).toEqual(['income_statement']);
+    });
+
+    it('does not call two different periods a copy because one line is blank', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_minus_1', 1_000_000],
+          ['income_statement', 'cogs', 'fy_minus_1', 400_000],
+          ['income_statement', 'operating_expenses', 'fy_minus_1', 450_000],
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'cogs', 'fy_current', 400_000],
+        ]),
+      );
+      expect(checks(report.anomalies)).not.toContain('duplicate_period');
+    });
+  });
+
+  describe('a charge with nothing behind it', () => {
+    it('catches depreciation with no depreciable asset on the balance sheet', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'depreciation_amortization', 'fy_current', 120_000],
+          ['balance_sheet', 'cash', 'fy_current', 500_000],
+        ]),
+      );
+      const found = report.anomalies.find((a) => a.check === 'depreciation_without_assets');
+      expect(found).toBeDefined();
+      expect(found?.severity).toBe('warning');
+      expect(found?.row_key).toBe('depreciation_amortization');
+      expect(found?.value).toBe(120_000);
+      // Why it is worth the reader's time: EBITDA is what the market
+      // approaches are struck off, and this row is added back to reach it.
+      expect(found?.detail).toContain('EBITDA');
+    });
+
+    it('is satisfied by intangibles as much as by fixed assets', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'depreciation_amortization', 'fy_current', 120_000],
+          ['balance_sheet', 'intangibles', 'fy_current', 900_000],
+        ]),
+      );
+      expect(checks(report.anomalies)).not.toContain('depreciation_without_assets');
+    });
+
+    it('stays quiet where no balance sheet was entered for the period', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'depreciation_amortization', 'fy_current', 120_000],
+        ]),
+      );
+      // Absence of a statement is not evidence about its contents;
+      // `missing_balance_sheet` is the finding for that.
+      expect(checks(report.anomalies)).not.toContain('depreciation_without_assets');
+      expect(checks(report.anomalies)).toContain('missing_balance_sheet');
+    });
+
+    it('notes inventory held by a company reporting no cost of sales', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'operating_expenses', 'fy_current', 700_000],
+          ['balance_sheet', 'inventory', 'fy_current', 250_000],
+          ['balance_sheet', 'cash', 'fy_current', 500_000],
+        ]),
+      );
+      const found = report.anomalies.find((a) => a.check === 'inventory_without_cogs');
+      expect(found).toBeDefined();
+      // Presentation rather than a figure anybody relies on — a reader's
+      // attention, not anybody's correction.
+      expect(found?.severity).toBe('info');
+      expect(found?.sheet).toBe('balance_sheet');
+      expect(found?.value).toBe(250_000);
+    });
+
+    it('leaves inventory alone where cost of sales is reported', () => {
+      const report = detectFinancialAnomalies(
+        grid([
+          ['income_statement', 'revenue', 'fy_current', 1_000_000],
+          ['income_statement', 'cogs', 'fy_current', 400_000],
+          ['balance_sheet', 'inventory', 'fy_current', 250_000],
+          ['balance_sheet', 'cash', 'fy_current', 500_000],
+        ]),
+      );
+      expect(checks(report.anomalies)).not.toContain('inventory_without_cogs');
     });
   });
 

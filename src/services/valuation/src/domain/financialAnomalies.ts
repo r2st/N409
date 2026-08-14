@@ -24,7 +24,14 @@ import { isProjectionColumn, type ComputedSheet } from './workbook.js';
  *     approach discounts that stream; it is the most consequential unchecked
  *     input in the file.
  *   * Two statements that disagree: interest expense charged in a year with no
- *     debt on the balance sheet, tax charged on a pre-tax loss.
+ *     debt on the balance sheet, depreciation with no depreciable asset behind
+ *     it, inventory held by a company reporting no cost of sales, tax charged
+ *     on a pre-tax loss.
+ *   * A stock that has outrun the flow it comes from — receivables above a
+ *     year of revenue, payables above a year of cash costs — which is the one
+ *     family of errors where every figure involved is individually ordinary.
+ *   * A period that is a copy of the one beside it, line for line: a
+ *     fill-right, or a paste that landed a column off.
  *
  * ## What this is not
  *
@@ -118,6 +125,25 @@ export const REVENUE_DECLINE_FRACTION = 0.6;
 export const HOCKEY_STICK_MULTIPLE = 3;
 export const HOCKEY_STICK_FLOOR = 0.5;
 
+/**
+ * How many years of a flow a balance-sheet stock may stand at before it stops
+ * describing a business.
+ *
+ * Receivables against revenue and payables against costs are the two places the
+ * income statement and the balance sheet can be checked against each other with
+ * no assumption about the company at all. A stock at one year of its own flow is
+ * a collection or payment period of 365 days; past that the figure is not slow,
+ * it is a different quantity — a cumulative balance, a stock in different units
+ * from the flow it is read against, or a row mapped to the wrong line.
+ *
+ * Set at a full year rather than at some tighter "healthy" DSO on purpose. This
+ * is not a check on how well the company runs its working capital — an
+ * early-stage company with two customers and a 200-day collection cycle is
+ * unusual and not wrong, and a warning it earns is a warning it teaches the
+ * reader to skip. It is a check on whether the two statements can both be true.
+ */
+export const WORKING_CAPITAL_YEARS = 1;
+
 /** Sheets these checks understand. Anything else is passed over untouched. */
 const INCOME = 'income_statement';
 const BALANCE = 'balance_sheet';
@@ -147,6 +173,13 @@ const LIABILITY_ROWS = [
 ] as const;
 
 const DEBT_ROWS = ['short_term_debt', 'long_term_debt'] as const;
+
+/**
+ * Asset lines a depreciation or amortization charge can arise from. Nothing
+ * else on this balance sheet is depreciable: cash, receivables, inventory and
+ * the "other" buckets are not written down through D&A.
+ */
+const DEPRECIABLE_ROWS = ['ppe_net', 'intangibles'] as const;
 
 /** Indexed read access over the computed grid. */
 interface Grid {
@@ -219,7 +252,9 @@ export function detectFinancialAnomalies(sheets: readonly ComputedSheet[]): Fina
   checkRevenueSeries(grid, add);
   checkForecastBreak(grid, add);
   checkPeriodGaps(grid, add);
+  checkDuplicatePeriods(grid, add);
   checkCrossStatement(grid, add);
+  checkWorkingCapital(grid, add);
 
   const counts: Record<AnomalySeverity, number> = { error: 0, warning: 0, info: 0 };
   for (const a of found) counts[a.severity] += 1;
@@ -627,6 +662,144 @@ function checkPeriodGaps(grid: Grid, add: Add): void {
   }
 }
 
+/**
+ * Two adjacent periods that are identical line for line.
+ *
+ * The workbook's own analogue of what the engine calls a flat forecast, and it
+ * has to be a separate check because it is a different artifact: the engine
+ * reads one extracted series and asks whether every period holds the same
+ * number; the grid an analyst types into has fifteen rows across five columns,
+ * and the way a column goes wrong here is that the one beside it was copied
+ * into it — by a fill-right, or by a paste that landed one column off.
+ *
+ * A real company does not report the same revenue, the same cost of sales, the
+ * same operating expenses and the same everything else two years running. One
+ * line repeating is ordinary — a fixed rent, a flat headcount, a placeholder
+ * held constant on purpose. Every populated line repeating is a copy.
+ *
+ * Which is why the bar is *every* line and at least two of them: one identical
+ * row proves nothing, and a period holding a single figure that happens to
+ * match its neighbour is a coincidence rather than a finding. Only input rows
+ * are compared, because the derived ones are a function of them and would
+ * merely restate the same evidence with more confidence than it has.
+ */
+function checkDuplicatePeriods(grid: Grid, add: Add): void {
+  for (const sheetKey of [INCOME, BALANCE]) {
+    const sheet = grid.sheets.get(sheetKey);
+    if (!sheet) continue;
+    const inputRows = sheet.rows.filter((row) => row.kind === 'input').map((row) => row.key);
+    const periods = periodsOf(grid, sheetKey);
+
+    for (let i = 1; i < periods.length; i += 1) {
+      const column = periods[i]!;
+      const prior = periods[i - 1]!;
+      if (!grid.populated(sheetKey, column) || !grid.populated(sheetKey, prior)) continue;
+
+      let matched = 0;
+      let identical = true;
+      for (const row of inputRows) {
+        const current = grid.value(sheetKey, row, column);
+        const previous = grid.value(sheetKey, row, prior);
+        if (current === null && previous === null) continue;
+        // A line entered in one period and blank in the other is not a copy —
+        // it is two different periods, which is the answer we wanted.
+        if (current === null || previous === null || current !== previous) {
+          identical = false;
+          break;
+        }
+        matched += 1;
+      }
+      if (!identical || matched < 2) continue;
+
+      add({
+        check: 'duplicate_period',
+        severity: 'warning',
+        sheet: sheetKey,
+        column_key: column,
+        row_key: null,
+        value: null,
+        summary:
+          `Every one of the ${matched} entered lines in ${grid.columnLabel(sheetKey, column)} is ` +
+          `identical to ${grid.columnLabel(sheetKey, prior)}.`,
+        detail:
+          'Two periods matching line for line is a column copied rather than a period entered. Growth ' +
+          'is then zero across the pair by construction, and any forecast struck off the trend inherits ' +
+          'that. Confirm the period against the source statement, or clear it if it is not yet available.',
+      });
+    }
+  }
+}
+
+/**
+ * A balance-sheet stock read against the income-statement flow it comes from.
+ *
+ * These are the two checks that tie the statements together arithmetically
+ * rather than by existence: receivables are unbilled revenue and payables are
+ * unpaid costs, so each has a flow it cannot outrun for long without being
+ * something other than what its label says. Both catch the same family of
+ * errors the rest of this module is about — a cumulative balance entered as a
+ * period one, a stock in thousands against a flow in units, a row mapped to the
+ * wrong line — and they catch them on companies where every other check here
+ * passes, because individually each figure is perfectly ordinary.
+ */
+function checkWorkingCapital(grid: Grid, add: Add): void {
+  for (const column of periodsOf(grid, BALANCE)) {
+    if (!grid.populated(BALANCE, column) || !grid.populated(INCOME, column)) continue;
+
+    const receivables = grid.value(BALANCE, 'accounts_receivable', column);
+    const revenue = grid.value(INCOME, 'revenue', column);
+    if (receivables !== null && revenue !== null && revenue > 0) {
+      const days = (receivables / revenue) * 365;
+      if (receivables > revenue * WORKING_CAPITAL_YEARS) {
+        add({
+          check: 'receivables_exceed_revenue',
+          severity: 'warning',
+          sheet: BALANCE,
+          column_key: column,
+          row_key: 'accounts_receivable',
+          value: receivables,
+          summary:
+            `Receivables in ${grid.columnLabel(BALANCE, column)} stand at ${days.toFixed(0)} days of ` +
+            'that period’s revenue.',
+          detail:
+            'A company cannot be owed more than it has billed. Usually the balance is cumulative across ' +
+            'periods while the revenue is a single one, or the two are stated in different units. Both ' +
+            'readings overstate working capital and the net-cash bridge that runs off it.',
+        });
+      }
+    }
+
+    const payables = grid.value(BALANCE, 'accounts_payable', column);
+    // Against the cash costs the payables would have arisen from. D&A is
+    // excluded deliberately: nobody is invoiced for depreciation, so including
+    // it would widen the bar by an amount that has nothing to do with the
+    // question — and on an asset-heavy company it would widen it a lot.
+    const cogs = grid.value(INCOME, 'cogs', column);
+    const opex = grid.value(INCOME, 'operating_expenses', column);
+    const costs = (cogs ?? 0) + (opex ?? 0);
+    if (payables !== null && (cogs !== null || opex !== null) && costs > 0) {
+      const days = (payables / costs) * 365;
+      if (payables > costs * WORKING_CAPITAL_YEARS) {
+        add({
+          check: 'payables_exceed_costs',
+          severity: 'warning',
+          sheet: BALANCE,
+          column_key: column,
+          row_key: 'accounts_payable',
+          value: payables,
+          summary:
+            `Payables in ${grid.columnLabel(BALANCE, column)} stand at ${days.toFixed(0)} days of that ` +
+            'period’s cash costs.',
+          detail:
+            'A company cannot owe more than it has been billed. Where it is real it is usually accrued ' +
+            'liabilities or deferred revenue sitting in the payables line, which belong in other current ' +
+            'liabilities; where it is not, the balance is cumulative and the costs are one period.',
+        });
+      }
+    }
+  }
+}
+
 /** Findings only visible when the two statements are read against each other. */
 function checkCrossStatement(grid: Grid, add: Add): void {
   const periods = periodsOf(grid, INCOME);
@@ -654,10 +827,70 @@ function checkCrossStatement(grid: Grid, add: Add): void {
       });
     }
 
+    if (!grid.populated(BALANCE, column)) continue;
+
+    /*
+     * Depreciation charged against an asset base that is not there.
+     *
+     * The same shape as the interest check below, on the other side of the
+     * statements, and it matters more than it looks: D&A is added back to reach
+     * EBITDA, so the multiple approaches are struck off a figure that this row
+     * moves directly. A charge with nothing behind it either means the assets
+     * are missing from the balance sheet — understating them, and equity with
+     * them — or that operating costs have been split into a line that gets
+     * added back, which flatters every EBITDA multiple in the file.
+     */
+    const dna = grid.value(INCOME, 'depreciation_amortization', column);
+    if (dna !== null && dna > 0) {
+      const base = DEPRECIABLE_ROWS.reduce((sum, row) => sum + (grid.value(BALANCE, row, column) ?? 0), 0);
+      if (base <= 0) {
+        add({
+          check: 'depreciation_without_assets',
+          severity: 'warning',
+          sheet: INCOME,
+          column_key: column,
+          row_key: 'depreciation_amortization',
+          value: dna,
+          summary:
+            `Depreciation and amortization are charged in ${grid.columnLabel(INCOME, column)} with no ` +
+            'fixed or intangible assets on the balance sheet.',
+          detail:
+            'D&A is added back to reach EBITDA, so this row sets the figure the market approaches are ' +
+            'struck off. Either the asset base is missing from the balance sheet, or the charge is an ' +
+            'operating cost in a line that gets added back. An asset fully written down during the ' +
+            'period is a real explanation and should be stated.',
+        });
+      }
+    }
+
+    /*
+     * Inventory held by a company that reports no cost of sales. Info rather
+     * than warning: the likeliest reading is a services business that put a
+     * prepaid or a deposit in the inventory line, which is a presentation
+     * question rather than a figure anybody relies on — but it is also what a
+     * mis-mapped column looks like, and it changes working capital.
+     */
+    const inventory = grid.value(BALANCE, 'inventory', column);
+    const cogs = grid.value(INCOME, 'cogs', column);
+    if (inventory !== null && inventory > 0 && (cogs === null || cogs === 0)) {
+      add({
+        check: 'inventory_without_cogs',
+        severity: 'info',
+        sheet: BALANCE,
+        column_key: column,
+        row_key: 'inventory',
+        value: inventory,
+        summary: `Inventory is held in ${grid.columnLabel(BALANCE, column)} with no cost of sales reported.`,
+        detail:
+          'A company holding stock generally sells some of it. The usual explanation is a services ' +
+          'business carrying a prepaid or a deposit in the inventory line, which belongs in other ' +
+          'current assets; the other is a column mapped to the wrong row on import.',
+      });
+    }
+
     // Interest charged in a year the company carried no debt.
     const interest = grid.value(INCOME, 'interest_expense', column);
     if (interest === null || interest <= 0) continue;
-    if (!grid.populated(BALANCE, column)) continue;
     const debt = DEBT_ROWS.reduce((sum, row) => sum + (grid.value(BALANCE, row, column) ?? 0), 0);
     if (debt > 0) continue;
 
