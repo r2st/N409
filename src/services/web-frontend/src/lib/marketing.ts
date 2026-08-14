@@ -95,6 +95,27 @@ export const PRODUCTS: Product[] = [
     deliveryDays: 7,
   },
   {
+    slug: 'portfolio-valuation',
+    kind: 'fund',
+    name: 'Portfolio Valuation',
+    short: 'Portfolio',
+    tagline: 'Mark the whole fund, not one holding at a time.',
+    description:
+      'Fair value across an entire VC, PE or credit portfolio — every position marked and classified in the ASC 820 hierarchy, rolled up to NAV, and distributed through your LP waterfall.',
+    bullets: [
+      'Position-level marks with Level 1 / 2 / 3 classification',
+      'Level 3 holdings calibrated to the last financing round',
+      'Roll-forward of a prior mark to a new measurement date',
+      'NAV and an LP waterfall with preferred return, catch-up, carry and clawback',
+    ],
+    audience: 'Fund managers, fund admins, and LPs',
+    // The fallback price the checkout charges for the `fund` kind. Quoted here
+    // rather than assumed: a marketing figure the checkout does not honour is
+    // the one place on the site it is most expensive to be wrong.
+    priceCents: P(99_000),
+    deliveryDays: 10,
+  },
+  {
     slug: 'gift-estate-tax-valuation',
     kind: 'gifts',
     name: 'Gift & Estate Tax Valuation',
@@ -612,6 +633,75 @@ export const PRODUCT_CONTENT: Record<string, ProductContent> = {
       },
     ],
     ctaHeadline: 'Get defensible fair-value marks',
+    disclaimer: DEFAULT_DISCLAIMER,
+  },
+
+  'portfolio-valuation': {
+    heroSubhead: 'Every position marked, rolled up to NAV, and run through your LP waterfall.',
+    ctaLabel: CTA_START,
+    problem: {
+      headline: 'A portfolio marked one spreadsheet at a time',
+      body: 'ASC 820 asks for fair value position by position, but LPs and auditors read the fund: a NAV, a hierarchy split, and a distribution that ties. Assembling that from per-company workbooks each quarter is where the errors and the weeks go.',
+      bullets: [
+        'Level 3 holdings need calibration to a real financing, not a cost carry',
+        'A quarter-on-quarter roll-forward has to explain what moved and why',
+        'Carried interest and clawback are arithmetic nobody wants to redo by hand',
+      ],
+      relatedSlug: 'asc-820-valuation',
+    },
+    solution: [
+      {
+        title: 'Position-level marks',
+        body: 'Each holding fair-valued by its own method — market, last round, calibrated OPM, or cost — and classified Level 1, 2 or 3.',
+      },
+      {
+        title: 'Calibrated to the last round',
+        body: 'A Level 3 mark solved so the model reproduces the price of the most recent financing, the technique the AICPA PE/VC guide describes.',
+      },
+      {
+        title: 'Roll-forward',
+        body: 'Carry a prior mark to a new measurement date by re-calibration, accretion, or a public-market-equivalent index movement.',
+      },
+      {
+        title: 'NAV and LP waterfall',
+        body: 'Net asset value after fund liabilities, distributed through return of capital, preferred return, GP catch-up, carry, and an end-of-life clawback test.',
+      },
+    ],
+    included: [
+      'Fair value for every position, with its method and hierarchy level',
+      'Calibration of Level 3 holdings to the latest financing round',
+      'Roll-forward from the prior measurement date',
+      'Net asset value after fund liabilities',
+      'LP waterfall with preferred return, catch-up, carried interest and clawback',
+      'Audit-ready schedules, analyst review and dual signatures',
+    ],
+    faq: [
+      {
+        q: 'How is this different from an ASC 820 valuation?',
+        a: 'ASC 820 here means one instrument or one holding measured at fair value. A portfolio valuation is the whole fund: every position marked, rolled up to NAV, and distributed through the waterfall your LPA specifies.',
+      },
+      {
+        q: 'What does “calibrated to the last round” mean?',
+        a: 'The option-pricing model for a holding is solved so that it reproduces the price investors actually paid in its most recent financing. The calibrated model is then used at the measurement date, which is what makes a Level 3 mark supportable rather than asserted.',
+      },
+      {
+        q: 'Can you roll forward marks we already have?',
+        a: 'Yes. A prior mark can be carried to a new date by re-calibration, by accretion, or by a public-market-equivalent index movement — whichever the position and the evidence support.',
+      },
+      {
+        q: 'Does the waterfall handle clawback?',
+        a: 'Yes, including an end-of-life clawback test, alongside return of capital, the preferred return, the GP catch-up, and carried interest.',
+      },
+      {
+        q: 'How long does it take?',
+        a: 'A first draft in 24 hours and the final in 10 business days, depending on the number of positions.',
+      },
+      {
+        q: 'How much does it cost?',
+        a: `Portfolio valuations start at ${formatUsd(99_000)}.`,
+      },
+    ],
+    ctaHeadline: 'Mark your portfolio for this quarter',
     disclaimer: DEFAULT_DISCLAIMER,
   },
 
@@ -1282,7 +1372,13 @@ export const QUIZ_OPTIONS: QuizOption[] = [
   },
   {
     label: 'I run an investment fund and need to value my holdings',
+    subtitle: 'A single position or instrument',
     productSlug: 'asc-820-valuation',
+  },
+  {
+    label: 'I need to mark a whole fund portfolio and report NAV to my LPs',
+    subtitle: 'Every position, rolled up through the waterfall',
+    productSlug: 'portfolio-valuation',
   },
   {
     label: 'I have, or am setting up, an employee stock ownership plan (ESOP)',

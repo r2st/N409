@@ -90,8 +90,14 @@ describe('marketing data (§22)', () => {
   });
 
   it('has a product page for every valuation kind and 7 comparisons', () => {
-    expect(new Set(PRODUCTS.map((p) => p.kind)).size).toBe(13);
+    expect(new Set(PRODUCTS.map((p) => p.kind)).size).toBe(14);
     expect(COMPARISONS).toHaveLength(7);
+  });
+
+  it('sells one product per kind — no kind is listed twice', () => {
+    // Two entries on the same kind would quote two prices for one checkout
+    // path, and the cheaper one is the one a prospect would find.
+    expect(new Set(PRODUCTS.map((p) => p.kind)).size).toBe(PRODUCTS.length);
   });
 });
 
