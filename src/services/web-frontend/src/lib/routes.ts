@@ -1,4 +1,4 @@
-import { COMPARISONS, FUNDING_STAGES, PRODUCTS } from './marketing';
+import { COMPARISONS, FUNDING_STAGES, PARTNER_SEGMENTS, PRODUCTS } from './marketing';
 
 /**
  * Static route inventory for SEO (409.ai §24). Pure data — no browser or
@@ -27,6 +27,10 @@ export function marketingRoutes(): SitemapRoute[] {
     { path: '/how-much-does-a-409a-cost', changefreq: 'monthly', priority: 0.7 },
     { path: '/sample-report', changefreq: 'monthly', priority: 0.8 },
     { path: '/compare/409a-valuation-providers', changefreq: 'monthly', priority: 0.7 },
+    // The partner channel is a second acquisition funnel, not a footnote: one
+    // cap-table platform is worth a lot of individual signups.
+    { path: '/partners', changefreq: 'monthly', priority: 0.8 },
+    { path: '/developers', changefreq: 'monthly', priority: 0.7 },
     // The blog index only. Individual posts live in the database and are
     // authored after this file is built, so listing them here would either be
     // a stale list or a build that has to reach the database.
@@ -44,6 +48,9 @@ export function marketingRoutes(): SitemapRoute[] {
   // long tail.
   for (const stage of FUNDING_STAGES) {
     routes.push({ path: `/409a-valuation/${stage.slug}`, changefreq: 'monthly', priority: 0.7 });
+  }
+  for (const segment of PARTNER_SEGMENTS) {
+    routes.push({ path: `/partners/${segment.slug}`, changefreq: 'monthly', priority: 0.6 });
   }
   for (const comparison of COMPARISONS) {
     routes.push({ path: `/compare/${comparison.slug}`, changefreq: 'monthly', priority: 0.6 });

@@ -44,6 +44,9 @@ const CalculatorPage = named(() => import('./pages/marketing/CalculatorPage'), '
 const SampleReportPage = named(() => import('./pages/marketing/SampleReportPage'), 'SampleReportPage');
 const ComparePage = named(() => import('./pages/marketing/ComparePage'), 'ComparePage');
 const CompareHubPage = named(() => import('./pages/marketing/CompareHubPage'), 'CompareHubPage');
+const PartnersPage = named(() => import('./pages/marketing/PartnerPages'), 'PartnersPage');
+const PartnerSegmentPage = named(() => import('./pages/marketing/PartnerPages'), 'PartnerSegmentPage');
+const DevelopersPage = named(() => import('./pages/marketing/DevelopersPage'), 'DevelopersPage');
 const BlogIndexPage = named(() => import('./pages/marketing/BlogPages'), 'BlogIndexPage');
 const BlogPostPage = named(() => import('./pages/marketing/BlogPages'), 'BlogPostPage');
 const AboutPage = named(() => import('./pages/marketing/StaticPages'), 'AboutPage');
@@ -211,6 +214,9 @@ export default function App() {
           {/* Hub route must precede the :slug catch-all (gap #30) */}
           <Route path="/compare/409a-valuation-providers" element={<CompareHubPage />} />
           <Route path="/compare/:slug" element={<ComparePage />} />
+          <Route path="/partners" element={<PartnersPage />} />
+          <Route path="/partners/:segment" element={<PartnerSegmentPage />} />
+          <Route path="/developers" element={<DevelopersPage />} />
           <Route path="/blog" element={<BlogIndexPage />} />
           <Route path="/blog/:slug" element={<BlogPostPage />} />
           <Route path="/about" element={<AboutPage />} />

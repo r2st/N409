@@ -2,12 +2,15 @@ import {
   COMPARISONS,
   FUNDING_STAGES,
   MIN_PRODUCT_PRICE_CENTS,
+  PARTNER_FAQ,
+  PARTNER_SEGMENTS,
   PRICING_FAQ,
   PRODUCTS,
   VALUATION_TRIGGERS,
   comparisonBySlug,
   formatUsd,
   fundingStageBySlug,
+  partnerSegmentBySlug,
   productBySlug,
   stagePriceRangeCents,
 } from './marketing';
@@ -115,6 +118,19 @@ function staticPages(): HeadInput[] {
         'The five kinds of 409A valuation provider — AI-native platforms, cap-table products, bundled providers, startup CPAs and independent firms — and what founders should ask before choosing one.',
     },
     {
+      path: '/partners',
+      title: 'Partner programme',
+      description:
+        'Refer valuation clients, deliver them under your own brand on your own subdomain, or submit them over an API with signed webhooks — analyst-reviewed and dual-signed either way.',
+      jsonLd: faqJsonLd(PARTNER_FAQ),
+    },
+    {
+      path: '/developers',
+      title: 'Partner API for developers',
+      description:
+        'The N409 partner API: bearer keys, idempotent submission, an OpenAPI 3.1 document you can generate a client from, and HMAC-signed webhooks on state changes and report-ready.',
+    },
+    {
       path: '/blog',
       title: 'Blog',
       description:
@@ -204,6 +220,30 @@ export function stagePageMeta(slug: string): HeadInput | undefined {
 }
 
 /**
+ * Metadata for a partner-segment page. `/partners` links to all four, so it is
+ * the real parent of the trail.
+ */
+export function partnerSegmentPageMeta(slug: string): HeadInput | undefined {
+  const segment = partnerSegmentBySlug(slug);
+  if (!segment) return undefined;
+  const path = `/partners/${segment.slug}`;
+  return {
+    path,
+    title: `Partner with N409 — ${segment.name}`,
+    description: segment.searchBlurb,
+    jsonLd: [
+      faqJsonLd(segment.faq),
+      breadcrumbJsonLd([
+        HOME_CRUMB,
+        { name: 'Partner programme', path: '/partners' },
+        { name: segment.name, path },
+      ]),
+      websiteJsonLd(),
+    ],
+  };
+}
+
+/**
  * Metadata for a single competitor comparison page. The hub at
  * COMPARE_HUB_PATH links to every one of these, so it is a real parent and the
  * breadcrumb is a three-step trail.
@@ -234,6 +274,7 @@ export function allPageMeta(): HeadInput[] {
     ...staticPages(),
     ...PRODUCTS.map((p) => productPageMeta(p.slug)!),
     ...FUNDING_STAGES.map((s) => stagePageMeta(s.slug)!),
+    ...PARTNER_SEGMENTS.map((s) => partnerSegmentPageMeta(s.slug)!),
     ...COMPARISONS.map((c) => comparePageMeta(c.slug)!),
   ];
 }

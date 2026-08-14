@@ -2279,3 +2279,297 @@ export function stagePriceRangeCents(stage: FundingStage): { fromCents: number; 
     toCents: base + RAISE_BANDS[clamp(hi)]!.upliftCents,
   };
 }
+
+// ── Partner programme ─────────────────────────────────────────────────────────
+// `/partners` and `/partners/:segment`. The platform has had a partner channel
+// since M3 — scoped portals, white-label branding, subdomains, an API with
+// signed webhooks — and no public page saying so, which meant the only way to
+// discover it was to already be a partner. 409.ai runs a hub plus four segment
+// pages; this is the same shape, over what we actually ship.
+//
+// Nothing here quotes a referral fee or a wholesale discount. Those are
+// commercial terms nobody has set, and a number invented to fill the column
+// would be a price we could not honour — the pages route that question to the
+// partnerships team instead.
+
+export interface PartnerModel {
+  key: 'referral' | 'co_branded' | 'api';
+  name: string;
+  summary: string;
+  /** What the partner does. */
+  youDo: string;
+  /** What we do. */
+  weDo: string;
+  /** Platform capabilities this model is built on — all shipped, all nameable. */
+  capabilities: string[];
+  /** Whose brand the client sees. */
+  brand: string;
+}
+
+export const PARTNER_MODELS: PartnerModel[] = [
+  {
+    key: 'referral',
+    name: 'Referral',
+    summary:
+      'Send us the client and step back. They buy at our published prices, and you keep the relationship without carrying the engagement.',
+    youDo: 'Introduce the client with a tracked link.',
+    weDo: 'Intake, valuation, review, signature, delivery, and support.',
+    capabilities: [
+      'Tracked referral attribution on every engagement you send',
+      'A partner-scoped worklist showing the status of each one',
+      'Published per-report pricing, with no subscription for the client',
+    ],
+    brand: 'Ours. The client knows they were referred to N409.',
+  },
+  {
+    key: 'co_branded',
+    name: 'Co-branded',
+    summary:
+      'Your firm’s name and colours on the intake, the app and the report cover, on your own subdomain. The client stays inside your brand.',
+    youDo: 'Own the client relationship and the price you charge them.',
+    weDo: 'The analysis, the review, the signature, and the deliverable — under your identity.',
+    capabilities: [
+      'A subdomain of your own, with reserved names refused rather than repaired',
+      'White-label branding resolved once and applied to the app, the report PDF and every workflow email',
+      'A partner portal scoped to your clients, with per-user roles',
+      'Partner-settled billing, so the client never sees an invoice from us',
+    ],
+    brand: 'Yours, from the intake form to the report cover.',
+  },
+  {
+    key: 'api',
+    name: 'API',
+    summary:
+      'Submit engagements from your own product and pull the finished report back. We are a service you call, not a site your users visit.',
+    youDo: 'Build against the partner API; keep your users where they are.',
+    weDo: 'Run the engagement and push you an event the moment the report is ready.',
+    capabilities: [
+      'A versioned REST API with an OpenAPI 3.1 document you can generate a client from',
+      'Bearer API keys, issued once and revocable, scoped to your organisation',
+      'Idempotency keys, so a retried submission replays instead of duplicating',
+      'Signed webhooks (HMAC-SHA256) on state changes and report-ready, with delivery retries',
+    ],
+    brand: 'Invisible. Your users never see us.',
+  },
+];
+
+export interface PartnerSegment {
+  slug: string;
+  name: string;
+  /** Search-result description, ~140 characters. */
+  searchBlurb: string;
+  heroSubhead: string;
+  /** The problem this segment actually has. */
+  problem: string;
+  /** Why they are the ones asked for a valuation in the first place. */
+  bullets: string[];
+  /** The model that usually fits, by key. */
+  recommendedModel: PartnerModel['key'];
+  /** Report types this segment's clients ask for most. */
+  productSlugs: string[];
+  faq: FaqItem[];
+}
+
+export const PARTNER_SEGMENTS: PartnerSegment[] = [
+  {
+    slug: 'cap-table-platforms',
+    name: 'Cap-table & equity platforms',
+    searchBlurb:
+      'Add 409A valuations to your cap-table product through an API with signed webhooks, or co-branded on your own subdomain — without building a valuation team.',
+    heroSubhead:
+      'Your users already keep their cap table with you. The 409A is the next thing they ask you for.',
+    problem:
+      'A cap-table platform holds the exact data a valuation needs and gets asked for the valuation constantly — but building the practice means analysts, review, signatures and audit support, which is a different company. The usual answer is a referral out of the product, and the user does not come back for a week.',
+    bullets: [
+      'You already hold the securities, the rounds and the option ledger',
+      'A strike price your users cannot set is a workflow that stops inside your product',
+      'Sending them elsewhere hands the next relationship to someone else',
+    ],
+    recommendedModel: 'api',
+    productSlugs: ['409a-valuation', 'asc-718-valuation', 'qsbs-attestation'],
+    faq: [
+      {
+        q: 'Can we submit and retrieve entirely over the API?',
+        a: 'Yes. Create the engagement, upload documents, poll status or subscribe to webhooks, and download the finished PDF — all from your own systems, with no user visit to us.',
+      },
+      {
+        q: 'Do our users see N409 at all?',
+        a: 'Only if you want them to. Under the API model we are invisible; under the co-branded model the intake and the report carry your brand on your subdomain.',
+      },
+      {
+        q: 'How do we know a report is ready?',
+        a: 'A signed webhook on report-ready, delivered with retries, alongside a status you can poll. The signature is HMAC-SHA256 over the exact request body.',
+      },
+    ],
+  },
+  {
+    slug: 'accounting-law-firms',
+    name: 'Accounting, advisory & law firms',
+    searchBlurb:
+      'Offer 409A, ASC 718 and gift-and-estate valuations under your own firm’s brand, with analyst review and audit support behind them.',
+    heroSubhead:
+      'Your clients ask you first. Answer without subcontracting the relationship away.',
+    problem:
+      'A firm that does the tax work, the audit or the equity plan is the first call when a valuation is needed — and referring it out means introducing a client to a provider who now has their own relationship. Doing it in-house means staffing a specialism that only some clients need.',
+    bullets: [
+      'The engagement arrives through work you are already doing',
+      'Independence rules may stop you valuing an audit client yourself',
+      'The deliverable has to survive your own review, not just the client’s',
+    ],
+    recommendedModel: 'co_branded',
+    productSlugs: ['409a-valuation', 'asc-718-valuation', 'gift-estate-tax-valuation'],
+    faq: [
+      {
+        q: 'Can the report carry our firm’s branding?',
+        a: 'Yes. Under the co-branded model your name, colours and logo appear on the intake, in the app, and on the report cover, served from your own subdomain.',
+      },
+      {
+        q: 'Who signs the valuation?',
+        a: 'Our analysts review and sign it. That independence is often the point — it is what lets you offer the valuation to a client you could not value yourself.',
+      },
+      {
+        q: 'What happens when the auditor asks questions?',
+        a: `We support the valuation directly, at $${AUDIT_DEFENCE_RATE_USD} an hour, working with you or with the client as you prefer.`,
+      },
+    ],
+  },
+  {
+    slug: 'funds-accelerators',
+    name: 'VC, PE, fund admins & accelerators',
+    searchBlurb:
+      'ASC 820 portfolio marks and 409A valuations for every company you back, in one place, with roll-forward from the prior measurement date.',
+    heroSubhead:
+      'One provider for the portfolio marks you report and the 409As your companies need.',
+    problem:
+      'A fund needs its own marks for LP reporting and its companies need their own valuations, and the two are usually bought from different places on different calendars. Nothing ties the mark on a position to the valuation of the company underneath it, so every quarter is a re-collection exercise.',
+    bullets: [
+      'Quarter-close is a deadline, not a preference',
+      'Level 3 marks are where the auditor spends their time',
+      'Every portfolio company needs its own 409A, on its own schedule',
+    ],
+    recommendedModel: 'referral',
+    productSlugs: ['portfolio-valuation', 'asc-820-valuation', '409a-valuation'],
+    faq: [
+      {
+        q: 'Can you mark the whole portfolio, not just one holding?',
+        a: 'Yes — that is the Portfolio Valuation product: every position marked and classified, rolled up to NAV, and distributed through your LP waterfall.',
+      },
+      {
+        q: 'Can you roll forward the marks we already have?',
+        a: 'Yes, by re-calibration, accretion, or a public-market-equivalent index movement, depending on what the position supports.',
+      },
+      {
+        q: 'Do our portfolio companies get their own accounts?',
+        a: 'Yes. Each company runs its own engagement; you see the ones you referred in a partner-scoped worklist.',
+      },
+    ],
+  },
+  {
+    slug: 'fintech-hr-platforms',
+    name: 'Fintech & HR/comp platforms',
+    searchBlurb:
+      'Compensation and HR platforms need a defensible strike price to show equity properly. Add one over an API, or co-branded inside your product.',
+    heroSubhead:
+      'Equity is half of the offer. Without a current strike price you cannot show what it is worth.',
+    problem:
+      'A compensation or HR platform models equity in offers, in total-rewards statements and in retention analysis — all of which need a fair market value that is current and defensible. Without one, the equity number is either stale or made up, and both are worse than absent.',
+    bullets: [
+      'Offer and total-rewards modelling needs a current, supportable FMV',
+      'A stale valuation makes every downstream equity figure wrong at once',
+      'Grant workflows stall on a strike price your product cannot produce',
+    ],
+    recommendedModel: 'api',
+    productSlugs: ['409a-valuation', 'asc-718-valuation'],
+    faq: [
+      {
+        q: 'How current can the valuation be?',
+        a: 'A first draft in 24 hours and a final report in 7 business days, with express delivery available. Valuations are refreshed annually and on any material event.',
+      },
+      {
+        q: 'Can we trigger a valuation from our own workflow?',
+        a: 'Yes — a single API call creates the engagement, and a webhook tells you when the report is ready.',
+      },
+      {
+        q: 'Do you also handle the accounting side?',
+        a: 'Yes. ASC 718 stock-compensation expense and IFRS 2 are separate report types on the same platform and the same intake.',
+      },
+    ],
+  },
+];
+
+export function partnerSegmentBySlug(slug: string): PartnerSegment | undefined {
+  return PARTNER_SEGMENTS.find((s) => s.slug === slug);
+}
+
+export function partnerModelByKey(key: PartnerModel['key']): PartnerModel {
+  return PARTNER_MODELS.find((m) => m.key === key)!;
+}
+
+export const PARTNER_FAQ: FaqItem[] = [
+  {
+    q: 'What does it cost to become a partner?',
+    a: 'Nothing to join, and no volume commitment. Referral terms and co-branded or API rates are agreed with the partnerships team, because they depend on the model and the volume rather than on a published list.',
+  },
+  {
+    q: 'How fast are reports delivered?',
+    a: 'A first draft in 24 hours and a final report in 7 business days for every report type, with express delivery available as an add-on.',
+  },
+  {
+    q: 'Who reviews and signs the valuation?',
+    a: 'Our analysts. Every report is reviewed and dual-signed before it is published, whichever brand it carries.',
+  },
+  {
+    q: 'Which report types can partners submit?',
+    a: `All ${PRODUCTS.length} of them — 409A, ASC 718, ASC 820, portfolio, gift and estate, QSBS, EMI, CSOP, IFRS 2, purchase price allocation, impairment, ESOP, IP and SMB.`,
+  },
+  {
+    q: 'What happens if a client’s auditor has questions?',
+    a: `We support the valuation directly at $${AUDIT_DEFENCE_RATE_USD} an hour, working with whichever of you is fielding the question.`,
+  },
+  {
+    q: 'Is client data shared between partners?',
+    a: 'No. Every read is scoped to the organisation that owns it, and an out-of-scope id is not found rather than forbidden — a partner cannot even confirm another partner’s engagement exists.',
+  },
+];
+
+// ── Partner API facts, for the public /developers page ────────────────────────
+// The endpoint table on that page is fetched live from GET /api/partner/v1/docs
+// so it cannot drift. These are the surrounding facts a crawler and a
+// first-time reader both need without running JavaScript, so they are static —
+// which means they are a second copy, and the only defence against a second
+// copy is naming where the first one lives.
+//
+// Source of truth, all in the valuation service:
+//   prefix, key prefix        → routes/partnerApi.ts (PARTNER_API_PREFIX)
+//   signature/event/delivery  → domain/partnerWebhooks.ts (SIGNATURE_HEADER, …)
+//   webhook secret prefix     → domain/partnerWebhooks.ts (newWebhookSecret)
+//   retry ladder              → domain/partnerWebhooks.ts
+//                               (WEBHOOK_RETRY_BACKOFF_MINUTES)
+// test/integration/partnerApiDocs.test.ts pins each of them against this file.
+
+export const PARTNER_API = {
+  prefix: '/api/partner/v1',
+  openApiUrl: '/api/partner/v1/openapi.json',
+  keyPrefix: 'n409_pat_',
+  webhookSecretPrefix: 'n409_whsec_',
+  signatureHeader: 'x-n409-signature',
+  eventHeader: 'x-n409-event',
+  deliveryHeader: 'x-n409-delivery',
+  /** Backoff after each failed delivery, in the order it is walked. */
+  retryLadder: ['1 min', '5 min', '30 min', '2 h', '6 h'],
+} as const;
+
+export const WEBHOOK_EVENTS: Array<{ name: string; description: string }> = [
+  {
+    name: 'valuation.state_changed',
+    description: 'Any lifecycle transition, for every report type.',
+  },
+  {
+    name: 'valuation.report_ready',
+    description: 'The transition that first makes the deliverable downloadable.',
+  },
+  {
+    name: 'webhook.test',
+    description: 'A signed ping you can trigger yourself while building the receiver.',
+  },
+];

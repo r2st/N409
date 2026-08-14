@@ -4,7 +4,7 @@ import { ThemeToggleButton } from './ThemeToggle';
 import { ErrorBoundary } from './ErrorBoundary';
 import { SkipLink, mainContentTargetProps } from './SkipLink';
 import { Wordmark } from './Logo';
-import { COMPARISONS, FUNDING_STAGES, PRODUCTS } from '../lib/marketing';
+import { COMPARISONS, FUNDING_STAGES, PARTNER_SEGMENTS, PRODUCTS } from '../lib/marketing';
 import { siteConfig } from '../lib/siteConfig';
 
 /** Brand glyph for a social link (gap #29). */
@@ -255,6 +255,20 @@ export function MarketingFooter() {
               </Link>
             ))}
           </div>
+          <div className="overline mt-8 mb-4 text-brass-400">Partners</div>
+          <div className="grid grid-cols-1 gap-1.5 text-sm">
+            <Link to="/partners" className="font-semibold hover:text-chrome-fg">
+              Partner programme
+            </Link>
+            {PARTNER_SEGMENTS.map((s) => (
+              <Link key={s.slug} to={`/partners/${s.slug}`} className="hover:text-chrome-fg">
+                {s.name}
+              </Link>
+            ))}
+            <Link to="/developers" className="hover:text-chrome-fg">
+              Developers
+            </Link>
+          </div>
         </div>
         <div>
           <div className="overline mb-4 text-brass-400">Company</div>
@@ -285,6 +299,12 @@ export function MarketingFooter() {
             </Link>
             <Link to="/pricing" className="hover:text-chrome-fg">
               Pricing
+            </Link>
+            <Link to="/partners" className="hover:text-chrome-fg">
+              Partner programme
+            </Link>
+            <Link to="/developers" className="hover:text-chrome-fg">
+              Developers
             </Link>
             <Link to="/blog" className="hover:text-chrome-fg">
               Blog
