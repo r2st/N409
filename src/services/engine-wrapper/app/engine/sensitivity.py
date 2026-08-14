@@ -42,14 +42,39 @@ def _income(inputs: dict) -> dict:
 
 
 def _market_multiples(inputs: dict) -> list[float] | None:
+    """The multiples the market approach actually prices, or None if it can't.
+
+    Filtered to the positive members, because that is the set
+    ``approaches.market_multiples`` strikes its median over — it drops
+    everything that is not ``> 0`` before selecting. Reading the raw list here
+    put this lever's whole axis on a different footing from the valuation it
+    claims to be a sensitivity of.
+
+    A non-positive multiple is ordinary rather than a typo: ``auto_comparables``
+    takes ``ev_ebitda`` straight off each comparable ticker, and a peer with
+    negative EBITDA contributes a negative multiple. On ``[-8, 5, 7]`` the
+    engine prices the median of ``[5, 7]`` — 6.0× — while this returned the
+    median of all three, 5.0×, so the table was captioned 4.0 / 5.0 / 6.0 for
+    cells the engine had computed at 4.8 / 6.0 / 7.2. Those labels are rendered
+    straight into the axis, and the point labelled 6.0× carried the FMV of a
+    7.2× exit. Worse, a majority-negative set (``[-6, -4, 5]``) gave a negative
+    median, which failed ``base and base > 0`` in ``_apply`` and collapsed the
+    comparables to a single negative multiple: every cell in the table came
+    back null for a payload that computes fine.
+
+    Nothing positive left means the market approach cannot be driven at all, so
+    the lever is reported as skipped rather than tabulated against a base the
+    valuation never used.
+    """
     market = inputs.get("market")
     if not isinstance(market, dict):
         return None
     multiples = market.get("multiples")
     if isinstance(multiples, list) and multiples:
-        return [_req(m, "market.multiples[]") for m in multiples]
+        return [m for m in (_req(x, "market.multiples[]") for x in multiples) if m > 0] or None
     if market.get("multiple") is not None:
-        return [_req(market["multiple"], "market.multiple")]
+        one = _req(market["multiple"], "market.multiple")
+        return [one] if one > 0 else None
     return None
 
 
