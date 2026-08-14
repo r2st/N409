@@ -479,20 +479,28 @@
 #            engagement's own write path, kept as the only one, so the kind
 #            rules, the mention parsing and the realtime broadcast stay in one
 #            place. Sending marks the thread read, because it now has been.
-# gap:       a monitoring baseline snapshotted before the cap-table summary was
-#            re-derived on read holds the old 1:1 fully-diluted count, and the
-#            live figure it is compared against no longer does. `findCapTable`
-#            now recomputes `validation` from the entries, which corrects the
-#            tab, the workbook and the live half of the monitoring snapshot —
-#            but `monitors.baseline` is a stored JSONB snapshot of exactly that
-#            figure, and nothing rewrites one. So a monitored engagement whose
-#            cap table carries a class converting at other than 1:1, and whose
-#            baseline predates eded249, will fire one `cap_table_change` trigger
-#            reporting a share count that moved when nothing did. The set is
-#            narrow — monitoring enabled, a non-1:1 ratio, a baseline older than
-#            the fix — and the trigger is advisory rather than a state change,
-#            so this wants a list before it wants a migration, the same shape as
-#            the stored-calculation gaps above. The query is a `monitors` row
-#            whose `baseline->'fully_diluted_shares'` disagrees with
-#            `validateCapTable(entries).summary.fully_diluted_shares` for the
-#            same valuation.
+# closed:    a monitoring baseline snapshotted before the cap-table summary was
+#            re-derived on read held the old 1:1 fully-diluted count, and the
+#            live figure it is compared against no longer did — so a monitored
+#            engagement carrying a class that converts at other than 1:1 fired a
+#            `cap_table_change` on every scan reporting a move nobody made.
+#            `baseline` is JSONB written once by `enableMonitor` and nothing
+#            rewrites one, and it cannot be recomputed in general: it is a
+#            snapshot of entries as they stood, and those entries are not kept.
+#            It can be recomputed in the case that matters. When the cap table
+#            has not been written since the baseline was taken —
+#            `cap_tables.updated_at <= valuation_monitors.updated_at`, and
+#            nothing but enable/disable moves that column — the rows behind the
+#            live count *are* the rows the baseline was taken from, so the only
+#            thing that can make the two counts differ is the cache the old one
+#            was copied out of. `reconcileBaselineShares` adopts the live count
+#            there and leaves it alone everywhere else, because a difference
+#            after a rewrite may be a real issuance and suppressing it would
+#            silence the trigger the subsystem exists for. Applied at all three
+#            evaluation sites (dashboard, single monitor, scan), and the single
+#            monitor returns the reconciled baseline rather than the stored one
+#            so the figure on screen agrees with the empty trigger list beside
+#            it. Bound worth stating: a baseline that is stale *and* whose cap
+#            table has since been rewritten stays stale, so its trigger fires
+#            correctly and overstates the delta by whatever the old summary
+#            never counted.

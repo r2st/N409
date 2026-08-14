@@ -29,6 +29,7 @@ import {
   evaluateTriggers,
   MONITOR_EVENT_TYPES,
   overallStatus,
+  reconcileBaselineShares,
   type MonitorSnapshot,
 } from '../domain/monitoring.js';
 import {
@@ -41,6 +42,7 @@ import {
   MONITOR_PAGE_LIMIT,
   notifiedSignaturesFor,
   recordAlert,
+  type MonitorRow,
 } from '../repos/monitors.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
@@ -81,6 +83,29 @@ interface SnapshotSources {
   params: ValuationParamsRow | null;
   capTable: CapTableRow | null;
   resolution: BoardResolutionRow | null;
+}
+
+/**
+ * A snapshot of live data, plus the one thing about how it was assembled that
+ * the baseline comparison needs: when the cap table behind it was last written.
+ * {@link reconcileBaselineShares} uses that to tell a stale stored count from a
+ * cap table that genuinely moved.
+ */
+interface LiveState {
+  snapshot: MonitorSnapshot;
+  cap_table_changed_at: Date | null;
+}
+
+/** The baseline to compare against, healed of the stale as-converted count. */
+function baselineOf(monitor: MonitorRow, live: LiveState): MonitorSnapshot {
+  return reconcileBaselineShares(
+    monitor.baseline,
+    {
+      fully_diluted_shares: live.snapshot.fully_diluted_shares,
+      changed_at: live.cap_table_changed_at,
+    },
+    monitor.updated_at,
+  );
 }
 
 /**
@@ -128,14 +153,17 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
 }
 
 /** Build a monitoring snapshot from live data (calc FMV, revenue, cap table, rounds). */
-async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<MonitorSnapshot> {
+async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<LiveState> {
   const [calc, params, capTable, resolution] = await Promise.all([
     latestSucceededCalculation(pool, valuation.id),
     findParams(pool, valuation.id),
     findCapTable(pool, valuation.id),
     findResolutionByValuation(pool, valuation.id),
   ]);
-  return assembleSnapshot(valuation, { calc, params, capTable, resolution });
+  return {
+    snapshot: assembleSnapshot(valuation, { calc, params, capTable, resolution }),
+    cap_table_changed_at: capTable?.updated_at ?? null,
+  };
 }
 
 /**
@@ -144,10 +172,7 @@ async function buildSnapshot(pool: pg.Pool, valuation: ValuationRow): Promise<Mo
  * so the per-valuation form made those handlers cost 4N round trips; batching
  * makes them constant.
  */
-async function buildSnapshots(
-  pool: pg.Pool,
-  valuations: ValuationRow[],
-): Promise<Map<string, MonitorSnapshot>> {
+async function buildSnapshots(pool: pg.Pool, valuations: ValuationRow[]): Promise<Map<string, LiveState>> {
   const ids = valuations.map((v) => v.id);
   const [calcs, params, capTables, resolutions] = await Promise.all([
     latestSucceededCalculationsByValuationIds(pool, ids),
@@ -156,15 +181,21 @@ async function buildSnapshots(
     findResolutionsByValuationIds(pool, ids),
   ]);
   return new Map(
-    valuations.map((valuation) => [
-      valuation.id,
-      assembleSnapshot(valuation, {
-        calc: calcs.get(valuation.id) ?? null,
-        params: params.get(valuation.id) ?? null,
-        capTable: capTables.get(valuation.id) ?? null,
-        resolution: resolutions.get(valuation.id) ?? null,
-      }),
-    ]),
+    valuations.map((valuation) => {
+      const capTable = capTables.get(valuation.id) ?? null;
+      return [
+        valuation.id,
+        {
+          snapshot: assembleSnapshot(valuation, {
+            calc: calcs.get(valuation.id) ?? null,
+            params: params.get(valuation.id) ?? null,
+            capTable,
+            resolution: resolutions.get(valuation.id) ?? null,
+          }),
+          cap_table_changed_at: capTable?.updated_at ?? null,
+        },
+      ];
+    }),
   );
 }
 
@@ -200,8 +231,8 @@ export function registerMonitoringRoutes(
     for (const m of monitors) {
       const valuation = valuations.get(m.valuation_id);
       if (!valuation) continue;
-      const current = snapshots.get(valuation.id)!;
-      const triggers = evaluateTriggers(m.baseline, current, now);
+      const live = snapshots.get(valuation.id)!;
+      const triggers = evaluateTriggers(baselineOf(m, live), live.snapshot, now);
       out.push({
         valuation_id: m.valuation_id,
         company_name: m.company_name,
@@ -229,9 +260,18 @@ export function registerMonitoringRoutes(
         monitorable: MONITORABLE_STATES.has(valuation.state),
       };
     }
-    const current = await buildSnapshot(deps.pool, valuation);
-    const triggers = evaluateTriggers(monitor.baseline, current, new Date());
-    return { monitor, current, status: overallStatus(triggers), triggers };
+    const live = await buildSnapshot(deps.pool, valuation);
+    // The reconciled baseline is what the triggers were evaluated against, so
+    // it is also the one to show beside them — returning the stored figure
+    // would put a difference on screen that the trigger list denies.
+    const baseline = baselineOf(monitor, live);
+    const triggers = evaluateTriggers(baseline, live.snapshot, new Date());
+    return {
+      monitor: { ...monitor, baseline },
+      current: live.snapshot,
+      status: overallStatus(triggers),
+      triggers,
+    };
   });
 
   // Enable monitoring — snapshots the baseline from current data.
@@ -244,7 +284,7 @@ export function registerMonitoringRoutes(
     if (!MONITORABLE_STATES.has(valuation.state) && !hasCalc) {
       throw problems.conflict('Only a completed valuation can be monitored');
     }
-    const baseline = await buildSnapshot(deps.pool, valuation);
+    const { snapshot: baseline } = await buildSnapshot(deps.pool, valuation);
     const monitor = await enableMonitor(
       deps.pool,
       { valuationId: id, baseline, createdBy: principal.id },
@@ -303,8 +343,8 @@ export function registerMonitoringRoutes(
       for (const m of monitors) {
         const valuation = valuations.get(m.valuation_id);
         if (!valuation) continue;
-        const current = snapshots.get(valuation.id)!;
-        const triggers = evaluateTriggers(m.baseline, current, now);
+        const live = snapshots.get(valuation.id)!;
+        const triggers = evaluateTriggers(baselineOf(m, live), live.snapshot, now);
         if (triggers.length === 0) continue;
 
         const alreadyNotified = notified.get(m.id) ?? new Set<string>();

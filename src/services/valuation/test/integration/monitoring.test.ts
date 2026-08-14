@@ -309,3 +309,196 @@ describe.skipIf(!dbUp)('feature 10 — monitoring fetches valuations in one quer
     expect((await findValuationsByIds(pool, [])).size).toBe(0);
   });
 });
+
+/**
+ * A baseline snapshotted before `conversion_ratio` reached the fully-diluted
+ * denominator holds a 1:1 count, and the live half of the comparison has been
+ * recomputed on read since d946f0d — so a monitored engagement with a ratchet
+ * fired a `cap_table_change` reporting a move nobody made, on every scan, until
+ * somebody re-enabled monitoring. `baseline` is JSONB written once and nothing
+ * rewrites one, so writing the old count straight into the column is the only
+ * way to reproduce a row that predates the rule change.
+ */
+describe.skipIf(!dbUp)('feature 10 — a baseline that predates the as-converted count', () => {
+  let ctx: TestApp;
+  let app: FastifyInstance;
+  let pool: pg.Pool;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+  let valuationId: string;
+
+  const RATCHET_CSV = [
+    'class,shares,price,invested,conversion_ratio',
+    'Common,8000000,0.10,,',
+    'Series A,2000000,1.00,2000000,2',
+  ].join('\n');
+
+  const capTableTriggers = (triggers: { type: string }[]) =>
+    triggers.filter((t) => t.type === 'cap_table_change');
+
+  const getMonitor = async () =>
+    (
+      await app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${valuationId}/monitor`,
+        headers: authHeader(ops.token),
+      })
+    ).json();
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ AUTO_PIPELINE: 'off', EMAIL_MODE: 'off' });
+    app = ctx.app;
+    pool = ctx.pool;
+    ops = await seedUser(ctx, { roles: ['reviewer'] });
+    const client = await seedUser(ctx, { roles: ['valuation_user'] });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(client.token),
+      payload: { kind: '409a', company_name: 'RatchetCo' },
+    });
+    valuationId = created.json().valuation.id;
+    await createCalculation(
+      pool,
+      {
+        valuationId,
+        engineVersion: 't',
+        status: 'succeeded',
+        inputs: {},
+        results: {},
+        equityValue: 1,
+        fmvPerShare: 2,
+        createdBy: ops.id,
+      },
+      { actorType: 'human', actorId: ops.id },
+    );
+    await pool.query("UPDATE valuations SET state = 'published', assigned_reviewer_id = $2 WHERE id = $1", [
+      valuationId,
+      ops.id,
+    ]);
+    await app.inject({
+      method: 'PUT',
+      url: `/api/v1/valuations/${valuationId}/cap-table`,
+      headers: authHeader(client.token),
+      payload: { format: 'generic', csv: RATCHET_CSV },
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/valuations/${valuationId}/monitor`,
+      headers: authHeader(ops.token),
+    });
+    // Age the stored baseline the way the schema change did: the Series A goes
+    // back to being counted 1:1, so 12M as-converted reads as 10M.
+    await pool.query(
+      `UPDATE valuation_monitors
+          SET baseline = jsonb_set(baseline, '{fully_diluted_shares}', '10000000')
+        WHERE valuation_id = $1`,
+      [valuationId],
+    );
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  it('snapshots the as-converted count when monitoring is enabled today', async () => {
+    // The fixture wrote 10,000,000 over it; what enabling stored was 12,000,000.
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT baseline->>'fully_diluted_shares' AS n FROM valuation_monitors WHERE valuation_id = $1`,
+      [valuationId],
+    );
+    expect(rows[0]!.n).toBe('10000000');
+    const capTable = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${valuationId}/cap-table`,
+      headers: authHeader(ops.token),
+    });
+    expect(capTable.json().cap_table.validation.summary.fully_diluted_shares).toBe(12_000_000);
+  });
+
+  it('fires no cap-table trigger against the stale count', async () => {
+    const body = await getMonitor();
+    expect(capTableTriggers(body.triggers)).toHaveLength(0);
+    expect(body.status).toBe('green');
+  });
+
+  it('shows the reconciled baseline beside the triggers, not the stored one', async () => {
+    // Returning the stored figure would put a 2,000,000-share difference on
+    // screen that the empty trigger list denies.
+    const body = await getMonitor();
+    expect(body.monitor.baseline.fully_diluted_shares).toBe(12_000_000);
+    expect(body.current.fully_diluted_shares).toBe(12_000_000);
+  });
+
+  it('leaves the rest of the stored baseline alone', async () => {
+    const body = await getMonitor();
+    const { rows } = await pool.query<{ baseline: Record<string, unknown> }>(
+      'SELECT baseline FROM valuation_monitors WHERE valuation_id = $1',
+      [valuationId],
+    );
+    // Read-time reconciliation, not a rewrite: the column still holds the old
+    // count, and only that one field of the returned snapshot differs from it.
+    expect(rows[0]!.baseline.fully_diluted_shares).toBe(10_000_000);
+    expect({ ...body.monitor.baseline, fully_diluted_shares: null }).toEqual({
+      ...rows[0]!.baseline,
+      fully_diluted_shares: null,
+    });
+  });
+
+  it('reports green on the dashboard and alerts nobody on a scan', async () => {
+    const dash = await app.inject({
+      method: 'GET',
+      url: '/api/v1/monitors',
+      headers: authHeader(ops.token),
+    });
+    const mine = dash.json().monitors.find((m: { valuation_id: string }) => m.valuation_id === valuationId);
+    expect(capTableTriggers(mine.triggers)).toHaveLength(0);
+    expect(mine.status).toBe('green');
+
+    const scan = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/monitors/scan',
+      headers: authHeader(ops.token),
+    });
+    expect(scan.statusCode).toBe(200);
+    const alerts = await pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM monitor_alerts a
+         JOIN valuation_monitors m ON m.id = a.monitor_id
+        WHERE m.valuation_id = $1 AND a.trigger_type = 'cap_table_change'`,
+      [valuationId],
+    );
+    expect(alerts.rows[0]!.n).toBe(0);
+  });
+
+  it('still fires when the cap table is genuinely rewritten afterwards', async () => {
+    // The reconciliation is bounded by `cap_tables.updated_at`: once the table
+    // is written again the rows behind the live count are no longer the rows
+    // the baseline was taken from, so a difference has to be reported.
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/valuations/${valuationId}/cap-table`,
+      headers: authHeader(ops.token),
+      payload: {
+        format: 'generic',
+        csv: [
+          'class,shares,price,invested,conversion_ratio',
+          'Common,8000000,0.10,,',
+          'Series A,2000000,1.00,2000000,2',
+          'Series B,3000000,2.00,6000000,1',
+        ].join('\n'),
+      },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const body = await getMonitor();
+    const [trigger] = capTableTriggers(body.triggers);
+    expect(trigger).toBeDefined();
+    // And the baseline is the stored one again, stale count and all: the
+    // entries it was taken from are gone, so there is nothing left to recompute
+    // it from. The trigger is right that the table moved and overstates the
+    // move by the 2,000,000 the old summary never counted — which is the bound
+    // on this fix, and the reason it is a read-time correction rather than a
+    // claim that the stored figure has been repaired.
+    expect(body.monitor.baseline.fully_diluted_shares).toBe(10_000_000);
+    expect(body.current.fully_diluted_shares).toBe(15_000_000);
+  });
+});

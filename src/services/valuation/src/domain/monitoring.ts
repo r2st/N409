@@ -28,6 +28,54 @@ export interface MonitorSnapshot {
   last_round_date: string | null;
 }
 
+/**
+ * Correct a baseline share count that was snapshotted from the stale cache.
+ *
+ * `baseline` is JSONB written once when monitoring was enabled, and its
+ * `fully_diluted_shares` was copied out of `cap_tables.validation` — the column
+ * that counted every preferred share 1:1 until eded249 taught it
+ * `conversion_ratio`. The live half of the comparison is now recomputed on read
+ * (`withFreshValidation`), so a monitored engagement holding a class that
+ * converts at other than 1:1, whose baseline predates that fix, compares an old
+ * denominator against a new one and fires a `cap_table_change` reporting a move
+ * nobody made. Nothing rewrites a baseline, so it fires on every scan until
+ * somebody re-enables monitoring.
+ *
+ * The baseline cannot be recomputed in general — it is a snapshot of entries as
+ * they stood, and those entries are not kept. But it can be recomputed in
+ * exactly the case that matters: when the cap table has not been written since
+ * the baseline was taken, the rows behind `capTable` *are* the rows the baseline
+ * was taken from, so the only thing that can make the two counts differ is the
+ * cache the old one was copied out of. Recompute there, and leave the count
+ * alone whenever the table has been rewritten since — a difference then may be a
+ * real change, and suppressing it would silence the trigger this exists for.
+ *
+ * `takenAt` is the monitor's `updated_at`: `enableMonitor` is the only writer of
+ * `baseline` and it stamps that column, and neither `markChecked` nor the alert
+ * writes touch it. `changedAt` is `cap_tables.updated_at`. Either being absent
+ * means there is nothing to compare, so the baseline stands.
+ */
+export function reconcileBaselineShares(
+  baseline: MonitorSnapshot,
+  capTable: { fully_diluted_shares: number | null; changed_at: Date | string | null } | null,
+  takenAt: Date | string | null,
+): MonitorSnapshot {
+  const live = capTable?.fully_diluted_shares ?? null;
+  if (live === null || baseline.fully_diluted_shares === null || live === baseline.fully_diluted_shares) {
+    return baseline;
+  }
+  const changed = asTime(capTable?.changed_at ?? null);
+  const taken = asTime(takenAt);
+  if (changed === null || taken === null || changed > taken) return baseline;
+  return { ...baseline, fully_diluted_shares: live };
+}
+
+function asTime(v: Date | string | null): number | null {
+  if (v === null) return null;
+  const t = v instanceof Date ? v.getTime() : new Date(v).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
 export type TriggerLevel = 'green' | 'yellow' | 'red';
 export type TriggerType = 'expiry' | 'revenue_change' | 'funding_round' | 'cap_table_change';
 

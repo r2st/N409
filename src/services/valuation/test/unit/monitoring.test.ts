@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateTriggers, overallStatus, type MonitorSnapshot } from '../../src/domain/monitoring.js';
+import {
+  evaluateTriggers,
+  overallStatus,
+  reconcileBaselineShares,
+  type MonitorSnapshot,
+} from '../../src/domain/monitoring.js';
 
 const baseline: MonitorSnapshot = {
   valuation_date: '2026-01-01',
@@ -161,5 +166,132 @@ describe('monitoring — the arithmetic at the edges', () => {
     expect(triggers.map((t) => t.level).sort()).toEqual(['red', 'yellow']);
     expect(overallStatus(triggers)).toBe('red');
     expect(overallStatus([...triggers].reverse())).toBe('red');
+  });
+
+  describe('reconcileBaselineShares', () => {
+    // The baseline is JSONB written once, and its share count was copied out of
+    // the cap table's stored validation back when that summed preferred 1:1.
+    // The live side is recomputed on read, so a table with a ratchet compares an
+    // old denominator against a new one and reports a change nobody made.
+    const TAKEN = new Date('2026-02-01T12:00:00Z');
+    const BEFORE = new Date('2026-01-15T09:00:00Z');
+    const AFTER = new Date('2026-03-20T09:00:00Z');
+
+    it('adopts the live count when the cap table has not been written since', () => {
+      const healed = reconcileBaselineShares(
+        baseline,
+        { fully_diluted_shares: 13_000_000, changed_at: BEFORE },
+        TAKEN,
+      );
+      expect(healed.fully_diluted_shares).toBe(13_000_000);
+      // Only that field moves; the rest of the snapshot is the record of what
+      // was true when monitoring was enabled and must not be rewritten.
+      expect({ ...healed, fully_diluted_shares: null }).toEqual({
+        ...baseline,
+        fully_diluted_shares: null,
+      });
+    });
+
+    it('fires nothing once the count is reconciled', () => {
+      const current: MonitorSnapshot = { ...same, fully_diluted_shares: 13_000_000 };
+      const stale = evaluateTriggers(baseline, current, new Date('2026-03-01T00:00:00Z'));
+      expect(stale.map((t) => t.type)).toContain('cap_table_change');
+
+      const healed = reconcileBaselineShares(
+        baseline,
+        { fully_diluted_shares: current.fully_diluted_shares, changed_at: BEFORE },
+        TAKEN,
+      );
+      expect(evaluateTriggers(healed, current, new Date('2026-03-01T00:00:00Z'))).toHaveLength(0);
+    });
+
+    it('leaves a cap table rewritten since the baseline alone', () => {
+      // The rows behind the live count are no longer the rows the baseline was
+      // taken from, so the difference may be a real issuance. Suppressing it
+      // would silence the trigger this whole subsystem exists for.
+      const kept = reconcileBaselineShares(
+        baseline,
+        { fully_diluted_shares: 13_000_000, changed_at: AFTER },
+        TAKEN,
+      );
+      expect(kept.fully_diluted_shares).toBe(baseline.fully_diluted_shares);
+      expect(evaluateTriggers(kept, { ...same, fully_diluted_shares: 13_000_000 }, AFTER)).toHaveLength(1);
+    });
+
+    it('treats a write at the same instant as the baseline as not later', () => {
+      // `enableMonitor` reads the cap table and stamps `updated_at` in the same
+      // request, so equal timestamps are the ordinary case for a table saved and
+      // monitored together — not a rewrite.
+      const healed = reconcileBaselineShares(
+        baseline,
+        { fully_diluted_shares: 13_000_000, changed_at: TAKEN },
+        TAKEN,
+      );
+      expect(healed.fully_diluted_shares).toBe(13_000_000);
+    });
+
+    it('accepts the timestamps as ISO strings as well as Dates', () => {
+      const healed = reconcileBaselineShares(
+        baseline,
+        { fully_diluted_shares: 13_000_000, changed_at: BEFORE.toISOString() },
+        TAKEN.toISOString(),
+      );
+      expect(healed.fully_diluted_shares).toBe(13_000_000);
+    });
+
+    it('keeps the baseline when either timestamp is missing or unreadable', () => {
+      const cases: Array<[Date | string | null, Date | string | null]> = [
+        [null, TAKEN],
+        [BEFORE, null],
+        ['not a date', TAKEN],
+        [BEFORE, 'not a date'],
+      ];
+      for (const [changed_at, takenAt] of cases) {
+        const kept = reconcileBaselineShares(
+          baseline,
+          { fully_diluted_shares: 13_000_000, changed_at },
+          takenAt,
+        );
+        expect(kept.fully_diluted_shares).toBe(baseline.fully_diluted_shares);
+      }
+    });
+
+    it('keeps the baseline when there is no cap table to recompute from', () => {
+      expect(reconcileBaselineShares(baseline, null, TAKEN)).toEqual(baseline);
+      expect(
+        reconcileBaselineShares(baseline, { fully_diluted_shares: null, changed_at: BEFORE }, TAKEN),
+      ).toEqual(baseline);
+    });
+
+    it('returns the baseline untouched when the counts already agree', () => {
+      const same_count = reconcileBaselineShares(
+        baseline,
+        { fully_diluted_shares: baseline.fully_diluted_shares, changed_at: BEFORE },
+        TAKEN,
+      );
+      expect(same_count).toEqual(baseline);
+    });
+
+    it('reconciles a baseline of zero rather than reading it as absent', () => {
+      // 0 is a share count the old summary could produce, and `?? null` on it
+      // would be the classic falsy slip.
+      const from_zero: MonitorSnapshot = { ...baseline, fully_diluted_shares: 0 };
+      const healed = reconcileBaselineShares(
+        from_zero,
+        { fully_diluted_shares: 13_000_000, changed_at: BEFORE },
+        TAKEN,
+      );
+      expect(healed.fully_diluted_shares).toBe(13_000_000);
+    });
+
+    it('leaves a null baseline count null', () => {
+      // Nothing was ever snapshotted, so there is nothing to correct — and the
+      // cap-table trigger already declines to fire against a null baseline.
+      const never: MonitorSnapshot = { ...baseline, fully_diluted_shares: null };
+      expect(
+        reconcileBaselineShares(never, { fully_diluted_shares: 13_000_000, changed_at: BEFORE }, TAKEN)
+          .fully_diluted_shares,
+      ).toBeNull();
+    });
   });
 });
