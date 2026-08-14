@@ -135,4 +135,160 @@ describe('CommentsSection', () => {
     expect(await screen.findByText('cfo@client.com')).toBeInTheDocument();
     expect(screen.getByText(/Cap table attached/)).toBeInTheDocument();
   });
+
+  describe('sticky notes (ops only)', () => {
+    const note: Comment = {
+      ...chat,
+      id: '01HZXW5N8YBFJ4G2Q0TCVMKRBB',
+      kind: 'note',
+      author_id: 'op',
+      author_name: 'Rae Okafor',
+      author_email: 'rae@n409.ai',
+      body: 'Client has not sent the 2025 audited accounts yet — chase before review.',
+      pinned: false,
+    };
+
+    /**
+     * The panel is gated on `isOps`, so the session has to be a real one: a
+     * marker in storage plus an /auth/me the provider will accept.
+     */
+    function renderAsOps(handler: (url: string, init?: RequestInit) => Response) {
+      localStorage.setItem('n409.token', '1');
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+        const u = String(url);
+        if (u.endsWith('/auth/me'))
+          return jsonResponse({
+            user: { id: 'op', email: 'rae@n409.ai', roles: ['admin'], verified: true },
+          });
+        return handler(u, init as RequestInit | undefined);
+      });
+      return renderSection();
+    }
+
+    it('shows ops their internal notes, and clients nothing at all', async () => {
+      renderAsOps(() => jsonResponse({ comments: [chat, note] }));
+
+      expect(await screen.findByText(/Sticky notes/)).toBeInTheDocument();
+      expect(screen.getByText(/chase before review/)).toBeInTheDocument();
+      // A note is not a message — it must not appear in the client-visible thread.
+      const conversation = screen.getByText('Conversation').closest('section')!;
+      expect(conversation).not.toHaveTextContent(/chase before review/);
+    });
+
+    it('says so when there are no notes', async () => {
+      renderAsOps(() => jsonResponse({ comments: [chat] }));
+      expect(await screen.findByText('No notes yet.')).toBeInTheDocument();
+    });
+
+    it('posts a note pinned, under the note kind', async () => {
+      const posts: unknown[] = [];
+      renderAsOps((url, init) => {
+        if (url.includes('/comments') && init?.method === 'POST') {
+          posts.push(JSON.parse(String(init.body)));
+          return jsonResponse({ comment: note }, 201);
+        }
+        return jsonResponse({ comments: posts.length ? [note] : [] });
+      });
+
+      await screen.findByText('No notes yet.');
+      await userEvent.type(screen.getByLabelText('Add an internal note'), '  Chase the accounts  ');
+      await userEvent.click(screen.getByRole('button', { name: 'Add note' }));
+
+      await waitFor(() => expect(posts).toHaveLength(1));
+      expect(posts[0]).toEqual({ kind: 'note', body: 'Chase the accounts', pinned: true });
+    });
+
+    it('names each note control after the note it acts on', async () => {
+      renderAsOps(() => jsonResponse({ comments: [note, { ...note, id: 'n2', body: 'Second note' }] }));
+
+      await screen.findByText(/Sticky notes/);
+      expect(
+        screen.getByRole('button', { name: /Delete note — Rae Okafor: Client has not sent/ }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Delete note — Rae Okafor: Second note' }),
+      ).toBeInTheDocument();
+    });
+
+    it('pins and unpins a note through the same control', async () => {
+      const patches: Array<{ url: string; body: unknown }> = [];
+      let pinned = false;
+      renderAsOps((url, init) => {
+        if (init?.method === 'PATCH') {
+          patches.push({ url, body: JSON.parse(String(init.body)) });
+          pinned = !pinned;
+          return jsonResponse({ ok: true });
+        }
+        return jsonResponse({ comments: [{ ...note, pinned }] });
+      });
+
+      await userEvent.click(await screen.findByRole('button', { name: /^Pin note —/ }));
+
+      await waitFor(() => expect(patches).toHaveLength(1));
+      expect(patches[0]!.body).toEqual({ pinned: true });
+      await screen.findByRole('button', { name: /^Unpin note —/ });
+    });
+
+    it('deletes a note and reloads the panel', async () => {
+      const deletes: string[] = [];
+      renderAsOps((url, init) => {
+        if (init?.method === 'DELETE') {
+          deletes.push(url);
+          return jsonResponse({ ok: true });
+        }
+        return jsonResponse({ comments: deletes.length ? [] : [note] });
+      });
+
+      await userEvent.click(await screen.findByRole('button', { name: /^Delete note —/ }));
+
+      await waitFor(() => expect(screen.getByText('No notes yet.')).toBeInTheDocument());
+      expect(deletes[0]).toContain('/comments/01HZXW5N8YBFJ4G2Q0TCVMKRBB');
+    });
+
+    it('reports a delete the server refused', async () => {
+      renderAsOps((_url, init) =>
+        init?.method === 'DELETE'
+          ? jsonResponse({ title: 'Forbidden' }, 403)
+          : jsonResponse({ comments: [note] }),
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /^Delete note —/ }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(/Could not delete the comment/i);
+    });
+
+    it('reports a pin the server refused', async () => {
+      renderAsOps((_url, init) =>
+        init?.method === 'PATCH'
+          ? jsonResponse({ title: 'Forbidden' }, 403)
+          : jsonResponse({ comments: [note] }),
+      );
+
+      await userEvent.click(await screen.findByRole('button', { name: /^Pin note —/ }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(/Could not update the note/i);
+    });
+
+    it('lets ops delete anyone else’s chat message', async () => {
+      const deletes: string[] = [];
+      renderAsOps((url, init) => {
+        if (init?.method === 'DELETE') {
+          deletes.push(url);
+          return jsonResponse({ ok: true });
+        }
+        return jsonResponse({ comments: deletes.length ? [] : [chat] });
+      });
+
+      await userEvent.click(
+        await screen.findByRole('button', { name: /^Delete message — Grace Hopper/ }),
+      );
+      await waitFor(() => expect(deletes).toHaveLength(1));
+    });
+  });
+
+  it('offers no delete on a message that is not yours', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ comments: [chat] }));
+    renderSection();
+
+    await screen.findByText('When is the draft due?');
+    expect(screen.queryByRole('button', { name: /^Delete message/ })).not.toBeInTheDocument();
+  });
 });

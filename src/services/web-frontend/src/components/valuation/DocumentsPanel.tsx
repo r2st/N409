@@ -302,10 +302,22 @@ export function DocumentsPanel({
                   {doc.reviewed_at ? 'Reopen' : 'Mark reviewed'}
                 </Button>
               )}
-              <Button variant="ghost" onClick={() => void download(doc)}>
+              {/* A list of ten documents otherwise offers ten buttons named
+                  "Download" and ten named "Delete", which is what a screen
+                  reader's element list shows — the filename is the only thing
+                  that tells them apart. */}
+              <Button
+                variant="ghost"
+                aria-label={`Download ${doc.filename}`}
+                onClick={() => void download(doc)}
+              >
                 Download
               </Button>
-              <Button variant="danger" onClick={() => void remove(doc)}>
+              <Button
+                variant="danger"
+                aria-label={`Delete ${doc.filename}`}
+                onClick={() => void remove(doc)}
+              >
                 Delete
               </Button>
             </li>

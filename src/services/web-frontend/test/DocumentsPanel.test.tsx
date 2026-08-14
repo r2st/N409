@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DocumentsPanel, MAX_DOCUMENT_BYTES } from '../src/components/valuation/DocumentsPanel';
 import type { ValuationDocument } from '../src/lib/pipeline';
@@ -214,5 +214,195 @@ describe('DocumentsPanel upload', () => {
     mockApi();
     render(<DocumentsPanel valuationId={VAL_ID} />);
     expect(await screen.findByText(/max 25 MB each/)).toBeInTheDocument();
+  });
+
+  it('names the type files will upload as, and follows the picker', async () => {
+    mockApi();
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+    await screen.findByText('No documents yet');
+
+    expect(screen.getByText(/Drag & drop files here/)).toHaveTextContent('upload as Other');
+    await userEvent.selectOptions(screen.getByLabelText('Document type'), 'cap_table');
+    expect(screen.getByText(/Drag & drop files here/)).toHaveTextContent('upload as Cap table');
+  });
+
+  it('reports which file of how many is in flight', async () => {
+    let release: (r: Response) => void = () => {};
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if ((init?.method ?? 'GET') === 'GET') return jsonResponse({ documents: [] });
+      return new Promise<Response>((resolve) => (release = resolve));
+    });
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+    await screen.findByText('No documents yet');
+
+    const pending = pick([sizedFile('a.pdf', 10), sizedFile('b.pdf', 10)]);
+    expect(await screen.findByRole('status')).toHaveTextContent('Uploading 1 of 2 — a.pdf');
+    release(jsonResponse({ document: doc('d1', 'a.pdf') }, 201));
+    expect(await screen.findByRole('status')).toHaveTextContent('Uploading 2 of 2 — b.pdf');
+    release(jsonResponse({ document: doc('d2', 'b.pdf') }, 201));
+    await pending;
+  });
+
+  it('says so when the drop was a folder rather than files', async () => {
+    mockApi();
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+    const zone = await screen.findByText(/Drag & drop files here/);
+
+    fireEvent.drop(zone, { dataTransfer: { files: [] } });
+
+    expect(await screen.findByText(/drop files rather than a folder/i)).toBeInTheDocument();
+  });
+
+  it('highlights the dropzone while a drag is over it', async () => {
+    mockApi();
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+    const zone = await screen.findByText(/Drag & drop files here/);
+
+    fireEvent.dragOver(zone);
+    expect(zone.className).toContain('border-bond-500');
+    fireEvent.dragLeave(zone);
+    expect(zone.className).not.toContain('border-bond-500');
+  });
+});
+
+describe('DocumentsPanel list', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  /** Serves a fixed list, and records the writes made against it. */
+  function mockList(
+    documents: ValuationDocument[],
+    hooks: { del?: () => Response; review?: () => Response; download?: () => Response } = {},
+  ) {
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const path = String(url);
+      const method = init?.method ?? 'GET';
+      calls.push({
+        url: path,
+        method,
+        body: init?.body && typeof init.body === 'string' ? JSON.parse(init.body) : undefined,
+      });
+      if (path.includes('/download')) {
+        return (
+          hooks.download ??
+          (() =>
+            new Response(new Blob(['pdf']), {
+              status: 200,
+              headers: { 'content-disposition': 'attachment; filename="cap-table.pdf"' },
+            }))
+        )();
+      }
+      if (path.includes('/review')) return (hooks.review ?? (() => jsonResponse({ ok: true })))();
+      if (method === 'DELETE') return (hooks.del ?? (() => jsonResponse({ ok: true })))();
+      return jsonResponse({ documents });
+    });
+    return calls;
+  }
+
+  it('names each row’s controls after the file they act on', async () => {
+    mockList([doc('d1', 'cap-table.pdf'), doc('d2', 'financials.xlsx')]);
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+
+    expect(await screen.findByRole('button', { name: 'Download cap-table.pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete financials.xlsx' })).toBeInTheDocument();
+  });
+
+  it('asks before deleting, and does nothing if the answer is no', async () => {
+    const calls = mockList([doc('d1', 'cap-table.pdf')]);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete cap-table.pdf' }));
+
+    expect(confirm).toHaveBeenCalledWith('Remove "cap-table.pdf"?');
+    expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(0);
+  });
+
+  it('deletes on confirmation', async () => {
+    const calls = mockList([doc('d1', 'cap-table.pdf')]);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete cap-table.pdf' }));
+
+    await waitFor(() => expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(1));
+  });
+
+  it('surfaces a delete the server refused', async () => {
+    mockList([doc('d1', 'cap-table.pdf')], {
+      del: () => problem(403, 'Documents cannot be removed after publication.'),
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete cap-table.pdf' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Documents cannot be removed after publication.',
+    );
+  });
+
+  it('surfaces a failed download', async () => {
+    mockList([doc('d1', 'cap-table.pdf')], { download: () => problem(404, 'That file is gone.') });
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Download cap-table.pdf' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('That file is gone.');
+  });
+
+  it('hides the review mark from anyone who cannot review', async () => {
+    mockList([doc('d1', 'cap-table.pdf')]);
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+
+    await screen.findByText('cap-table.pdf');
+    expect(screen.queryByRole('button', { name: /Mark .* reviewed/ })).not.toBeInTheDocument();
+  });
+
+  it('marks a document reviewed at once, and tells the workspace', async () => {
+    const calls = mockList([doc('d1', 'cap-table.pdf')]);
+    const onReviewed = vi.fn();
+    render(<DocumentsPanel valuationId={VAL_ID} canReview onReviewed={onReviewed} />);
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Mark cap-table.pdf reviewed' }),
+    );
+
+    // Optimistic — the row flips before the round trip returns.
+    expect(screen.getByText('reviewed')).toBeInTheDocument();
+    await waitFor(() => expect(onReviewed).toHaveBeenCalled());
+    expect(calls.find((c) => c.url.includes('/review'))!.body).toEqual({ reviewed: true });
+  });
+
+  it('reopens a reviewed document', async () => {
+    const calls = mockList([{ ...doc('d1', 'cap-table.pdf'), reviewed_at: '2026-02-01T00:00:00Z' }]);
+    render(<DocumentsPanel valuationId={VAL_ID} canReview />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reopen cap-table.pdf' }));
+
+    await waitFor(() =>
+      expect(calls.find((c) => c.url.includes('/review'))!.body).toEqual({ reviewed: false }),
+    );
+  });
+
+  it('puts the optimistic mark back when the server refuses it', async () => {
+    mockList([doc('d1', 'cap-table.pdf')], { review: () => problem(403, 'Reviewers only.') });
+    render(<DocumentsPanel valuationId={VAL_ID} canReview />);
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Mark cap-table.pdf reviewed' }),
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Reviewers only.');
+    // Reloaded from the server, so the row shows what actually landed.
+    await waitFor(() => expect(screen.queryByText('reviewed')).not.toBeInTheDocument());
+  });
+
+  it('says the list could not be loaded rather than showing a skeleton for ever', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(problem(503, 'Storage is unavailable.'));
+    render(<DocumentsPanel valuationId={VAL_ID} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load documents/i);
+    expect(screen.queryByText('No documents yet')).not.toBeInTheDocument();
   });
 });
