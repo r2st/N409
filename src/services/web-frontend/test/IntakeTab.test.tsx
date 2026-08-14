@@ -222,6 +222,28 @@ describe('IntakeTab', () => {
       expect(await screen.findByText('Documents still needed')).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: 'Company information' })).not.toBeInTheDocument();
     });
+
+    it('says why there are no sections, instead of inviting the client to fill in nothing', async () => {
+      // The empty-list fallback is right; what was missing was the reason. The
+      // tab rendered "Complete the sections below" above no sections at all,
+      // and a client with nothing to fill in and no explanation has no way to
+      // tell a broken form from a questionnaire that is already done.
+      mockApi({ schema: problem(500, 'no schema') });
+      renderTab();
+
+      expect(await screen.findByText(/Could not load the questionnaire form/)).toBeInTheDocument();
+      expect(screen.queryByText(/Complete the sections below/)).not.toBeInTheDocument();
+      // The half that did load is still on screen and still true.
+      expect(screen.getByText('Documents still needed')).toBeInTheDocument();
+    });
+
+    it('says nothing of the sort when the schema loads', async () => {
+      mockApi();
+      renderTab();
+      await ready();
+      expect(screen.getByText(/Complete the sections below/)).toBeInTheDocument();
+      expect(screen.queryByText(/Could not load the questionnaire form/)).not.toBeInTheDocument();
+    });
   });
 
   describe('the questionnaire', () => {

@@ -231,21 +231,36 @@ function settlementNote(p: Payment): string | null {
  */
 export function PaymentHistory({ valuation }: { valuation: Valuation }) {
   const [payments, setPayments] = useState<Payment[] | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void api<{ payments: Payment[] }>(`/valuations/${valuation.id}/payments`)
       .then((res) => {
-        if (!cancelled) setPayments(res.payments);
+        if (cancelled) return;
+        setFailed(false);
+        setPayments(res.payments);
       })
       .catch(() => {
-        if (!cancelled) setPayments([]);
+        // Not `setPayments([])`: this section hides itself when there is
+        // nothing to show, so a failed read took the whole payment record off
+        // the page — and the reader most likely to open it is someone checking
+        // whether a charge went through.
+        if (!cancelled) setFailed(true);
       });
     return () => {
       cancelled = true;
     };
   }, [valuation.id, valuation.paid_status]);
 
+  if (failed) {
+    return (
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+        <h2 className="overline mb-4 text-ink-400">Payment history</h2>
+        <ErrorNote>Could not load the payment history.</ErrorNote>
+      </section>
+    );
+  }
   if (!payments || payments.length === 0) return null;
 
   return (

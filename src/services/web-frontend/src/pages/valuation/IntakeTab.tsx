@@ -51,6 +51,7 @@ export function IntakeTab() {
   const { user } = useAuth();
   const ops = isOps(user);
   const [schema, setSchema] = useState<IntakeSection[] | null>(null);
+  const [schemaFailed, setSchemaFailed] = useState(false);
   const [crossRules, setCrossRules] = useState<IntakeCrossRule[]>([]);
   const [data, setData] = useState<QuestionnaireResponse | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
@@ -77,7 +78,15 @@ export function IntakeTab() {
         setSchema(r.sections);
         setCrossRules(r.cross_rules ?? []);
       })
-      .catch(() => setSchema([]));
+      // The empty list is deliberate — the sidebar, the progress and the
+      // document checklist are still worth showing, and blocking the whole tab
+      // on the form would take them away too. What was missing is the reason:
+      // the tab rendered "Complete the sections below" above no sections at
+      // all, so a client had nothing to fill in and nothing to explain it.
+      .catch(() => {
+        setSchema([]);
+        setSchemaFailed(true);
+      });
     void load();
   }, [load, valuation.kind]);
 
@@ -160,10 +169,19 @@ export function IntakeTab() {
             Questionnaire submitted. You can still update answers below if anything changes.
           </div>
         ) : (
-          <div className="rounded-md border border-paper-300 bg-paper-50 px-4 py-3 text-sm text-ink-500">
-            Complete the sections below to help us value {valuation.company_name}. Your answers save per
-            section.
-          </div>
+          !schemaFailed && (
+            <div className="rounded-md border border-paper-300 bg-paper-50 px-4 py-3 text-sm text-ink-500">
+              Complete the sections below to help us value {valuation.company_name}. Your answers save per
+              section.
+            </div>
+          )
+        )}
+
+        {schemaFailed && (
+          <ErrorNote>
+            Could not load the questionnaire form. Your saved answers are safe — reload the page to try again.
+            Everything else on this tab is up to date.
+          </ErrorNote>
         )}
 
         {error && <ErrorNote>{error}</ErrorNote>}

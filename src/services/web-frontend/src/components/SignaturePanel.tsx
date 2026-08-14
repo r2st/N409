@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import type { Valuation } from '../lib/types';
-import { Button, ErrorNote, Field, Select, TextInput } from './ui';
+import { Button, ErrorNote, Field, Select, Spinner, TextInput } from './ui';
 
 /**
  * Signature workflow (remaining-gaps §3 #3) — Signature (main) / Signature
@@ -24,6 +24,7 @@ export interface Signature {
 
 export function SignaturePanel({ valuation }: { valuation: Valuation }) {
   const [signatures, setSignatures] = useState<Signature[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ role: 'main', signer_name: '', signer_title: '', signature_text: '' });
@@ -34,8 +35,14 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
         `/valuations/${valuation.id}/signatures`,
       );
       setSignatures(items);
+      setLoadFailed(false);
     } catch {
-      setSignatures([]);
+      // Emphatically not `setSignatures([])`. An empty list here is a claim —
+      // it renders both roles as "Not signed", stamps the engagement "Publish
+      // blocked — main signature required", and offers the sign form again on a
+      // valuation that may already carry both signatures. A failed read must
+      // not be able to produce a duplicate signature.
+      setLoadFailed(true);
     }
   }, [valuation.id]);
 
@@ -109,6 +116,22 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
       )}
     </div>
   );
+
+  // Nothing below can be stated without the list: the badge, both rows and the
+  // sign form are all assertions about what has been signed. Until it arrives,
+  // the panel says so rather than defaulting to "Not signed".
+  if (signatures === null) {
+    return (
+      <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+        <h2 className="overline mb-2 text-ink-400">Signatures</h2>
+        {loadFailed ? (
+          <ErrorNote>Could not load the signatures on this valuation.</ErrorNote>
+        ) : (
+          <Spinner label="Loading signatures" />
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">

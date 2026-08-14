@@ -111,6 +111,7 @@ export function FirmDashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [clients, setClients] = useState<FirmClient[] | null>(null);
+  const [clientsError, setClientsError] = useState<string | null>(null);
   const [clientTotal, setClientTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -138,6 +139,7 @@ export function FirmDashboardPage() {
       if (term.trim()) query.set('search', term.trim());
       if (partnerId) query.set('partner_id', partnerId);
       const res = await api<{ clients: FirmClient[]; total: number }>(`/firm/clients?${query}`);
+      setClientsError(null);
       setClients(res.clients);
       setClientTotal(res.total);
     },
@@ -147,7 +149,11 @@ export function FirmDashboardPage() {
   // Debounced so typing a client name is one request per pause, not per key.
   useEffect(() => {
     const timer = setTimeout(() => {
-      loadClients(page, search).catch(() => setClients([]));
+      // Not `setClients([])`: the table's empty text is "No clients yet", so a
+      // firm whose book failed to load was told it has no book.
+      loadClients(page, search).catch((err: unknown) =>
+        setClientsError(err instanceof ApiError ? err.message : 'Could not load the client list.'),
+      );
     }, 250);
     return () => clearTimeout(timer);
   }, [page, search, loadClients]);
@@ -322,7 +328,11 @@ export function FirmDashboardPage() {
           </div>
         </div>
         <div className="mt-3 rounded-lg border border-paper-300 bg-surface p-2 shadow-card">
-          {clients === null ? (
+          {clientsError ? (
+            <div className="p-2">
+              <ErrorNote>{clientsError}</ErrorNote>
+            </div>
+          ) : clients === null ? (
             <TableSkeleton columns={clientColumns.length} rows={6} label="Loading clients…" />
           ) : (
             <DataTable

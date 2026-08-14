@@ -148,6 +148,7 @@ export function ValuationComparePage() {
   const b = params.get('b') ?? '';
 
   const [options, setOptions] = useState<Valuation[] | null>(null);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -172,7 +173,12 @@ export function ValuationComparePage() {
   useEffect(() => {
     void api<{ valuations: Valuation[] }>('/valuations?per_page=100')
       .then((r) => setOptions(r.valuations))
-      .catch(() => setOptions([]));
+      // Not `setOptions([])`: two empty pickers plus "You need at least two
+      // valuations before there is anything to compare" is a claim about the
+      // account, and the account is not what failed.
+      .catch((err: unknown) =>
+        setOptionsError(err instanceof ApiError ? err.message : 'Could not load the valuations to compare.'),
+      );
   }, []);
 
   const pick = useCallback(
@@ -247,6 +253,12 @@ export function ValuationComparePage() {
         </Field>
       </div>
 
+      {optionsError && (
+        <div className="mt-6">
+          <ErrorNote>{optionsError}</ErrorNote>
+        </div>
+      )}
+
       {error && (
         <div className="mt-6">
           <ErrorNote>{error}</ErrorNote>
@@ -255,7 +267,7 @@ export function ValuationComparePage() {
 
       {loading && <Spinner />}
 
-      {!loading && !error && (!a || !b) && (
+      {!loading && !error && !optionsError && (!a || !b) && (
         <div className="mt-8">
           <EmptyState title="Choose two valuations">
             {options && options.length < 2

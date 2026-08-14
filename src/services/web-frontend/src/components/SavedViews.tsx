@@ -56,6 +56,7 @@ export function SavedViews() {
   const ops = isOps(user);
   const [params, setParams] = useSearchParams();
   const [views, setViews] = useState<SavedView[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [name, setName] = useState('');
@@ -69,10 +70,17 @@ export function SavedViews() {
   const load = useCallback(async () => {
     try {
       const res = await api<{ views: SavedView[] }>('/saved-views');
+      setLoadFailed(false);
       setViews(res.views);
     } catch {
-      // A failed picker must not take the worklist with it.
-      setViews([]);
+      // A failed picker must not take the worklist with it — that part was
+      // always right. What `setViews([])` did on top of that was label the
+      // empty dropdown "No saved views yet", which is a claim about the user's
+      // account rather than about the request, and the two call for opposite
+      // responses. The control stays on screen (it is a real feature, and
+      // removing it on a blip reads as it having been taken away) and says
+      // what actually happened.
+      setLoadFailed(true);
     }
   }, []);
 
@@ -142,6 +150,16 @@ export function SavedViews() {
       setError('Could not delete the view.');
     }
   };
+
+  if (loadFailed) {
+    return (
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Select aria-label="Saved view" value="" disabled className="!w-auto min-w-48">
+          <option value="">Saved views unavailable</option>
+        </Select>
+      </div>
+    );
+  }
 
   if (!views) return null;
 
