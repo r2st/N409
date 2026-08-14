@@ -11,6 +11,7 @@ import {
   marketExhibit,
   peerSetExhibit,
   pwermExhibit,
+  sensitivityExhibit,
   financialsExhibit,
   waccExhibit,
   scheduleTitle,
@@ -19,6 +20,7 @@ import {
 } from '../../src/domain/reportExhibits.js';
 import { ALLOWED_TAGS, sanitizeHtml } from '../../src/domain/report.js';
 import { renderedScheduleIds } from '../../src/domain/reportExhibitIndex.js';
+import { sensitivityGrid } from '../../src/domain/sensitivity.js';
 import { computeWorkbook } from '../../src/domain/workbook.js';
 import type { CalculationRow } from '../../src/repos/calculations.js';
 import type { ProjectionRow } from '../../src/repos/projections.js';
@@ -142,6 +144,9 @@ describe('buildExhibits', () => {
       'Exhibit C — Income Approach (Discounted Cash Flow)',
       'Exhibit D — Market Approach (Guideline Multiples)',
       'Exhibit F — Allocation of Equity Value',
+      // F-2 needs only what an OPM run already has — sigma, the term, the
+      // rate, the preference stack — so it is present wherever an OPM is.
+      'Exhibit F-2 — Allocation Sensitivity',
       'Exhibit H — Discounts and Concluded Value',
     ]);
   });
@@ -378,9 +383,10 @@ describe('the schedule catalogue', () => {
     const bare = buildExhibits(calculation(), CONTEXT).map((s) => s.heading);
     for (const s of SCHEDULE_CATALOGUE) {
       expect(bare.includes(scheduleTitle(s)), `${scheduleTitle(s)} always=${s.always}`).toBe(
-        // C and D survive the bare fixture because INPUTS carries both an
-        // income and a market approach; they are not guaranteed in general.
-        s.always || s.id === 'C' || s.id === 'D',
+        // C, D and F-2 survive the bare fixture because INPUTS carries an
+        // income approach, a market approach and a full OPM assumption set;
+        // none of the three is guaranteed in general.
+        s.always || s.id === 'C' || s.id === 'D' || s.id === 'F-2',
       );
     }
     expect(SCHEDULE_CATALOGUE.filter((s) => s.always).map((s) => s.id)).toEqual(['A', 'B', 'F', 'H']);
@@ -687,6 +693,105 @@ describe('allocation exhibit', () => {
 });
 
 // ── Exhibit G ────────────────────────────────────────────────────────────────
+
+// ── Exhibit F-2 ──────────────────────────────────────────────────────────────
+
+describe('Exhibit F-2 — allocation sensitivity', () => {
+  const f2 = (results: Record<string, unknown> = RESULTS, inputs: Record<string, unknown> = INPUTS) =>
+    sensitivityExhibit(inputs, results, CONTEXT);
+
+  it('restates the conclusion across a volatility and term grid', () => {
+    const s = f2()!;
+    expect(s.heading).toBe('Exhibit F-2 — Allocation Sensitivity');
+    const seen = plain(s.html);
+    // The applied assumptions are the centre of the grid: 65% at 3.50 years.
+    expect(seen).toContain('65.0%');
+    expect(seen).toContain('3.50 yrs');
+    // And the stressed columns either side of it (±1 year, ±0.5 year).
+    expect(seen).toContain('2.50 yrs');
+    expect(seen).toContain('4.50 yrs');
+    expect(seen).toContain('(base)');
+  });
+
+  it('prints the concluded figure to the four decimals the report concludes to', () => {
+    // `sensitivity.ts` is denominated in cents, and passing cents straight
+    // through would round a $1.2345 conclusion to $1.23 — a grid that
+    // disagrees with the conclusion it exists to test. Four decimals, and a
+    // sub-cent digit that is actually non-zero somewhere in the table.
+    const html = f2()!.html;
+    expect(html).toMatch(/\$\d[\d,]*\.\d{4}/);
+    expect(html).not.toMatch(/\$\d[\d,]*\.\d{2}(?!\d)/);
+  });
+
+  it('marks every cell but the base as one the valuation does not adopt', () => {
+    // The exhibit is a robustness statement, not a range of defensible values,
+    // and a reader who takes a corner cell as an alternative conclusion has
+    // taken the wrong number out of a signed report.
+    const seen = plain(f2()!.html);
+    expect(seen).toContain('No cell other than the base case is adopted');
+  });
+
+  it('moves the value up with volatility — it is a call option', () => {
+    // Vega is positive, so each row down (higher sigma) must be worth more
+    // than the one above it at the same term. A grid that did not would mean
+    // the exhibit was stressing something other than the model it describes.
+    const grid = sensitivityGrid({
+      equityValueCents: 42_000_000 * 10_000,
+      strikeCents: 10_000_000 * 10_000,
+      volatility: 0.65,
+      termYears: 3.5,
+      riskFreeRate: 0.042,
+      commonShares: 8_000_000,
+      dlom: 0.25,
+    });
+    for (let col = 0; col < grid.terms.length; col++) {
+      for (let row = 1; row < grid.rows.length; row++) {
+        expect(grid.rows[row]![col]!.fmvPerShareCents).toBeGreaterThan(
+          grid.rows[row - 1]![col]!.fmvPerShareCents,
+        );
+      }
+    }
+  });
+
+  it('reads the preference off the blended model when there are no share classes', () => {
+    const s = f2(RESULTS, { liquidation_preference: 10_000_000 });
+    expect(s).not.toBeNull();
+    expect(plain(s!.html)).toContain('(base)');
+  });
+
+  it('is absent when the allocation ran no option model', () => {
+    // Current-value and as-converted allocations have no sigma and no term.
+    // A grid struck on a defaulted volatility would be a table of numbers with
+    // no relationship to the conclusion above it.
+    expect(f2({ ...RESULTS, assumptions: { risk_free_rate: 0.042 } })).toBeNull();
+    expect(f2({ ...RESULTS, assumptions: { volatility: 0.65, risk_free_rate: 0.042 } })).toBeNull();
+    expect(f2({ ...RESULTS, assumptions: {} })).toBeNull();
+  });
+
+  it('is absent without a preference stack to strike against', () => {
+    expect(
+      f2(RESULTS, { share_classes: [{ kind: 'common', name: 'Common', shares: 8_000_000 }] }),
+    ).toBeNull();
+    expect(f2(RESULTS, {})).toBeNull();
+  });
+
+  it('is absent on a degenerate share count rather than dividing by it', () => {
+    expect(f2({ ...RESULTS, fully_diluted_common: 0 })).toBeNull();
+    expect(f2({ ...RESULTS, fully_diluted_common: null })).toBeNull();
+  });
+
+  it('treats an absent DLOM as no discount rather than dropping the schedule', () => {
+    // DLOM is the one input with a defensible default: a valuation that
+    // concluded no marketability discount still has a sensitivity to sigma.
+    const s = f2({ ...RESULTS, discounts: {} });
+    expect(s).not.toBeNull();
+  });
+
+  it('emits only markup the report renderer understands', () => {
+    const html = f2()!.html;
+    expect(sanitizeHtml(html)).toBe(html);
+  });
+});
 
 describe('PWERM scenario exhibit', () => {
   const results = {
@@ -1069,6 +1174,7 @@ describe('peer set exhibit', () => {
       'Exhibit D — Market Approach (Guideline Multiples)',
       'Exhibit D-1 — Guideline Company Set',
       'Exhibit F — Allocation of Equity Value',
+      'Exhibit F-2 — Allocation Sensitivity',
       'Exhibit H — Discounts and Concluded Value',
     ]);
   });

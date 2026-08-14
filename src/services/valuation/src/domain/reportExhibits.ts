@@ -6,6 +6,7 @@ import { esc, P, section, table } from './exhibitHtml.js';
 import { MULTIPLE_LABELS, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
 import { requiredReturnRows } from './requiredReturns.js';
+import { sensitivityGrid } from './sensitivity.js';
 import { VOLATILITY_CONFIDENCE_NOTES, VOLATILITY_METHOD_LABELS } from './volatility.js';
 import type { VolatilityEstimateRow } from '../repos/volatilityEstimates.js';
 import type { ProjectionRow, ProjectionYear } from '../repos/projections.js';
@@ -98,7 +99,7 @@ export interface ExhibitPeer {
 
 /** The identifier the index and the body's pointers use for a schedule. */
 export type ScheduleId =
-  'A' | 'B' | 'C' | 'C-1' | 'D' | 'D-1' | 'E' | 'F' | 'F-1' | 'G' | 'H' | 'H-1' | 'I' | 'II' | 'III';
+  'A' | 'B' | 'C' | 'C-1' | 'D' | 'D-1' | 'E' | 'F' | 'F-1' | 'F-2' | 'G' | 'H' | 'H-1' | 'I' | 'II' | 'III';
 
 export interface ScheduleDescriptor {
   id: ScheduleId;
@@ -144,6 +145,7 @@ export const SCHEDULE_CATALOGUE: readonly ScheduleDescriptor[] = [
   { id: 'E', kind: 'Exhibit', name: 'Asset Approach', always: false },
   { id: 'F', kind: 'Exhibit', name: 'Allocation of Equity Value', always: true },
   { id: 'F-1', kind: 'Exhibit', name: 'Selected Volatility', always: false },
+  { id: 'F-2', kind: 'Exhibit', name: 'Allocation Sensitivity', always: false },
   { id: 'G', kind: 'Exhibit', name: 'Probability-Weighted Expected Return Scenarios', always: false },
   { id: 'H', kind: 'Exhibit', name: 'Discounts and Concluded Value', always: true },
   { id: 'H-1', kind: 'Exhibit', name: 'Marketability Discount: Derivation', always: false },
@@ -1329,6 +1331,160 @@ export function volatilityExhibit(
   ]);
 }
 
+// ── Exhibit F-2 — what the conclusion does if the two soft inputs are wrong ──
+
+/**
+ * The aggregate liquidation preference the OPM strikes at.
+ *
+ * Read the same two ways `capitalizationExhibit` reads the cap table: the
+ * class model when the engagement has share classes, and the single blended
+ * preference when it does not. Null when neither is present, which drops the
+ * exhibit — an OPM sensitivity with no strike is a Black-Scholes call on
+ * nothing.
+ */
+function aggregatePreference(inputs: Record<string, unknown>): number | null {
+  const classes = list(inputs.share_classes);
+  if (classes.length > 0) {
+    let total = 0;
+    let sawOne = false;
+    for (const raw of classes) {
+      const c = record(raw);
+      const p = num(c?.preference);
+      if (p !== null) {
+        total += p;
+        sawOne = true;
+      }
+    }
+    return sawOne ? total : null;
+  }
+  return num(inputs.liquidation_preference);
+}
+
+/**
+ * Exhibit F-2 — the concluded value across a volatility × term grid.
+ *
+ * Every other schedule in this file reports what the model *did*. This one
+ * reports how much that depended on two inputs nobody can observe.
+ *
+ * The allocation is a Black-Scholes call on total equity value, and two of its
+ * inputs are judgements rather than measurements: the expected volatility
+ * (estimated from guideline peers, which is what Exhibit F-1 argues) and the
+ * expected time to a liquidity event (an opinion about a company's future). A
+ * reviewer's first question about an OPM conclusion is what happens to it if
+ * those two are wrong, and until now the deliverable had no answer — the grid
+ * existed, tested, in `domain/sensitivity.ts`, but it was wired only to the
+ * analyst's dashboard and never reached the client's report.
+ *
+ * The exhibit is not an alternative conclusion and says so: every cell but the
+ * centre is a figure the valuation does *not* adopt. What it establishes is
+ * the shape of the dependence — a conclusion that moves 3% across the whole
+ * grid is robust, and one that doubles is a conclusion whose volatility
+ * estimate is the whole valuation.
+ */
+export function sensitivityExhibit(
+  inputs: Record<string, unknown>,
+  results: Record<string, unknown>,
+  ctx: ExhibitContext,
+): ReportPdfSection | null {
+  const assumptions = record(results.assumptions);
+  const volatility = num(assumptions?.volatility);
+  const termYears = num(assumptions?.time_to_exit_years);
+  const riskFreeRate = num(assumptions?.risk_free_rate);
+  const equityValue = num(results.equity_value);
+  const commonShares = num(results.fully_diluted_common);
+  const strike = aggregatePreference(inputs);
+  const dlom = num(record(results.discounts)?.dlom) ?? 0;
+
+  /*
+   * Every input or nothing. A grid struck on a defaulted volatility or a
+   * guessed term would be a table of numbers with no relationship to the
+   * conclusion above it, which is worse than the omission — and the allocation
+   * paths that do not run an OPM (current-value, as-converted) legitimately
+   * have no sigma, so this is the ordinary case rather than an error.
+   */
+  if (
+    volatility === null ||
+    termYears === null ||
+    riskFreeRate === null ||
+    equityValue === null ||
+    commonShares === null ||
+    strike === null ||
+    volatility <= 0 ||
+    termYears <= 0 ||
+    commonShares <= 0
+  ) {
+    return null;
+  }
+
+  /*
+   * `sensitivity.ts` is denominated in cents because the dashboard it was
+   * written for deals in cents. A 409A concludes to four decimal places — the
+   * convention `fmv_per_share` and Exhibit H both use — so passing cents would
+   * round $1.2345 to $1.23 and print a grid that disagrees with the conclusion
+   * it is testing. The module's arithmetic is homogeneous in the two money
+   * inputs, so feeding it ten-thousandths instead makes its integer rounding
+   * land on the fourth decimal, and dividing back out is exact.
+   */
+  const SCALE = 10_000;
+  const grid = sensitivityGrid({
+    equityValueCents: equityValue * SCALE,
+    strikeCents: strike * SCALE,
+    volatility,
+    termYears,
+    riskFreeRate,
+    commonShares,
+    dlom,
+  });
+
+  const money = (scaled: number) => formatCurrency(scaled / SCALE, ctx.currency, 4);
+  const signedPercent = (d: number) => `${d > 0 ? '+' : ''}${formatPercent(d, 1)}`;
+
+  const head = ['Volatility', ...grid.terms.map((t) => `${t.toFixed(2)} yrs`)];
+  const rows = grid.rows.map((row, i) => [
+    formatPercent(grid.volatilities[i]!, 1),
+    ...row.map((cell) =>
+      // The base case is the conclusion, so it is marked rather than left for
+      // the reader to locate by matching a number against an earlier page.
+      cell.deltaFromBase === 0
+        ? `<strong>${money(cell.fmvPerShareCents)}</strong> (base)`
+        : `${money(cell.fmvPerShareCents)} (${signedPercent(cell.deltaFromBase)})`,
+    ),
+  ]);
+
+  const flat = grid.rows.flat().map((c) => c.fmvPerShareCents);
+  const low = Math.min(...flat);
+  const high = Math.max(...flat);
+  const base = grid.base.fmvPerShareCents;
+  const spread = base > 0 ? (high - low) / base : 0;
+
+  return section(SCHEDULE['F-2'], [
+    P(
+      'The allocation prices common as a call option on total equity value, and two of its inputs ' +
+        'are estimates rather than observations: the expected volatility and the expected time to a ' +
+        'liquidity event. The table below restates the concluded value per share across a range of ' +
+        'both, holding every other input — equity value, the preference stack, the risk-free rate ' +
+        'and the marketability discount — at the values the conclusion adopts.',
+    ),
+    table({
+      head,
+      rows,
+      foot: [
+        'Applied',
+        ...grid.terms.map((t) =>
+          Math.abs(t - termYears) < 0.005 ? `${formatPercent(volatility, 1)} at ${t.toFixed(2)} yrs` : '',
+        ),
+      ],
+    }),
+    P(
+      `Across the range tested the concluded value runs from <strong>${money(low)}</strong> to ` +
+        `<strong>${money(high)}</strong>, a spread of ${formatPercent(spread, 1)} of the concluded ` +
+        `${money(base)}. <strong>No cell other than the base case is adopted by this valuation.</strong> ` +
+        'The table is presented so that the sensitivity of the conclusion to its two least observable ' +
+        'inputs can be judged, not to offer a range of defensible values.',
+    ),
+  ]);
+}
+
 // ── Exhibit G — PWERM scenarios ──────────────────────────────────────────────
 
 export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitContext): ReportPdfSection | null {
@@ -2462,6 +2618,9 @@ export function buildExhibits(calculation: CalculationRow | null, ctx: ExhibitCo
     // Immediately after F, because it is F's supporting detail — the same
     // relationship D-1 has with D and H-1 with H.
     volatilityExhibit(ctx, results),
+    // And F-2 after F-1: F-1 argues the volatility, F-2 shows what the
+    // conclusion does if that argument is wrong.
+    sensitivityExhibit(inputs, results, ctx),
     pwermExhibit(results, ctx),
     discountExhibit(results, ctx),
     // Immediately after H, because it is H's supporting detail — the same
