@@ -185,10 +185,16 @@ export default defineConfig({
       // engagement basics, approach weights, allocation methods and PWERM
       // grid: measured 97.45 lines/statements, 89.18 branches, 86.41
       // functions.
+      // Ratcheted on the round that went after the *handlers* rather than the
+      // files — the financial model's row edits, the marketing header's two
+      // menus under a pointer and a finger, and `InfoTooltip` across all
+      // three input devices: measured 97.78 lines/statements, 89.73
+      // branches, 88.46 functions. Functions was the weak metric and moved
+      // 1.5 points; it is the one worth raising.
       thresholds: {
         lines: 97,
         statements: 97,
-        functions: 86,
+        functions: 88,
         branches: 89,
       },
     },
