@@ -81,6 +81,7 @@ export function CommandPalette() {
   const [recent, setRecent] = useState<string[]>([]);
   const [remote, setRemote] = useState<SearchResults | null>(null);
   const [searching, setSearching] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -142,6 +143,7 @@ export function CommandPalette() {
     const q = query.trim();
     if (q.length < 2) {
       setRemote(null);
+      setSearchFailed(false);
       setSearching(false);
       return;
     }
@@ -150,10 +152,25 @@ export function CommandPalette() {
     const timer = setTimeout(() => {
       api<SearchResults>(`/search?q=${encodeURIComponent(q)}&limit=6`)
         .then((r) => {
-          if (!cancelled) setRemote(r);
+          if (!cancelled) {
+            setRemote(r);
+            setSearchFailed(false);
+          }
         })
+        /*
+         * Discarding the failure left the palette saying "Nothing matches
+         * “Acme”" — a statement about the account, on the strength of a search
+         * that never came back. The palette is how people find a valuation
+         * they cannot see in the list, so that answer sends them looking for
+         * an engagement they were told does not exist. The local commands are
+         * still matched and still shown; only the server half is missing, and
+         * it now says so.
+         */
         .catch(() => {
-          if (!cancelled) setRemote(null);
+          if (!cancelled) {
+            setRemote(null);
+            setSearchFailed(true);
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -290,8 +307,16 @@ export function CommandPalette() {
           role="listbox"
           className="max-h-[52vh] overflow-y-auto py-2"
         >
-          {rows.length === 0 && (
+          {searchFailed && (
+            <p role="status" className="px-4 py-3 text-center text-sm text-red-700">
+              Search is unavailable — only pages are listed. Try again in a moment.
+            </p>
+          )}
+          {rows.length === 0 && !searchFailed && (
             <p className="px-4 py-6 text-center text-sm text-ink-400">Nothing matches “{query}”.</p>
+          )}
+          {rows.length === 0 && searchFailed && (
+            <p className="px-4 pb-6 text-center text-sm text-ink-400">No page matches “{query}”.</p>
           )}
           {rows.map((row, index) => {
             const group = groupOf(row);

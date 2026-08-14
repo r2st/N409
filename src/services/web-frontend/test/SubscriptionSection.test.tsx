@@ -316,7 +316,12 @@ describe('SubscriptionSection (feature 7)', () => {
       expect(within(panel).getByText('40')).toBeInTheDocument();
     });
 
-    it('stays out of the way when the ops figures cannot be loaded', async () => {
+    /**
+     * `isOps` reads the token on the client, so a 403 means the server has
+     * decided this reader is not ops after all — the section belongs to
+     * someone else and removing it silently is right.
+     */
+    it('stays out of the way when the reader turns out not to be ops', async () => {
       flags.ops = true;
       mockApi(subscribed(), undefined, {
         '/admin/billing': { body: { title: 'Forbidden' }, status: 403 },
@@ -324,6 +329,25 @@ describe('SubscriptionSection (feature 7)', () => {
       render(<SubscriptionSection />);
       await screen.findByTestId('usage');
       await waitFor(() => expect(screen.queryByTestId('admin-billing')).not.toBeInTheDocument());
+    });
+
+    /**
+     * Every other failure is the opposite case: the reader is entitled to the
+     * dashboard and it is missing. Vanishing then reads as "ops has no billing
+     * view", which is a claim about the product rather than about the request.
+     */
+    it('says so when the reader is entitled to the figures and they did not come back', async () => {
+      flags.ops = true;
+      mockApi(subscribed(), undefined, {
+        '/admin/billing': { body: { title: 'Service Unavailable', detail: 'Billing is resyncing.' }, status: 503 },
+      });
+      render(<SubscriptionSection />);
+
+      const panel = await screen.findByTestId('admin-billing');
+      expect(within(panel).getByText('Billing dashboard (ops)')).toBeInTheDocument();
+      expect(within(panel).getByText('Billing is resyncing.')).toBeInTheDocument();
+      // No figures, because none were read.
+      expect(within(panel).queryByText('Active subscriptions')).not.toBeInTheDocument();
     });
   });
 });

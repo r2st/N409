@@ -265,11 +265,37 @@ interface AdminBilling {
 
 function AdminBillingDashboard() {
   const [data, setData] = useState<AdminBilling | null>(null);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     api<AdminBilling>('/admin/billing')
       .then(setData)
-      .catch(() => {});
+      .catch((err: unknown) => {
+        /*
+         * 403 is the one failure that means "this reader should not be seeing
+         * this section at all". `isOps` is a client-side read of the token, so
+         * the server is the authority, and the section removing itself without
+         * comment is the right answer — that is what the empty catch was for.
+         *
+         * Every other failure is the opposite: the reader is entitled to the
+         * dashboard and it is not there. Discarding those took MRR, the active
+         * count and the whole invoice table off the page with nothing left
+         * behind, so what it read as was "ops has no billing view" rather than
+         * "one request did not come back".
+         */
+        if (err instanceof ApiError && err.status === 403) return;
+        setError(err instanceof ApiError ? err.message : 'Could not load the billing dashboard.');
+      });
   }, []);
+  if (error) {
+    return (
+      <div className="mt-10" data-testid="admin-billing">
+        <h3 className="font-display text-lg font-semibold text-ink-900">Billing dashboard (ops)</h3>
+        <div className="mt-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      </div>
+    );
+  }
   if (!data) return null;
   return (
     <div className="mt-10" data-testid="admin-billing">
