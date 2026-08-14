@@ -112,6 +112,26 @@ function mockApi(routes: Array<[RegExp, () => Response]>) {
 const capTable = (body: unknown) => [/\/cap-table$/, () => json(body)] as [RegExp, () => Response];
 const formats = () => [/\/cap-table\/formats/, () => json({ formats: FORMATS })] as [RegExp, () => Response];
 
+/** The upload response shape, restated here because the tab keeps it private. */
+interface UploadedSheet {
+  name: string;
+  headers: string[];
+  rows: Record<string, string>[];
+  lines: number[];
+}
+interface Upload {
+  filename: string;
+  source: 'xlsx' | 'csv';
+  truncated: boolean;
+  sheets: UploadedSheet[];
+}
+
+async function openImporter() {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: /import/i }));
+  return user;
+}
+
 function renderTab() {
   return render(
     <MemoryRouter initialEntries={['/cap-table']}>
@@ -266,12 +286,6 @@ describe('CapTableTab', () => {
   });
 
   describe('the importer', () => {
-    async function openImporter() {
-      const user = userEvent.setup();
-      await user.click(await screen.findByRole('button', { name: /import/i }));
-      return user;
-    }
-
     it('derives the column mapping choices from the pasted CSV header', async () => {
       mockApi([capTable({ cap_table: null, can_edit: true }), formats()]);
       renderTab();
@@ -462,6 +476,277 @@ describe('CapTableTab', () => {
       await user.selectOptions(await screen.findByLabelText('Source format'), 'carta');
       await user.type(screen.getByRole('textbox'), 'class,shares');
       expect(await screen.findByLabelText('Security class *')).toHaveValue('');
+    });
+  });
+
+  describe('uploading a workbook', () => {
+    const sheet = (over: Partial<UploadedSheet> = {}): UploadedSheet => ({
+      name: 'Sheet1',
+      headers: ['Security', 'Quantity'],
+      rows: [{ Security: 'Common Stock', Quantity: '8000000' }],
+      lines: [2],
+      ...over,
+    });
+    const uploaded = (over: Partial<Upload> = {}): Upload => ({
+      filename: 'captable.xlsx',
+      source: 'xlsx',
+      truncated: false,
+      sheets: [sheet()],
+      ...over,
+    });
+    const uploadRoute = (respond: () => Response) =>
+      [/\/cap-table\/upload/, respond] as [RegExp, () => Response];
+
+    async function uploadFile(user: ReturnType<typeof userEvent.setup>, name = 'captable.xlsx') {
+      const input = screen.getByLabelText(/Upload Excel or CSV/);
+      await user.upload(input, new File(['binary'], name));
+      return input as HTMLInputElement;
+    }
+
+    it('names the uploaded file and its row count, and maps from the sheet header', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() => json(uploaded())),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+
+      expect(await screen.findByText('captable.xlsx')).toBeInTheDocument();
+      expect(screen.getByText(/Excel workbook · 1 rows/)).toBeInTheDocument();
+      // The mapping now comes from the server's parse, not from the textarea,
+      // which the upload replaces entirely.
+      const select = await screen.findByLabelText('Security class *');
+      expect([...select.querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+        '—',
+        'Security',
+        'Quantity',
+      ]);
+      expect(screen.queryByRole('textbox')).toBeNull();
+    });
+
+    /**
+     * The parsed rows go to the server, not the raw file: an .xlsx has no CSV
+     * text to send, and the source lines are what let a validation error cite
+     * the row the reader sees in Excel.
+     */
+    it('sends the parsed rows and their source lines, not raw text', async () => {
+      let previewBody: Record<string, unknown> | null = null;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (/\/cap-table\/upload/.test(url)) return json(uploaded());
+        if (/\/cap-table\/preview/.test(url)) {
+          previewBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return json({ entries: ENTRIES, validation: VALID });
+        }
+        if (/\/cap-table\/formats/.test(url)) return json({ formats: FORMATS });
+        return json({ cap_table: null, can_edit: true });
+      });
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+      await screen.findByText('captable.xlsx');
+      await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+      await waitFor(() => expect(previewBody).not.toBeNull());
+      expect(previewBody).toEqual({
+        format: 'generic',
+        rows: [{ Security: 'Common Stock', Quantity: '8000000' }],
+        source_lines: [2],
+        mapping: {},
+      });
+      expect(previewBody).not.toHaveProperty('csv');
+    });
+
+    it('lands on the sheet that looks like the cap table, not the first tab', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() =>
+          json(
+            uploaded({
+              sheets: [
+                sheet({ name: 'Instructions', rows: [{ Security: 'read me', Quantity: '' }] }),
+                sheet({ name: 'Cap Table', rows: [{ Security: 'Common Stock', Quantity: '8000000' }] }),
+              ],
+            }),
+          ),
+        ),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+      expect(await screen.findByLabelText('Sheet')).toHaveValue('1');
+    });
+
+    it('falls back to the first sheet with rows when no tab is named for equity', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() =>
+          json(
+            uploaded({
+              sheets: [
+                sheet({ name: 'Cover', rows: [], lines: [] }),
+                sheet({ name: 'Data', rows: [{ Security: 'Common Stock', Quantity: '8000000' }] }),
+              ],
+            }),
+          ),
+        ),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+      expect(await screen.findByLabelText('Sheet')).toHaveValue('1');
+    });
+
+    /**
+     * Neither search matches, and `findIndex(...) || 0` left the index at -1:
+     * the picker showed a value no option carried and the "no data rows"
+     * hint — the one piece of advice this workbook needs — never rendered.
+     */
+    it('lands on the first sheet, and says it is empty, when no sheet has rows', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() =>
+          json(
+            uploaded({
+              sheets: [
+                sheet({ name: 'Cover', rows: [], lines: [] }),
+                sheet({ name: 'Notes', rows: [], lines: [] }),
+              ],
+            }),
+          ),
+        ),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+
+      expect(await screen.findByLabelText('Sheet')).toHaveValue('0');
+      expect(screen.getByText(/This sheet has no data rows/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Preview' })).toBeDisabled();
+    });
+
+    it('offers no sheet picker for a single-sheet file', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() => json(uploaded({ source: 'csv', filename: 'export.csv' }))),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user, 'export.csv');
+      await screen.findByText('export.csv');
+      expect(screen.getByText(/CSV · 1 rows/)).toBeInTheDocument();
+      expect(screen.queryByLabelText('Sheet')).toBeNull();
+    });
+
+    it('switches sheets and drops the mapping taken from the previous one', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() =>
+          json(
+            uploaded({
+              sheets: [
+                sheet({ name: 'Cap Table', headers: ['Security', 'Quantity'] }),
+                sheet({ name: 'Options', headers: ['Holder', 'Granted'] }),
+              ],
+            }),
+          ),
+        ),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+      await user.selectOptions(await screen.findByLabelText('Security class *'), 'Security');
+      expect(screen.getByLabelText('Security class *')).toHaveValue('Security');
+
+      await user.selectOptions(screen.getByLabelText('Sheet'), '1');
+      // Carrying "Security" across would map a column the new sheet has not got.
+      expect(await screen.findByLabelText('Security class *')).toHaveValue('');
+      expect([...screen.getByLabelText('Shares *').querySelectorAll('option')].map((o) => o.value)).toEqual(
+        ['', 'Holder', 'Granted'],
+      );
+    });
+
+    it('warns that a long workbook was cut short rather than importing part of it silently', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() => json(uploaded({ truncated: true }))),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+      expect(await screen.findByText(/Only the first 2,000 rows were read/)).toBeInTheDocument();
+    });
+
+    it('removes the upload and returns to the paste box', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() => json(uploaded())),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+      await user.click(await screen.findByRole('button', { name: 'Remove' }));
+
+      expect(screen.getByRole('textbox')).toHaveValue('');
+      expect(screen.queryByText('captable.xlsx')).toBeNull();
+    });
+
+    it('reports a file the server could not read, and keeps the paste box usable', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() => json({ status: 415, detail: 'That file is not a readable workbook' }, 415)),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user, 'captable.xlsx');
+
+      expect(await screen.findByText('That file is not a readable workbook')).toBeInTheDocument();
+      expect(screen.getByRole('textbox')).toBeInTheDocument();
+    });
+
+    /**
+     * The browser fires no change event when the same file is picked twice in a
+     * row, so a rejected upload could not simply be retried after fixing the
+     * file. Clearing the input's value is what makes the second pick fire.
+     */
+    it('clears the file input so the same file can be re-picked after a failure', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() => json({ status: 500, detail: 'Parser crashed' }, 500)),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      const input = await uploadFile(user);
+      await screen.findByText('Parser crashed');
+      expect(input.value).toBe('');
+    });
+
+    it('cancelling the import discards the uploaded workbook too', async () => {
+      mockApi([
+        capTable({ cap_table: null, can_edit: true }),
+        formats(),
+        uploadRoute(() => json(uploaded())),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await uploadFile(user);
+      await screen.findByText('captable.xlsx');
+
+      await user.click(screen.getByRole('button', { name: 'Cancel import' }));
+      await user.click(screen.getByRole('button', { name: 'Import cap table' }));
+      expect(screen.queryByText('captable.xlsx')).toBeNull();
+      expect(screen.getByRole('textbox')).toHaveValue('');
     });
   });
 

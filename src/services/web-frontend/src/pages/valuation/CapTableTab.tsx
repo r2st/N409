@@ -306,7 +306,13 @@ export function CapTableTab() {
       // Land on the sheet most likely to hold the cap table rather than
       // whichever tab happened to be first in the workbook.
       const best = res.sheets.findIndex((s) => /cap|equity|shares|ownership/i.test(s.name));
-      setSheetIndex(best === -1 ? res.sheets.findIndex((s) => s.rows.length > 0) || 0 : best);
+      // A workbook where nothing matches and nothing has rows leaves both
+      // searches at -1, and `-1 || 0` is -1: the tab landed on `sheets[-1]`,
+      // so the sheet picker showed a value none of its options carried and
+      // the "no data rows" hint — which is exactly the advice that workbook
+      // needs — never rendered. Fall back to the first sheet instead.
+      const withRows = res.sheets.findIndex((s) => s.rows.length > 0);
+      setSheetIndex(best !== -1 ? best : withRows !== -1 ? withRows : 0);
       setCsv('');
       setMapping({});
       setPreview(null);

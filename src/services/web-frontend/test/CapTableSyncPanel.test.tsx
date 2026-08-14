@@ -24,6 +24,12 @@ const providers = [
   { provider: 'pulley', label: 'Pulley', configured: false, connection: null },
 ];
 
+/** Pulley configured but never connected — the branch that offers "Connect Pulley". */
+const pulleyConnectable = [
+  providers[0],
+  { provider: 'pulley', label: 'Pulley', configured: true, connection: null },
+];
+
 const conflictOutcome = {
   applied: false,
   class_count: 3,
@@ -99,5 +105,216 @@ describe('CapTableSyncPanel (feature 4)', () => {
     render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
     expect(await screen.findByText('Could not load sync providers.')).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('sends the analyst to the provider’s own consent screen to connect', async () => {
+    const user = userEvent.setup();
+    // jsdom implements no navigation, so a plain object stands in and the
+    // assignment the OAuth handoff makes becomes observable.
+    const original = Object.getOwnPropertyDescriptor(window, 'location');
+    Object.defineProperty(window, 'location', { value: { href: '' }, writable: true, configurable: true });
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/pulley/connect': () =>
+        jsonResponse({ authorize_url: 'https://app.pulley.com/oauth/authorize?state=xyz' }),
+      'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
+        jsonResponse({ providers: pulleyConnectable }),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Connect Pulley' }));
+    await waitFor(() =>
+      expect(window.location.href).toBe('https://app.pulley.com/oauth/authorize?state=xyz'),
+    );
+    if (original) Object.defineProperty(window, 'location', original);
+  });
+
+  /**
+   * A refused handoff left the button disabled with no explanation — the
+   * analyst could neither retry nor learn why. The error is reported and the
+   * button becomes clickable again.
+   */
+  it('reports a refused connection and re-enables the button', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/pulley/connect': () =>
+        jsonResponse({ title: 'Bad Gateway', detail: 'Pulley declined the handshake.', status: 502 }, 502),
+      'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
+        jsonResponse({ providers: pulleyConnectable }),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Connect Pulley' }));
+    expect(await screen.findByText('Pulley declined the handshake.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect Pulley' })).toBeEnabled();
+  });
+
+  it('never offers to connect a provider this deployment has no keys for', async () => {
+    mockApi();
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'Connect Pulley' })).toBeDisabled();
+  });
+
+  it('sets a periodic cadence and re-reads the connection it changed', async () => {
+    const user = userEvent.setup();
+    let frequency = 'manual';
+    const sent: unknown[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const key = `${init?.method ?? 'GET'} ${String(url).replace(/^.*\/api\/v1/, '')}`;
+      if (key.includes('/cap-table/sync/carta/frequency')) {
+        const body = JSON.parse(String(init?.body)) as { frequency: string };
+        sent.push(body);
+        frequency = body.frequency;
+        return jsonResponse({ ok: true });
+      }
+      return jsonResponse({
+        providers: [
+          { ...providers[0], connection: { ...providers[0].connection, sync_frequency: frequency } },
+          providers[1],
+        ],
+      });
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+
+    const select = await screen.findByLabelText('Carta sync frequency');
+    await user.selectOptions(select, 'weekly');
+    await waitFor(() => expect(sent).toEqual([{ frequency: 'weekly' }]));
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe('weekly'));
+  });
+
+  it('says why a cadence change was refused rather than silently keeping the old one', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/carta/frequency': () =>
+        jsonResponse({ title: 'Conflict', detail: 'Daily sync needs a paid plan.', status: 409 }, 409),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+
+    await user.selectOptions(await screen.findByLabelText('Carta sync frequency'), 'daily');
+    expect(await screen.findByText('Daily sync needs a paid plan.')).toBeInTheDocument();
+    // The panel is loaded, so the error belongs inline — not in place of the list.
+    expect(screen.getByTestId('cap-table-sync')).toBeInTheDocument();
+  });
+
+  it('drops the connection and re-reads the providers on disconnect', async () => {
+    const user = userEvent.setup();
+    let connected = true;
+    const calls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${String(url).replace(/^.*\/api\/v1/, '')}`);
+      if (method === 'DELETE') {
+        connected = false;
+        return jsonResponse({ ok: true });
+      }
+      return jsonResponse({
+        providers: [{ ...providers[0], connection: connected ? providers[0].connection : null }, providers[1]],
+      });
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Disconnect' }));
+    expect(await screen.findByRole('button', { name: 'Connect Carta' })).toBeInTheDocument();
+    expect(calls).toContain(`DELETE /valuations/${VAL_ID}/cap-table/sync/carta`);
+  });
+
+  it('surfaces the provider’s last error against the connection that carries it', async () => {
+    mockApi({
+      'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
+        jsonResponse({
+          providers: [
+            {
+              ...providers[0],
+              connection: { ...providers[0].connection, status: 'error', last_error: 'Token expired' },
+            },
+            providers[1],
+          ],
+        }),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    expect(await screen.findByText(/Last error: Token expired/)).toBeInTheDocument();
+  });
+
+  /**
+   * A revoked grant still has a connection record. Treating it as connected
+   * would offer "Sync now" against a token the provider no longer honours.
+   */
+  it('treats a revoked grant as not connected', async () => {
+    mockApi({
+      'GET /valuations/01N409VAL000000000000000AA/cap-table/sync': () =>
+        jsonResponse({
+          providers: [
+            { ...providers[0], connection: { ...providers[0].connection, status: 'revoked' } },
+            providers[1],
+          ],
+        }),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: 'Connect Carta' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
+  });
+
+  it('reports a failed pull and leaves the cap table on file alone', async () => {
+    const user = userEvent.setup();
+    const onApplied = vi.fn();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/carta/pull': () =>
+        jsonResponse({ title: 'Bad Gateway', detail: 'Carta returned no cap table.', status: 502 }, 502),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={onApplied} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    expect(await screen.findByText('Carta returned no cap table.')).toBeInTheDocument();
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('sync-conflicts')).not.toBeInTheDocument();
+    // The button is released, so the analyst can retry once the provider recovers.
+    expect(screen.getByRole('button', { name: 'Sync now' })).toBeEnabled();
+  });
+
+  it('dismisses a conflict preview without touching the cap table', async () => {
+    const user = userEvent.setup();
+    const onApplied = vi.fn();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/carta/pull': () =>
+        jsonResponse(conflictOutcome),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={onApplied} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    await user.click(await screen.findByRole('button', { name: 'Keep current' }));
+    await waitFor(() => expect(screen.queryByTestId('sync-conflicts')).not.toBeInTheDocument());
+    expect(onApplied).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A removed class has no value on the provider side, and a textual field
+   * (a class name, a preference type) is not a number to be grouped.
+   */
+  it('renders an absent value as a dash and a textual one verbatim', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /valuations/01N409VAL000000000000000AA/cap-table/sync/carta/pull': () =>
+        jsonResponse({
+          ...conflictOutcome,
+          diff: {
+            ...conflictOutcome.diff,
+            conflicts: [
+              {
+                security_class: 'Series Seed',
+                status: 'removed',
+                changes: [
+                  { field: 'shares', from: 1500000, to: null },
+                  { field: 'preference_type', from: 'non-participating', to: 'participating' },
+                ],
+              },
+            ],
+          },
+        }),
+    });
+    render(<CapTableSyncPanel valuationId={VAL_ID} onApplied={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: 'Sync now' }));
+    const row = (await screen.findByText('Series Seed')).closest('tr')!;
+    expect(row).toHaveTextContent('shares: 1,500,000 → —');
+    expect(row).toHaveTextContent('preference_type: non-participating → participating');
   });
 });
