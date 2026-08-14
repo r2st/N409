@@ -16,6 +16,7 @@ import { listEvents, type EventQuery } from '../events/record.js';
 import { findValuationById } from '../repos/valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
+import { checkWindowOrder, dateWindowFields } from '../domain/dateWindow.js';
 
 /**
  * Per-valuation audit trail: the raw event spine enriched with category,
@@ -34,11 +35,10 @@ const ListQuery = z.object({
   actor_type: z.enum(['human', 'ai', 'engine', 'system']).optional(),
   type: z.string().max(100).optional(),
   field: z.string().max(120).optional(),
-  from: z.coerce.date().optional(),
-  to: z.coerce.date().optional(),
+  ...dateWindowFields,
   page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(200).default(50),
-});
+}).superRefine(checkWindowOrder);
 
 const HistoryQuery = z.object({ field: z.string().min(1).max(120) });
 
