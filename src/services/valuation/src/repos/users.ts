@@ -72,6 +72,64 @@ export async function findUserById(pool: pg.Pool, id: string): Promise<UserWithR
   return rows[0] ?? null;
 }
 
+/** The columns the `authenticate` preHandler actually reads. */
+export interface AuthPrincipalRow {
+  id: string;
+  roles: RoleKey[];
+  partner_id: string | null;
+  deleted_at: Date | null;
+  session_epoch: number;
+}
+
+/**
+ * The narrow read behind bearer authentication.
+ *
+ * This runs on *every authenticated request* — it is the single most-executed
+ * statement in the service — and it used to be `findUserById`, which is
+ * `SELECT u.*`. The preHandler reads five fields; the other seventeen columns
+ * were fetched, decoded and thrown away several times per page load, and among
+ * them are `password_digest` and the encrypted `totp_secret`, which have no
+ * business being materialised into the request path of a route that only wants
+ * to know who is calling.
+ *
+ * Deliberately *not* cached. `plugins/auth.ts` documents why: roles and partner
+ * are re-read per request so that a role change or a removal takes effect
+ * immediately rather than at token expiry, and a TTL — however short — is
+ * exactly the window in which a revoked operator keeps their access. Making
+ * the read cheap is the alternative to making it rare.
+ */
+export async function findAuthPrincipal(pool: pg.Pool, id: string): Promise<AuthPrincipalRow | null> {
+  const { rows } = await pool.query<AuthPrincipalRow>(
+    `SELECT u.id, u.partner_id, u.deleted_at, u.session_epoch,
+            coalesce(array_agg(r.key) FILTER (WHERE r.key IS NOT NULL), '{}') AS roles
+     FROM users u
+     LEFT JOIN user_roles ur ON ur.user_id = u.id
+     LEFT JOIN roles r ON r.id = ur.role_id
+     WHERE u.id = $1
+     GROUP BY u.id`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Whether a user id names a row — for the reviewer and assignee checks.
+ *
+ * Four routes (workflow reassign, bulk assign_reviewer, the valuation patch and
+ * task assignment) called `findUserById` and did nothing with the result but
+ * test it for null. That is `SELECT u.*` plus a two-table join to build a role
+ * array nobody reads.
+ *
+ * Soft-deleted accounts count as existing, which is what `findUserById`
+ * returned and therefore what those routes already accepted. Whether a deleted
+ * user should be assignable is a real question, but it is a behaviour change
+ * and not this one's to make.
+ */
+export async function userExists(pool: pg.Pool, id: string): Promise<boolean> {
+  const { rowCount } = await pool.query('SELECT 1 FROM users WHERE id = $1', [id]);
+  return (rowCount ?? 0) > 0;
+}
+
 /**
  * Several users by id, keyed by id — one query for a set the caller already
  * knows the whole of.

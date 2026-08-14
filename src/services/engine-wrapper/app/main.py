@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .engine.approaches import EngineInputError
 from .engine.compute import ENGINE_VERSION, compute
 from .engine.validate import split_issues, validate_payload
+from .build_info import build_info
 from .errors import error_response, install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import enforce_token_configured, internal_token_middleware
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
@@ -324,17 +325,31 @@ def root() -> dict:
 
 @app.get("/health")
 def health() -> dict:
+    build = build_info()
     return {
         "status": "ok",
         "service": SERVICE,
         "version": ENGINE_VERSION,
         "uptime_s": int(time.monotonic() - _started),
+        # Which commit is actually live. 'unknown' when the deploy recorded no
+        # provenance — reported rather than omitted, so a skipped step shows up
+        # instead of being silent. infra/deploy.sh reads this field.
+        "build_sha": build.sha,
+        "build_sha_source": build.source,
     }
 
 
 @app.get("/ready")
 def ready() -> dict:
-    return {"status": "ready", "checks": {"engine": ENGINE_VERSION}}
+    # The engine has no upstream and no store: it is ready as soon as it can
+    # answer, so there is nothing here to gate on. The build sha rides along
+    # for the same reason it does on /health — one probe, one answer to
+    # "which code is this".
+    return {
+        "status": "ready",
+        "checks": {"engine": ENGINE_VERSION},
+        "build_sha": build_info().sha,
+    }
 
 
 @app.get("/engine/v1/health")

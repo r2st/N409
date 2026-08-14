@@ -202,6 +202,135 @@ describe.skipIf(!dbUp)('batched reads on bulk request paths', () => {
   });
 });
 
+/**
+ * The other half of the same audit: reads that ran the right number of times
+ * but fetched more than the caller looked at.
+ *
+ * `SELECT u.*` on the authenticate preHandler is the most-executed statement
+ * in the service, and the preHandler reads five of its twenty-two columns.
+ * Two of the seventeen it discarded are `password_digest` and the encrypted
+ * `totp_secret`, so the narrowing is a defence-in-depth change as much as a
+ * bandwidth one — which is why the assertion names those columns rather than
+ * just counting bytes.
+ */
+describe.skipIf(!dbUp)('narrow reads on the authentication path', () => {
+  let ctx: TestApp;
+  let ops: { id: string; token: string };
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+    ops = await seedUser(ctx, { roles: ['admin'] });
+  }, 60_000);
+  afterAll(async () => ctx?.teardown());
+
+  /** Reads of `users` issued while serving one request. */
+  async function userReads(run: () => Promise<unknown>): Promise<string[]> {
+    const tap = tapQueries(ctx.pool);
+    try {
+      await run();
+    } finally {
+      tap.restore();
+    }
+    return tap.statements.filter((s) => /FROM users\b/i.test(s));
+  }
+
+  it('does not fetch the password digest or the TOTP secret to identify a caller', async () => {
+    const reads = await userReads(() =>
+      ctx.app.inject({ method: 'GET', url: '/api/v1/valuations', headers: authHeader(ops.token) }),
+    );
+
+    expect(reads.length).toBeGreaterThan(0);
+    for (const sql of reads) {
+      expect(sql).not.toMatch(/SELECT u\.\*/i);
+      expect(sql).not.toMatch(/password_digest|totp_secret/i);
+    }
+    // It still reads what it decides with — a narrower query that dropped one
+    // of these would be an authorization bug, not an optimization.
+    expect(reads.some((s) => /session_epoch/.test(s) && /deleted_at/.test(s))).toBe(true);
+  });
+
+  it('still resolves roles, so an ops-only route stays reachable', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/users',
+      headers: authHeader(ops.token),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('still refuses a soft-deleted account', async () => {
+    const doomed = await seedUser(ctx, { roles: ['client'] });
+    await ctx.pool.query('UPDATE users SET deleted_at = now() WHERE id = $1', [doomed.id]);
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/valuations',
+      headers: authHeader(doomed.token),
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('still refuses a token minted before the session epoch moved', async () => {
+    const user = await seedUser(ctx, { roles: ['client'] });
+    await ctx.pool.query('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = $1', [
+      user.id,
+    ]);
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/api/v1/valuations',
+      headers: authHeader(user.token),
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('checks a reviewer exists without building their role array', async () => {
+    const reviewer = await seedUser(ctx, { roles: ['analyst'] });
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: 'Reviewer Check' },
+    });
+    const id = created.json().valuation.id as string;
+
+    const reads = await userReads(async () => {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/workflow/reassign`,
+        headers: authHeader(ops.token),
+        payload: { reviewer_id: reviewer.id },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    // The existence check is `SELECT 1`, not a whole row. The only other
+    // `users` read on this request is the preHandler's own, which is asserted
+    // separately above and is narrow by construction — so "no statement on
+    // this path selects a full user row" covers both.
+    expect(reads.some((s) => /SELECT 1 FROM users WHERE id = \$1/i.test(s))).toBe(true);
+    expect(reads.filter((s) => /SELECT u\.\*/i.test(s))).toEqual([]);
+  });
+
+  it('still rejects an unknown reviewer with the same 422', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: 'Unknown Reviewer' },
+    });
+    const id = created.json().valuation.id as string;
+
+    for (const reviewer_id of [newUlid(), 'not-a-ulid']) {
+      const res = await ctx.app.inject({
+        method: 'POST',
+        url: `/api/v1/valuations/${id}/workflow/reassign`,
+        headers: authHeader(ops.token),
+        payload: { reviewer_id },
+      });
+      expect(res.statusCode).toBe(422);
+    }
+  });
+});
+
 if (!dbUp) {
   console.warn('[batchedReads.test] Postgres not reachable — skipped. Run: npm run dev:db');
 }

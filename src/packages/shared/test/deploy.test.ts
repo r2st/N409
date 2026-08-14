@@ -515,6 +515,9 @@ describe('the shipped archive', () => {
 /** Ports the script probes: web is the public origin, valuation the API. */
 const WEB_PORT = 3000;
 const VALUATION_PORT = 3001;
+const AI_PORT = 3002;
+const ENGINE_PORT = 3003;
+const REPORT_PORT = 3004;
 
 /**
  * An ssh stub clause answering `<port>/health` with `sha`.
@@ -539,6 +542,18 @@ function healthStub(port: number, sha: string, notBefore = 1): string {
 function healthProbes(port: number): number {
   const f = `${transcript}.health${port}`;
   return existsSync(f) ? Number(readFileSync(f, 'utf8')) : 0;
+}
+
+/**
+ * The three units restarted alongside web, all reporting `sha`.
+ *
+ * They were restarted and never checked until r39: `systemctl restart` returns
+ * at fork under Type=simple, so "restarted" only ever meant "asked to restart".
+ * A test that wants the deploy to *succeed* now has to answer for them, which
+ * is the point — a stub that stays silent is a unit that never came up.
+ */
+function otherHealthStubs(sha: string): string[] {
+  return [AI_PORT, ENGINE_PORT, REPORT_PORT].map((port) => healthStub(port, sha));
 }
 
 describe('post-deploy verification', () => {
@@ -574,6 +589,81 @@ describe('post-deploy verification', () => {
     expect(run.status).not.toBe(0);
     expect(run.stderr).toContain('/ready is not passing');
   });
+
+  // ── Every unit, not just the two that used to be checked ──────────────────
+  //
+  // ai, engine-wrapper and report were restarted in step 6 and then never
+  // probed. Under Type=simple `systemctl restart` returns at fork, so a unit
+  // that failed to start — or whose venv did not update — left the *previous*
+  // process serving while the deploy printed "verified live". The two FastAPI
+  // services could not have been checked this way before: their /health
+  // reported no build_sha at all.
+
+  it.each([
+    ['ai', AI_PORT],
+    ['engine', ENGINE_PORT],
+    ['report', REPORT_PORT],
+  ])('fails the deploy when %s is still on the old commit', (label, port) => {
+    const sha = git('rev-parse', 'HEAD');
+    const stale = [AI_PORT, ENGINE_PORT, REPORT_PORT].map((p) =>
+      healthStub(p, p === port ? 'deadbeef' : sha),
+    );
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      healthStub(VALUATION_PORT, sha),
+      healthStub(WEB_PORT, sha),
+      ...stale,
+    ]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain(`${label} reports`);
+    expect(run.stderr).toContain('deadbeef'); // names what it saw
+    expect(run.stderr).toContain('did not pick up the release');
+  });
+
+  it('fails the deploy when a unit never answers at all', () => {
+    // A unit that failed to start refuses the connection rather than reporting
+    // a stale sha — the shape that `systemctl restart` returning at fork hides.
+    const sha = git('rev-parse', 'HEAD');
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      healthStub(VALUATION_PORT, sha),
+      healthStub(WEB_PORT, sha),
+      healthStub(AI_PORT, sha),
+      healthStub(ENGINE_PORT, sha),
+      // report answers nothing: no stub clause, so curl exits non-zero.
+    ]);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('report reports');
+  });
+
+  it('probes all five services when every one is healthy', () => {
+    const sha = git('rev-parse', 'HEAD');
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      healthStub(VALUATION_PORT, sha),
+      healthStub(WEB_PORT, sha),
+      ...otherHealthStubs(sha),
+    ]);
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain('verified live');
+    for (const port of [VALUATION_PORT, WEB_PORT, AI_PORT, ENGINE_PORT, REPORT_PORT]) {
+      expect(healthProbes(port), `port ${port} was never probed`).toBeGreaterThan(0);
+    }
+  });
+
+  it('checks the dependent units only after they have been restarted', () => {
+    // Probing before the restart would pass against the *outgoing* process,
+    // which reports the old sha and would therefore fail — but for the wrong
+    // reason, and intermittently.
+    const sha = git('rev-parse', 'HEAD');
+    const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
+      healthStub(VALUATION_PORT, sha),
+      healthStub(WEB_PORT, sha),
+      ...otherHealthStubs(sha),
+    ]);
+    expect(run.status).toBe(0);
+
+    const restart = run.remote.findIndex((c) => c.includes('systemctl restart n409-web'));
+    const firstAiProbe = run.remote.findIndex((c) => c.includes(`:${AI_PORT}/health`));
+    expect(firstAiProbe).toBeGreaterThan(restart);
+  });
 });
 
 describe('verification waits for the restart instead of racing it', () => {
@@ -588,6 +678,7 @@ describe('verification waits for the restart instead of racing it', () => {
     const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
       healthStub(VALUATION_PORT, sha, 2), // one connection-refused, then up
       healthStub(WEB_PORT, sha, 3), // two, then up
+      ...otherHealthStubs(sha),
     ]);
     expect(run.status).toBe(0);
     expect(run.stderr).toContain('verified live');
@@ -600,6 +691,7 @@ describe('verification waits for the restart instead of racing it', () => {
     const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
       healthStub(VALUATION_PORT, sha),
       healthStub(WEB_PORT, sha, 3),
+      ...otherHealthStubs(sha),
     ]);
     expect(run.status).toBe(0);
     // A retry loop with no sleep would hammer a booting host and exhaust its
@@ -653,6 +745,7 @@ describe('the restart order it claims to enforce', () => {
     const run = deploy(['--apply'], { SKIP_VERIFY: '0' }, [
       healthStub(VALUATION_PORT, sha, 2),
       healthStub(WEB_PORT, sha),
+      ...otherHealthStubs(sha),
     ]);
     expect(run.status).toBe(0);
 

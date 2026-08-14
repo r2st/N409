@@ -6,7 +6,7 @@ import { isOps, type Principal } from '../auth/rbac.js';
 import { REVIEW_TASK_KINDS, REVIEW_TASK_STATUSES } from '../domain/pipeline.js';
 import { findValuationById } from '../repos/valuations.js';
 import { createTask, findTaskById, listTasks, patchTask } from '../repos/tasks.js';
-import { findUserById } from '../repos/users.js';
+import { userExists } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { pageParam } from '../domain/pagination.js';
@@ -64,7 +64,7 @@ function requireOps(principal: Principal): void {
 
 async function assertAssigneeExists(pool: pg.Pool, assigneeId: string | null | undefined): Promise<void> {
   if (!assigneeId) return;
-  if (!isUlid(assigneeId) || !(await findUserById(pool, assigneeId))) {
+  if (!isUlid(assigneeId) || !(await userExists(pool, assigneeId))) {
     throw problems.unprocessable('Unknown assignee', { errors: [{ path: ['assignee_id'] }] });
   }
 }

@@ -4,7 +4,7 @@ import { problems } from '@n409/shared';
 import { verifySession, type JwtConfig } from '../auth/jwt.js';
 import { SESSION_COOKIE } from '../auth/cookies.js';
 import { isOps, type Principal } from '../auth/rbac.js';
-import { findUserById } from '../repos/users.js';
+import { findAuthPrincipal } from '../repos/users.js';
 import { resolveApiToken, TOKEN_SCHEME } from '../repos/apiTokens.js';
 import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import { costOfRequest } from '../domain/requestCost.js';
@@ -132,7 +132,7 @@ export function registerAuth(
       }
     }
 
-    const user = await findUserById(deps.pool, sub);
+    const user = await findAuthPrincipal(deps.pool, sub);
     if (!user || user.deleted_at) throw problems.unauthorized('Unknown user');
 
     // "Sign out everywhere" and password changes bump the epoch; a JWT minted

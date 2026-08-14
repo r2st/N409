@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .agents import AGENT_PIPELINES
 from .anonymize import AnonymizeInputError, Redactor
+from .build_info import build_info
 from .errors import install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import enforce_token_configured, internal_token_middleware
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
@@ -229,11 +230,17 @@ def root() -> dict:
 
 @app.get("/health")
 def health() -> dict:
+    build = build_info()
     return {
         "status": "ok",
         "service": SERVICE,
         "version": VERSION,
         "uptime_s": int(time.monotonic() - _started),
+        # Which commit is actually live. 'unknown' when the deploy recorded no
+        # provenance — reported rather than omitted, so a skipped step shows up
+        # instead of being silent. infra/deploy.sh reads this field.
+        "build_sha": build.sha,
+        "build_sha_source": build.source,
     }
 
 
@@ -285,7 +292,11 @@ def ready() -> JSONResponse:
         checks["bedrock_credentials_detail"] = aws.detail
     return JSONResponse(
         status_code=200 if key.ok else 503,
-        content={"status": "ready" if key.ok else "unavailable", "checks": checks},
+        content={
+            "status": "ready" if key.ok else "unavailable",
+            "checks": checks,
+            "build_sha": build_info().sha,
+        },
     )
 
 

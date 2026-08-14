@@ -26,7 +26,7 @@ import {
   type ValuationFilters,
   type ValuationRow,
 } from '../repos/valuations.js';
-import { findUserById } from '../repos/users.js';
+import { userExists } from '../repos/users.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { assertPublishGate } from '../domain/publishGate.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -306,7 +306,7 @@ export function registerValuationRoutes(
     // the driver and a 500 to the caller. Same check and same message as the
     // bulk reassign in routes/workflow.ts, which is the other way to set this.
     if (parsed.data.assigned_reviewer_id != null) {
-      if (!(await findUserById(deps.pool, parsed.data.assigned_reviewer_id))) {
+      if (!(await userExists(deps.pool, parsed.data.assigned_reviewer_id))) {
         throw problems.unprocessable('Unknown reviewer', {
           errors: [{ path: ['assigned_reviewer_id'] }],
         });

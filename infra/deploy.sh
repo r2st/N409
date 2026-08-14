@@ -34,6 +34,10 @@
 #   VALUATION_HEALTH_URL
 #                 Base URL for valuation's own check (default http://localhost:3001).
 #                 Waited on between the two restart steps — see section 6.
+#   AI_HEALTH_URL / ENGINE_HEALTH_URL / REPORT_HEALTH_URL
+#                 Base URLs for the three remaining units (defaults
+#                 http://localhost:3002 / :3003 / :3004). All five are verified;
+#                 see section 7.
 #   CURL          curl command to use. Tests stub this.
 #   SLEEP         sleep command to use. Tests stub this to make the waits free.
 #   VERIFY_TIMEOUT   Seconds to allow a restarted service to come up (default 120).
@@ -66,6 +70,9 @@ CURL="${CURL:-curl}"
 SLEEP="${SLEEP:-sleep}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:3000}"
 VALUATION_HEALTH_URL="${VALUATION_HEALTH_URL:-http://localhost:3001}"
+AI_HEALTH_URL="${AI_HEALTH_URL:-http://localhost:3002}"
+ENGINE_HEALTH_URL="${ENGINE_HEALTH_URL:-http://localhost:3003}"
+REPORT_HEALTH_URL="${REPORT_HEALTH_URL:-http://localhost:3004}"
 VERIFY_TIMEOUT="${VERIFY_TIMEOUT:-120}"
 VERIFY_INTERVAL="${VERIFY_INTERVAL:-3}"
 
@@ -353,6 +360,17 @@ fi
 log "verifying (up to ${VERIFY_TIMEOUT}s)"
 wait_for_build "web" "$HEALTH_URL" \
   || die "deployed $SHA but /health reports '${LAST_LIVE_SHA:-<none>}' — the build or the restart did not take"
+
+# The other three units were restarted in step 6 and, until now, never checked.
+# `systemctl restart` returns at fork under Type=simple, so "restarted" was only
+# ever "asked to restart": a unit that failed to start, or one whose venv did not
+# update, left the *previous* process serving and the deploy reported success.
+# Every service reports the commit it booted on now — the two FastAPI ones
+# gained the field for this — so all five answer the same question the same way.
+for probe in "ai:$AI_HEALTH_URL" "engine:$ENGINE_HEALTH_URL" "report:$REPORT_HEALTH_URL"; do
+  wait_for_build "${probe%%:*}" "${probe#*:}" \
+    || die "deployed $SHA but ${probe%%:*} reports '${LAST_LIVE_SHA:-<none>}' — that unit did not pick up the release"
+done
 
 wait_for_ready "web" "$HEALTH_URL" \
   || die "/ready is not passing after the restart"
