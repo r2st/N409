@@ -10,6 +10,12 @@ const dbUp = await isDbAvailable();
  * query parameter is attacker-controlled until it verifies. These pin the
  * schema that now bounds them: oversized input is refused before any of it
  * reaches the JWT verifier, the token exchange, or `external_org_id`.
+ *
+ * The status splits where the query stops being the subject. A parameter that
+ * is too long, repeated, or absent is a malformed request — 400, the same
+ * answer every other query string in the service gets. A `state` that is
+ * well-formed and does not verify is not malformed: the request was understood
+ * and refused, which is the 422 the last two cases keep.
  */
 describe.skipIf(!dbUp)('accounting OAuth callback — query validation', () => {
   let ctx: TestApp;
@@ -29,37 +35,37 @@ describe.skipIf(!dbUp)('accounting OAuth callback — query validation', () => {
 
   it('refuses an over-long state instead of handing it to the verifier', async () => {
     const res = await callback(`state=${'a'.repeat(4097)}`);
-    expect(res.statusCode).toBe(422);
+    expect(res.statusCode).toBe(400);
     expect(res.json().detail).toBe('Invalid callback parameters');
   });
 
   it('refuses an over-long code', async () => {
     const res = await callback(`state=abc&code=${'c'.repeat(4097)}`);
-    expect(res.statusCode).toBe(422);
+    expect(res.statusCode).toBe(400);
     expect(res.json().detail).toBe('Invalid callback parameters');
   });
 
   it('refuses an over-long realmId before it can reach external_org_id', async () => {
     const res = await callback(`state=abc&code=x&realmId=${'r'.repeat(129)}`);
-    expect(res.statusCode).toBe(422);
+    expect(res.statusCode).toBe(400);
     expect(res.json().detail).toBe('Invalid callback parameters');
   });
 
   it('refuses an over-long error', async () => {
     const res = await callback(`state=abc&error=${'e'.repeat(257)}`);
-    expect(res.statusCode).toBe(422);
+    expect(res.statusCode).toBe(400);
     expect(res.json().detail).toBe('Invalid callback parameters');
   });
 
   it('refuses a repeated parameter, which arrives as an array', async () => {
     const res = await callback('state=one&state=two');
-    expect(res.statusCode).toBe(422);
+    expect(res.statusCode).toBe(400);
     expect(res.json().detail).toBe('Invalid callback parameters');
   });
 
   it('still reports a missing state as such', async () => {
     const res = await callback('code=abc');
-    expect(res.statusCode).toBe(422);
+    expect(res.statusCode).toBe(400);
     expect(res.json().detail).toBe('Missing state');
   });
 

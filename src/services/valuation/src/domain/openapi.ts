@@ -339,18 +339,41 @@ export function buildOpenApiDocument(input: OpenApiInput): Record<string, unknow
                 'The key is valid but not a partner key, or the resource is outside its organisation.',
               ),
               '404': problemResponse('No such resource, or it belongs to another organisation.'),
-              '422': problemResponse('The request body or query failed validation.'),
+              '422': problemResponse('The request body failed validation.'),
               '429': problemResponse(
                 'Per-key rate limit exceeded. Retry after the window resets.',
                 RETRY_AFTER_HEADER,
               ),
             }
           : {}),
+        // 400 covers the two failures that are not "a field in the body is
+        // wrong", and it is declared only on the operations that can produce
+        // one — a client should not be told to handle a query error on an
+        // operation that takes no query.
+        //
         // A body that is not parseable JSON never reaches the validator, so it
         // fails as a 400 rather than the 422 the validator produces. Both are
         // real and a client has to tell them apart: the 400 means "fix the
         // request framing", the 422 means "fix a field".
-        ...(endpoint.body ? { '400': problemResponse('The request body was not valid JSON.') } : {}),
+        //
+        // A query string is the other one. It used to be folded into the 422
+        // here — the description read "body or query" — which was wrong in both
+        // directions once the service settled on 400 for it: a generated client
+        // handled a status the API does not send and did not handle the one it
+        // does. `?limit=abc` is not a well-formed request the server declined to
+        // act on; it is a request that did not parse.
+        ...(endpoint.body || endpoint.query
+          ? {
+              '400': problemResponse(
+                [
+                  endpoint.body ? 'The request body was not valid JSON' : null,
+                  endpoint.query ? 'a query parameter was missing or malformed' : null,
+                ]
+                  .filter(Boolean)
+                  .join(', or ') + '.',
+              ),
+            }
+          : {}),
         // Declared last so an endpoint-specific description of a status wins
         // over the uniform one — a 409 has no uniform meaning to override, but
         // a route that narrows what its 422 means should be able to say so.

@@ -139,7 +139,7 @@ describe.skipIf(!dbUp)('admin API token listing', () => {
 
   it('rejects an unparseable revoked filter rather than silently ignoring it', async () => {
     const res = await list(admin.token, '?revoked=maybe');
-    expect(res.statusCode).toBe(422);
+    expect(res.statusCode).toBe(400);
   });
 
   /**
@@ -202,8 +202,8 @@ describe.skipIf(!dbUp)('admin API token listing', () => {
     });
 
     it('refuses a limit above the ceiling rather than honouring it', async () => {
-      expect((await list(admin.token, '?limit=100000')).statusCode).toBe(422);
-      expect((await list(admin.token, '?limit=0')).statusCode).toBe(422);
+      expect((await list(admin.token, '?limit=100000')).statusCode).toBe(400);
+      expect((await list(admin.token, '?limit=0')).statusCode).toBe(400);
     });
   });
 });

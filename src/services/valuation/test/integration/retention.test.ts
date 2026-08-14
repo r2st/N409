@@ -309,7 +309,7 @@ describe.skipIf(!dbUp)('data retention + legal hold (feature 10)', () => {
           url: `/api/v1/admin/retention/holds${q}`,
           headers: authHeader(admin.token),
         });
-        expect(res.statusCode).toBe(422);
+        expect(res.statusCode).toBe(400);
       }
     });
   });

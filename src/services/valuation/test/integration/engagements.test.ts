@@ -208,7 +208,7 @@ describe.skipIf(!dbUp)('feature 8 — engagement lifecycle', () => {
           url: `/api/v1/engagements${q}`,
           headers: authHeader(ops.token),
         });
-        expect(res.statusCode).toBe(422);
+        expect(res.statusCode).toBe(400);
       }
     });
 

@@ -78,7 +78,7 @@ export function registerEngagementRoutes(
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const { engagements: rows, truncated } = await listActiveEngagements(deps.pool, {
       limit: parsedQuery.data.limit,

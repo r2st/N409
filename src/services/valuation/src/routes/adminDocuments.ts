@@ -60,7 +60,7 @@ export function registerAdminDocumentRoutes(app: FastifyInstance, deps: { pool: 
     const parsed = z
       .object({ limit: z.coerce.number().int().min(1).max(500).default(200) })
       .safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
 
     const [rows, total] = await Promise.all([
       listUnfiledDocuments(deps.pool, { limit: parsed.data.limit }),

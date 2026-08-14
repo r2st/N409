@@ -136,7 +136,7 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const { versions, truncated } = await listPromptVersions(deps.pool, id, {
       limit: parsedQuery.data.limit,

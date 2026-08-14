@@ -71,7 +71,7 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const { tokens, truncated } = await listScimTokens(deps.pool, { limit: parsedQuery.data.limit });
     return { tokens, truncated, page_limit: SCIM_TOKEN_PAGE_LIMIT };

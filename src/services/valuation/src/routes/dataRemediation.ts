@@ -66,7 +66,7 @@ export function registerDataRemediationRoutes(
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const { limit } = parsedQuery.data;
     const [backsolves, qaReviews] = await Promise.all([

@@ -326,7 +326,7 @@ describe.skipIf(!dbUp)('data remediation', () => {
           url: `/api/v1/admin/data-remediation${q}`,
           headers: authHeader(ops.token),
         });
-        expect(res.statusCode).toBe(422);
+        expect(res.statusCode).toBe(400);
       }
     });
   });

@@ -196,7 +196,7 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     // The summary is its own query rather than a reduce over the two pages
     // below: capping what the screen lists must not move what the screen says.

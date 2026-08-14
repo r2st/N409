@@ -152,7 +152,7 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const { views, truncated } = await listVisibleViews(deps.pool, {
       userId: principal.id,

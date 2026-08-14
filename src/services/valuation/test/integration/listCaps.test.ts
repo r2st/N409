@@ -236,13 +236,17 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
    * `truncatedKey` is not always `truncated`: the admin billing screen serves
    * two capped lists in one response and so names each flag after its list.
    *
-   * `overCeilingStatus` records what a request above the ceiling actually gets
-   * today, and it is not uniform — `paginationBounds`/`pickerLimits` pin 400 for
-   * a bad query string (422 is this codebase's code for a bad *body*), and the
-   * seven routes below that answer 422 diverge from that. Pinned rather than
-   * papered over with `[400, 422]`: a weak assertion here would let the split
-   * widen unnoticed, and it is a one-line change per route whenever it is worth
-   * making the break.
+   * A bad `?limit=` is 400 on every one of these. It was 422 on seven of the
+   * nine until the split this comment used to describe was closed: 422 is this
+   * codebase's code for a well-formed request whose *body* it will not act on,
+   * and a query string that does not parse never gets that far. The two
+   * suites that pin the rule — `paginationBounds` and `pickerLimits` — always
+   * read 400, and a client cannot write one handler for "you sent a bad page
+   * size" while the answer depends on which list it asked for.
+   *
+   * There is no `overCeilingStatus` column any more, deliberately: a per-row
+   * status is what let the divergence sit here documented for as long as it
+   * did.
    */
   const CAPPED: ReadonlyArray<{
     name: string;
@@ -250,7 +254,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
     key: string;
     truncatedKey: string;
     ceiling: number;
-    overCeilingStatus: number;
   }> = [
     {
       name: 'listAllSubscriptions',
@@ -258,7 +261,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
       key: 'subscriptions',
       truncatedKey: 'subscriptions_truncated',
       ceiling: SUBSCRIPTION_PAGE_LIMIT,
-      overCeilingStatus: 422,
     },
     {
       name: 'listVisibleViews',
@@ -266,7 +268,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
       key: 'views',
       truncatedKey: 'truncated',
       ceiling: SAVED_VIEW_PAGE_LIMIT,
-      overCeilingStatus: 422,
     },
     {
       name: 'listScimTokens',
@@ -274,7 +275,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
       key: 'tokens',
       truncatedKey: 'truncated',
       ceiling: SCIM_TOKEN_PAGE_LIMIT,
-      overCeilingStatus: 422,
     },
     {
       name: 'listArticles',
@@ -282,7 +282,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
       key: 'articles',
       truncatedKey: 'truncated',
       ceiling: ARTICLE_PAGE_LIMIT,
-      overCeilingStatus: 422,
     },
     {
       name: 'listTemplates',
@@ -290,7 +289,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
       key: 'templates',
       truncatedKey: 'truncated',
       ceiling: TEMPLATE_PAGE_LIMIT,
-      overCeilingStatus: 400,
     },
   ];
 
@@ -302,7 +300,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
       key: 'versions',
       truncatedKey: 'truncated',
       ceiling: PROMPT_VERSION_PAGE_LIMIT,
-      overCeilingStatus: 422,
     },
     {
       name: 'listGrants',
@@ -310,7 +307,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
       key: 'grants',
       truncatedKey: 'truncated',
       ceiling: GRANT_PAGE_LIMIT,
-      overCeilingStatus: 422,
     },
     {
       name: 'listComments',
@@ -318,7 +314,6 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
       key: 'comments',
       truncatedKey: 'truncated',
       ceiling: COMMENT_PAGE_LIMIT,
-      overCeilingStatus: 400,
     },
   ];
 
@@ -380,7 +375,7 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
     // got a smaller one, and nothing in the response would say so.
     for (const c of cases()) {
       const res = await get(c.url, `?limit=${c.ceiling + 1}`);
-      expect(res.statusCode, c.name).toBe(c.overCeilingStatus);
+      expect(res.statusCode, c.name).toBe(400);
     }
   });
 
@@ -388,9 +383,29 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
     for (const c of cases()) {
       for (const limit of ['0', '-1']) {
         const res = await get(c.url, `?limit=${limit}`);
-        expect(res.statusCode, `${c.name} limit=${limit}`).toBe(c.overCeilingStatus);
+        expect(res.statusCode, `${c.name} limit=${limit}`).toBe(400);
       }
     }
+  });
+
+  it('gives one answer to a bad page size, whichever list was asked', async () => {
+    /*
+     * The assertion the two above are not quite making. They run per endpoint
+     * and would still pass if `?limit=0` were 400 here and 422 there — which is
+     * what this suite pinned, row by row, before the codes were normalised.
+     *
+     * A client does not hold nine handlers. It sends a page size, and either it
+     * was acceptable or it was not; the list it was asking for is not part of
+     * that answer. So this collects the statuses across every capped endpoint
+     * and asserts there is exactly one of them.
+     */
+    const statuses = new Set<number>();
+    for (const c of cases()) {
+      for (const limit of ['0', '-1', 'abc', String(c.ceiling + 1)]) {
+        statuses.add((await get(c.url, `?limit=${limit}`)).statusCode);
+      }
+    }
+    expect([...statuses]).toEqual([400]);
   });
 
   it('accepts the ceiling itself', async () => {

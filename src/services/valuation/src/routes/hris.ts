@@ -252,12 +252,12 @@ export function registerHrisRoutes(app: FastifyInstance, deps: HrisDeps): void {
   app.get('/api/v1/hris/callback', async (req, reply) => {
     const parsedQuery = CallbackQuery.safeParse(req.query);
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid callback parameters', {
+      throw problems.badRequest('Invalid callback parameters', {
         errors: parsedQuery.error.issues,
       });
     }
     const q = parsedQuery.data;
-    if (!q.state) throw problems.unprocessable('Missing state');
+    if (!q.state) throw problems.badRequest('Missing state');
     let state;
     try {
       state = await verifyHrisState(q.state, deps.jwt);

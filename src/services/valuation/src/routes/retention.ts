@@ -156,7 +156,7 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const { holds, truncated } = await listHolds(deps.pool, { limit: parsedQuery.data.limit });
     return { holds, truncated, page_limit: HOLD_PAGE_LIMIT };

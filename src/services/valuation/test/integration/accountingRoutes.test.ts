@@ -250,7 +250,7 @@ describe.skipIf(!dbUp)('accounting routes', () => {
   describe('the OAuth callback', () => {
     it('rejects a call with no state at all', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/accounting/callback' });
-      expect(res.statusCode).toBe(422);
+      expect(res.statusCode).toBe(400);
     });
 
     // The signature is the only authentication this endpoint has.
@@ -268,7 +268,7 @@ describe.skipIf(!dbUp)('accounting routes', () => {
         method: 'GET',
         url: `/api/v1/accounting/callback?state=${'a'.repeat(5000)}`,
       });
-      expect(res.statusCode).toBe(422);
+      expect(res.statusCode).toBe(400);
     });
 
     it('bounces back as denied when the user refuses consent', async () => {

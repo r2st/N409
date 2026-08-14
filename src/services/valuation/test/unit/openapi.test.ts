@@ -288,8 +288,41 @@ describe('buildOpenApiDocument', () => {
     // retries a 400 as though it were a validation error retries forever.
     expect(doc.paths['/valuations'].post.responses['400']).toBeDefined();
     expect(doc.paths['/valuations'].post.responses['422']).toBeDefined();
-    // A GET has no body to fail parsing.
-    expect(doc.paths['/valuations'].get.responses['400']).toBeUndefined();
+  });
+
+  it('declares the 400 a bad query earns, on the operations that take one', () => {
+    /*
+     * This was the spec's own copy of the inconsistency the service had: the
+     * 422 was described as "the request body or query failed validation" and
+     * the 400 was declared only where there was a body. Both halves were
+     * wrong for a list operation — `GET /valuations?limit=abc` is a 400, so a
+     * generated client had a handler for a status it will never see and none
+     * for the one it gets.
+     */
+    const list = doc.paths['/valuations'].get.responses;
+    expect(list['400']).toBeDefined();
+    expect(list['400'].description).toMatch(/query parameter/i);
+    // …and not the body clause, since a GET has no body to fail parsing.
+    expect(list['400'].description).not.toMatch(/valid JSON/i);
+    // The create takes both, and says so.
+    expect(doc.paths['/valuations'].post.responses['400'].description).toMatch(/valid JSON/i);
+  });
+
+  it('leaves the 400 off an operation that takes neither a body nor a query', () => {
+    // The uniform errors are uniform because every operation can produce them.
+    // A 400 is not one of those, and declaring it everywhere would be the same
+    // failure as the 422 it replaces: telling a client to handle what it
+    // cannot receive.
+    const noInput = doc.paths['/valuations/{id}/report.pdf'].get.responses;
+    expect(noInput['400']).toBeUndefined();
+    expect(noInput['422']).toBeDefined();
+  });
+
+  it('says "body" in the 422, because a query never produces one', () => {
+    for (const op of [doc.paths['/valuations'].get, doc.paths['/valuations'].post]) {
+      expect(op.responses['422'].description).toMatch(/body/i);
+      expect(op.responses['422'].description).not.toMatch(/query/i);
+    }
   });
 
   it('documents the 500 on every operation, public ones included', () => {

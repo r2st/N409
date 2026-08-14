@@ -173,7 +173,7 @@ export function registerMonitoringRoutes(
       })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const { monitors, truncated } = await listEnabledMonitors(deps.pool, {
       limit: parsedQuery.data.limit,

@@ -74,7 +74,7 @@ export function registerApiTokenRoutes(app: FastifyInstance, deps: { pool: pg.Po
         limit: z.coerce.number().int().min(1).max(TOKEN_PAGE_LIMIT).default(TOKEN_PAGE_LIMIT),
       })
       .safeParse(req.query ?? {});
-    if (!parsed.success) throw problems.unprocessable('Invalid query', { errors: parsed.error.issues });
+    if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
 
     // The rows are a page; the figures are the platform. Counting in SQL rather
     // than over `tokens` is what lets the read be bounded without the security

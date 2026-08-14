@@ -58,7 +58,7 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       .object({ limit: z.coerce.number().int().min(1).max(ARTICLE_PAGE_LIMIT).default(ARTICLE_PAGE_LIMIT) })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const { limit } = parsedQuery.data;
     // The limit is part of the key: without it the first caller's page size is

@@ -143,7 +143,7 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
       .object({ limit: z.coerce.number().int().min(1).max(GRANT_PAGE_LIMIT).default(GRANT_PAGE_LIMIT) })
       .safeParse(req.query ?? {});
     if (!parsedQuery.success) {
-      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+      throw problems.badRequest('Invalid query', { errors: parsedQuery.error.issues });
     }
     const asOf = new Date();
     const { grants, truncated } = await listGrants(deps.pool, id, { limit: parsedQuery.data.limit });
