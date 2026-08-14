@@ -26,6 +26,7 @@ import {
   type ValuationFilters,
   type ValuationRow,
 } from '../repos/valuations.js';
+import { findUserById } from '../repos/users.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { assertPublishGate } from '../domain/publishGate.js';
 import { requirePrincipal } from '../plugins/auth.js';
@@ -55,7 +56,11 @@ const PatchBody = z
     service_name: z.string().min(1).max(300).nullable(),
     state: z.enum(VALUATION_STATES),
     waiting_on_client: z.boolean(),
-    assigned_reviewer_id: z.string().nullable(),
+    // The column is the `ulid` domain with a foreign key to `users`. Neither
+    // was checked here, so both halves of getting it wrong — a string that is
+    // not an id, and an id that is not a user — reached the driver and came
+    // back as a 500. Shape here, existence in the handler.
+    assigned_reviewer_id: z.string().refine(isUlid, 'Not a valid id').nullable(),
     due_date: z.string().datetime().nullable(),
     delivery_days: int4Positive().nullable(),
     paid_status: z.enum(['unpaid', 'paid', 'paid_by_partner']),
@@ -294,6 +299,18 @@ export function registerValuationRoutes(
     if (requested.length === 0) {
       reply.header('ETag', versionEtag(valuation.version));
       return { valuation };
+    }
+
+    // `valuations_assigned_reviewer_id_fkey` references `users`, so a reviewer
+    // who has since been deleted — or an id from a stale list — is a 23503 in
+    // the driver and a 500 to the caller. Same check and same message as the
+    // bulk reassign in routes/workflow.ts, which is the other way to set this.
+    if (parsed.data.assigned_reviewer_id != null) {
+      if (!(await findUserById(deps.pool, parsed.data.assigned_reviewer_id))) {
+        throw problems.unprocessable('Unknown reviewer', {
+          errors: [{ path: ['assigned_reviewer_id'] }],
+        });
+      }
     }
 
     if (parsed.data.state && parsed.data.state !== valuation.state) {

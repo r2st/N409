@@ -33,6 +33,7 @@ export function ValuationDetailPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [events, setEvents] = useState<ValuationEvent[] | null>(null);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -48,8 +49,13 @@ export function ValuationDetailPage() {
     try {
       const { events: ev } = await api<{ events: ValuationEvent[] }>(`/valuations/${valuation.id}/events`);
       setEvents(ev);
-    } catch {
-      setEvents([]);
+      setEventsError(null);
+    } catch (err) {
+      // Emphatically not `setEvents([])`: an engagement with a full audit trail
+      // would then render "No activity yet." — a wrong answer, on the one panel
+      // whose job is to be the record of what happened.
+      setEvents(null);
+      setEventsError(err instanceof ApiError ? err.message : 'Could not load the activity timeline.');
     }
   }, [valuation.id]);
 
@@ -288,7 +294,8 @@ export function ValuationDetailPage() {
       {/* Audit timeline */}
       <aside>
         <h2 className="overline mb-4 text-ink-400">Activity</h2>
-        {!events && <Spinner />}
+        {eventsError && <ErrorNote>{eventsError}</ErrorNote>}
+        {!events && !eventsError && <Spinner />}
         {events && events.length === 0 && <p className="text-sm text-ink-400">No activity yet.</p>}
         {events && events.length > 0 && (
           <ol className="relative space-y-5 border-l border-paper-300 pl-5">
