@@ -1,6 +1,13 @@
 import type { ReportPdfSection } from '@n409/report/pdf';
 import type { CalculationRow } from '../repos/calculations.js';
-import { APPROACH_LABELS, ALLOCATION_LABELS, formatCurrency, formatPercent, num } from './reportSummary.js';
+import {
+  APPROACH_LABELS,
+  ALLOCATION_LABELS,
+  DLOM_LABELS,
+  formatCurrency,
+  formatPercent,
+  num,
+} from './reportSummary.js';
 import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
 import { CLASS_VOLATILITY_SCHEDULE } from './report.js';
@@ -2133,29 +2140,7 @@ export function pwermExhibit(results: Record<string, unknown>, ctx: ExhibitConte
 
 // ── Exhibit H — discounts and conclusion ─────────────────────────────────────
 
-/**
- * Study rows carry their own names; everything else is a model.
- *
- * One map, read by Exhibit H's Basis column and by Exhibit H-1's derivation
- * heading. There were two, and the older one listed three methods of the seven
- * the engine dispatches on — so a valuation concluded on Ghaidarov, Longstaff,
- * a restricted-stock blend or a pre-IPO blend printed its raw slug
- * ("restricted_stock") in the Basis column of the exhibit that states the
- * conclusion. A second copy of a vocabulary is a copy that goes stale, and this
- * one did.
- */
-const DLOM_MODEL_NAMES: Record<string, string> = {
-  chaffee: 'Chaffee protective-put model',
-  finnerty: 'Finnerty average-strike put model',
-  ghaidarov: 'Ghaidarov average-strike put model',
-  longstaff: 'Longstaff upper bound',
-  restricted_stock: 'Restricted-stock studies',
-  pre_ipo: 'Pre-IPO transaction studies',
-  qualitative: 'Qualitative — analyst judgement',
-  weighted: 'Several methods, weighted',
-};
-
-/** The same, for the control discount (engine dloc.py DLOC_METHODS). */
+/** The same as `DLOM_LABELS`, for the control discount (engine dloc.py DLOC_METHODS). */
 const DLOC_METHOD_NAMES: Record<string, string> = {
   control_premium: 'Inverted from a stated control premium',
   studies: 'Blended from published control-premium studies',
@@ -2232,7 +2217,7 @@ export function discountExhibit(
   rows.push([
     `Less: discount for lack of marketability — ${formatPercent(dlom)}`,
     `(${formatCurrency(afterDloc - fmv, currency, 4)})`,
-    method ? (DLOM_MODEL_NAMES[method] ?? esc(method)) : 'No active market exists for the shares',
+    method ? (DLOM_LABELS[method] ?? esc(method)) : 'No active market exists for the shares',
   ]);
 
   return section(SCHEDULE.H, [
@@ -2477,7 +2462,7 @@ function derivationRows(
   discounts: Record<string, unknown> | null,
 ): string[][] {
   const method = text(detail.method) ?? text(discounts?.dlom_method) ?? 'unknown';
-  const rows: string[][] = [['Method applied', DLOM_MODEL_NAMES[method] ?? esc(method), '']];
+  const rows: string[][] = [['Method applied', DLOM_LABELS[method] ?? esc(method), '']];
 
   const formula = text(detail.formula);
   if (formula) rows.push(['Basis', esc(formula), '']);
@@ -2684,7 +2669,7 @@ function methodWeightingBlock(
         const indicated = num(c.dlom);
         const weighted = num(c.weighted);
         return [
-          DLOM_MODEL_NAMES[name] ?? esc(name),
+          DLOM_LABELS[name] ?? esc(name),
           // Weights to two places, matching the footed 100.00%: a column of
           // "33.3%" thrice under a total of 100.00% invites the reader to check
           // an addition that was never done in one decimal place.
@@ -2717,7 +2702,7 @@ function methodWeightingBlock(
     const rows = derivationRows(legDetail, null);
     if (rows.length <= 1 && list(legDetail.studies).length === 0) continue;
     out.push(
-      P(`<strong>${DLOM_MODEL_NAMES[name] ?? esc(name)}</strong>`),
+      P(`<strong>${DLOM_LABELS[name] ?? esc(name)}</strong>`),
       table({ head: ['Derivation', 'Value', 'Note'], rows }),
       ...studyBlock(legDetail),
     );

@@ -64,10 +64,35 @@ export const ALLOCATION_LABELS: Record<string, string> = {
   cvm_common_only: 'Current value method (common only)',
 };
 
-const DLOM_LABELS: Record<string, string> = {
+/**
+ * How the marketability discount's method is named, for every value the engine
+ * puts in `discounts.dlom_method`.
+ *
+ * Study rows carry their own names; everything else is a model. `weighted` is
+ * what a `dlom_methods` blend reports (compute.py `_resolve_discounts`) — the
+ * legs and their weights are Exhibit H-1's business, so here it says only that
+ * several were weighted.
+ *
+ * This lives beside `ALLOCATION_LABELS` for the reason that map documents, and
+ * for the same reason it is exported: the vocabulary was written out three
+ * times — here, in Exhibit H's Basis column, and in the valuation comparison —
+ * and two of the three listed three methods of the eight the engine dispatches
+ * on. Unmapped keys fall through to an echo of the key, so both gaps were
+ * silent and both reached a reader. A 409A concluded on a restricted-stock
+ * blend printed "restricted_stock" on its summary page while Exhibit H of the
+ * same PDF named the studies properly, and the comparison view — whose entire
+ * premise is telling a board that the DLOM *method* changed — answered that
+ * question with two database slugs.
+ */
+export const DLOM_LABELS: Record<string, string> = {
   chaffee: 'Chaffee protective-put model',
   finnerty: 'Finnerty average-strike put model',
-  qualitative: 'Qualitative (analyst judgement)',
+  ghaidarov: 'Ghaidarov average-strike put model',
+  longstaff: 'Longstaff upper bound',
+  restricted_stock: 'Restricted-stock studies',
+  pre_ipo: 'Pre-IPO transaction studies',
+  qualitative: 'Qualitative — analyst judgement',
+  weighted: 'Several methods, weighted',
 };
 
 export function num(value: unknown): number | null {

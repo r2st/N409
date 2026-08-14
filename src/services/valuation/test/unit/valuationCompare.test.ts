@@ -323,13 +323,60 @@ describe('compareValuations — labels this build has not heard of', () => {
   });
 
   it('shows an unrecognised DLOM method as written', () => {
+    // A method genuinely not in the engine's DLOM_METHODS. This case used to be
+    // written with 'ghaidarov', which the engine has dispatched on for as long
+    // as there have been four option models — so what it actually pinned was
+    // the bug below rather than the fallback.
     const rows = rowsOf(
       compareValuations(
-        side({ results: { discounts: { dlom_method: 'ghaidarov' } } }),
+        side({ results: { discounts: { dlom_method: 'lattice_binomial' } } }),
         side({ results: { discounts: { dlom_method: 'chaffee' } } }),
       ),
     );
-    expect(rows.get('dlom_method')?.a_display).toBe('ghaidarov');
+    expect(rows.get('dlom_method')?.a_display).toBe('lattice_binomial');
+  });
+});
+
+/**
+ * The vocabularies, against the engine's.
+ *
+ * This module's whole premise is answering "why is the number different from
+ * last time", and two of the rows it answers with are *names*: which allocation
+ * ran and which DLOM method was concluded on. Both label maps were local copies
+ * that had fallen behind the engine, and both fall back to an echo of the key —
+ * so the comparison answered its headline question with a database slug.
+ */
+describe('compareValuations — method names', () => {
+  it.each([
+    ['ghaidarov', 'Ghaidarov average-strike put model'],
+    ['longstaff', 'Longstaff upper bound'],
+    ['restricted_stock', 'Restricted-stock studies'],
+    ['pre_ipo', 'Pre-IPO transaction studies'],
+    ['weighted', 'Several methods, weighted'],
+  ])('names the %s DLOM rather than echoing the slug', (method, label) => {
+    const rows = rowsOf(
+      compareValuations(
+        side({ results: { discounts: { dlom_method: method } } }),
+        side({ results: { discounts: { dlom_method: 'chaffee' } } }),
+      ),
+    );
+    expect(rows.get('dlom_method')?.a_display).toBe(label);
+  });
+
+  it('names the OPM mechanism an older run carries instead of upper-casing it', () => {
+    // Calculations stored before the engine emitted `allocation_method` on the
+    // OPM path carry only `allocation.method` — the mechanism. Unmapped, that
+    // rendered as "OPM_WATERFALL", which is the defect ALLOCATION_LABELS was
+    // written to fix on the report's summary page and which came back here by
+    // copying the map instead of importing it.
+    const rows = rowsOf(
+      compareValuations(
+        side({ results: { allocation: { method: 'opm_waterfall' } } }),
+        side({ results: { allocation_method: 'opm' } }),
+      ),
+    );
+    expect(rows.get('allocation_method')?.a_display).toBe('Option pricing model (cap-table waterfall)');
+    expect(rows.get('allocation_method')?.b_display).toBe('Option pricing model');
   });
 
   it('keys an unrecognised approach by its own name', () => {

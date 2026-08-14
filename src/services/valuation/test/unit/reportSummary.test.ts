@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { DLOM_METHODS } from '../../src/repos/params.js';
 import {
+  DLOM_LABELS,
   approachChart,
   buildReportSummary,
   discountChart,
@@ -291,6 +293,50 @@ describe('buildReportSummary', () => {
       expect(noteFor({ dlom_volatility: 0.55, dlom_volatility_basis: 'class' })).toBe(
         'Finnerty average-strike put model',
       );
+    });
+  });
+
+  /**
+   * The method named beside the discount, for every method the engine can
+   * conclude on.
+   *
+   * The map held three of the eight and falls back to an echo of the key, so a
+   * valuation concluded on a study blend printed "restricted_stock" on the page
+   * a board reads first — while Exhibit H of the same PDF, reading a different
+   * copy of the same vocabulary, named the studies properly.
+   */
+  describe('the DLOM method is named for every method the engine dispatches on', () => {
+    const noteFor = (method: string) =>
+      buildReportSummary(
+        calculation({ results: { ...RESULTS, discounts: { ...RESULTS.discounts, dlom_method: method } } }),
+        CONTEXT,
+      )!.figures!.find((f) => f.label === 'Discount for lack of marketability')!.note;
+
+    it.each([
+      ['ghaidarov', 'Ghaidarov average-strike put model'],
+      ['longstaff', 'Longstaff upper bound'],
+      ['restricted_stock', 'Restricted-stock studies'],
+      ['pre_ipo', 'Pre-IPO transaction studies'],
+      ['qualitative', 'Qualitative — analyst judgement'],
+      ['weighted', 'Several methods, weighted'],
+    ])('names %s', (method, label) => {
+      expect(noteFor(method)).toBe(label);
+    });
+
+    it('covers every method the engine dispatches on, plus a blend', () => {
+      /*
+       * The guard that keeps the map from falling behind again. `weighted` is
+       * not in DLOM_METHODS — it is not selectable — but it is what
+       * `_resolve_discounts` writes to `dlom_method` for a `dlom_methods`
+       * blend, so it has to be nameable all the same.
+       */
+      expect(Object.keys(DLOM_LABELS).sort()).toEqual([...DLOM_METHODS, 'weighted'].sort());
+    });
+
+    it('still echoes a method added after this build', () => {
+      // The blob is the authority — both halves of a roll-forward comparison
+      // may come from engine versions this one has not heard of.
+      expect(noteFor('lattice_binomial')).toBe('lattice_binomial');
     });
   });
 

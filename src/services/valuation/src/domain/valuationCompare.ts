@@ -1,4 +1,21 @@
-import { APPROACH_LABELS, formatCurrency, formatPercent, num } from './reportSummary.js';
+/*
+ * The label maps are imported, not restated. Both were local copies here and
+ * both had gone stale against the engine: the allocation map held the four
+ * analyst-chosen methods and none of the seven *mechanisms* `allocation.method`
+ * reports, and the DLOM map held three of eight methods. Since `allocationMethod`
+ * falls back to an upper-cased echo of the key, a comparison of two OPM runs
+ * offered "OPM_WATERFALL" as the answer to what allocation they used — the same
+ * defect `ALLOCATION_LABELS` was written to fix on the report's summary page,
+ * reintroduced by copying the map instead of importing it.
+ */
+import {
+  ALLOCATION_LABELS,
+  APPROACH_LABELS,
+  DLOM_LABELS,
+  formatCurrency,
+  formatPercent,
+  num,
+} from './reportSummary.js';
 import { toCsv } from './csv.js';
 
 /**
@@ -165,20 +182,6 @@ function row(
     changed: numeric ? delta !== 0 : a !== b,
   };
 }
-
-const ALLOCATION_LABELS: Record<string, string> = {
-  opm: 'Option pricing model',
-  pwerm: 'PWERM',
-  hybrid: 'Hybrid (OPM + PWERM)',
-  cvm: 'Current value method',
-  monte_carlo: 'Monte Carlo simulation',
-};
-
-const DLOM_LABELS: Record<string, string> = {
-  chaffee: 'Chaffee protective-put model',
-  finnerty: 'Finnerty average-strike put model',
-  qualitative: 'Qualitative (analyst judgement)',
-};
 
 function allocationMethod(r: Results): string | null {
   const raw = text(r.allocation_method ?? r.allocation?.method);
