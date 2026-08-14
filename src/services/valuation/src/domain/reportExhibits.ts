@@ -11,7 +11,7 @@ import {
 import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
 import { CLASS_VOLATILITY_SCHEDULE } from './report.js';
-import { MULTIPLE_LABELS, type MultipleKey } from './comparables.js';
+import { MULTIPLE_LABELS, multipleKeyFor, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
 import { requiredReturnRows } from './requiredReturns.js';
 import { sensitivityGrid, sensitivityTables, type OpmInputs } from './sensitivity.js';
@@ -1427,7 +1427,8 @@ export function peerSetExhibit(
   // No market approach in the run means no schedule: a peer set an analyst
   // screened but did not weight into the conclusion is working material, and
   // printing it as a supporting exhibit overstates its role in the opinion.
-  if (!record(record(results.approaches)?.market)) return null;
+  const market = record(record(results.approaches)?.market);
+  if (!market) return null;
 
   const included = usable.filter((p) => p.included);
   const excluded = usable.filter((p) => !p.included);
@@ -1437,20 +1438,99 @@ export function peerSetExhibit(
     included.some((p) => typeof p.multiples[key] === 'number'),
   );
 
+  /*
+   * Which of those columns Exhibit D's median was struck over.
+   *
+   * A run uses exactly one — `market_method` × `market_horizon` picks it, and
+   * the engine records the pair it used as `basis`/`horizon`. This schedule
+   * printed all four and marked none, so the prose below ("the multiples in
+   * Exhibit D are struck from the companies retained") invited a check the
+   * table made impossible: four columns of plausible multiples against one
+   * median, with nothing saying which column to take it over. A reviewer who
+   * picks the wrong one finds a median that does not reconcile and concludes
+   * the report is wrong — the exhibit turning a correct calculation into an
+   * apparent error.
+   */
+  const operative = multipleKeyFor(text(market.basis), text(market.horizon));
+  const operativeShown = columns.includes(operative);
+  // Selected column first: a reader looking for the one figure that matters
+  // should not have to find it among three that do not.
+  const ordered = operativeShown ? [operative, ...columns.filter((k) => k !== operative)] : columns;
+
   const label = (p: ExhibitPeer) => (p.ticker ? `${esc(p.name)} (${esc(p.ticker)})` : esc(p.name));
   const cell = (value: number | null | undefined) => (typeof value === 'number' ? ratio(value, 2) : '—');
+
+  /*
+   * The median of the retained set, on this schedule, in the same column.
+   *
+   * It is the number Exhibit D concluded on, re-struck from the rows printed
+   * here — which is the reconciliation the two exhibits exist to support and
+   * neither carried. It also makes one failure visible that was silent: the
+   * peer set is read at render time while the multiples are read from the
+   * stored calculation, so a set edited after the last run reconciles to
+   * nothing, and the reader was shown two numbers with no hint they disagreed.
+   */
+  const operativeValues = operativeShown
+    ? included
+        .map((p) => p.multiples[operative])
+        .filter((v): v is number => typeof v === 'number')
+        .sort((a, b) => a - b)
+    : [];
+  const operativeMedian = ((): number | null => {
+    const n = operativeValues.length;
+    if (n === 0) return null;
+    const hi = operativeValues[n >> 1];
+    if (hi === undefined) return null;
+    // Even counts average the two middles, as `statistics.median` does — the
+    // engine's median is what this has to reconcile against.
+    if (n % 2 === 1) return hi;
+    const lo = operativeValues[(n >> 1) - 1];
+    return lo === undefined ? null : (lo + hi) / 2;
+  })();
 
   const selected =
     included.length > 0
       ? table({
-          head: ['Guideline company', ...columns.map((k) => MULTIPLE_LABELS[k]), 'Screen score'],
+          head: [
+            'Guideline company',
+            ...ordered.map((k) => (k === operative ? `${MULTIPLE_LABELS[k]} (selected)` : MULTIPLE_LABELS[k])),
+            'Screen score',
+          ],
           rows: included.map((p) => [
             label(p),
-            ...columns.map((k) => cell(p.multiples[k])),
+            ...ordered.map((k) => cell(p.multiples[k])),
             p.score === null ? '—' : p.score.toFixed(2),
           ]),
+          foot:
+            operativeMedian === null
+              ? undefined
+              : [
+                  'Median of the retained set',
+                  ratio(operativeMedian, 2),
+                  ...ordered.slice(1).map(() => ''),
+                  '',
+                ],
         })
       : null;
+
+  /*
+   * Stated only when the two disagree, and stated as a caveat rather than
+   * silently reconciled: the schedule must not redraw Exhibit D's conclusion,
+   * because the conclusion is what the allocation was actually run on. Compared
+   * at the precision both are printed to — a disagreement smaller than the
+   * printed figures show is not one a reader can see.
+   */
+  const concluded = num(market.selected_multiple);
+  const stale =
+    operativeMedian !== null &&
+    concluded !== null &&
+    Math.abs(operativeMedian - concluded) >= 0.005 &&
+    P(
+      'The median of the set above differs from the multiple concluded in <strong>Exhibit D</strong>, ' +
+        'which is struck from the peer set as it stood when the valuation was last calculated. The ' +
+        'screen has been edited since; the conclusion reflects the earlier set, and the valuation ' +
+        'should be recalculated before the report is relied upon.',
+    );
 
   const rejected =
     excluded.length > 0
@@ -1508,9 +1588,14 @@ export function peerSetExhibit(
     P(
       'The guideline companies below were screened on industry classification, scale, growth and ' +
         'margin profile. The multiples in Exhibit D are struck from the companies retained; the ' +
-        'companies considered and set aside are listed with the basis on which each was excluded.',
+        'companies considered and set aside are listed with the basis on which each was excluded.' +
+        (operativeShown
+          ? ` The valuation is struck on <strong>${esc(MULTIPLE_LABELS[operative])}</strong>; the ` +
+            'other quotients are shown for context and were not concluded on.'
+          : ''),
     ),
     selected,
+    stale || null,
     provenance,
     excluded.length > 0
       ? P('The following companies were considered and are not reflected in the concluded multiples.')

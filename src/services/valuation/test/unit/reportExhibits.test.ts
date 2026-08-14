@@ -1940,6 +1940,18 @@ describe('peer set exhibit', () => {
       multiples: { ev_revenue_ltm: 6.5, ev_ebitda_ltm: null },
     },
     {
+      // The third retained comp, so the set reconciles to RESULTS' concluded
+      // 6.5: the multiples Exhibit D was struck from *are* the retained rows,
+      // and a fixture where they are not is a fixture of a broken engagement.
+      ticker: 'CCC',
+      name: 'Gamma Systems',
+      included: true,
+      exclude_reason: null,
+      source: 'market_feed',
+      score: 0.61,
+      multiples: { ev_revenue_ltm: 7.1, ev_ebitda_ltm: null },
+    },
+    {
       ticker: 'ZZZ',
       name: 'Zeta Mining',
       included: false,
@@ -1967,6 +1979,109 @@ describe('peer set exhibit', () => {
 
   it('escapes company names, which come from the engagement', () => {
     expect(peerSetExhibit(peers, RESULTS)!.html).toContain('Beta &amp; Sons &lt;Holdings&gt;');
+  });
+
+  /*
+   * A run concludes on exactly one of the four quotients — `market_method` ×
+   * `market_horizon` picks it — and this schedule printed all four and marked
+   * none. So its own prose ("the multiples in Exhibit D are struck from the
+   * companies retained") invited a check the table made impossible: four
+   * columns of plausible multiples against one median, with nothing saying
+   * which column to take it over. A reviewer who picks the wrong column finds
+   * a median that does not reconcile and concludes the report is wrong.
+   */
+  describe('which column Exhibit D concluded on', () => {
+    /** A retained set carrying both quotients, so there is a choice to mark. */
+    const twoColumn = [
+      { ...peers[0], multiples: { ev_revenue_ltm: 5.0, ev_ebitda_ltm: 11.0 } },
+      { ...peers[1], multiples: { ev_revenue_ltm: 6.5, ev_ebitda_ltm: 14.0 } },
+      { ...peers[2], multiples: { ev_revenue_ltm: 7.1, ev_ebitda_ltm: 20.0 } },
+      peers[3],
+    ];
+    const resultsOn = (basis: string, horizon: string, selected: number) => ({
+      ...RESULTS,
+      approaches: { ...RESULTS.approaches, market: { ...RESULTS.approaches.market, basis, horizon, selected_multiple: selected } },
+    });
+
+    it('marks the column the valuation was struck on', () => {
+      const seen = plain(peerSetExhibit(twoColumn, resultsOn('revenue', 'ltm', 6.5))!.html);
+      expect(seen).toContain('EV/LTM Revenue (selected)');
+      expect(seen).not.toContain('EV/LTM EBITDA (selected)');
+      // ...and in the prose, so the marking is not a header convention the
+      // reader has to infer.
+      expect(seen).toContain('The valuation is struck on EV/LTM Revenue');
+      expect(seen).toContain('were not concluded on');
+    });
+
+    it('marks the EBITDA column when that is what was concluded on', () => {
+      // Same peer set, same four columns — only the run's basis differs, and
+      // it is the whole difference between a reconcilable exhibit and a
+      // misleading one.
+      const seen = plain(peerSetExhibit(twoColumn, resultsOn('ebitda', 'ltm', 14.0))!.html);
+      expect(seen).toContain('EV/LTM EBITDA (selected)');
+      expect(seen).not.toContain('EV/LTM Revenue (selected)');
+    });
+
+    it('puts the selected column first', () => {
+      const seen = plain(peerSetExhibit(twoColumn, resultsOn('ebitda', 'ltm', 14.0))!.html);
+      expect(seen.indexOf('EV/LTM EBITDA')).toBeLessThan(seen.indexOf('EV/LTM Revenue'));
+    });
+
+    it('foots the retained set with the median Exhibit D concluded on', () => {
+      // The reconciliation both exhibits exist to support and neither carried.
+      const seen = plain(peerSetExhibit(peers, RESULTS)!.html);
+      expect(seen).toContain('Median of the retained set');
+      expect(seen).toContain('6.50x'); // median of 5.0, 6.5, 7.1 — RESULTS' selected_multiple
+    });
+
+    it('averages the two middles on an even set, as the engine does', () => {
+      // `statistics.median` averages; a foot that took the upper middle would
+      // disagree with Exhibit D on every even-sized peer set.
+      const four = [
+        { ...peers[0], multiples: { ev_revenue_ltm: 4.0 } },
+        { ...peers[1], multiples: { ev_revenue_ltm: 5.0 } },
+        { ...peers[2], multiples: { ev_revenue_ltm: 6.0 } },
+        { ...peers[0], ticker: 'DDD', name: 'Delta', multiples: { ev_revenue_ltm: 9.0 } },
+      ];
+      const seen = plain(peerSetExhibit(four, resultsOn('revenue', 'ltm', 5.5))!.html);
+      expect(seen).toContain('5.50x');
+      expect(seen).not.toContain('median of the set above differs');
+    });
+
+    it('says so when the screen no longer reconciles to the conclusion', () => {
+      /*
+       * The peer set is read at render time; the multiples come from the stored
+       * calculation. A set edited after the last run reconciles to nothing, and
+       * the reader was shown two numbers with no hint they disagreed.
+       */
+      const edited = peers.filter((p) => p.ticker !== 'CCC'); // median drops to 5.75
+      const seen = plain(peerSetExhibit(edited, RESULTS)!.html);
+      expect(seen).toContain('5.75x');
+      expect(seen).toContain('median of the set above differs');
+      expect(seen).toContain('should be recalculated');
+    });
+
+    it('stays quiet when the set reconciles', () => {
+      expect(plain(peerSetExhibit(peers, RESULTS)!.html)).not.toContain(
+        'median of the set above differs',
+      );
+    });
+
+    it('does not cry stale over a difference the printed figures do not show', () => {
+      // Both are printed to two places; a disagreement below that is not one a
+      // reader can see, and a caveat they cannot verify is worse than none.
+      const seen = plain(peerSetExhibit(peers, resultsOn('revenue', 'ltm', 6.502))!.html);
+      expect(seen).not.toContain('median of the set above differs');
+    });
+
+    it('marks nothing when the retained set lacks the concluded quotient', () => {
+      // Every retained comp is loss-making, so there is no EBITDA column to
+      // mark — and the exhibit must not invent one, nor claim a reconciliation.
+      const seen = plain(peerSetExhibit(peers, resultsOn('ebitda', 'ltm', 14.0))!.html);
+      expect(seen).not.toContain('(selected)');
+      expect(seen).not.toContain('Median of the retained set');
+      expect(seen).not.toContain('median of the set above differs');
+    });
   });
 
   it('is absent without a peer set', () => {
