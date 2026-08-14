@@ -328,3 +328,205 @@ describe('OnboardingPage (guided client funnel)', () => {
     });
   });
 });
+
+/**
+ * Step 3 — the document uploads. Reached by resuming a draft, which is how a
+ * client returning from the Stripe round trip gets here too.
+ */
+describe('OnboardingPage — uploading documents', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    sessionStorage.clear();
+  });
+
+  /** Land straight on the upload step with a valuation already created. */
+  function resumeAtUploads(uploaded: Record<string, string[]> = {}) {
+    sessionStorage.setItem(
+      'n409.onboarding.draft',
+      JSON.stringify({
+        version: 1,
+        step: 2,
+        valuation: VALUATION,
+        uploaded,
+        savedAt: Date.now(),
+      }),
+    );
+    renderPage();
+  }
+
+  const file = (name: string) => new File(['x'], name, { type: 'application/pdf' });
+  const picker = () => document.querySelector('input[type="file"]') as HTMLInputElement;
+  const storedUploads = () =>
+    JSON.parse(sessionStorage.getItem('n409.onboarding.draft') ?? '{}').uploaded;
+
+  it('uploads the chosen files and ticks the checklist', async () => {
+    const user = userEvent.setup();
+    const sent: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).includes('/documents')) {
+        sent.push(String((init?.body as FormData).get('kind')));
+        return jsonResponse({ document: { id: 'd1' } }, 201);
+      }
+      return jsonResponse({});
+    });
+    resumeAtUploads();
+
+    await user.upload(picker(), [file('cap.pdf'), file('table.pdf')]);
+
+    // The tick carries the count, so both files have to be recorded.
+    await waitFor(() => expect(screen.getByText('(2)')).toBeInTheDocument());
+    expect(sent).toEqual(['cap_table', 'cap_table']);
+    expect(storedUploads()).toEqual({ cap_table: ['cap.pdf', 'table.pdf'] });
+  });
+
+  it('files the upload under the document type that was chosen', async () => {
+    const user = userEvent.setup();
+    let kind: string | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).includes('/documents')) {
+        kind = String((init?.body as FormData).get('kind'));
+        return jsonResponse({ document: { id: 'd1' } }, 201);
+      }
+      return jsonResponse({});
+    });
+    resumeAtUploads();
+
+    await user.selectOptions(screen.getByLabelText('Document type'), 'balance_sheet');
+    await user.upload(picker(), file('bs.pdf'));
+
+    await waitFor(() => expect(kind).toBe('balance_sheet'));
+    await waitFor(() => expect(storedUploads()).toEqual({ balance_sheet: ['bs.pdf'] }));
+  });
+
+  /**
+   * The bug: the ticks were written only after the whole loop had run, so a
+   * failure partway through discarded the names of the files already sitting on
+   * the server. The client resumed the wizard, saw no tick against the cap
+   * table, and uploaded it a second time — the one thing the ticks are for.
+   */
+  it('keeps the files that landed when a later one fails', async () => {
+    const user = userEvent.setup();
+    let n = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/documents')) {
+        n += 1;
+        if (n === 3) return jsonResponse({ detail: 'That file is too large.' }, 413);
+        return jsonResponse({ document: { id: `d${n}` } }, 201);
+      }
+      return jsonResponse({});
+    });
+    resumeAtUploads();
+
+    await user.upload(picker(), [file('one.pdf'), file('two.pdf'), file('three.pdf')]);
+
+    expect(await screen.findByText('That file is too large.')).toBeInTheDocument();
+    // The two that made it are on the server, so they are ticked and recorded —
+    // and the one that did not is neither.
+    await waitFor(() => expect(screen.getByText('(2)')).toBeInTheDocument());
+    expect(storedUploads()).toEqual({ cap_table: ['one.pdf', 'two.pdf'] });
+  });
+
+  it('adds nothing to the checklist when the very first file fails', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      String(url).includes('/documents')
+        ? jsonResponse({ detail: 'Unsupported file type.' }, 415)
+        : jsonResponse({}),
+    );
+    resumeAtUploads();
+
+    await user.upload(picker(), file('notes.txt'));
+
+    expect(await screen.findByText('Unsupported file type.')).toBeInTheDocument();
+    expect(screen.queryByText('(1)')).not.toBeInTheDocument();
+    expect(storedUploads()).toEqual({});
+  });
+
+  it('falls back to a plain message when the upload carries none', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (String(url).includes('/documents')) throw new Error('offline');
+      return jsonResponse({});
+    });
+    resumeAtUploads();
+
+    await user.upload(picker(), file('cap.pdf'));
+
+    expect(await screen.findByText('Upload failed.')).toBeInTheDocument();
+  });
+
+  /**
+   * Retrying a failed upload means picking the same file again — and a file
+   * input that still holds that file fires no change event when it is chosen a
+   * second time, so the obvious way to recover was a control that did nothing.
+   * The fix hands the input back empty after every pick.
+   *
+   * Asserted on the input rather than through a second upload: jsdom's
+   * `user.upload` dispatches change whichever value the input holds, so a
+   * two-upload test passes with or without the fix and proves nothing. The
+   * emptied value is the part of the behaviour this environment can actually
+   * observe.
+   */
+  it('hands the file input back empty so the same file can be re-picked', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      String(url).includes('/documents')
+        ? jsonResponse({ detail: 'Temporary glitch.' }, 500)
+        : jsonResponse({}),
+    );
+    resumeAtUploads();
+
+    await user.upload(picker(), file('cap.pdf'));
+
+    expect(await screen.findByText('Temporary glitch.')).toBeInTheDocument();
+    expect(picker().value).toBe('');
+    expect(picker().files).toHaveLength(0);
+  });
+
+  it('adds to the ticks a resumed draft already carried', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      String(url).includes('/documents')
+        ? jsonResponse({ document: { id: 'd2' } }, 201)
+        : jsonResponse({}),
+    );
+    resumeAtUploads({ cap_table: ['already.pdf'] });
+
+    expect(screen.getByText('(1)')).toBeInTheDocument();
+    await user.upload(picker(), file('more.pdf'));
+
+    await waitFor(() => expect(screen.getByText('(2)')).toBeInTheDocument());
+    expect(storedUploads()).toEqual({ cap_table: ['already.pdf', 'more.pdf'] });
+  });
+
+  /** Choosing nothing is not an upload. */
+  it('does nothing when the picker is dismissed without a file', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({}));
+    resumeAtUploads();
+    fetchMock.mockClear();
+
+    await userEvent.setup().upload(picker(), []);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  /** The button names what it does — and uploads are genuinely optional. */
+  it('offers to skip while nothing is uploaded, and to finish once something is', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+      String(url).includes('/documents')
+        ? jsonResponse({ document: { id: 'd1' } }, 201)
+        : jsonResponse({}),
+    );
+    resumeAtUploads();
+
+    expect(screen.getByRole('button', { name: 'Skip uploads for now →' })).toBeInTheDocument();
+    await user.upload(picker(), file('cap.pdf'));
+
+    const finish = await screen.findByRole('button', { name: 'Finish →' });
+    await user.click(finish);
+
+    expect(await screen.findByText(/Your request is in/)).toBeInTheDocument();
+    expect(screen.getByText(/1 document received/)).toBeInTheDocument();
+  });
+});

@@ -174,30 +174,36 @@ export function OnboardingPage() {
   };
 
   // ── Step 3: uploads ───────────────────────────────────────────────────────
-  const upload = async (files: FileList | null) => {
-    if (!valuation || !files || files.length === 0) return;
+  const upload = async (files: File[]) => {
+    if (!valuation || files.length === 0) return;
     setError(null);
     setBusy(true);
+    // Recorded one file at a time rather than as a batch at the end. The ticks
+    // were only written once the whole loop had run, so a failure on the third
+    // of five files discarded the names of the two already sitting on the
+    // server — and a client resuming the wizard uploaded the same cap table
+    // twice, which is the single thing the ticks exist to prevent.
+    const landed: string[] = [];
     try {
-      for (const file of Array.from(files)) {
+      for (const file of files) {
         const data = new FormData();
         data.append('kind', docKind);
         data.append('file', file);
         await apiUpload(`/valuations/${valuation.id}/documents`, data);
+        landed.push(file.name);
       }
-      setUploaded((u) => {
-        const next = {
-          ...u,
-          [docKind]: [...(u[docKind] ?? []), ...Array.from(files).map((f) => f.name)],
-        };
-        // The files are on the server either way; the ticks are what a resumed
-        // wizard needs so the client does not upload the same cap table twice.
-        remember({ step: 2, valuation, uploaded: next });
-        return next;
-      });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Upload failed.');
     } finally {
+      if (landed.length > 0) {
+        setUploaded((u) => {
+          const next = { ...u, [docKind]: [...(u[docKind] ?? []), ...landed] };
+          // The files are on the server either way; the ticks are what a
+          // resumed wizard needs.
+          remember({ step: 2, valuation, uploaded: next });
+          return next;
+        });
+      }
       setBusy(false);
     }
   };
@@ -357,7 +363,15 @@ export function OnboardingPage() {
                 multiple
                 className="hidden"
                 disabled={busy}
-                onChange={(e) => void upload(e.target.files)}
+                onChange={(e) => {
+                  // Snapshot the picks and hand the input back empty. Left as
+                  // it was, re-choosing the *same* file fires no change event —
+                  // so the obvious way to retry a failed upload, picking it
+                  // again, was a control that did nothing.
+                  const picked = Array.from(e.target.files ?? []);
+                  e.target.value = '';
+                  void upload(picked);
+                }}
               />
             </label>
           </div>
