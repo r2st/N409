@@ -43,7 +43,7 @@ const messageFor = (label: string) => {
   return document.getElementById(box.getAttribute('aria-describedby')!);
 };
 
-const sensitivityCalls = (spy: ReturnType<typeof vi.spyOn>) =>
+const sensitivityCalls = (spy: { mock: { calls: unknown[][] } }) =>
   spy.mock.calls.filter(([u]) => String(u).includes('/sensitivity'));
 
 describe('SensitivityPage assumption validation', () => {
