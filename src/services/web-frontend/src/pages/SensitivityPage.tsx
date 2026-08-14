@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { all, integer, numberMin, numberRange, useFormValidation } from '../lib/useFormValidation';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatMoney } from '../lib/format';
@@ -112,8 +112,24 @@ export function SensitivityPage() {
   const set = (key: keyof typeof defaultAssumptions) => (e: { target: { value: string } }) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const run = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * The bounds restate the `min`/`max`/`step` the controls already carry. They
+   * were only ever enforced by the browser, which the `noValidate` below turns
+   * off; the OPM behind this form divides by the share count and takes the log
+   * of the volatility, so a zero or a negative reaches the API as a 422 at
+   * best and a NaN table at worst.
+   */
+  const { errorFor, blurHandler, handleSubmit } = useFormValidation(form, {
+    equity_value: numberMin('equity_value', 1, 'Equity value'),
+    strike: numberMin('strike', 0, 'Preference stack'),
+    volatility: numberRange('volatility', 1, 500, 'Volatility'),
+    term_years: numberRange('term_years', 0.1, 30, 'Term'),
+    risk_free_rate: numberRange('risk_free_rate', 0, 25, 'Risk-free rate'),
+    common_shares: all(numberMin('common_shares', 1, 'Common shares'), integer('common_shares', 'Common shares')),
+    dlom: numberRange('dlom', 0, 95, 'DLOM'),
+  });
+
+  const run = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -141,7 +157,7 @@ export function SensitivityPage() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <div>
@@ -156,34 +172,40 @@ export function SensitivityPage() {
         <h1 className="mt-1 font-display text-3xl font-semibold text-ink-900">Sensitivity dashboard</h1>
       </div>
 
-      <form onSubmit={run} className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
+      <form
+        onSubmit={run}
+        className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card"
+        noValidate
+      >
         {error && (
           <div className="mb-5">
             <ErrorNote>{error}</ErrorNote>
           </div>
         )}
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Equity value ($)">
+          <Field label="Equity value ($)" error={errorFor('equity_value')}>
             <TextInput
               type="number"
               min="1"
               step="any"
               value={form.equity_value}
               onChange={set('equity_value')}
+              onBlur={blurHandler('equity_value')}
               required
             />
           </Field>
-          <Field label="Preference stack / strike ($)">
+          <Field label="Preference stack / strike ($)" error={errorFor('strike')}>
             <TextInput
               type="number"
               min="0"
               step="any"
               value={form.strike}
               onChange={set('strike')}
+              onBlur={blurHandler('strike')}
               required
             />
           </Field>
-          <Field label="Volatility (%)">
+          <Field label="Volatility (%)" error={errorFor('volatility')}>
             <TextInput
               type="number"
               min="1"
@@ -191,10 +213,11 @@ export function SensitivityPage() {
               step="any"
               value={form.volatility}
               onChange={set('volatility')}
+              onBlur={blurHandler('volatility')}
               required
             />
           </Field>
-          <Field label="Term to exit (years)">
+          <Field label="Term to exit (years)" error={errorFor('term_years')}>
             <TextInput
               type="number"
               min="0.1"
@@ -202,10 +225,11 @@ export function SensitivityPage() {
               step="any"
               value={form.term_years}
               onChange={set('term_years')}
+              onBlur={blurHandler('term_years')}
               required
             />
           </Field>
-          <Field label="Risk-free rate (%)">
+          <Field label="Risk-free rate (%)" error={errorFor('risk_free_rate')}>
             <TextInput
               type="number"
               min="0"
@@ -213,20 +237,22 @@ export function SensitivityPage() {
               step="any"
               value={form.risk_free_rate}
               onChange={set('risk_free_rate')}
+              onBlur={blurHandler('risk_free_rate')}
               required
             />
           </Field>
-          <Field label="Common shares (FD)">
+          <Field label="Common shares (FD)" error={errorFor('common_shares')}>
             <TextInput
               type="number"
               min="1"
               step="1"
               value={form.common_shares}
               onChange={set('common_shares')}
+              onBlur={blurHandler('common_shares')}
               required
             />
           </Field>
-          <Field label="DLOM (%)">
+          <Field label="DLOM (%)" error={errorFor('dlom')}>
             <TextInput
               type="number"
               min="0"
@@ -234,6 +260,7 @@ export function SensitivityPage() {
               step="any"
               value={form.dlom}
               onChange={set('dlom')}
+              onBlur={blurHandler('dlom')}
               required
             />
           </Field>

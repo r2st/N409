@@ -175,6 +175,41 @@ export function numberRange<V>(key: keyof V, min: number, max: number, label: st
 }
 
 /**
+ * A number at or above `min`, with no ceiling.
+ *
+ * Most of the money and share boxes are bounded below and not above — an equity
+ * value has no largest sensible figure — and writing that as `numberRange(k, 0,
+ * Infinity, l)` puts an "at most Infinity" branch in the code that can never
+ * fire. This is the same check without it.
+ */
+export function numberMin<V>(key: keyof V, min: number, label: string): Validator<V> {
+  return (values) => {
+    const raw = String(values[key] ?? '').trim();
+    if (!raw) return `${label} is required.`;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return `${label} must be a number.`;
+    return n >= min ? null : `${label} must be at least ${min}.`;
+  };
+}
+
+/**
+ * A whole number.
+ *
+ * `step="1"` on `<input type=number>` is a real constraint the browser enforces
+ * — it rejects 1.5 — so the boxes counting shares need it restated here, or
+ * turning the browser off would quietly start accepting fractional shares.
+ */
+export function integer<V>(key: keyof V, label: string): Validator<V> {
+  return (values) => {
+    const raw = String(values[key] ?? '').trim();
+    if (!raw) return `${label} is required.`;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return `${label} must be a number.`;
+    return Number.isInteger(n) ? null : `${label} must be a whole number.`;
+  };
+}
+
+/**
  * Applies `validator` only when the field has been filled in.
  *
  * For the boxes that are genuinely optional but must be well-formed if used —

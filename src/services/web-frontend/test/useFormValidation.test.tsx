@@ -3,7 +3,17 @@ import { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Button, Field, TextInput } from '../src/components/ui';
-import { all, email, matches, minLength, required, useFormValidation } from '../src/lib/useFormValidation';
+import {
+  all,
+  email,
+  integer,
+  matches,
+  minLength,
+  numberMin,
+  numberRange,
+  required,
+  useFormValidation,
+} from '../src/lib/useFormValidation';
 
 /**
  * A form with the two rules that between them cover every shape the hook has
@@ -206,5 +216,58 @@ describe('the validators', () => {
     const rule = all<{ c: string }>(required('c', 'Confirmation'), () => 'second');
     expect(rule({ c: '' })).toBe('Confirmation is required.');
     expect(rule({ c: 'x' })).toBe('second');
+  });
+
+  describe('numberMin', () => {
+    const rule = numberMin('v', 1, 'Shares');
+
+    it('accepts the boundary and anything above it', () => {
+      expect(rule({ v: '1' })).toBeNull();
+      expect(rule({ v: '9999999999999' })).toBeNull();
+    });
+
+    it('rejects below the floor, and reports the floor', () => {
+      expect(rule({ v: '0' })).toBe('Shares must be at least 1.');
+      expect(rule({ v: '-5' })).toBe('Shares must be at least 1.');
+    });
+
+    it('calls an empty box absent rather than zero', () => {
+      // `Number('')` is 0, which would otherwise fail the floor check and
+      // report "must be at least 1" about a box with nothing in it.
+      expect(rule({ v: '' })).toBe('Shares is required.');
+      expect(rule({ v: '   ' })).toBe('Shares is required.');
+    });
+
+    it('separates non-numeric text from an out-of-range number', () => {
+      expect(rule({ v: 'lots' })).toBe('Shares must be a number.');
+    });
+
+    it('has no ceiling, unlike numberRange', () => {
+      expect(numberRange('v', 1, 10, 'Shares')({ v: '11' })).toBe('Shares must be at most 10.');
+      expect(numberMin('v', 1, 'Shares')({ v: '11' })).toBeNull();
+    });
+  });
+
+  describe('integer', () => {
+    const rule = integer('v', 'Shares');
+
+    it('accepts whole numbers, including negative and exponent forms', () => {
+      expect(rule({ v: '1000' })).toBeNull();
+      expect(rule({ v: '-4' })).toBeNull();
+      expect(rule({ v: '1e3' })).toBeNull();
+    });
+
+    it('rejects a fraction, which is what step="1" rejected', () => {
+      expect(rule({ v: '1000.5' })).toBe('Shares must be a whole number.');
+    });
+
+    it('accepts a trailing zero decimal, which is the same whole number', () => {
+      expect(rule({ v: '1000.0' })).toBeNull();
+    });
+
+    it('reports an empty box and non-numeric text distinctly', () => {
+      expect(rule({ v: '' })).toBe('Shares is required.');
+      expect(rule({ v: 'many' })).toBe('Shares must be a number.');
+    });
   });
 });
