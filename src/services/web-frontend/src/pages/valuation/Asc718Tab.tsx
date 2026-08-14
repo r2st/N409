@@ -36,6 +36,34 @@ interface Settings {
   expected_term_method: TermMethod;
   espp_discount_pct: string | null;
   espp_lookback_months: number | null;
+  rsu_performance_conditions: Record<string, unknown> | null;
+  tsr_peer_basket: unknown[] | null;
+}
+
+/**
+ * The stored settings columns this tab does not edit, echoed back as the save
+ * has to send them.
+ *
+ * `PUT .../asc718/settings` is a full replace — it upserts every column from
+ * the body, so a column the body omits is written back as `NULL`. This tab has
+ * controls for three of the seven, which meant pressing "Save settings" after
+ * changing a ticker also discarded the ESPP discount and lookback, the RSU
+ * performance conditions and the TSR peer basket. Nothing on screen said so,
+ * and the next measurement quietly priced the ESPPs off the request defaults
+ * instead of the configured ones.
+ *
+ * `espp_discount_pct` comes back from a numeric column, so Postgres hands it
+ * over as a string; the body schema wants a number.
+ */
+function untouchedSettings(s: Settings | null): Record<string, unknown> {
+  if (!s) return {};
+  const discount = s.espp_discount_pct === null ? null : Number(s.espp_discount_pct);
+  return {
+    espp_discount_pct: discount !== null && Number.isFinite(discount) ? discount : null,
+    espp_lookback_months: s.espp_lookback_months,
+    rsu_performance_conditions: s.rsu_performance_conditions ?? null,
+    tsr_peer_basket: s.tsr_peer_basket ?? null,
+  };
 }
 
 interface Market {
@@ -179,21 +207,23 @@ export function Asc718Tab() {
           company_type: companyType,
           ticker: companyType === 'public' ? ticker.trim().toUpperCase() || null : null,
           expected_term_method: termMethod,
+          ...untouchedSettings(settings),
         },
       });
       setSettings(s);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to save settings');
     }
-  }, [id, companyType, ticker, termMethod]);
+  }, [id, companyType, ticker, termMethod, settings]);
 
   const run = useCallback(async () => {
     setRunning(true);
     setError(null);
+    const isPublic = companyType === 'public';
     try {
       const payload: Record<string, unknown> = {
         company_type: companyType,
-        ...(companyType === 'public' && ticker.trim() ? { ticker: ticker.trim().toUpperCase() } : {}),
+        ...(isPublic && ticker.trim() ? { ticker: ticker.trim().toUpperCase() } : {}),
         ...(numOrU(defaultUnderlying) !== undefined
           ? { default_grant_date_fair_value: numOrU(defaultUnderlying) }
           : {}),
@@ -211,30 +241,42 @@ export function Asc718Tab() {
             risk_free_rate: numOrU(o.risk_free_rate),
             expected_term_method: termMethod,
           })),
-        espp: espps.map((e) => ({
-          label: e.label || undefined,
-          shares_enrolled: numOrU(e.shares_enrolled),
-          grant_date_price: numOrU(e.grant_date_price),
-          discount_pct: numOrU(e.discount_pct),
-          lookback_months: numOrU(e.lookback_months),
-          risk_free_rate: numOrU(e.risk_free_rate),
-        })),
-        rsu: rsus.map((r) => ({
-          label: r.label || undefined,
-          condition: r.condition,
-          units: numOrU(r.units),
-          market_price: numOrU(r.market_price),
-          vesting_years: numOrU(r.vesting_years),
-          ...(r.condition === 'performance'
-            ? {
-                expected_attainment: numOrU(r.expected_attainment),
-                attainment_volatility: numOrU(r.attainment_volatility),
-              }
-            : {}),
-          ...(r.condition === 'market'
-            ? { hurdle_price: numOrU(r.hurdle_price), risk_free_rate: numOrU(r.risk_free_rate) }
-            : {}),
-        })),
+        // ESPPs and RSUs are public-company awards, and both sections replace
+        // themselves with "Switch company type to Public" the moment the
+        // company type goes back to private. The entries survive that switch —
+        // deliberately, so toggling the type is not destructive — but sending
+        // them must not. A private run carried every award the analyst could no
+        // longer see, the engine measured them against the 409A FMV, and the
+        // results tables listed ESPP and RSU rows for a company the tab had
+        // just finished saying cannot have them.
+        espp: !isPublic
+          ? []
+          : espps.map((e) => ({
+              label: e.label || undefined,
+              shares_enrolled: numOrU(e.shares_enrolled),
+              grant_date_price: numOrU(e.grant_date_price),
+              discount_pct: numOrU(e.discount_pct),
+              lookback_months: numOrU(e.lookback_months),
+              risk_free_rate: numOrU(e.risk_free_rate),
+            })),
+        rsu: !isPublic
+          ? []
+          : rsus.map((r) => ({
+              label: r.label || undefined,
+              condition: r.condition,
+              units: numOrU(r.units),
+              market_price: numOrU(r.market_price),
+              vesting_years: numOrU(r.vesting_years),
+              ...(r.condition === 'performance'
+                ? {
+                    expected_attainment: numOrU(r.expected_attainment),
+                    attainment_volatility: numOrU(r.attainment_volatility),
+                  }
+                : {}),
+              ...(r.condition === 'market'
+                ? { hurdle_price: numOrU(r.hurdle_price), risk_free_rate: numOrU(r.risk_free_rate) }
+                : {}),
+            })),
       };
       const res = await api<Asc718Response>(`/valuations/${id}/asc718`, { method: 'POST', body: payload });
       setResult(res.asc718);

@@ -60,6 +60,8 @@ interface Settings {
   expected_term_method: 'simplified' | 'lattice' | 'historical';
   espp_discount_pct: string | null;
   espp_lookback_months: number | null;
+  rsu_performance_conditions: Record<string, unknown> | null;
+  tsr_peer_basket: unknown[] | null;
 }
 
 const makeSettings = (over: Partial<Settings> = {}): Settings => ({
@@ -69,6 +71,8 @@ const makeSettings = (over: Partial<Settings> = {}): Settings => ({
   expected_term_method: 'simplified',
   espp_discount_pct: null,
   espp_lookback_months: null,
+  rsu_performance_conditions: null,
+  tsr_peer_basket: null,
   ...over,
 });
 
@@ -110,11 +114,20 @@ function mockServer(options: ServerOptions = {}) {
 
     if (path.endsWith('/asc718/settings')) {
       if (method === 'PUT') {
+        // Faithful to the route: the upsert writes every column from the body,
+        // so a column the body leaves out comes back null. Answering with the
+        // *stored* row instead would hide a save that silently blanks a field.
         return json({
           settings: makeSettings({
             company_type: body?.company_type as Settings['company_type'],
             ticker: (body?.ticker as string | null) ?? null,
             expected_term_method: body?.expected_term_method as Settings['expected_term_method'],
+            espp_discount_pct:
+              body?.espp_discount_pct == null ? null : String(body.espp_discount_pct as number),
+            espp_lookback_months: (body?.espp_lookback_months as number | null) ?? null,
+            rsu_performance_conditions:
+              (body?.rsu_performance_conditions as Record<string, unknown> | null) ?? null,
+            tsr_peer_basket: (body?.tsr_peer_basket as unknown[] | null) ?? null,
           }),
         });
       }
@@ -242,6 +255,89 @@ describe('Asc718Tab — settings', () => {
 
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
     expect(calls.find((c) => c.method === 'PUT')?.body?.ticker).toBeNull();
+  });
+
+  /**
+   * `PUT .../asc718/settings` upserts every column from its body, so a column
+   * the body omits is written back as `NULL`. This tab edits three of the seven
+   * and the other four have no control on screen — which made "Save settings"
+   * after a ticker change also discard the ESPP discount and lookback, the RSU
+   * performance conditions and the TSR peer basket. Nothing said so, and the
+   * next measurement priced the ESPPs off the request defaults instead.
+   */
+  it('carries the settings it has no control for through a save', async () => {
+    const { calls } = mockServer({
+      settings: makeSettings({
+        company_type: 'public',
+        ticker: 'ACME',
+        espp_discount_pct: '0.15',
+        espp_lookback_months: 12,
+        rsu_performance_conditions: { tier1: 0.5 },
+        tsr_peer_basket: ['PEER'],
+      }),
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await awaitLoaded();
+
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(calls.find((c) => c.method === 'PUT')?.body).toMatchObject({
+      // The numeric column arrives as a string and the body schema wants a
+      // number, so the round trip has to convert rather than echo.
+      espp_discount_pct: 0.15,
+      espp_lookback_months: 12,
+      rsu_performance_conditions: { tier1: 0.5 },
+      tsr_peer_basket: ['PEER'],
+    });
+  });
+
+  /** Nothing stored yet is nothing to carry — not four explicit nulls. */
+  it('sends only the fields it owns when nothing has been stored', async () => {
+    const { calls } = mockServer({ settings: null });
+    const user = userEvent.setup();
+    renderTab();
+    await awaitLoaded();
+
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(Object.keys(calls.find((c) => c.method === 'PUT')!.body!).sort()).toEqual([
+      'company_type',
+      'expected_term_method',
+      'ticker',
+    ]);
+  });
+
+  /** A stored discount that is not a number must not go back out as `NaN`. */
+  it('drops an unparseable stored discount rather than echoing it', async () => {
+    const { calls } = mockServer({ settings: makeSettings({ espp_discount_pct: 'n/a' }) });
+    const user = userEvent.setup();
+    renderTab();
+    await awaitLoaded();
+
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(calls.find((c) => c.method === 'PUT')?.body?.espp_discount_pct).toBeNull();
+  });
+
+  /** Two saves in a row must leave the carried columns where the first found them. */
+  it('does not erode the carried settings across repeated saves', async () => {
+    const { calls } = mockServer({
+      settings: makeSettings({ company_type: 'public', ticker: 'ACME', espp_lookback_months: 12 }),
+    });
+    const user = userEvent.setup();
+    renderTab();
+    await awaitLoaded();
+
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2));
+
+    expect(calls.filter((c) => c.method === 'PUT')[1]?.body?.espp_lookback_months).toBe(12);
   });
 
   it('reports the server’s reason when the settings save is rejected', async () => {
@@ -541,6 +637,233 @@ describe('Asc718Tab — award sections', () => {
     const [rsu] = runCall(calls)!.body?.rsu as Array<Record<string, unknown>>;
     expect(rsu).toMatchObject({ condition: 'market', hurdle_price: 40, risk_free_rate: 0.03 });
     expect(rsu).not.toHaveProperty('expected_attainment');
+  });
+
+  /**
+   * Every input in the section goes through one `upd(i, key, value)` helper, so
+   * the only thing standing between a box on screen and the assumption the
+   * engine prices with is the key literal spelled at the call site. Fill all
+   * eight and assert the grant that goes out, so a key typed against the wrong
+   * box shows up here rather than as a fair value nobody can reconcile.
+   */
+  it('wires every option-grant input to the assumption it is labelled with', async () => {
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderTab();
+    await awaitLoaded();
+
+    const grants = card('Option grants');
+    const fill = async (label: string, value: string) => {
+      const box = boxIn(grants, label);
+      await user.clear(box);
+      await user.type(box, value);
+    };
+    await fill('Label', 'Every field');
+    await fill('Options', '250000');
+    await fill('Grant date', '2026-03-31');
+    await fill('Vesting months', '36');
+    await fill('Exercise price', '3.25');
+    await fill('Expected term', '5.5');
+    await fill('Volatility', '0.62');
+    await fill('Risk-free', '0.045');
+    await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
+
+    await waitFor(() => expect(runCall(calls)).toBeDefined());
+    expect(grantsOf(calls)[0]).toEqual({
+      label: 'Every field',
+      options_granted: 250000,
+      grant_date: '2026-03-31',
+      vesting_months: 36,
+      exercise_price: 3.25,
+      expected_term_years: 5.5,
+      volatility: 0.62,
+      risk_free_rate: 0.045,
+      expected_term_method: 'simplified',
+    });
+  });
+
+  /** The term method is a per-grant assumption, so changing it has to reach one. */
+  it('stamps the chosen expected-term method onto every grant', async () => {
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderTab();
+    await goPublic(user);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /^Expected-term method/ }),
+      'historical',
+    );
+    await user.type(boxIn(card('Option grants'), 'Exercise price'), '10');
+    await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
+
+    await waitFor(() => expect(runCall(calls)).toBeDefined());
+    expect(grantsOf(calls)[0]?.expected_term_method).toBe('historical');
+  });
+
+  it('wires every ESPP input to the term it is labelled with', async () => {
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderTab();
+    await goPublic(user);
+
+    await user.click(within(card('ESPP (public)')).getByRole('button', { name: 'Add ESPP' }));
+    const espp = card('ESPP (public)');
+    const fill = async (label: string, value: string) => {
+      const box = boxIn(espp, label);
+      await user.clear(box);
+      await user.type(box, value);
+    };
+    await fill('Label', 'H2 offering');
+    await fill('Shares enrolled', '80000');
+    await fill('Grant-date price', '42.5');
+    await fill('Discount %', '0.1');
+    await fill('Lookback months', '6');
+    await fill('Risk-free', '0.052');
+    await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
+
+    await waitFor(() => expect(runCall(calls)).toBeDefined());
+    expect(runCall(calls)!.body?.espp).toEqual([
+      {
+        label: 'H2 offering',
+        shares_enrolled: 80000,
+        grant_date_price: 42.5,
+        discount_pct: 0.1,
+        lookback_months: 6,
+        risk_free_rate: 0.052,
+      },
+    ]);
+  });
+
+  it('wires every service-RSU input to the term it is labelled with', async () => {
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderTab();
+    await goPublic(user);
+
+    await user.click(within(card('RSUs (public)')).getByRole('button', { name: 'Add RSU' }));
+    const rsu = card('RSUs (public)');
+    const fill = async (label: string, value: string) => {
+      const box = boxIn(rsu, label);
+      await user.clear(box);
+      await user.type(box, value);
+    };
+    await fill('Label', 'Retention grant');
+    await fill('Units', '4200');
+    await fill('Market price', '18.75');
+    await fill('Vesting years', '4');
+    await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
+
+    await waitFor(() => expect(runCall(calls)).toBeDefined());
+    expect(runCall(calls)!.body?.rsu).toEqual([
+      {
+        label: 'Retention grant',
+        condition: 'service',
+        units: 4200,
+        market_price: 18.75,
+        vesting_years: 4,
+      },
+    ]);
+  });
+
+  it('wires the performance pair to the attainment fields', async () => {
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderTab();
+    await goPublic(user);
+
+    await user.click(within(card('RSUs (public)')).getByRole('button', { name: 'Add RSU' }));
+    await user.selectOptions(
+      within(card('RSUs (public)')).getByRole('combobox', { name: /^Condition/ }),
+      'performance',
+    );
+    const rsu = card('RSUs (public)');
+    const fill = async (label: string, value: string) => {
+      const box = boxIn(rsu, label);
+      await user.clear(box);
+      await user.type(box, value);
+    };
+    await fill('Expected attainment', '0.75');
+    await fill('Attainment vol', '0.4');
+    await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
+
+    await waitFor(() => expect(runCall(calls)).toBeDefined());
+    expect(runCall(calls)!.body?.rsu).toMatchObject([
+      { expected_attainment: 0.75, attainment_volatility: 0.4 },
+    ]);
+  });
+
+  /**
+   * A market award takes a vesting term *and* a risk-free rate of its own — the
+   * Monte Carlo prices the hurdle over that horizon at that rate. Both boxes
+   * only exist under this condition, so both are only ever wired here.
+   */
+  it('wires the market award’s own horizon and rate', async () => {
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderTab();
+    await goPublic(user);
+
+    await user.click(within(card('RSUs (public)')).getByRole('button', { name: 'Add RSU' }));
+    await user.selectOptions(
+      within(card('RSUs (public)')).getByRole('combobox', { name: /^Condition/ }),
+      'market',
+    );
+    const rsu = card('RSUs (public)');
+    const fill = async (label: string, value: string) => {
+      const box = boxIn(rsu, label);
+      await user.clear(box);
+      await user.type(box, value);
+    };
+    await fill('Hurdle price', '55');
+    await fill('Vesting years', '2.5');
+    await fill('Risk-free', '0.047');
+    await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
+
+    await waitFor(() => expect(runCall(calls)).toBeDefined());
+    expect(runCall(calls)!.body?.rsu).toMatchObject([
+      { condition: 'market', hurdle_price: 55, vesting_years: 2.5, risk_free_rate: 0.047 },
+    ]);
+  });
+
+  /**
+   * Switching back to private hides both public sections behind "Switch company
+   * type to Public" but keeps their entries, so the toggle is not destructive.
+   * The entries must not be measured while hidden: the engine would price them
+   * against the 409A FMV and the results tables would list ESPP and RSU rows
+   * for a company this tab had just finished saying cannot have them.
+   */
+  it('leaves the hidden public awards out of a private run', async () => {
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderTab();
+    await goPublic(user);
+
+    await user.click(within(card('ESPP (public)')).getByRole('button', { name: 'Add ESPP' }));
+    await user.click(within(card('RSUs (public)')).getByRole('button', { name: 'Add RSU' }));
+    await user.selectOptions(await awaitLoaded(), 'private');
+    await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
+
+    await waitFor(() => expect(runCall(calls)).toBeDefined());
+    expect(runCall(calls)!.body).toMatchObject({ company_type: 'private', espp: [], rsu: [] });
+  });
+
+  /** …and they are still there, unchanged, when the company goes public again. */
+  it('keeps the awards so the toggle is not destructive', async () => {
+    const { calls } = mockServer();
+    const user = userEvent.setup();
+    renderTab();
+    await goPublic(user);
+
+    await user.click(within(card('ESPP (public)')).getByRole('button', { name: 'Add ESPP' }));
+    await user.type(boxIn(card('ESPP (public)'), 'Label'), 'Q1 offering');
+    await user.selectOptions(await awaitLoaded(), 'private');
+    await user.selectOptions(await awaitLoaded(), 'public');
+
+    expect(boxIn(card('ESPP (public)'), 'Label')).toHaveValue('Q1 offering');
+
+    await user.click(screen.getByRole('button', { name: 'Run ASC 718' }));
+    await waitFor(() => expect(runCall(calls)).toBeDefined());
+    expect(runCall(calls)!.body?.espp).toMatchObject([{ label: 'Q1 offering' }]);
   });
 
   it('removes an RSU grant again', async () => {
