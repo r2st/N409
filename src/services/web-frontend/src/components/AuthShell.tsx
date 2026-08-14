@@ -18,7 +18,15 @@ export function AuthShell({
         <Wordmark light />
         <div>
           <div className="overline mb-5 text-brass-400">Independent · Defensible · Audit-ready</div>
-          <h1 className="font-display text-[2.6rem] leading-[1.12] font-medium text-chrome-fg">
+          {/*
+           * Not a heading. This is the brand panel's strapline, and it is
+           * hidden below `lg` — so as an <h1> it was both the wrong h1 (a
+           * screen reader jumping by heading landed on advertising copy, with
+           * "Sign in" filed under it as an h2) and, on every phone, no h1 at
+           * all: the only heading left on the page was that orphaned h2. The
+           * page's own title is the h1 now, and this reads as what it is.
+           */}
+          <p className="font-display text-[2.6rem] leading-[1.12] font-medium text-chrome-fg">
             Valuations built for
             <br />
             scrutiny, delivered
@@ -28,7 +36,7 @@ export function AuthShell({
               precision
             </em>
             .
-          </h1>
+          </p>
           <p className="mt-6 max-w-sm text-[0.95rem] leading-relaxed text-chrome-dim">
             IRC §409A common-stock valuations and a full family of fair-value opinions — AI-assisted intake,
             analyst-reviewed, engine-computed.
@@ -54,7 +62,7 @@ export function AuthShell({
               <span className="font-display text-2xl font-semibold text-ink-900">N409</span>
             </span>
           </div>
-          <h2 className="font-display text-2xl font-semibold text-ink-900">{title}</h2>
+          <h1 className="font-display text-2xl font-semibold text-ink-900">{title}</h1>
           <p className="mt-1.5 mb-8 text-sm text-ink-400">{subtitle}</p>
           {children}
         </div>

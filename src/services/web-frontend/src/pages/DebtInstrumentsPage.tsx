@@ -378,9 +378,9 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
 
       {/* Parameters */}
       <div className="rounded-lg border border-paper-200 bg-surface p-4">
-        <h3 className="mb-3 text-sm font-semibold text-ink-700">
+        <h2 className="mb-3 text-sm font-semibold text-ink-700">
           {TYPE_LABELS[instrument.instrument_type]} parameters
-        </h3>
+        </h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {PARAM_FIELDS[instrument.instrument_type].map((f) => (
             <Field key={f.key} label={f.label} tooltip={f.tip}>
@@ -427,7 +427,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
       {/* Sensitivity table */}
       {sensitivity && (
         <div className="rounded-lg border border-paper-200 bg-surface p-4">
-          <h3 className="mb-2 text-sm font-semibold text-ink-700">Sensitivity</h3>
+          <h2 className="mb-2 text-sm font-semibold text-ink-700">Sensitivity</h2>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500">
@@ -456,7 +456,7 @@ function InstrumentDetail({ instrumentId }: { instrumentId: string }) {
       {/* Valuation history */}
       {valuations.length > 0 && (
         <div className="rounded-lg border border-paper-200 bg-surface p-4">
-          <h3 className="mb-2 text-sm font-semibold text-ink-700">Valuation history</h3>
+          <h2 className="mb-2 text-sm font-semibold text-ink-700">Valuation history</h2>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-paper-300 text-left text-xs uppercase text-ink-500">
@@ -492,7 +492,7 @@ function ResultCard({
   const schedule = Array.isArray(result.schedule) ? (result.schedule as Array<Record<string, number>>) : null;
   return (
     <div className="space-y-4 rounded-lg border border-paper-300 bg-paper-50 p-5">
-      <h3 className="text-base font-semibold text-ink-800">Valuation result</h3>
+      <h2 className="text-base font-semibold text-ink-800">Valuation result</h2>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {num('fair_value') != null && (
           <Metric label="Fair value" value={money(num('fair_value')!, currency)} accent />
@@ -544,7 +544,7 @@ function ResultCard({
 
       {schedule && (
         <div>
-          <h4 className="overline mb-2 text-ink-400">Cash-flow schedule</h4>
+          <h3 className="overline mb-2 text-ink-400">Cash-flow schedule</h3>
           {/* Both axes: six money columns clear a phone's content box by ~140px,
               and the schedule is long enough to want the capped height too. */}
           <div className="max-h-72 overflow-x-auto overflow-y-auto">
@@ -623,7 +623,7 @@ function CreditTermsCard({
 
   return (
     <div className="rounded-lg border border-paper-200 bg-surface p-4">
-      <h3 className="mb-3 text-sm font-semibold text-ink-700">Credit terms</h3>
+      <h2 className="mb-3 text-sm font-semibold text-ink-700">Credit terms</h2>
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Field label="Rating">

@@ -151,11 +151,11 @@ function GrantDetailPanel({ valuationId, grant }: { valuationId: string; grant: 
   return (
     <div className="space-y-5 border-t border-paper-200 pt-4">
       <div>
-        <h4 className="overline mb-2 text-ink-400">Vesting timeline</h4>
+        <h3 className="overline mb-2 text-ink-400">Vesting timeline</h3>
         <VestingTimeline timeline={detail.timeline} total={grant.options_count} />
       </div>
       <div>
-        <h4 className="overline mb-2 text-ink-400">Exercise scenarios</h4>
+        <h3 className="overline mb-2 text-ink-400">Exercise scenarios</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

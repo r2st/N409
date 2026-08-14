@@ -293,7 +293,7 @@ function FundDetailView({ fundId }: { fundId: string }) {
       {/* ASC 820 hierarchy disclosure */}
       {nav && (
         <div className="rounded-lg border border-paper-200 bg-surface p-4">
-          <h3 className="mb-2 text-sm font-semibold text-ink-700">ASC 820 fair-value hierarchy</h3>
+          <h2 className="mb-2 text-sm font-semibold text-ink-700">ASC 820 fair-value hierarchy</h2>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[420px] text-sm">
               <thead>
@@ -318,7 +318,7 @@ function FundDetailView({ fundId }: { fundId: string }) {
       {/* Positions */}
       <div className="rounded-lg border border-paper-200 bg-surface p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-ink-700">Positions</h3>
+          <h2 className="text-sm font-semibold text-ink-700">Positions</h2>
           <Button variant="secondary" onClick={() => setShowPos((s) => !s)}>
             {showPos ? 'Cancel' : 'Add position'}
           </Button>
@@ -523,7 +523,7 @@ function PositionRow({
             </div>
           </form>
           <div>
-            <h5 className="overline mb-1 text-ink-400">Mark history</h5>
+            <h3 className="overline mb-1 text-ink-400">Mark history</h3>
             {!marks ? (
               <Spinner />
             ) : marks.length === 0 ? (
@@ -614,13 +614,13 @@ function WaterfallCard({
 
   return (
     <div className="rounded-lg border border-paper-200 bg-surface p-4">
-      <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-ink-700">
+      <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-ink-700">
         LP waterfall calculator
         <InfoTooltip
           label="About the LP waterfall"
           text="Distributes proceeds through the standard tiers, in order: return of capital to LPs, the preferred return (hurdle), an optional GP catch-up, then the carry split. Any GP overpayment across the fund’s life shows as a clawback."
         />
-      </h3>
+      </h2>
       {error && <ErrorNote>{error}</ErrorNote>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Field label="Committed">

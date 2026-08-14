@@ -157,7 +157,7 @@ function SectionCard({
   return (
     <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h3 className="font-display text-base font-semibold text-ink-900">{prompt.label}</h3>
+        <h2 className="font-display text-base font-semibold text-ink-900">{prompt.label}</h2>
         <span className="font-mono text-xs text-ink-400">{prompt.section_key}</span>
         <span
           className={`rounded-full px-2 py-0.5 text-[0.65rem] font-semibold ring-1 ring-inset ${
