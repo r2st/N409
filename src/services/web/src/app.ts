@@ -52,7 +52,7 @@ export interface WebAppOptions {
  * fails — /ready is what a load balancer trusts to decide whether to send
  * traffic here.
  */
-function buildReadinessPool(databaseUrl: string): pg.Pool {
+export function buildReadinessPool(databaseUrl: string): pg.Pool {
   return new pg.Pool({
     connectionString: databaseUrl,
     max: 1,

@@ -22,12 +22,13 @@ export default defineConfig({
       // `index.ts` (the listen/signal bootstrap) is 0% and pulls the whole-file
       // numbers down about 11 points; it is left in rather than excluded,
       // because excluding the part nobody tests is how a floor stops meaning
-      // anything. app.ts itself is at 94%.
+      // anything. app.ts itself is now at 100% statements / 90% branches, so
+      // what remains below is index.ts and four branches in app.ts.
       thresholds: {
-        lines: 81,
-        statements: 81,
-        functions: 81,
-        branches: 85,
+        lines: 86,
+        statements: 86,
+        functions: 88,
+        branches: 87,
       },
     },
   },
