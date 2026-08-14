@@ -1306,6 +1306,21 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
                     ]);
                     set('dlom_method')('');
                   } else {
+                    /*
+                     * And back the other way, for the same reason. Entering the
+                     * blend cleared `dlom_method`; leaving it with nothing put
+                     * back made the round trip destructive rather than a no-op —
+                     * the single form came back empty, nothing blocks a save on
+                     * an empty method, and `dlom_method: null` with
+                     * `dlom_methods: null` is an engagement with no DLOM
+                     * methodology at all. The first leg is what the blend was
+                     * seeded from, so it is what comes back; a method already
+                     * typed into the single form wins over it.
+                     */
+                    if (form.dlom_method === '') {
+                      const seeded = dlomLegs.find((leg) => leg.method !== '');
+                      if (seeded) set('dlom_method')(seeded.method);
+                    }
                     setDlomLegs([]);
                   }
                 }}
