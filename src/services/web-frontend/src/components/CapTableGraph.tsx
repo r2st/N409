@@ -44,9 +44,21 @@ export interface GraphNode {
  * Read off the server's own figures rather than off `conversion_ratio`, so the
  * rule for which kinds convert stays in one place — `capTable.ts`'s
  * `asConvertedShares`, which the engine's denominator also comes from.
+ *
+ * `!= null` rather than `!== null`, and it is load-bearing. The field arrived
+ * with the fix that added it; a payload serialised before that one — a cached
+ * response, a partner client pinned to an older contract — has no key there at
+ * all. `undefined !== null` is true, so the strict form called a node
+ * *converting* precisely when it had no as-converted figure to draw, and the
+ * non-null assertion below then handed `undefined` to `toLocaleString`. That
+ * throws during render, which React does not contain: the exception unwinds
+ * past the tab and the whole Cap table page renders as an empty div. A
+ * component whose contract says `number | null` should treat an absent value
+ * as the absence it is, and draw the outstanding count — which is the same
+ * thing it draws for every class that converts 1:1.
  */
 function converts(node: GraphNode): boolean {
-  return node.as_converted_shares !== null && node.as_converted_shares !== node.shares;
+  return node.as_converted_shares != null && node.as_converted_shares !== node.shares;
 }
 
 export interface GraphEdge {

@@ -91,6 +91,10 @@ const GRAPH_NODE = {
   label: 'Class',
   rank: 0,
   shares: 8_000_000,
+  // The basis `ownership` is struck on. Every node the server builds carries
+  // it — as a number or an explicit null — so a fixture without it was
+  // describing a payload this app is never sent.
+  as_converted_shares: 8_000_000,
   ownership: 0.6,
   class_type: 'common',
   seniority: null,
@@ -801,6 +805,47 @@ describe('CapTableTab', () => {
       const user = userEvent.setup();
       await user.click(await screen.findByRole('button', { name: 'Show' }));
       await waitFor(() => expect(screen.getByRole('button', { name: 'Hide' })).toBeInTheDocument());
+    });
+
+    it('draws a node whose as-converted count is missing rather than blanking the tab', async () => {
+      /*
+       * `as_converted_shares` arrived with 50061df. A response serialised
+       * before it — one still in a cache, or a client pinned to the older
+       * contract — has no key there, and `undefined` is not `null`: the strict
+       * check called the node *converting* exactly when it had no as-converted
+       * figure, then asserted non-null and handed `undefined` to
+       * `toLocaleString`. That throws during render, and React does not contain
+       * it — the whole Cap table tab came out as an empty div.
+       *
+       * The assertion is therefore that the page is still there, with the
+       * outstanding count drawn, which is what a class converting 1:1 shows
+       * anyway.
+       */
+      const { as_converted_shares: _omitted, ...WITHOUT } = GRAPH_NODE;
+      mockApi([
+        [
+          /\/cap-table\/graph/,
+          () =>
+            json({
+              graph: {
+                nodes: [{ ...WITHOUT, id: 'common', label: 'Common Stock' }],
+                edges: [],
+                issues: [],
+              },
+            }),
+        ],
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole('button', { name: 'Show' }));
+
+      expect(await screen.findByRole('button', { name: 'Hide' })).toBeInTheDocument();
+      // The node's own badge — the outstanding count, drawn in the SVG. The
+      // label is not asserted on: "Common Stock" is a class name and appears in
+      // the cap table below as well, so it cannot tell the graph from the grid.
+      expect(screen.getByText('8,000,000 sh')).toBeInTheDocument();
     });
 
     it('says the graph could not be built rather than spinning forever', async () => {
