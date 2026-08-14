@@ -674,6 +674,11 @@ function summarySheet(input: ValuationWorkbookInput): XlsxSheet {
       ['Security classes', s.class_count],
       // Same recomputation as the Cap table sheet, and for the same reason —
       // the two sit in one file and must not print different denominators.
+      // `findCapTable` re-derives the whole summary on read, so the stale rows
+      // this was written for no longer reach here; it stays because this is a
+      // pure function over whatever validation it is handed, and the one place
+      // both figures are rendered side by side is the one place a disagreement
+      // is visible to the reader as arithmetic that does not add up.
       ['Fully diluted shares', fullyDilutedShares(input.capTable.entries)],
       ['Common shares', s.common_shares],
       ['Preferred shares', s.preferred_shares],

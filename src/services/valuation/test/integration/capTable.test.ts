@@ -138,6 +138,68 @@ describe.skipIf(!dbUp)('feature 9 — cap-table integration', () => {
     expect(stored.json().cap_table.source_format).toBe('generic');
   });
 
+  /**
+   * The stored `validation` is a cache of `validateCapTable(entries)`, and a
+   * cap table is only revalidated when somebody re-imports it — which for a
+   * published engagement is never. Rows written before `conversion_ratio`
+   * reached the denominator therefore still hold a 1:1 fully-diluted count,
+   * and the tab, the monitoring baseline and the workbook's Summary sheet all
+   * read it. Writing a stale summary straight into the column is the only way
+   * to reproduce a row that predates a rule change.
+   */
+  it('re-derives a stale stored validation from the entries beside it', async () => {
+    await app.inject({
+      method: 'PUT',
+      url: `/api/v1/valuations/${valuationId}/cap-table`,
+      headers: authHeader(client.token),
+      payload: {
+        format: 'generic',
+        csv: [
+          'class,shares,price,invested,conversion_ratio',
+          'Common,8000000,0.10,,',
+          'Series A,2000000,1.00,2000000,2',
+        ].join('\n'),
+      },
+    });
+
+    const fresh = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${valuationId}/cap-table`,
+      headers: authHeader(ops.token),
+    });
+    // 8M common + 2M converting 2:1 = 12M as-converted, not the 10M raw sum.
+    expect(fresh.json().cap_table.validation.summary.fully_diluted_shares).toBe(12_000_000);
+
+    // Age the row the way the schema change did: the entries stay, the cached
+    // summary goes back to counting the Series A 1:1.
+    await ctx.pool.query(
+      `UPDATE cap_tables
+          SET validation = jsonb_set(validation, '{summary,fully_diluted_shares}', '10000000')
+        WHERE valuation_id = $1`,
+      [valuationId],
+    );
+
+    const reread = await app.inject({
+      method: 'GET',
+      url: `/api/v1/valuations/${valuationId}/cap-table`,
+      headers: authHeader(ops.token),
+    });
+    expect(reread.json().cap_table.validation.summary.fully_diluted_shares).toBe(12_000_000);
+
+    // And the entries themselves are untouched — the correction is a
+    // recomputation on read, not a rewrite of what was imported.
+    expect(reread.json().cap_table.entries).toHaveLength(2);
+    expect(reread.json().cap_table.entries[1].conversion_ratio).toBe(2);
+
+    // Restore the fixture the later cases in this file read.
+    await app.inject({
+      method: 'PUT',
+      url: `/api/v1/valuations/${valuationId}/cap-table`,
+      headers: authHeader(client.token),
+      payload: { format: 'generic', csv: CSV },
+    });
+  });
+
   it('rejects an import with validation errors', async () => {
     const bad = 'class,shares\nCommon,-100\n';
     const res = await app.inject({

@@ -479,3 +479,20 @@
 #            engagement's own write path, kept as the only one, so the kind
 #            rules, the mention parsing and the realtime broadcast stay in one
 #            place. Sending marks the thread read, because it now has been.
+# gap:       a monitoring baseline snapshotted before the cap-table summary was
+#            re-derived on read holds the old 1:1 fully-diluted count, and the
+#            live figure it is compared against no longer does. `findCapTable`
+#            now recomputes `validation` from the entries, which corrects the
+#            tab, the workbook and the live half of the monitoring snapshot —
+#            but `monitors.baseline` is a stored JSONB snapshot of exactly that
+#            figure, and nothing rewrites one. So a monitored engagement whose
+#            cap table carries a class converting at other than 1:1, and whose
+#            baseline predates eded249, will fire one `cap_table_change` trigger
+#            reporting a share count that moved when nothing did. The set is
+#            narrow — monitoring enabled, a non-1:1 ratio, a baseline older than
+#            the fix — and the trigger is advisory rather than a state change,
+#            so this wants a list before it wants a migration, the same shape as
+#            the stored-calculation gaps above. The query is a `monitors` row
+#            whose `baseline->'fully_diluted_shares'` disagrees with
+#            `validateCapTable(entries).summary.fully_diluted_shares` for the
+#            same valuation.
