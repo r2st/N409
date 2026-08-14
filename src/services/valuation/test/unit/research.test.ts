@@ -10,6 +10,7 @@ import {
   RESEARCH_TOPIC_DEFS,
   RESEARCH_TOPICS,
   researchQuestion,
+  researchStaleAsOf,
   ResearchInputError,
   type PublicResearchFacts,
 } from '../../src/domain/research.js';
@@ -142,6 +143,57 @@ describe('staleness', () => {
     const fresh = new Date(asOf.getTime() - 10 * 86_400_000);
     expect(isResearchStale(old, asOf)).toBe(true);
     expect(isResearchStale(fresh, asOf)).toBe(false);
+  });
+
+  it('measures against the measurement date, not today', () => {
+    // The regression this pins: the route used to omit `asOf` entirely, so
+    // `isResearchStale` fell through to its `new Date()` default. On any
+    // engagement dated more than a quarter ago that marks every row stale
+    // forever — including research retrieved the day before the measurement
+    // date, which is the best evidence the file will ever hold.
+    const measurementDate = '2026-01-15';
+    const retrievedJustBefore = new Date('2026-01-14T00:00:00Z');
+    const asOf = researchStaleAsOf(measurementDate);
+
+    expect(isResearchStale(retrievedJustBefore, asOf)).toBe(false);
+    // ...and it would have been stale had the reference been a later "today".
+    expect(isResearchStale(retrievedJustBefore, new Date('2026-08-14T00:00:00Z'))).toBe(true);
+  });
+
+  it('still flags research that predates the measurement date by more than the window', () => {
+    const asOf = researchStaleAsOf('2026-06-30');
+    expect(isResearchStale(new Date('2026-01-02T00:00:00Z'), asOf)).toBe(true);
+  });
+
+  it('falls back to today when no measurement date is set', () => {
+    // An engagement with no measurement date chosen has no other reference, so
+    // the age question really is "how old is this today".
+    const before = Date.now();
+    for (const unset of [null, undefined, '']) {
+      const asOf = researchStaleAsOf(unset).getTime();
+      expect(asOf).toBeGreaterThanOrEqual(before);
+      expect(asOf).toBeLessThanOrEqual(Date.now());
+    }
+  });
+
+  it('falls back to today rather than NaN on an unparseable measurement date', () => {
+    // A NaN reference makes every comparison false, which would silently
+    // disable the marker rather than loosen it — the failure you cannot see.
+    const asOf = researchStaleAsOf('not-a-date');
+    expect(Number.isNaN(asOf.getTime())).toBe(false);
+    expect(isResearchStale(new Date('2000-01-01T00:00:00Z'), asOf)).toBe(true);
+  });
+
+  it('accepts a Date as well as the string the date column yields', () => {
+    const asString = researchStaleAsOf('2026-03-01');
+    const asDate = researchStaleAsOf(new Date('2026-03-01T00:00:00Z'));
+    expect(asDate.getTime()).toBe(asString.getTime());
+  });
+
+  it('does not treat an unparseable created_at as stale', () => {
+    // The row is unreadable, not old. Flagging it stale would send an analyst
+    // to re-run research over a storage bug.
+    expect(isResearchStale('not-a-date', new Date('2026-08-08T00:00:00Z'))).toBe(false);
   });
 });
 

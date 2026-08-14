@@ -357,6 +357,35 @@ export function isResearchStale(createdAt: Date | string, asOf: Date = new Date(
 }
 
 /**
+ * The reference date staleness is measured against: the engagement's own
+ * measurement date, or today when it has not been set yet.
+ *
+ * This exists because the default `asOf` on {@link isResearchStale} is the
+ * wrong one for a valuation and the right one for nothing else. An opinion is
+ * as of its measurement date, so research is stale when it predates *that* by a
+ * quarter — not when it predates *today* by a quarter. Measuring against today
+ * gets the finished work exactly backwards: an engagement dated last year shows
+ * every row as stale forever, including the row retrieved the day before the
+ * measurement date, which is the most contemporaneous evidence the file will
+ * ever hold. A warning that fires on the engagements with nothing wrong with
+ * them is one people learn to click past, and then it is not there on the
+ * engagement that needed it.
+ *
+ * `inception_date` is `valuation_params`' name for the measurement date. It is
+ * a `date` column, so it parses as UTC midnight; a day of drift either way is
+ * immaterial against a 90-day threshold and is not worth a timezone library.
+ *
+ * Falling back to now when it is unset is deliberate rather than lenient: an
+ * engagement with no measurement date chosen has no other reference, and the
+ * research on it is genuinely being judged on how old it is today.
+ */
+export function researchStaleAsOf(measurementDate: string | Date | null | undefined): Date {
+  if (!measurementDate) return new Date();
+  const parsed = measurementDate instanceof Date ? measurementDate : new Date(measurementDate);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+/**
  * The research block the `report_narrative` agent receives.
  *
  * Only grounded rows travel: an answer with no citations was written without

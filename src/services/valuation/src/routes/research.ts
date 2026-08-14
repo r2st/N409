@@ -6,6 +6,7 @@ import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
+import { findParams } from '../repos/params.js';
 import { findCompanyProfile } from '../repos/companyProfiles.js';
 import { listOverwrites } from '../repos/overwrites.js';
 import { findPromptByPipeline } from '../repos/aiPrompts.js';
@@ -17,6 +18,7 @@ import {
   EMPTY_FACTS,
   isResearchRegion,
   isResearchStale,
+  researchStaleAsOf,
   isResearchTopic,
   RESEARCH_REGIONS,
   RESEARCH_STALE_DAYS,
@@ -259,11 +261,20 @@ export function registerResearchRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // provenance behind the report's market discussion, and a client asking
     // "where did this multiple come from" is asking a fair question. Running
     // it, which spends money, stays ops-only.
-    const rows = await listMarketResearch(deps.pool, id);
+    // Staleness is measured against the engagement's measurement date, not
+    // today — see `researchStaleAsOf`. The params read is worth the round trip
+    // for that alone: without it every finished engagement flags all of its
+    // research stale forever, which is the tab's own copy contradicted by the
+    // field beside it.
+    const [rows, params] = await Promise.all([
+      listMarketResearch(deps.pool, id),
+      findParams(deps.pool, id),
+    ]);
+    const asOf = researchStaleAsOf(params?.inception_date);
     return {
       research: rows.map((row) => ({
         ...row,
-        stale: isResearchStale(row.created_at),
+        stale: isResearchStale(row.created_at, asOf),
         // Same rule the report gates apply, computed in one place the tab can
         // read: sources are necessary and not sufficient. `row.synthesized`
         // travels alongside via the spread, so the tab can say *which* of the
