@@ -1,8 +1,8 @@
 /**
  * Guarding an algorithm's exponent, not the speed of the machine it runs on.
  *
- * Several scans in this service were quadratic on input that never closes a
- * tag, and each is now guarded by a test. The obvious guard — run the
+ * The client mirror of the report sanitizer was quadratic on input that never
+ * closes a tag, and is now guarded by a test. The obvious guard — run the
  * pathological input, assert a wall-clock ceiling — is the one that flakes,
  * because the number it compares against is a property of the CI box rather
  * than of the code. The margin has to absorb a cold JIT, a GC pause over a

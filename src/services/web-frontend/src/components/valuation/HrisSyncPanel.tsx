@@ -94,10 +94,18 @@ export function HrisSyncPanel({ valuationId, onImported }: { valuationId: string
   };
 
   const disconnect = async (provider: Provider) => {
+    setError(null);
     setBusy(provider);
     try {
       await api(`/valuations/${valuationId}/hris/${provider}`, { method: 'DELETE' });
+      setNote(null);
       await load();
+    } catch (err) {
+      // The only one of the four calls that used to swallow its failure: the
+      // rejection went nowhere, the row stayed connected, and the analyst was
+      // left to conclude the button does nothing. A revoked token is the usual
+      // cause and the message says so.
+      setError(err instanceof ApiError ? err.message : 'Could not disconnect the provider.');
     } finally {
       setBusy(null);
     }

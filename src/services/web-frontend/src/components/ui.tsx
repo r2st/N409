@@ -190,6 +190,28 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} className={`${inputClass} ${props.className ?? ''}`} />;
 }
 
+/**
+ * The last entry in a picker whose server-side list was capped.
+ *
+ * Reviewer and partner pickers used to be filled by reading every matching row
+ * on the platform, which is a query that gets slower for everyone as the
+ * business grows. They are capped now — and a cap on a picker is only safe if
+ * it is visible, because the failure it causes otherwise is silent: a reviewer
+ * who is simply not in the list reads as a reviewer who cannot be assigned, and
+ * nobody thinks to doubt a dropdown.
+ *
+ * Disabled so it cannot be chosen, and rendered last so it does not displace
+ * the entry someone is reaching for.
+ */
+export function PickerOverflowNote({ truncated }: { truncated: boolean }) {
+  if (!truncated) return null;
+  return (
+    <option disabled value="">
+      — more exist than are listed; filter to narrow the list —
+    </option>
+  );
+}
+
 const toneStyles: Record<StateTone, string> = {
   neutral: 'bg-paper-200 text-ink-600 ring-ink-200',
   progress: 'bg-sky-50 text-sky-800 ring-sky-200',

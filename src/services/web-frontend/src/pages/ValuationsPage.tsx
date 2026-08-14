@@ -21,6 +21,7 @@ import {
   ErrorNote,
   KindBadge,
   LoadingBlock,
+  PickerOverflowNote,
   Select,
   Skeleton,
   SkeletonTable,
@@ -92,7 +93,9 @@ export function ValuationsPage() {
   const [counts, setCounts] = useState<NamedBucketCounts | null>(null);
   const [bucketDefs, setBucketDefs] = useState<NamedBucketDef[] | null>(null);
   const [reviewers, setReviewers] = useState<UserOption[]>([]);
+  const [reviewersCapped, setReviewersCapped] = useState(false);
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [partnersCapped, setPartnersCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [qDraft, setQDraft] = useState(params.get('q') ?? '');
@@ -157,11 +160,17 @@ export function ValuationsPage() {
 
   useEffect(() => {
     if (!ops) return;
-    api<{ options: UserOption[] }>('/users/options?group=ops')
-      .then((res) => setReviewers(res.options))
+    api<{ options: UserOption[]; truncated: boolean }>('/users/options?group=ops')
+      .then((res) => {
+        setReviewers(res.options);
+        setReviewersCapped(res.truncated);
+      })
       .catch(() => {});
-    api<{ partners: Partner[] }>('/partners')
-      .then((res) => setPartners(res.partners))
+    api<{ partners: Partner[]; truncated: boolean }>('/partners')
+      .then((res) => {
+        setPartners(res.partners);
+        setPartnersCapped(res.truncated);
+      })
       .catch(() => {});
   }, [ops]);
 
@@ -425,6 +434,7 @@ export function ValuationsPage() {
                   {displayName(r)}
                 </option>
               ))}
+              <PickerOverflowNote truncated={reviewersCapped} />
             </Select>
             <Select
               aria-label="Filter by partner"
@@ -438,6 +448,7 @@ export function ValuationsPage() {
                   {p.name}
                 </option>
               ))}
+              <PickerOverflowNote truncated={partnersCapped} />
             </Select>
             <Select
               aria-label="Filter by source"
@@ -589,6 +600,7 @@ export function ValuationsPage() {
                   {displayName(r)}
                 </option>
               ))}
+              <PickerOverflowNote truncated={reviewersCapped} />
             </Select>
           )}
           <Button disabled={bulkBusy} onClick={() => void applyBulk()}>

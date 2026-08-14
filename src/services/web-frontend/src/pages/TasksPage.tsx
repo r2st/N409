@@ -20,6 +20,7 @@ import {
   EmptyState,
   ErrorNote,
   KindBadge,
+  PickerOverflowNote,
   Select,
   StateBadge,
   TableSkeleton,
@@ -65,10 +66,14 @@ export function TasksPage() {
   const { user } = useAuth();
   const [view, setView] = useState<View>('tasks');
   const [options, setOptions] = useState<UserOption[]>([]);
+  const [optionsCapped, setOptionsCapped] = useState(false);
 
   useEffect(() => {
-    api<{ options: UserOption[] }>('/users/options?group=ops')
-      .then((res) => setOptions(res.options))
+    api<{ options: UserOption[]; truncated: boolean }>('/users/options?group=ops')
+      .then((res) => {
+        setOptions(res.options);
+        setOptionsCapped(res.truncated);
+      })
       .catch(() => {});
   }, []);
 
@@ -97,14 +102,18 @@ export function TasksPage() {
           onChange={setView}
         />
       </div>
-      {view === 'tasks' ? <TaskQueue options={options} /> : <ReviewQueue options={options} />}
+      {view === 'tasks' ? (
+        <TaskQueue options={options} capped={optionsCapped} />
+      ) : (
+        <ReviewQueue options={options} />
+      )}
     </div>
   );
 }
 
 // ── Tasks tab — typed review tasks with inline actions ───────────────────────
 
-function TaskQueue({ options }: { options: UserOption[] }) {
+function TaskQueue({ options, capped }: { options: UserOption[]; capped: boolean }) {
   const { user } = useAuth();
   const [scope, setScope] = useState<Scope>('me');
   const [status, setStatus] = useState<'' | ReviewTaskStatus>('');
@@ -218,6 +227,7 @@ function TaskQueue({ options }: { options: UserOption[] }) {
                       {displayName(o)}
                     </option>
                   ))}
+                  <PickerOverflowNote truncated={capped} />
                 </Select>
                 <Select
                   aria-label={`Status of ${task.title}`}

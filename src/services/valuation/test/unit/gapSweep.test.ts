@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { expectSubQuadratic } from '../support/complexity.js';
 import { buildValuationWhere } from '../../src/repos/valuations.js';
 import { contentFromManagedTemplate } from '../../src/domain/report.js';
 
@@ -96,9 +97,10 @@ describe('managed template merge (gap 6)', () => {
   it('splits a body whose headings are never closed in linear time', () => {
     // The split is paid on every report generated from the template, not once
     // by whoever saved it, so a quadratic scan here bills the wrong person.
-    const body = '<h1>'.repeat(250_000);
-    const started = performance.now();
-    contentFromManagedTemplate({ name: 'T', body }, vars);
-    expect(performance.now() - started).toBeLessThan(3_000);
+    expectSubQuadratic({
+      input: (n) => '<h1>'.repeat(n),
+      run: (body) => contentFromManagedTemplate({ name: 'T', body }, vars),
+      size: 25_000,
+    });
   });
 });

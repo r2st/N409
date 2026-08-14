@@ -10,6 +10,7 @@ import {
   visibleSections,
 } from '../../src/domain/report.js';
 import { VALUATION_KINDS } from '../../src/domain/valuation.js';
+import { expectSubQuadratic } from '../support/complexity.js';
 
 describe('sanitizeHtml', () => {
   it('keeps whitelisted structure and drops all attributes', () => {
@@ -136,16 +137,23 @@ describe('sanitizeHtml, continued', () => {
   });
 
   it('sanitizes markers that are never closed in linear time', () => {
-    // A section is capped at 100,000 characters and a report takes 50 of them.
     // Under the lazy-regex sanitizer this body was quadratic — every `<!--` a
-    // candidate start, each rescanning to the end before failing — and held
-    // the event loop for tens of seconds on a single save. Well under a second
-    // here; the ceiling is loose so a slow CI box does not flake it.
+    // candidate start, each rescanning to the end before failing — and held the
+    // event loop for tens of seconds on a single save.
+    //
+    // This used to render fifty section-loads of each marker and assert a
+    // three-second ceiling, which is the shape of timing test that eventually
+    // fails on a busy machine rather than on a bug: 2.1s idle against a 3s
+    // budget is a 1.4x margin, and it duly failed at 3.4s under load. What
+    // matters is the exponent, so that is what is asserted now — four times the
+    // input, not sixteen times the cost — over inputs small enough that neither
+    // measurement outlives a scheduler slice.
     for (const marker of ['<!--', '<script>', '<style>', '<h1>']) {
-      const body = marker.repeat(Math.ceil((50 * 100_000) / marker.length));
-      const started = performance.now();
-      sanitizeHtml(body);
-      expect(performance.now() - started).toBeLessThan(3_000);
+      expectSubQuadratic({
+        input: (chars) => marker.repeat(Math.ceil(chars / marker.length)),
+        run: sanitizeHtml,
+        size: 25_000,
+      });
     }
   });
 });
@@ -537,32 +545,22 @@ describe('report templates', () => {
  * 4x per doubling — against 3ms for ordinary editor HTML of the same size, with
  * 100,000 the per-section limit `reports.ts` already allows.
  *
- * The budgets below are set an order of magnitude under the quadratic timings
- * and two orders above what the scan needs, so they fail on a return of the
- * exponent rather than on a slow machine.
+ * "A clean 4x per doubling" is the whole diagnosis, so it is what these tests
+ * assert: `expectSubQuadratic` grows the input fourfold and requires the cost
+ * to grow by less than eight, halfway between the four a linear scan pays and
+ * the sixteen the old regexes did. A ratio has no units and no opinion about
+ * how fast the machine is, which is what the wall-clock budgets that used to
+ * live here could not manage.
  */
 describe('sanitizeHtml on input with no closing bracket', () => {
-  const SECTION_LIMIT = 100_000;
-  const elapsed = (fn: () => unknown): number => {
-    const started = Date.now();
-    fn();
-    return Date.now() - started;
-  };
-
   it('sanitizes a section-sized run of unterminated tags in linear time', () => {
-    expect(elapsed(() => sanitizeHtml('<p'.repeat(SECTION_LIMIT / 2)))).toBeLessThan(500);
+    expectSubQuadratic({ input: (n) => '<p'.repeat(n / 2), run: sanitizeHtml, size: 25_000 });
   });
 
   it('sanitizes a section-sized run of junk leads in linear time', () => {
     // `"<3"` exercises the second regex, the junk-tag sweep, which was
     // quadratic in exactly the same way and by exactly the same amount.
-    expect(elapsed(() => sanitizeHtml('<3'.repeat(SECTION_LIMIT / 2)))).toBeLessThan(500);
-  });
-
-  it('scales linearly rather than quadratically as the input doubles', () => {
-    const cost = (n: number) => elapsed(() => sanitizeHtml('<p'.repeat(n)));
-    cost(2_000); // warm up so the first measurement is not paying for JIT
-    expect(cost(50_000)).toBeLessThan(Math.max(cost(12_500), 5) * 8);
+    expectSubQuadratic({ input: (n) => '<3'.repeat(n / 2), run: sanitizeHtml, size: 25_000 });
   });
 
   it('keeps the text of an unterminated tag rather than eating the rest', () => {

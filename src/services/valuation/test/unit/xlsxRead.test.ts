@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildZip } from '../../src/export/zip.js';
+import { expectSubQuadratic } from '../support/complexity.js';
 import { buildXlsx } from '../../src/export/xlsx.js';
 import {
   columnIndex,
@@ -427,16 +428,22 @@ describe('xlsxRead', () => {
       // service for days. The bound below is ~1000x what the scan now takes and
       // ~10x under what it cost before, so it is the collapse being pinned, not
       // a machine's speed.
-      const started = Date.now();
       expect(() => readSheet('<row r="1">'.repeat(100_000))).not.toThrow();
-      expect(Date.now() - started).toBeLessThan(2_000);
+      expectSubQuadratic({
+        input: (n) => '<row r="1">'.repeat(n),
+        run: readSheet,
+        size: 25_000,
+      });
     });
 
     it('scans a row of unclosed cells in linear time', () => {
       // Same shape one level down: rows are well-formed, the `<c>` inside is not.
-      const started = Date.now();
       expect(() => readSheet(`<row>${'<c r="A1">'.repeat(100_000)}</row>`)).not.toThrow();
-      expect(Date.now() - started).toBeLessThan(2_000);
+      expectSubQuadratic({
+        input: (n) => `<row>${'<c r="A1">'.repeat(n)}</row>`,
+        run: readSheet,
+        size: 25_000,
+      });
     });
 
     it('still reads the self-closing cells that follow an unclosed one', () => {
@@ -489,49 +496,46 @@ describe('xlsxRead', () => {
      * hour. The fixtures below run in single-digit milliseconds now.
      */
     it('finds sheetData in a part of unclosed opens in linear time', () => {
-      const started = Date.now();
-      expect(() =>
-        readXlsx(
-          buildWorkbook({
-            sheets: [{ name: 'S', data: `<?xml version="1.0"?><worksheet>${'<sheetData>'.repeat(100_000)}` }],
-          }),
-        ),
-      ).not.toThrow();
-      expect(Date.now() - started).toBeLessThan(2_000);
+      const workbookOf = (n: number) =>
+        buildWorkbook({
+          sheets: [{ name: 'S', data: `<?xml version="1.0"?><worksheet>${'<sheetData>'.repeat(n)}` }],
+        });
+      expect(() => readXlsx(workbookOf(100_000))).not.toThrow();
+      expectSubQuadratic({ input: workbookOf, run: readXlsx, size: 25_000 });
     });
 
     it('reads a cell value past unclosed value opens in linear time', () => {
       // Bounded by the cell's `</c>` rather than the part, so the fixture is one
       // `<c>` — but a sheet may hold as many of them as the budget allows rows.
-      const started = Date.now();
       expect(() => readSheet(`<row><c r="A1">${'<v>'.repeat(100_000)}</c></row>`)).not.toThrow();
-      expect(Date.now() - started).toBeLessThan(2_000);
+      expectSubQuadratic({
+        input: (n) => `<row><c r="A1">${'<v>'.repeat(n)}</c></row>`,
+        run: readSheet,
+        size: 25_000,
+      });
     });
 
     it('reads the style table past unclosed opens in linear time', () => {
       // styles.xml is a part of the upload like any other, and the date-format
       // classification it drives runs before a single cell is read.
-      const started = Date.now();
-      expect(() =>
-        readXlsx(
-          buildZip([
-            {
-              name: 'xl/workbook.xml',
-              data: '<?xml version="1.0"?><workbook><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
-            },
-            {
-              name: 'xl/_rels/workbook.xml.rels',
-              data: '<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
-            },
-            {
-              name: 'xl/styles.xml',
-              data: `<?xml version="1.0"?><styleSheet>${'<cellXfs>'.repeat(100_000)}`,
-            },
-            { name: 'xl/worksheets/sheet1.xml', data: sheetWith('<row/>') },
-          ]),
-        ),
-      ).not.toThrow();
-      expect(Date.now() - started).toBeLessThan(2_000);
+      const styledWorkbookOf = (n: number) =>
+        buildZip([
+          {
+            name: 'xl/workbook.xml',
+            data: '<?xml version="1.0"?><workbook><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>',
+          },
+          {
+            name: 'xl/_rels/workbook.xml.rels',
+            data: '<?xml version="1.0"?><Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+          },
+          {
+            name: 'xl/styles.xml',
+            data: `<?xml version="1.0"?><styleSheet>${'<cellXfs>'.repeat(n)}`,
+          },
+          { name: 'xl/worksheets/sheet1.xml', data: sheetWith('<row/>') },
+        ]);
+      expect(() => readXlsx(styledWorkbookOf(100_000))).not.toThrow();
+      expectSubQuadratic({ input: styledWorkbookOf, run: readXlsx, size: 25_000 });
     });
 
     it('treats an empty value element as empty, not as serial zero', () => {

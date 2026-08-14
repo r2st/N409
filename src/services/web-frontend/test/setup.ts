@@ -1,7 +1,24 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
 import { clearToken } from '../src/lib/api';
+
+/**
+ * Testing Library's own wait budget, which `testTimeout` in the Vite config
+ * does not cover: every `findBy*` and `waitFor` gives up after 1s by default,
+ * whatever the test timeout says.
+ *
+ * That was enough for a bare run and not for `--coverage`, which puts twelve
+ * v8-instrumented workers on twelve cores. A `findBy` that waits on a lazily
+ * imported route plus a settled fetch would occasionally cross 1s under that
+ * load, and a *different* test failed on each run — the same shape of problem
+ * the `testTimeout` bump already documents, one layer down. A suite whose
+ * red/green depends on machine load is not measuring the code.
+ *
+ * Raising it costs nothing on a passing wait — the poll returns as soon as the
+ * assertion holds — and only lets a genuinely failing one take longer to say so.
+ */
+configure({ asyncUtilTimeout: 5000 });
 
 // Node 26 defines an experimental globalThis.localStorage that is inert
 // (undefined) without --localstorage-file and shadows jsdom's implementation.

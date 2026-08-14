@@ -22,6 +22,7 @@ import {
   listPartners,
   listUserOptions,
   listUsers,
+  PICKER_LIMIT,
   restoreUser,
   softDeleteUser,
   updatePartner,
@@ -308,9 +309,18 @@ export function registerAdminUserRoutes(
   app.get('/api/v1/users/options', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden();
-    const parsed = z.object({ group: z.enum(['ops', 'partner']).default('ops') }).safeParse(req.query);
+    const parsed = z
+      .object({
+        group: z.enum(['ops', 'partner']).default('ops'),
+        q: z.string().trim().min(1).max(200).optional(),
+        limit: z.coerce.number().int().min(1).max(PICKER_LIMIT).default(PICKER_LIMIT),
+      })
+      .safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query');
-    return { options: await listUserOptions(deps.pool, parsed.data.group) };
+    return listUserOptions(deps.pool, parsed.data.group, {
+      q: parsed.data.q,
+      limit: parsed.data.limit,
+    });
   });
 
   app.post('/api/v1/users', { preHandler: app.authenticate }, async (req, reply) => {
@@ -529,9 +539,19 @@ export function registerAdminUserRoutes(
   app.get('/api/v1/partners', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden();
-    const parsed = z.object({ include_archived: z.coerce.boolean().default(false) }).safeParse(req.query);
+    const parsed = z
+      .object({
+        include_archived: z.coerce.boolean().default(false),
+        q: z.string().trim().min(1).max(200).optional(),
+        limit: z.coerce.number().int().min(1).max(PICKER_LIMIT).default(PICKER_LIMIT),
+      })
+      .safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query');
-    return { partners: await listPartners(deps.pool, { includeArchived: parsed.data.include_archived }) };
+    return listPartners(deps.pool, {
+      includeArchived: parsed.data.include_archived,
+      q: parsed.data.q,
+      limit: parsed.data.limit,
+    });
   });
 
   /** A partner user's own organisation — name + branding for the portal. */

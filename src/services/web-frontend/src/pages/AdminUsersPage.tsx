@@ -6,7 +6,16 @@ import { useAuth } from '../lib/auth';
 import { canManageUsers } from '../lib/rbac';
 import { displayName, formatDate } from '../lib/format';
 import type { AdminUser, Invitation, Partner } from '../lib/types';
-import { Button, EmptyState, ErrorNote, Field, Select, TableSkeleton, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Field,
+  PickerOverflowNote,
+  Select,
+  TableSkeleton,
+  TextInput,
+} from '../components/ui';
 
 const PER_PAGE = 25;
 
@@ -158,6 +167,7 @@ export function AdminUsersPage() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<UserList | null>(null);
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [partnersCapped, setPartnersCapped] = useState(false);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [error, setError] = useState<string | null>(null);
   /** Confirmation for actions with no visible effect on the table. */
@@ -192,8 +202,11 @@ export function AdminUsersPage() {
   }, [load]);
 
   useEffect(() => {
-    api<{ partners: Partner[] }>('/partners')
-      .then((res) => setPartners(res.partners))
+    api<{ partners: Partner[]; truncated: boolean }>('/partners')
+      .then((res) => {
+        setPartners(res.partners);
+        setPartnersCapped(res.truncated);
+      })
       .catch(() => {});
   }, []);
 
@@ -513,6 +526,7 @@ export function AdminUsersPage() {
               {p.name}
             </option>
           ))}
+          <PickerOverflowNote truncated={partnersCapped} />
         </Select>
         <label className="flex cursor-pointer items-center gap-1.5 self-center text-sm text-ink-700">
           <input
@@ -590,6 +604,7 @@ export function AdminUsersPage() {
                       {p.name}
                     </option>
                   ))}
+                  <PickerOverflowNote truncated={partnersCapped} />
                 </Select>
               </Field>
             </div>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { displayName, STATE_LABELS } from '../lib/format';
 import type { UserOption, Valuation, ValuationState } from '../lib/types';
-import { Button, ErrorNote, Field, Select } from './ui';
+import { Button, ErrorNote, Field, PickerOverflowNote, Select } from './ui';
 
 /**
  * Workflow engine controls (M4) — auto-advance, restart, reassign. Rendered
@@ -36,10 +36,15 @@ export function WorkflowActions({
   // An empty reviewer list reads as "there are no reviewers"; a load that failed
   // has to say so, or ops is left staring at a control that cannot work.
   const [optionsFailed, setOptionsFailed] = useState(false);
+  // Capped server-side; a picker that is quietly short is its own failure.
+  const [optionsCapped, setOptionsCapped] = useState(false);
 
   useEffect(() => {
-    api<{ options: UserOption[] }>('/users/options?group=ops')
-      .then((res) => setOptions(res.options))
+    api<{ options: UserOption[]; truncated: boolean }>('/users/options?group=ops')
+      .then((res) => {
+        setOptions(res.options);
+        setOptionsCapped(res.truncated);
+      })
       .catch(() => setOptionsFailed(true));
   }, []);
 
@@ -99,14 +104,13 @@ export function WorkflowActions({
                   {displayName(o)}
                 </option>
               ))}
+              <PickerOverflowNote truncated={optionsCapped} />
             </Select>
           </Field>
         </div>
         <Button
           variant="secondary"
-          disabled={
-            busy || optionsFailed || (reviewerId || null) === valuation.assigned_reviewer_id
-          }
+          disabled={busy || optionsFailed || (reviewerId || null) === valuation.assigned_reviewer_id}
           onClick={() => void run('reassign', { reviewer_id: reviewerId || null })}
         >
           Reassign

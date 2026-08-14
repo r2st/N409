@@ -9,6 +9,17 @@ import type { RoleKey } from '../domain/roles.js';
 
 /** Admin console queries (M3 feature 13) — list/edit/soft-delete users. */
 
+/**
+ * Ceiling on a picker response.
+ *
+ * High enough that every ops team and all but the largest partner rosters come
+ * back whole — so the dropdowns keep behaving exactly as they did — and low
+ * enough that one customer's growth cannot turn a page load into a full table
+ * scan serialised over the wire. Past it the caller gets `truncated` and is
+ * expected to search rather than scroll.
+ */
+export const PICKER_LIMIT = 200;
+
 export interface UserListFilters {
   q?: string; // matches email or name, case-insensitive substring
   role?: RoleKey;
@@ -176,18 +187,36 @@ const PARTNER_COUNTS_SQL = `
 const PARTNER_COLUMNS_SQL = `p.id, p.name, p.key, p.created_at, p.archived_at, p.brand_color, p.logo_url,
   p.email_templates, p.subdomain, p.prepaid, p.cc_emails`;
 
-/** Archived partners are hidden by default so pickers only offer live channels. */
+/**
+ * Archived partners are hidden by default so pickers only offer live channels.
+ *
+ * Capped on the same terms as `listUserOptions`, and for a sharper reason: each
+ * row carries two correlated counts over `users` and `valuations`, so the work
+ * this query does grows with the partner roster *and* with everything every
+ * partner owns. Truncation is reported rather than hidden.
+ */
 export async function listPartners(
   pool: pg.Pool,
-  opts: { includeArchived?: boolean } = {},
-): Promise<PartnerRow[]> {
+  opts: { includeArchived?: boolean; q?: string; limit?: number } = {},
+): Promise<{ partners: PartnerRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? PICKER_LIMIT, 1), PICKER_LIMIT);
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (!opts.includeArchived) where.push('p.archived_at IS NULL');
+  if (opts.q) {
+    params.push(likeContains(opts.q));
+    where.push(`concat_ws(' ', p.name, p.key) ILIKE $${params.length}`);
+  }
+  params.push(limit + 1);
   const { rows } = await pool.query<PartnerRow>(
     `SELECT ${PARTNER_COLUMNS_SQL}, ${PARTNER_COUNTS_SQL}
      FROM partners p
-     ${opts.includeArchived ? '' : 'WHERE p.archived_at IS NULL'}
-     ORDER BY p.name ASC`,
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY p.name ASC
+     LIMIT $${params.length}`,
+    params,
   );
-  return rows;
+  return { partners: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function findPartnerById(pool: pg.Pool, id: string): Promise<PartnerRow | null> {
@@ -351,11 +380,32 @@ export async function getPartnerDetail(pool: pg.Pool, id: string): Promise<Partn
   };
 }
 
-/** Lightweight id+label list for filter dropdowns (reviewer picker etc.). */
+export interface UserOptionRow {
+  id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+}
+
+/**
+ * Lightweight id+label list for filter dropdowns (reviewer picker etc.).
+ *
+ * Capped, and honest about it. The `partner` group is every partner user on
+ * the platform and the `ops` group is every member of staff; neither is bounded
+ * by anything but how well the business does, and both were being read in full
+ * to populate a `<select>`. The cap alone would be worse than the unbounded
+ * read, though — a reviewer missing from the picker cannot be assigned, and
+ * silently short lists are how that happens — so the caller is told when the
+ * list was trimmed and can offer the search that narrows it.
+ *
+ * One row past the limit is fetched rather than counted: it answers "is there
+ * more" without a second pass over the join.
+ */
 export async function listUserOptions(
   pool: pg.Pool,
   group: 'ops' | 'partner',
-): Promise<Array<{ id: string; email: string; first_name: string | null; last_name: string | null }>> {
+  opts: { q?: string; limit?: number } = {},
+): Promise<{ options: UserOptionRow[]; truncated: boolean }> {
   const keys =
     group === 'ops'
       ? [
@@ -373,14 +423,23 @@ export async function listUserOptions(
           'spa',
         ]
       : ['partner', 'member'];
-  const { rows } = await pool.query(
+  const limit = Math.min(Math.max(opts.limit ?? PICKER_LIMIT, 1), PICKER_LIMIT);
+  const params: unknown[] = [keys];
+  let search = '';
+  if (opts.q) {
+    params.push(likeContains(opts.q));
+    search = `AND concat_ws(' ', u.email, u.first_name, u.last_name) ILIKE $${params.length}`;
+  }
+  params.push(limit + 1);
+  const { rows } = await pool.query<UserOptionRow>(
     `SELECT DISTINCT u.id, u.email, u.first_name, u.last_name
      FROM users u
      JOIN user_roles ur ON ur.user_id = u.id
      JOIN roles r ON r.id = ur.role_id
-     WHERE r.key = ANY($1) AND u.deleted_at IS NULL
-     ORDER BY u.email ASC`,
-    [keys],
+     WHERE r.key = ANY($1) AND u.deleted_at IS NULL ${search}
+     ORDER BY u.email ASC
+     LIMIT $${params.length}`,
+    params,
   );
-  return rows;
+  return { options: rows.slice(0, limit), truncated: rows.length > limit };
 }

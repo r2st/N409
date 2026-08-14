@@ -3,7 +3,15 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { formatDateTime } from '../lib/format';
-import { Button, EmptyState, ErrorNote, Select, Spinner, TextInput } from '../components/ui';
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  PickerOverflowNote,
+  Select,
+  Spinner,
+  TextInput,
+} from '../components/ui';
 
 const PER_PAGE = 50;
 
@@ -59,6 +67,7 @@ export function ActivityLogPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actors, setActors] = useState<UserOption[]>([]);
+  const [actorsCapped, setActorsCapped] = useState(false);
   const [typeDraft, setTypeDraft] = useState(params.get('type') ?? '');
 
   const scope = params.get('scope') ?? 'all';
@@ -109,8 +118,11 @@ export function ActivityLogPage() {
   }, [buildQuery]);
 
   useEffect(() => {
-    api<{ options: UserOption[] }>('/users/options')
-      .then((d) => setActors(d.options))
+    api<{ options: UserOption[]; truncated: boolean }>('/users/options')
+      .then((d) => {
+        setActors(d.options);
+        setActorsCapped(d.truncated);
+      })
       .catch(() => {});
   }, []);
 
@@ -176,6 +188,7 @@ export function ActivityLogPage() {
               {a.email}
             </option>
           ))}
+          <PickerOverflowNote truncated={actorsCapped} />
         </Select>
         <Select
           aria-label="Actor type"
