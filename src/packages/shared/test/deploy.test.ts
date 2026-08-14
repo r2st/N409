@@ -49,7 +49,7 @@ let bin: string;
  * (two), and that distinction is the whole point of passing the identity as an
  * array. \037 is an octal escape: bash 3.2's printf has no \x.
  */
-const US = '';
+const US = '\x1f';
 
 function stub(name: string, body: string[] = []): void {
   writeFileSync(

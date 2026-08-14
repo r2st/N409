@@ -401,10 +401,24 @@ export interface ComputedSheet {
  * previous column, e.g. YoY growth). Row order in a sheet definition is
  * topological — a formula only reads rows defined above it or plain inputs.
  */
+/**
+ * Lookup key for one stored cell.
+ *
+ * The separator is a NUL because no sheet, row or column key can contain one,
+ * so no two distinct cells can collide on their joined key. It is written as
+ * the escape `\0` rather than as the byte itself, which is how it was written
+ * before: a raw NUL in the source made this file *binary* to `grep`, `rg` and
+ * `file`, so every code search across this repository silently skipped the
+ * workbook model — the file did not turn up when searched for by the name of
+ * a function defined in it.
+ */
+const cellKey = (sheet: string, rowKey: string, columnKey: string): string =>
+  `${sheet}\0${rowKey}\0${columnKey}`;
+
 export function computeWorkbook(cells: readonly WorkbookCellInput[]): ComputedSheet[] {
   const stored = new Map<string, number>();
   for (const cell of cells) {
-    stored.set(`${cell.sheet} ${cell.row_key} ${cell.column_key}`, cell.value);
+    stored.set(cellKey(cell.sheet, cell.row_key, cell.column_key), cell.value);
   }
 
   return WORKBOOK_SHEETS.map((sheetDef) => {
@@ -418,7 +432,7 @@ export function computeWorkbook(cells: readonly WorkbookCellInput[]): ComputedSh
       for (const row of sheetDef.rows) {
         let value: number | null;
         if (row.kind === 'input') {
-          value = stored.get(`${sheetDef.key} ${row.key} ${col.key}`) ?? null;
+          value = stored.get(cellKey(sheetDef.key, row.key, col.key)) ?? null;
         } else {
           const ctx: ComputeCtx = {
             value: (rowKey) => resolved.get(rowKey)?.[colIdx] ?? null,
