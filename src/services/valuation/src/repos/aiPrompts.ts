@@ -57,16 +57,35 @@ export async function latestPromptVersion(pool: pg.Pool, promptId: string): Prom
   return rows[0]?.version ?? null;
 }
 
-export async function listPromptVersions(pool: pg.Pool, promptId: string): Promise<AiPromptVersionListRow[]> {
+export const PROMPT_VERSION_PAGE_LIMIT = 100;
+
+/**
+ * The edit history of one prompt, newest version first — a page of it.
+ *
+ * Versions are append-only and each carries a full `system_prompt`, so this is
+ * the one list here whose *rows* are large as well as numerous: a prompt edited
+ * daily for a year is a few hundred multi-kilobyte rows, all of them read to
+ * draw a history panel that shows the top of the list. The cap takes the newest
+ * end, which is the end anybody diffs against; `latestPromptVersion` is its own
+ * `max(version)` query, so the provenance recorded on a job never depends on
+ * how much of the history fits.
+ */
+export async function listPromptVersions(
+  pool: pg.Pool,
+  promptId: string,
+  opts: { limit?: number } = {},
+): Promise<{ versions: AiPromptVersionListRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? PROMPT_VERSION_PAGE_LIMIT, 1), PROMPT_VERSION_PAGE_LIMIT);
   const { rows } = await pool.query<AiPromptVersionListRow>(
     `SELECT v.*, u.email AS created_by_email
      FROM ai_prompt_versions v
      LEFT JOIN users u ON u.id = v.created_by
      WHERE v.prompt_id = $1
-     ORDER BY v.version DESC`,
-    [promptId],
+     ORDER BY v.version DESC
+     LIMIT $2`,
+    [promptId, limit + 1],
   );
-  return rows;
+  return { versions: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 async function insertNextVersion(

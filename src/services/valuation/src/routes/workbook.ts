@@ -51,9 +51,9 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await authorize(deps.pool, principal, id);
-    const cells = await listWorkbookCells(deps.pool, id);
+    const { cells, truncated } = await listWorkbookCells(deps.pool, id);
     const sheets = computeWorkbook(cells);
-    return { sheets, anomalies: detectFinancialAnomalies(sheets) };
+    return { sheets, anomalies: detectFinancialAnomalies(sheets), truncated };
   });
 
   /**
@@ -72,7 +72,7 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
     // Loaded together rather than per-tab: the tabs cross-reference each other
     // (fully-diluted shares belong to the cap table, the price it prices is on
     // financials), so a per-tab fetch would read five tables four times.
-    const [valuation, profile, params, capTable, cells, overwrites] = await Promise.all([
+    const [valuation, profile, params, capTable, workbook, overwrites] = await Promise.all([
       findValuationById(deps.pool, id),
       findCompanyProfile(deps.pool, id),
       findParams(deps.pool, id),
@@ -80,6 +80,7 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
       listWorkbookCells(deps.pool, id),
       listOverwrites(deps.pool, id),
     ]);
+
     // authorize() already resolved it; this is the type narrowing.
     if (!valuation) throw problems.notFound();
 
@@ -88,7 +89,7 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
       profile,
       params,
       capTable: capTable?.entries ?? [],
-      sheets: computeWorkbook(cells),
+      sheets: computeWorkbook(workbook.cells),
       overwrites: new Map(overwrites.map((o) => [o.field_key, o.value])),
     });
 
@@ -97,6 +98,7 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
       // The per-class detail behind the cap-table tab's roll-up. Kept out of
       // the field model because it is a table, not a cell.
       cap_table_entries: capTable?.entries ?? [],
+      truncated: workbook.truncated,
     };
   });
 
@@ -120,7 +122,7 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
       actorId: principal.id,
       source: 'api',
     });
-    const cells = await listWorkbookCells(deps.pool, id);
+    const { cells, truncated } = await listWorkbookCells(deps.pool, id);
     /*
      * Re-checked on save rather than only on load, so the panel answers the
      * edit that was just made. A sign error is corrected in the cell that
@@ -128,6 +130,6 @@ export function registerWorkbookRoutes(app: FastifyInstance, deps: { pool: pg.Po
      * chose to leave.
      */
     const sheets = computeWorkbook(cells);
-    return { sheets, anomalies: detectFinancialAnomalies(sheets) };
+    return { sheets, anomalies: detectFinancialAnomalies(sheets), truncated };
   });
 }

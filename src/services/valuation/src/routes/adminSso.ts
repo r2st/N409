@@ -10,6 +10,7 @@ import {
   getSamlConfig,
   listScimTokens,
   revokeScimToken,
+  SCIM_TOKEN_PAGE_LIMIT,
   upsertSamlConfig,
 } from '../repos/ssoConfig.js';
 
@@ -64,7 +65,16 @@ export function registerAdminSsoRoutes(app: FastifyInstance, deps: { pool: pg.Po
 
   app.get('/api/v1/admin/sso/scim-tokens', { preHandler: app.authenticate }, async (req) => {
     requireAdmin(req);
-    return { tokens: await listScimTokens(deps.pool) };
+    const parsedQuery = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(SCIM_TOKEN_PAGE_LIMIT).default(SCIM_TOKEN_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    const { tokens, truncated } = await listScimTokens(deps.pool, { limit: parsedQuery.data.limit });
+    return { tokens, truncated, page_limit: SCIM_TOKEN_PAGE_LIMIT };
   });
 
   app.post('/api/v1/admin/sso/scim-tokens', { preHandler: app.authenticate }, async (req, reply) => {

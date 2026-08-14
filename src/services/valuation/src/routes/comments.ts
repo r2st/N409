@@ -6,6 +6,7 @@ import { canReadValuation, type Principal } from '../auth/rbac.js';
 import { canEditComment, canIngestEmail, canPostComment, visibleCommentKinds } from '../auth/operations.js';
 import { parseEmailSubjectRef, type CommentKind } from '../domain/operations.js';
 import {
+  COMMENT_PAGE_LIMIT,
   createComment,
   deleteComment,
   findCommentById,
@@ -92,7 +93,12 @@ export function registerCommentRoutes(
     const { id } = req.params as { id: string };
     await loadReadable(deps.pool, principal, id);
 
-    const query = z.object({ kind: z.enum(['chat', 'note', 'email']).optional() }).safeParse(req.query);
+    const query = z
+      .object({
+        kind: z.enum(['chat', 'note', 'email']).optional(),
+        limit: z.coerce.number().int().min(1).max(COMMENT_PAGE_LIMIT).default(COMMENT_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
     if (!query.success) throw problems.badRequest('Invalid query');
 
     let kinds = visibleCommentKinds(principal);
@@ -100,8 +106,10 @@ export function registerCommentRoutes(
       if (!kinds.has(query.data.kind)) throw problems.forbidden();
       kinds = new Set<CommentKind>([query.data.kind]);
     }
-    const comments = await listComments(deps.pool, id, kinds);
-    return { comments: comments.map(toPublicComment) };
+    const { comments, truncated } = await listComments(deps.pool, id, kinds, {
+      limit: query.data.limit,
+    });
+    return { comments: comments.map(toPublicComment), truncated, page_limit: COMMENT_PAGE_LIMIT };
   });
 
   app.post('/api/v1/valuations/:id/comments', { preHandler: app.authenticate }, async (req, reply) => {

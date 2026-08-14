@@ -324,7 +324,11 @@ export async function summaryFor(
     // rows only: a superseded answer is not what this report was drafted from.
     listMarketResearch(pool, valuation.id),
   ]);
-  const financials = computeWorkbook(workbookCells);
+  // `.cells` only: the page is bounded well above every address the workbook
+  // model defines (see WORKBOOK_CELL_LIMIT), and `computeWorkbook` reads only
+  // those addresses — so the appendix this feeds cannot be built from a partial
+  // model by way of the cap.
+  const financials = computeWorkbook(workbookCells.cells);
   const peers = peerRows.map((row) => ({
     ticker: row.ticker,
     name: row.name,

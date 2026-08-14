@@ -125,7 +125,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       grants_skipped: 0,
     });
 
-    const grants = await listGrants(ctx.pool, v.id);
+    const { grants } = await listGrants(ctx.pool, v.id);
     expect(grants).toHaveLength(2);
     const ada = grants.find((g) => g.grantee_email === 'ada@acme.com')!;
     expect(ada.options_count).toBe(10000);
@@ -138,7 +138,7 @@ describe.skipIf(!dbUp)('HRIS sync for ASC 718 (feature 11)', () => {
       headers: authHeader(ops.token),
     });
     expect(again.json()).toMatchObject({ grants_created: 0, grants_skipped: 2 });
-    expect(await listGrants(ctx.pool, v.id)).toHaveLength(2);
+    expect((await listGrants(ctx.pool, v.id)).grants).toHaveLength(2);
   });
 
   it('forbids HRIS import for non-ops users', async () => {

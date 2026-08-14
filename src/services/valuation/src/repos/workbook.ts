@@ -14,16 +14,53 @@ export interface WorkbookCellRow {
   updated_at: Date;
 }
 
-export async function listWorkbookCells(pool: pg.Pool, valuationId: string): Promise<WorkbookCellInput[]> {
-  const { rows } = await pool.query<WorkbookCellRow>('SELECT * FROM workbook_cells WHERE valuation_id = $1', [
-    valuationId,
-  ]);
-  return rows.map((r) => ({
+/**
+ * The cap on one valuation's stored cells.
+ *
+ * Set against the model rather than picked: `WORKBOOK_SHEETS` defines every
+ * address a cell may have, `validateCellRef` rejects anything else on write,
+ * and `computeWorkbook` reads *only* addresses the model defines — so the
+ * number of cells that can affect a rendered figure is fixed by the template
+ * and is about a hundred. `ADDRESSABLE_WORKBOOK_CELLS` in the test suite
+ * computes it and pins that this constant stays well clear of it.
+ *
+ * That headroom is what makes the cap safe on the paths that matter. The report
+ * renderer and the auditor workbook read this list to print the Financial
+ * Analysis appendix, and a *silently* short read there would be a document
+ * stating subtotals that do not add up. It cannot be short: reaching this many
+ * rows takes an order of magnitude more cells than the model has addresses for,
+ * and every one past the model's vocabulary is discarded by `computeWorkbook`
+ * anyway.
+ */
+export const WORKBOOK_CELL_LIMIT = 2000;
+
+/**
+ * One valuation's stored input cells.
+ *
+ * Ordered by address rather than left to the heap, so a truncated read — which
+ * takes a direct database write to produce, see above — is at least the same
+ * cells every time rather than whatever the scan happened to return.
+ */
+export async function listWorkbookCells(
+  pool: pg.Pool,
+  valuationId: string,
+  opts: { limit?: number } = {},
+): Promise<{ cells: WorkbookCellInput[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? WORKBOOK_CELL_LIMIT, 1), WORKBOOK_CELL_LIMIT);
+  const { rows } = await pool.query<WorkbookCellRow>(
+    `SELECT * FROM workbook_cells
+      WHERE valuation_id = $1
+      ORDER BY sheet, row_key, column_key
+      LIMIT $2`,
+    [valuationId, limit + 1],
+  );
+  const cells = rows.slice(0, limit).map((r) => ({
     sheet: r.sheet,
     row_key: r.row_key,
     column_key: r.column_key,
     value: Number(r.value),
   }));
+  return { cells, truncated: rows.length > limit };
 }
 
 export interface WorkbookPatchCell {

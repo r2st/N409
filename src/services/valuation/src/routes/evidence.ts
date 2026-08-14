@@ -10,7 +10,7 @@ import { withTransaction } from '../db/pool.js';
 import { findValuationById } from '../repos/valuations.js';
 import { listCalculations } from '../repos/calculations.js';
 import { listDocuments } from '../repos/documents.js';
-import { listComments } from '../repos/comments.js';
+import { COMMENT_PAGE_LIMIT, listComments } from '../repos/comments.js';
 import { listSignatures } from '../repos/signatures.js';
 import { listAiJobs } from '../repos/aiJobs.js';
 import { listDecisions } from '../repos/methodologyDecisions.js';
@@ -48,7 +48,7 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     const valuation = await findValuationById(deps.pool, id);
     if (!valuation) throw problems.notFound();
 
-    const [events, calculations, documents, comments, signatures, aiJobs, report, generator] =
+    const [events, calculations, documents, commentPage, signatures, aiJobs, report, generator] =
       await Promise.all([
         listEvents(deps.pool, id),
         listCalculations(deps.pool, id),
@@ -109,6 +109,11 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     }
 
     const generatedAt = new Date();
+    // A bundle is read by somebody looking for what is *not* in it, so a list
+    // that came back short has to say so on the manifest rather than end
+    // quietly. Reaching COMMENT_PAGE_LIMIT on one engagement takes an email
+    // loop, and this is what tells the auditor that is what they are looking at.
+    const { comments, truncated: commentsTruncated } = commentPage;
     const documentManifest = documents.map((d) => ({
       id: d.id,
       kind: d.kind,
@@ -194,6 +199,8 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
         comparables_excluded: comparables.filter((c) => !c.included).length,
         report_versions: versions.length,
       },
+      /** Lists this bundle carries only a page of, and the page size. */
+      truncated: commentsTruncated ? { comments: COMMENT_PAGE_LIMIT } : {},
       files: ['manifest.json', ...entries.map((e) => e.name)],
     };
     entries.unshift({ name: 'manifest.json', data: toJson(manifest) });

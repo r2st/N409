@@ -27,18 +27,47 @@ const SELECT_WITH_AUTHOR = `
   FROM valuation_comments c
   LEFT JOIN users u ON u.id = c.author_id`;
 
+/**
+ * The cap on one engagement's thread.
+ *
+ * Comments are three things at once: the chat panel, the analyst's private
+ * notes, and every inbound email ingested against the engagement. The last is
+ * why this needed a bound — an auto-responder in a loop with a shared inbox
+ * writes rows as fast as it can be replied to, and nothing here counted them.
+ *
+ * The cap takes the *newest* end while keeping the thread in reading order, and
+ * pinned comments are exempt from the cut, because a pinned comment is the one
+ * somebody marked as the thing not to lose. The evidence bundle reads this list
+ * too and records when it was short, so an auditor is never handed a
+ * correspondence file that quietly stops.
+ */
+export const COMMENT_PAGE_LIMIT = 5000;
+
 export async function listComments(
   pool: pg.Pool,
   valuationId: string,
   kinds: ReadonlySet<CommentKind>,
-): Promise<CommentRow[]> {
+  opts: { limit?: number } = {},
+): Promise<{ comments: CommentRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? COMMENT_PAGE_LIMIT, 1), COMMENT_PAGE_LIMIT);
+  // Newest first *in SQL*, so what the cap drops is the oldest end of the
+  // thread. Ordering ascending and taking a LIMIT would do the opposite — keep
+  // the first 5000 messages ever sent and lose the live conversation.
   const { rows } = await pool.query<CommentRow>(
     `${SELECT_WITH_AUTHOR}
      WHERE c.valuation_id = $1 AND c.kind = ANY($2)
-     ORDER BY c.pinned DESC, c.created_at ASC`,
-    [valuationId, [...kinds]],
+     ORDER BY c.pinned DESC, c.created_at DESC
+     LIMIT $3`,
+    [valuationId, [...kinds], limit + 1],
   );
-  return rows;
+  // Re-sorted after the cut, not before it: the reading order the panel and the
+  // bundle want is oldest-first, and re-sorting in SQL would put the row that
+  // signals truncation somewhere in the middle of the page.
+  const comments = rows.slice(0, limit).sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return a.created_at.getTime() - b.created_at.getTime();
+  });
+  return { comments, truncated: rows.length > limit };
 }
 
 export async function findCommentById(pool: pg.Pool, id: string): Promise<CommentRow | null> {

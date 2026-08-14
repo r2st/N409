@@ -16,7 +16,7 @@ import { tablePdf, type PdfColumn } from '../export/pdf.js';
 import { buildXlsx, XLSX_CONTENT_TYPE, type XlsxColumn, type XlsxValue } from '../export/xlsx.js';
 import { valuationWorkbookSheets } from '../export/valuationWorkbook.js';
 import { findCapTable } from '../repos/capTables.js';
-import { listGrants } from '../repos/grants.js';
+import { GRANT_PAGE_LIMIT, listGrants } from '../repos/grants.js';
 import { listWorkbookCells } from '../repos/workbook.js';
 import { latestSucceededCalculation } from '../repos/calculations.js';
 import { listOverwrites } from '../repos/overwrites.js';
@@ -281,20 +281,31 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       throw problems.notFound();
     }
 
-    const [cells, capTable, grants, calculation, overwrites] = await Promise.all([
+    const [workbook, capTable, grantPage, calculation, overwrites] = await Promise.all([
       listWorkbookCells(deps.pool, id),
       findCapTable(deps.pool, id),
       listGrants(deps.pool, id),
       latestSucceededCalculation(deps.pool, id),
       listOverwrites(deps.pool, id),
     ]);
+    // A deliverable that quietly omits grants is worse than one that will not
+    // build: this workbook is what an auditor reconciles the option pool
+    // against, and a short grant sheet reconciles to the wrong number without
+    // ever saying so. Only reachable past GRANT_PAGE_LIMIT grants on one
+    // engagement, which is an import fault rather than a cap table.
+    if (grantPage.truncated) {
+      throw problems.unprocessable(
+        `This engagement holds more than ${GRANT_PAGE_LIMIT} option grants; the auditor workbook cannot be built from a partial set. Check the grant import before exporting.`,
+      );
+    }
+    const { grants } = grantPage;
 
     const fmv = calculation?.fmv_per_share === null ? null : Number(calculation?.fmv_per_share);
     const generatedAt = new Date();
 
     const sheets = valuationWorkbookSheets({
       valuation,
-      cells,
+      cells: workbook.cells,
       capTable: capTable ? { entries: capTable.entries, validation: capTable.validation } : null,
       grants,
       fmvPerShare: fmv !== undefined && Number.isFinite(fmv) ? fmv : null,

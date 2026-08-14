@@ -92,9 +92,32 @@ export async function createScimToken(
   return { row: rows[0]!, token };
 }
 
-export async function listScimTokens(pool: pg.Pool): Promise<Omit<ScimTokenRow, 'token_hash'>[]> {
-  const { rows } = await pool.query<ScimTokenRow>('SELECT * FROM scim_tokens ORDER BY created_at DESC');
-  return rows.map(({ token_hash: _t, ...rest }) => rest);
+export const SCIM_TOKEN_PAGE_LIMIT = 200;
+
+/**
+ * The SCIM tokens, newest first — a page of them.
+ *
+ * Revocation writes `revoked_at` rather than deleting the row, on purpose: a
+ * token that was once accepted has to stay auditable. So the table only grows,
+ * one row per issue, and the admin screen was reading all of it. Live tokens
+ * are ordered ahead of revoked ones so a long tail of history can never push
+ * an active credential off the page an administrator revokes from — and
+ * `verifyScimToken` matches in SQL, so a token past the cut is still honoured
+ * and still revocable by id.
+ */
+export async function listScimTokens(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<{ tokens: Omit<ScimTokenRow, 'token_hash'>[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? SCIM_TOKEN_PAGE_LIMIT, 1), SCIM_TOKEN_PAGE_LIMIT);
+  const { rows } = await pool.query<ScimTokenRow>(
+    `SELECT * FROM scim_tokens
+      ORDER BY (revoked_at IS NULL) DESC, created_at DESC
+      LIMIT $1`,
+    [limit + 1],
+  );
+  const tokens = rows.slice(0, limit).map(({ token_hash: _t, ...rest }) => rest);
+  return { tokens, truncated: rows.length > limit };
 }
 
 export async function revokeScimToken(pool: pg.Pool, id: string): Promise<boolean> {

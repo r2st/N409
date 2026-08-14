@@ -7,6 +7,7 @@ import {
   findPromptById,
   listPrompts,
   listPromptVersions,
+  PROMPT_VERSION_PAGE_LIMIT,
   revertPrompt,
   updatePrompt,
   type AiPromptRow,
@@ -124,7 +125,23 @@ export function registerPromptRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     requireOps(requirePrincipal(req));
     const { id } = req.params as { id: string };
     await loadPrompt(deps.pool, id);
-    return { versions: await listPromptVersions(deps.pool, id) };
+    const parsedQuery = z
+      .object({
+        limit: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(PROMPT_VERSION_PAGE_LIMIT)
+          .default(PROMPT_VERSION_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    const { versions, truncated } = await listPromptVersions(deps.pool, id, {
+      limit: parsedQuery.data.limit,
+    });
+    return { versions, truncated, page_limit: PROMPT_VERSION_PAGE_LIMIT };
   });
 
   // Revert = re-apply an old version's content as a NEW version, so history

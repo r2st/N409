@@ -94,12 +94,34 @@ export async function createGrant(
   });
 }
 
-export async function listGrants(pool: pg.Pool, valuationId: string): Promise<GrantRow[]> {
+/**
+ * The cap on one valuation's option grants.
+ *
+ * Set an order of magnitude above any real cap table — the largest private
+ * companies this platform values have low thousands of live grants — because
+ * this list is not only a screen. The auditor workbook builds a sheet from it,
+ * and a deliverable that silently omits grants is worse than one that refuses
+ * to build, so the export checks `truncated` and refuses rather than shipping
+ * a short one. What the cap actually guards against is the HRIS import: a
+ * misconfigured connector replaying its whole population into one engagement
+ * had no ceiling at all before this.
+ */
+export const GRANT_PAGE_LIMIT = 10_000;
+
+export async function listGrants(
+  pool: pg.Pool,
+  valuationId: string,
+  opts: { limit?: number } = {},
+): Promise<{ grants: GrantRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? GRANT_PAGE_LIMIT, 1), GRANT_PAGE_LIMIT);
   const { rows } = await pool.query<GrantRow>(
-    'SELECT * FROM option_grants WHERE valuation_id = $1 ORDER BY grant_date DESC, created_at DESC',
-    [valuationId],
+    `SELECT * FROM option_grants
+      WHERE valuation_id = $1
+      ORDER BY grant_date DESC, created_at DESC
+      LIMIT $2`,
+    [valuationId, limit + 1],
   );
-  return rows;
+  return { grants: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function findGrantById(pool: pg.Pool, id: string): Promise<GrantRow | null> {

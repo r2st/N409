@@ -17,16 +17,32 @@ export interface HelpArticleRow {
   updated_at: Date;
 }
 
+export const ARTICLE_PAGE_LIMIT = 500;
+
+/**
+ * The knowledge base, grouped by category — a page of it.
+ *
+ * Every row carries its whole `body_html`, and the help widget asks for all of
+ * them at once so it can search them in the browser. That is fine at fifty
+ * articles and is a multi-megabyte response at five thousand. Ordered as the
+ * widget groups them, so a truncated page is a prefix of the categories rather
+ * than an arbitrary scattering across all of them, and `findArticleBySlug`
+ * resolves any single article directly — an article past the cut is still
+ * reachable by its link.
+ */
 export async function listArticles(
   pool: pg.Pool,
-  opts: { includeUnpublished?: boolean } = {},
-): Promise<HelpArticleRow[]> {
+  opts: { includeUnpublished?: boolean; limit?: number } = {},
+): Promise<{ articles: HelpArticleRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? ARTICLE_PAGE_LIMIT, 1), ARTICLE_PAGE_LIMIT);
   const { rows } = await pool.query<HelpArticleRow>(
     `SELECT * FROM help_articles
      ${opts.includeUnpublished ? '' : 'WHERE published'}
-     ORDER BY category ASC, sort_order ASC, title ASC`,
+     ORDER BY category ASC, sort_order ASC, title ASC
+     LIMIT $1`,
+    [limit + 1],
   );
-  return rows;
+  return { articles: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function findArticleBySlug(pool: pg.Pool, slug: string): Promise<HelpArticleRow | null> {

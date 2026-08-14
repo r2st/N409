@@ -14,6 +14,7 @@ import {
 } from '../payments/stripe.js';
 import { checkoutAvailableTo, isSettled } from './payments.js';
 import {
+  billingSummary,
   cancelSubscription,
   createInvoice,
   findActiveSubscription,
@@ -21,12 +22,14 @@ import {
   findInvoiceByStripeId,
   findPlan,
   findStripeCustomerId,
+  INVOICE_PAGE_LIMIT,
   listAllInvoices,
   listAllSubscriptions,
   listInvoicesForUser,
   listPlans,
   markSubscriptionPastDue,
   nextInvoiceSequence,
+  SUBSCRIPTION_PAGE_LIMIT,
   upsertSubscription,
 } from '../repos/billing.js';
 import { createNotifications } from '../repos/notifications.js';
@@ -186,31 +189,30 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
   app.get('/api/v1/admin/billing', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('Billing dashboard is operations-only');
-    const [subscriptions, invoices] = await Promise.all([
-      listAllSubscriptions(deps.pool),
-      listAllInvoices(deps.pool),
+    const parsedQuery = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(SUBSCRIPTION_PAGE_LIMIT).default(SUBSCRIPTION_PAGE_LIMIT),
+        invoice_limit: z.coerce.number().int().min(1).max(INVOICE_PAGE_LIMIT).default(INVOICE_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    // The summary is its own query rather than a reduce over the two pages
+    // below: capping what the screen lists must not move what the screen says.
+    const [subscriptions, invoices, summary] = await Promise.all([
+      listAllSubscriptions(deps.pool, { limit: parsedQuery.data.limit }),
+      listAllInvoices(deps.pool, { limit: parsedQuery.data.invoice_limit }),
+      billingSummary(deps.pool),
     ]);
-    // Normalise each active plan's price to a monthly run-rate for MRR.
-    const mrrCents = subscriptions
-      .filter((s) => s.status === 'active' || s.status === 'trialing')
-      .reduce(
-        (sum, s) =>
-          sum +
-          (s.interval === 'year'
-            ? Math.round(s.price_cents / 12)
-            : s.interval === 'month'
-              ? s.price_cents
-              : 0),
-        0,
-      );
     return {
-      subscriptions,
-      invoices,
-      summary: {
-        active: subscriptions.filter((s) => s.status === 'active').length,
-        mrr_cents: mrrCents,
-        collected_cents: invoices.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount_cents, 0),
-      },
+      subscriptions: subscriptions.subscriptions,
+      subscriptions_truncated: subscriptions.truncated,
+      invoices: invoices.invoices,
+      invoices_truncated: invoices.truncated,
+      page_limit: SUBSCRIPTION_PAGE_LIMIT,
+      invoice_page_limit: INVOICE_PAGE_LIMIT,
+      summary,
     };
   });
 

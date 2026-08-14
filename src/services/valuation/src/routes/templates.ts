@@ -10,6 +10,7 @@ import {
   createTemplateVersion,
   findTemplateById,
   listTemplates,
+  TEMPLATE_PAGE_LIMIT,
   templateLabel,
   updateDraftTemplate,
   type ReportTemplateRow,
@@ -44,9 +45,13 @@ const PatchBody = z
   .strict();
 
 const ListQuery = z.object({
-  name: z.string().optional(),
+  // Bounded like the column it filters on (`name` is varchar(120) in migration
+  // 0061). An unbounded string here is a megabyte of query parameter that
+  // Postgres has to compare against every row before returning nothing.
+  name: z.string().max(120).optional(),
   kind: z.enum(VALUATION_KINDS).optional(),
   status: z.enum(['draft', 'active', 'archived']).optional(),
+  limit: z.coerce.number().int().min(1).max(TEMPLATE_PAGE_LIMIT).default(TEMPLATE_PAGE_LIMIT),
 });
 
 function requireOps(principal: Principal): void {
@@ -86,8 +91,8 @@ export function registerTemplateRoutes(app: FastifyInstance, deps: { pool: pg.Po
     requireOps(requirePrincipal(req));
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
-    const templates = await listTemplates(deps.pool, parsed.data);
-    return { templates: templates.map(serialize) };
+    const { templates, truncated } = await listTemplates(deps.pool, parsed.data);
+    return { templates: templates.map(serialize), truncated, page_limit: TEMPLATE_PAGE_LIMIT };
   });
 
   app.post('/api/v1/report-templates', { preHandler: app.authenticate }, async (req, reply) => {

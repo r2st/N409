@@ -57,7 +57,7 @@ describe.skipIf(!dbUp)('report template versioning under concurrency', () => {
     expect(created.map((t) => t.version).sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
     expect(new Set(created.map((t) => t.id)).size).toBe(4);
 
-    const persisted = await listTemplates(ctx.pool, { name });
+    const { templates: persisted } = await listTemplates(ctx.pool, { name });
     expect(persisted.map((t) => t.version).sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
   });
 
@@ -135,7 +135,7 @@ describe.skipIf(!dbUp)('report template activation under concurrency', () => {
 
   /** Rows of `name`, by version, as `{version: status}`. */
   async function statuses(name: string): Promise<Record<number, string>> {
-    const rows = await listTemplates(ctx.pool, { name });
+    const { templates: rows } = await listTemplates(ctx.pool, { name });
     return Object.fromEntries(rows.map((r) => [r.version, r.status]));
   }
 

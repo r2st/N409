@@ -42,10 +42,27 @@ export async function findActiveTemplateForKind(
   return rows[0] ?? null;
 }
 
+export const TEMPLATE_PAGE_LIMIT = 200;
+
+/**
+ * Report templates, grouped by name and newest version first — a page of them.
+ *
+ * Every edit to a template mints a *new row* rather than updating one (see
+ * {@link createTemplateVersion}), and archived versions are kept because a
+ * published report names the version it was set from. So this table grows with
+ * every edit anyone has ever made, and it carries the full template body on
+ * each row. The unfiltered list is the one the admin screen opens with.
+ *
+ * `findActiveTemplateForKind` is a `LIMIT 1` of its own, so which template a
+ * render picks up is not affected by this cap; nor is
+ * {@link createTemplateVersion}, which takes `max(version)` in SQL under the
+ * name lock. This is the browse path only.
+ */
 export async function listTemplates(
   pool: pg.Pool,
-  filters: { name?: string; kind?: ValuationKind; status?: ReportTemplateStatus } = {},
-): Promise<ReportTemplateRow[]> {
+  filters: { name?: string; kind?: ValuationKind; status?: ReportTemplateStatus; limit?: number } = {},
+): Promise<{ templates: ReportTemplateRow[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(filters.limit ?? TEMPLATE_PAGE_LIMIT, 1), TEMPLATE_PAGE_LIMIT);
   const where: string[] = [];
   const params: unknown[] = [];
   const add = (clause: string, value: unknown) => {
@@ -56,11 +73,12 @@ export async function listTemplates(
   if (filters.kind) add('kind = ?', filters.kind);
   if (filters.status) add('status = ?', filters.status);
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  params.push(limit + 1);
   const { rows } = await pool.query<ReportTemplateRow>(
-    `SELECT * FROM report_templates ${whereSql} ORDER BY name ASC, version DESC`,
+    `SELECT * FROM report_templates ${whereSql} ORDER BY name ASC, version DESC LIMIT $${params.length}`,
     params,
   );
-  return rows;
+  return { templates: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
 export async function findTemplateById(pool: pg.Pool, id: string): Promise<ReportTemplateRow | null> {

@@ -8,7 +8,9 @@ import {
   createSavedView,
   deleteSavedView,
   findSavedView,
+  findVisibleViewByQuery,
   listVisibleViews,
+  SAVED_VIEW_PAGE_LIMIT,
   updateSavedView,
   VIEW_VISIBILITIES,
   type SavedViewWithOwner,
@@ -144,13 +146,26 @@ function toJson(row: SavedViewWithOwner, viewerId: string) {
 export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.Pool }): void {
   app.get('/api/v1/saved-views', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
-    const rows = await listVisibleViews(deps.pool, {
+    const parsedQuery = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(SAVED_VIEW_PAGE_LIMIT).default(SAVED_VIEW_PAGE_LIMIT),
+      })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    const { views, truncated } = await listVisibleViews(deps.pool, {
       userId: principal.id,
       // Shared views are an ops-team artefact; a client has no use for
       // "Unpaid > 7 days" and no business seeing that the queue exists.
       includeShared: isOps(principal),
+      limit: parsedQuery.data.limit,
     });
-    return { views: rows.map((r) => toJson(r, principal.id)) };
+    return {
+      views: views.map((r) => toJson(r, principal.id)),
+      truncated,
+      page_limit: SAVED_VIEW_PAGE_LIMIT,
+    };
   });
 
   app.post('/api/v1/saved-views', { preHandler: app.authenticate }, async (req, reply) => {
@@ -244,9 +259,11 @@ export function registerSavedViewRoutes(app: FastifyInstance, deps: { pool: pg.P
     // Matched on the query rather than on the name: a firm renamed after its
     // view was pinned must not get a second one, and the query is what the
     // view actually *is*.
-    const existing = (await listVisibleViews(deps.pool, { userId: principal.id, includeShared: true })).find(
-      (v) => v.query === query,
-    );
+    const existing = await findVisibleViewByQuery(deps.pool, {
+      userId: principal.id,
+      includeShared: true,
+      query,
+    });
     if (existing) return { view: toJson(existing, principal.id), created: false };
 
     if ((await countSavedViews(deps.pool, principal.id)) >= MAX_VIEWS_PER_USER) {

@@ -187,15 +187,35 @@ export type AdminSubscription = SubscriptionRow & {
   interval: 'one_time' | 'month' | 'year';
 };
 
-export async function listAllSubscriptions(pool: pg.Pool): Promise<AdminSubscription[]> {
+export const SUBSCRIPTION_PAGE_LIMIT = 500;
+
+/**
+ * Every subscription on the platform, newest first — a page of it.
+ *
+ * One row per paying account and never deleted, so this table's size is the
+ * business's own growth curve; the admin billing screen was reading all of it,
+ * joined to `users` and `plan_limits`, on every load. Truncation is reported
+ * rather than hidden, because "how many customers do we have" is a question
+ * somebody asks of this screen and a silently short list answers it wrongly.
+ * The page is not the ledger: {@link listAllInvoices} and the counters the
+ * screen shows beside it are their own queries.
+ */
+export async function listAllSubscriptions(
+  pool: pg.Pool,
+  opts: { limit?: number } = {},
+): Promise<{ subscriptions: AdminSubscription[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? SUBSCRIPTION_PAGE_LIMIT, 1), SUBSCRIPTION_PAGE_LIMIT);
   const { rows } = await pool.query(
     `SELECT s.*, u.email, p.name AS plan_name, p.valuation_limit, p.price_cents, p.interval
        FROM subscriptions s
        JOIN users u ON u.id = s.user_id
        JOIN plan_limits p ON p.tier = s.plan_tier
-      ORDER BY s.created_at DESC`,
+      ORDER BY s.created_at DESC
+      LIMIT $1`,
+    [limit + 1],
   );
-  return rows as AdminSubscription[];
+  const subscriptions = rows as AdminSubscription[];
+  return { subscriptions: subscriptions.slice(0, limit), truncated: subscriptions.length > limit };
 }
 
 // ── Invoices ──────────────────────────────────────────────────────────────────
@@ -328,14 +348,68 @@ export async function listInvoicesForUser(pool: pg.Pool, userId: string): Promis
   return rows;
 }
 
+export const INVOICE_PAGE_LIMIT = 200;
+
+/**
+ * The invoice ledger, newest first — a page of it.
+ *
+ * Already capped, but at a number the caller passed and nothing checked, and
+ * without saying when the cap bit. Both matter now that the admin screen states
+ * how much has been collected: that figure comes from {@link billingSummary},
+ * which counts in SQL, so the page can be short without the total being wrong.
+ */
 export async function listAllInvoices(
   pool: pg.Pool,
-  limit = 200,
-): Promise<Array<InvoiceRow & { email: string }>> {
+  opts: { limit?: number } = {},
+): Promise<{ invoices: Array<InvoiceRow & { email: string }>; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? INVOICE_PAGE_LIMIT, 1), INVOICE_PAGE_LIMIT);
   const { rows } = await pool.query(
     `SELECT i.*, u.email FROM invoices i JOIN users u ON u.id = i.user_id
       ORDER BY i.issued_at DESC LIMIT $1`,
-    [limit],
+    [limit + 1],
   );
-  return rows as Array<InvoiceRow & { email: string }>;
+  const invoices = rows as Array<InvoiceRow & { email: string }>;
+  return { invoices: invoices.slice(0, limit), truncated: invoices.length > limit };
+}
+
+/** The three figures the admin billing screen states above its two tables. */
+export interface BillingSummary {
+  active: number;
+  mrr_cents: number;
+  collected_cents: number;
+}
+
+/**
+ * Counted in SQL, over every row, rather than reduced over the page.
+ *
+ * The screen's two tables are pages now, and MRR summed over a page is not MRR
+ * — it is "MRR of the 500 newest subscriptions", which is the same number right
+ * up until the day it quietly is not. Each figure is an aggregate over the
+ * whole table, so the cap on what is *displayed* can never move what is
+ * *stated*.
+ *
+ * The annual → monthly conversion rounds per subscription and then sums, which
+ * is what the reduce it replaces did; rounding the sum instead would move the
+ * total by a few cents against every figure ops has already reconciled.
+ */
+export async function billingSummary(pool: pg.Pool): Promise<BillingSummary> {
+  const { rows } = await pool.query<{ active: string; mrr_cents: string; collected_cents: string }>(
+    `SELECT
+       (SELECT count(*) FROM subscriptions WHERE status = 'active') AS active,
+       (SELECT coalesce(sum(CASE p.interval
+                              WHEN 'year'  THEN round(p.price_cents / 12.0)
+                              WHEN 'month' THEN p.price_cents
+                              ELSE 0
+                            END), 0)
+          FROM subscriptions s
+          JOIN plan_limits p ON p.tier = s.plan_tier
+         WHERE s.status IN ('active', 'trialing')) AS mrr_cents,
+       (SELECT coalesce(sum(amount_cents), 0) FROM invoices WHERE status = 'paid') AS collected_cents`,
+  );
+  const row = rows[0];
+  return {
+    active: Number(row?.active ?? 0),
+    mrr_cents: Number(row?.mrr_cents ?? 0),
+    collected_cents: Number(row?.collected_cents ?? 0),
+  };
 }

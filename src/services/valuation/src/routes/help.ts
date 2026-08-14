@@ -5,6 +5,7 @@ import { conditionalJson, isUlid, problems, TtlCache } from '@n409/shared';
 import { isOps } from '../auth/rbac.js';
 import { sanitizeHtml } from '../domain/report.js';
 import {
+  ARTICLE_PAGE_LIMIT,
   createArticle,
   deleteArticle,
   findArticleById,
@@ -53,11 +54,25 @@ export function registerHelpRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
   app.get('/api/v1/help/articles', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const ops = isOps(principal);
-    const articles = await cache.getOrLoad(`list:${ops ? 'all' : 'published'}`, () =>
-      listArticles(deps.pool, { includeUnpublished: ops }),
-    );
+    const parsedQuery = z
+      .object({ limit: z.coerce.number().int().min(1).max(ARTICLE_PAGE_LIMIT).default(ARTICLE_PAGE_LIMIT) })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
+    const { limit } = parsedQuery.data;
+    // The limit is part of the key: without it the first caller's page size is
+    // served to everyone for the next 30 seconds, which is a short list to one
+    // reader and somebody else's truncation flag to the next.
+    const page = (await cache.getOrLoad(`list:${ops ? 'all' : 'published'}:${limit}`, () =>
+      listArticles(deps.pool, { includeUnpublished: ops, limit }),
+    )) as Awaited<ReturnType<typeof listArticles>>;
     // The widget refetches this on every page mount; 304 keeps that free.
-    return conditionalJson(req, reply, { articles });
+    return conditionalJson(req, reply, {
+      articles: page.articles,
+      truncated: page.truncated,
+      page_limit: ARTICLE_PAGE_LIMIT,
+    });
   });
 
   app.get('/api/v1/help/articles/:slug', { preHandler: app.authenticate }, async (req) => {

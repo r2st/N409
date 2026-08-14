@@ -11,6 +11,7 @@ import {
   cancelGrant,
   createGrant,
   findGrantById,
+  GRANT_PAGE_LIMIT,
   listGrants,
   updateGrant,
   type GrantRow,
@@ -138,9 +139,15 @@ export function registerGrantRoutes(app: FastifyInstance, deps: { pool: pg.Pool 
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await loadReadable(deps.pool, id, principal);
+    const parsedQuery = z
+      .object({ limit: z.coerce.number().int().min(1).max(GRANT_PAGE_LIMIT).default(GRANT_PAGE_LIMIT) })
+      .safeParse(req.query ?? {});
+    if (!parsedQuery.success) {
+      throw problems.unprocessable('Invalid query', { errors: parsedQuery.error.issues });
+    }
     const asOf = new Date();
-    const grants = await listGrants(deps.pool, id);
-    return { grants: grants.map((g) => grantView(g, asOf)) };
+    const { grants, truncated } = await listGrants(deps.pool, id, { limit: parsedQuery.data.limit });
+    return { grants: grants.map((g) => grantView(g, asOf)), truncated, page_limit: GRANT_PAGE_LIMIT };
   });
 
   // Issue a grant (ops). Requires an approved board resolution; the exercise

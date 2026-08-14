@@ -29,25 +29,62 @@ export interface SavedViewWithOwner extends SavedViewRow {
   owner_last_name: string | null;
 }
 
+const VISIBLE_VIEWS_SQL = `
+  SELECT v.*, u.email AS owner_email, u.first_name AS owner_first_name, u.last_name AS owner_last_name
+    FROM saved_views v
+    JOIN users u ON u.id = v.owner_id
+   WHERE v.owner_id = $1
+      OR ($2::boolean AND v.visibility = 'shared')`;
+
+export const SAVED_VIEW_PAGE_LIMIT = 200;
+
 /**
  * Everything the principal may see: their own views always, plus every shared
  * view when they are ops. Own views sort first so a picker can show them
  * without a second query.
+ *
+ * `MAX_VIEWS_PER_USER` caps what one person can save, which is why this looked
+ * bounded and was not: the shared half is every ops user's views at once, and
+ * that grows with the size of the team times the cap each of them has. Own
+ * views sorting first is what makes the cap safe to apply — a long shared list
+ * can never push somebody's own view off the end of their own picker.
  */
 export async function listVisibleViews(
   pool: pg.Pool,
-  args: { userId: string; includeShared: boolean },
-): Promise<SavedViewWithOwner[]> {
+  args: { userId: string; includeShared: boolean; limit?: number },
+): Promise<{ views: SavedViewWithOwner[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(args.limit ?? SAVED_VIEW_PAGE_LIMIT, 1), SAVED_VIEW_PAGE_LIMIT);
   const { rows } = await pool.query<SavedViewWithOwner>(
-    `SELECT v.*, u.email AS owner_email, u.first_name AS owner_first_name, u.last_name AS owner_last_name
-       FROM saved_views v
-       JOIN users u ON u.id = v.owner_id
-      WHERE v.owner_id = $1
-         OR ($2::boolean AND v.visibility = 'shared')
-      ORDER BY (v.owner_id = $1) DESC, lower(v.name)`,
-    [args.userId, args.includeShared],
+    `${VISIBLE_VIEWS_SQL}
+      ORDER BY (v.owner_id = $1) DESC, lower(v.name)
+      LIMIT $3`,
+    [args.userId, args.includeShared, limit + 1],
   );
-  return rows;
+  return { views: rows.slice(0, limit), truncated: rows.length > limit };
+}
+
+/**
+ * The one visible view whose stored query is exactly `query`, if there is one.
+ *
+ * Asked of the database rather than found in {@link listVisibleViews}'s result,
+ * because the caller — pinning a firm's queue — is an idempotency check, and an
+ * idempotency check that reads a *page* stops being one as soon as the page is
+ * full: the existing pin sorts past the cut, the second click does not find it,
+ * and the firm quietly gets a duplicate view. Ordered so the principal's own
+ * pin wins over a colleague's when both exist.
+ */
+export async function findVisibleViewByQuery(
+  pool: pg.Pool,
+  args: { userId: string; includeShared: boolean; query: string },
+): Promise<SavedViewWithOwner | null> {
+  const { rows } = await pool.query<SavedViewWithOwner>(
+    `${VISIBLE_VIEWS_SQL}
+       AND v.query = $3
+      ORDER BY (v.owner_id = $1) DESC, lower(v.name)
+      LIMIT 1`,
+    [args.userId, args.includeShared, args.query],
+  );
+  return rows[0] ?? null;
 }
 
 export async function findSavedView(pool: pg.Pool, id: string): Promise<SavedViewRow | null> {
