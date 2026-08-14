@@ -95,6 +95,51 @@ describe('MfaCard (feature 2)', () => {
     expect(setUser).toHaveBeenCalledWith(expect.objectContaining({ totp_enabled: true }));
   });
 
+  /**
+   * R30 — the six-digit shape was `code.trim().length < 6` on a disabled
+   * button, which refused a five-digit code without saying why and accepted
+   * "abcdef" without hesitation. Both go to the API as a rejected code.
+   */
+  it('refuses a code that is not six digits, rather than posting it', async () => {
+    const u = userEvent.setup();
+    const fetchSpy = mockApi({
+      'POST /account/mfa/setup': () =>
+        jsonResponse({
+          secret: 'ABCDEF234567',
+          qr: 'data:image/png;base64,iVBORw0KGgo=',
+          otpauth: 'otpauth://totp/N409:ada@acme.com?secret=ABCDEF234567',
+        }),
+    });
+    render(<MfaCard />);
+
+    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await u.type(await screen.findByLabelText('Authenticator code'), 'abcdef');
+    await u.click(screen.getByRole('button', { name: /enable 2fa/i }));
+
+    expect(
+      await screen.findByText('Enter the six-digit code from your authenticator app.'),
+    ).toBeInTheDocument();
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/confirm'))).toHaveLength(0);
+  });
+
+  it('names an empty code box as required rather than as malformed', async () => {
+    const u = userEvent.setup();
+    mockApi({
+      'POST /account/mfa/setup': () =>
+        jsonResponse({
+          secret: 'ABCDEF234567',
+          qr: 'data:image/png;base64,iVBORw0KGgo=',
+          otpauth: 'otpauth://totp/N409:ada@acme.com?secret=ABCDEF234567',
+        }),
+    });
+    render(<MfaCard />);
+
+    await u.click(await screen.findByRole('button', { name: /set up two-factor/i }));
+    await u.click(await screen.findByRole('button', { name: /enable 2fa/i }));
+
+    expect(await screen.findByText('Authenticator code is required.')).toBeInTheDocument();
+  });
+
   it('shows an SSO account cannot enrol', async () => {
     mockApi({
       'GET /account/mfa': () =>
@@ -113,9 +158,7 @@ describe('MfaCard (feature 2)', () => {
   it('says the status could not be loaded rather than spinning forever', async () => {
     mockApi({ 'GET /account/mfa': () => jsonResponse({ title: 'Unavailable' }, 503) });
     render(<MfaCard />);
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      /Could not load two-factor status/i,
-    );
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load two-factor status/i);
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
@@ -180,9 +223,7 @@ describe('MfaCard (feature 2)', () => {
     it('counts a single remaining backup code in the singular', async () => {
       mockApi({ 'GET /account/mfa': () => enabled() });
       render(<MfaCard />);
-      expect(await screen.findByTestId('mfa-backup-remaining')).toHaveTextContent(
-        '1 backup code remaining.',
-      );
+      expect(await screen.findByTestId('mfa-backup-remaining')).toHaveTextContent('1 backup code remaining.');
     });
 
     it('asks for the password before regenerating rather than calling the API', async () => {
@@ -192,10 +233,10 @@ describe('MfaCard (feature 2)', () => {
 
       await u.click(await screen.findByRole('button', { name: /regenerate backup codes/i }));
 
-      expect(await screen.findByRole('alert')).toHaveTextContent(/Enter your password/i);
-      expect(
-        fetchSpy.mock.calls.filter(([url]) => String(url).includes('backup-codes')),
-      ).toHaveLength(0);
+      // R30 — this used to be a banner at the top of the card; it now sits
+      // beside the box it is about.
+      expect(await screen.findByText('Password is required.')).toBeInTheDocument();
+      expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('backup-codes'))).toHaveLength(0);
     });
 
     it('regenerates backup codes and clears the password it used', async () => {
@@ -275,17 +316,14 @@ describe('MfaCard (feature 2)', () => {
       const u = userEvent.setup();
       mockApi({
         'GET /account/mfa': () => enabled(),
-        'POST /account/mfa/backup-codes': () =>
-          jsonResponse({ backup_codes: ['1111-2222', '3333-4444'] }),
+        'POST /account/mfa/backup-codes': () => jsonResponse({ backup_codes: ['1111-2222', '3333-4444'] }),
       });
       // jsdom implements neither half of the object-URL pair.
       const createUrl = vi.fn((_blob: Blob) => 'blob:codes');
       const revokeUrl = vi.fn();
       Object.defineProperty(URL, 'createObjectURL', { value: createUrl, configurable: true });
       Object.defineProperty(URL, 'revokeObjectURL', { value: revokeUrl, configurable: true });
-      const click = vi
-        .spyOn(HTMLAnchorElement.prototype, 'click')
-        .mockImplementation(() => {});
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
       render(<MfaCard />);
 
       await u.type(await screen.findByLabelText('Password'), 'hunter2');

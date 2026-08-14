@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { all, pattern, required, useFormValidation } from '../lib/useFormValidation';
 import { useAuth } from '../lib/auth';
 import { Button, ErrorNote, Field, Spinner, TextInput } from './ui';
 
@@ -58,8 +58,13 @@ export function MfaCard() {
   const { user, setUser } = useAuth();
   const [status, setStatus] = useState<MfaStatus | null>(null);
   const [setup, setSetup] = useState<SetupResponse | null>(null);
-  const [code, setCode] = useState('');
-  const [password, setPassword] = useState('');
+  /*
+   * The code and the password live in one object so `useFormValidation` has a
+   * values object to read, and are validated by two instances of it: they
+   * belong to two forms that are never on screen together, and one shared
+   * `submitted` flag would reveal the other form's message.
+   */
+  const [secrets, setSecrets] = useState({ code: '', password: '' });
   const [backupCodes, setBackupCodes] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,6 +77,22 @@ export function MfaCard() {
   useEffect(() => {
     void load();
   }, []);
+
+  /*
+   * Two instances over one values object. The 6-digit shape was expressed as
+   * `code.trim().length < 6` on a disabled button, which refused a five-digit
+   * code and accepted "abcdef"; the password's rule was the same disabled
+   * button with nothing said at all.
+   */
+  const codeForm = useFormValidation(secrets, {
+    code: all(
+      required('code', 'Authenticator code'),
+      pattern('code', /\d{6}/, 'Enter the six-digit code from your authenticator app.'),
+    ),
+  });
+  const passwordForm = useFormValidation(secrets, {
+    password: required('password', 'Password'),
+  });
 
   // A failed status load has to say so. `status` stays null on failure, so the
   // spinner below would otherwise spin for as long as the tab is open while the
@@ -97,18 +118,18 @@ export function MfaCard() {
     }
   };
 
-  const confirm = async (e: FormEvent) => {
-    e.preventDefault();
+  const confirm = codeForm.handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
       const res = await api<{ backup_codes: string[] }>('/account/mfa/confirm', {
         method: 'POST',
-        body: { code: code.trim() },
+        body: { code: secrets.code.trim() },
       });
       setBackupCodes(res.backup_codes);
       setSetup(null);
-      setCode('');
+      setSecrets((v) => ({ ...v, code: '' }));
+      codeForm.reset();
       if (user) setUser({ ...user, totp_enabled: true });
       await load();
     } catch (err) {
@@ -116,15 +137,15 @@ export function MfaCard() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
-  const disable = async (e: FormEvent) => {
-    e.preventDefault();
+  const disable = passwordForm.handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
-      await api('/account/mfa/disable', { method: 'POST', body: { password } });
-      setPassword('');
+      await api('/account/mfa/disable', { method: 'POST', body: { password: secrets.password } });
+      setSecrets((v) => ({ ...v, password: '' }));
+      passwordForm.reset();
       setBackupCodes(null);
       if (user) setUser({ ...user, totp_enabled: false });
       await load();
@@ -133,29 +154,32 @@ export function MfaCard() {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
-  const regenerate = async () => {
-    if (!password.trim()) {
-      setError('Enter your password to regenerate backup codes.');
-      return;
-    }
+  /*
+   * Regenerating needs the same password box the disable form does, so it goes
+   * through the same rule rather than through its own copy of the check — that
+   * copy put "Enter your password to regenerate backup codes." in the card's
+   * error banner rather than next to the empty box.
+   */
+  const regenerate = passwordForm.handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
       const res = await api<{ backup_codes: string[] }>('/account/mfa/backup-codes', {
         method: 'POST',
-        body: { password },
+        body: { password: secrets.password },
       });
       setBackupCodes(res.backup_codes);
-      setPassword('');
+      setSecrets((v) => ({ ...v, password: '' }));
+      passwordForm.reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not regenerate backup codes.');
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <section className="mt-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
@@ -192,12 +216,18 @@ export function MfaCard() {
             {status.backup_codes_remaining} backup code
             {status.backup_codes_remaining === 1 ? '' : 's'} remaining.
           </p>
-          <Field label="Password" hint="Required to change these settings.">
+          <Field
+            label="Password"
+            hint="Required to change these settings."
+            error={passwordForm.errorFor('password')}
+          >
             <TextInput
               type="password"
               autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              required
+              value={secrets.password}
+              onChange={(e) => setSecrets((v) => ({ ...v, password: e.target.value }))}
+              onBlur={passwordForm.blurHandler('password')}
             />
           </Field>
           <div className="flex flex-wrap gap-3">
@@ -205,8 +235,8 @@ export function MfaCard() {
               Regenerate backup codes
             </Button>
             {!status.required && (
-              <form onSubmit={disable}>
-                <Button type="submit" variant="danger" disabled={busy || !password.trim()}>
+              <form onSubmit={disable} noValidate>
+                <Button type="submit" variant="danger" disabled={busy}>
                   Disable 2FA
                 </Button>
               </form>
@@ -214,7 +244,7 @@ export function MfaCard() {
           </div>
         </div>
       ) : setup ? (
-        <form onSubmit={confirm} className="space-y-4">
+        <form onSubmit={confirm} className="space-y-4" noValidate>
           <p className="text-sm text-ink-600">
             Scan this QR code with your authenticator app, then enter the 6-digit code to finish.
           </p>
@@ -229,17 +259,19 @@ export function MfaCard() {
             Can't scan? Enter this secret manually:{' '}
             <code className="rounded bg-paper-100 px-1.5 py-0.5 font-mono text-ink-700">{setup.secret}</code>
           </p>
-          <Field label="Authenticator code">
+          <Field label="Authenticator code" error={codeForm.errorFor('code')}>
             <TextInput
               inputMode="numeric"
               autoComplete="one-time-code"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
+              required
+              value={secrets.code}
+              onChange={(e) => setSecrets((v) => ({ ...v, code: e.target.value }))}
+              onBlur={codeForm.blurHandler('code')}
               placeholder="123456"
             />
           </Field>
           <div className="flex gap-3">
-            <Button type="submit" disabled={busy || code.trim().length < 6}>
+            <Button type="submit" disabled={busy}>
               {busy ? 'Verifying…' : 'Enable 2FA'}
             </Button>
             <Button type="button" variant="secondary" onClick={() => setSetup(null)} disabled={busy}>

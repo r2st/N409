@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { email as emailRule, required, useFormValidation } from '../lib/useFormValidation';
 import { formatDateTime } from '../lib/format';
 import { sanitizeHtml } from '../lib/m2';
 import type { Valuation } from '../lib/types';
@@ -130,8 +130,18 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
     }
   };
 
-  const addMember = async (e: FormEvent) => {
-    e.preventDefault();
+  /*
+   * A board member's address is where the signing link is sent, and a link
+   * that bounces is discovered only when the safe-harbor record is short a
+   * signature. The disabled button this replaces checked that the box was not
+   * empty and nothing else.
+   */
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(member, {
+    name: required('name', 'Name'),
+    email: emailRule('email'),
+  });
+
+  const addMember = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -144,6 +154,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
         },
       });
       setMember({ name: '', email: '', title: '' });
+      reset();
       setLastLink(`${window.location.origin}/board-sign#token=${res.sign_token}`);
       await load();
     } catch (err) {
@@ -151,7 +162,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const sendLink = async (id: string) => {
     setError(null);
@@ -312,20 +323,22 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
             )}
 
             {resolution.status !== 'approved' && (
-              <form onSubmit={addMember} className="mt-4 grid gap-3 sm:grid-cols-3">
-                <Field label="Name">
+              <form onSubmit={addMember} className="mt-4 grid gap-3 sm:grid-cols-3" noValidate>
+                <Field label="Name" error={errorFor('name')}>
                   <TextInput
                     value={member.name}
                     onChange={(e) => setMember((m) => ({ ...m, name: e.target.value }))}
+                    onBlur={blurHandler('name')}
                     required
                     maxLength={200}
                   />
                 </Field>
-                <Field label="Email">
+                <Field label="Email" error={errorFor('email')}>
                   <TextInput
                     type="email"
                     value={member.email}
                     onChange={(e) => setMember((m) => ({ ...m, email: e.target.value }))}
+                    onBlur={blurHandler('email')}
                     required
                     maxLength={320}
                   />
@@ -339,7 +352,7 @@ export function BoardApprovalPanel({ valuation }: { valuation: Valuation }) {
                   />
                 </Field>
                 <div className="sm:col-span-3">
-                  <Button type="submit" disabled={busy || !member.name.trim() || !member.email.trim()}>
+                  <Button type="submit" disabled={busy}>
                     Add board member
                   </Button>
                 </div>

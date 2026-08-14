@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
 import { api, ApiError } from '../lib/api';
+import { required, useFormValidation } from '../lib/useFormValidation';
 import { formatDateTime } from '../lib/format';
 import type { Valuation } from '../lib/types';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from './ui';
@@ -54,8 +54,12 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
   const main = signatures?.find((s) => s.role === 'main');
   const second = signatures?.find((s) => s.role === 'second');
 
-  const sign = async (e: FormEvent) => {
-    e.preventDefault();
+  const { errorFor, blurHandler, handleSubmit, reset } = useFormValidation(form, {
+    signer_name: required('signer_name', 'Full name'),
+    signature_text: required('signature_text', 'Signature'),
+  });
+
+  const sign = handleSubmit(async () => {
     setError(null);
     setBusy(true);
     try {
@@ -69,13 +73,16 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
         },
       });
       setForm((f) => ({ ...f, signer_name: '', signer_title: '', signature_text: '' }));
+      // The panel stays mounted after signing, so the cleared boxes must not
+      // arrive already flagged as required.
+      reset();
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not record the signature.');
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   const remove = async (role: 'main' | 'second') => {
     setError(null);
@@ -159,17 +166,18 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
       </div>
 
       {!published && (
-        <form onSubmit={sign} className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <form onSubmit={sign} className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" noValidate>
           <Field label="Role">
             <Select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
               <option value="main">Signature (main)</option>
               <option value="second">Signature (second)</option>
             </Select>
           </Field>
-          <Field label="Full name">
+          <Field label="Full name" error={errorFor('signer_name')}>
             <TextInput
               value={form.signer_name}
               onChange={(e) => setForm((f) => ({ ...f, signer_name: e.target.value }))}
+              onBlur={blurHandler('signer_name')}
               required
               maxLength={200}
             />
@@ -182,17 +190,22 @@ export function SignaturePanel({ valuation }: { valuation: Valuation }) {
               placeholder="e.g. Senior Analyst"
             />
           </Field>
-          <Field label="Type to sign" hint="Typing your name here is your digital signature.">
+          <Field
+            label="Type to sign"
+            hint="Typing your name here is your digital signature."
+            error={errorFor('signature_text')}
+          >
             <TextInput
               value={form.signature_text}
               onChange={(e) => setForm((f) => ({ ...f, signature_text: e.target.value }))}
+              onBlur={blurHandler('signature_text')}
               required
               maxLength={500}
               placeholder="/s/ Your Name"
             />
           </Field>
           <div className="sm:col-span-2 lg:col-span-4">
-            <Button type="submit" disabled={busy || !form.signer_name.trim() || !form.signature_text.trim()}>
+            <Button type="submit" disabled={busy}>
               {busy ? 'Signing…' : 'Sign'}
             </Button>
           </div>

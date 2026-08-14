@@ -244,16 +244,34 @@ describe('BoardApprovalPanel', () => {
     expect((calls.find((c) => c.method === 'POST')?.body as { title: unknown }).title).toBeNull();
   });
 
-  it('will not submit a member with no name or no email', async () => {
-    mockApi({ resolution: RESOLUTION });
+  it('will not submit a member with no name or no email, and names both boxes', async () => {
+    const calls = mockApi({ resolution: RESOLUTION });
     renderPanel();
     await screen.findByText('No board members added yet.');
 
-    expect(screen.getByRole('button', { name: 'Add board member' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Add board member' }));
+
+    expect(await screen.findByText('Name is required.')).toBeInTheDocument();
+    expect(screen.getByText('Email is required.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
+  });
+
+  /**
+   * The address is where the signing link is sent, and a link that bounces is
+   * discovered when the safe-harbor record turns out to be short a signature.
+   * The disabled button this replaces only checked that the box was not empty.
+   */
+  it('refuses an address that could not receive the signing link', async () => {
+    const calls = mockApi({ resolution: RESOLUTION });
+    renderPanel();
+    await screen.findByText('No board members added yet.');
+
     await userEvent.type(screen.getByLabelText('Name'), 'Dana');
-    expect(screen.getByRole('button', { name: 'Add board member' })).toBeDisabled();
-    await userEvent.type(screen.getByLabelText('Email'), 'dana@board.example');
-    expect(screen.getByRole('button', { name: 'Add board member' })).toBeEnabled();
+    await userEvent.type(screen.getByLabelText('Email'), 'dana@board');
+    await userEvent.click(screen.getByRole('button', { name: 'Add board member' }));
+
+    expect(await screen.findByText('Enter a valid email address.')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(0);
   });
 
   it('reports a duplicate member instead of appearing to add them', async () => {
