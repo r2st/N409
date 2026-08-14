@@ -27,13 +27,18 @@ export function OrgAssignmentCard({ valuationId }: { valuationId: string }) {
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // A failed list used to be stored as an empty one, which rendered the "create
+  // an organization on the Portfolio page" prose — telling an owner of six
+  // organizations that they have none. Failure and emptiness are now distinct.
+  const [listFailed, setListFailed] = useState(false);
+
   useEffect(() => {
     api<{ organizations: Organization[] }>('/organizations')
       .then((r) => setOrgs(r.organizations))
-      .catch(() => setOrgs([]));
+      .catch(() => setListFailed(true));
   }, []);
 
-  if (!orgs) return null;
+  if (!orgs && !listFailed) return null;
 
   const assign = async () => {
     if (!orgId) return;
@@ -56,7 +61,10 @@ export function OrgAssignmentCard({ valuationId }: { valuationId: string }) {
   return (
     <section className="rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
       <h2 className="overline mb-4 text-ink-400">Portfolio</h2>
-      {orgs.length === 0 ? (
+      {/* Past the guard above, a null list is a failed one. */}
+      {!orgs ? (
+        <ErrorNote>Could not load your organizations.</ErrorNote>
+      ) : orgs.length === 0 ? (
         <p className="text-sm text-ink-400">
           Create an organization on the Portfolio page to group this entity into a fund or holding company.
         </p>

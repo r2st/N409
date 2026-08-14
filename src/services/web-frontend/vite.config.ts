@@ -174,11 +174,16 @@ export default defineConfig({
       // the ASC 718 workspace (the package's lowest file, tested for its
       // tooltips only): measured 93.29 lines/statements, 86.63 branches,
       // 76.50 functions.
+      // Ratcheted with the round-16 push through the five lowest-covered files
+      // — the fund portfolio, the comparables tab, the auditor portal, the
+      // billing section and the org-assignment card, four of which were
+      // hiding a swallowed load error: measured 95.17 lines/statements,
+      // 87.45 branches, 79.73 functions.
       thresholds: {
-        lines: 93,
-        statements: 93,
-        functions: 76,
-        branches: 86,
+        lines: 95,
+        statements: 95,
+        functions: 79,
+        branches: 87,
       },
     },
   },
