@@ -1,6 +1,11 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { inflateSync } from 'node:zlib';
+// The fourth copy of a decoder that split the file on `<...>` and read the
+// bytes inside as Latin-1. The renderer embeds a subsetted Unicode face, so
+// those bytes are glyph indices private to the document; only the face's
+// /ToUnicode CMap turns them back into letters. `support/pdfText.ts` delegates
+// to the renderer's own reader, which is the only one that can be right.
+import { readable } from './support/pdfText.js';
 import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
@@ -115,25 +120,6 @@ describe.skipIf(!dbUp)('the fund and debt deliverables', () => {
       { kind: kind as never, companyName: company, userId: client.id, currency: 'USD' },
       { ...actor, actorId: client.id },
     );
-  }
-
-  /** See reportDeliverable.test.ts — inflate the streams, decode the hex runs. */
-  function readable(pdf: Buffer): string {
-    const raw = pdf.toString('latin1');
-    let all = raw;
-    for (const m of raw.matchAll(/stream\r?\n/g)) {
-      const start = m.index + m[0].length;
-      const end = pdf.indexOf(Buffer.from('endstream'), start);
-      if (end < 0) continue;
-      try {
-        all += inflateSync(pdf.subarray(start, end)).toString('latin1');
-      } catch {
-        // Not a deflate stream — nothing to read.
-      }
-    }
-    return Array.from(all.matchAll(/<([0-9a-fA-F]+)>/g))
-      .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-      .join('');
   }
 
   async function pdfText(id: string): Promise<string> {
