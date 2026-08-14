@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCapTableGraph } from '../../src/domain/capTableGraph.js';
-import type { CapTableEntry } from '../../src/domain/capTable.js';
+import { toWaterfallInputs, type CapTableEntry } from '../../src/domain/capTable.js';
 
 const entry = (
   over: Partial<CapTableEntry> & Pick<CapTableEntry, 'security_class' | 'class_type'>,
@@ -46,14 +46,31 @@ const build = (entries: CapTableEntry[], rounds?: Parameters<typeof buildCapTabl
 
 describe('cap table graph', () => {
   it('ranks the preference stack in payment order, not name order', () => {
-    // Sorted by name a table shows "Series A, Series B, Series Seed" while the
-    // money goes B, A, Seed. That inversion is the reason the graph exists.
+    // Seed is seniority 1, A is 2, B is 3 — and seniority 1 pays first, which
+    // is the engine's rule (`waterfall.py` sorts the ranks ascending under
+    // "1 = most senior"), the rule the importer states in `bad_seniority`, and
+    // the rule Exhibit A prints. So the money goes Seed, A, B, and the first
+    // column of the diagram is the first class paid.
     const { nodes } = build([COMMON, SEED, A, B]);
     const stack = nodes
       .filter((n) => n.class_type === 'preferred')
       .sort((x, y) => x.rank - y.rank)
       .map((n) => n.label);
-    expect(stack).toEqual(['Series B', 'Series A', 'Series Seed']);
+    expect(stack).toEqual(['Series Seed', 'Series A', 'Series B']);
+  });
+
+  it('draws the stack in the order the engine would pay it', () => {
+    // Tied directly to `toWaterfallInputs`, which is the projection the engine
+    // consumes: whatever order it hands over, the diagram must match.
+    const entries = [COMMON, B, SEED, A]; // deliberately not in stack order
+    const drawn = build(entries)
+      .nodes.filter((n) => n.class_type === 'preferred')
+      .sort((x, y) => x.rank - y.rank)
+      .map((n) => n.label);
+    const paid = [...toWaterfallInputs(entries).preferred]
+      .sort((x, y) => x.seniority - y.seniority)
+      .map((p) => p.security_class);
+    expect(drawn).toEqual(paid);
   });
 
   it('puts common and the derivatives behind the whole stack', () => {
@@ -70,9 +87,11 @@ describe('cap table graph', () => {
     const { edges } = build([COMMON, SEED, A, B]);
     const senior = edges.filter((e) => e.kind === 'senior_to');
     expect(senior).toHaveLength(2);
+    // The arrow reads "is senior to", so it runs from the class paid first to
+    // the one behind it: Seed (rank 1) is senior to A, and A to B.
     expect(senior.map((e) => `${e.from}→${e.to}`)).toEqual([
-      'class:series-b→class:series-a',
-      'class:series-a→class:series-seed',
+      'class:series-seed→class:series-a',
+      'class:series-a→class:series-b',
     ]);
   });
 

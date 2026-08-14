@@ -81,8 +81,11 @@ describe.skipIf(!dbUp)('cap table graph API', () => {
       };
 
       const byLabel = Object.fromEntries(nodes.map((n) => [n.label, n]));
-      expect(byLabel['Series A']!.rank).toBeLessThan(byLabel['Series Seed']!.rank);
-      expect(byLabel.Common!.rank).toBeGreaterThan(byLabel['Series Seed']!.rank);
+      // Seed states seniority 1 and Series A states 2, and rank 1 is paid
+      // first — so Seed is drawn ahead of A, the same order the engine walks
+      // the stack in. This asserted the reverse while the sort ran descending.
+      expect(byLabel['Series Seed']!.rank).toBeLessThan(byLabel['Series A']!.rank);
+      expect(byLabel.Common!.rank).toBeGreaterThan(byLabel['Series A']!.rank);
       expect(byLabel['Option Pool']!.rank).toBe(byLabel.Common!.rank);
 
       expect(edges.filter((e) => e.kind === 'senior_to')).toHaveLength(1);

@@ -88,19 +88,31 @@ function kindOf(entry: CapTableEntry): CapTableNodeKind {
 /**
  * Sort the preference stack into payment order.
  *
- * Higher `seniority` pays first — that is the convention the waterfall engine
- * uses, and reversing it here would draw a picture that contradicts the
- * numbers underneath it. Classes with no stated seniority are pari passu and
- * sort together, after everything that stated one, by descending investment:
- * an unstated seniority is far more often "nobody filled this column in" than
- * "this class is genuinely last", and ordering the unknown ones by money at
- * least puts the largest cheque where an analyst will look at it.
+ * Seniority 1 is the most senior and pays first. That is the engine's rule —
+ * `waterfall.py` walks `sorted({c["seniority"] …})` ascending under the comment
+ * "1 = most senior" — and it is what the importer tells the operator in the
+ * `bad_seniority` message and what Exhibit A prints under the column.
+ *
+ * This sorted descending, so the explorer drew the stack backwards: with Seed
+ * at 1, A at 2 and B at 3, the picture put Series B in the first column and
+ * Series Seed in the last, while the money goes Seed, A, B. Reading the stack
+ * off the diagram gave exactly the reverse of what a liquidation would do, on
+ * the one screen built to make payment order legible — and the docstring
+ * asserting the opposite convention is presumably how it survived review.
+ *
+ * Classes with no stated seniority are pari passu and sort together, after
+ * everything that stated one, by descending investment: an unstated seniority
+ * is far more often "nobody filled this column in" than "this class is
+ * genuinely last", and ordering the unknown ones by money at least puts the
+ * largest cheque where an analyst will look at it. `graphIssues` raises
+ * `partial_seniority` when a table mixes the two, because that guess is one the
+ * reader should know is being made.
  */
 function stackOrder(entries: readonly CapTableEntry[]): CapTableEntry[] {
   return [...entries].sort((a, b) => {
     const as = a.seniority;
     const bs = b.seniority;
-    if (as !== null && bs !== null && as !== bs) return bs - as;
+    if (as !== null && bs !== null && as !== bs) return as - bs;
     if (as !== null && bs === null) return -1;
     if (as === null && bs !== null) return 1;
     return (b.invested_amount ?? 0) - (a.invested_amount ?? 0);
