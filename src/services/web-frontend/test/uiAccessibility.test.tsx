@@ -52,6 +52,44 @@ describe('Field aria wiring (F-3 P2)', () => {
     expect(screen.getByRole('button', { name: 'About Market yield' })).toBeInTheDocument();
   });
 
+  it('names a control that ships with a sibling, such as a suggestion list', () => {
+    // A suggestion box is a control *and* its `<datalist>`, so the field's
+    // children arrive as an array — and the wiring below used to run only for a
+    // lone child. Those inputs fell back to name-from-the-wrapping-label, which
+    // sweeps in the hint: the bot-prompt model box announced itself as "Model
+    // OpenRouter model id — leave empty to use the default fallback chain",
+    // and the template-name box likewise. Two of the platform's suggestion
+    // fields, both read aloud as a paragraph.
+    render(
+      <Field label="Model" hint="OpenRouter model id — leave empty to use the default fallback chain.">
+        <TextInput list="models" defaultValue="" />
+        <datalist id="models">
+          <option value="a/b" />
+        </datalist>
+      </Field>,
+    );
+    // `list` puts the input in the combobox role rather than textbox.
+    const input = screen.getByRole('combobox', { name: 'Model' });
+    expect(input).toHaveAttribute('list', 'models');
+    // The hint is still described-by rather than folded into the name.
+    const describedBy = input.getAttribute('aria-describedby');
+    expect(document.getElementById(describedBy!)).toHaveTextContent('OpenRouter model id');
+    // The sibling survives the rewiring — the suggestions still resolve.
+    expect(document.getElementById('models')).toBeInTheDocument();
+  });
+
+  it('leaves a sibling that is not the control alone', () => {
+    render(
+      <Field label="Amount" error="Too large">
+        <TextInput defaultValue="" />
+        <span data-testid="suffix">USD</span>
+      </Field>,
+    );
+    const input = screen.getByRole('textbox', { name: 'Amount' });
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByTestId('suffix')).not.toHaveAttribute('aria-labelledby');
+  });
+
   it('does not overwrite a name the caller set deliberately', () => {
     render(
       <Field label="Search">

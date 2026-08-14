@@ -1,4 +1,5 @@
 import {
+  Children,
   cloneElement,
   isValidElement,
   useEffect,
@@ -114,9 +115,19 @@ export function Field({
   const labelId = `${fieldId}-label`;
   const describedBy = error ? errorId : hint ? hintId : undefined;
 
+  // A field whose control comes with a sibling — a `<datalist>` behind a
+  // suggestion box is the usual one — arrives here as an array, and the
+  // single-child branch below simply skipped it: no id, no `aria-labelledby`.
+  // Those inputs fell back to name-from-the-wrapping-label, which sweeps in the
+  // hint, so a screen reader announced the model box as "Model OpenRouter model
+  // id — leave empty to use the default fallback chain". The control is the
+  // first element in the list by construction; the rest are its attachments.
+  const childList = Children.toArray(children);
+  const primary = childList.length > 1 ? childList.find((c) => isValidElement(c)) : children;
+
   let control: ReactNode = children;
-  if (isValidElement(children)) {
-    const child = children as ReactElement<Record<string, unknown>>;
+  if (isValidElement(primary)) {
+    const child = primary as ReactElement<Record<string, unknown>>;
     const props = child.props;
     const existingDescribedBy = props['aria-describedby'] as string | undefined;
     // Name the control explicitly rather than leaning on the wrapping <label>.
@@ -127,12 +138,15 @@ export function Field({
     // label's own text span skips the tooltip trigger and is unambiguous.
     // An explicit name on the child still wins; the caller meant it.
     const named = props['aria-label'] !== undefined || props['aria-labelledby'] !== undefined;
-    control = cloneElement(child, {
+    const wired = cloneElement(child, {
       id: (props.id as string | undefined) ?? fieldId,
       'aria-invalid': error ? true : props['aria-invalid'],
       'aria-describedby': [existingDescribedBy, describedBy].filter(Boolean).join(' ') || undefined,
       ...(named ? {} : { 'aria-labelledby': labelId }),
     });
+    // `Children.toArray` has already keyed the siblings, so rebuilding the list
+    // around the wired control does not provoke React's missing-key warning.
+    control = childList.length > 1 ? childList.map((c) => (c === primary ? wired : c)) : wired;
   }
 
   return (
