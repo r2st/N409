@@ -75,6 +75,7 @@ import { registerReportRoutes } from './routes/reports.js';
 import { registerPromptRoutes } from './routes/prompts.js';
 import { registerNarrativePromptRoutes } from './routes/narrativePrompts.js';
 import { registerCompanyProfileRoutes } from './routes/companyProfile.js';
+import { registerValuationTagRoutes } from './routes/valuationTags.js';
 import { registerPackageRoutes } from './routes/packageView.js';
 import { registerInboxRoutes } from './routes/inbox.js';
 import { registerNetworkItemRoutes } from './routes/networkItems.js';
@@ -491,6 +492,8 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // The caller the adapter never had.
   registerResearchRoutes(app, { pool, aiUrl: config.AI_URL });
   registerCompanyProfileRoutes(app, { pool });
+  // 409.ai parity gap #23 — the engagement tag vocabulary and its decisions.
+  registerValuationTagRoutes(app, { pool });
   registerPackageRoutes(app, { pool });
   registerJobRoutes(app, { pool });
   registerSupportRoutes(app, { pool });

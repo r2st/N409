@@ -273,6 +273,21 @@ export interface ValuationFilters {
   dueFrom?: string;
   dueTo?: string;
   /**
+   * Engagement tags (migration 0153) — every slug must be present, and only
+   * `accepted` ones count.
+   *
+   * AND rather than OR because that is what the query is for. "Pre-revenue
+   * medtech with a participating stack" is one precedent question; the OR of
+   * those three tags is most of the book of work, which is not a filter anyone
+   * asked for. A caller wanting alternatives issues the requests separately and
+   * knows which result is which.
+   *
+   * `suggested` tags are excluded for the reason they exist: a suggestion
+   * nobody has reviewed must not silently change which engagements an analyst
+   * sees when they filter.
+   */
+  tags?: string[];
+  /**
    * Include archived engagements, which are excluded from every read by
    * default. Opt-in rather than opt-out because the default is what a list, a
    * count and an export all want, and the one caller that wants the whole
@@ -405,6 +420,25 @@ export function buildValuationWhere(
     where.push(
       `${alias}last_comment_at IS NOT NULL AND (${alias}${readCol} IS NULL OR ${alias}last_comment_at > ${alias}${readCol})`,
     );
+  }
+  /*
+   * Tags, as one EXISTS per slug.
+   *
+   * Not `slug = ANY($1)` with a HAVING count: that form needs a GROUP BY the
+   * count query and the page query would each have to grow, and it reads as an
+   * OR to anyone skimming it. A conjunction of EXISTS clauses says AND in the
+   * shape it is, and `valuation_tags_slug_idx` — (slug, valuation_id) WHERE
+   * status = 'accepted' — is an index-only lookup for each one.
+   */
+  if (filters.tags?.length) {
+    const idRef = `${alias || 'valuations.'}id`;
+    for (const slug of filters.tags) {
+      params.push(slug);
+      where.push(
+        `EXISTS (SELECT 1 FROM valuation_tags vt
+                  WHERE vt.valuation_id = ${idRef} AND vt.status = 'accepted' AND vt.slug = $${params.length})`,
+      );
+    }
   }
   if (filters.createdFrom) add('created_at >= ?', filters.createdFrom);
   if (filters.createdTo) add(`created_at < ?::timestamptz + interval '1 day'`, filters.createdTo);

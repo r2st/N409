@@ -15,6 +15,7 @@ import { CurrencyCode } from '../domain/currency.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import { NAMED_BUCKET_KEYS, type NamedBucketKey } from '../domain/workflow.js';
+import { isTagSlug } from '../domain/valuationTags.js';
 import { listEvents } from '../events/record.js';
 import {
   createValuation,
@@ -119,6 +120,27 @@ export const ValuationFilterQuery = z.object({
   created_to: DateOnly.optional(),
   due_from: DateOnly.optional(),
   due_to: DateOnly.optional(),
+  /*
+   * `tags=saas,pre_revenue` — every one must be accepted on the engagement.
+   *
+   * Unknown slugs are dropped rather than refused, which is the same call the
+   * `ids` filter above makes about malformed ULIDs. A saved view or a bookmark
+   * written against a tag later retired should keep working on the tags it
+   * still names, and a 422 on a URL somebody saved six months ago is a worse
+   * answer than a narrower result. The catalogue is served at
+   * /api/v1/tag-catalogue for a caller that wants to check first.
+   */
+  tags: z
+    .string()
+    .max(600)
+    .transform((s) =>
+      s
+        .split(',')
+        .map((part) => part.trim())
+        .filter((part) => isTagSlug(part))
+        .slice(0, 12),
+    )
+    .optional(),
 });
 
 export function toRepoFilters(
@@ -145,6 +167,7 @@ export function toRepoFilters(
     createdTo: f.created_to,
     dueFrom: f.due_from,
     dueTo: f.due_to,
+    tags: f.tags?.length ? f.tags : undefined,
   };
 }
 
