@@ -119,7 +119,7 @@ describe('app data tables stay within a 375px viewport', () => {
     // instead of one short token, which no longer fits the budget, so it went
     // into an overflow-x-auto box like the invoice table beside it.
     ['pages/SettingsPage.tsx:462', 228], // personal API tokens
-    ['pages/FundPortfolioPage.tsx:525', 292], // position mark history
+    ['pages/FundPortfolioPage.tsx:530', 292], // position mark history
     ['pages/AdminSsoPage.tsx:220', 261], // SCIM tokens — label · created · state · revoke
     ['pages/AdminRetentionPage.tsx:255', 284], // legal holds — scope · reason · state · release
   ]);
