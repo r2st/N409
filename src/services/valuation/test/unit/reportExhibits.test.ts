@@ -996,6 +996,42 @@ describe('income approach exhibit', () => {
     expect(seen).toContain('0.8000x');
   });
 
+  /*
+   * The basis line under the discount rate said "Weighted average cost of
+   * capital" on every run, and on one of the three paths the calculation said
+   * otherwise. `auto_wacc` builds a WACC and then yields to a rate the analyst
+   * typed, recording both — so a run overriding a 28% build-up with 32% put
+   * "32.00% — Weighted average cost of capital" in this exhibit while Appendix I
+   * printed the 28% build-up and said in terms that it had been superseded.
+   */
+  describe('what the discount rate is said to be', () => {
+    const basisOf = (auto?: Record<string, unknown>) =>
+      plain(incomeExhibit(INPUTS, { ...RESULTS, ...(auto ? { auto } : {}) }, CONTEXT)!.html);
+
+    it('names the build-up when the run built the rate and applied it', () => {
+      const seen = basisOf({ wacc: { wacc: 0.25, used_manual_override: false } });
+      expect(seen).toContain('Weighted average cost of capital, built up in Appendix I');
+    });
+
+    it('does not call the analyst’s rate a WACC when it superseded one', () => {
+      const seen = basisOf({ wacc: { wacc: 0.2812, used_manual_override: true } });
+      expect(seen).toContain('superseding the build-up in Appendix I');
+      expect(seen).not.toContain('Weighted average cost of capital');
+      // The convention still travels with it — the discount-factor column is
+      // checked against it, and that is independent of where the rate came from.
+      expect(seen).toContain('end-of-year convention');
+    });
+
+    it('claims no derivation for a rate that was simply supplied', () => {
+      // No build-up was recorded, so Appendix I is not rendered and there is
+      // nothing to point at. It may well be a WACC; a basis line is not the
+      // place to guess.
+      const seen = basisOf();
+      expect(seen).toContain('Discount rate concluded by the analyst');
+      expect(seen).not.toContain('Weighted average cost of capital');
+    });
+  });
+
   it('states an exit-multiple terminal value as one, with the metric it was struck on', () => {
     const seen = plain(
       incomeExhibit(
@@ -2750,7 +2786,29 @@ describe('Appendix I — the WACC build-up', () => {
   it('says so when the analyst overrode it', () => {
     // The build-up still belongs in the report — it is what the override was a
     // judgement against — but the appendix must not claim it drove the flows.
-    expect(html({ used_manual_override: true })).toContain('superseded by the analyst');
+    const out = html({ used_manual_override: true });
+    expect(out).toContain('superseded by the analyst');
+    // ...nor that the flows were discounted at the components above.
+    expect(out).toContain('the figures the calculation produced');
+    expect(out).not.toContain('The discount rate applied in the income approach is the weighted');
+  });
+
+  it('does not state one rate as the WACC while Exhibit C states another', () => {
+    /*
+     * The two exhibits in one render, which is how the contradiction was
+     * reachable: Appendix I already disclosed the override, and Exhibit C
+     * labelled the overriding rate "Weighted average cost of capital" anyway.
+     * A reader met two different percentages under one name.
+     */
+    const results = { ...RESULTS, auto: { wacc: { ...AUTO_WACC, used_manual_override: true } } };
+    const appendix = plain(waccExhibit(results, CONTEXT)!.html);
+    const exhibitC = plain(incomeExhibit(INPUTS, results, CONTEXT)!.html);
+
+    expect(appendix).toContain('28.12%'); // the build-up's own conclusion
+    expect(exhibitC).toContain('25.00%'); // the rate that discounted the flows
+    // Exactly one of the two may call its figure the WACC.
+    expect(appendix).toContain('weighted average cost of capital');
+    expect(exhibitC.toLowerCase()).not.toContain('weighted average cost of capital');
   });
 
   it('renders nothing when the rate was typed rather than built', () => {

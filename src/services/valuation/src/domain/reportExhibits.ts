@@ -887,6 +887,34 @@ export function rollforwardExhibit(
 
 // ── Exhibit C — income approach ──────────────────────────────────────────────
 
+/**
+ * What the rate Exhibit C discounts at actually is.
+ *
+ * The row used to say "Weighted average cost of capital" whatever the run did,
+ * and on one of the three paths that is a claim the calculation contradicts.
+ * `auto_wacc` builds a WACC from the CAPM inputs, but it yields to a discount
+ * rate the analyst typed — `compute._resolve_auto` records the build-up either
+ * way and marks which happened with `used_manual_override`. So a run whose
+ * analyst overrode a 28% build-up with 32% printed "Discount rate 32.00% —
+ * Weighted average cost of capital" in Exhibit C, while Appendix I of the same
+ * report printed the 28% build-up and said in terms that it had been superseded.
+ * Two rates, both called the WACC, in one deliverable.
+ *
+ * The third path is a run with no build-up at all: the rate was concluded
+ * somewhere this system cannot see, so the exhibit says that rather than
+ * asserting a derivation it has no record of. It may well be a WACC — Appendix I
+ * is simply not rendered to show it, and a basis line is not the place to
+ * guess.
+ */
+function discountRateBasis(results: Record<string, unknown>): string {
+  const wacc = record(record(results.auto)?.wacc);
+  if (!wacc) return 'Discount rate concluded by the analyst';
+  if (wacc.used_manual_override === true) {
+    return 'Analyst’s concluded rate, superseding the build-up in Appendix I';
+  }
+  return 'Weighted average cost of capital, built up in Appendix I';
+}
+
 export function incomeExhibit(
   inputs: Record<string, unknown>,
   results: Record<string, unknown>,
@@ -965,9 +993,7 @@ export function incomeExhibit(
     bridge.push([
       'Discount rate',
       formatPercent(rate, 2),
-      midYear
-        ? 'Weighted average cost of capital, mid-year convention'
-        : 'Weighted average cost of capital, end-of-year convention',
+      `${discountRateBasis(results)}, ${midYear ? 'mid-year convention' : 'end-of-year convention'}`,
     ]);
   // A terminal growth rate is a Gordon input. Printing it against an
   // exit-multiple terminal value states an assumption the calculation never
@@ -3288,10 +3314,17 @@ export function waccExhibit(
 
   return section(SCHEDULE.I, [
     P(
-      'The discount rate applied in the income approach is the weighted average cost of capital. The ' +
-        'cost of equity is built up under the modified capital asset pricing model and blended with the ' +
-        'after-tax cost of debt at the subject’s target capital structure. The components below are the ' +
-        'figures the calculation used, not a reconstruction of them.',
+      (wacc.used_manual_override === true
+        ? 'The weighted average cost of capital was built up as follows and then superseded: the rate ' +
+          'Exhibit C applies is the one the analyst concluded. The build-up is disclosed because it ' +
+          'was computed and considered, and a reviewer weighing the override needs the figure it ' +
+          'departs from. '
+        : 'The discount rate applied in the income approach is the weighted average cost of capital. ') +
+        'The cost of equity is built up under the modified capital asset pricing model and blended ' +
+        'with the after-tax cost of debt at the subject’s target capital structure. The components ' +
+        'below are the figures the calculation ' +
+        (wacc.used_manual_override === true ? 'produced' : 'used') +
+        ', not a reconstruction of them.',
     ),
     table({ head: ['Cost of equity component', 'Rate', 'Basis'], rows: equity }),
     table({ head: ['Weighted average cost of capital', 'Value', 'Basis'], rows: blend }),
