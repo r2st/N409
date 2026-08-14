@@ -76,6 +76,22 @@
 #              $1.2242, because every QA check grades a number and none of them
 #              opened the report.
 #
+# gap:       `date` columns are formatted with `toISOString().slice(0, 10)` in
+#            about a dozen places, and node-postgres parses OID 1082 into a JS
+#            Date at midnight *local* time — so on a host east of UTC every one
+#            of them dates the row to the day before. `domain/navExhibits.ts`
+#            already carries the correct helper and the reasoning for it
+#            (format from the local parts, never through UTC); `capTableGraph`,
+#            `workbookTabs` and `reportExhibits` each have their own version
+#            that does not. This is latent rather than live: the Hetzner host
+#            runs UTC, where local midnight and UTC midnight coincide and every
+#            site is right. It becomes a wrong valuation date, grant date or
+#            round date the moment that is not true. Not fixed in one sweep
+#            because the same expression is *correct* at several of those sites
+#            — `vesting.ts` builds its Date through `setUTCFullYear` — so the
+#            fix is per-site and wants the OID-1082 callers identified first,
+#            not a find-and-replace.
+#
 # gap:       cap tables imported before the as-converted fix carry a stale
 #            `fully_diluted_shares` in their stored summary. That column is
 #            JSONB written once at import, and until this fix it summed
