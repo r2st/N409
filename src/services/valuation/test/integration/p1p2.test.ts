@@ -141,6 +141,10 @@ describe.skipIf(!dbUp)('P1/P2 features API', () => {
         'report_narrative',
         'roll_forward',
         'summarize',
+        // Engagement tagging (migrations 0153/0154). It is a prompt-registry
+        // row like the rest — the closed vocabulary it classes against lives in
+        // domain/valuationTags.ts, not here.
+        'tagging',
       ]);
       const extract = prompts.find((p: { pipeline: string }) => p.pipeline === 'extract');
       expect(extract.system_prompt).toContain('Never invent numbers');

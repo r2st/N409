@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { WORKBOOK_SHEETS } from '../../src/domain/workbook.js';
 
 const dbUp = await isDbAvailable();
 
@@ -155,11 +156,21 @@ describe.skipIf(!dbUp)('M2 — output & delivery (overwrites, workbook, reports)
       const res = await opsGet(`/api/v1/valuations/${valuationId}/workbook`);
       expect(res.statusCode).toBe(200);
       const { sheets } = res.json();
-      expect(sheets.map((s: { key: string }) => s.key)).toEqual([
-        'income_statement',
-        'balance_sheet',
-        'assumptions',
-      ]);
+      // Derived from the domain constant on purpose. What this route owes the
+      // caller is the template *as defined*, in order — not a particular list
+      // of sheets, which is `test/unit/workbook.test.ts`'s job to pin. A second
+      // hardcoded copy here only meant that adding a sheet (`operating_metrics`,
+      // Appendix II-1) failed this file for having been right yesterday, and
+      // Vitest emits no coverage report for a failing run.
+      expect(sheets.map((s: { key: string }) => s.key)).toEqual(WORKBOOK_SHEETS.map((s) => s.key));
+      // Still an assertion with teeth: the grid is non-trivial and every sheet
+      // arrives with its columns and rows, not just a key.
+      expect(sheets.length).toBeGreaterThan(3);
+      for (const sheet of sheets as { label: string; columns: unknown[]; rows: unknown[] }[]) {
+        expect(sheet.label).toBeTruthy();
+        expect(sheet.columns.length).toBeGreaterThan(0);
+        expect(sheet.rows.length).toBeGreaterThan(0);
+      }
     });
 
     it('saves input cells and returns recomputed derived rows', async () => {
