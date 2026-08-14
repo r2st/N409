@@ -284,11 +284,20 @@ describe('valuationWorkbookSheets', () => {
       expect(rowNumber(ct, 0)).toBe(2);
     });
 
-    it('computes ownership against the total row', () => {
-      // Four classes on rows 2-5, so the total lands on row 6.
-      expect(formulaAt(ct, 0, 8).formula).toBe('IFERROR(C2/$C$6,"")');
-      expect(formulaAt(ct, 3, 8).formula).toBe('IFERROR(C5/$C$6,"")');
-      expect(formulaAt(ct, 0, 8).value).toBeCloseTo(8 / 12, 10);
+    it('computes ownership against the as-converted total row', () => {
+      // Four classes on rows 2-5, so the total lands on row 6. The denominator
+      // is column I (as-converted), not column C (raw shares) — the two differ
+      // on any table carrying a conversion ratio.
+      expect(formulaAt(ct, 0, 9).formula).toBe('IFERROR(I2/$I$6,"")');
+      expect(formulaAt(ct, 3, 9).formula).toBe('IFERROR(I5/$I$6,"")');
+      expect(formulaAt(ct, 0, 9).value).toBeCloseTo(8 / 12, 10);
+    });
+
+    it('converts preferred through its ratio cell and passes everything else through', () => {
+      // Common (row 0) is already in common-equivalent units.
+      expect(formulaAt(ct, 0, 8).formula).toBe('C2');
+      // Series B (row 1) reads its own ratio, defaulting a blank one to 1:1.
+      expect(formulaAt(ct, 1, 8).formula).toBe('C3*IF(AND(ISNUMBER(H3),H3>0),H3,1)');
     });
 
     it('totals shares and investment over exactly the data rows', () => {
@@ -298,6 +307,8 @@ describe('valuationWorkbookSheets', () => {
       expect(formulaAt(ct, total, 2).value).toBe(12_000_000);
       expect(formulaAt(ct, total, 4).formula).toBe('SUM(E2:E5)');
       expect(formulaAt(ct, total, 4).value).toBe(7_000_000);
+      expect(formulaAt(ct, total, 8).formula).toBe('SUM(I2:I5)');
+      expect(formulaAt(ct, total, 8).value).toBe(12_000_000);
     });
 
     it('preserves the source order of the classes', () => {
@@ -307,6 +318,56 @@ describe('valuationWorkbookSheets', () => {
         'Series A Preferred',
         'Option pool',
       ]);
+    });
+
+    /*
+     * A ratchet is the case the whole as-converted column exists for: Series A
+     * converting 2:1 adds 2,000,000 shares to the denominator that a raw
+     * `SUM(shares)` never sees.
+     */
+    describe('with a class converting at other than 1:1', () => {
+      const RATCHETED = ENTRIES.map((e) =>
+        e.security_class === 'Series A Preferred' ? { ...e, conversion_ratio: 2 } : e,
+      );
+      const sheets = (validation = validateCapTable(RATCHETED)) =>
+        sheet(valuationWorkbookSheets(input({ capTable: { entries: RATCHETED, validation } })), 'Cap table');
+
+      it('divides ownership by the as-converted total, not the share tally', () => {
+        const ratcheted = sheets();
+        const total = indexOfLabel(ratcheted, 'Total (fully diluted)');
+        expect(formulaAt(ratcheted, total, 2).value).toBe(12_000_000);
+        expect(formulaAt(ratcheted, total, 8).value).toBe(14_000_000);
+        // Common holds 8M of 14M as-converted — not 8M of 12M.
+        expect(formulaAt(ratcheted, 0, 9).value).toBeCloseTo(8 / 14, 10);
+        expect(formulaAt(ratcheted, 2, 8).value).toBe(4_000_000);
+      });
+
+      it('still sums the ownership column to exactly one', () => {
+        const ratcheted = sheets();
+        const shares = ratcheted.rows.slice(0, 4).map((r) => (r[9] as { value: number }).value);
+        expect(shares.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
+      });
+
+      /*
+       * The summary is persisted as JSONB at import time, so a table stored by
+       * a build that summed 1:1 carries that number for good. Printing it beside
+       * formulas derived from the entries would put a cached total on the page
+       * that Excel contradicts the moment the reader touches a cell.
+       */
+      it('ignores a stored summary that disagrees with the entries', () => {
+        const stale = validateCapTable(RATCHETED);
+        stale.summary.fully_diluted_shares = 12_000_000; // as an older build wrote it
+        const all = valuationWorkbookSheets(input({ capTable: { entries: RATCHETED, validation: stale } }));
+
+        const capTable = sheet(all, 'Cap table');
+        const total = indexOfLabel(capTable, 'Total (fully diluted)');
+        expect(formulaAt(capTable, total, 8).value).toBe(14_000_000);
+
+        // And the Summary sheet, which sits in the same file and must not
+        // print a different denominator from the one two tabs over.
+        const summary = sheet(all, 'Summary');
+        expect(valueAt(summary, indexOfLabel(summary, 'Fully diluted shares'), 1)).toBe(14_000_000);
+      });
     });
   });
 

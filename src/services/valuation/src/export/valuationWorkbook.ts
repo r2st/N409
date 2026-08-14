@@ -19,7 +19,13 @@ import {
   type FormulaCtx,
   type WorkbookCellInput,
 } from '../domain/workbook.js';
-import { toWaterfallInputs, type CapTableEntry, type CapTableValidation } from '../domain/capTable.js';
+import {
+  asConvertedShares,
+  fullyDilutedShares,
+  toWaterfallInputs,
+  type CapTableEntry,
+  type CapTableValidation,
+} from '../domain/capTable.js';
 import { OVERWRITE_FIELDS_BY_KEY } from '../domain/overwrites.js';
 import { toIsoDate, vestingStatus } from '../domain/vesting.js';
 import { cellRef, type XlsxColumn, type XlsxSheet, type XlsxValue } from './xlsx.js';
@@ -175,11 +181,7 @@ function modelSheet(computed: ComputedSheet, currency: string): XlsxSheet {
   return { name: computed.label, titleLines, columns, rows: labelled };
 }
 
-function capTableSheet(
-  entries: CapTableEntry[],
-  validation: CapTableValidation,
-  currency: string,
-): XlsxSheet {
+function capTableSheet(entries: CapTableEntry[], currency: string): XlsxSheet {
   const columns: XlsxColumn[] = [
     { header: 'Security class', width: 28, format: 'text' },
     { header: 'Type', width: 12, format: 'text' },
@@ -189,16 +191,34 @@ function capTableSheet(
     { header: 'Liquidation multiple', width: 18, format: 'number' },
     { header: 'Seniority', width: 11, format: 'integer' },
     { header: 'Conversion ratio', width: 16, format: 'number' },
+    /*
+     * The as-converted count, shown rather than folded into the percentage.
+     *
+     * Ownership used to be `shares / SUM(shares)`, which counts a preferred
+     * class 1:1 no matter what sits in the Conversion ratio column beside it —
+     * so on any table with a ratchet the column disagreed with the engine's
+     * denominator, and with this same workbook's Waterfall sheet, which has
+     * carried an as-converted column all along. Making the conversion its own
+     * column means the reader can see the step rather than having to trust that
+     * the percentage did it, which is the point of shipping a workbook.
+     */
+    { header: 'As-converted shares', width: 20, format: 'integer' },
     { header: '% fully diluted', width: 16, format: 'percent' },
   ];
 
-  const fd = validation.summary.fully_diluted_shares;
+  // Recomputed from the entries this sheet prints rather than read off the
+  // stored summary, so the cached values agree with the formulas beside them
+  // even for a cap table persisted by a build that summed shares 1:1.
+  const fd = fullyDilutedShares(entries);
   const firstDataRow = firstDataRowFor([]);
   const lastDataRow = firstDataRow + entries.length - 1;
+  const totalRow = lastDataRow + 1;
 
   const rows: XlsxValue[][] = entries.map((e, i) => {
     const r = firstDataRow + i;
     const sharesRef = cellRef(2, r);
+    const ratioRef = cellRef(7, r);
+    const converted = asConvertedShares(e);
     return [
       e.security_class,
       e.class_type,
@@ -208,9 +228,19 @@ function capTableSheet(
       e.liquidation_multiple,
       e.seniority,
       e.conversion_ratio,
-      // Live against the total row below, so editing a share count reflows the
-      // ownership column.
-      fd > 0 ? { formula: `IFERROR(${sharesRef}/$C$${lastDataRow + 1},"")`, value: e.shares / fd } : null,
+      // Only preferred converts, so only preferred reads the ratio cell — the
+      // same rule the engine applies. A blank or non-positive ratio is 1:1,
+      // matching `asConvertedShares`, so an edited sheet recomputes to what the
+      // service would have sent.
+      e.class_type === 'preferred'
+        ? {
+            formula: `${sharesRef}*IF(AND(ISNUMBER(${ratioRef}),${ratioRef}>0),${ratioRef},1)`,
+            value: converted,
+          }
+        : { formula: sharesRef, value: converted },
+      // Live against the total row below, so editing a share count or a ratio
+      // reflows the ownership column.
+      fd > 0 ? { formula: `IFERROR(${cellRef(8, r)}/$I$${totalRow},"")`, value: converted / fd } : null,
     ];
   });
 
@@ -218,7 +248,10 @@ function capTableSheet(
     rows.push([
       'Total (fully diluted)',
       null,
-      { formula: `SUM(C${firstDataRow}:C${lastDataRow})`, value: fd },
+      {
+        formula: `SUM(C${firstDataRow}:C${lastDataRow})`,
+        value: entries.reduce((sum, e) => sum + (Number.isFinite(e.shares) ? e.shares : 0), 0),
+      },
       null,
       {
         formula: `SUM(E${firstDataRow}:E${lastDataRow})`,
@@ -227,7 +260,8 @@ function capTableSheet(
       null,
       null,
       null,
-      fd > 0 ? { formula: `SUM(I${firstDataRow}:I${lastDataRow})`, value: 1 } : null,
+      { formula: `SUM(I${firstDataRow}:I${lastDataRow})`, value: fd },
+      fd > 0 ? { formula: `SUM(J${firstDataRow}:J${lastDataRow})`, value: 1 } : null,
     ]);
   }
 
@@ -638,7 +672,9 @@ function summarySheet(input: ValuationWorkbookInput): XlsxSheet {
       [],
       ['Cap table', ''],
       ['Security classes', s.class_count],
-      ['Fully diluted shares', s.fully_diluted_shares],
+      // Same recomputation as the Cap table sheet, and for the same reason —
+      // the two sit in one file and must not print different denominators.
+      ['Fully diluted shares', fullyDilutedShares(input.capTable.entries)],
       ['Common shares', s.common_shares],
       ['Preferred shares', s.preferred_shares],
       ['Option pool shares', s.option_shares],
@@ -689,7 +725,7 @@ export function valuationWorkbookSheets(input: ValuationWorkbookInput): XlsxShee
 
   if (input.capTable && input.capTable.entries.length > 0) {
     sheets.push(
-      capTableSheet(input.capTable.entries, input.capTable.validation, input.valuation.currency),
+      capTableSheet(input.capTable.entries, input.valuation.currency),
       waterfallSheet(input.capTable.entries, input.valuation.currency, input.fmvPerShare),
     );
   }

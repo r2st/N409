@@ -11,6 +11,7 @@ import {
   validateCapTable,
   type CapTableEntry,
 } from '../../src/domain/capTable.js';
+import { capTableTotals } from '../../src/domain/workbookTabs.js';
 
 describe('capTable', () => {
   describe('parseNumericCell', () => {
@@ -379,6 +380,58 @@ describe('capTable', () => {
     // it and these were not, so a repurchase or contra row imported as valid
     // and put a negative preference into the auditor's workbook, into the
     // summary the import screen reports, and into an engine that refuses it.
+    /*
+     * The summary's fully-diluted count is a denominator, not a tally: it is
+     * what an equity value is divided by to reach a price per share, and the
+     * engine reaches it as `Σ shares × conversion_ratio` (waterfall.py). Summing
+     * the four kind buckets instead counted every preferred share 1:1 and so
+     * ignored a column this importer maps, validates and stores.
+     */
+    describe('as-converted fully diluted', () => {
+      const ratchet = (conversion_ratio: number | null): CapTableEntry[] => [
+        good[0]!,
+        { ...good[1]!, conversion_ratio },
+        good[2]!,
+      ];
+
+      it('converts preferred through its ratio', () => {
+        // 8M common + 2M preferred at 2:1 + 1M options = 13M, not 11M.
+        expect(validateCapTable(ratchet(2)).summary.fully_diluted_shares).toBe(13_000_000);
+      });
+
+      it('agrees with the workbook tab on the same entries', () => {
+        for (const ratio of [null, 1, 1.5, 2, 3]) {
+          const entries = ratchet(ratio);
+          expect(capTableTotals(entries).fully_diluted_shares).toBe(
+            validateCapTable(entries).summary.fully_diluted_shares,
+          );
+        }
+      });
+
+      it('leaves the raw share tally alone', () => {
+        // `total_shares` and the per-kind buckets stay pre-conversion — they
+        // answer "what is on the sheet", which is a different question.
+        const v = validateCapTable(ratchet(2));
+        expect(v.summary.total_shares).toBe(11_000_000);
+        expect(v.summary.preferred_shares).toBe(2_000_000);
+      });
+
+      it('counts a broken ratio 1:1 rather than dropping the class', () => {
+        // 0 is refused as `bad_conversion`; the denominator must still be the
+        // whole table, because callers that only read the summary divide by it.
+        const v = validateCapTable(ratchet(0));
+        expect(v.valid).toBe(false);
+        expect(v.summary.fully_diluted_shares).toBe(11_000_000);
+      });
+
+      it('does not convert common, options or warrants', () => {
+        // Only preferred carries a ratio in the engine's model, so a stray one
+        // on another kind must not multiply it.
+        const strayed = [{ ...good[0]!, conversion_ratio: 5 }, good[1]!, good[2]!];
+        expect(validateCapTable(strayed).summary.fully_diluted_shares).toBe(11_000_000);
+      });
+    });
+
     describe('negative money in the preference stack', () => {
       it.each([
         ['a negative invested amount', { invested_amount: -5_000_000 }, 'negative_investment'],

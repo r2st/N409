@@ -392,6 +392,13 @@ export interface CapTableSummary {
   preferred_shares: number;
   option_shares: number;
   warrant_shares: number;
+  /**
+   * Every security counted once, **as converted** — see `asConvertedShares`.
+   *
+   * Not the same figure as `total_shares`, which is the raw sum of the shares
+   * column, and the difference is the whole point: this is the denominator a
+   * per-share price is quoted against.
+   */
   fully_diluted_shares: number;
   total_preference_stack: number;
   class_count: number;
@@ -401,6 +408,49 @@ export interface CapTableValidation {
   valid: boolean;
   issues: CapTableIssue[];
   summary: CapTableSummary;
+}
+
+/** Coerce a cell that is typed `number` but arrives from JSON as either. */
+function finiteOr(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * One class's share count on an as-converted basis.
+ *
+ * This is the basis the engine allocates on — `waterfall.py` computes
+ * `total_as_converted = Σ shares × conversion_ratio`, with the ratio defaulting
+ * to 1.0 for anything that has none — and therefore the only basis a
+ * fully-diluted count may be quoted on. Only preferred converts; common,
+ * options and warrants are already in common-equivalent units, which is why the
+ * engine attaches a ratio to no other kind.
+ *
+ * A ratio of zero or below is a broken row rather than a class that converts
+ * into nothing: `validateCapTable` raises `bad_conversion` on it and the engine
+ * refuses the allocation outright, so such a table never reaches a price. It
+ * counts 1:1 here so that an already-invalid table does not additionally hand a
+ * zero denominator to the callers that only read the summary.
+ */
+export function asConvertedShares(entry: CapTableEntry): number {
+  const shares = finiteOr(entry.shares, 0);
+  if (entry.class_type !== 'preferred') return shares;
+  const ratio = finiteOr(entry.conversion_ratio, 1);
+  return shares * (ratio > 0 ? ratio : 1);
+}
+
+/**
+ * The fully-diluted, as-converted count for a whole table.
+ *
+ * Prefer this over a stored `CapTableSummary.fully_diluted_shares` anywhere the
+ * entries are in hand. The summary is persisted as JSONB at import time, so a
+ * row written by an earlier build carries whatever that build computed — and a
+ * workbook that printed a stale total beside live formulas derived from the
+ * entries would hand the reader a cached number Excel disagrees with the moment
+ * it recalculates.
+ */
+export function fullyDilutedShares(entries: readonly CapTableEntry[]): number {
+  return entries.reduce((sum, e) => sum + asConvertedShares(e), 0);
 }
 
 /**
@@ -579,8 +629,26 @@ export function validateCapTable(entries: CapTableEntry[]): CapTableValidation {
     }
   }
 
-  summary.fully_diluted_shares =
-    summary.common_shares + summary.preferred_shares + summary.option_shares + summary.warrant_shares;
+  /*
+   * As-converted, not the raw sum of the four kind buckets.
+   *
+   * Summing the buckets counts every preferred share 1:1 and so ignores
+   * `conversion_ratio` — a column this importer maps, validates
+   * (`bad_conversion`) and writes into the row, and which the engine then
+   * multiplies by. Any class converting at other than 1:1 therefore produced a
+   * fully-diluted count that disagreed with the one the valuation is actually
+   * divided by, and it disagreed in three visible places at once: the figure
+   * the import screen reports back as confirmation the sheet read correctly,
+   * the "% fully diluted" column of the exported workbook (whose Cap table
+   * sheet then contradicted its own Waterfall sheet, which has been
+   * as-converted all along), and the `cap_table` monitoring baseline, which
+   * compares this number across runs and cannot match one the engine computes
+   * differently.
+   *
+   * A 2× ratchet on a Series A is not exotic, and it understates the
+   * denominator — so every holder's ownership percentage came out too high.
+   */
+  summary.fully_diluted_shares = fullyDilutedShares(entries);
   /*
    * A table of rows that between them hold no shares.
    *

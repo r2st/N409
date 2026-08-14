@@ -1,4 +1,4 @@
-import type { CapTableEntry } from './capTable.js';
+import { asConvertedShares, type CapTableEntry } from './capTable.js';
 import type { ComputedSheet } from './workbook.js';
 import { OVERWRITE_FIELDS_BY_KEY } from './overwrites.js';
 
@@ -210,18 +210,17 @@ export function capTableTotals(entries: readonly CapTableEntry[]): CapTableTotal
 
   for (const e of entries) {
     const shares = num(e.shares) ?? 0;
+    // One definition of as-converted for the whole service. This tab and
+    // `validateCapTable`'s summary each used to carry their own, and only one
+    // of the two applied the conversion ratio, so the same cap table reported
+    // two different fully-diluted counts depending on which screen asked.
+    totals.fully_diluted_shares += asConvertedShares(e);
     switch (e.class_type) {
       case 'common':
         totals.common_shares += shares;
-        totals.fully_diluted_shares += shares;
         break;
       case 'preferred': {
         totals.preferred_shares += shares;
-        const ratio = num(e.conversion_ratio);
-        // A stored ratio of 0 is a broken row, not "converts to nothing";
-        // treating it as 1:1 is wrong in a way that shows up, whereas
-        // dropping the class from the denominator inflates every price.
-        totals.fully_diluted_shares += shares * (ratio && ratio > 0 ? ratio : 1);
         const invested = num(e.invested_amount) ?? 0;
         totals.invested_capital += invested;
         totals.liquidation_preference += invested * (num(e.liquidation_multiple) ?? 1);
@@ -229,11 +228,9 @@ export function capTableTotals(entries: readonly CapTableEntry[]): CapTableTotal
       }
       case 'option':
         totals.option_shares += shares;
-        totals.fully_diluted_shares += shares;
         break;
       case 'warrant':
         totals.warrant_shares += shares;
-        totals.fully_diluted_shares += shares;
         break;
     }
   }
