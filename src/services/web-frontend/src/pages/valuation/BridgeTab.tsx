@@ -3,6 +3,7 @@ import { api, ApiError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import { useWorkspace } from './ValuationWorkspace';
 import { WaterfallChart } from '../../components/charts';
+import { RollforwardPanel } from '../../components/valuation/RollforwardPanel';
 import { EmptyState, ErrorNote, Select, Spinner } from '../../components/ui';
 
 interface Candidate {
@@ -187,6 +188,19 @@ export function BridgeTab() {
           </div>
         </div>
       )}
+
+      {/*
+        The other bridge, and the one that moves a number: the value bridge
+        above explains a change after the fact, while the roll-forward carries
+        the prior 409A's concluded equity value into this engagement's
+        backsolve. Same tab because they answer the same question — "what does
+        last year's valuation say about this one?" — from either end.
+      */}
+      <RollforwardPanel
+        valuationId={valuation.id}
+        currency={valuation.currency}
+        candidates={candidates}
+      />
     </div>
   );
 }

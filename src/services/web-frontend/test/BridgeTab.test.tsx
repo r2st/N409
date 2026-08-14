@@ -67,9 +67,24 @@ function mockApi(options: { candidates?: unknown[]; bridge?: () => Response } = 
     const path = String(url);
     if (path.includes('/bridge-candidates')) return jsonResponse({ candidates });
     if (path.includes('/bridge/')) return bridge();
+    // The roll-forward panel shares this tab and loads itself; it has its own
+    // suite (RollforwardPanel.test.tsx), so an empty state is enough here.
+    if (path.endsWith('/rollforward')) {
+      return jsonResponse({
+        runs: [],
+        applied_anchor: null,
+        new_valuation_date: '2026-07-01',
+        rolling_forward: false,
+        can_edit: true,
+      });
+    }
     throw new Error(`unexpected fetch ${path}`);
   });
 }
+
+/** The bridge calls only — the panel's own traffic is not this suite's subject. */
+const bridgeCalls = (spy: { mock: { calls: unknown[][] } }): string[] =>
+  spy.mock.calls.map((c) => String(c[0])).filter((p) => p.includes('/bridge'));
 
 function renderTab() {
   return render(
@@ -119,6 +134,9 @@ describe('BridgeTab', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('offline'));
     renderTab();
     await screen.findByText(/Could not load comparable valuations/i);
+    // The roll-forward panel shares the tab and fails its own load a tick
+    // later; wait for it to settle before claiming nothing is still spinning.
+    await screen.findByText('Could not load the roll-forward.');
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
@@ -126,7 +144,7 @@ describe('BridgeTab', () => {
     const fetchSpy = mockApi();
     renderTab();
     await screen.findByLabelText('Compare against');
-    expect(fetchSpy.mock.calls).toHaveLength(1);
+    expect(bridgeCalls(fetchSpy)).toEqual([`/api/v1/valuations/${valuation.id}/bridge-candidates`]);
     expect(screen.queryByTestId('bridge-result')).not.toBeInTheDocument();
   });
 
@@ -136,9 +154,7 @@ describe('BridgeTab', () => {
     await userEvent.selectOptions(await screen.findByLabelText('Compare against'), CANDIDATES[0]!.id);
 
     await screen.findByTestId('bridge-result');
-    expect(String(fetchSpy.mock.calls[1]![0])).toBe(
-      `/api/v1/valuations/${valuation.id}/bridge/${CANDIDATES[0]!.id}`,
-    );
+    expect(bridgeCalls(fetchSpy)[1]).toBe(`/api/v1/valuations/${valuation.id}/bridge/${CANDIDATES[0]!.id}`);
     const result = within(screen.getByTestId('bridge-result'));
     expect(result.getByText('From (V-2025-004)')).toBeInTheDocument();
     expect(result.getByText('To (V-2026-002)')).toBeInTheDocument();
