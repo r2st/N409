@@ -115,6 +115,28 @@ export async function createCommunicationTemplate(
   return rows[0]!;
 }
 
+/**
+ * Columns a template patch may name. The key is interpolated into SQL rather
+ * than bound — a column name cannot be a parameter — so what is allowed to
+ * reach that position has to be decided here and not by the caller.
+ *
+ * Today's caller passes `TemplatePatch.safeParse(...).data`, and a plain Zod
+ * object strips unknown keys, so nothing else can arrive. That is a property of
+ * one schema at one call site, not of this function: `.passthrough()`, a second
+ * caller, or a hand-built patch object each turn `Object.entries(patch)` into
+ * attacker-chosen SQL. The type annotation says the same thing and is erased at
+ * runtime. Every sibling repo that builds an UPDATE this way — narrativePrompts,
+ * branding, params, adminUsers, grants, clientIntake — names its columns in the
+ * repo; these two were the outliers.
+ */
+const TEMPLATE_PATCH_COLUMNS: ReadonlySet<string> = new Set([
+  'category',
+  'description',
+  'subject',
+  'body',
+  'enabled',
+]);
+
 export async function updateCommunicationTemplate(
   pool: pg.Pool,
   id: string,
@@ -124,6 +146,7 @@ export async function updateCommunicationTemplate(
   const sets: string[] = ['updated_at = now()'];
   const params: unknown[] = [];
   for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined || !TEMPLATE_PATCH_COLUMNS.has(key)) continue;
     params.push(value);
     sets.push(`${key} = $${params.length}`);
   }
@@ -206,6 +229,19 @@ export async function createAutoEmail(
   return rows[0]!;
 }
 
+/** Columns a campaign patch may name — see TEMPLATE_PATCH_COLUMNS for why. */
+const AUTO_EMAIL_PATCH_COLUMNS: ReadonlySet<string> = new Set([
+  'channel',
+  'trigger_state',
+  'condition',
+  'delay_hours',
+  'repeat_hours',
+  'max_sends',
+  'template_key',
+  'enabled',
+  'promotional',
+]);
+
 export async function updateAutoEmail(
   pool: pg.Pool,
   id: string,
@@ -227,6 +263,7 @@ export async function updateAutoEmail(
   const sets: string[] = ['updated_at = now()'];
   const params: unknown[] = [];
   for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined || !AUTO_EMAIL_PATCH_COLUMNS.has(key)) continue;
     params.push(value);
     sets.push(`${key} = $${params.length}`);
   }
