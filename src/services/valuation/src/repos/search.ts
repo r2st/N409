@@ -61,28 +61,44 @@ export interface DocumentSearchHit {
 }
 
 /**
- * The scope predicate every search shares, as SQL against a `valuations` row.
+ * What a caller may see of the `valuations` table, as SQL against one row:
+ * the scope predicate, plus the archived filter every other read applies.
  *
  * `searchValuations` builds this inline against the table's own columns;
  * document search needs the same rule applied to the *joined* valuation, so
  * the clause is written once here and qualified with the caller's alias.
  * Keeping one source for the rule is what stops the two endpoints drifting
  * into different answers about who can see what.
+ *
+ * The archived half belongs here for the same reason. `buildValuationWhere`
+ * (repos/valuations.ts) carries `archived_at IS NULL` for the list, the counts,
+ * the buckets and the export — and its comment says why it is one builder and
+ * not ten: "every read that forgets is a read that shows archived work".
+ * Search *was* the read that forgot. It builds its own WHERE, so it never
+ * inherited the rule, and a retired engagement stayed findable by company name,
+ * by number and by id — for the client whose engagement it was, not only for
+ * ops. Retiring an engagement removed it from every list and left it in the one
+ * box people actually type into.
+ *
+ * There is no `includeArchived` counterpart here on purpose: the list has a
+ * filter that asks for archived work explicitly, and search has no such
+ * affordance to honour.
  */
-function scopeClause(
+function visibleValuationSql(
   scope: Exclude<ValuationScope, { kind: 'none' }>,
   alias: string,
   params: unknown[],
-): string | null {
+): string[] {
+  const where = [`${alias}.archived_at IS NULL`];
   if (scope.kind === 'partner') {
     params.push(scope.partnerId);
-    return `${alias}.partner_id = $${params.length}`;
+    where.push(`${alias}.partner_id = $${params.length}`);
   }
   if (scope.kind === 'own') {
     params.push(scope.userId);
-    return `${alias}.user_id = $${params.length}`;
+    where.push(`${alias}.user_id = $${params.length}`);
   }
-  return null;
+  return where;
 }
 
 export async function searchValuations(
@@ -93,10 +109,8 @@ export async function searchValuations(
 ): Promise<ValuationRow[]> {
   if (scope.kind === 'none') return [];
 
-  const where: string[] = [];
   const params: unknown[] = [];
-  const scoped = scopeClause(scope, 'valuations', params);
-  if (scoped) where.push(scoped);
+  const where = visibleValuationSql(scope, 'valuations', params);
 
   const matches: string[] = [];
   const contains = likeContains(q);
@@ -141,7 +155,10 @@ export async function searchValuations(
  *
  * Soft-deleted rows are excluded — a deleted upload is deleted, and the
  * partial index on `documents (valuation_id) WHERE deleted_at IS NULL` already
- * reflects that this is the only interesting slice.
+ * reflects that this is the only interesting slice. So are uploads hanging off
+ * an archived valuation: the document is not itself deleted, but the engagement
+ * it belongs to has been retired, and a hit here carries that engagement's
+ * company name and number in its own payload.
  */
 export async function searchDocuments(
   pool: pg.Pool,
@@ -152,9 +169,7 @@ export async function searchDocuments(
   if (scope.kind === 'none') return [];
 
   const params: unknown[] = [];
-  const where: string[] = ['d.deleted_at IS NULL'];
-  const scoped = scopeClause(scope, 'v', params);
-  if (scoped) where.push(scoped);
+  const where: string[] = ['d.deleted_at IS NULL', ...visibleValuationSql(scope, 'v', params)];
 
   const matches: string[] = [];
   params.push(likeContains(q));
@@ -180,11 +195,28 @@ export async function searchDocuments(
   return rows;
 }
 
+/**
+ * People, for the ops-only half of the search box.
+ *
+ * Deactivated accounts are excluded, which every other read of `users` already
+ * does — `listUsers` (repos/adminUsers.ts) filters `u.deleted_at IS NULL`, the
+ * per-firm roster does, the reviewer picker does, and migration 0148 indexes
+ * exactly that slice. Search did not, so a deactivated account stayed visible
+ * here and nowhere else: the one surface that could still hand an admin a
+ * departed employee to assign work to, after the directory had stopped
+ * offering them.
+ *
+ * The `OR id = …` branch is inside the parentheses for the same reason. A bare
+ * `OR` would have escaped the deleted filter and made every deactivated user
+ * retrievable by pasting their id — the exact shape of the bug being fixed,
+ * one operator away.
+ */
 export async function searchUsers(pool: pg.Pool, q: string, limit = 10): Promise<UserSearchHit[]> {
   const { rows } = await pool.query<UserSearchHit>(
     `SELECT id, email, first_name, last_name, partner_id FROM users
-     WHERE ${userSearchSql('$1')}
-        ${isUlid(q.toUpperCase()) ? 'OR id = $3' : ''}
+     WHERE deleted_at IS NULL
+       AND (${userSearchSql('$1')}
+        ${isUlid(q.toUpperCase()) ? 'OR id = $3' : ''})
      ORDER BY created_at DESC LIMIT $2`,
     isUlid(q.toUpperCase()) ? [likeContains(q), limit, q.toUpperCase()] : [likeContains(q), limit],
   );
