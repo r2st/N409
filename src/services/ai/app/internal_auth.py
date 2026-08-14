@@ -9,6 +9,10 @@ Dockerfile ``--host 127.0.0.1``), this closes the "zero auth on 0.0.0.0" gap.
 
 The token is read from the environment per-request (not at import) so a
 deployment can rotate it without a code change and tests can toggle it.
+
+Configuring it is optional outside production and mandatory inside it: with
+``APP_ENV=production`` and no secret, ``enforce_token_configured`` refuses to
+start the service rather than logging a warning nobody reads.
 """
 
 from __future__ import annotations
@@ -80,24 +84,62 @@ def tokens_match(provided: str | None, expected: str) -> bool:
     return hmac.compare_digest(_header_bytes(provided), expected.encode("utf-8"))
 
 
+class MissingInternalTokenError(RuntimeError):
+    """Raised at import time when production has no ``INTERNAL_SERVICE_TOKEN``."""
+
+
+def is_production() -> bool:
+    """True when this process believes it is serving production traffic.
+
+    Same variable ``anonymize.anonymization_enforced`` keys off, so one setting
+    turns on both of this service's production-only guards.
+    """
+    return os.environ.get("APP_ENV", "").lower() == "production"
+
+
 async def internal_token_middleware(request: Request, call_next):
     """Reject non-health requests whose ``X-Internal-Token`` doesn't match.
 
-    A no-op when the secret is unset (local dev / tests). Production MUST set
-    ``INTERNAL_SERVICE_TOKEN`` — ``warn_if_unset`` logs a startup warning so a
-    misconfigured deploy is loud rather than silently open.
+    A no-op when the secret is unset outside production (local dev / tests).
+    Production MUST set ``INTERNAL_SERVICE_TOKEN``: ``enforce_token_configured``
+    refuses to start without it, and this middleware refuses every non-public
+    request too, so the gate cannot be opened by unsetting the variable.
     """
     expected = _configured_token()
-    if expected is not None and not is_public_path(request.url.path):
-        if not tokens_match(request.headers.get(INTERNAL_TOKEN_HEADER), expected):
+    if is_public_path(request.url.path):
+        return await call_next(request)
+    if expected is None:
+        # Unreachable after a successful start-up in production; kept because
+        # the token is read per-request so it can rotate without a restart, and
+        # rotating it to nothing must close the gate rather than open it.
+        if is_production():
             return error_response(401, "Missing or invalid internal service token")
+        return await call_next(request)
+    if not tokens_match(request.headers.get(INTERNAL_TOKEN_HEADER), expected):
+        return error_response(401, "Missing or invalid internal service token")
     return await call_next(request)
 
 
-def warn_if_unset() -> None:
-    if _configured_token() is None:
-        _log.warning(
-            "%s is not set — the service accepts unauthenticated requests. "
-            "Set it in production and bind to loopback.",
-            INTERNAL_TOKEN_ENV,
+def enforce_token_configured() -> None:
+    """Fail the boot in production when no secret is configured; warn otherwise.
+
+    This was warn-only everywhere (R25 security audit). A deploy that forgot the
+    secret logged one line and then served every non-health route
+    unauthenticated — and that line is identical to the one a developer laptop
+    prints, where it is correct. The failure a warning describes here is silent,
+    permanent, and only visible from outside the box, so it is worth a failed
+    start instead: a crash-looping unit is noticed, an open one is not.
+    """
+    if _configured_token() is not None:
+        return
+    if is_production():
+        raise MissingInternalTokenError(
+            f"{INTERNAL_TOKEN_ENV} is required when APP_ENV=production — refusing to start. "
+            "Every non-health route would otherwise accept unauthenticated requests. "
+            "Generate one with `openssl rand -hex 32` and set it on every service in the estate."
         )
+    _log.warning(
+        "%s is not set — the service accepts unauthenticated requests. "
+        "Set it in production and bind to loopback.",
+        INTERNAL_TOKEN_ENV,
+    )

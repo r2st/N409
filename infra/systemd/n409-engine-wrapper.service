@@ -3,6 +3,9 @@
 # SECURITY (audit B-1 P0): binds 127.0.0.1 (never world-reachable) and requires
 # X-Internal-Token (INTERNAL_SERVICE_TOKEN in /opt/N409/.env). The CPU-bound
 # /engine/v1/compute is a DoS target if exposed. See infra/DEPLOYMENT.md.
+# APP_ENV=production is what makes that token mandatory rather than advisory:
+# without it the service starts and serves unauthenticated when the secret is
+# missing, which is the failure the guard exists to prevent.
 [Unit]
 Description=N409 engine-wrapper (FastAPI calculation engine)
 After=network-online.target
@@ -12,6 +15,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/N409/src/services/engine-wrapper
 EnvironmentFile=/opt/N409/.env
+Environment=APP_ENV=production
 ExecStart=/opt/N409/src/services/engine-wrapper/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 3003
 Restart=always
 RestartSec=3

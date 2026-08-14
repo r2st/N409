@@ -2,7 +2,8 @@
 
 When INTERNAL_SERVICE_TOKEN is set, every non-health route requires a matching
 X-Internal-Token header; health/introspection routes stay open; and an unset
-secret leaves the service open (dev/test) but logs a warning.
+secret leaves the service open (dev/test) but logs a warning. In production
+(APP_ENV=production) an unset secret is a failed boot instead.
 """
 
 import logging
@@ -12,13 +13,20 @@ from fastapi.testclient import TestClient
 
 from app.internal_auth import (
     INTERNAL_TOKEN_ENV,
+    MissingInternalTokenError,
+    is_production,
     is_public_path,
     tokens_match,
-    warn_if_unset,
+    enforce_token_configured,
 )
 from app.main import app
 
 TOKEN = "s3cret-internal-token"
+
+# One route behind the gate, and a body its handler will accept far enough to
+# prove the request cleared auth.
+PROTECTED_PATH = "/ai/v1/pipelines/__no_such_pipeline__"
+PROTECTED_BODY = {"valuation": {}}
 
 
 @pytest.fixture
@@ -71,10 +79,10 @@ def test_unset_secret_leaves_service_open(monkeypatch, client):
     assert res.status_code == 404
 
 
-def test_warn_if_unset_logs(monkeypatch, caplog):
+def test_unset_secret_warns_outside_production(monkeypatch, caplog):
     monkeypatch.delenv(INTERNAL_TOKEN_ENV, raising=False)
     with caplog.at_level(logging.WARNING):
-        warn_if_unset()
+        enforce_token_configured()
     assert any(INTERNAL_TOKEN_ENV in r.message for r in caplog.records)
 
 
@@ -146,3 +154,68 @@ def test_tokens_match_compares_wire_bytes_not_decoded_text():
     on_the_wire = secret.encode("utf-8").decode("latin-1")
     assert tokens_match(on_the_wire, secret) is True
     assert tokens_match(secret, secret) is False
+
+
+# ── Fail-closed in production (R25 security audit) ────────────────────────────
+#
+# The gate was warn-only wherever the secret was missing, so a deploy that
+# forgot INTERNAL_SERVICE_TOKEN logged one line and then served every non-health
+# route unauthenticated — and that line reads exactly like the one a developer
+# laptop prints, where it is correct. Under APP_ENV=production the same
+# situation has to stop the service instead.
+
+
+def test_production_without_a_secret_refuses_to_start(monkeypatch):
+    monkeypatch.delenv(INTERNAL_TOKEN_ENV, raising=False)
+    monkeypatch.setenv("APP_ENV", "production")
+    with pytest.raises(MissingInternalTokenError) as excinfo:
+        enforce_token_configured()
+    assert INTERNAL_TOKEN_ENV in str(excinfo.value)
+
+
+@pytest.mark.parametrize("value", ["production", "PRODUCTION", "Production"])
+def test_production_is_recognised_whatever_the_casing(monkeypatch, value):
+    monkeypatch.setenv("APP_ENV", value)
+    assert is_production() is True
+
+
+@pytest.mark.parametrize("value", ["", "dev", "staging", "prod", "development"])
+def test_only_production_fails_closed(monkeypatch, value):
+    """`prod` is deliberately not production: the deploy sets the exact word.
+
+    Guessing at near-misses would mean a laptop with APP_ENV=prod refusing to
+    start, which trades one confusing failure for another. The unit files and
+    DEPLOYMENT.md all set `production`.
+    """
+    monkeypatch.delenv(INTERNAL_TOKEN_ENV, raising=False)
+    monkeypatch.setenv("APP_ENV", value)
+    assert is_production() is False
+    enforce_token_configured()  # warns, does not raise
+
+
+def test_production_with_a_secret_starts(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv(INTERNAL_TOKEN_ENV, TOKEN)
+    enforce_token_configured()
+
+
+def test_production_rejects_requests_if_the_secret_is_unset_after_boot(monkeypatch, client):
+    """The token is read per request so it can rotate without a restart.
+
+    Rotating it to nothing must close the gate, not open it — otherwise the
+    start-up check is the only thing holding the door and a bad rotation
+    silently undoes it.
+    """
+    monkeypatch.delenv(INTERNAL_TOKEN_ENV, raising=False)
+    monkeypatch.setenv("APP_ENV", "production")
+    res = client.post(PROTECTED_PATH, json=PROTECTED_BODY)
+    assert res.status_code == 401
+    assert "internal service token" in res.json()["detail"].lower()
+
+
+def test_production_keeps_the_probes_open_with_no_secret(monkeypatch, client):
+    """A supervisor must still be able to see that the service is up and wrong."""
+    monkeypatch.delenv(INTERNAL_TOKEN_ENV, raising=False)
+    monkeypatch.setenv("APP_ENV", "production")
+    assert client.get("/health").status_code == 200
+    assert client.get("/ready").status_code in (200, 503)

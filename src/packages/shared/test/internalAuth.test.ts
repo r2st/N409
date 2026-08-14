@@ -5,6 +5,8 @@ import {
   internalToken,
   internalTokenMatches,
   isInternalPublicPath,
+  isProductionEnv,
+  MissingInternalTokenError,
   registerInternalAuth,
 } from '../src/internalAuth.js';
 import { registerHealth } from '../src/health.js';
@@ -223,5 +225,101 @@ describe('registerInternalAuth', () => {
       registerInternalAuth(app);
       expect(warnings[0]).toMatch(/INTERNAL_SERVICE_TOKEN is not set/);
     });
+  });
+});
+
+/**
+ * Fail-closed in production (R25 security audit).
+ *
+ * Warn-only was the whole gap: a deploy that forgot the secret logged one line
+ * and then served every non-health route unauthenticated, and that line reads
+ * exactly like the one a developer laptop prints, where it is correct. Under
+ * `NODE_ENV=production` the same situation has to stop the service instead —
+ * a unit that will not start gets noticed, an open one does not.
+ */
+describe('registerInternalAuth in production', () => {
+  const PROD = { NODE_ENV: 'production' } as NodeJS.ProcessEnv;
+
+  it('refuses to register with no secret configured', () => {
+    const instance = Fastify({ logger: false });
+    expect(() => registerInternalAuth(instance, { service: 'report', env: { ...PROD } })).toThrow(
+      MissingInternalTokenError,
+    );
+    expect(() => registerInternalAuth(instance, { service: 'report', env: { ...PROD } })).toThrow(
+      /INTERNAL_SERVICE_TOKEN is required.*refusing to start report/s,
+    );
+  });
+
+  it('names the service that refused, so a five-unit estate says which one', () => {
+    const instance = Fastify({ logger: false });
+    try {
+      registerInternalAuth(instance, { service: 'report', env: { ...PROD } });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MissingInternalTokenError);
+      expect((err as MissingInternalTokenError).service).toBe('report');
+    }
+  });
+
+  it('registers normally when the secret is configured', async () => {
+    app = buildStub({ ...PROD, INTERNAL_SERVICE_TOKEN: SECRET });
+    const denied = await app.inject({ method: 'POST', url: '/render/v1/pdf' });
+    expect(denied.statusCode).toBe(401);
+    const allowed = await app.inject({
+      method: 'POST',
+      url: '/render/v1/pdf',
+      headers: { [INTERNAL_TOKEN_HEADER]: SECRET },
+    });
+    expect(allowed.statusCode).toBe(200);
+  });
+
+  it('closes the gate when a rotation removes the secret after start-up', async () => {
+    // The secret is deliberately re-read per request so it can rotate without a
+    // restart. That means the start-up check is not the only thing holding the
+    // door: rotating to nothing must 401, not fall through to the handler.
+    const env: NodeJS.ProcessEnv = { ...PROD, INTERNAL_SERVICE_TOKEN: SECRET };
+    app = buildStub(env);
+    delete env.INTERNAL_SERVICE_TOKEN;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/render/v1/pdf',
+      headers: { [INTERNAL_TOKEN_HEADER]: SECRET },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('keeps the probes open when a rotation removes the secret', async () => {
+    // A supervisor has to be able to see that the service is up and misconfigured.
+    const env: NodeJS.ProcessEnv = { ...PROD, INTERNAL_SERVICE_TOKEN: SECRET };
+    app = buildStub(env);
+    delete env.INTERNAL_SERVICE_TOKEN;
+
+    for (const url of ['/', '/health', '/ready']) {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.statusCode, url).toBe(200);
+    }
+  });
+
+  it('leaves every non-production environment warn-only', () => {
+    for (const NODE_ENV of ['development', 'test', 'staging', undefined]) {
+      const instance = Fastify({ logger: false });
+      expect(() =>
+        registerInternalAuth(instance, { service: 'stub', env: { NODE_ENV }, log: { warn: () => {} } }),
+      ).not.toThrow();
+    }
+  });
+});
+
+describe('isProductionEnv', () => {
+  it('matches only the exact word the unit files set', () => {
+    expect(isProductionEnv({ NODE_ENV: 'production' })).toBe(true);
+    // `prod` is deliberately not production: guessing at near-misses would make
+    // a laptop with NODE_ENV=prod refuse to start, trading one confusing
+    // failure for another. infra/systemd/* all set `production`.
+    expect(isProductionEnv({ NODE_ENV: 'prod' })).toBe(false);
+    expect(isProductionEnv({ NODE_ENV: 'Production' })).toBe(false);
+    expect(isProductionEnv({ NODE_ENV: 'development' })).toBe(false);
+    expect(isProductionEnv({})).toBe(false);
   });
 });

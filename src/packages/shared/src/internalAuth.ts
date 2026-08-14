@@ -22,9 +22,11 @@ import { problems } from './problem.js';
  * from being open. This closes that inconsistency: all four internal services
  * now answer the question the same way.
  *
- * Off when the variable is unset, matching the Python behaviour exactly so a
- * local `docker compose up` and the existing test suites keep working, and so
- * a single configured secret turns the whole estate on at once.
+ * Off when the variable is unset *outside* production, matching the Python
+ * behaviour exactly so a local `docker compose up` and the existing test suites
+ * keep working, and so a single configured secret turns the whole estate on at
+ * once. In production an unset secret refuses to start — see
+ * {@link MissingInternalTokenError}.
  */
 export const INTERNAL_TOKEN_HEADER = 'x-internal-token';
 export const INTERNAL_TOKEN_ENV = 'INTERNAL_SERVICE_TOKEN';
@@ -63,13 +65,43 @@ export interface InternalAuthLogger {
   warn: (obj: Record<string, unknown>, msg: string) => void;
 }
 
+/** True when this process believes it is serving production traffic. */
+export function isProductionEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV === 'production';
+}
+
+/**
+ * Thrown at start-up when production has no `INTERNAL_SERVICE_TOKEN`.
+ *
+ * The gate used to be warn-only in every environment (R25 security audit): a
+ * deploy that forgot the secret logged one line and then served every internal
+ * route unauthenticated, and the line is indistinguishable from the same line
+ * on a developer laptop where it is correct. A warning is the wrong shape for
+ * this — the failure it describes is silent, permanent, and only visible from
+ * outside the box. Refusing to boot makes the misconfiguration cost a failed
+ * deploy instead of an open service.
+ */
+export class MissingInternalTokenError extends Error {
+  constructor(readonly service: string) {
+    super(
+      `${INTERNAL_TOKEN_ENV} is required when NODE_ENV=production — refusing to start ${service}. ` +
+        'Every non-health route on this service would otherwise accept unauthenticated requests. ' +
+        `Generate one with \`openssl rand -hex 32\` and set it on every service in the estate.`,
+    );
+    this.name = 'MissingInternalTokenError';
+  }
+}
+
 /**
  * Requires `X-Internal-Token` on every non-health route once
- * `INTERNAL_SERVICE_TOKEN` is set. Register before the routes it guards.
+ * `INTERNAL_SERVICE_TOKEN` is set, and requires the variable itself in
+ * production. Register before the routes it guards.
  *
  * `onRequest` rather than a per-route preHandler: it runs before the body is
  * parsed, so an unauthenticated caller cannot make this service buffer and
  * validate an eight-megabyte render request before being turned away.
+ *
+ * @throws MissingInternalTokenError in production with no secret configured.
  */
 export function registerInternalAuth(
   app: FastifyInstance,
@@ -79,6 +111,7 @@ export function registerInternalAuth(
 ): void {
   const env = opts.env ?? process.env;
   if (internalToken(env) === null) {
+    if (isProductionEnv(env)) throw new MissingInternalTokenError(opts.service);
     (opts.log ?? app.log).warn(
       { service: opts.service, env: INTERNAL_TOKEN_ENV },
       `${INTERNAL_TOKEN_ENV} is not set — this service accepts unauthenticated requests. ` +
@@ -87,10 +120,17 @@ export function registerInternalAuth(
   }
 
   app.addHook('onRequest', async (req: FastifyRequest) => {
-    // Re-read per request: the warning above is about start-up configuration,
-    // the check is about the secret in force right now.
+    // Re-read per request: the check above is about start-up configuration,
+    // this one is about the secret in force right now.
     const expected = internalToken(env);
-    if (expected === null || isInternalPublicPath(req.url)) return;
+    if (isInternalPublicPath(req.url)) return;
+    if (expected === null) {
+      // Unreachable at boot in production, but the secret is deliberately
+      // re-read so it can rotate without a restart — and a rotation that
+      // rotates it to nothing must close the gate, not open it.
+      if (isProductionEnv(env)) throw problems.unauthorized('Missing or invalid internal service token');
+      return;
+    }
     const provided = req.headers[INTERNAL_TOKEN_HEADER];
     const value = Array.isArray(provided) ? provided[0] : provided;
     if (!internalTokenMatches(value, expected)) {

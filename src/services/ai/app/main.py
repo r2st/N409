@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .agents import AGENT_PIPELINES
 from .anonymize import AnonymizeInputError, Redactor
 from .errors import install_error_handlers, make_unhandled_error_middleware
-from .internal_auth import internal_token_middleware, warn_if_unset
+from .internal_auth import enforce_token_configured, internal_token_middleware
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
 from .llm_router import chat, configured_models
@@ -124,7 +124,7 @@ app.middleware("http")(make_request_context_middleware(SERVICE))
 # Put the request id on the deliberate failures as well, so every error
 # response this service can emit is traceable to a log line.
 install_error_handlers(app)
-warn_if_unset()
+enforce_token_configured()
 
 
 class PipelineRequest(BaseModel):

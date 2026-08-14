@@ -10,6 +10,8 @@ export {
   internalToken,
   internalTokenMatches,
   isInternalPublicPath,
+  isProductionEnv,
+  MissingInternalTokenError,
   registerInternalAuth,
   type InternalAuthLogger,
 } from './internalAuth.js';

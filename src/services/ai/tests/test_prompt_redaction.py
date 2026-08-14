@@ -484,9 +484,15 @@ def test_the_dry_run_box_honours_the_escape_hatch_outside_production(monkeypatch
 def test_production_ignores_the_escape_hatch_in_the_dry_run_box(monkeypatch, dry_run, client):
     # The route the pipelines' enforcement test does not reach.
     monkeypatch.setenv("APP_ENV", "production")
+    # APP_ENV=production also arms the internal-token gate (internal_auth.py),
+    # so a production request is one that carries the header. Configuring the
+    # secret here keeps this test about redaction rather than about auth — and
+    # keeps "production" meaning the same thing in both.
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "s3cret-internal-token")
     resp = client.post(
         "/ai/v1/test",
         json={"system": "s", "user": OVERVIEW, "options": {"anonymize": False}},
+        headers={"X-Internal-Token": "s3cret-internal-token"},
     )
     assert EMAIL not in dry_run[0]["user"] and PHONE not in dry_run[0]["user"]
     assert resp.json()["anonymization"]["enforced"] is True

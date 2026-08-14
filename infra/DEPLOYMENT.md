@@ -45,8 +45,18 @@ The single most important production control, and the reason this doc exists:
    caller that reached port 3004, with the firewall and the loopback bind as the
    only guard. Every unit already loads the same `.env`, so no new variable is
    needed.
+
+   **This is fail-closed.** A missing secret used to log one warning and then
+   serve every non-health route unauthenticated — a line indistinguishable from
+   the one a developer laptop prints, where it is correct. All three services
+   now **refuse to start** without it when they are told they are in production:
+   `NODE_ENV=production` for `report`, `APP_ENV=production` for `ai` and
+   `engine-wrapper`. If a unit crash-loops after a deploy with
+   `INTERNAL_SERVICE_TOKEN is required`, that is this check, and the fix is the
+   variable rather than the flag.
 4. **Forced PII redaction.** `n409-ai` runs with `APP_ENV=production`, which
-   makes `options.anonymize=false` a no-op.
+   makes `options.anonymize=false` a no-op. `n409-engine-wrapper` sets it too,
+   for the token check in item 3 — it has no LLM call to redact.
 5. **Document encryption at rest.** Set `DOCUMENTS_ENCRYPTION_KEY` in
    `/opt/N409/.env` (`openssl rand -hex 32`) to AES-256-GCM the stored blobs.
 
@@ -58,12 +68,17 @@ work adds:
 
 ```
 NODE_ENV=production
-INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>   # valuation ⇄ ai/engine/report
+INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>   # valuation ⇄ ai/engine/report; REQUIRED
 DOCUMENTS_ENCRYPTION_KEY=<openssl rand -hex 32> # document blobs at rest
 PUBLIC_BASE_URL=https://n409.aiknol.com         # emailed links (reset, board sign)
 BUILD_SHA_FILE=/opt/N409/BUILD_SHA              # provenance, written by the deploy
-# On the ai unit (set in the unit file, not .env): APP_ENV=production
+# On the ai and engine-wrapper units (set in the unit files, not .env):
+#   APP_ENV=production
 ```
+
+`INTERNAL_SERVICE_TOKEN` is the one entry above that is not optional: omit it
+and `report`, `ai` and `engine-wrapper` all fail to start (security posture
+item 3). Everything else degrades rather than refusing.
 
 ### Optional: Amazon Bedrock as a second completion provider (design §12.2)
 
