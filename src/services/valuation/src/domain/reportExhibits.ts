@@ -1770,6 +1770,25 @@ export function allocationExhibit(
   if (stdErr !== null) {
     simulation.push(['Standard error of the simulated value per share', formatCurrency(stdErr, currency, 6)]);
   }
+  /*
+   * And the same precision as an interval.
+   *
+   * The standard error alone left the reader to double it, sign it and add it
+   * before the figure meant anything, and on a simulated allocation that
+   * arithmetic moves the first decimal: a per-share value printed to six
+   * decimals can carry an error near five cents. A schedule that states the
+   * conclusion to a precision the method does not have is the same defect as
+   * one that states a rate too coarsely to reproduce the deduction beside it —
+   * this end of it just flatters the number instead of contradicting it.
+   */
+  const [ciLow, ciHigh] = list(allocation.common_per_share_ci95).map(num);
+  const level = num(allocation.confidence_level);
+  if (ciLow != null && ciHigh != null) {
+    simulation.push([
+      `${level !== null ? formatPercent(level, 0) : '95%'} confidence interval for the simulated value per share`,
+      `${formatCurrency(ciLow, currency, 4)} – ${formatCurrency(ciHigh, currency, 4)}`,
+    ]);
+  }
 
   return section(SCHEDULE.F, [
     P(

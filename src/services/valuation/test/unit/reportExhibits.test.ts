@@ -2260,6 +2260,8 @@ describe('Exhibit F — a simulated allocation', () => {
       common_shares: 9_250_000,
       common_per_share: 3.5537,
       standard_error_per_share: 0.0605,
+      common_per_share_ci95: [3.435112, 3.672288],
+      confidence_level: 0.95,
       scenarios: [
         { name: 'IPO', probability: 0.3, years_to_exit: 5, volatility: 0.7, common_per_share: 3.66 },
         { name: 'Trade sale', probability: 0.7, years_to_exit: 2, volatility: 0.5, common_per_share: 3.48 },
@@ -2292,6 +2294,24 @@ describe('Exhibit F — a simulated allocation', () => {
     // rounded to the same place would read as zero.
     expect(html()).toContain('Standard error');
     expect(html()).toContain('0.060500');
+  });
+
+  it('states the precision as an interval, not only as an error to convert', () => {
+    // A reader given only a standard error has to double it, sign it and add it
+    // before the figure means anything, and here that arithmetic moves the
+    // first decimal: $3.5537 carries an error of six cents.
+    expect(html()).toContain('95% confidence interval');
+    expect(html()).toContain('$3.4351');
+    expect(html()).toContain('$3.6723');
+  });
+
+  it('omits the interval rather than inventing one for a run that reported none', () => {
+    // Calculations stored before the engine reported it, and every closed-form
+    // allocation, which has no interval because it has no error.
+    const { common_per_share_ci95: _ci, confidence_level: _l, ...allocation } = MC_RESULTS.allocation;
+    const noInterval = allocationExhibit({ ...MC_RESULTS, allocation }, { currency: 'USD' })!.html;
+    expect(noInterval).toContain('Standard error');
+    expect(noInterval).not.toContain('confidence interval');
   });
 
   it('does not claim the mixture is a PWERM schedule', () => {
