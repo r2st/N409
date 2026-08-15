@@ -275,7 +275,23 @@ export async function retryDueDeliveries(
   return { attempted: claimed.length, delivered, retrying, failed };
 }
 
-/** Fan one event out to every enabled, subscribed webhook of a partner. */
+/**
+ * Fan one event out to every enabled, subscribed webhook of a partner.
+ *
+ * Each delivery is contained. `postDelivery` never throws, so the only thing
+ * that can raise here is a database failure in `recordDelivery` or `settle` —
+ * and that is precisely the case where an uncontained loop does the most
+ * damage. The receivers are independent subscribers to the same event, so one
+ * partner's write failing must not decide whether the others hear about it.
+ *
+ * It also cannot be recovered downstream. The retry sweep works from delivery
+ * rows, and a `recordDelivery` that failed left none — so an aborted fan-out
+ * does not delay the remaining webhooks, it drops their event entirely, with
+ * nothing anywhere recording that it was owed. The caller
+ * (`onStateChanged`) logs and swallows what escapes, which is right for a
+ * transition that has already committed and is also what would have made this
+ * silent.
+ */
 export async function firePartnerWebhooks(
   deps: WebhookDeps,
   partnerId: string,
@@ -288,7 +304,17 @@ export async function firePartnerWebhooks(
   if (wanted.length === 0) return;
   const payload = buildWebhookPayload(event, valuation, extra);
   for (const hook of wanted) {
-    await deliverToWebhook(deps, hook, event, payload, valuation?.id ?? null);
+    try {
+      await deliverToWebhook(deps, hook, event, payload, valuation?.id ?? null);
+    } catch (err) {
+      // Error, not warn: no delivery row survives to carry this, so this line
+      // is the only record that the partner was owed an event and did not get
+      // one.
+      deps.log?.error(
+        { err, webhookId: hook.id, partnerId, event },
+        'partner webhook dispatch failed before a delivery row existed; event dropped for this webhook',
+      );
+    }
   }
 }
 

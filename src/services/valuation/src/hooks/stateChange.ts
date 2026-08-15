@@ -74,6 +74,37 @@ async function resolveRecipients(
   return new Map(wanted.map(([r, id]) => [r, (id !== null ? users.get(id) : null) ?? null]));
 }
 
+/**
+ * Announce a transition that has already happened.
+ *
+ * Every caller commits the state change first and calls this afterwards, so by
+ * the time anything in here runs the transition is durable and the decision has
+ * been made. Nothing raised here can un-make it, which is why nothing raised
+ * here is allowed to travel back to the caller: the request would answer 5xx
+ * for a transition that did in fact succeed, and the client would be told to
+ * retry a move that has already been applied.
+ *
+ * The webhook half has always been contained for that reason. The email and
+ * notification half was not, and it is the half with four database round trips
+ * in front of the write that makes it durable — the template overrides, the
+ * partner row, the recipients and their channel preferences. A blip across any
+ * of those threw into the caller.
+ *
+ * The Stripe path is where that was worst, and where it was invisible.
+ * `recordStripeEvent` is deliberately not written on the throw path so a failed
+ * event is redelivered — but the redelivery re-enters `fulfill()` to find
+ * `paid_status` already `paid`, skips the whole block, and settles the event
+ * successfully. So the retry that was supposed to recover the notification is
+ * the thing that buries it: the client's payment advanced the engagement to
+ * `paid` and the mail saying so was never queued, with a 500 in the log
+ * attributed to a webhook that Stripe's own dashboard then shows as delivered.
+ *
+ * Containing it does not make the message arrive; it makes the failure legible
+ * and stops it corrupting the answer to a request that worked. Once the outbox
+ * rows commit the message is durable and the retry sweep owns delivery — the
+ * exposure is only the window before that, and it is logged at error because a
+ * dropped notification has nothing else anywhere recording that it was owed.
+ */
 export async function onStateChanged(
   deps: { pool: pg.Pool; transport?: EmailTransport; log?: FastifyBaseLogger },
   valuation: ValuationSnapshot,
@@ -90,6 +121,21 @@ export async function onStateChanged(
     }
   }
 
+  try {
+    await deliverTransitionMessages(deps, valuation, to);
+  } catch (err) {
+    deps.log?.error(
+      { err, valuationId: valuation.id, to },
+      'state change notifications failed; the transition stands and the message was not queued',
+    );
+  }
+}
+
+async function deliverTransitionMessages(
+  deps: { pool: pg.Pool; transport?: EmailTransport; log?: FastifyBaseLogger },
+  valuation: ValuationSnapshot,
+  to: ValuationState,
+): Promise<void> {
   let emailSpecs = emailsForTransition(valuation, to);
   const notifySpecs = notificationsForTransition(valuation, to);
   if (emailSpecs.length === 0 && notifySpecs.length === 0) return;
@@ -165,14 +211,31 @@ export async function onStateChanged(
     return out;
   });
 
+  // Past this point the rows are committed, so nothing here can lose a message
+  // — the worst case is one left 'queued' for the retry sweep. The containment
+  // is still per-email rather than per-batch: `markEmail` is a database write on
+  // both the success and the failure path, and letting one of them abort the
+  // loop hands the sweep every remaining recipient of the same transition, each
+  // waiting out the claim lease before anyone hears anything.
   if (!deps.transport) return;
   for (const email of queued) {
     try {
       await deps.transport.send(email);
       await markEmail(deps.pool, email.id, 'sent');
     } catch (err) {
-      await markEmail(deps.pool, email.id, 'failed', err instanceof Error ? err.message : String(err));
-      deps.log?.warn({ err, emailId: email.id }, 'email delivery failed; left in outbox');
+      try {
+        await markEmail(deps.pool, email.id, 'failed', err instanceof Error ? err.message : String(err));
+        deps.log?.warn({ err, emailId: email.id }, 'email delivery failed; left in outbox');
+      } catch (settleErr) {
+        // The row stays 'queued' and the sweep re-sends it once the lease
+        // lapses, so this is a delay rather than a loss — but it is a delay
+        // nobody would otherwise see, and it means the database is refusing
+        // writes on a path the send loop above is about to use again.
+        deps.log?.error(
+          { err: settleErr, cause: err, emailId: email.id },
+          'could not record a failed send; outbox row left queued for the retry sweep',
+        );
+      }
     }
   }
 }
