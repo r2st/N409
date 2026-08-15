@@ -67,6 +67,67 @@ describe('monitoring', () => {
     });
   });
 
+  /**
+   * The company this platform mostly values, and the one the materiality test
+   * could not see.
+   *
+   * That test is a ratio, and the `baseline > 0` guard that keeps it from
+   * dividing by zero excluded every pre-revenue startup from revenue monitoring
+   * altogether — silently, and for the whole class rather than for an edge of
+   * it. A company that went from nothing to a first million monitored green.
+   */
+  describe('first revenue', () => {
+    const preRevenue: MonitorSnapshot = { ...baseline, annual_revenue: 0 };
+    const at = new Date('2026-03-01T00:00:00Z');
+
+    it('fires red when a pre-revenue company starts earning', () => {
+      const t = evaluateTriggers(preRevenue, { ...same, annual_revenue: 1_000_000 }, at);
+      const r = t.find((x) => x.type === 'revenue_change');
+      expect(r?.level).toBe('red');
+      expect(r?.message).toMatch(/begun recognising revenue/);
+      expect(r?.detail).toMatchObject({ baseline: 0, current: 1_000_000, pct: null });
+      expect(overallStatus(t)).toBe('red');
+    });
+
+    it('fires at any amount — there is no percentage of nothing to threshold', () => {
+      // The 25%/15% ladder has no meaning from a zero base, and a small first
+      // invoice is the same change of premise as a large one: the income and
+      // market approaches were weighted on a company with no revenue.
+      const t = evaluateTriggers(preRevenue, { ...same, annual_revenue: 1 }, at);
+      expect(t.find((x) => x.type === 'revenue_change')?.level).toBe('red');
+    });
+
+    it('stays quiet while the company still has no revenue', () => {
+      const t = evaluateTriggers(preRevenue, { ...same, annual_revenue: 0 }, at);
+      expect(t.find((x) => x.type === 'revenue_change')).toBeUndefined();
+    });
+
+    it('says nothing about a company whose revenue was never recorded', () => {
+      // `null` is an unknown baseline, not a zero one. Firing here would report
+      // a change nobody observed.
+      const unknown: MonitorSnapshot = { ...baseline, annual_revenue: null };
+      const t = evaluateTriggers(unknown, { ...same, annual_revenue: 4_000_000 }, at);
+      expect(t.find((x) => x.type === 'revenue_change')).toBeUndefined();
+    });
+
+    it('does not double-fire with the ratio test', () => {
+      // The two arms are mutually exclusive by construction (=== 0 against
+      // > 0); this pins that they stay so, since both push the same trigger
+      // type and a duplicate would be emailed twice.
+      const t = evaluateTriggers(preRevenue, { ...same, annual_revenue: 2_500_000 }, at);
+      expect(t.filter((x) => x.type === 'revenue_change')).toHaveLength(1);
+    });
+
+    it('leaves the fall to zero to the ratio test, which already covers it', () => {
+      // Baseline 1M → current 0 is a 100% move and was never the blind spot.
+      const t = evaluateTriggers(baseline, { ...same, annual_revenue: 0 }, at);
+      const r = t.filter((x) => x.type === 'revenue_change');
+      expect(r).toHaveLength(1);
+      expect(r[0]?.level).toBe('red');
+      expect(r[0]?.message).toMatch(/moved 100%/);
+    });
+  });
+
   describe('funding round', () => {
     it('fires red on a newer round date', () => {
       const t = evaluateTriggers(

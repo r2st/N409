@@ -136,6 +136,40 @@ export function evaluateTriggers(
     }
   }
 
+  /*
+   * First revenue, which the materiality test below cannot see.
+   *
+   * That test is a ratio, so it needs a non-zero denominator, and the `> 0`
+   * guard that gives it one silently excludes the whole class of company this
+   * platform mostly values: the pre-revenue startup. Its baseline is 0, so the
+   * check never ran, and an engagement that went from nothing to a first
+   * million in bookings — the single most legible event that a 409A no longer
+   * holds — monitored green all the way. The guard was written against a
+   * division by zero and took the alert with it.
+   *
+   * From zero there is no percentage to state, which is why this is its own
+   * arm rather than a special case inside the ratio, and no threshold to apply
+   * either: a company that had no revenue at the measurement date and has
+   * revenue now has changed the premise the income and market approaches were
+   * weighted on, at any amount. Red, and it says the figure instead of a
+   * multiple of nothing.
+   *
+   * Only an explicit zero. A `null` baseline is a company whose revenue was
+   * never recorded, not one that had none, and firing on that would report a
+   * change we cannot see rather than one that happened.
+   */
+  if (baseline.annual_revenue === 0 && current.annual_revenue !== null && current.annual_revenue > 0) {
+    triggers.push({
+      type: 'revenue_change',
+      level: 'red',
+      message:
+        `The company has begun recognising revenue (${Math.round(current.annual_revenue).toLocaleString()} ` +
+        'annualised) — it had none at the valuation date.',
+      signature: `revenue:first:${current.annual_revenue}`,
+      detail: { baseline: 0, current: current.annual_revenue, pct: null },
+    });
+  }
+
   // Material revenue change.
   if (baseline.annual_revenue !== null && baseline.annual_revenue > 0 && current.annual_revenue !== null) {
     const change = Math.abs(current.annual_revenue - baseline.annual_revenue) / baseline.annual_revenue;
