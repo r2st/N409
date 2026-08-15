@@ -1,15 +1,16 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
-# commit:    668f8b5
-# subject:   the money path, hardened
+# commit:    3b61a70
+# subject:   the money path, and two people in one report
 # previous:  162ce75 (the soft-delete sweep, finished).
-# includes:  5 commits — R57, a production-readiness round.
+# includes:  8 commits — R57, a production-readiness round.
 #
 #            R56 asked, of every reader of `valuations`, whether it asks
 #            somebody to act or merely records what happened. This round asked
 #            the same question of the money path, and of the two subsystems
 #            whose correctness is decided by events we do not control: Stripe
-#            webhooks, and boot.
+#            webhooks, and boot — and then a second question, of the report:
+#            what happens when two people are in it at once.
 #
 #            Two of the five are the same mistake in two places — a state
 #            machine that trusted an event to be news:
@@ -80,11 +81,70 @@
 #            URLs, which are authenticated per request, with auditor tokens
 #            carrying an expiry and a revocation.
 #
+#            Three are the report with two people in it. Migration 0137 closed
+#            the lost update on the engagement's fields — ETag on the read,
+#            `If-Match` on the write — and stopped there. The report body is the
+#            other thing two analysts edit at once and the more expensive of the
+#            two to lose, being the prose the deliverable is made of:
+#
+#            f0f1dc1 — `saveVersion` appends, so both saves succeeded, both
+#              analysts were told "saved as version N", and only
+#              `current_version` moved, to whoever finished last. The other's
+#              chapters stayed in the history but stopped being the report that
+#              every read, render and download resolves to. Nobody was told. The
+#              same ETag/`If-Match` loop now covers the body and the revert,
+#              checked under the `FOR UPDATE` the save already took rather than
+#              against the caller's copy, which would be blind to exactly the
+#              writer it exists to catch. The conflict is worded differently
+#              from the valuation's on purpose: that one says "reload and
+#              reapply", which is right for a dozen typed fields and wrong for
+#              the chapters somebody spent an afternoon on. The tab keeps the
+#              draft, rebases onto their version, and relabels the button
+#              "Save over v4".
+#
+#            6f968b3 — the narrative route read the body, called the AI service,
+#              and applied the draft to the body as first read. That call takes
+#              minutes and the button that starts it is in the tab the analyst
+#              is typing in, so a save inside the window is the ordinary case.
+#              Their chapter was carried back to its pre-edit text and reported
+#              as `written` — the outcome meaning "this was unwritten and now it
+#              is drafted" — so the one rule the feature rests on was reported
+#              as honoured while being broken. The body is re-read after the
+#              agent returns and the draft applied to that; rebasing loses
+#              nothing, because `applyNarrative` measures "unwritten" against v1.
+#
+#            3b61a70 — a report is instantiated from the template on first ops
+#              access: a read of `reports`, then an INSERT. `valuation_id` is
+#              UNIQUE and the read is a round trip, so the analyst and the
+#              reviewer opening the same engagement together both instantiated
+#              and the second was refused — a 500 on a read-only action, which a
+#              retry then fixed. Caught and re-read. `ensureEngagement` had this
+#              right already; a sweep of the other get-or-create sites found
+#              billing correct too, and `savedViews` refusing with a 409 rather
+#              than a 500.
+#
+#            On staging races: R57's webhook attempt was abandoned because
+#            `fastify.inject` interleaved at await points that serialised the
+#            read and the write. The first-open race is the one place that
+#            argument does not apply — the first await in each request is a
+#            query on its own pooled connection — and two overlapping injects
+#            reproduce the 500 every run. The narrative race is staged inside
+#            the AI stub's own handler, which is the only place honestly inside
+#            the window.
+#
 #            gap: there is no subject-access export. A client cannot ask for
 #            everything held about them in one call, and nothing assembles it.
 #            The pieces exist per-collection and are already scope-filtered;
 #            what is missing is the endpoint that walks them and the decision
 #            about what belongs in it.
+#
+#            Looked at and found sound: the render itself. `summaryFor` reads
+#            the calculation once and derives the cover's valuation date, the
+#            summary page and every schedule from that one row, so a
+#            recalculation landing mid-render cannot put figures in a PDF that
+#            were never all true together. What is read in the second wave is
+#            model state — params, volatility, the projection, the workbook —
+#            which the exhibits are meant to report as it currently stands.
 #
 
 # N409 revision
