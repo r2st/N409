@@ -54,18 +54,30 @@ export interface InboxFilter {
  * Returned as a fragment rather than filtered in JS because the inbox is
  * paginated: filtering after the LIMIT would hand a partner user a page of
  * four rows out of fifty and call it page one.
+ *
+ * The archived rule is part of the fragment rather than added by each of the
+ * three callers, for the reason the firm console demonstrated: the list and the
+ * badge counting different things is the bug. All three read through here —
+ * the page, the unread-thread count behind the nav badge, and "clear inbox" —
+ * so a retired engagement is out of the inbox, out of the number beside it, and
+ * not something "clear inbox" silently reaches into.
  */
 function scopeClause(principal: Principal, params: unknown[]): string | null {
   const scope = valuationScope(principal);
+  // `buildValuationWhere` keeps archived engagements out of the list, the
+  // counts and the export; the inbox builds its own WHERE and inherited none
+  // of it, so a retired engagement kept a live thread in the shared inbox and
+  // an unread badge nobody could clear from the engagement itself.
+  const live = 'v.archived_at IS NULL';
   switch (scope.kind) {
     case 'all':
-      return 'TRUE';
+      return live;
     case 'partner':
       params.push(scope.partnerId);
-      return `v.partner_id = $${params.length}`;
+      return `${live} AND v.partner_id = $${params.length}`;
     case 'own':
       params.push(scope.userId);
-      return `v.user_id = $${params.length}`;
+      return `${live} AND v.user_id = $${params.length}`;
     case 'none':
       return null;
   }

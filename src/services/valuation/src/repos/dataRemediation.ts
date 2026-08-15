@@ -38,6 +38,28 @@ import type pg from 'pg';
 export const REMEDIATION_PAGE_LIMIT = 500;
 
 /**
+ * The soft delete, applied to both queues and to the re-run guard between them.
+ *
+ * These are work queues — lists of engagements with a "re-run" button beside
+ * them — and archiving is how an engagement stops being work. `archived_at` is
+ * what `retireValuations` and the retention sweep stamp, and
+ * `buildValuationWhere` keeps it out of the list, the counts and the export; a
+ * query that builds its own WHERE inherits none of that.
+ *
+ * It matters twice here. The queue offered an operator a re-run of an
+ * engagement the firm had withdrawn, which the guard below would then have
+ * carried out — writing a fresh calculation onto retired work. And the totals
+ * beside it are counted with `count(*) OVER ()`, so the "how many are affected"
+ * figure this file goes out of its way to keep exact was overstated by every
+ * retired engagement that ever took the stale path.
+ *
+ * `state <> 'published'` on the guard is the neighbouring rule and stays: one
+ * is "we must not silently reissue a signed opinion", this is "there is nothing
+ * here to reissue".
+ */
+const NOT_ARCHIVED = 'v.archived_at IS NULL';
+
+/**
  * Totals over the entire match, not the returned page.
  *
  * `count(*) OVER ()` is evaluated before `LIMIT`, so these stay correct however
@@ -145,7 +167,8 @@ export async function listStaleBacksolves(
             count(*) FILTER (WHERE v.state = 'published') OVER ()::text AS published_matched
        FROM latest l
        JOIN valuations v ON v.id = l.valuation_id
-      WHERE l.results->'approaches'->'opm_backsolve'->>'method' = 'backsolve_single'
+      WHERE ${NOT_ARCHIVED}
+        AND l.results->'approaches'->'opm_backsolve'->>'method' = 'backsolve_single'
         AND COALESCE(NULLIF(l.inputs->'inputs'->>'options_outstanding', '')::numeric, 0) > 0
       ORDER BY (v.state = 'published') DESC, l.created_at ASC
       LIMIT $1`,
@@ -180,7 +203,8 @@ export async function findRerunnableBacksolves(
      SELECT l.valuation_id
        FROM latest l
        JOIN valuations v ON v.id = l.valuation_id
-      WHERE l.results->'approaches'->'opm_backsolve'->>'method' = 'backsolve_single'
+      WHERE ${NOT_ARCHIVED}
+        AND l.results->'approaches'->'opm_backsolve'->>'method' = 'backsolve_single'
         AND COALESCE(NULLIF(l.inputs->'inputs'->>'options_outstanding', '')::numeric, 0) > 0
         AND v.state <> 'published'`,
     [valuationIds as readonly string[]],
@@ -253,7 +277,8 @@ export async function listStaleQaReviews(
        FROM latest l
        JOIN calculations c ON c.id = l.calculation_id
        JOIN valuations v   ON v.id = l.valuation_id
-      WHERE c.results->'discounts'->>'dlom_method' IN ('chaffee', 'finnerty')
+      WHERE ${NOT_ARCHIVED}
+        AND c.results->'discounts'->>'dlom_method' IN ('chaffee', 'finnerty')
         AND NOT EXISTS (
           SELECT 1 FROM jsonb_array_elements(l.checks) chk
            WHERE chk->>'key' = 'dlom_range'

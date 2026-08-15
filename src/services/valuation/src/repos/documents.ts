@@ -170,6 +170,7 @@ export async function listUnfiledDocuments(
        JOIN valuations v ON v.id = d.valuation_id
        LEFT JOIN users u ON u.id = d.uploaded_by
       WHERE d.deleted_at IS NULL
+        AND v.archived_at IS NULL
         AND d.category = 'uploads'
         AND d.kind = 'other'
       ORDER BY d.created_at ASC
@@ -179,11 +180,25 @@ export async function listUnfiledDocuments(
   return rows;
 }
 
-/** How many rows the queue holds in total, regardless of the page limit. */
+/**
+ * How many rows the queue holds in total, regardless of the page limit.
+ *
+ * The engagement join is here only to carry `archived_at`, which is why it is
+ * an EXISTS rather than a JOIN — the count must not change shape if a document
+ * ever outlives its valuation. It has to be here at all because this number is
+ * rendered beside `listUnfiledDocuments`, and a count that included retired
+ * engagements while the list below it excluded them is the firm-console bug
+ * again: a header reading 15 above a list of 12, with nothing on the page to
+ * reconcile them.
+ */
 export async function countUnfiledDocuments(pool: pg.Pool): Promise<number> {
   const { rows } = await pool.query<{ n: string }>(
-    `SELECT count(*)::text AS n FROM documents
-      WHERE deleted_at IS NULL AND category = 'uploads' AND kind = 'other'`,
+    `SELECT count(*)::text AS n FROM documents d
+      WHERE d.deleted_at IS NULL AND d.category = 'uploads' AND d.kind = 'other'
+        AND EXISTS (
+          SELECT 1 FROM valuations v
+           WHERE v.id = d.valuation_id AND v.archived_at IS NULL
+        )`,
   );
   return Number(rows[0]?.n ?? 0);
 }
