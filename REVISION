@@ -1,5 +1,89 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    33ac089
+# subject:   the guard that was never consulted, and the overflow nothing said
+# previous:  4a84b38 (links that outlive what they were minted for).
+# includes:  3 commits — R62, a production-readiness round.
+#
+#            R61 asked, of every guard, whether it was a condition of the write
+#            or a question asked beforehand. This round asked a narrower one, of
+#            the arithmetic: where does a figure a reviewer would sign leave the
+#            doubles, and what does the platform say when it does. And, of the
+#            lifecycle table, the question R61 asked of the publish gate — is
+#            there a door that goes around it.
+#
+#            One is a table nothing but the bulk executor read:
+#
+#            18e3d07 — `WORKFLOW_TRANSITIONS` has described the legal edges
+#              since M4 and exactly one caller consulted it, the `set_state` arm
+#              of the bulk executor. `PATCH /valuations/:id` never did. `state`
+#              had sat in `OPS_PATCH_FIELDS` since M0 carrying the comment
+#              "guarded transitions arrive in M1 (#5)", and they did not arrive:
+#              the field validated against the enum and nothing else, so any of
+#              the fifteen states could be written over any other in one
+#              request. `pending -> published` skips onboarding, the client's
+#              own inputs, payment, review, QA and drafting; `published ->
+#              started` walks back out of the one state the table deliberately
+#              leaves with no outgoing edges. The dashboard is why it outlives
+#              the request — the buckets, the SLA counts, the review queue, the
+#              throughput chart and the auto emails are all keyed on `state` and
+#              each assumes the sequence it was built to describe, so a file
+#              that reaches `review` without passing `completed` sits in the
+#              queue with ageing figures computed from a timestamp nothing set.
+#              Applied on both sides of the write, for the reason
+#              `assertPublishGateForWrite` already exists next door.
+#
+#            One is an input that met an operation with no answer:
+#
+#            45ebfbc — the mirror of 778a9a9's `discount_factor` guard, and the
+#              same pairing that made that one a bug. `volatility` outside its band
+#              is a `warn`, not an `error` — a band is a review opinion rather
+#              than a fact about the arithmetic — so any finite positive sigma
+#              clears `/validate` with `ok: true` and reaches Black-Scholes,
+#              where `0.5*sigma^2*t` leaves the doubles long before sigma does.
+#              Two regimes, both silent. Where `sigma^2` saturates but
+#              `sigma*sqrt(t)` does not, `d1` and `d2` are both `inf`, `N(d2)`
+#              is 1 where the limit it stands in for is 0, and the call
+#              collapses to intrinsic value: $5,739,281 against a correct
+#              $10,000,000 on a 200. Where both saturate, `d1` is `inf/inf` and
+#              every class value in the allocation is a NaN — `null` in the
+#              response, the failure `waterfall._finite` refuses one layer up,
+#              arriving one layer down. The check lives in a shared `d1_d2`
+#              because the value, the delta and the printed schedule have to
+#              agree; the healthy path is the same expression it was, bit for
+#              bit, and the tests pin it to the full double.
+#
+#            One is a test that had been red since dfec812:
+#
+#            33ac089 — `queryValidationStatus` scans every `req.query`/`req.body`
+#              parse in `routes/` and asserts the status its failure branch
+#              throws. Its one by-design exemption was keyed on
+#              `boardApproval.ts:316`; an edit thirty lines above moved the parse
+#              to 348 and both assertions went red for a route nobody had
+#              touched — and while they were red the rule they enforce over the
+#              other ~130 parses was enforcing nothing. Keyed on the throw
+#              instead, which is also what the exemption is about.
+#
+#            Where the sweep found nothing, which is worth recording since the
+#            question was asked: the breakpoint waterfall holds under model-free
+#            invariants — value conservation, identical-class symmetry,
+#            split-neutrality and monotonicity in the exit value — across 800
+#            generated cap tables spanning caps, non-participating conversions
+#            and multiple option pools, at share counts and preferences from 1e2
+#            to 1e10. The DLOM models stay inside [0, 1] and monotone in
+#            volatility across a 12x9 grid. The backsolve round-trips exactly:
+#            on 300 random tables the solved equity repriced the round to its
+#            own PPS to within 1e-6 relative, checked against `class_per_share`
+#            rather than against the solver's own `solved_pps`.
+#
+# gap:       `newton._bisect` decides its bracket with `f_lo * f_mid < 0`. Two
+#            same-signed values whose product underflows to -0.0, or opposite
+#            ones whose product overflows, take the wrong branch. Not reachable
+#            from any per-share objective the platform actually solves — it
+#            needs |f| near 1e-160 or 1e160 — so it is recorded rather than
+#            changed, since a sign comparison would be a diff with no test that
+#            can fail without it.
+#
 # commit:    4a84b38
 # subject:   links that outlive what they were minted for
 # previous:  9b079ef (the batched read that judged two hundred transitions
