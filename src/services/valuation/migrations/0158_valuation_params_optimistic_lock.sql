@@ -1,0 +1,34 @@
+-- The financial model two analysts saved at once, of which only one survived.
+--
+-- Migration 0137 closed this for `valuations`. It is open on the row next to
+-- it. `valuation_params` holds the methodology and the engine inputs, and the
+-- financial-model panel saves it the way 0137 describes almost word for word:
+-- `toBody(form)` serialises the *whole* document — the income, market and asset
+-- blocks together — and PATCHes it, whether or not the analyst touched all
+-- three. The route merges that document with `engine_inputs || $2::jsonb`.
+--
+-- `||` is a shallow merge, so a top-level block in the incoming document
+-- replaces the stored one outright. Analyst A edits the discount rate and
+-- saves; analyst B, whose panel loaded a moment earlier, edits a market
+-- multiple and saves. B's body carries B's copy of the income block, which
+-- lands whole on top of A's. A's discount rate is gone. Both requests return
+-- 200, both analysts see "Saved", and the audit trail records two
+-- `params_updated` events neither of which says a value was lost.
+--
+-- This is not a rare collision. The route is operations-only, which in this
+-- product means the analyst preparing the model, the reviewer working the
+-- queue, and ops — the same three roles 0137 was written for, on the same
+-- engagement, in the same sitting.
+--
+-- The fix is 0137's: `version` is bumped by every writer of this row, and a
+-- caller that sends `If-Match` gets its UPDATE conditioned on the version it
+-- read. A write built on a stale document matches no row and is refused with a
+-- 409 instead of overwriting. Both writers must bump it, not just the guarded
+-- one — a `PATCH /params` that left the version alone would be invisible to an
+-- engine-inputs editor holding a version that had, as far as it could tell,
+-- not moved.
+--
+-- Existing rows start at 1, matching 0137, so "no version" and "version zero"
+-- stay distinguishable for a client that omits the header.
+ALTER TABLE valuation_params
+  ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;

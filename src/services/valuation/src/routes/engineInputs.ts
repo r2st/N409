@@ -6,6 +6,7 @@ import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { findValuationById } from '../repos/valuations.js';
 import { applyEngineInputs, findParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import type { EventActor } from '../events/record.js';
 import { finite, finiteNonNegative, finitePositive } from '../domain/finite.js';
 
@@ -392,38 +393,57 @@ export function registerEngineInputsRoutes(app: FastifyInstance, deps: { pool: p
   };
 
   // Read the current financial model (the raw engine_inputs document).
-  app.get('/api/v1/valuations/:id/engine-inputs', { preHandler: app.authenticate }, async (req) => {
+  app.get('/api/v1/valuations/:id/engine-inputs', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await loadValuation(principal, id);
     const params = await findParams(deps.pool, id);
     if (!params) throw problems.notFound();
-    return { engine_inputs: params.engine_inputs ?? {} };
+    // The version the editor sends back as If-Match. Also in the body, because
+    // fetch wrappers routinely discard response headers and a version the
+    // client cannot read is a guard it cannot use.
+    reply.header('ETag', versionEtag(params.version));
+    return { engine_inputs: params.engine_inputs ?? {}, version: params.version };
   });
 
   // Hand-enter / edit the financial model. Ops-only, mirroring the params and
   // calculation routes (methodology + inputs are analyst work).
-  app.patch('/api/v1/valuations/:id/engine-inputs', { preHandler: app.authenticate }, async (req) => {
-    const principal = requirePrincipal(req);
-    if (!isOps(principal)) throw problems.forbidden('Financial model inputs are operations-only');
-    const { id } = req.params as { id: string };
-    await loadValuation(principal, id);
-    const current = await findParams(deps.pool, id);
-    if (!current) throw problems.notFound();
+  app.patch(
+    '/api/v1/valuations/:id/engine-inputs',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      if (!isOps(principal)) throw problems.forbidden('Financial model inputs are operations-only');
+      const { id } = req.params as { id: string };
+      await loadValuation(principal, id);
+      const current = await findParams(deps.pool, id);
+      if (!current) throw problems.notFound();
 
-    const parsed = EngineInputsBody.safeParse(req.body ?? {});
-    if (!parsed.success) {
-      throw problems.unprocessable('Invalid financial model inputs', {
-        errors: parsed.error.issues,
-      });
-    }
+      // Same contract as PATCH /valuations/:id — see domain/concurrency.ts. A
+      // malformed header is refused rather than ignored: an If-Match nobody
+      // parses is a lost-update guard that silently is not there.
+      const ifMatch = parseIfMatch(req.headers['if-match']);
+      if (ifMatch.kind === 'invalid') {
+        throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+      }
+      const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
-    const updated = await applyEngineInputs(
-      deps.pool,
-      id,
-      parsed.data as Record<string, unknown>,
-      actorFor(principal),
-    );
-    return { params: updated };
-  });
+      const parsed = EngineInputsBody.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        throw problems.unprocessable('Invalid financial model inputs', {
+          errors: parsed.error.issues,
+        });
+      }
+
+      const updated = await applyEngineInputs(
+        deps.pool,
+        id,
+        parsed.data as Record<string, unknown>,
+        actorFor(principal),
+        { expectedVersion },
+      );
+      reply.header('ETag', versionEtag(updated.version));
+      return { params: updated };
+    },
+  );
 }

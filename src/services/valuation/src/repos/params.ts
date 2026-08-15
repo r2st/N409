@@ -109,6 +109,8 @@ export interface ValuationParamsRow {
   /** How equity value is allocated to common: OPM (default), PWERM, a hybrid
    * blend of the two, or the Current Value Method. */
   allocation_method: 'opm' | 'pwerm' | 'hybrid' | 'cvm' | 'monte_carlo';
+  /** Optimistic-lock counter; every writer of this row bumps it (0158). */
+  version: number;
   updated_at: Date;
   [key: string]: unknown;
 }
@@ -226,26 +228,56 @@ export async function findParamsByValuationIds(
   return new Map(rows.map((row) => [row.valuation_id, hydrated(row)]));
 }
 
+/** Refused write: the row moved between the caller's read and this UPDATE. */
+function staleParamsWrite(current: number | undefined, expected: number): never {
+  throw problems.conflict(
+    `These valuation parameters were changed by someone else (expected version ${expected}, ` +
+      `now ${current ?? 'unknown'}). Reload and reapply your changes.`,
+  );
+}
+
 /**
  * Extraction auto-apply (remaining-gaps §2 "Set Valuation Parameters"):
  * merge AI-extracted engine inputs into valuation_params.engine_inputs, with
  * the params_updated audit event. Existing keys are overwritten — the newest
  * applied extraction wins.
+ *
+ * `expectedVersion` is what makes that last sentence safe for a *human*
+ * editor. The merge is `||`, which replaces a top-level block outright, and the
+ * financial-model panel posts every block it holds — so without the check, a
+ * save built on a document another analyst has since edited quietly reverts
+ * them (migration 0158). Supplied from `If-Match` by the engine-inputs route
+ * and omitted by the extraction path, which is applying values it just derived
+ * rather than a form somebody has been looking at.
  */
 export async function applyEngineInputs(
   pool: pg.Pool,
   valuationId: string,
   inputs: Record<string, unknown>,
   actor: EventActor,
+  options: { expectedVersion?: number } = {},
 ): Promise<ValuationParamsRow> {
+  const { expectedVersion } = options;
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<ValuationParamsRow>(
       `UPDATE valuation_params
-       SET engine_inputs = engine_inputs || $2::jsonb, updated_at = now()
-       WHERE valuation_id = $1
+       SET engine_inputs = engine_inputs || $2::jsonb, updated_at = now(), version = version + 1
+       WHERE valuation_id = $1${expectedVersion === undefined ? '' : ' AND version = $3'}
        RETURNING *`,
-      [valuationId, JSON.stringify(inputs)],
+      expectedVersion === undefined
+        ? [valuationId, JSON.stringify(inputs)]
+        : [valuationId, JSON.stringify(inputs), expectedVersion],
     );
+    // Without a version condition the WHERE is the primary key of a row the
+    // route just loaded, so zero rows can only mean the condition failed.
+    if (rows.length === 0) {
+      const { rows: live } = await client.query<{ version: number }>(
+        'SELECT version FROM valuation_params WHERE valuation_id = $1',
+        [valuationId],
+      );
+      if (expectedVersion !== undefined) staleParamsWrite(live[0]?.version, expectedVersion);
+      throw problems.notFound();
+    }
     await recordEvent(client, {
       valuationId,
       type: PIPELINE_EVENT_TYPES.paramsUpdated,
@@ -323,7 +355,11 @@ export async function patchParams(
     const entries = Object.entries(changes).map(([key, change]) => [key, change.to] as const);
     if (entries.length === 0) return fresh;
 
-    const sets: string[] = ['updated_at = now()'];
+    // Every writer of this row moves the version, not just the guarded one: an
+    // engine-inputs editor holding version 4 has to be able to tell that a
+    // `PATCH /params` landed, and a write that left the version alone would be
+    // invisible to it (migration 0158).
+    const sets: string[] = ['updated_at = now()', 'version = version + 1'];
     const params: unknown[] = [];
     for (const [key, value] of entries) {
       // NULL stays NULL: `JSON.stringify(null)` is the four characters "null",

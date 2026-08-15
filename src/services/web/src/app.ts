@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -69,6 +70,72 @@ const defaultStaticRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../web-frontend/dist',
 );
+
+/**
+ * Executable inline `<script>` bodies in a served HTML document, as the
+ * `'sha256-…'` source expressions CSP wants.
+ *
+ * `index.html` ships one inline script on purpose: the theme resolver, which
+ * must run synchronously in `<head>` before first paint or a dark-mode visitor
+ * sees a white flash. Every prerendered marketing document inherits it, since
+ * the prerenderer rewrites only the head-fallback block.
+ *
+ * A `script-src` of `'self'` does not permit inline script, so shipping that
+ * tag under this CSP means the browser refuses to run it and the flash it
+ * exists to prevent happens on every cold load — silently, because a blocked
+ * inline script is a console message and nothing else.
+ *
+ * The hashes are computed from the documents actually on disk rather than
+ * pinned as constants, so editing the theme script cannot quietly re-break it:
+ * whatever is served is what is allowed. `'unsafe-inline'` would also fix the
+ * flash, and would additionally permit every inline script an injection could
+ * introduce — the whole value of the directive. Hashes keep that shut.
+ *
+ * Only executable scripts count. `application/ld+json` blocks — of which the
+ * marketing documents carry dozens — are data, never executed, and so are not
+ * subject to `script-src`; hashing them would bloat the header for nothing.
+ */
+export function inlineScriptHashes(staticRoot: string): string[] {
+  const hashes = new Set<string>();
+  for (const file of htmlFilesUnder(staticRoot)) {
+    let html: string;
+    try {
+      html = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+      const attrs = match[1] ?? '';
+      // An external script is governed by its URL, not by a hash.
+      if (/\bsrc\s*=/i.test(attrs)) continue;
+      const type = /\btype\s*=\s*["']?([^"'\s>]+)/i.exec(attrs)?.[1];
+      // Absent type and `module` are JavaScript; anything else is a data block
+      // unless it names a JavaScript MIME type.
+      if (type && type !== 'module' && !/^(text|application)\/(java|ecma)script$/i.test(type)) continue;
+      hashes.add(`'sha256-${createHash('sha256').update(match[2] ?? '', 'utf8').digest('base64')}'`);
+    }
+  }
+  // Sorted so the header is byte-stable across boots — it is compared in tests
+  // and cached by intermediaries.
+  return [...hashes].sort();
+}
+
+/** Every `.html` file under `dir`, recursively. Missing directory → nothing. */
+function htmlFilesUnder(dir: string): string[] {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const found: string[] = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...htmlFilesUnder(full));
+    else if (/\.html?$/i.test(entry.name)) found.push(full);
+  }
+  return found;
+}
 
 /**
  * Route → prerendered document, written by the frontend build
@@ -165,6 +232,12 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
   // origin, so it carries the real CSP: self-hosted JS/CSS only, images from
   // https/data, styles allow inline (Tailwind/injected), analytics hosts allowed
   // for consent-gated scripts. Framing is denied and HSTS is enabled.
+  //
+  // The inline theme resolver in each document is admitted by hash — see
+  // inlineScriptHashes. Analytics needs no such treatment: gtm.js and gtag.js
+  // are injected as `src` scripts (web-frontend/src/lib/analytics.ts), so the
+  // host allowances above cover them.
+  const scriptHashes = hasStatic ? inlineScriptHashes(staticRoot) : [];
   void app.register(helmet, {
     contentSecurityPolicy: {
       useDefaults: false,
@@ -174,7 +247,7 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
         'object-src': ["'none'"],
         'frame-ancestors': ["'none'"],
         'form-action': ["'self'"],
-        'script-src': ["'self'", ...ANALYTICS_SCRIPT],
+        'script-src': ["'self'", ...ANALYTICS_SCRIPT, ...scriptHashes],
         'style-src': ["'self'", "'unsafe-inline'"],
         'img-src': ["'self'", 'data:', 'https:'],
         'font-src': ["'self'", 'data:'],

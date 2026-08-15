@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, ifMatch } from '../../lib/api';
 import type { EngineInputs, ShareClassInput } from '../../lib/pipeline';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../ui';
 
@@ -240,13 +240,25 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  /**
+   * The params version this form was loaded from, sent back as `If-Match`.
+   *
+   * The save below posts the *whole* model — income, market and asset together
+   * — and the server merges top-level blocks wholesale, so without this a save
+   * built on a stale load reverts whatever another analyst changed in a block
+   * this user never opened (migration 0158). Undefined until the first load and
+   * on an older server that does not report it; `ifMatch` then sends nothing
+   * and the write falls back to last-write-wins rather than failing.
+   */
+  const [version, setVersion] = useState<number | undefined>(undefined);
 
   const load = useCallback(async () => {
     try {
-      const { engine_inputs } = await api<{ engine_inputs: EngineInputs }>(
+      const { engine_inputs, version } = await api<{ engine_inputs: EngineInputs; version?: number }>(
         `/valuations/${valuationId}/engine-inputs`,
       );
       setForm(fromInputs(engine_inputs ?? {}));
+      setVersion(version);
     } catch {
       setError('Could not load the financial model.');
     }
@@ -291,10 +303,28 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
     setError(null);
     setBusy(true);
     try {
-      await api(`/valuations/${valuationId}/engine-inputs`, { method: 'PATCH', body: toBody(form) });
+      const res = await api<{ params?: { version?: number } }>(
+        `/valuations/${valuationId}/engine-inputs`,
+        { method: 'PATCH', body: toBody(form), headers: ifMatch(version) },
+      );
+      // Take the version the write produced, so a second save from this same
+      // form is not refused for a change this user just made themselves.
+      setVersion(res.params?.version);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save the financial model.');
+      // A conflict is an out-of-date panel rather than a failed save: reload so
+      // the analyst reapplies onto what actually landed instead of retyping
+      // over it. Reloading is what clears the stale blocks this form would
+      // otherwise post again on the next attempt.
+      if (err instanceof ApiError && err.status === 409) {
+        await load();
+        setError(
+          err.problem.detail ??
+            'Someone else changed this financial model while you were editing. It has been reloaded — please reapply your changes.',
+        );
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not save the financial model.');
+      }
     } finally {
       setBusy(false);
     }
