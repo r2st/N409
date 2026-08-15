@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createValuation } from '../../src/repos/valuations.js';
 import { createCalculation } from '../../src/repos/calculations.js';
 import { createReport } from '../../src/repos/reports.js';
+import { markValuationsArchived } from '../../src/repos/retention.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
@@ -160,6 +161,68 @@ describe.skipIf(!dbUp)('external auditor portal (feature 8)', () => {
       });
       expect(direct.statusCode).toBe(404);
       expect((await redeem(token)).json().report).toBeNull();
+    });
+  });
+
+  /**
+   * `archived_at` is the platform's soft delete — stamped by the retention
+   * sweep when a policy period runs out, and by `retireValuations` when a firm
+   * withdraws a piece of work. R55/R56 took retired engagements out of every
+   * list; R57 found that a list no longer offering something is not a write
+   * refusing it. This is the same shape one step further out: the reader holds
+   * a link rather than an account, and the link returns the conclusion, the
+   * assumptions and the report.
+   */
+  describe('a retired engagement', () => {
+    // Through the retention sweep's own writer rather than raw SQL: it is the
+    // path that stamps archived_at in production, and it invalidates the row
+    // cache in front of `findValuationById`, which raw SQL does not.
+    const archive = (id: string) => markValuationsArchived(ctx.pool, [id]);
+
+    it('stops answering links already in an auditor\u2019s inbox', async () => {
+      const v = await seedValuation();
+      const { token } = (await createLink(owner.token, v.id)).json();
+      // Live before, so the assertion below is about the archive and not about
+      // a link that never worked.
+      expect((await redeem(token)).statusCode).toBe(200);
+
+      await archive(v.id);
+
+      const after = await redeem(token);
+      expect(after.statusCode).toBe(404);
+      expect(after.json().detail).toContain('retired');
+    });
+
+    it('refuses to mint a new one', async () => {
+      // Stopping the read without stopping the write leaves the write.
+      const v = await seedValuation();
+      await archive(v.id);
+      const created = await createLink(owner.token, v.id, { label: 'PwC' });
+      expect(created.statusCode).toBe(409);
+      expect(created.json().detail).toContain('retired');
+    });
+
+    it('still lets ops see and revoke the links that exist', async () => {
+      // The point is to close the outstanding links, so the screen that lists
+      // them has to keep working after the sweep has run.
+      const v = await seedValuation();
+      const { access } = (await createLink(owner.token, v.id, { label: 'KPMG' })).json();
+      await archive(v.id);
+
+      const listed = await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${v.id}/auditor-access`,
+        headers: authHeader(owner.token),
+      });
+      expect(listed.statusCode).toBe(200);
+      expect(listed.json().access).toHaveLength(1);
+
+      const revoked = await ctx.app.inject({
+        method: 'DELETE',
+        url: `/api/v1/valuations/${v.id}/auditor-access/${access.id}`,
+        headers: authHeader(owner.token),
+      });
+      expect(revoked.statusCode).toBe(204);
     });
   });
 });

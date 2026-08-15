@@ -58,10 +58,36 @@ export function registerAuditorPortalRoutes(
     return valuation;
   };
 
+  /**
+   * A retired engagement is not shareable, and stops being shared.
+   *
+   * `archived_at` is the platform's soft delete — stamped by the retention
+   * sweep when a policy period runs out, and by `retireValuations` when a firm
+   * withdraws a piece of work. R55/R56 took retired engagements out of every
+   * list, and R57 found the residue: a list that no longer offers something is
+   * not the same as a write that refuses it, because the page stays reachable
+   * by id.
+   *
+   * This is the same shape one step further out. The reader here holds a link
+   * rather than an account, and what the link returns is the conclusion, the
+   * assumptions and the report itself — so the gap was not a stale page, it was
+   * a third party still being served a deliverable the firm has withdrawn, for
+   * as much as 180 days after the sweep that was supposed to end its retention.
+   * Nothing revokes the outstanding links when a valuation is archived, and
+   * nothing could reasonably be expected to: they are minted per auditor and
+   * live in their inboxes. So the check belongs at redemption, where the
+   * current state of the engagement is known.
+   *
+   * The mint route refuses for the same reason — R57's lesson, that stopping
+   * the read without stopping the write leaves the write.
+   */
+  const RETIRED = 'This engagement has been retired and is no longer available.';
+
   app.post('/api/v1/valuations/:id/auditor-access', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadManageable(principal, id);
+    if (valuation.archived_at !== null) throw problems.conflict(RETIRED);
     const parsed = CreateBody.safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
@@ -115,6 +141,10 @@ export function registerAuditorPortalRoutes(
 
     const valuation = await findValuationById(deps.pool, access.valuation_id);
     if (!valuation) throw problems.notFound();
+    // Not `unauthorized`: the token is genuine and the holder was authorised
+    // for this engagement, so telling them it has been withdrawn discloses
+    // nothing they did not already know and is the answer they can act on.
+    if (valuation.archived_at !== null) throw problems.notFound(RETIRED);
 
     // Report content (current shared version), if any.
     //
