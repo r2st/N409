@@ -84,3 +84,33 @@ export {
 } from './systemdEnv.js';
 export { TtlCache } from './cache.js';
 export { conditionalJson, etagFor, matchesIfNoneMatch, type ConditionalOptions } from './httpCache.js';
+export {
+  backoffDelayMs,
+  classifyFailure,
+  classifyStatus,
+  FAILURE_KIND,
+  isTransient,
+  logFailure,
+  markFailure,
+  type BackoffOptions,
+  type ClassifyHint,
+  type FailureClass,
+  type FailureKind,
+  type FailureLogger,
+} from './failure.js';
+export {
+  CircuitBreaker,
+  CircuitOpenError,
+  CircuitRegistry,
+  type CircuitOptions,
+  type CircuitSnapshot,
+  type CircuitState,
+} from './circuit.js';
+export {
+  awaitDependencies,
+  StartupGate,
+  type AwaitDependenciesOptions,
+  type AwaitDependenciesResult,
+  type DependencyCheck,
+  type DependencyOutcome,
+} from './startup.js';
