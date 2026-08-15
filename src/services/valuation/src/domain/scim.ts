@@ -4,6 +4,8 @@
  * request syntax we support (userName eq filters, PatchOp active toggles).
  */
 
+import { EmailAddress, MAX_EMAIL_LENGTH } from './email.js';
+
 export const SCIM_USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
 export const SCIM_LIST_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:ListResponse';
 export const SCIM_ERROR_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:Error';
@@ -144,21 +146,85 @@ export interface ScimCreate {
   active: boolean;
 }
 
-/** Parse a SCIM User create/replace body into our shape. */
-export function parseScimUser(body: unknown): ScimCreate | null {
-  if (!body || typeof body !== 'object') return null;
+/** Why a create body cannot be provisioned, in words an IdP admin can act on. */
+export interface ScimRejection {
+  rejected: string;
+}
+
+export function isScimRejection(parsed: ScimCreate | ScimRejection): parsed is ScimRejection {
+  return 'rejected' in parsed;
+}
+
+/**
+ * Bounds on what an IdP may put in a `users` row.
+ *
+ * This was the one write path into `users` with no schema in front of it at
+ * all: every other create/patch route parses its body with Zod, and SCIM read
+ * the fields off the body with `typeof x === 'string'` and inserted whatever
+ * came back. So an IdP connector — authenticated, but not by us, and often
+ * misconfigured rather than hostile — could provision a 300 KB `givenName`, or
+ * a `userName` that is not an address at all.
+ *
+ * Neither is theoretical. `users_email_key` is a b-tree over `lower(email)` and
+ * `users_scim_external_id_idx` is a b-tree over `scim_external_id`; a value past
+ * roughly 2.7 KB fails the INSERT with `54000 index row size exceeds btree
+ * version 4 maximum`. That is not a unique violation, so the 409 branch below
+ * does not catch it, and the IdP receives a 500 on a provision — which Okta and
+ * Entra both retry indefinitely, turning one malformed directory record into a
+ * permanent write loop against the pool.
+ *
+ * The shape check matters as much as the size. `userName` maps to
+ * `users.email`, which is this platform's login identity and the address every
+ * notification and password reset is sent to. RFC 7643 does not require it to
+ * be an address, but a row where it is not is an account nobody can sign into
+ * and nobody can email; refusing it at the door tells the directory admin which
+ * record is wrong, where accepting it fails much later and silently.
+ */
+const MAX_SCIM_NAME = 100;
+const MAX_SCIM_EXTERNAL_ID = 255;
+/** A SCIM User carries work/home/other at most; a longer list is a malformed body. */
+const MAX_SCIM_EMAILS = 20;
+
+/** A bounded optional string field, or a rejection naming it. */
+function scimText(value: unknown, field: string, max: number): string | null | ScimRejection {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > max) return { rejected: `${field} must be at most ${max} characters` };
+  return trimmed;
+}
+
+/** Parse a SCIM User create/replace body into our shape, or say why we can't. */
+export function parseScimUser(body: unknown): ScimCreate | ScimRejection {
+  if (!body || typeof body !== 'object') return { rejected: 'A userName / email is required' };
   const b = body as Record<string, unknown>;
-  const emails = Array.isArray(b.emails) ? (b.emails as Array<Record<string, unknown>>) : [];
+  const rawEmails = Array.isArray(b.emails) ? (b.emails as Array<Record<string, unknown>>) : [];
+  if (rawEmails.length > MAX_SCIM_EMAILS) {
+    return { rejected: `emails accepts at most ${MAX_SCIM_EMAILS} entries` };
+  }
   const primaryEmail =
-    emails.find((e) => e.primary)?.value ?? emails[0]?.value ?? (b.userName as string | undefined);
-  const email = typeof primaryEmail === 'string' ? primaryEmail.toLowerCase() : null;
-  if (!email) return null;
+    rawEmails.find((e) => e?.primary)?.value ?? rawEmails[0]?.value ?? (b.userName as unknown);
+  if (typeof primaryEmail !== 'string' || !primaryEmail.trim()) {
+    return { rejected: 'A userName / email is required' };
+  }
+  const email = EmailAddress.safeParse(primaryEmail);
+  if (!email.success) {
+    return {
+      rejected: `userName / emails[].value must be an email address of at most ${MAX_EMAIL_LENGTH} characters`,
+    };
+  }
   const name = (b.name ?? {}) as Record<string, unknown>;
+  const firstName = scimText(name.givenName, 'name.givenName', MAX_SCIM_NAME);
+  if (firstName !== null && typeof firstName !== 'string') return firstName;
+  const lastName = scimText(name.familyName, 'name.familyName', MAX_SCIM_NAME);
+  if (lastName !== null && typeof lastName !== 'string') return lastName;
+  const externalId = scimText(b.externalId, 'externalId', MAX_SCIM_EXTERNAL_ID);
+  if (externalId !== null && typeof externalId !== 'string') return externalId;
   return {
-    email,
-    firstName: typeof name.givenName === 'string' ? name.givenName : null,
-    lastName: typeof name.familyName === 'string' ? name.familyName : null,
-    externalId: typeof b.externalId === 'string' ? b.externalId : null,
+    email: email.data.toLowerCase(),
+    firstName,
+    lastName,
+    externalId,
     active: b.active === undefined ? true : scimBoolean(b.active),
   };
 }

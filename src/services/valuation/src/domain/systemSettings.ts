@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EmailAddress } from './email.js';
 
 /**
  * Runtime-editable system settings — the handful of knobs an administrator
@@ -24,7 +25,7 @@ export const SYSTEM_SETTINGS_SCHEMA = z.object({
    */
   password_min_length: z.number().int().min(10).max(128),
   /** Surfaced publicly; shown to signed-out visitors on the contact page. */
-  support_email: z.string().email(),
+  support_email: EmailAddress,
   /** Pre-filled turnaround on a new valuation when ops don't set one. */
   default_delivery_days: z.number().int().min(1).max(365),
   /**

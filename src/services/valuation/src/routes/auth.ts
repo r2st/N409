@@ -41,6 +41,7 @@ import {
   upsertGoogleUser,
   type UserWithRoles,
 } from '../repos/users.js';
+import { EmailAddress } from '../domain/email.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { SlidingWindowRateLimiter } from '../plugins/rateLimit.js';
 import { findUserById } from '../repos/users.js';
@@ -55,14 +56,14 @@ import type { SystemSettingsStore } from '../repos/systemSettings.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 
 const RegisterBody = z.object({
-  email: z.string().email(),
+  email: EmailAddress,
   password: z.string().min(10, 'password must be at least 10 characters'),
   first_name: z.string().min(1).max(100).optional(),
   last_name: z.string().min(1).max(100).optional(),
 });
 
 const LoginBody = z.object({
-  email: z.string().email(),
+  email: EmailAddress,
   password: z.string().min(1),
 });
 
@@ -77,7 +78,7 @@ const MfaVerifyBody = z
     message: 'A TOTP code or a backup code is required.',
   });
 
-const ForgotPasswordBody = z.object({ email: z.string().email() });
+const ForgotPasswordBody = z.object({ email: EmailAddress });
 
 const VerifyEmailBody = z.object({ token: z.string().min(1) });
 

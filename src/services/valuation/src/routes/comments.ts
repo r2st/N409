@@ -21,6 +21,7 @@ import {
   type ValuationRow,
 } from '../repos/valuations.js';
 import { createSupportMessage } from '../repos/support.js';
+import { EmailAddress } from '../domain/email.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { ValuationHub } from '../realtime/hub.js';
@@ -40,7 +41,7 @@ const PatchBody = z
   .strict();
 
 const InboxBody = z.object({
-  from: z.string().email(),
+  from: EmailAddress,
   subject: z.string().max(1000).default(''),
   body: z.string().min(1).max(100_000),
   message_id: z.string().max(500).optional(),

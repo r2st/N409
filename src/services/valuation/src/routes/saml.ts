@@ -7,6 +7,7 @@ import { setSessionCookie, type SessionCookieConfig } from '../auth/cookies.js';
 import { getSamlConfig, type SamlConfigRow } from '../repos/ssoConfig.js';
 import { consumeSamlAssertion, type SamlAssertionRef } from '../repos/samlReplay.js';
 import { createProvisionedUser, findUserByEmail, type UserWithRoles } from '../repos/users.js';
+import { EmailAddress, MAX_EMAIL_LENGTH } from '../domain/email.js';
 import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
 
@@ -47,28 +48,60 @@ function buildSaml(config: SamlConfigRow, base: string): SAML {
   });
 }
 
+/** Bound on a display-name claim; matches `first_name`/`last_name` everywhere else. */
+const MAX_SSO_NAME = 100;
+
 /** Pull an email + names out of a validated SAML profile (attribute names vary). */
 export function extractIdentity(profile: Record<string, unknown>): {
   email: string | null;
   firstName: string | null;
   lastName: string | null;
 } {
-  const attr = (keys: string[]): string | null => {
+  /**
+   * The first of `keys` this profile carries, if it is short enough to store.
+   *
+   * The assertion is signed, which makes the IdP trusted — not its attribute
+   * *mapping*. A directory that maps a photo, a DN or a group blob onto
+   * `givenName` sends kilobytes here, and every one of them went into the INSERT
+   * unmeasured; `users` is `text`, but migration 0149's trigram index builds
+   * over `first_name || ' ' || last_name` and indexes whatever that comes to.
+   *
+   * Over the bound the claim is dropped rather than truncated, and what that
+   * costs depends on which claim it is. A display name is cosmetic — the account
+   * is identified by its address — so dropping one still signs the user in,
+   * where refusing would lock a whole org out of SSO over one bad mapping. The
+   * address is not: dropping it makes `email` null, and the caller answers 401.
+   * Truncating either would be worse than both, since half an identity presented
+   * as whole is the silent corruption this codebase avoids elsewhere.
+   */
+  const attr = (keys: string[], max = MAX_SSO_NAME): string | null => {
     for (const k of keys) {
       const v = profile[k];
-      if (typeof v === 'string' && v.trim()) return v.trim();
+      if (typeof v === 'string' && v.trim()) {
+        const trimmed = v.trim();
+        return trimmed.length <= max ? trimmed : null;
+      }
     }
     return null;
   };
-  const email =
-    attr([
-      'email',
-      'mail',
-      'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
-      'urn:oid:0.9.2342.19200300.100.1.3',
-    ]) ?? (typeof profile.nameID === 'string' && profile.nameID.includes('@') ? profile.nameID : null);
+  const claimed =
+    attr(
+      [
+        'email',
+        'mail',
+        'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
+        'urn:oid:0.9.2342.19200300.100.1.3',
+      ],
+      MAX_EMAIL_LENGTH,
+    ) ?? (typeof profile.nameID === 'string' && profile.nameID.includes('@') ? profile.nameID : null);
+  // A claim that is not a storable address is no address: the caller answers
+  // 401 "SAML assertion has no email", which is the truth — nothing here can be
+  // signed in as. Letting it through provisioned an account with a login
+  // identity that cannot receive its own password reset, and, past ~2.7 KB,
+  // failed `users_email_key`'s b-tree with a 500 instead.
+  const email = EmailAddress.safeParse(claimed);
   return {
-    email: email ? email.toLowerCase() : null,
+    email: email.success ? email.data.toLowerCase() : null,
     firstName: attr([
       'firstName',
       'givenName',

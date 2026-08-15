@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { activeFromPatch, parseScimUser, parseUserNameFilter, toScimUser } from '../../src/domain/scim.js';
+import {
+  activeFromPatch,
+  isScimRejection,
+  parseScimUser,
+  parseUserNameFilter,
+  toScimUser,
+} from '../../src/domain/scim.js';
 import { extractIdentity } from '../../src/routes/saml.js';
 
 describe('SCIM mapping (feature 9)', () => {
@@ -46,8 +52,11 @@ describe('SCIM mapping (feature 9)', () => {
       externalId: 'e',
       active: true,
     });
-    expect(parseScimUser({ emails: [{ value: 'p@corp.com', primary: true }] })?.email).toBe('p@corp.com');
-    expect(parseScimUser({})).toBeNull();
+    const fromEmails = parseScimUser({ emails: [{ value: 'p@corp.com', primary: true }] });
+    expect(isScimRejection(fromEmails) ? null : fromEmails.email).toBe('p@corp.com');
+    // A body naming no user is refused with the reason, not with a bare null —
+    // see scim.test.ts for the whole set of bounds this parse now applies.
+    expect(parseScimUser({})).toEqual({ rejected: 'A userName / email is required' });
   });
 
   it('resolves active from a PatchOp with or without a path', () => {

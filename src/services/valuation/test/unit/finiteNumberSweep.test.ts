@@ -1,9 +1,10 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { finite, finiteNonNegative, finitePositive } from '../../src/domain/finite.js';
+import { sourceFiles } from '../support/sourceFiles.js';
 
 /**
  * Infinity is a number to zod, and JSON hands it out for free.
@@ -133,16 +134,6 @@ function chainAfter(source: string, from: number): string[] {
     i = j;
   }
   return parts;
-}
-
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts')) out.push(full);
-  }
-  return out;
 }
 
 /** A chain that cannot admit Infinity, whatever else it does or does not do. */

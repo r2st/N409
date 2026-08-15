@@ -7,6 +7,7 @@ import type { RoleKey } from '../domain/roles.js';
 import { ROLE_KEYS } from '../domain/roles.js';
 import {
   activeFromPatch,
+  isScimRejection,
   parseScimUser,
   parseUserNameFilter,
   scimError,
@@ -112,11 +113,11 @@ export function registerScimRoutes(
   app.post('/scim/v2/Users', limited, async (req, reply) => {
     if (!(await requireToken(req, reply))) return;
     const parsed = parseScimUser(req.body);
-    if (!parsed)
-      return reply
-        .status(400)
-        .header('content-type', CT)
-        .send(scimError(400, 'A userName / email is required'));
+    // The rejection carries which field is wrong and what the bound is. An IdP
+    // connector surfaces `detail` verbatim to the directory admin, and "a
+    // userName is required" for a 4 KB givenName sends them to the wrong field.
+    if (isScimRejection(parsed))
+      return reply.status(400).header('content-type', CT).send(scimError(400, parsed.rejected));
 
     const existing = await findUserByEmail(deps.pool, parsed.email);
     if (existing) {

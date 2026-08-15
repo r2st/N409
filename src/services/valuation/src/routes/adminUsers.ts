@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
 import { canManageUsers, isOps } from '../auth/rbac.js';
-import { PARTNER_ROLES, ROLE_KEYS, USER_ADMIN_ROLES, type RoleKey } from '../domain/roles.js';
+import { PARTNER_ROLES, ROLE_KEYS, RoleSet, USER_ADMIN_ROLES, type RoleKey } from '../domain/roles.js';
 import { CAPABILITIES, ROLE_DEFS, capabilitiesFor } from '../domain/permissions.js';
 import { normalizeSubdomain } from '../domain/partnerSubdomain.js';
 import { NullablePhone } from '../domain/phone.js';
@@ -47,6 +47,7 @@ import { recordAdminEvent } from '../events/adminRecord.js';
 import { buildPersonalDataExport } from '../repos/dataExport.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { EmailAddress } from '../domain/email.js';
 import { pageParam } from '../domain/pagination.js';
 import { isUniqueViolation } from '../db/pgError.js';
 
@@ -60,18 +61,18 @@ const ListQuery = z.object({
 });
 
 const CreateBody = z.object({
-  email: z.string().email(),
+  email: EmailAddress,
   password: z.string().min(10, 'password must be at least 10 characters'),
   first_name: z.string().min(1).max(100).optional(),
   last_name: z.string().min(1).max(100).optional(),
   partner_id: z.string().nullable().optional(),
   verified: z.boolean().optional(),
-  roles: z.array(z.enum(ROLE_KEYS)).min(1),
+  roles: RoleSet.min(1),
 });
 
 const PatchBody = z
   .object({
-    email: z.string().email(),
+    email: EmailAddress,
     first_name: z.string().max(100).nullable(),
     last_name: z.string().max(100).nullable(),
     phone: NullablePhone,
@@ -79,7 +80,7 @@ const PatchBody = z
     company_name: z.string().max(200).nullable(),
     verified: z.boolean(),
     partner_id: z.string().nullable(),
-    roles: z.array(z.enum(ROLE_KEYS)),
+    roles: RoleSet,
   })
   .partial()
   .strict();
@@ -104,8 +105,8 @@ function toAdminUser(u: AdminUserRow) {
 }
 
 const InviteBody = z.object({
-  email: z.string().email(),
-  roles: z.array(z.enum(ROLE_KEYS)).min(1),
+  email: EmailAddress,
+  roles: RoleSet.min(1),
   partner_id: z.string().nullable().optional(),
 });
 

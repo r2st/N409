@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 /**
  * Role model (issue #3). Role keys mirror the observed production set
  * (database-design.md §6). The policy layer groups them into scopes:
@@ -28,6 +30,18 @@ export const ROLE_KEYS = [
 ] as const;
 
 export type RoleKey = (typeof ROLE_KEYS)[number];
+
+/**
+ * The roles one request body may name.
+ *
+ * `z.array(z.enum(ROLE_KEYS))` bounds each *element* and not the array, so the
+ * three admin-user schemas that spelled it that way were capped only by
+ * Fastify's 1 MB body — about 60,000 repetitions of `"admin"`, all of which
+ * reached `assignRoles` as a single `text[]` parameter for a table with as many
+ * rows as there are keys above. There are only so many distinct roles, so a
+ * longer list is naming one of them twice.
+ */
+export const RoleSet = z.array(z.enum(ROLE_KEYS)).max(ROLE_KEYS.length);
 
 export const OPS_ROLES: ReadonlySet<RoleKey> = new Set([
   'admin',

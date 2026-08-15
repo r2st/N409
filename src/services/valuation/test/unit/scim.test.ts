@@ -5,13 +5,29 @@ import {
   scimList,
   parseUserNameFilter,
   parseScimUser,
+  isScimRejection,
   activeFromPatch,
   scimBoolean,
   SCIM_USER_SCHEMA,
   SCIM_LIST_SCHEMA,
   SCIM_ERROR_SCHEMA,
+  type ScimCreate,
   type ScimUserRow,
 } from '../../src/domain/scim.js';
+
+/** The parsed create body, failing the test rather than the compiler on a rejection. */
+function provisioned(body: unknown): ScimCreate {
+  const parsed = parseScimUser(body);
+  if (isScimRejection(parsed)) throw new Error(`expected a create body, got: ${parsed.rejected}`);
+  return parsed;
+}
+
+/** Why the body was refused, failing the test if it was in fact accepted. */
+function rejection(body: unknown): string {
+  const parsed = parseScimUser(body);
+  if (!isScimRejection(parsed)) throw new Error('expected a rejection, got a create body');
+  return parsed.rejected;
+}
 
 function fakeUser(overrides: Partial<ScimUserRow> = {}): ScimUserRow {
   return {
@@ -150,49 +166,135 @@ describe('parseScimUser', () => {
       externalId: 'ext-001',
       active: true,
     };
-    const result = parseScimUser(body);
-    expect(result).not.toBeNull();
+    const result = provisioned(body);
     // email comes from primary emails entry
-    expect(result!.email).toBe('alice@example.com');
-    expect(result!.firstName).toBe('Alice');
-    expect(result!.lastName).toBe('Smith');
-    expect(result!.externalId).toBe('ext-001');
-    expect(result!.active).toBe(true);
+    expect(result.email).toBe('alice@example.com');
+    expect(result.firstName).toBe('Alice');
+    expect(result.lastName).toBe('Smith');
+    expect(result.externalId).toBe('ext-001');
+    expect(result.active).toBe(true);
   });
 
   it('falls back to userName when emails array is empty', () => {
-    const result = parseScimUser({ userName: 'Bob@Corp.com', name: {} });
-    expect(result!.email).toBe('bob@corp.com');
+    expect(provisioned({ userName: 'Bob@Corp.com', name: {} }).email).toBe('bob@corp.com');
   });
 
   it('defaults active to true when omitted', () => {
-    const result = parseScimUser({ userName: 'a@b.com', name: {} });
-    expect(result!.active).toBe(true);
+    expect(provisioned({ userName: 'a@b.com', name: {} }).active).toBe(true);
   });
 
-  it('returns null for missing body', () => {
-    expect(parseScimUser(null)).toBeNull();
-    expect(parseScimUser(undefined)).toBeNull();
+  it('rejects a missing body', () => {
+    expect(rejection(null)).toBe('A userName / email is required');
+    expect(rejection(undefined)).toBe('A userName / email is required');
   });
 
-  it('returns null when no email can be derived', () => {
-    expect(parseScimUser({ name: {} })).toBeNull();
+  it('rejects a body no email can be derived from', () => {
+    expect(rejection({ name: {} })).toBe('A userName / email is required');
   });
 
   it('handles non-string name fields', () => {
-    const result = parseScimUser({ userName: 'a@b.com', name: { givenName: 123 } });
-    expect(result!.firstName).toBeNull();
+    expect(provisioned({ userName: 'a@b.com', name: { givenName: 123 } }).firstName).toBeNull();
   });
 
   // Entra ID creates already-suspended users with active:"False" (a string).
   it('creates a user inactive when active is the string "False"', () => {
-    const result = parseScimUser({ userName: 'a@b.com', name: {}, active: 'False' });
-    expect(result!.active).toBe(false);
+    expect(provisioned({ userName: 'a@b.com', name: {}, active: 'False' }).active).toBe(false);
   });
 
   it('creates a user active when active is the string "True"', () => {
-    const result = parseScimUser({ userName: 'a@b.com', name: {}, active: 'True' });
-    expect(result!.active).toBe(true);
+    expect(provisioned({ userName: 'a@b.com', name: {}, active: 'True' }).active).toBe(true);
+  });
+
+  /**
+   * The bounds on what an IdP may write into `users`.
+   *
+   * This was the only create path into that table with no schema in front of
+   * it, and the two columns it fills are both under unique b-tree indexes
+   * (`users_email_key` over `lower(email)`, `users_scim_external_id_idx` over
+   * `scim_external_id`). A b-tree index tuple stops at 2704 bytes, so a value
+   * past that failed the INSERT with 54000 rather than a unique violation — a
+   * 500 on a provision, which Okta and Entra both retry forever.
+   *
+   * Each case asserts the *reason*, not just the refusal: the connector shows
+   * `detail` to the directory admin, and "a userName is required" for a 4 KB
+   * givenName sends them to the wrong field.
+   */
+  describe('bounds on what an IdP can write', () => {
+    /** Comfortably past a b-tree index tuple, and trivial to send. */
+    const huge = (n: number) => 'a'.repeat(n);
+
+    it('refuses an address longer than RFC 5321 allows', () => {
+      expect(rejection({ userName: `${huge(4000)}@corp.com` })).toBe(
+        'userName / emails[].value must be an email address of at most 320 characters',
+      );
+    });
+
+    it('refuses the same address arriving through emails[] instead of userName', () => {
+      expect(rejection({ emails: [{ value: `${huge(4000)}@corp.com`, primary: true }] })).toBe(
+        'userName / emails[].value must be an email address of at most 320 characters',
+      );
+    });
+
+    it('accepts an address at exactly the limit', () => {
+      // 320 total: local part padded so the whole address lands on the bound.
+      const at = `${huge(320 - '@corp.com'.length)}@corp.com`;
+      expect(at).toHaveLength(320);
+      expect(provisioned({ userName: at }).email).toBe(at.toLowerCase());
+    });
+
+    it('refuses a userName that is not an address at all', () => {
+      // `userName` becomes `users.email` — the login identity and the address
+      // every password reset is sent to. A row where it is not an address is an
+      // account nobody can sign into and nobody can email.
+      expect(rejection({ userName: 'CORP\\jdoe' })).toContain('must be an email address');
+      expect(rejection({ userName: 'S-1-5-21-1004336348' })).toContain('must be an email address');
+    });
+
+    it.each([
+      ['name.givenName', { userName: 'a@b.com', name: { givenName: huge(101) } }, 100],
+      ['name.familyName', { userName: 'a@b.com', name: { familyName: huge(101) } }, 100],
+      ['externalId', { userName: 'a@b.com', externalId: huge(256) }, 255],
+    ])('refuses an over-long %s and names it', (field, body, max) => {
+      expect(rejection(body)).toBe(`${field} must be at most ${max} characters`);
+    });
+
+    it('accepts each of those at exactly its bound', () => {
+      const ok = provisioned({
+        userName: 'a@b.com',
+        name: { givenName: huge(100), familyName: huge(100) },
+        externalId: huge(255),
+      });
+      expect(ok.firstName).toHaveLength(100);
+      expect(ok.lastName).toHaveLength(100);
+      expect(ok.externalId).toHaveLength(255);
+    });
+
+    it('refuses an emails array no directory record would have', () => {
+      const emails = Array.from({ length: 21 }, (_, i) => ({ value: `u${i}@corp.com` }));
+      expect(rejection({ userName: 'a@b.com', emails })).toBe('emails accepts at most 20 entries');
+    });
+
+    it('still reads the primary out of a plausible emails array', () => {
+      expect(
+        provisioned({
+          emails: [
+            { value: 'home@corp.com' },
+            { value: 'work@corp.com', primary: true },
+            { value: 'other@corp.com' },
+          ],
+        }).email,
+      ).toBe('work@corp.com');
+    });
+
+    it('trims rather than storing the padding an IdP sends', () => {
+      const ok = provisioned({ userName: '  Ada@Corp.com  ', name: { givenName: '  Ada  ' } });
+      expect(ok.email).toBe('ada@corp.com');
+      expect(ok.firstName).toBe('Ada');
+    });
+
+    it('treats a whitespace-only claim as absent rather than as a name', () => {
+      expect(provisioned({ userName: 'a@b.com', name: { givenName: '   ' } }).firstName).toBeNull();
+    });
   });
 });
 
