@@ -13,6 +13,8 @@ mid-body sends `http.disconnect` instead of a further `http.request`, and the
 reader has to stop and hand back what it has rather than loop waiting for more.
 """
 
+import logging
+
 import anyio
 import pytest
 
@@ -164,3 +166,45 @@ def test_a_malformed_content_length_is_a_400_not_a_413(header):
         headers={"content-type": "application/json", "content-length": header},
     )
     assert res.status_code == 400
+
+
+# ── the operator is told ─────────────────────────────────────────────────────
+
+
+def test_a_rejected_body_cap_is_logged_rather_than_silently_dropped(monkeypatch, caplog):
+    # Falling back is right; falling back silently is not. The operator who set
+    # MAX_REQUEST_BODY_BYTES=8MB has a service running on the old cap and,
+    # before this, nothing anywhere that disagreed with them.
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "8MB")
+    with caplog.at_level(logging.WARNING, logger="limits"):
+        assert max_body_bytes(4096) == 4096
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert "MAX_REQUEST_BODY_BYTES" in record.getMessage()
+    assert record.detail == "8MB"
+    assert record.status == 4096
+
+
+def test_a_non_positive_body_cap_is_logged_too(monkeypatch, caplog):
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "0")
+    with caplog.at_level(logging.WARNING, logger="limits"):
+        assert max_body_bytes(4096) == 4096
+    assert [r.detail for r in caplog.records] == ["0"]
+
+
+def test_a_rejected_threadpool_size_is_logged(monkeypatch, caplog):
+    monkeypatch.setenv("THREADPOOL_MAX", "forty")
+    with caplog.at_level(logging.WARNING, logger="limits"):
+        assert threadpool_size(40) == 40
+    assert "THREADPOOL_MAX" in caplog.records[0].getMessage()
+    assert caplog.records[0].detail == "forty"
+
+
+def test_an_absent_or_valid_setting_logs_nothing(monkeypatch, caplog):
+    # A warning on every boot is a warning nobody reads.
+    monkeypatch.delenv("MAX_REQUEST_BODY_BYTES", raising=False)
+    monkeypatch.setenv("THREADPOOL_MAX", "64")
+    with caplog.at_level(logging.WARNING, logger="limits"):
+        assert max_body_bytes(4096) == 4096
+        assert threadpool_size(40) == 64
+    assert caplog.records == []

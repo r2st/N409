@@ -32,6 +32,25 @@ from .errors import error_response
 _log = logging.getLogger("limits")
 
 
+def _misconfigured(name: str, raw: str, default: int) -> int:
+    """Log a rejected value and hand back the default.
+
+    Falling back rather than raising is deliberate — both readers below run
+    during start-up, and an unhandled ValueError here is a service that will not
+    boot because somebody wrote "8MB" in a unit file. But falling back *without
+    saying so* is its own failure: the operator who raised the body cap has a
+    service running on the old one and nothing anywhere disagrees with them.
+    ``ratelimit.limit_per_minute`` has warned on exactly this since it was
+    written; these two never did.
+    """
+    _log.warning(
+        "%s is not a positive integer — falling back to the default",
+        name,
+        extra={"event": "limits_config", "detail": raw, "status": default},
+    )
+    return default
+
+
 def max_body_bytes(default: int) -> int:
     """Configured request-body ceiling (MAX_REQUEST_BODY_BYTES), else `default`."""
     raw = os.environ.get("MAX_REQUEST_BODY_BYTES")
@@ -40,8 +59,10 @@ def max_body_bytes(default: int) -> int:
     try:
         value = int(raw)
     except ValueError:
-        return default
-    return value if value > 0 else default
+        return _misconfigured("MAX_REQUEST_BODY_BYTES", raw, default)
+    # Zero would refuse every request carrying a body; a negative one is not a
+    # cap at all. Neither is something the operator can have meant.
+    return value if value > 0 else _misconfigured("MAX_REQUEST_BODY_BYTES", raw, default)
 
 
 # Methods that may carry a body. A GET or a HEAD arrives with neither a
@@ -131,8 +152,10 @@ def threadpool_size(default: int = 40) -> int:
     try:
         value = int(raw)
     except ValueError:
-        return default
-    return value if value > 0 else default
+        return _misconfigured("THREADPOOL_MAX", raw, default)
+    # A pool of zero threads runs no sync handler at all — every `def` route
+    # would hang forever rather than fail.
+    return value if value > 0 else _misconfigured("THREADPOOL_MAX", raw, default)
 
 
 def configure_threadpool(total_tokens: int) -> None:

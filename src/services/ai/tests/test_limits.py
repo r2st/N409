@@ -1,4 +1,5 @@
 import importlib
+import logging
 
 from fastapi.testclient import TestClient
 
@@ -122,3 +123,29 @@ def test_negative_content_length_is_rejected():
 def test_bodyless_methods_skip_the_meter():
     # GET carries no body; it must not pay for an extra receive() round-trip.
     assert client.get("/health").status_code == 200
+
+
+def test_a_rejected_limit_setting_says_so(monkeypatch, caplog):
+    # Falling back to the default rather than raising is deliberate: both
+    # readers run during start-up, and an unhandled ValueError here is a service
+    # that will not boot because somebody wrote "8MB" in a unit file. Falling
+    # back *silently* is the other half of the problem — the operator who raised
+    # the cap is running on the old one with nothing to disagree with them.
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "8MB")
+    monkeypatch.setenv("THREADPOOL_MAX", "0")
+    with caplog.at_level(logging.WARNING, logger="limits"):
+        assert max_body_bytes(1000) == 1000
+        assert threadpool_size(40) == 40
+    named = {r.getMessage().split(" ")[0] for r in caplog.records}
+    assert named == {"MAX_REQUEST_BODY_BYTES", "THREADPOOL_MAX"}
+    assert {r.detail for r in caplog.records} == {"8MB", "0"}
+
+
+def test_a_valid_setting_logs_nothing(monkeypatch, caplog):
+    # A warning on every boot is a warning nobody reads.
+    monkeypatch.setenv("MAX_REQUEST_BODY_BYTES", "2048")
+    monkeypatch.delenv("THREADPOOL_MAX", raising=False)
+    with caplog.at_level(logging.WARNING, logger="limits"):
+        assert max_body_bytes(1000) == 2048
+        assert threadpool_size(40) == 40
+    assert caplog.records == []
