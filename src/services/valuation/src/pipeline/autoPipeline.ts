@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type pg from 'pg';
 import { EXTRACTABLE_EXTENSIONS, runAiPipeline } from '../routes/ai.js';
+import { classifyInternalError } from '../clients/internal.js';
 import { buildCalculationInputs, runCalculation } from '../routes/calculations.js';
 import { findParams } from '../repos/params.js';
 import {
@@ -182,7 +183,54 @@ async function executeRun(
     await setPipelineRunStatus(deps.pool, run, 'ready', { actor });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    deps.log.warn({ err, runId: run.id, valuationId: valuation.id }, 'auto-pipeline run failed');
-    await setPipelineRunStatus(deps.pool, run, 'failed', { error: message, actor });
+    // Classify before recording: `setPipelineRunStatus` stamps the retry
+    // schedule from this, and a run recorded without it is a run nothing will
+    // ever come back for (migration 0161).
+    //
+    // `classifyInternalError` rather than the bare shared classifier because
+    // the failures that reach here are overwhelmingly `InternalServiceError`,
+    // which carries the upstream status — and the whole distinction this makes
+    // is between the AI service being down (retry) and it rejecting our payload
+    // (do not). Anything else — a missing params row, a bug — falls through to
+    // the shared table, whose default is permanent, so a run is only ever
+    // rescheduled on a positive judgement that it should be.
+    const failure = classifyInternalError(err);
+    const level = failure.kind === 'transient' ? 'warn' : 'error';
+    deps.log[level](
+      {
+        err,
+        runId: run.id,
+        valuationId: valuation.id,
+        failure_kind: failure.kind,
+        failure_reason: failure.reason,
+        // A permanent failure is not going to fix itself and no retry is
+        // coming; it is the one that wants a person.
+        ...(failure.kind === 'permanent' ? { alert: true } : {}),
+      },
+      'auto-pipeline run failed',
+    );
+    await setPipelineRunStatus(deps.pool, run, 'failed', { error: message, actor, failure });
   }
+}
+
+/**
+ * Re-execute a run the retry sweep has already claimed.
+ *
+ * Separate entry point from `startPipelineRun` because the row exists and is
+ * already back on 'queued' — creating a second one would both lose the attempt
+ * count and collide with the one-active-run index. Everything downstream is the
+ * ordinary path: same limiter, same `executeRun`, so a retried orchestration is
+ * indistinguishable from a first attempt except in the audit payload.
+ */
+export function resumePipelineRun(
+  deps: AutoPipelineDeps,
+  run: PipelineRunRow,
+  valuation: ValuationRow,
+): void {
+  const triggeredBy = run.triggered_by ?? 'retry-sweep';
+  void autoPipelineLimiter
+    .run(() => executeRun(deps, run, valuation, triggeredBy))
+    .catch((err) => {
+      deps.log.error({ err, runId: run.id }, 'auto-pipeline retry crashed');
+    });
 }

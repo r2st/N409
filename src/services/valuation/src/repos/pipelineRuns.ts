@@ -1,9 +1,10 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, type FailureClass } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { invalidateValuationAfter } from './valuations.js';
 import { isUniqueViolation } from '../db/pgError.js';
+import { PIPELINE_MAX_ATTEMPTS, pipelineRetryDelayMinutes } from '../domain/pipelineRetry.js';
 
 /**
  * Auto-pipeline run tracking (final-status §4.4 #3). One row per orchestrated
@@ -29,6 +30,12 @@ export interface PipelineRunRow {
   triggered_by: string | null;
   created_at: Date;
   updated_at: Date;
+  /** Execution attempts made, including the first (migration 0161). */
+  attempts: number;
+  /** When the retry sweep may re-queue this failed run; null = never. */
+  next_attempt_at: Date | null;
+  /** How the failure was classified; null when the run never failed. */
+  failure_kind: 'transient' | 'permanent' | null;
 }
 
 /**
@@ -97,14 +104,43 @@ export async function setPipelineRunStatus(
   pool: pg.Pool,
   run: PipelineRunRow,
   status: PipelineRunStatus,
-  opts: { error?: string; actor?: EventActor } = {},
+  opts: { error?: string; actor?: EventActor; failure?: FailureClass } = {},
 ): Promise<PipelineRunRow | null> {
+  // The retry schedule, stamped by the same statement that records the failure
+  // — never a second UPDATE. A process that died between the two would leave a
+  // run failed with no schedule, which is silently the old behaviour: owed
+  // work that nothing will ever come back for.
+  //
+  // Only a transient failure earns a schedule (see domain/pipelineRetry.ts).
+  // The ceiling is checked against the `attempts` column rather than the value
+  // on the row this worker is holding, which may be several minutes stale.
+  const transient = status === 'failed' && opts.failure?.kind === 'transient';
+  const delayMinutes = transient ? pipelineRetryDelayMinutes(run.attempts) : null;
+
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<PipelineRunRow>(
-      `UPDATE pipeline_runs SET status = $1, error = $2, updated_at = now()
-       WHERE id = $3 AND status NOT IN ('ready', 'failed')
+      `UPDATE pipeline_runs
+          SET status = $1,
+              error = $2,
+              failure_kind = $4,
+              next_attempt_at = CASE
+                WHEN $5::numeric IS NOT NULL AND attempts < $6
+                  -- Equal jitter: uniform over [0.5, 1.0] of the step, so one
+                  -- outage's worth of runs do not all come back at once.
+                  THEN now() + (($5::numeric * (0.5 + random() * 0.5)) || ' minutes')::interval
+                ELSE NULL
+              END,
+              updated_at = now()
+        WHERE id = $3 AND status NOT IN ('ready', 'failed')
        RETURNING *`,
-      [status, opts.error ?? null, run.id],
+      [
+        status,
+        opts.error ?? null,
+        run.id,
+        status === 'failed' ? (opts.failure?.kind ?? null) : null,
+        delayMinutes,
+        PIPELINE_MAX_ATTEMPTS,
+      ],
     );
     const updated = rows[0];
     if (!updated) {
@@ -203,6 +239,94 @@ export async function reapStalePipelineRuns(
       reaped.push(rows[0]!);
     }
     return reaped;
+  });
+}
+
+/**
+ * Take failed runs whose retry is due and put them back on 'queued'.
+ *
+ * Claimed, not merely selected: the row moves to an active status inside the
+ * same statement that reads it, so two sweepers — or two instances, which is
+ * the deployed shape — split the backlog instead of both re-running all of it.
+ * `FOR UPDATE SKIP LOCKED` is what makes that true concurrently rather than
+ * only in the happy case.
+ *
+ * Row by row, tolerating the active-run conflict, because of migration 0094:
+ * at most one run per valuation may be active, and a valuation whose failed run
+ * is due for retry may perfectly well have had a *newer* run started by hand in
+ * the meantime. That newer run supersedes this one — the work is already being
+ * done — so the conflict is the correct outcome and not an error. A set-based
+ * UPDATE would take the whole batch down with it.
+ *
+ * `error` is cleared on the way out. A re-queued run that kept the previous
+ * attempt's message would show a failure reason on a run that is currently
+ * running, which is what the UI polls.
+ */
+export async function claimRetryablePipelineRuns(
+  pool: pg.Pool,
+  opts: { limit?: number; actor: EventActor },
+): Promise<PipelineRunRow[]> {
+  return withTransaction(pool, async (client) => {
+    const { rows: due } = await client.query<PipelineRunRow>(
+      `SELECT * FROM pipeline_runs
+        WHERE status = 'failed'
+          AND next_attempt_at IS NOT NULL
+          AND next_attempt_at <= now()
+        ORDER BY next_attempt_at ASC
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED`,
+      [opts.limit ?? 20],
+    );
+
+    const claimed: PipelineRunRow[] = [];
+    for (const run of due) {
+      const { rows } = await client.query<PipelineRunRow>(
+        `UPDATE pipeline_runs r
+            SET status = 'queued',
+                attempts = attempts + 1,
+                error = NULL,
+                next_attempt_at = NULL,
+                updated_at = now()
+          WHERE r.id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM pipeline_runs a
+               WHERE a.valuation_id = r.valuation_id
+                 AND a.status IN ('queued', 'extracting', 'calculating')
+            )
+         RETURNING *`,
+        [run.id],
+      );
+      const requeued = rows[0];
+      if (!requeued) {
+        // A newer run is already active for this valuation. Stand down
+        // permanently rather than leaving the schedule set: otherwise this row
+        // is re-examined by every sweep forever, and the log fills with a
+        // retry that is never taken.
+        await client.query(
+          `UPDATE pipeline_runs
+              SET next_attempt_at = NULL,
+                  error = COALESCE(error, '') || ' (retry abandoned: a newer run is active)',
+                  updated_at = now()
+            WHERE id = $1`,
+          [run.id],
+        );
+        continue;
+      }
+      await recordEvent(client, {
+        valuationId: requeued.valuation_id,
+        type: 'auto_pipeline_started',
+        actor: opts.actor,
+        payload: {
+          run_id: requeued.id,
+          trigger: requeued.trigger,
+          document_id: requeued.document_id,
+          retry: true,
+          attempt: requeued.attempts,
+        },
+      });
+      claimed.push(requeued);
+    }
+    return claimed;
   });
 }
 
