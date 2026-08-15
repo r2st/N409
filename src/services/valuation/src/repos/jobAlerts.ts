@@ -18,6 +18,10 @@ export interface JobAlertRow {
   opened_at: Date;
   last_seen_at: Date;
   resolved_at: Date | null;
+  /** When the opening announcement was delivered; NULL means it is still owed. */
+  opened_notified_at: Date | null;
+  /** When the recovery announcement was delivered; NULL on a resolved alert means still owed. */
+  resolved_notified_at: Date | null;
 }
 
 /**
@@ -178,5 +182,90 @@ export async function reconcileJobAlerts(
     }
 
     return { opened, resolved, ongoing };
+  });
+}
+
+/** Which of an alert's two announcements is being delivered. */
+export type JobAlertAnnouncement = 'opened' | 'resolved';
+
+/** The column stamping each announcement. A closed map, so nothing interpolated
+ * into the SQL below can come from a caller. */
+const NOTIFIED_COLUMN: Record<JobAlertAnnouncement, string> = {
+  opened: 'opened_notified_at',
+  resolved: 'resolved_notified_at',
+};
+
+export interface PendingJobAlertAnnouncements {
+  /** Open alerts nobody has been told about yet. */
+  opened: JobAlertRow[];
+  /** Alerts that have cleared without the recovery being announced. */
+  resolved: JobAlertRow[];
+}
+
+/**
+ * The announcements the ledger still owes, oldest first.
+ *
+ * Read straight from `job_alerts` rather than from a reconcile's return value,
+ * which is what makes delivery survive a scan that died halfway through it. A
+ * scan that opened three alerts and crashed after announcing the first leaves
+ * two rows with a NULL `opened_notified_at`; the next scan — or the ops-
+ * triggered one — picks them up here and finishes the job.
+ *
+ * `resolved` is not filtered on `opened_notified_at`. An alert can clear before
+ * its opening announcement ever got out, and both are then owed: "the queue
+ * stalled" followed by "the queue recovered" is the honest account of a blip,
+ * whereas a bare recovery notice names a problem the operator was never told
+ * about. `runJobAlertScan` sends them in that order.
+ */
+export async function pendingJobAlertAnnouncements(
+  pool: pg.Pool | pg.PoolClient,
+): Promise<PendingJobAlertAnnouncements> {
+  const { rows } = await pool.query<RawJobAlertRow>(
+    `SELECT * FROM job_alerts
+      WHERE opened_notified_at IS NULL
+         OR (resolved_at IS NOT NULL AND resolved_notified_at IS NULL)
+      ORDER BY opened_at ASC`,
+  );
+  const all = rows.map(hydrate);
+  return {
+    opened: all.filter((a) => a.opened_notified_at === null),
+    resolved: all.filter((a) => a.resolved_at !== null && a.resolved_notified_at === null),
+  };
+}
+
+/**
+ * Deliver one announcement and record that it was delivered, atomically.
+ *
+ * `deliver` writes the admin event and the notification rows on the transaction
+ * this opens, so the stamp and the thing it attests to commit together. There is
+ * no ordering of two separate writes that survives a crash between them: stamp
+ * first and a crash loses the alert exactly as before, stamp second and a crash
+ * re-announces it. One transaction has neither failure.
+ *
+ * The row is taken `FOR UPDATE` with the NULL check in the predicate, which is
+ * also the guard against two instances announcing the same alert: the sweep runs
+ * on every instance and from an ops route, so concurrent delivery is ordinary
+ * rather than exotic. The loser finds the column already stamped, matches no
+ * row, and reports `false` without sending anything.
+ *
+ * Returns whether this call was the one that delivered it.
+ */
+export async function deliverJobAlertAnnouncement(
+  pool: pg.Pool,
+  alertId: string,
+  which: JobAlertAnnouncement,
+  deliver: (tx: pg.PoolClient, alert: JobAlertRow) => Promise<void>,
+): Promise<boolean> {
+  const column = NOTIFIED_COLUMN[which];
+  return withTransaction(pool, async (tx) => {
+    const { rows } = await tx.query<RawJobAlertRow>(
+      `SELECT * FROM job_alerts WHERE id = $1 AND ${column} IS NULL FOR UPDATE`,
+      [alertId],
+    );
+    const row = rows[0];
+    if (!row) return false;
+    await deliver(tx, hydrate(row));
+    await tx.query(`UPDATE job_alerts SET ${column} = now() WHERE id = $1`, [alertId]);
+    return true;
   });
 }

@@ -184,6 +184,11 @@ export function registerJobRoutes(app: FastifyInstance, deps: { pool: pg.Pool })
       resolved: result.resolved,
       ongoing: result.ongoing.length,
       evaluated: result.evaluated,
+      // What actually reached an operator, which is not the same as what was
+      // opened: an announcement owed by an earlier failed scan is delivered
+      // here and counted here, and one that failed again is in `failed` rather
+      // than silently missing. See migration 0157.
+      notified: result.notified,
     };
   });
 }

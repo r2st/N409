@@ -258,3 +258,270 @@ describe.skipIf(!dbUp)('job queue alerts', () => {
     expect(rows[1]!.payload).toHaveProperty('open_minutes');
   });
 });
+
+/**
+ * The half of alerting that is not "did the alert fire" but "did anyone hear it".
+ *
+ * 0120 reconciled the ledger in one transaction and then notified off the
+ * result, outside it. Anything that threw in that loop lost the rest of the
+ * batch and — because the ledger already recorded those alerts as open — lost
+ * them permanently: the next scan saw `ongoing`, which is deliberately silent.
+ * A row said an operator had been told and no operator had been.
+ *
+ * The failure injected below is the one that actually happens. A queue stalls
+ * because the database is struggling, so the announcement writes are executing
+ * against exactly the database that just made the queue stall; a dropped
+ * connection there is the ordinary case, not the exotic one.
+ */
+describe.skipIf(!dbUp)('job queue alert delivery', () => {
+  let ctx: TestApp;
+  let app: FastifyInstance;
+  let pool: pg.Pool;
+  let ops: Awaited<ReturnType<typeof seedUser>>;
+  let valuationId: string;
+
+  /**
+   * A pool that fails chosen statements, on both the pool and the clients
+   * `withTransaction` checks out.
+   *
+   * The client is wrapped in a Proxy rather than patched: a checked-out client
+   * goes back to the real pool on release, and a patched `query` would follow
+   * it there and fail unrelated work later in the run.
+   */
+  const flakyPool = (fail: (sql: string) => boolean): pg.Pool => {
+    const sqlOf = (arg: unknown) =>
+      typeof arg === 'string' ? arg : ((arg as { text?: string } | null)?.text ?? '');
+    const guard = (arg: unknown) => {
+      if (fail(sqlOf(arg))) throw new Error('connection terminated unexpectedly');
+    };
+    return {
+      query: (...args: unknown[]) => {
+        guard(args[0]);
+        return (pool.query as (...a: unknown[]) => unknown)(...args);
+      },
+      connect: async () => {
+        const client = await pool.connect();
+        return new Proxy(client, {
+          get(target, prop) {
+            if (prop === 'query') {
+              return (...args: unknown[]) => {
+                guard(args[0]);
+                return (target.query as (...a: unknown[]) => unknown)(...args);
+              };
+            }
+            const value = Reflect.get(target, prop) as unknown;
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      },
+    } as unknown as pg.Pool;
+  };
+
+  /** Fails every notification insert — the last write in an announcement. */
+  const notifyIsDown = () => flakyPool((sql) => sql.includes('INSERT INTO notifications'));
+
+  const stuckEmail = async (minutes: number) => {
+    await pool.query(
+      `INSERT INTO email_outbox
+         (id, valuation_id, to_email, template_key, subject, body, status, created_at)
+       VALUES ($1, $2, 'stuck@test.example.com', 'draft_ready', 'Draft ready', 'body', 'queued',
+               now() - make_interval(mins => $3::int))`,
+      [newUlid(), valuationId, minutes],
+    );
+  };
+
+  /** `failure_count` for email is 10, so this is what makes the queue "failing". */
+  const failedEmails = async (n: number) => {
+    for (let i = 0; i < n; i++) {
+      await pool.query(
+        `INSERT INTO email_outbox
+           (id, valuation_id, to_email, template_key, subject, body, status, created_at)
+         VALUES ($1, $2, 'dead@test.example.com', 'draft_ready', 'Draft ready', 'body', 'failed', now())`,
+        [newUlid(), valuationId],
+      );
+    }
+  };
+
+  const scan = (p: pg.Pool = pool) => runJobAlertScan({ pool: p });
+
+  /**
+   * A scan run the way the boot interval runs it.
+   *
+   * `nonOverlapping` hands a rejecting tick to `onError` and carries on, so a
+   * scan that throws is logged and forgotten in production — the schedule
+   * survives and the operator hears nothing. Swallowing it here the same way
+   * keeps these tests pointed at the consequence (was the alert ever
+   * announced?) rather than at whether the throw escapes, which is the part a
+   * caller already tolerates.
+   */
+  const sweep = async (p: pg.Pool = pool) => {
+    try {
+      return await scan(p);
+    } catch {
+      return null;
+    }
+  };
+  const notifications = async (type: string) => {
+    const { rows } = await pool.query(`SELECT * FROM notifications WHERE type = $1`, [type]);
+    return rows;
+  };
+  const ledger = async () => {
+    const { rows } = await pool.query<{ resolved_at: Date | null }>(
+      `SELECT * FROM job_alerts ORDER BY opened_at ASC`,
+    );
+    return rows;
+  };
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+    app = ctx.app;
+    pool = ctx.pool;
+    ops = await seedUser(ctx, { roles: ['admin'] });
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(ops.token),
+      payload: { kind: '409a', company_name: 'DeliveryCo' },
+    });
+    valuationId = created.json().valuation.id;
+  });
+
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  beforeEach(async () => {
+    await pool.query('DELETE FROM job_alerts');
+    await pool.query('DELETE FROM email_outbox');
+    await pool.query('DELETE FROM notifications');
+  });
+
+  it('announces an alert whose first announcement failed, on the next scan', async () => {
+    await stuckEmail(60 * 8);
+
+    await sweep(notifyIsDown());
+    // The alert is in the ledger: reconciling committed before the announcement
+    // was ever attempted. And nobody has been told.
+    expect(await ledger()).toHaveLength(1);
+    expect(await notifications('job_alert')).toHaveLength(0);
+
+    // This is where the alert used to be lost for good. The row is open, so
+    // every later scan reconciles it as `ongoing`, and `ongoing` is silent by
+    // design — the ledger said an operator had been told, and none had.
+    const second = await sweep();
+    expect(second?.opened).toEqual([]);
+    expect(second?.ongoing).toHaveLength(1);
+
+    // Asserted before the tally so that a regression reports the thing that
+    // matters — an empty notification list for a queue that has been stopped
+    // for eight hours — rather than a missing counter.
+    const sent = await notifications('job_alert');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.user_id).toBe(ops.id);
+    expect(sent[0]!.title).toMatch(/Outbound message queue looks stalled/);
+    expect(second?.notified).toMatchObject({ opened: 1, failed: 0 });
+  });
+
+  it('does not let one failed announcement suppress the others in the batch', async () => {
+    // Two alerts on one queue: stalled, and failing.
+    await stuckEmail(60 * 8);
+    await failedEmails(10);
+
+    const first = await sweep(notifyIsDown());
+    expect(await ledger()).toHaveLength(2);
+    expect(await notifications('job_alert')).toHaveLength(0);
+
+    // Both are still owed, so both arrive. Losing the second alert because the
+    // first could not be sent is the failure being ruled out.
+    const second = await sweep();
+    const sent = await notifications('job_alert');
+    expect(sent.map((n: { title: string }) => n.title).sort()).toEqual([
+      'Outbound message queue is failing',
+      'Outbound message queue looks stalled',
+    ]);
+    // And both were attempted on the failing sweep rather than the batch dying
+    // on the first: the old loop threw out of the whole scan on alert one and
+    // never reached alert two, so the number that separates the two designs
+    // is 2, not 1.
+    expect(first?.notified).toMatchObject({ opened: 0, failed: 2 });
+    expect(second?.notified).toMatchObject({ opened: 2, failed: 0 });
+  });
+
+  it('rolls back the admin event when the announcement it belongs to fails', async () => {
+    // The stamp, the admin event and the notification are one transaction, so a
+    // half-written announcement cannot leave an audit row claiming an operator
+    // was told. Without that, the retry double-records the open on the spine.
+    const { rows: mark } = await pool.query<{ now: Date }>('SELECT now() AS now');
+    await stuckEmail(60 * 8);
+
+    await sweep(notifyIsDown());
+    const since = async () => {
+      const { rows } = await pool.query(
+        `SELECT type FROM admin_events
+          WHERE type IN ('job_alert_opened', 'job_alert_resolved') AND occurred_at >= $1`,
+        [mark[0]!.now],
+      );
+      return rows;
+    };
+    expect(await since()).toHaveLength(0);
+
+    await sweep();
+    expect(await since()).toHaveLength(1);
+  });
+
+  it('announces a recovery that was owed, and only once', async () => {
+    await stuckEmail(60 * 8);
+    await scan();
+    expect(await notifications('job_alert')).toHaveLength(1);
+
+    await pool.query(`UPDATE email_outbox SET status = 'sent'`);
+    const cleared = await sweep(notifyIsDown());
+    expect((await ledger())[0]!.resolved_at).not.toBeNull();
+    expect(await notifications('job_alert_resolved')).toHaveLength(0);
+
+    // A resolved alert leaves the open set for good, so nothing in a later
+    // reconcile's result would ever mention it again — the recovery is owed by
+    // the ledger or it is owed by nobody.
+    await sweep();
+    expect(await notifications('job_alert_resolved')).toHaveLength(1);
+    expect(cleared?.notified).toMatchObject({ resolved: 0, failed: 1 });
+
+    // And the retry does not become a second announcement on later sweeps.
+    await sweep();
+    await sweep();
+    expect(await notifications('job_alert_resolved')).toHaveLength(1);
+    expect(await notifications('job_alert')).toHaveLength(1);
+  });
+
+  it('announces once when two sweeps run at the same time', async () => {
+    // The sweep runs on every instance and from the ops route, so two of them
+    // landing on the same owed announcement is ordinary. The delivery
+    // transaction takes the row FOR UPDATE with the NULL check in the
+    // predicate, so the loser matches nothing and sends nothing.
+    await stuckEmail(60 * 8);
+    await sweep(notifyIsDown());
+    expect(await notifications('job_alert')).toHaveLength(0);
+
+    const [a, b] = await Promise.all([sweep(), sweep()]);
+    expect(await notifications('job_alert')).toHaveLength(1);
+    // Exactly one of the two did the sending, and it says so.
+    expect((a?.notified.opened ?? 0) + (b?.notified.opened ?? 0)).toBe(1);
+  });
+
+  it('still announces recoveries when every rule is turned off', async () => {
+    await stuckEmail(60 * 8);
+    await scan();
+
+    await pool.query(`UPDATE job_alert_rules SET enabled = false`);
+    try {
+      // Disabling every rule closes the open alerts. That early-returns before
+      // the evaluation, and the recovery is owed to the same operator.
+      const result = await sweep();
+      expect(result?.resolved).toHaveLength(1);
+      expect(await notifications('job_alert_resolved')).toHaveLength(1);
+      expect(result?.notified).toMatchObject({ resolved: 1, failed: 0 });
+    } finally {
+      await pool.query(`UPDATE job_alert_rules SET enabled = true`);
+    }
+  });
+});
