@@ -79,11 +79,23 @@ export function calendarDate(value: Date): string {
  * is zero, which is why this went unnoticed on a UTC CI box.
  *
  * "Here" is the process's zone: the browser's for the frontend copy of this
- * rule, which is what a date typed into a form means; and `TZ` for the server,
- * which the deploy pins to America/New_York, so a server-minted valuation date
- * is a US business day. That is a choice rather than a truth — the client's own
- * zone is not on the request — but it is the choice the deliverables are
- * written for, and it is at least a day that has begun somewhere.
+ * rule, which is what a date typed into a form means; and for the server, the
+ * host's — America/New_York on the Hetzner box, so a server-minted valuation
+ * date is a US business day. That is a choice rather than a truth — the
+ * client's own zone is not on the request — but it is the choice the
+ * deliverables are written for, and it is at least a day that has begun
+ * somewhere.
+ *
+ * Worth being exact about where that zone comes from, because it is not pinned:
+ * nothing sets `TZ` in the units or the env file, so Node reads
+ * `/etc/localtime` and the answer is host state rather than deployed config.
+ * It has been America/New_York on that box since it was built, and the
+ * behaviour above is correct today. But a rebuilt host, or a container that
+ * defaults to UTC, would move every server-minted date by up to four hours
+ * without a line of this repository changing — and the failure is the silent
+ * kind this function exists to remove. `Environment=TZ=America/New_York` in
+ * the systemd units would make the zone a deployed fact; until then, treat it
+ * as an assumption that happens to hold.
  *
  * `at` exists so a caller can pass the instant under test. Defaulting it to the
  * clock is what every call site wants and what none of them should have to
