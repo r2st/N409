@@ -701,15 +701,36 @@ export function registerReportRoutes(
     }
 
     const drafted = draftedSectionsFrom(job.result);
+
+    /*
+     * Re-read the body the draft is applied to, after the agent has run.
+     *
+     * `version` above was read before `runAiPipeline`, and that call is a round
+     * trip to the AI service that takes minutes. An analyst saving a chapter in
+     * that window is the ordinary case, not the exotic one — the button that
+     * starts this is in the same tab as the editor, and a run is exactly the
+     * length of time somebody uses to write while they wait. Applying to the
+     * body as it was read would carry the pre-edit text back over the top of
+     * their work, and because the agent's whole contract is "fills the chapters
+     * nobody has written" the result reads as if it had honoured that.
+     *
+     * Applying to the current body loses nothing: `applyNarrative` decides what
+     * is unwritten by comparing against v1, so a chapter saved during the run is
+     * a written one and is left alone, exactly as it would have been had it been
+     * saved a minute earlier.
+     */
+    const current = (await findReportByValuation(deps.pool, valuation.id)) ?? report;
+    const target = (await getVersion(deps.pool, current.id, current.current_version)) ?? version;
+
     /*
      * Version 1 is the template as instantiated for this engagement, and
      * `saveVersion` appends rather than rewrites — so it is still the pristine
      * skeleton however many edits followed, and a chapter identical to its v1
      * text is one nobody has written. That is the whole overwrite rule.
      */
-    const baseline = version.version === 1 ? version : await getVersion(deps.pool, report.id, 1);
+    const baseline = target.version === 1 ? target : await getVersion(deps.pool, current.id, 1);
     const calculation = await latestSucceededCalculation(deps.pool, valuation.id);
-    const outcome = applyNarrative(version.content, drafted, {
+    const outcome = applyNarrative(target.content, drafted, {
       overwrite: parsed.data.overwrite,
       baseline: baseline?.content ?? null,
       // Which chapter each drafted section belongs in is a property of the
@@ -723,14 +744,17 @@ export function registerReportRoutes(
     // No new version when nothing moved: a run that wrote nothing should not
     // leave a version in the history claiming it did.
     if (!outcome.changed) {
-      return { version: version.version, job_id: job.id, applied: outcome.applied, changed: false };
+      return { version: target.version, job_id: job.id, applied: outcome.applied, changed: false };
     }
 
     const saved = await saveVersion(deps.pool, {
-      report,
+      report: current,
       content: sanitizeContent(outcome.content),
       actor: actorFor(principal),
       origin: { redraftedFrom: `ai:report_narrative:${job.id}` },
+      // Closes the last gap: a save landing between the read just above and
+      // this write. Refused rather than applied to a body that has moved again.
+      expectedVersion: current.current_version,
     });
     return {
       version: saved.version.version,
