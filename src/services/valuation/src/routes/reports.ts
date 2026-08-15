@@ -13,6 +13,7 @@ import {
   visibleSections,
   type ReportContent,
 } from '../domain/report.js';
+import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { findActiveTemplateForKind, templateLabel } from '../repos/reportTemplates.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import {
@@ -102,6 +103,24 @@ async function loadValuation(pool: pg.Pool, principal: Principal, id: string): P
 async function loadForEdit(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
   if (!canEditWorkingData(principal)) throw problems.forbidden();
   return loadValuation(pool, principal, id);
+}
+
+/**
+ * The report version an editor is asserting it loaded, from `If-Match`.
+ *
+ * Opt-in, like the same header on the valuation: a client with no opinion sends
+ * nothing and keeps the old last-write-wins behaviour. `*` asserts the report
+ * exists, which the caller has already established by loading it, so it is not
+ * a version check. A header that is present but unreadable is refused rather
+ * than dropped — a typo'd validator that is silently ignored is a lost update
+ * wearing a seatbelt that was never buckled.
+ */
+function expectedReportVersion(raw: string | string[] | undefined): number | undefined {
+  const ifMatch = parseIfMatch(raw);
+  if (ifMatch.kind === 'invalid') {
+    throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+  }
+  return ifMatch.kind === 'version' ? ifMatch.version : undefined;
 }
 
 /**
@@ -463,13 +482,18 @@ export function registerReportRoutes(
    */
   deps: { pool: pg.Pool; ai?: AiPipelineDeps },
 ): void {
-  app.get('/api/v1/valuations/:id/report', { preHandler: app.authenticate }, async (req) => {
+  app.get('/api/v1/valuations/:id/report', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, principal, id);
     if (!canReadReport(principal, toRef(valuation))) throw problems.notFound();
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
     const version = await getVersion(deps.pool, report.id, report.current_version);
+    // The validator an editor sends back as If-Match when it saves. The report
+    // pointer, not the valuation's `version` — the two move independently and
+    // an analyst editing prose is racing other prose, not the engagement's
+    // fields.
+    reply.header('ETag', versionEtag(report.current_version));
     return {
       report,
       version: version
@@ -478,10 +502,14 @@ export function registerReportRoutes(
     };
   });
 
-  app.put('/api/v1/valuations/:id/report', { preHandler: app.authenticate }, async (req) => {
+  app.put('/api/v1/valuations/:id/report', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
+
+    // Parsed before the body so a malformed header fails the same way whatever
+    // the editor is trying to save.
+    const expectedVersion = expectedReportVersion(req.headers['if-match']);
 
     const parsed = PutBody.safeParse(req.body);
     if (!parsed.success)
@@ -494,7 +522,9 @@ export function registerReportRoutes(
       content,
       actor: actorFor(principal),
       origin: 'editor',
+      expectedVersion,
     });
+    reply.header('ETag', versionEtag(saved.report.current_version));
     return {
       report: saved.report,
       version: { version: saved.version.version, content: saved.version.content, rendered_at: null },
@@ -536,10 +566,11 @@ export function registerReportRoutes(
     },
   );
 
-  app.post('/api/v1/valuations/:id/report/revert', { preHandler: app.authenticate }, async (req) => {
+  app.post('/api/v1/valuations/:id/report/revert', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
+    const expectedVersion = expectedReportVersion(req.headers['if-match']);
 
     const parsed = RevertBody.safeParse(req.body);
     if (!parsed.success)
@@ -558,7 +589,9 @@ export function registerReportRoutes(
       content: target.content,
       actor: actorFor(principal),
       origin: { revertedFrom: target.version },
+      expectedVersion,
     });
+    reply.header('ETag', versionEtag(saved.report.current_version));
     return {
       report: saved.report,
       version: { version: saved.version.version, content: saved.version.content, rendered_at: null },

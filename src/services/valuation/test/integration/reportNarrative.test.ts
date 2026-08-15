@@ -28,11 +28,24 @@ const PROSE = (topic: string) =>
   `${topic} is set out at length here, in the professional register a reviewing auditor expects, ` +
   `with the figures the calculation produced and nothing invented beside them.`;
 
-/** Replays a canned narrative and records how many times it was asked for one. */
-async function startAiStub(state: { calls: number; sections: Array<Record<string, unknown>> }) {
+/**
+ * Replays a canned narrative and records how many times it was asked for one.
+ *
+ * `duringRun` is the only way to stage the thing this route actually races: an
+ * analyst saving a chapter while the agent is working. The window is the round
+ * trip to the AI service, so running the save inside the stub's handler puts it
+ * exactly there — after the route's first read of the body, before it applies
+ * anything — rather than approximating it with a hand-ordered pair of calls.
+ */
+async function startAiStub(state: {
+  calls: number;
+  sections: Array<Record<string, unknown>>;
+  duringRun?: (() => Promise<void>) | null;
+}) {
   const stub = Fastify({ logger: false });
   stub.post('/ai/v1/pipelines/report_narrative', async (_req, reply) => {
     state.calls += 1;
+    if (state.duringRun) await state.duringRun();
     return reply.status(200).send({ model: 'stub-model', result: { sections: state.sections } });
   });
   await stub.listen({ port: 0, host: '127.0.0.1' });
@@ -49,8 +62,13 @@ describe.skipIf(!dbUp)('drafting the report narrative', () => {
   let ops: Awaited<ReturnType<typeof seedUser>>;
   let client: Awaited<ReturnType<typeof seedUser>>;
 
-  const state = {
+  const state: {
+    calls: number;
+    duringRun: (() => Promise<void>) | null;
+    sections: Array<Record<string, unknown>>;
+  } = {
     calls: 0,
+    duringRun: null,
     sections: [
       { key: 'company_overview', title: 'Company Overview', body: PROSE('Northwind Robotics') },
       { key: 'valuation_methodology', title: 'Methodology', body: PROSE('The methodology') },
@@ -208,6 +226,53 @@ describe.skipIf(!dbUp)('drafting the report narrative', () => {
     }>;
     expect(applied.find((a) => a.source_key === 'company_overview')!.outcome).toBe('kept');
     expect((await sectionsOf(id)).get('company_overview')).toContain('Written by the analyst');
+  });
+
+  /**
+   * The same overwrite rule, against a save that lands *during* the run.
+   *
+   * "Does not overwrite a chapter the analyst has written" above stages the
+   * save before the run, which is the easy half — the route reads the body once
+   * at the top, so it sees that edit. The hard half is the edit that arrives
+   * after that read: the agent takes minutes, the button that starts it sits in
+   * the tab the analyst is typing in, and waiting for a draft is exactly the
+   * time somebody uses to write. Applying to the body as first read would carry
+   * the pre-edit text back over their chapter, in a document a named appraiser
+   * signs, while reporting the outcome as if the rule had been honoured.
+   */
+  it('applies the draft to the body as it stands when the agent returns', async () => {
+    const id = await engagement('Narrative Eleven, Inc.');
+    state.duringRun = async () => {
+      const current = (
+        await app.inject({
+          method: 'GET',
+          url: `/api/v1/valuations/${id}/report`,
+          headers: authHeader(ops.token),
+        })
+      ).json().version.content;
+      current.sections.find((s: { key: string }) => s.key === 'company_overview').html =
+        '<p>Written by the analyst while the agent was still running.</p>';
+      await app.inject({
+        method: 'PUT',
+        url: `/api/v1/valuations/${id}/report`,
+        headers: authHeader(ops.token),
+        payload: { content: current },
+      });
+    };
+    try {
+      const res = await draft(id, { reuse: false });
+      expect(res.statusCode, res.body).toBe(200);
+      const applied = res.json().applied as Array<{ source_key: string; outcome: string }>;
+      expect(applied.find((a) => a.source_key === 'company_overview')!.outcome).toBe('kept');
+    } finally {
+      state.duringRun = null;
+    }
+
+    const sections = await sectionsOf(id);
+    expect(sections.get('company_overview')).toContain('while the agent was still running');
+    // And the chapters nobody had written are still drafted: rebasing onto the
+    // current body is not the same as abandoning the run.
+    expect(sections.get('dlom')).toContain('The marketability discount');
   });
 
   it('overwrites when explicitly told to', async () => {

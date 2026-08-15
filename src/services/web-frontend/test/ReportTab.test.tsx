@@ -87,6 +87,7 @@ interface Call {
   url: string;
   method: string;
   body: Record<string, unknown> | undefined;
+  ifMatch: string | null;
 }
 
 function mockApi(
@@ -109,6 +110,7 @@ function mockApi(
         url,
         method,
         body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+        ifMatch: new Headers(init?.headers).get('if-match'),
       });
       if (/\/report\/versions$/.test(url)) {
         return opts.versions ? opts.versions() : json({ versions: VERSIONS });
@@ -372,6 +374,87 @@ describe('ReportTab', () => {
       await user.click(screen.getByRole('button', { name: 'Save (new version)' }));
       await screen.findByText('Saved as version 4.');
       expect(calls.filter((c) => /\/report\/versions$/.test(c.url)).length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('sends the version it loaded so a concurrent save is refused', async () => {
+      const user = userEvent.setup();
+      const calls = mockApi();
+      renderTab();
+      await ready();
+      await user.type(screen.getByLabelText('Report title'), '!');
+      await user.click(screen.getByRole('button', { name: 'Save (new version)' }));
+      await screen.findByText('Saved as version 4.');
+      expect(calls.find((c) => c.method === 'PUT')!.ifMatch).toBe('"3"');
+    });
+
+    /**
+     * A conflict here cannot be handled the way the valuation form handles one.
+     *
+     * There, a 409 reloads the page: the fields are a dozen values and retyping
+     * them from the source document is a minute's work. Here the refused
+     * payload is the chapters the analyst has been writing, and reloading is
+     * exactly how they are lost — so the draft stays on screen, and the button
+     * changes to say what saving it would now do.
+     */
+    describe('when someone else saved first', () => {
+      /**
+       * The tab loads at v3 and the other analyst's v4 lands between that read
+       * and the save — so the second read of `/report`, the one the conflict
+       * handler makes, is the first that can see v4.
+       */
+      const conflicting = () => {
+        let reads = 0;
+        return mockApi({
+          save: problem(
+            409,
+            'This report was changed by someone else (expected version 3, now 4). ' +
+              'Your draft has not been lost — read version 4 before saving over it.',
+          ),
+          report: () => {
+            const version = reads++ === 0 ? 3 : 4;
+            return json({
+              report: { ...REPORT, current_version: version },
+              version: { version, content: CONTENT },
+            });
+          },
+        });
+      };
+
+      const conflict = async () => {
+        const user = userEvent.setup();
+        const calls = conflicting();
+        renderTab();
+        await ready();
+        await user.type(screen.getByLabelText('Report title'), '!');
+        await user.click(screen.getByRole('button', { name: 'Save (new version)' }));
+        await screen.findByRole('alert');
+        return { user, calls };
+      };
+
+      it('keeps the analyst’s unsaved draft on screen', async () => {
+        await conflict();
+        expect(screen.getByLabelText('Report title')).toHaveValue('Acme Robotics — 409A Valuation!');
+      });
+
+      it('says which version landed and that the draft survived', async () => {
+        await conflict();
+        expect(screen.getByRole('alert')).toHaveTextContent('now 4');
+        expect(screen.getByRole('alert')).toHaveTextContent('has not been lost');
+      });
+
+      it('makes the retry say it will save over their version', async () => {
+        await conflict();
+        expect(await screen.findByRole('button', { name: 'Save over v4' })).toBeEnabled();
+      });
+
+      it('rebases the retry onto their version rather than conflicting forever', async () => {
+        const { user, calls } = await conflict();
+        await user.click(await screen.findByRole('button', { name: 'Save over v4' }));
+        const puts = calls.filter((c) => c.method === 'PUT');
+        expect(puts).toHaveLength(2);
+        expect(puts[0]!.ifMatch).toBe('"3"');
+        expect(puts[1]!.ifMatch).toBe('"4"');
+      });
     });
 
     it('reports a rejected save', async () => {

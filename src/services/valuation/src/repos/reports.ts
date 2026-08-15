@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { EVENT_TYPES } from '../domain/valuation.js';
 import { recordEvent, type EventActor } from '../events/record.js';
@@ -96,6 +96,24 @@ export async function createReport(
   });
 }
 
+/**
+ * The 409 a stale report save is refused with.
+ *
+ * Both versions are named, as in `staleWrite` in repos/valuations.ts, so the
+ * client can tell "somebody else saved" from "my own retry raced itself" and
+ * can point at the version that landed. The advice differs deliberately: the
+ * valuation's conflict tells the user to reload, which is right for a form of
+ * a dozen fields, and wrong here — the refused body is the chapters they have
+ * been writing, and reloading is how you lose them.
+ */
+function staleSave(current: number, expected: number): never {
+  throw problems.conflict(
+    `This report was changed by someone else (expected version ${expected}, ` +
+      `now ${current}). Your draft has not been lost — read version ${current} ` +
+      `before saving over it.`,
+  );
+}
+
 /** Appends a new immutable version and bumps the report pointer. */
 export async function saveVersion(
   pool: pg.Pool,
@@ -103,6 +121,16 @@ export async function saveVersion(
     report: ReportRow;
     content: ReportContent;
     actor: EventActor;
+    /**
+     * The `current_version` the editor's copy of the body was loaded at. When
+     * given, the save is refused if somebody else has saved since.
+     *
+     * Checked under the row lock below rather than against `args.report`, which
+     * is read outside the transaction: the whole failure this guards is another
+     * writer landing between that read and this write, so a check against the
+     * caller's own copy would be blind to exactly the case it exists for.
+     */
+    expectedVersion?: number;
     /**
      * Audit trail: 'editor' for a save, the version a revert restored, or the
      * skeleton a re-draft instantiated.
@@ -124,6 +152,9 @@ export async function saveVersion(
       [args.report.id],
     );
     const locked = lockedRows[0]!;
+    if (args.expectedVersion !== undefined && args.expectedVersion !== locked.current_version) {
+      staleSave(locked.current_version, args.expectedVersion);
+    }
     const nextVersion = locked.current_version + 1;
 
     const { rows: versionRows } = await client.query<ReportVersionRow>(

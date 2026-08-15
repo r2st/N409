@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError, getToken } from '../../lib/api';
+import { api, ApiError, getToken, ifMatch } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import {
@@ -93,6 +93,18 @@ export function ReportTab() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /**
+   * The version somebody else saved while this editor was open.
+   *
+   * Set when a save is refused, and it is the only piece of conflict state the
+   * tab keeps, because the response to a conflict here cannot be the response
+   * the valuation form gives. There, a 409 reloads the page — the fields are a
+   * dozen values that can be retyped from the source document. Here the refused
+   * payload is the chapters, so reloading is precisely how they are lost. The
+   * draft stays on screen, the button says what saving it would now do, and the
+   * analyst decides.
+   */
+  const [conflictedWith, setConflictedWith] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -102,6 +114,7 @@ export function ReportTab() {
       setReport(res.report);
       setContent(res.version?.content ?? null);
       setDirty(false);
+      setConflictedWith(null);
       if (ops) {
         const { versions: v } = await api<{ versions: ReportVersionSummary[] }>(
           `/valuations/${valuation.id}/report/versions`,
@@ -154,18 +167,47 @@ export function ReportTab() {
 
   const save = () =>
     run('save', async () => {
-      const res = await api<{ report: Report; version: { version: number; content: ReportContent } }>(
-        `/valuations/${valuation.id}/report`,
-        { method: 'PUT', body: { content } },
-      );
-      setReport(res.report);
-      setContent(res.version.content);
-      setDirty(false);
-      setNotice(`Saved as version ${res.version.version}.`);
-      const { versions: v } = await api<{ versions: ReportVersionSummary[] }>(
-        `/valuations/${valuation.id}/report/versions`,
-      );
-      setVersions(v);
+      try {
+        const res = await api<{ report: Report; version: { version: number; content: ReportContent } }>(
+          `/valuations/${valuation.id}/report`,
+          {
+            method: 'PUT',
+            body: { content },
+            // The version this editor was loaded at. Refused with a 409 if
+            // anyone saved since — `saveVersion` appends, so without this the
+            // other analyst's chapters stay in the history but stop being the
+            // report anything reads, renders or downloads, and nobody is told.
+            headers: ifMatch(report.current_version),
+          },
+        );
+        setReport(res.report);
+        setContent(res.version.content);
+        setDirty(false);
+        setConflictedWith(null);
+        setNotice(`Saved as version ${res.version.version}.`);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 409) {
+          // Take their version as the new base — but only the pointer. The body
+          // on screen is this analyst's unsaved work and is the one thing that
+          // must survive. With the pointer current, a second click saves on top
+          // of theirs deliberately, and still conflicts if a third writer lands
+          // in between.
+          const fresh = await api<{ report: Report }>(`/valuations/${valuation.id}/report`);
+          setReport(fresh.report);
+          setConflictedWith(fresh.report.current_version);
+        }
+        throw err;
+      } finally {
+        // Their save is in the history either way, and the panel is how this
+        // analyst reads it before deciding to supersede it.
+        if (ops) {
+          // Cosmetic, and in the failure path — a panel that would not refresh
+          // must not replace the error explaining why the save was refused.
+          await api<{ versions: ReportVersionSummary[] }>(`/valuations/${valuation.id}/report/versions`)
+            .then(({ versions: v }) => setVersions(v))
+            .catch(() => {});
+        }
+      }
     });
 
   const render = () =>
@@ -215,7 +257,13 @@ export function ReportTab() {
 
   const restore = (version: number) =>
     run('restore', async () => {
-      await api(`/valuations/${valuation.id}/report/revert`, { method: 'POST', body: { version } });
+      await api(`/valuations/${valuation.id}/report/revert`, {
+        method: 'POST',
+        body: { version },
+        // A revert appends the old body as the new current version, so it is a
+        // save like any other and races the same editors.
+        headers: ifMatch(report.current_version),
+      });
       setNotice(`Restored version ${version} as a new version.`);
       await load();
     });
@@ -278,8 +326,20 @@ export function ReportTab() {
                 <Button variant="secondary" onClick={() => void render()} disabled={busy !== null || dirty}>
                   {busy === 'render' ? 'Rendering…' : 'Render PDF'}
                 </Button>
-                <Button onClick={() => void save()} disabled={busy !== null || !dirty}>
-                  {busy === 'save' ? 'Saving…' : 'Save (new version)'}
+                <Button
+                  onClick={() => void save()}
+                  disabled={busy !== null || !dirty}
+                  title={
+                    conflictedWith === null
+                      ? undefined
+                      : `Someone else saved v${conflictedWith} while you were editing. Saving now appends your draft on top of theirs — read v${conflictedWith} in the version history first.`
+                  }
+                >
+                  {busy === 'save'
+                    ? 'Saving…'
+                    : conflictedWith === null
+                      ? 'Save (new version)'
+                      : `Save over v${conflictedWith}`}
                 </Button>
               </>
             )}

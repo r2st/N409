@@ -1,5 +1,93 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    668f8b5
+# subject:   the money path, hardened
+# previous:  162ce75 (the soft-delete sweep, finished).
+# includes:  5 commits — R57, a production-readiness round.
+#
+#            R56 asked, of every reader of `valuations`, whether it asks
+#            somebody to act or merely records what happened. This round asked
+#            the same question of the money path, and of the two subsystems
+#            whose correctness is decided by events we do not control: Stripe
+#            webhooks, and boot.
+#
+#            Two of the five are the same mistake in two places — a state
+#            machine that trusted an event to be news:
+#
+#            c6955c6 — fulfilment decided whether a `checkout.session.completed`
+#              was news by reading `status === 'succeeded'` on the payments row.
+#              Both ways money goes back out (a full refund, a chargeback
+#              decided against us) move that row to 'refunded', which is not
+#              'succeeded' — so a row that had been settled *and* reversed read
+#              as one never settled at all. Stripe retries for three days and an
+#              operator can resend by hand, so the replay is ordinary: it marked
+#              the payment succeeded again and put `paid_status` back to paid. A
+#              client with every cent returned, holding a published 409A,
+#              counted as a paying customer. The status test moved into the
+#              UPDATE, where it also excludes a second writer.
+#
+#            58a9e85 — `upsertSubscription` wrote `status = EXCLUDED.status`
+#              unconditionally, so a `customer.subscription.updated` carrying
+#              'active' overwrote a row `deleted` had already cancelled and
+#              cleared `canceled_at`. Stripe guarantees no ordering, and its own
+#              retry is how events most often arrive out of order. The row then
+#              satisfied `findActiveSubscription` and `consumeValuation`: a
+#              subscriber who had cancelled kept the plan and the quota.
+#              Cancellation is terminal in Stripe, so "already cancelled" is
+#              never the stale half — the same invariant
+#              `markSubscriptionPastDue` already held on its own path.
+#
+#            Two are money taken that should not have been:
+#
+#            a261631 — R56 stopped `listUnpaidValuationsForScope` offering an
+#              archived engagement, because that list "is a demand for money
+#              with a button beside it". The button was never gated, and the
+#              list is not the only way to reach it: an engagement's page stays
+#              addressable by id, so the pay panel rendered and the checkout ran
+#              through to a live Session. This is the shape R56 left behind —
+#              the read was fixed, the write was not.
+#
+#            668f8b5 — a Checkout Session URL stays payable for 24 hours and
+#              this route minted a fresh one on every POST, never closing the
+#              one before. A double-click, a second tab, a tab left open that
+#              morning: two live ways to be charged for one piece of work. The
+#              duplicate is near-invisible here — the second webhook finds the
+#              valuation already paid and leaves it alone — so what survives is
+#              a charge on a card statement with no counterpart in our records.
+#
+#            One is boot:
+#
+#            3761b4f — `PUBLIC_BASE_URL` and `DATABASE_URL` carry
+#              local-development defaults so `npm run dev` needs no .env, and
+#              deployed that is what makes an unset one invisible. Every emailed
+#              link — reset, verification, invitation, intake, board signing —
+#              would be minted against `http://localhost:3000` on a service
+#              reporting itself healthy. Both are now required in production,
+#              checked for presence only.
+#
+#            One test was written, found to pass without the fix, and replaced.
+#            Two concurrent webhook deliveries cannot be staged honestly in a
+#            single-threaded suite — `fastify.inject` interleaves at await
+#            points that happen to serialise the read and the write — so the
+#            parallel-delivery test proved nothing and now asserts the
+#            compare-and-set contract the route relies on instead.
+#
+#            Looked at and found sound: tenant scoping on every aggregate
+#            (`sameCompanyFilter`, the firm console, the dashboard caches, whose
+#            keys all carry the scope); `searchUsers`, which is unscoped but
+#            platform-staff-only; report rendering, which is transactional and
+#            buffered, so there is no partial deliverable to download; report
+#            URLs, which are authenticated per request, with auditor tokens
+#            carrying an expiry and a revocation.
+#
+#            gap: there is no subject-access export. A client cannot ask for
+#            everything held about them in one call, and nothing assembles it.
+#            The pieces exist per-collection and are already scope-filtered;
+#            what is missing is the endpoint that walks them and the decision
+#            about what belongs in it.
+#
+
+# N409 revision
 # commit:    162ce75
 # subject:   the soft-delete sweep, finished
 # previous:  ecd4341 (two work queues kept offering retired engagements).
