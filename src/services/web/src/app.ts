@@ -211,6 +211,37 @@ export function cacheControlFor(filePath: string): string {
 }
 
 /**
+ * An upstream base URL, or a refusal that names the variable it came from.
+ *
+ * The valuation service parses its own `AI_URL` / `ENGINE_URL` through
+ * `z.string().url()`; the same three variables here were read straight out of
+ * the environment. A scheme-less `VALUATION_URL=127.0.0.1:3001` — the obvious
+ * way to write it, and the way the systemd unit's own comment describes the
+ * address — does fail, but it fails as an unhandled `TypeError: Invalid URL`
+ * raised inside `@fastify/reply-from` while the plugin is registering. The
+ * stack names `reply-from/lib/request.js`; nothing in it names `VALUATION_URL`,
+ * and the whole /api surface of the public origin is what did not come up.
+ *
+ * `probeReady` takes the other two, where the equivalent mistake is quieter
+ * still: a bad `AI_URL` is a readiness check that fails for a reason that reads
+ * like the AI service being down.
+ */
+function upstreamUrl(value: string, variable: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(
+      `${variable} is not a URL — got "${value}". It needs a scheme, e.g. http://127.0.0.1:3001`,
+    );
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`${variable} must be http or https — got "${value}"`);
+  }
+  return value;
+}
+
+/**
  * Web/BFF: serves the built React SPA and proxies /api/* to the valuation
  * service so the browser talks to a single origin (no CORS, no exposed ports).
  */
@@ -272,9 +303,15 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
 
   registerProblemHandler(app);
 
-  const valuationUrl = opts.valuationUrl ?? process.env.VALUATION_URL ?? 'http://127.0.0.1:3001';
-  const aiUrl = opts.aiUrl ?? process.env.AI_URL ?? 'http://127.0.0.1:3002';
-  const engineUrl = opts.engineUrl ?? process.env.ENGINE_URL ?? 'http://127.0.0.1:3003';
+  const valuationUrl = upstreamUrl(
+    opts.valuationUrl ?? process.env.VALUATION_URL ?? 'http://127.0.0.1:3001',
+    'VALUATION_URL',
+  );
+  const aiUrl = upstreamUrl(opts.aiUrl ?? process.env.AI_URL ?? 'http://127.0.0.1:3002', 'AI_URL');
+  const engineUrl = upstreamUrl(
+    opts.engineUrl ?? process.env.ENGINE_URL ?? 'http://127.0.0.1:3003',
+    'ENGINE_URL',
+  );
 
   // Readiness. This endpoint previously reported `{"checks":{}}` with a 200 —
   // structurally incapable of ever saying "not ready", which made it worse than
