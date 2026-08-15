@@ -1,5 +1,10 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import {
+  EMAIL_JITTER_FLOOR,
+  EMAIL_MAX_ATTEMPTS,
+  EMAIL_RETRY_BACKOFF_MINUTES,
+} from '../domain/emailRetry.js';
 
 export type EmailStatus = 'queued' | 'sent' | 'failed' | 'skipped';
 
@@ -25,6 +30,12 @@ export interface EmailOutboxRow {
   sent_at: Date | null;
   /** When a retry sweeper last took this row; null when free. See claimRetryableEmails. */
   claimed_at: Date | null;
+  /**
+   * Earliest time a sweep may claim this row again (migration 0159). Null means
+   * no wait — a fresh row, or one whose ladder is spent and which the attempt
+   * ceiling now holds. See domain/emailRetry.ts.
+   */
+  next_attempt_at: Date | null;
 }
 
 export async function enqueueEmail(
@@ -60,18 +71,62 @@ export async function enqueueEmail(
   return rows[0]!;
 }
 
+/**
+ * The retry schedule, as the two failure-recording statements below stamp it.
+ *
+ * In SQL rather than in JavaScript because it has to land in the *same*
+ * statement that records the failure. Split across two round trips, a process
+ * that died between them would leave a row 'failed' with no schedule — which is
+ * claimable immediately, i.e. exactly the unbounded-cadence behaviour migration
+ * 0159 exists to remove, reintroduced by the crash window.
+ *
+ * The ladder's figures are not restated here: `ladder` is
+ * `EMAIL_RETRY_BACKOFF_MINUTES` passed in, and the index into it is the number
+ * of attempts *made* including the one being recorded. That count is spelled by
+ * the caller rather than assumed, because the two writers differ on it:
+ * `markEmail` increments in the same statement, so its count is `attempts + 1`,
+ * while `settleClaimedEmail` settles a row the claim already incremented, so
+ * its count is `attempts`. Getting that wrong is an off-by-one that shifts the
+ * whole ladder a step and is invisible in any single test.
+ *
+ * Past the end of the array it holds at the longest step, which is what lets a
+ * raised `EMAIL_RETRY_MAX_ATTEMPTS` add attempts rather than silently do
+ * nothing.
+ *
+ * `random()` is per row, not per statement, which is the point of the jitter:
+ * an outage fails the whole backlog at one moment and a fixed ladder would give
+ * every row the same next-attempt time, serving a just-recovered relay its
+ * entire outage in one sweep.
+ *
+ * NULL when the ladder is spent, so terminality is expressed once — by
+ * `attempts >= maxAttempts` in the claim — and raising the ceiling later can
+ * still pick an old row up.
+ */
+function retryScheduleSql(status: string, made: string, max: string, ladder: string): string {
+  return `CASE
+    WHEN ${status}::text = 'failed' AND (${made}) < ${max}::int
+      THEN now() + make_interval(mins => COALESCE(
+             (${ladder}::int[])[${made}],
+             (${ladder}::int[])[array_length(${ladder}::int[], 1)]
+           )) * (${EMAIL_JITTER_FLOOR} + ${1 - EMAIL_JITTER_FLOOR} * random())
+    ELSE NULL
+  END`;
+}
+
 export async function markEmail(
   db: pg.Pool | pg.PoolClient,
   id: string,
   status: Exclude<EmailStatus, 'queued'>,
   error?: string,
+  opts: { maxAttempts?: number } = {},
 ): Promise<void> {
   await db.query(
     `UPDATE email_outbox
      SET status = $2::email_status, error = $3, attempts = attempts + 1,
-         sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END
+         sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END,
+         next_attempt_at = ${retryScheduleSql('$2', 'email_outbox.attempts + 1', '$4', '$5')}
      WHERE id = $1`,
-    [id, status, error ?? null],
+    [id, status, error ?? null, opts.maxAttempts ?? EMAIL_MAX_ATTEMPTS, EMAIL_RETRY_BACKOFF_MINUTES],
   );
 }
 
@@ -114,6 +169,13 @@ export const CLAIM_LEASE_MS = 15 * 60_000;
  * as longer than any single transport attempt, which is exactly the condition
  * for "no in-flight send can still be holding this row" — so reusing it here
  * cannot double-deliver a slow-but-live attempt.
+ *
+ * `next_attempt_at` is the retry ladder (0159), and it is deliberately *not*
+ * applied to a stranded 'queued' row: that row has never been attempted, so
+ * there is nothing to back off from, and its own wait is the lease. A NULL is
+ * due now — which is what a fresh row carries, what the migration left on the
+ * whole existing backlog, and what a row whose ladder is spent carries once the
+ * attempt ceiling above is the thing holding it.
  */
 export async function claimRetryableEmails(
   pool: pg.Pool,
@@ -136,6 +198,7 @@ export async function claimRetryableEmails(
           AND (status = 'failed' OR created_at < now() - ($3 || ' seconds')::interval)
           AND attempts < $1
           AND channel = ANY($2::comm_channel[])
+          AND (status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now())
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)
         -- Oldest first: a backlog larger than the batch must not leave the
         -- earliest failures permanently behind the newest ones.
@@ -154,22 +217,35 @@ export async function claimRetryableEmails(
 }
 
 /**
- * Settles a row taken by claimRetryableEmails. Unlike markEmail this does not count
- * an attempt — the claim already did — and it releases the lease so a row left
- * 'failed' is picked up by the next sweep instead of waiting one out.
+ * Settles a row taken by claimRetryableEmails. Unlike markEmail this does not
+ * count an attempt — the claim already did — and it releases the lease.
+ *
+ * Releasing the lease used to be the whole of it, with a comment arguing that a
+ * failed row should be "picked up by the next sweep instead of waiting one
+ * out". Nothing else spaced the attempts, so the retry schedule was the sweep
+ * interval and every attempt a message had was spent inside one outage. The
+ * lease is still released — it is a lease, and holding it would only make the
+ * row wait twice — and `next_attempt_at` now carries the schedule (0159).
+ *
+ * The attempt count in the ladder's index is the row's own, not the claimed
+ * copy's: `attempts` here is read fresh by the UPDATE, so a row another sweeper
+ * has since touched is scheduled off what the table says rather than off what
+ * this sweeper read.
  */
 export async function settleClaimedEmail(
   pool: pg.Pool,
   id: string,
   status: Exclude<EmailStatus, 'queued'>,
   error?: string,
+  opts: { maxAttempts?: number } = {},
 ): Promise<void> {
   await pool.query(
     `UPDATE email_outbox
      SET status = $2::email_status, error = $3, claimed_at = NULL,
-         sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END
+         sent_at = CASE WHEN $2::text = 'sent' THEN now() ELSE sent_at END,
+         next_attempt_at = ${retryScheduleSql('$2', 'email_outbox.attempts', '$4', '$5')}
      WHERE id = $1`,
-    [id, status, error ?? null],
+    [id, status, error ?? null, opts.maxAttempts ?? EMAIL_MAX_ATTEMPTS, EMAIL_RETRY_BACKOFF_MINUTES],
   );
 }
 

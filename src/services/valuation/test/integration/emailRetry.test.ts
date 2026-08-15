@@ -13,6 +13,24 @@ const failingTransport: EmailTransport = {
   },
 };
 
+/**
+ * Fails a row and brings its retry schedule forward.
+ *
+ * A failed row carries `next_attempt_at` since migration 0159, so it is not
+ * claimable until its backoff has elapsed. *When* a row comes back is the
+ * subject of emailRetryBackoff.test.ts; the cases in this file are about what a
+ * sweep does with a row it is allowed to take, so they wait the ladder out by
+ * clearing the stamp rather than by sleeping through it.
+ *
+ * Written as a helper rather than folded into the `beforeEach` reset because
+ * the reset runs before the seeding, and a stamp cleared before it is written
+ * is not cleared at all.
+ */
+async function failAndMakeDue(ctx: TestApp, id: string, error: string): Promise<void> {
+  await markEmail(ctx.pool, id, 'failed', error);
+  await ctx.pool.query('UPDATE email_outbox SET next_attempt_at = NULL WHERE id = $1', [id]);
+}
+
 async function seedFailedEmail(
   ctx: TestApp,
   overrides: Partial<{ toEmail: string }> = {},
@@ -23,7 +41,7 @@ async function seedFailedEmail(
     subject: 'Test',
     body: 'Body',
   });
-  await markEmail(ctx.pool, email.id, 'failed', 'smtp connect refused');
+  await failAndMakeDue(ctx, email.id, 'smtp connect refused');
   return { ...email, status: 'failed', attempts: email.attempts + 1, error: 'smtp connect refused' };
 }
 
@@ -136,7 +154,7 @@ describe.skipIf(!dbUp)('retryFailedEmails', () => {
       subject: 'Test',
       body: 'Body',
     });
-    await markEmail(ctx.pool, email.id, 'failed', 'boom');
+    await failAndMakeDue(ctx, email.id, 'boom');
 
     const deliveredIds: string[] = [];
     await retryFailedEmails({
@@ -267,7 +285,7 @@ describe.skipIf(!dbUp)('POST /api/v1/admin/outbox/retry', () => {
       subject: 'Test',
       body: 'Body',
     });
-    await markEmail(ctx.pool, email.id, 'failed', 'boom');
+    await failAndMakeDue(ctx, email.id, 'boom');
 
     const res = await ctx.app.inject({
       method: 'POST',

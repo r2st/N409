@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { claimRetryableEmails, settleClaimedEmail } from '../repos/emailOutbox.js';
+import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
 import type { EmailTransport } from './stateChange.js';
 
 /**
@@ -18,6 +19,11 @@ import type { EmailTransport } from './stateChange.js';
  * that point a transient-failure retry is unlikely to help, and retrying
  * forever would mask a real, permanent problem (bad address, disabled
  * account) behind an ever-growing attempts counter.
+ *
+ * *When* a failed row comes back is the ladder in domain/emailRetry.ts, stamped
+ * on the row as `next_attempt_at` (0159). Before that this sweep had a ceiling
+ * and no schedule, so the attempts were spaced by the sweep interval alone and
+ * a message spent all of them inside a single relay outage.
  *
  * The batch is claimed before anything is sent (see claimRetryableEmails), so two
  * sweepers running at once split the backlog instead of both delivering all of
@@ -37,9 +43,14 @@ export async function retryFailedEmails(deps: {
   if (deps.transport) channels.push('email');
   if (deps.smsTransport) channels.push('sms');
 
+  // One ceiling for both halves. The claim refuses a row past it and the
+  // settle stops scheduling at the same number, so "out of attempts" is one
+  // fact rather than two that can disagree — a schedule stamped past the
+  // ceiling would be a row waiting for a sweep that will never take it.
+  const maxAttempts = deps.maxAttempts ?? EMAIL_MAX_ATTEMPTS;
   const claimed = await claimRetryableEmails(deps.pool, {
     channels,
-    maxAttempts: deps.maxAttempts ?? 5,
+    maxAttempts,
     limit: deps.limit,
     leaseMs: deps.leaseMs,
   });
@@ -51,7 +62,7 @@ export async function retryFailedEmails(deps: {
     if (!transport) continue;
     try {
       await transport.send(email);
-      await settleClaimedEmail(deps.pool, email.id, 'sent');
+      await settleClaimedEmail(deps.pool, email.id, 'sent', undefined, { maxAttempts });
       sent += 1;
     } catch (err) {
       await settleClaimedEmail(
@@ -59,6 +70,7 @@ export async function retryFailedEmails(deps: {
         email.id,
         'failed',
         err instanceof Error ? err.message : String(err),
+        { maxAttempts },
       );
       deps.log?.warn({ err, emailId: email.id, attempts: email.attempts }, 'email retry failed');
     }

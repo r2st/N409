@@ -199,6 +199,20 @@ const REVIEWED: Record<string, string[]> = {
   // migration 0104 and a `z.enum` at the route. `?? 'false'` covers the miss.
   'src/services/valuation/src/repos/communications.ts': ["conditionSql[campaign.condition] ?? 'false'"],
 
+  // The retry ladder's schedule (migration 0159), built in SQL so it lands in
+  // the same statement that records the failure. Every argument is a string
+  // literal at the call site: two are placeholder *names* (`'$2'` the status,
+  // `'$4'`/`'$5'` the attempt ceiling and the ladder array, all bound), and the
+  // third is a fixed column expression naming which attempt count to index by —
+  // `attempts + 1` where the statement increments, `attempts` where the claim
+  // already did. The builder's own text interpolates nothing but those and two
+  // module-scope numbers (EMAIL_JITTER_FLOOR). No caller passes anything else,
+  // and none of it is reachable from a request.
+  'src/services/valuation/src/repos/emailOutbox.ts': [
+    "retryScheduleSql('$2', 'email_outbox.attempts + 1', '$4', '$5')",
+    "retryScheduleSql('$2', 'email_outbox.attempts', '$4', '$5')",
+  ],
+
   // `column` indexes NOTIFIED_COLUMN with a two-member union type.
   'src/services/valuation/src/repos/jobAlerts.ts': ['column'],
 

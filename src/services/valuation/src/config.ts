@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EMAIL_MAX_ATTEMPTS } from './domain/emailRetry.js';
 
 const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -66,8 +67,16 @@ const Env = z.object({
   // connection refused) otherwise sit forever — nothing else revisits them.
   // 0 disables the sweep. Rows that have failed EMAIL_RETRY_MAX_ATTEMPTS
   // times are left alone (treated as a real, non-transient failure).
+  //
+  // The scan is a poll, not the schedule: when a failed row is next eligible is
+  // EMAIL_RETRY_BACKOFF_MINUTES on the row itself (0159), so a scan interval
+  // longer than a ladder step delays that step rather than skipping it.
   EMAIL_RETRY_SCAN_MINUTES: z.coerce.number().int().min(0).default(30),
-  EMAIL_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(5),
+  // The initial attempt plus one per backoff step. Was 5 with no ladder behind
+  // it, which spent every attempt inside one outage; the default now tracks the
+  // ladder's length so the last attempt lands ~8.5 hours out. Raising it holds
+  // at the longest step rather than adding new ones.
+  EMAIL_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(EMAIL_MAX_ATTEMPTS),
   // Partner webhook delivery retries (migration 0103). The shortest backoff
   // step is one minute, so a slower scan than that just delays the first retry
   // — it cannot lose it. 0 disables the sweep; POST /admin/webhooks/retry

@@ -27,6 +27,19 @@ describe.skipIf(!dbUp)('retry sweep claiming', () => {
     await ctx.pool.query(`UPDATE email_outbox SET status = 'sent', claimed_at = NULL`);
   });
 
+  /**
+   * Fails a row and brings its retry schedule forward.
+   *
+   * A failed row carries `next_attempt_at` since migration 0159, so it is not
+   * claimable until its backoff elapses (emailRetryBackoff.test.ts pins that).
+   * The cases here are about two sweepers racing for a row both may take, so
+   * they clear the stamp rather than sleep through the ladder.
+   */
+  async function failAndMakeDue(id: string, error: string): Promise<void> {
+    await markEmail(ctx.pool, id, 'failed', error);
+    await ctx.pool.query('UPDATE email_outbox SET next_attempt_at = NULL WHERE id = $1', [id]);
+  }
+
   let seq = 0;
   async function seedFailed(prefix: string): Promise<EmailOutboxRow> {
     const email = await enqueueEmail(ctx.pool, {
@@ -35,7 +48,7 @@ describe.skipIf(!dbUp)('retry sweep claiming', () => {
       subject: 'Test',
       body: 'Body',
     });
-    await markEmail(ctx.pool, email.id, 'failed', 'smtp connect refused');
+    await failAndMakeDue(email.id, 'smtp connect refused');
     return email;
   }
 
@@ -168,7 +181,7 @@ describe.skipIf(!dbUp)('retry sweep claiming', () => {
       subject: 'Test',
       body: 'Body',
     });
-    await markEmail(ctx.pool, email.id, 'failed', 'boom');
+    await failAndMakeDue(email.id, 'boom');
     const before = (await listOutbox(ctx.pool, { limit: 500 })).find((e) => e.id === email.id)!;
 
     await retryFailedEmails({ pool: ctx.pool, transport: { async send() {} } });
@@ -209,6 +222,9 @@ describe.skipIf(!dbUp)('POST /api/v1/admin/outbox/retry racing itself', () => {
       body: 'Body',
     });
     await markEmail(ctx.pool, email.id, 'failed', 'boom');
+    // Past its backoff (0159) — this case is about two requests racing for one
+    // claimable row, not about when the row becomes claimable.
+    await ctx.pool.query('UPDATE email_outbox SET next_attempt_at = NULL WHERE id = $1', [email.id]);
 
     const fire = () =>
       ctx.app.inject({
