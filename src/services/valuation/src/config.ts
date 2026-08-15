@@ -7,7 +7,21 @@ const Env = z.object({
   LOG_LEVEL: z.string().default('info'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars'),
   JWT_ISSUER: z.string().default('n409'),
-  JWT_TTL_SECONDS: z.coerce.number().int().default(28800),
+  // Session lifetime, and the session cookie's `maxAge` with it (auth/cookies.ts).
+  //
+  // Bounded at both ends, which every other number in this file already is and
+  // this one was not (round 74). The floor turns the unit confusion into a
+  // refused boot rather than a platform where every session dies mid-request:
+  // `JWT_TTL_SECONDS=8`, meaning hours, is the obvious typo and it used to be
+  // accepted silently. The ceiling is a week, because the only thing that ends
+  // a session here besides `session_epoch` is this expiry, and the sessions in
+  // question read cap tables and 409A conclusions.
+  JWT_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60, 'JWT_TTL_SECONDS is in seconds; a session shorter than a minute is a typo')
+    .max(604800, 'JWT_TTL_SECONDS must not exceed 7 days')
+    .default(28800),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional(),

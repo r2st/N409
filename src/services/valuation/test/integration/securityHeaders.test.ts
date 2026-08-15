@@ -24,6 +24,30 @@ describe.skipIf(!dbUp)('security headers', () => {
   });
 
   /**
+   * The one header on the round-74 checklist that helmet does not set, so this
+   * service was sending none. The API policy denies everything, including the
+   * media and clipboard families the web service deliberately leaves alone —
+   * nothing reaches a JSON response that could want them.
+   */
+  it('denies every powerful feature via Permissions-Policy', async () => {
+    const res = await ctx.app.inject({ method: 'GET', url: '/health' });
+    const policy = String(res.headers['permissions-policy'] ?? '');
+    for (const feature of ['geolocation', 'camera', 'microphone', 'payment', 'usb', 'clipboard-write']) {
+      expect(policy).toContain(`${feature}=()`);
+    }
+  });
+
+  it('sets the headers on a 401, which never reaches a handler', async () => {
+    // The response most likely to go out bare: the auth plugin refuses above the
+    // route, which is why the policy is an onSend hook rather than per-route.
+    const res = await ctx.app.inject({ method: 'GET', url: '/api/v1/valuations' });
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(String(res.headers['permissions-policy'])).toContain('geolocation=()');
+    expect(String(res.headers['content-security-policy'])).toContain("default-src 'none'");
+  });
+
+  /**
    * The estate is deliberately single-origin: the browser only ever talks to
    * the web BFF, which proxies /api to this service, so no response here has
    * any reason to carry CORS headers. That is not a detail — it is half of the

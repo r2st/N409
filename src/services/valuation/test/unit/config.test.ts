@@ -172,3 +172,39 @@ describe('loadConfig half-configured subsystems', () => {
     expect(() => loadConfig({ NODE_ENV: 'test', JWT_SECRET: REAL_SECRET, EMAIL_MODE: 'smtp' })).not.toThrow();
   });
 });
+
+/**
+ * Session lifetime bounds (round 74).
+ *
+ * Every other number in config.ts carries a `.min()`; this one did not, and it
+ * is the one that decides how long a session holding a company's cap table
+ * stays valid.
+ */
+describe('loadConfig JWT_TTL_SECONDS bounds', () => {
+  const base = { ...PROD_BASE, JWT_SECRET: REAL_SECRET } as const;
+
+  it('defaults to eight hours', () => {
+    expect(loadConfig(base).JWT_TTL_SECONDS).toBe(28800);
+  });
+
+  it('refuses the hours-for-seconds typo instead of expiring every session at once', () => {
+    // `JWT_TTL_SECONDS=8` meaning "eight hours" used to be accepted, and every
+    // session minted under it was dead before the page finished loading.
+    expect(() => loadConfig({ ...base, JWT_TTL_SECONDS: '8' })).toThrow(/typo/);
+  });
+
+  it('refuses a session longer than a week', () => {
+    expect(() => loadConfig({ ...base, JWT_TTL_SECONDS: String(30 * 24 * 3600) })).toThrow(
+      /7 days/,
+    );
+  });
+
+  it('accepts the boundaries themselves', () => {
+    expect(loadConfig({ ...base, JWT_TTL_SECONDS: '60' }).JWT_TTL_SECONDS).toBe(60);
+    expect(loadConfig({ ...base, JWT_TTL_SECONDS: '604800' }).JWT_TTL_SECONDS).toBe(604800);
+  });
+
+  it('keeps the value the .env.example ships, so the documented config still boots', () => {
+    expect(loadConfig({ ...base, JWT_TTL_SECONDS: '28800' }).JWT_TTL_SECONDS).toBe(28800);
+  });
+});

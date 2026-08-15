@@ -4,9 +4,11 @@ import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
 import type pg from 'pg';
 import {
+  API_PERMISSIONS_POLICY,
   bindRequestId,
   createLogger,
   registerHealth,
+  registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
   trustedProxies,
@@ -50,6 +52,7 @@ import { registerCapTableRoutes } from './routes/capTable.js';
 import { registerMonitoringRoutes } from './routes/monitoring.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerDocumentRoutes, MAX_DOCUMENT_BYTES } from './routes/documents.js';
+import { UPLOAD_FIELD_LIMITS } from './routes/uploadLimits.js';
 import { registerPipelineRoutes } from './routes/pipeline.js';
 import type { AutoPipelineDeps } from './pipeline/autoPipeline.js';
 import { registerParamsRoutes } from './routes/params.js';
@@ -290,6 +293,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     hsts: { maxAge: 15552000, includeSubDomains: true }, // 180 days
     crossOriginResourcePolicy: { policy: 'same-site' },
   });
+  // The one header helmet does not set (round 74). Nothing granted: a JSON API
+  // response has no business being a document that can open a camera.
+  registerPermissionsPolicy(app, API_PERMISSIONS_POLICY);
 
   registerProblemHandler(app);
   // Records every route as it registers so the assertion at the end of this
@@ -331,7 +337,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // request via app.authenticate.
   const settings = new SystemSettingsStore(pool, undefined, undefined, app.log);
 
-  void app.register(multipart, { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
+  // `fileSize`/`files` bound the file half; UPLOAD_FIELD_LIMITS bounds the text
+  // half, which nothing bounded before — see uploadLimits.ts for the size of
+  // the request that was reaching the routes (round 74).
+  void app.register(multipart, {
+    limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1, ...UPLOAD_FIELD_LIMITS },
+  });
   // Parses Cookie headers into req.cookies so the auth plugin can read the
   // httpOnly session cookie (audit F-2).
   void app.register(cookie);

@@ -19,6 +19,7 @@ import { buildCapTableGraph } from '../domain/capTableGraph.js';
 import { findCapTable, saveCapTable } from '../repos/capTables.js';
 import { listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
+import { UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 
 /**
  * Cap-table integration (feature 9). Import a CSV (Carta / Pulley / generic)
@@ -138,7 +139,9 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!canEdit(principal, valuation))
       throw problems.forbidden('Only the client or ops can import a cap table');
 
-    const file = await req.file({ limits: { fileSize: MAX_CAP_TABLE_UPLOAD_BYTES, files: 1 } });
+    const file = await req.file({
+      limits: { fileSize: MAX_CAP_TABLE_UPLOAD_BYTES, files: 1, ...UPLOAD_FIELD_LIMITS },
+    });
     if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
 
     let buffer: Buffer;

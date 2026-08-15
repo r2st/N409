@@ -29,6 +29,7 @@ import { maybeStartAutoPipeline, type AutoPipelineDeps } from '../pipeline/autoP
 import { checkUploadType } from '../documents/fileType.js';
 import { scanUpload, UploadRejected, type ScanPolicy } from '../documents/virusScan.js';
 import { decodeFromStorage, encodeForStorage } from '../storage/documentEncryption.js';
+import { UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
@@ -193,7 +194,12 @@ export function registerDocumentRoutes(
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorizedValuation(deps.pool, principal, id);
 
-    const file = await req.file({ limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } });
+    // Field caps repeated here rather than left to the plugin registration:
+    // per-call `limits` and plugin `limits` are merged by @fastify/multipart,
+    // but the protection belongs where the upload is, not one file away.
+    const file = await req.file({
+      limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1, ...UPLOAD_FIELD_LIMITS },
+    });
     if (!file) throw problems.badRequest('Expected a multipart file field named "file"');
 
     // Either axis, or both: an API caller thinks in kinds, the person clicking
