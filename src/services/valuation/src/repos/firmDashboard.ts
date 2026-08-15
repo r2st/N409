@@ -11,7 +11,25 @@ import type { FirmValuationRow } from '../domain/firmDashboard.js';
  * Rollups are computed in SQL rather than by loading the firm's book into
  * memory: a firm with ten years of engagements should not pay for a full table
  * read to render six numbers.
+ *
+ * Every query also carries {@link LIVE_ONLY}, for the same reason the engagement
+ * list carries `archived_at IS NULL` (`buildValuationWhere`, repos/valuations.ts).
+ * Archiving is this platform's soft delete — the retention sweep stamps it, and
+ * `retireValuations` stamps it — and these six queries counted archived rows.
+ * A dashboard is read *against* the list underneath it: the header said 15
+ * engagements, the list showed 12, and a firm reasonably reads that gap as
+ * three engagements it cannot find rather than three it retired. The client
+ * roster counted retired companies as clients, and the team panel charged
+ * retired work to whoever last held it.
  */
+
+/**
+ * The archived filter, as SQL, qualified with the caller's alias.
+ *
+ * A constant rather than six literals: the bug this fixes was six queries that
+ * each had to remember, and the next query added to this file is the seventh.
+ */
+const LIVE_ONLY = (alias = '') => `${alias}archived_at IS NULL`;
 
 /** States that are neither published nor abandoned — the live book. */
 const ACTIVE_STATES = [...STATE_GROUPS.open, ...STATE_GROUPS.in_review, ...STATE_GROUPS.drafted];
@@ -57,7 +75,7 @@ export async function firmSummary(
             count(*) FILTER (WHERE assigned_reviewer_id IS NULL
                                AND state = ANY($5))               AS unassigned
        FROM valuations
-      WHERE partner_id = $1`,
+      WHERE partner_id = $1 AND ${LIVE_ONLY()}`,
     [
       partnerId,
       ACTIVE_STATES,
@@ -68,7 +86,8 @@ export async function firmSummary(
   );
 
   const byState = await pool.query<{ state: string; count: string }>(
-    `SELECT state, count(*) AS count FROM valuations WHERE partner_id = $1 GROUP BY state`,
+    `SELECT state, count(*) AS count FROM valuations
+      WHERE partner_id = $1 AND ${LIVE_ONLY()} GROUP BY state`,
     [partnerId],
   );
 
@@ -116,7 +135,7 @@ export async function firmClients(
   if (search) totalParams.push(search);
   const totalRes = await pool.query<{ count: string }>(
     `SELECT count(DISTINCT company_name) AS count FROM valuations
-      WHERE partner_id = $1${search ? ' AND company_name ILIKE $2' : ''}`,
+      WHERE partner_id = $1 AND ${LIVE_ONLY()}${search ? ' AND company_name ILIKE $2' : ''}`,
     totalParams,
   );
 
@@ -147,7 +166,7 @@ export async function firmClients(
             min(due_date) FILTER (WHERE state = ANY($2))  AS next_due_date,
             max(published_at)                             AS last_published_at
        FROM valuations
-      WHERE partner_id = $1${filter}
+      WHERE partner_id = $1 AND ${LIVE_ONLY()}${filter}
       GROUP BY company_name
       ORDER BY max(created_at) DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -199,7 +218,7 @@ export async function firmTeam(pool: pg.Pool, partnerId: string): Promise<FirmTe
                                AND v.state = ANY($2))      AS overdue
        FROM valuations v
        JOIN users u ON u.id = v.assigned_reviewer_id
-      WHERE v.partner_id = $1
+      WHERE v.partner_id = $1 AND ${LIVE_ONLY('v.')}
       GROUP BY u.id, u.first_name, u.last_name, u.email
       ORDER BY count(*) FILTER (WHERE v.state = ANY($2)) DESC, u.email ASC`,
     [partnerId, ACTIVE_STATES],
@@ -244,7 +263,7 @@ export async function firmAttentionCandidates(
             v.created_at, v.last_comment_at
        FROM valuations v
        LEFT JOIN users u ON u.id = v.assigned_reviewer_id
-      WHERE v.partner_id = $1 AND v.state = ANY($2)
+      WHERE v.partner_id = $1 AND ${LIVE_ONLY('v.')} AND v.state = ANY($2)
       ORDER BY v.due_date ASC NULLS LAST, v.created_at ASC
       LIMIT $3`,
     [partnerId, ACTIVE_STATES, limit],
