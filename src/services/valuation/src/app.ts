@@ -143,6 +143,8 @@ export interface AppDeps {
   clientIntakeLimiter?: FixedWindowRateLimiter;
   /** injectable for tests — per-IP limiter for /scim/v2/* */
   scimLimiter?: FixedWindowRateLimiter;
+  /** injectable for tests — per-IP limiter for the public sample-report render */
+  sampleReportPdfLimiter?: FixedWindowRateLimiter;
   /** injectable for tests/prod — per-user throttle across the whole authenticated API */
   sessionLimiter?: FixedWindowRateLimiter;
   /** injectable for tests/prod — per-partner throttle alongside sessionLimiter */
@@ -540,7 +542,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Public, no-signup common-stock FMV estimator behind the marketing calculator
   registerFmvEstimatorRoutes(app);
   // Public "see a sample report" outline, read off the real report templates
-  registerSampleReportRoutes(app);
+  registerSampleReportRoutes(app, { pdfLimiter: deps.sampleReportPdfLimiter });
   // P2 #12 — global activity audit viewer
   registerAdminEventRoutes(app, { pool });
   // P2 #10 — help / knowledge base

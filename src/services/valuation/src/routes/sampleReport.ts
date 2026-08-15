@@ -5,6 +5,7 @@ import { problems } from '@n409/shared';
 import { VALUATION_KINDS } from '../domain/valuation.js';
 import { sampleReportOutline } from '../domain/sampleReport.js';
 import { SAMPLE_FIGURES, SAMPLE_NOTICE, sampleReportPdfInput } from '../domain/sampleReportPdf.js';
+import { FixedWindowRateLimiter } from '../plugins/rateLimit.js';
 
 /**
  * "See a sample report" (`/sample-report`). Public: it is the page that shows
@@ -37,7 +38,38 @@ import { SAMPLE_FIGURES, SAMPLE_NOTICE, sampleReportPdfInput } from '../domain/s
  */
 const PDF_KINDS = ['409a'] as const;
 
-export function registerSampleReportRoutes(app: FastifyInstance): void {
+/**
+ * Renders per IP per window on `/sample-report/pdf`.
+ *
+ * The render is the only unauthenticated route on this service that costs real
+ * CPU, and until now the only thing standing in front of it was the
+ * `cache-control` header below. That header is a request to a cache, not a
+ * limit: a caller who sends `Cache-Control: no-cache`, or who simply reaches
+ * the origin directly, renders the document every time and nothing counts it.
+ *
+ * The per-user cost budget does not cover it either, twice over.
+ * `domain/requestCost` charges `/\.pdf$/` — a literal dot — and this path ends
+ * `/pdf`, so `costOfRequest` returns 0 for it while the engagement's own
+ * `report.pdf` is charged 10. And `applyCostLimiter` keys on
+ * `req.principal.id`, so it never runs for a caller who never authenticated.
+ * The budget was written for the authenticated API; the one public render sat
+ * outside both halves of it.
+ *
+ * Ten in ten minutes is set against the human the page is for: a prospect
+ * downloads the sample once, maybe twice, and an office behind one NAT a
+ * handful of times. It bounds a single address to roughly one render a minute
+ * sustained, which is the point — this cannot stop a distributed flood, and is
+ * not trying to. It stops one caller from holding the render loop open.
+ */
+const PDF_RENDERS_PER_IP = 10;
+const PDF_RENDER_WINDOW_MS = 10 * 60 * 1000;
+
+export function registerSampleReportRoutes(
+  app: FastifyInstance,
+  deps: { pdfLimiter?: FixedWindowRateLimiter } = {},
+): void {
+  const pdfLimiter = deps.pdfLimiter ?? new FixedWindowRateLimiter(PDF_RENDERS_PER_IP, PDF_RENDER_WINDOW_MS);
+
   app.get('/api/v1/sample-report', async (req) => {
     const parsed = z.object({ kind: z.enum(VALUATION_KINDS).default('409a') }).safeParse(req.query ?? {});
     if (!parsed.success) {
@@ -56,6 +88,17 @@ export function registerSampleReportRoutes(app: FastifyInstance): void {
   });
 
   app.get('/api/v1/sample-report/pdf', async (req, reply) => {
+    // Checked before the kind is parsed, as on every other public route here:
+    // the budget exists to keep work off the CPU, and deciding whether to spend
+    // it after having already decided the request is worth serving is the wrong
+    // order. It also means a flood of malformed requests is throttled too.
+    const { allowed, resetAt } = pdfLimiter.check(req.ip);
+    if (!allowed) {
+      throw problems.tooManyRequests(
+        'The sample report has been downloaded too many times from this address — please try again shortly',
+        Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)),
+      );
+    }
     const parsed = z.object({ kind: z.enum(PDF_KINDS).default('409a') }).safeParse(req.query ?? {});
     if (!parsed.success) {
       throw problems.badRequest('No sample is published for that report kind', {
