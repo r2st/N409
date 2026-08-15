@@ -1,4 +1,5 @@
 import { pino, type Logger } from 'pino';
+import { scrubUrl } from './problem.js';
 
 /**
  * Field names whose value must never reach a log line (NFR: structured
@@ -74,6 +75,49 @@ export const REDACT_PATHS: string[] = SENSITIVE_FIELDS.flatMap((field) =>
   ),
 );
 
+/** The subset of a raw request Fastify's own `req` serializer reads. */
+interface SerializableRequest {
+  method?: string;
+  url?: string;
+  host?: string;
+  ip?: string;
+  headers?: Record<string, unknown>;
+  socket?: { remotePort?: number };
+}
+
+/**
+ * Fastify's `req` serializer, with the URL scrubbed.
+ *
+ * `redact` cannot do this job. Its paths address *object properties*, and a
+ * credential in a query string is a substring of one — `req.url` is a single
+ * string that happens to have `?token=…` at the end of it, so a `token` entry
+ * on the redact list looks like it covers this and does not. The routine
+ * "incoming request" line Fastify writes for every request therefore carried
+ * every credential this API is obliged to accept in a URL: the one-click
+ * unsubscribe token, and the authorization `code` on all four OAuth callbacks.
+ * Both are live at the moment they are written, and a log aggregator is exactly
+ * the sort of place a year-valid token should not be sitting.
+ *
+ * The 5xx path already scrubbed its URL (`requestErrorContext`) — so the error
+ * line was clean and the two ordinary lines either side of it were not, which
+ * is the kind of gap that reads as covered right up until someone greps.
+ *
+ * Every other field is reproduced exactly as Fastify serializes it
+ * (`fastify/lib/logger-pino.js`), because a serializer on the instance
+ * *replaces* Fastify's rather than wrapping it — dropping `remoteAddress` here
+ * would quietly cost every abuse investigation its client IP.
+ */
+export function serializeRequest(req: SerializableRequest): Record<string, unknown> {
+  return {
+    method: req.method,
+    url: typeof req.url === 'string' ? scrubUrl(req.url) : req.url,
+    version: req.headers?.['accept-version'],
+    host: req.host,
+    remoteAddress: req.ip,
+    remotePort: req.socket?.remotePort,
+  };
+}
+
 export interface LoggerOptions {
   service: string;
   level?: string;
@@ -86,6 +130,10 @@ export function createLogger(opts: LoggerOptions): Logger {
     name: opts.service,
     level: opts.level ?? process.env.LOG_LEVEL ?? 'info',
     redact: { paths: [...REDACT_PATHS, ...(opts.redact ?? [])], censor: '[REDACTED]' },
+    // Only `req` is overridden. Fastify merges its own defaults *under* the
+    // instance's (`Object.assign({}, opts.serializers, instance[serializersSym])`),
+    // so `err` and `res` keep serializing as they always did.
+    serializers: { req: serializeRequest },
     formatters: {
       level(label) {
         return { level: label };

@@ -17,4 +17,46 @@ regexes = [
   # The well-known example JWT secret shipped in .env.example / compose (it is
   # explicitly denylisted at runtime in config.ts, so it is safe to allow here).
   '''dev-only-secret-change-me-0123456789abcdef''',
+
+  # ── Test fixtures ─────────────────────────────────────────────────────────
+  #
+  # Allowlisted by *value*, deliberately, rather than by adding `test/` to the
+  # `paths` list above. A path rule would also hide a genuine provider key that
+  # somebody pastes into a test while reproducing a customer issue, which is one
+  # of the likelier ways a real credential gets committed. Matching the values
+  # keeps every file in scope.
+  #
+  # This list exists because the scan was failing — 68 findings, every one of
+  # them a fixture. The CI step has no `continue-on-error`, so the job was red,
+  # and a red scanner is a scanner nobody reads: finding 69 would have been a
+  # real key nobody looked at. src/packages/shared/test/gitleaksAllowlist.test.ts
+  # pins both halves — that these fixtures stay allowed, and that realistic
+  # credential shapes are still caught.
+
+  # Values built out of a visibly fake alphabet, or that say so in words.
+  '''(?i)(abc123|abcdef0123456789|0123456789abcdef|sk-or-v1-abcdef|notareal|_brd_(anything|guess))''',
+  # The shared strong-secret fixture behind ~40 integration tests
+  # (`integration-test-secret-…`, `test-secret-…`).
+  '''(?i)\btest[-_]secret\b''',
+  # Stripe *test-mode* keys, which are non-live by construction.
+  '''(?i)^sk_test_''',
+  # RFC 7519's example JWT. It is in problem.test.ts precisely to prove
+  # scrubSensitive redacts JWTs.
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.''',
+  # An intake field id (the §1202 QSBS exclusions question), not a credential —
+  # the one finding that was in source rather than a test.
+  '''^prior_1202_exclusions$''',
+  # saml.test.ts asserts on the *pattern* used to strip a private key out of
+  # stored metadata. It is a regex literal; there is no key here.
+  '''BEGIN PRIVATE KEY-----\[''',
+  # The TOTP enrolment fixture in MfaCard.test.tsx.
+  '''^ABCDEF234567$''',
+  # Fixtures with no give-away marker, because their tests need secrets that
+  # *pass* strength validation — preflight.test.ts checks that a strong
+  # JWT_SECRET and INTERNAL_SERVICE_TOKEN are accepted, and config.test.ts
+  # names one `REAL_SECRET` for the same reason. Pinned literally rather than by
+  # pattern: an entry that matches exactly one known string cannot widen later.
+  '''^9f2c4a7e1b6d8035fe4a1c9b7d2e6083a5c4b1f7e9d0236a8c5b4f1e7d9a0c36$''',
+  '''^b41f7e9d0236a8c5b4f1e7d9a0c369f2$''',
+  '''^a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0$''',
 ]

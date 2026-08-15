@@ -57,6 +57,104 @@ function decodedUrl(url: string): string {
 }
 
 /**
+ * Query parameters whose value is a credential or an identifier, redacted by
+ * *name* rather than by the shape of what they hold.
+ *
+ * {@link scrubSensitive} matches value shapes — a DSN, a JWT, an `sk-` key, an
+ * address — and that is the wrong instrument for a query string, because the
+ * credentials this API actually puts in one have no distinguishing shape at
+ * all:
+ *
+ *   * `token` on `/api/v1/unsubscribe` is `<base64url>.<base64url>`
+ *     (domain/unsubscribeToken.ts). Two segments, so the three-segment JWT rule
+ *     does not match it, and nothing else does either.
+ *   * `code` on the four OAuth callbacks — Google SSO, accounting, HRIS and
+ *     cap-table sync — is an authorization code, which is an opaque
+ *     provider-chosen string that is exchangeable for an access token for the
+ *     minute or so before it is spent.
+ *
+ * `state` is on the list for a different reason. It *is* a JWT today, so the
+ * JWT rule already covers it — but only by coincidence of the signing format
+ * somebody chose in another module, and `unsubscribeToken` is the standing
+ * proof that such a format can change to something shapeless without anyone
+ * thinking about this file. Naming it here means the coverage does not depend
+ * on that. The cost is real and small: `?state=draft` on the two valuation
+ * listing routes is a bounded workflow enum, not a secret, and it now reads
+ * `[REDACTED]` in the logs.
+ *
+ * Deliberately absent: `q`. Free-text search is the single most useful query
+ * parameter to have in a log line when a search 500s, and what makes it
+ * sensitive is a client typing an address into it — a *value* shape, which is
+ * exactly what {@link scrubSensitive} is good at.
+ */
+export const SENSITIVE_QUERY_PARAMS: readonly string[] = [
+  // bearer credentials that travel in a URL because a header cannot reach here:
+  // a mailbox provider's one-click POST, an OAuth redirect, a signing link.
+  'token',
+  'access_token',
+  'refresh_token',
+  'id_token',
+  'code',
+  'state',
+  'signature',
+  'sig',
+  // provider material
+  'secret',
+  'client_secret',
+  'key',
+  'api_key',
+  'apikey',
+  // session and login
+  'auth',
+  'authorization',
+  'session',
+  'sid',
+  'password',
+  'passwd',
+  'pwd',
+  // personal identifiers; the address patterns in scrubSensitive catch a
+  // well-formed value, and this catches the rest.
+  'email',
+];
+
+const SENSITIVE_QUERY_PARAM_SET = new Set(SENSITIVE_QUERY_PARAMS);
+
+/**
+ * A request URL with credential-bearing query parameters blanked, then scrubbed
+ * as free text.
+ *
+ * Both halves are needed and neither subsumes the other: the parameter list
+ * catches a shapeless credential under a known name, and {@link scrubSensitive}
+ * catches a shaped secret under a name nobody predicted — including in the
+ * path, which is why it runs over the whole string rather than the query alone.
+ *
+ * Splitting happens on the raw string and decoding happens per component,
+ * never the other way round. Decoding the URL whole and *then* splitting means
+ * a `%26` inside somebody's search text becomes a separator, the string
+ * re-parses into parameters the client never sent, and which name a value sits
+ * under is no longer decided by the request — it is decided by the contents of
+ * another value. Deciding per raw pair keeps that mapping fixed. The name is
+ * decoded for the comparison itself, so `to%6Ben=` is still `token`.
+ */
+export function scrubUrl(url: string): string {
+  const cut = url.indexOf('?');
+  const path = scrubSensitive(decodedUrl(cut === -1 ? url : url.slice(0, cut)));
+  if (cut === -1) return path;
+  const query = url
+    .slice(cut + 1)
+    .split('&')
+    .map((pair) => {
+      const eq = pair.indexOf('=');
+      if (eq === -1) return scrubSensitive(decodedUrl(pair));
+      const name = scrubSensitive(decodedUrl(pair.slice(0, eq)));
+      if (SENSITIVE_QUERY_PARAM_SET.has(name.toLowerCase())) return `${name}=[REDACTED]`;
+      return `${name}=${scrubSensitive(decodedUrl(pair.slice(eq + 1)))}`;
+    })
+    .join('&');
+  return `${path}?${query}`;
+}
+
+/**
  * The request and actor facts a 5xx line needs to be actionable on its own.
  *
  * The line used to carry the error and nothing else. Pino adds `reqId`, so in
@@ -90,7 +188,7 @@ export function requestErrorContext(req: FastifyRequest): Record<string, unknown
   return {
     method: req.method,
     ...(route ? { route } : {}),
-    url: scrubSensitive(decodedUrl(req.url)),
+    url: scrubUrl(req.url),
     actor: principal
       ? {
           user_id: principal.id,
