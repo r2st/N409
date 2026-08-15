@@ -1,5 +1,81 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    4cb7159
+# subject:   the tie that paged a row twice, and the accent that unaddressed the mail
+# previous:  39a0187 (the work committed, and the message about it did not).
+# includes:  2 commits — R64, a production-readiness round over what a client
+#            receives: the pages they are served and the mail we send them.
+#
+#            R63 asked what happens when an announcement fails. This round asked
+#            two narrower questions and, unusually, most of the answers were
+#            already right — which is worth recording, because the two that were
+#            not are both invisible from inside the system that has them.
+#
+#            0ddb4f6 — ORDER BY on a column that is not unique. `created_at`
+#              defaults to `now()`, the *transaction* timestamp, so every row one
+#              transaction writes ties to the microsecond, and a paged query is
+#              issued once per page with a different OFFSET. A tie across a page
+#              boundary serves an engagement twice and its neighbour never, while
+#              `total` beside it counts both. Six queries; `orderBySql` carried
+#              the tiebreaker on its explicit-sort branch only, and the default
+#              branch is the one the UI uses — sorting is opt-in — so the branch
+#              that had it needed it least. Exported now because it is the one
+#              paged ORDER BY built rather than written inline: a source scan
+#              sees an interpolation and cannot judge it, so the sweep calls the
+#              function and judges both branches instead.
+#
+#              Same commit bounds `listPortfolioEntities` and applies
+#              `archived_at` to it — the last unbounded list on the client-facing
+#              surface, missed because `WHERE organization_id = $1` reads as
+#              scoped and nothing limits how many engagements an organization
+#              holds. The soft delete matters more here than in the queues swept
+#              in R55/R56: those show a stale row, this one adds it up.
+#              `consolidate()` sums `equity_value` across these rows, so a
+#              withdrawn engagement gone from the list, the search, the dashboard
+#              and the export was still inside the consolidated equity of the
+#              holding company that owned it — a figure the file itself calls
+#              the number an auditor relies on, reconciling against none of the
+#              surfaces it is drawn from.
+#
+#            4cb7159 — `buildMimeMessage` composed sanitize and encode the wrong
+#              way round on `From`, `To` and `Reply-To`. `encodeHeaderWords`
+#              separates RFC 2047 words with a fold — CRLF and a space, which is
+#              how a long accented value is legally carried — and
+#              `sanitizeHeaderValue` keeps the first line and drops the rest,
+#              which is right for an injected CRLF and catastrophic applied to
+#              the encoder's own seam. A white-labelled sender with one accent
+#              and a name over 45 bytes lost the `<no-reply@…>` half: a `From`
+#              with a display name, no mailbox, and a base64 word cut
+#              mid-character, on every notification that partner sends. `Subject`
+#              was already the right way round, so the file knew the order and
+#              disagreed with itself about it. Injection safety is unchanged and
+#              plainer: the CRLF is stripped from the raw value, and what
+#              survives is ASCII or base64 inside an encoded word.
+#
+#            Audited and found sound, recorded so the next round starts further
+#            in: template variables are built per candidate and per valuation,
+#            never once per batch; `applyTemplateOverrides` and
+#            `applyPartnerEmailTemplates` rebuild each spec rather than mutating
+#            a shared one, so no partner's rendering can persist into another's;
+#            `dueCandidates` joins `users` on `v.user_id` with the archived and
+#            deleted filters on it; the outbox and the template preview are both
+#            ops-only, and ops scope is `all`, so the preview's claim to show
+#            nothing the caller could not already read holds. On the file half:
+#            `safeFilename` strips directories before the join and the
+#            `<16 hex>__` prefix keeps the final segment from ever being `..`;
+#            every multipart entry point sets a byte ceiling and the global
+#            registration sets one under them; every CSV goes through
+#            `csvEscape`; evidence-bundle zip entries are constants, not
+#            filenames; and the two `content-disposition` headers are built from
+#            an RFC 5987 encoder and an `[a-z0-9-]` slug.
+#
+# gap:       `dueCandidates` reads every valuation in the trigger state with no
+#            LIMIT — the drip scan's candidate set is the one remaining
+#            unbounded read on a job path. It is a scan rather than a request
+#            and it holds the advisory lock while it runs, so it is a memory
+#            ceiling rather than a correctness bug, but it grows with the table
+#            and nothing tells anyone when it gets large.
+#
 # commit:    39a0187
 # subject:   the work committed, and the message about it did not
 # previous:  33ac089 (the guard that was never consulted, and the overflow

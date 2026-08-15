@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { validateWeights } from '../../src/routes/params.js';
 import { deepMerge } from '../../src/routes/calculations.js';
@@ -97,6 +98,45 @@ describe('safeFilename', () => {
 
   it('never returns an empty name', () => {
     expect(safeFilename('///')).toBe('upload');
+  });
+
+  /**
+   * The property that actually matters is the composed one.
+   *
+   * `storeDocument` writes to `path.join(documentsDir, valuationId, sha__name)`,
+   * and `path.join` normalizes — so a `..` surviving into the last segment does
+   * not stay in it, it climbs. Two separate things keep that from happening
+   * (`path.basename`, and the `<16 hex>__` prefix that makes the segment
+   * unequal to `..` even when the name is exactly that), and a test on
+   * `safeFilename` alone pins neither of them to the write it protects. This
+   * asserts the containment directly, on the same expression the route builds.
+   */
+  it('cannot escape the documents directory, whatever the upload is called', () => {
+    const documentsDir = '/srv/n409/documents';
+    const valuationId = '01JQZZZZZZZZZZZZZZZZZZZZZZ';
+    const sha = 'a'.repeat(64);
+    const hostile = [
+      '../../etc/passwd',
+      '../../../../../../etc/shadow',
+      '..',
+      '.',
+      '../',
+      '....//....//etc/hosts',
+      '/etc/passwd',
+      'C:\\Windows\\System32\\config\\SAM',
+      '..\\..\\..\\windows\\win.ini',
+      'a/../../../b.txt',
+      '\u0000../../etc/passwd',
+      'normal.pdf',
+    ];
+    for (const name of hostile) {
+      const rel = path.join(valuationId, `${sha.slice(0, 16)}__${safeFilename(name)}`);
+      const abs = path.resolve(documentsDir, rel);
+      expect(abs.startsWith(`${path.resolve(documentsDir)}${path.sep}`)).toBe(true);
+      // Stronger than "inside the root": it must land in this engagement's own
+      // folder, so one client's upload cannot be written over another's.
+      expect(path.dirname(abs)).toBe(path.resolve(documentsDir, valuationId));
+    }
   });
 });
 
