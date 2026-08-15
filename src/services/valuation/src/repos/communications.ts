@@ -331,6 +331,7 @@ export interface DueCandidate {
 export async function dueCandidates(
   db: pg.Pool | pg.PoolClient,
   campaign: AutoEmailRow,
+  opts: { limit?: number; after?: string | null } = {},
 ): Promise<DueCandidate[]> {
   const conditionSql: Record<string, string> = {
     always: 'true',
@@ -358,6 +359,9 @@ export async function dueCandidates(
     unsigned: `NOT EXISTS (
       SELECT 1 FROM valuation_signatures s WHERE s.valuation_id = v.id)`,
   };
+  const size = Math.min(Math.max(opts.limit ?? AUTO_EMAIL_PAGE_LIMIT, 1), AUTO_EMAIL_PAGE_LIMIT);
+  const params: unknown[] = [campaign.id, campaign.trigger_state, size];
+  const cursorSql = opts.after ? `AND v.id > $${params.push(opts.after)}` : '';
   const { rows } = await db.query<DueCandidate>(
     `SELECT v.id AS valuation_id, v.company_name, v.kind, v.number::text AS number,
             v.user_id, u.email AS to_email, u.phone AS to_phone,
@@ -382,10 +386,60 @@ export async function dueCandidates(
      FROM valuations v
      JOIN users u ON u.id = v.user_id
      WHERE v.archived_at IS NULL AND u.deleted_at IS NULL
-       AND v.state = $2 AND ${conditionSql[campaign.condition] ?? 'false'}`,
-    [campaign.id, campaign.trigger_state],
+       AND v.state = $2 AND ${conditionSql[campaign.condition] ?? 'false'} ${cursorSql}
+     ORDER BY v.id ASC
+     LIMIT $3`,
+    params,
   );
   return rows;
+}
+
+/**
+ * Rows per page of the drip scan's candidate set.
+ *
+ * The query above used to have no LIMIT at all — the last unbounded read on a
+ * job path. It is a scan rather than a request, and it holds the auto-email
+ * advisory lock while it runs, so it was a memory ceiling rather than a
+ * correctness bug: every valuation in a campaign's trigger state, with four
+ * correlated subqueries' worth of columns attached, materialised in this
+ * process at once. It grows with the table, and the failure mode is a
+ * heap-exhausted service rather than a slow one.
+ *
+ * 500 is the same order as the other bounded scans here (the pipeline reaper's
+ * 100, the retention sweep's 500, the monitor page's own limit) and is far
+ * above any plausible per-campaign backlog, so an ordinary pass still reads one
+ * page.
+ */
+export const AUTO_EMAIL_PAGE_LIMIT = 500;
+
+/**
+ * Every candidate for a campaign, a page at a time.
+ *
+ * Keyset on `v.id` for the reason `eachEnabledMonitor` spells out: a
+ * `timestamptz` cursor loses microseconds on the way through JavaScript and
+ * stops advancing. A ULID cursor is also stable under the writes the scan makes
+ * as it goes — each pass inserts `auto_email_sends` rows, which the
+ * `prior_sends_at` subquery reads, so a page's contents depend on what earlier
+ * pages did. Ordering by id means a valuation is visited exactly once whatever
+ * those writes changed, which an OFFSET page could not promise.
+ *
+ * Paged rather than capped: a campaign whose backlog exceeds one page must
+ * still reach everyone in it. A cap would leave the tail of the queue unmailed
+ * and report a healthy `queued` count for the head.
+ */
+export async function* eachDueCandidate(
+  db: pg.Pool | pg.PoolClient,
+  campaign: AutoEmailRow,
+  opts: { pageSize?: number } = {},
+): AsyncGenerator<DueCandidate[]> {
+  const size = Math.min(Math.max(opts.pageSize ?? AUTO_EMAIL_PAGE_LIMIT, 1), AUTO_EMAIL_PAGE_LIMIT);
+  let after: string | null = null;
+  for (;;) {
+    const rows: DueCandidate[] = await dueCandidates(db, campaign, { limit: size, after });
+    if (rows.length > 0) yield rows;
+    if (rows.length < size) return;
+    after = rows[rows.length - 1]!.valuation_id;
+  }
 }
 
 export async function recordAutoEmailSend(

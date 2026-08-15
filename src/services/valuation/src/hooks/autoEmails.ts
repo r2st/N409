@@ -8,7 +8,7 @@ import {
   valuationTemplateVars,
 } from '../domain/communications.js';
 import {
-  dueCandidates,
+  eachDueCandidate,
   findTemplatesByKeys,
   listAutoEmails,
   recordAutoEmailSend,
@@ -58,6 +58,12 @@ export async function runDueAutoEmails(deps: {
    * a footer rather than with a broken link.
    */
   publicBaseUrl?: string;
+  /**
+   * Candidates read per page. Defaults to AUTO_EMAIL_PAGE_LIMIT, which is well
+   * above any plausible backlog — a small value here is how a test exercises
+   * the paging without seeding hundreds of engagements.
+   */
+  pageSize?: number;
 }): Promise<{ queued: number; skipped: number; suppressed: number }> {
   const client = await deps.pool.connect();
   try {
@@ -107,6 +113,7 @@ async function scan(
     log?: FastifyBaseLogger;
     now?: Date;
     publicBaseUrl?: string;
+    pageSize?: number;
   },
 ): Promise<{ queued: number; skipped: number; suppressed: number }> {
   // Read once, before the candidate query, so the whole pass judges every
@@ -138,70 +145,78 @@ async function scan(
       continue;
     }
 
-    for (const candidate of await dueCandidates(db, campaign)) {
-      if (!isCampaignDue(campaign, candidate.state_entered_at, candidate.prior_sends_at, now)) {
-        continue;
-      }
-      // Marketing consent, and only for marketing (migration 0118). Checked
-      // before the outbox row exists rather than after: a suppressed
-      // promotional message was never queued, so there is nothing for the
-      // retry sweep to find and nothing counting against max_sends. A
-      // transactional campaign never reaches this branch — a client who
-      // unsubscribed from renewal offers still has to be told their draft is
-      // ready.
-      if (isSuppressed(campaign, { marketingEmail: candidate.marketing_email })) {
-        suppressed += 1;
-        continue;
-      }
-      const destination = campaign.channel === 'sms' ? candidate.to_phone : candidate.to_email;
-      const vars = valuationTemplateVars({
-        company_name: candidate.company_name,
-        kind: candidate.kind,
-        number: candidate.number,
-      });
-      // One transaction: a queued message with no send record would be
-      // delivered by the retry sweep and then queued again by the next scan,
-      // which is the double-send this is here to prevent. The record counts
-      // against max_sends even if delivery later fails — retries are the
-      // outbox's job; the campaign must not re-fire on a flaky transport.
-      const email = await withClientTransaction(db, async (tx) => {
-        const row = await enqueueEmail(tx, {
-          valuationId: candidate.valuation_id,
-          toUserId: candidate.user_id,
-          toEmail: destination ?? candidate.to_email,
-          channel: campaign.channel,
-          templateKey: campaign.template_key,
-          subject: renderTemplate(template.subject, vars),
-          // Footer on promotional sends only — see applyPromotionalFooter.
-          body: applyPromotionalFooter(renderTemplate(template.body, vars), campaign, settingsUrl),
-          // Carried onto the row so the transport can attach `List-Unsubscribe`
-          // to this send and to nothing else (migration 0138). The campaign
-          // knows; by delivery time only the row is left to ask.
-          promotional: campaign.promotional,
+    // A page at a time, not the whole trigger state at once. The candidate
+    // query is the only read on this path that had no LIMIT, and it is the one
+    // that grows with the table: every valuation in the state, each carrying
+    // four correlated subqueries' worth of columns, held in this process while
+    // the scan works through them. Paged rather than capped — see
+    // eachDueCandidate — because a campaign's tail must still be mailed.
+    for await (const page of eachDueCandidate(db, campaign, { pageSize: deps.pageSize })) {
+      for (const candidate of page) {
+        if (!isCampaignDue(campaign, candidate.state_entered_at, candidate.prior_sends_at, now)) {
+          continue;
+        }
+        // Marketing consent, and only for marketing (migration 0118). Checked
+        // before the outbox row exists rather than after: a suppressed
+        // promotional message was never queued, so there is nothing for the
+        // retry sweep to find and nothing counting against max_sends. A
+        // transactional campaign never reaches this branch — a client who
+        // unsubscribed from renewal offers still has to be told their draft is
+        // ready.
+        if (isSuppressed(campaign, { marketingEmail: candidate.marketing_email })) {
+          suppressed += 1;
+          continue;
+        }
+        const destination = campaign.channel === 'sms' ? candidate.to_phone : candidate.to_email;
+        const vars = valuationTemplateVars({
+          company_name: candidate.company_name,
+          kind: candidate.kind,
+          number: candidate.number,
         });
-        await recordAutoEmailSend(tx, {
-          autoEmailId: campaign.id,
-          valuationId: candidate.valuation_id,
-          outboxId: row.id,
+        // One transaction: a queued message with no send record would be
+        // delivered by the retry sweep and then queued again by the next scan,
+        // which is the double-send this is here to prevent. The record counts
+        // against max_sends even if delivery later fails — retries are the
+        // outbox's job; the campaign must not re-fire on a flaky transport.
+        const email = await withClientTransaction(db, async (tx) => {
+          const row = await enqueueEmail(tx, {
+            valuationId: candidate.valuation_id,
+            toUserId: candidate.user_id,
+            toEmail: destination ?? candidate.to_email,
+            channel: campaign.channel,
+            templateKey: campaign.template_key,
+            subject: renderTemplate(template.subject, vars),
+            // Footer on promotional sends only — see applyPromotionalFooter.
+            body: applyPromotionalFooter(renderTemplate(template.body, vars), campaign, settingsUrl),
+            // Carried onto the row so the transport can attach `List-Unsubscribe`
+            // to this send and to nothing else (migration 0138). The campaign
+            // knows; by delivery time only the row is left to ask.
+            promotional: campaign.promotional,
+          });
+          await recordAutoEmailSend(tx, {
+            autoEmailId: campaign.id,
+            valuationId: candidate.valuation_id,
+            outboxId: row.id,
+          });
+          return row;
         });
-        return row;
-      });
 
-      if (campaign.channel === 'sms' && !candidate.to_phone) {
-        await markEmail(db, email.id, 'skipped', 'no phone number on file');
-        skipped += 1;
-        continue;
-      }
-      queued += 1;
+        if (campaign.channel === 'sms' && !candidate.to_phone) {
+          await markEmail(db, email.id, 'skipped', 'no phone number on file');
+          skipped += 1;
+          continue;
+        }
+        queued += 1;
 
-      const transport = campaign.channel === 'sms' ? deps.smsTransport : deps.transport;
-      if (!transport) continue;
-      try {
-        await transport.send(email);
-        await markEmail(db, email.id, 'sent');
-      } catch (err) {
-        await markEmail(db, email.id, 'failed', err instanceof Error ? err.message : String(err));
-        deps.log?.warn({ err, emailId: email.id }, 'auto email delivery failed; left in outbox');
+        const transport = campaign.channel === 'sms' ? deps.smsTransport : deps.transport;
+        if (!transport) continue;
+        try {
+          await transport.send(email);
+          await markEmail(db, email.id, 'sent');
+        } catch (err) {
+          await markEmail(db, email.id, 'failed', err instanceof Error ? err.message : String(err));
+          deps.log?.warn({ err, emailId: email.id }, 'auto email delivery failed; left in outbox');
+        }
       }
     }
   }

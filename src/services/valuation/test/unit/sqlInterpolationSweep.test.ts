@@ -195,9 +195,15 @@ const REVIEWED: Record<string, string[]> = {
   // Two fixed spellings chosen by a boolean.
   'src/services/valuation/src/repos/boardApprovals.ts': ['approvedAt'],
 
-  // Map lookup on `auto_emails.condition`, which carries a CHECK constraint in
-  // migration 0104 and a `z.enum` at the route. `?? 'false'` covers the miss.
-  'src/services/valuation/src/repos/communications.ts': ["conditionSql[campaign.condition] ?? 'false'"],
+  // `conditionSql[...]`: map lookup on `auto_emails.condition`, which carries a
+  // CHECK constraint in migration 0104 and a `z.enum` at the route. `?? 'false'`
+  // covers the miss. `cursorSql` is the drip scan's keyset page — `AND v.id >
+  // $n` in one fixed spelling, with the cursor pushed onto `params`, as in the
+  // `engagements.ts` and `monitors.ts` entries above.
+  'src/services/valuation/src/repos/communications.ts': [
+    "conditionSql[campaign.condition] ?? 'false'",
+    'cursorSql',
+  ],
 
   // The retry ladder's schedule (migration 0159), built in SQL so it lands in
   // the same statement that records the failure. Every argument is a string
