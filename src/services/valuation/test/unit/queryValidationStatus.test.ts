@@ -33,6 +33,23 @@ const routesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 interface Parse {
   /** `file.ts:12`, for an assertion message that points at the line. */
   at: string;
+  /**
+   * `boardApproval.ts:notFound(DEAD_TOKEN_DETAIL)` — what an exemption is keyed
+   * on: the file, and the failure branch's throw written out in full.
+   *
+   * Deliberately not `at`. A line number is not a property of the code it
+   * names: `NOT_422_BY_DESIGN` pinned `boardApproval.ts:316`, an ordinary edit
+   * thirty lines above pushed that parse to 348, and both assertions below went
+   * red — one reporting an unexempted route, the other a stale exemption — for
+   * a route nobody had touched.
+   *
+   * The throw is also what the exemption is actually *about*: the licence is
+   * for answering a dead token's 404 to an unparseable body, and it should
+   * expire the moment that branch stops saying so. The parse variable would not
+   * do — it is `parsed` in almost every handler in the directory — and the
+   * route is registered three different ways across this directory.
+   */
+  key: string;
   /** `query` or `body` — which half of the request failed to parse. */
   source: 'query' | 'body';
   /** The `problems.<kind>` thrown on the failure branch. */
@@ -85,14 +102,23 @@ function parses(): { found: Parse[]; unresolved: string[] } {
 
       // …and the guard on it, with the throw that guard governs.
       const window = lines.slice(i, i + 8).join('\n');
+      // The argument is captured alongside the problem kind so the key below
+      // can name the branch rather than its address. `[^)\n]*` stops at the
+      // first close paren, which is the whole argument list for every throw in
+      // the directory that takes one — and empty for the many that take none.
       const guard = new RegExp(
-        `!${name}\\.success\\)?\\s*(?:\\{\\s*)?[\\s\\S]{0,120}?throw problems\\.([a-zA-Z]+)\\(`,
+        `!${name}\\.success\\)?\\s*(?:\\{\\s*)?[\\s\\S]{0,120}?throw problems\\.([a-zA-Z]+)\\(([^)\n]*)`,
       ).exec(window);
       if (!guard) {
         unresolved.push(`${at} (no !${name}.success branch)`);
         return;
       }
-      found.push({ at, source, kind: guard[1]! });
+      found.push({
+        at,
+        key: `${entry.name}:${guard[1]!}(${guard[2]!.trim()})`,
+        source,
+        kind: guard[1]!,
+      });
     });
   }
   return { found, unresolved };
@@ -109,7 +135,7 @@ function parses(): { found: Parse[]; unresolved: string[] } {
  * 404 a dead token gets. Listed here rather than exempted by pattern, because
  * the next route that wants this exemption should have to state why.
  */
-const NOT_422_BY_DESIGN = new Map([['boardApproval.ts:316', 'notFound']]);
+const NOT_422_BY_DESIGN = new Map([['boardApproval.ts:notFound(DEAD_TOKEN_DETAIL)', 'notFound']]);
 
 describe('query-string validation answers 400, everywhere', () => {
   const { found, unresolved } = parses();
@@ -145,19 +171,28 @@ describe('query-string validation answers 400, everywhere', () => {
     // same loss of information in the other direction: the caller could no
     // longer tell "I sent something unreadable" from "you read it and said no".
     const wrong = byBody
-      .filter((f) => f.kind !== (NOT_422_BY_DESIGN.get(f.at) ?? 'unprocessable'))
+      .filter((f) => f.kind !== (NOT_422_BY_DESIGN.get(f.key) ?? 'unprocessable'))
       .map((f) => `${f.at} → ${f.kind}`);
     expect(wrong, 'req.body parses that do not answer 422').toEqual([]);
   });
 
   it('keeps the documented exception documented', () => {
     // A stale exemption is worse than none: it is a licence sitting in the list
-    // for whatever moves onto that line next.
-    for (const [at, kind] of NOT_422_BY_DESIGN) {
+    // for whatever takes that name next.
+    for (const [key, kind] of NOT_422_BY_DESIGN) {
       expect(
-        byBody.find((f) => f.at === at)?.kind,
-        `${at} no longer throws ${kind} — drop it from NOT_422_BY_DESIGN`,
+        byBody.find((f) => f.key === key)?.kind,
+        `${key} no longer throws ${kind} — drop it from NOT_422_BY_DESIGN`,
       ).toBe(kind);
+    }
+  });
+
+  it('keys the exemption on something an unrelated edit cannot move', () => {
+    // The regression that sent this file red: `at` carries a line number, so
+    // every exemption expires the next time anyone edits above it. Whatever
+    // the key is, it must survive the parse moving down its own file.
+    for (const key of NOT_422_BY_DESIGN.keys()) {
+      expect(key, `${key} pins a line number`).not.toMatch(/:\d+$/);
     }
   });
 });
