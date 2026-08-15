@@ -89,11 +89,31 @@ export interface MonitorListRow extends MonitorRow {
 /** Ceiling on one page of the monitoring dashboard. */
 export const MONITOR_PAGE_LIMIT = 500;
 
+/**
+ * The join both the dashboard and the scan read enabled monitors through.
+ *
+ * `v.archived_at IS NULL` is part of it, not of the two callers, because the
+ * two must not be able to disagree about which engagements are still being
+ * watched. Archiving is this platform's soft delete for valuations
+ * (`retireValuations`, the retention sweep), and `buildValuationWhere` filters
+ * it out of the list, the counts and the export — so a retired engagement is
+ * gone from every surface its client can reach.
+ *
+ * Monitoring outlived that. A monitor is not disabled by archiving, so the scan
+ * kept evaluating retired engagements, and a trigger that fired emailed the
+ * assigned reviewer a message ending "Consider a fresh valuation" about work
+ * the firm had already withdrawn. That mail leaves the building, which makes it
+ * the worse half: the dashboard row was merely wrong, the alert acted on it.
+ *
+ * Filtering the read rather than disabling the monitor on archive keeps the
+ * decision reversible — un-archiving an engagement resumes the watch it was
+ * set up with, instead of silently having turned it off.
+ */
 const ENABLED_MONITOR_SELECT = `
   SELECT m.*, v.company_name, v.kind, v.user_id
     FROM valuation_monitors m
     JOIN valuations v ON v.id = m.valuation_id
-   WHERE m.enabled = true`;
+   WHERE m.enabled = true AND v.archived_at IS NULL`;
 
 /**
  * Every enabled monitor, newest first — a page of them.
