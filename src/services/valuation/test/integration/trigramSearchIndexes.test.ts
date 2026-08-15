@@ -231,9 +231,7 @@ describe.skipIf(!dbUp)('trigram search indexes (migration 0149)', () => {
       // return one. There is no prefix for a b-tree to descend on.
       expect(seq?.['Rows Removed by Filter'] ?? 0).toBeGreaterThan(VALUATIONS / 2);
 
-      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(
-        Math.max(...withoutIndex.map(blocks)) / 10,
-      );
+      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(Math.max(...withoutIndex.map(blocks)) / 10);
     });
 
     it('still finds the engagement it was asked for', async () => {
@@ -277,14 +275,10 @@ describe.skipIf(!dbUp)('trigram search indexes (migration 0149)', () => {
 
     it('reads far fewer blocks than the scan it replaced', async () => {
       const withIndex = await explain(db.pool, USER_SQL, [likeContains(NEEDLE_LAST)]);
-      const withoutIndex = await without(
-        db.pool,
-        ['users_email_trgm_idx', 'users_full_name_trgm_idx'],
-        (c) => explain(c, USER_SQL, [likeContains(NEEDLE_LAST)]),
+      const withoutIndex = await without(db.pool, ['users_email_trgm_idx', 'users_full_name_trgm_idx'], (c) =>
+        explain(c, USER_SQL, [likeContains(NEEDLE_LAST)]),
       );
-      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(
-        Math.max(...withoutIndex.map(blocks)) / 5,
-      );
+      expect(Math.max(...withIndex.map(blocks))).toBeLessThan(Math.max(...withoutIndex.map(blocks)) / 5);
     });
 
     it('matches across the first/last boundary, which is what people type', async () => {

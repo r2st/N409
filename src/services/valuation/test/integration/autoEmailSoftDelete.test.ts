@@ -59,11 +59,7 @@ describe.skipIf(!dbUp)('drip campaigns skip retired engagements and deactivated 
     });
 
   const seedValuation = (companyName: string, userId: string) =>
-    createValuation(
-      ctx.pool,
-      { kind: '409a', companyName, userId },
-      { actorType: 'human', actorId: userId },
-    );
+    createValuation(ctx.pool, { kind: '409a', companyName, userId }, { actorType: 'human', actorId: userId });
 
   /** Outbox rows the scan queued for this valuation. */
   const queuedFor = async (valuationId: string): Promise<number> => {

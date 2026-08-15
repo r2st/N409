@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Notification preferences (P2 #11): default-on matrix, per-channel opt-out
@@ -46,7 +46,16 @@ describe.skipIf(!dbUp)('notification preferences', () => {
     return res.json().valuation.id as string;
   };
 
-  const setState = async (id: string, state: string) => {
+  /**
+   * Moves the engagement to `state` by the transition the lifecycle table
+   * actually has, having first put it on the far side of that edge.
+   *
+   * The real transition is the part that matters here: what this suite asserts
+   * on is what the state-change hook sends, so writing the column directly
+   * would arrange away the very thing under test. Only the run-up is arranged.
+   */
+  const setState = async (id: string, state: string, from: string) => {
+    await forceState(ctx, id, from);
     const res = await ctx.app.inject({
       method: 'PATCH',
       url: `/api/v1/valuations/${id}`,
@@ -119,8 +128,8 @@ describe.skipIf(!dbUp)('notification preferences', () => {
 
     const ownVal = await createValuation(owner.token);
     const controlVal = await createValuation(control.token);
-    await setState(ownVal, 'drafted');
-    await setState(controlVal, 'drafted');
+    await setState(ownVal, 'drafted', 'reviewed');
+    await setState(controlVal, 'drafted', 'reviewed');
 
     // Owner: email off → no outbox row; in-app still on → notification lands.
     expect(await outboxRows(owner.id, 'draft_ready')).toHaveLength(0);
@@ -135,7 +144,7 @@ describe.skipIf(!dbUp)('notification preferences', () => {
     await putPrefs(owner.token, [{ event_type: 'draft_ready', in_app: false, email: true }]);
 
     const vid = await createValuation(owner.token);
-    await setState(vid, 'drafted');
+    await setState(vid, 'drafted', 'reviewed');
 
     expect(await outboxRows(owner.id, 'draft_ready')).toHaveLength(1);
     expect(await notificationRows(owner.id, 'draft_ready')).toHaveLength(0);

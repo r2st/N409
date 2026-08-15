@@ -198,7 +198,11 @@ describe.skipIf(!dbUp)('saved views', () => {
     beforeAll(async () => {
       owner = await seedUser(ctx, { roles: ['admin'] });
       for (const q of ['partner_id=01JQ0000000000000000000001', 'partner_id=01JQ0000000000000000000002']) {
-        const res = await create(owner.token, { name: `Owned ${q.slice(-2)}`, query: q, visibility: 'shared' });
+        const res = await create(owner.token, {
+          name: `Owned ${q.slice(-2)}`,
+          query: q,
+          visibility: 'shared',
+        });
         expect(res.statusCode).toBe(201);
       }
     });

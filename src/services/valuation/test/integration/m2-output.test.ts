@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  forceState,
+  isDbAvailable,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 import { WORKBOOK_SHEETS } from '../../src/domain/workbook.js';
 
 const dbUp = await isDbAvailable();
@@ -413,7 +421,8 @@ describe.skipIf(!dbUp)('M2 — output & delivery (overwrites, workbook, reports)
       });
       expect(pdfBefore.statusCode).toBe(404);
 
-      // ops moves the valuation to drafted
+      // ops moves the valuation to drafted, which is an edge out of `reviewed`
+      await forceState(ctx, valuationId, 'reviewed');
       const patch = await ctx.app.inject({
         method: 'PATCH',
         url: `/api/v1/valuations/${valuationId}`,

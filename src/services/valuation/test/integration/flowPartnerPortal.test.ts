@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  forceState,
+  isDbAvailable,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 /**
  * What a firm sees when it signs in, and what it does not.
@@ -211,6 +219,9 @@ describe.skipIf(!dbUp)('the partner portal', () => {
     expect((await as(partner.token, 'GET', `/api/v1/valuations/${ours}/report.pdf`)).statusCode).toBe(404);
     expect((await as(member.token, 'GET', `/api/v1/valuations/${ours}/report.pdf`)).statusCode).toBe(404);
 
+    // `drafted` is an edge out of `reviewed`; what this asserts on is what
+    // sharing the draft makes visible to the firm, not the run-up to it.
+    await forceState(ctx, ours, 'reviewed');
     expect(
       (await as(ops.token, 'PATCH', `/api/v1/valuations/${ours}`, { state: 'drafted' })).statusCode,
     ).toBe(200);

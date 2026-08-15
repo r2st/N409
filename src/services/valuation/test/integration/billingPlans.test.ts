@@ -199,7 +199,12 @@ describe.skipIf(!dbUp)('billing — plans, dashboard and invoices', () => {
       await ctx.pool.query(
         `INSERT INTO invoices (id, user_id, number, amount_cents, currency, status, issued_at, line_items)
          VALUES ($1, $2, $3, 25000, 'usd', 'paid', now(), $4::jsonb)`,
-        [id, userId, `INV-TEST-${(seq += 1)}`, JSON.stringify([{ description: 'Retainer', amount_cents: 25000 }])],
+        [
+          id,
+          userId,
+          `INV-TEST-${(seq += 1)}`,
+          JSON.stringify([{ description: 'Retainer', amount_cents: 25000 }]),
+        ],
       );
       return id;
     }

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -19,15 +19,9 @@ describe.skipIf(!dbUp)('review workflow API', () => {
     });
     expect(res.statusCode).toBe(201);
     const id = res.json().valuation.id as string;
-    if (state) {
-      const patch = await ctx.app.inject({
-        method: 'PATCH',
-        url: `/api/v1/valuations/${id}`,
-        headers: authHeader(ops.token),
-        payload: { state },
-      });
-      expect(patch.statusCode).toBe(200);
-    }
+    // Arranged, not transitioned: what these tests are about is the decision
+    // taken *from* a review state, not the six steps it takes to reach one.
+    if (state) await forceState(ctx, id, state);
     return id;
   };
 

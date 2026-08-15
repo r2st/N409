@@ -1,10 +1,7 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
-import {
-  findValuationIdsByCompanyName,
-  retireValuations,
-} from '../../src/repos/valuationPurge.js';
+import { findValuationIdsByCompanyName, retireValuations } from '../../src/repos/valuationPurge.js';
 import {
   createValuation,
   findValuationById,

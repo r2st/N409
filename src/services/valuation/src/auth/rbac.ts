@@ -56,7 +56,10 @@ export function canCreateValuation(p: Principal): boolean {
 export const OPS_PATCH_FIELDS: ReadonlySet<string> = new Set([
   'company_name',
   'service_name',
-  'state', // guarded transitions arrive in M1 (#5); M0 records the change as an event
+  // Which states this may be set *to* is not an RBAC question: the legality of
+  // the edge is `domain/transitionGuard.ts`, applied by the PATCH route both
+  // before the transaction and again under the row lock.
+  'state',
   'waiting_on_client',
   'assigned_reviewer_id',
   'due_date',

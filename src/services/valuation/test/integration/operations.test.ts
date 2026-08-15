@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newUlid } from '@n409/shared';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  forceState,
+  isDbAvailable,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -640,6 +648,10 @@ describe.skipIf(!dbUp)('M3 operations API', () => {
         payload: { role: 'main', signer_name: 'Ops Reviewer', signature_text: '/s/ Ops Reviewer' },
       });
       expect(signed.statusCode).toBe(201);
+      // `published` is an edge out of `draft_accepted` and out of nothing else.
+      // The signature above is arranged for the same reason: what this block
+      // sets up is a published engagement for the filters below to find.
+      await forceState(ctx, published.id, 'draft_accepted');
       const patch = await ctx.app.inject({
         method: 'PATCH',
         url: `/api/v1/valuations/${published.id}`,

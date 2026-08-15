@@ -10,7 +10,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { clearValuationCache, findValuationById, invalidateValuation } from '../../src/repos/valuations.js';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -299,6 +299,10 @@ describe.skipIf(!dbUp)('valuation read cache', () => {
       // The damaging shape of the same race: `state` is what `canReadReport`
       // and the whole publication gate read, so a stale one is not cosmetic.
       const v = await create('Racing Transition Co');
+      // On the far side of the `reviewed → drafted` edge, so the PATCH below is
+      // a transition the lifecycle table has. The read cache is what is under
+      // test here, and it does not care which edge moved the row.
+      await forceState(ctx, v.id, 'reviewed');
       await findValuationById(ctx.pool, v.id);
 
       const hook = onWriteBeforeCommit(() => findValuationById(ctx.pool, v.id));

@@ -98,12 +98,7 @@ describe.skipIf(!dbUp)('AI apply routes — nothing to apply', () => {
       await ctx.pool.query(
         `INSERT INTO ai_jobs (id, valuation_id, pipeline, status, result, created_by, completed_at)
          VALUES ($1, $2, 'extract', 'succeeded', $3::jsonb, $4, now())`,
-        [
-          newUlid(),
-          valuationId,
-          JSON.stringify({ engine_inputs: engineInputs }),
-          ops.id,
-        ],
+        [newUlid(), valuationId, JSON.stringify({ engine_inputs: engineInputs }), ops.id],
       );
     }
 

@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, pdfOutline, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  forceState,
+  isDbAvailable,
+  pdfOutline,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 import { VALUATION_KINDS, type ValuationKind } from '../../src/domain/valuation.js';
 import { templateForKind, TEMPLATE_VAR_NAMES } from '../../src/domain/report.js';
 
@@ -199,6 +207,9 @@ describe.skipIf(!dbUp)('a deliverable for every report type', () => {
       });
       expect(early.statusCode).toBe(404);
 
+      // `drafted` is reached from `reviewed`, and it is sharing the draft that
+      // this asserts on rather than the road to it.
+      await forceState(ctx, valuationId, 'reviewed');
       const shared = await ctx.app.inject({
         method: 'PATCH',
         url: `/api/v1/valuations/${valuationId}`,

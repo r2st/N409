@@ -196,9 +196,7 @@ describe.skipIf(!dbUp)('batched reads on bulk request paths', () => {
     // The old hook issued `SELECT id, email FROM users WHERE id = $1` once per
     // addressed role. Nothing on this path should now.
     expect(matching(tap, /SELECT id, email FROM users WHERE id = \$1/i)).toHaveLength(0);
-    expect(
-      matching(tap, /FROM users u.*WHERE u\.id = ANY\(\$1::ulid\[\]\)/i).length,
-    ).toBeLessThanOrEqual(1);
+    expect(matching(tap, /FROM users u.*WHERE u\.id = ANY\(\$1::ulid\[\]\)/i).length).toBeLessThanOrEqual(1);
   });
 });
 
@@ -271,9 +269,7 @@ describe.skipIf(!dbUp)('narrow reads on the authentication path', () => {
 
   it('still refuses a token minted before the session epoch moved', async () => {
     const user = await seedUser(ctx, { roles: ['client'] });
-    await ctx.pool.query('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = $1', [
-      user.id,
-    ]);
+    await ctx.pool.query('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = $1', [user.id]);
     const res = await ctx.app.inject({
       method: 'GET',
       url: '/api/v1/valuations',

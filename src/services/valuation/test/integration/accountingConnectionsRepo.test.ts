@@ -46,9 +46,8 @@ describe.skipIf(!dbUp)('accounting connections repo', () => {
     });
     userId = user.id;
     const actor = { actorType: 'human' as const, actorId: userId, source: 'test' };
-    valuationId = (
-      await createValuation(pool, { kind: '409a', companyName: 'Ledger Co.', userId }, actor)
-    ).id;
+    valuationId = (await createValuation(pool, { kind: '409a', companyName: 'Ledger Co.', userId }, actor))
+      .id;
     otherValuationId = (
       await createValuation(pool, { kind: '409a', companyName: 'Other Books Ltd', userId }, actor)
     ).id;

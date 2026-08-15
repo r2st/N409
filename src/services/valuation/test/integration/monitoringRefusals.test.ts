@@ -100,10 +100,10 @@ describe.skipIf(!dbUp)('valuation monitoring — refusals and baseline fallbacks
 
     it('accepts a published engagement that has never calculated', async () => {
       const id = await seedValuation();
-      await ctx.pool.query(
-        `UPDATE valuations SET state = 'published', published_at = $2 WHERE id = $1`,
-        [id, '2026-02-10T00:00:00Z'],
-      );
+      await ctx.pool.query(`UPDATE valuations SET state = 'published', published_at = $2 WHERE id = $1`, [
+        id,
+        '2026-02-10T00:00:00Z',
+      ]);
       const res = await enable(id);
       expect(res.statusCode).toBe(201);
       const baseline = await baselineOf(id);
@@ -129,10 +129,10 @@ describe.skipIf(!dbUp)('valuation monitoring — refusals and baseline fallbacks
       // document happened to be published.
       const id = await seedValuation();
       await withCalc(id, 2);
-      await ctx.pool.query(
-        `UPDATE valuations SET state = 'published', published_at = $2 WHERE id = $1`,
-        [id, '2026-03-20T00:00:00Z'],
-      );
+      await ctx.pool.query(`UPDATE valuations SET state = 'published', published_at = $2 WHERE id = $1`, [
+        id,
+        '2026-03-20T00:00:00Z',
+      ]);
       await ctx.pool.query(
         `INSERT INTO board_resolutions
            (id, valuation_id, valuation_date, fmv_conclusion, methodology_summary,
@@ -176,11 +176,8 @@ describe.skipIf(!dbUp)('valuation monitoring — refusals and baseline fallbacks
         headers: auth(),
       });
       expect(status.statusCode).toBe(200);
-      const expiry = status
-        .json()
-        .triggers.find((t: { type: string }) => t.type === 'expiry') as
-        | { level: string; detail: { months: number } }
-        | undefined;
+      const expiry = status.json().triggers.find((t: { type: string }) => t.type === 'expiry') as
+        { level: string; detail: { months: number } } | undefined;
       expect(expiry).toBeTruthy();
       expect(expiry!.level).toBe('red');
       // The month count is the thing that read as 0 before the fix.

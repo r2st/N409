@@ -108,9 +108,7 @@ describe.skipIf(!dbUp)('event spine read bounds', () => {
     const spineReads: number[] = [];
     const realQuery = ctx.pool.query.bind(ctx.pool);
     (ctx.pool as { query: unknown }).query = async (...args: unknown[]) => {
-      const result = await (realQuery as (...a: unknown[]) => Promise<{ rowCount: number | null }>)(
-        ...args,
-      );
+      const result = await (realQuery as (...a: unknown[]) => Promise<{ rowCount: number | null }>)(...args);
       const sql = typeof args[0] === 'string' ? args[0] : ((args[0] as { text?: string })?.text ?? '');
       if (/FROM valuation_events/i.test(sql)) spineReads.push(result.rowCount ?? 0);
       return result;

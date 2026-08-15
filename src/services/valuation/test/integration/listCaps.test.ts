@@ -221,7 +221,12 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
           { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_minus_1', value: 4_000_000 },
           { sheet: 'income_statement', row_key: 'revenue', column_key: 'fy_current', value: 5_000_000 },
           { sheet: 'income_statement', row_key: 'cogs', column_key: 'fy_current', value: 2_000_000 },
-          { sheet: 'income_statement', row_key: 'operating_expenses', column_key: 'fy_current', value: 900_000 },
+          {
+            sheet: 'income_statement',
+            row_key: 'operating_expenses',
+            column_key: 'fy_current',
+            value: 900_000,
+          },
         ],
       },
     });
@@ -481,8 +486,7 @@ describe.skipIf(!dbUp)('bounded list endpoints', () => {
        * being at risk of a silent short read and this fails first.
        */
       const ADDRESSABLE_WORKBOOK_CELLS = WORKBOOK_SHEETS.reduce(
-        (total, sheet) =>
-          total + sheet.rows.filter((r) => r.kind === 'input').length * sheet.columns.length,
+        (total, sheet) => total + sheet.rows.filter((r) => r.kind === 'input').length * sheet.columns.length,
         0,
       );
       expect(ADDRESSABLE_WORKBOOK_CELLS).toBeGreaterThan(0);

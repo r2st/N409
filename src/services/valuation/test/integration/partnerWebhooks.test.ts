@@ -8,7 +8,15 @@ import {
   WEBHOOK_RETRY_BACKOFF_MINUTES,
 } from '../../src/domain/partnerWebhooks.js';
 import { retryDueDeliveries } from '../../src/hooks/partnerWebhooks.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  forceState,
+  isDbAvailable,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -169,6 +177,10 @@ describe.skipIf(!dbUp)('partner webhooks & idempotency', () => {
     });
 
     received.length = 0;
+    // Onto the far side of the `reviewed → drafted` edge. The transition below
+    // is the one this asserts on; the four steps between `started` and here are
+    // onboarding's, and each would fire a hook of its own into `received`.
+    await forceState(ctx, valuationId, 'reviewed');
     const drafted = await app.inject({
       method: 'PATCH',
       url: `/api/v1/valuations/${valuationId}`,

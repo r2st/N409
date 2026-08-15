@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
  * Two reviewers, one engagement, from assignment to countersigned.
@@ -63,6 +63,11 @@ describe.skipIf(!dbUp)('the multi-reviewer workflow', () => {
     });
     expect(created.statusCode).toBe(201);
     valuationId = created.json().valuation.id as string;
+    // Where this story starts: the client has finished and the file is ready to
+    // be picked up. The five transitions in front of that are onboarding's
+    // story, not this one — but `completed` rather than `review`, because
+    // "into review" is the first thing the flow below actually asserts.
+    await forceState(ctx, valuationId, 'completed');
   });
   afterAll(async () => ctx?.teardown());
 
@@ -347,7 +352,8 @@ describe.skipIf(!dbUp)('the multi-reviewer workflow', () => {
           company_name: name,
         });
         const id = created.json().valuation.id as string;
-        await as(ops.token, 'PATCH', `/api/v1/valuations/${id}`, { state: 'review' });
+        // Arrangement — what these two assert is the assignment, not the route in.
+        await forceState(ctx, id, 'review');
         ids.push(id);
       }
     });

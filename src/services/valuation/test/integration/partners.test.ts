@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import { authHeader, forceState, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -92,15 +92,9 @@ describe.skipIf(!dbUp)('partner management API', () => {
           payload: { kind: '409a', company_name: 'ChannelCo' },
         });
         expect(created.statusCode).toBe(201);
-        if (state) {
-          const patched = await ctx.app.inject({
-            method: 'PATCH',
-            url: `/api/v1/valuations/${created.json().valuation.id}`,
-            headers: authHeader(admin.token),
-            payload: { state },
-          });
-          expect(patched.statusCode).toBe(200);
-        }
+        // Arranged, not transitioned: the rollup below counts states, and how
+        // the second engagement got to `review` is another suite's subject.
+        if (state) await forceState(ctx, created.json().valuation.id, state);
       }
 
       const res = await ctx.app.inject({

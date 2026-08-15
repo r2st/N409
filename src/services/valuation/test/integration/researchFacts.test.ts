@@ -88,8 +88,7 @@ describe.skipIf(!dbUp)('market research — the facts a question is built from',
       [valuationId, key, JSON.stringify(value), ops.id, newUlid()],
     );
 
-  const clearOverwrites = () =>
-    pool.query('DELETE FROM overwrites WHERE valuation_id = $1', [valuationId]);
+  const clearOverwrites = () => pool.query('DELETE FROM overwrites WHERE valuation_id = $1', [valuationId]);
 
   beforeAll(async () => {
     db = await setupTestDb();
@@ -195,11 +194,7 @@ describe.skipIf(!dbUp)('market research — the facts a question is built from',
   // ── Refusals ──────────────────────────────────────────────────────────────
   describe('refusals', () => {
     it('422s a topic or region outside the closed set', async () => {
-      for (const body of [
-        { topic: 'astrology' },
-        { topic: 'industry_outlook', region: 'mars' },
-        {},
-      ]) {
+      for (const body of [{ topic: 'astrology' }, { topic: 'industry_outlook', region: 'mars' }, {}]) {
         const res = await run(body);
         expect(res.statusCode, JSON.stringify(body)).toBe(422);
       }
@@ -284,7 +279,11 @@ describe.skipIf(!dbUp)('market research — the facts a question is built from',
       state.synthesized = true;
       const res = await run({ topic: 'competitor_analysis' });
       expect(res.statusCode).toBe(201);
-      const rows = (await listResearch()).json().research as Array<{ topic: string; grounded: boolean; stale: boolean }>;
+      const rows = (await listResearch()).json().research as Array<{
+        topic: string;
+        grounded: boolean;
+        stale: boolean;
+      }>;
       const row = rows.find((r) => r.topic === 'competitor_analysis')!;
       expect(row.grounded).toBe(true);
       // Freshly written, so not stale — the flag exists and is computed.

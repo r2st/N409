@@ -6,6 +6,7 @@ import { attachPoolErrorHandler } from '../../src/db/pool.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { createUser } from '../../src/repos/users.js';
+import { invalidateValuation } from '../../src/repos/valuations.js';
 import { hashPassword } from '../../src/auth/password.js';
 import { newUlid } from '@n409/shared';
 import type { RoleKey } from '../../src/domain/roles.js';
@@ -168,6 +169,43 @@ export async function seedPartner(ctx: TestApp, name: string): Promise<string> {
 }
 
 export const authHeader = (token: string) => ({ authorization: `Bearer ${token}` });
+
+/**
+ * Puts an engagement in a state, for tests that need one in order to test
+ * something else.
+ *
+ * A great many of these suites want an engagement sitting in `review` or
+ * `drafted` and do not care how it got there, and the shortest way to arrange
+ * that used to be a `PATCH { state }` — which worked because the PATCH route
+ * accepted any state over any other. It does not any more: `domain/
+ * transitionGuard.ts` refuses an edge the lifecycle table does not have, and
+ * that refusal is the point of the guard, so the arrangements have to stop
+ * relying on the hole.
+ *
+ * Walking the workflow for real is the wrong substitute. Reaching `drafted`
+ * legally is six transitions, each firing the state-change hook, its
+ * notification matrix, its partner webhooks and its outbox writes — arrangement
+ * noise in every assertion downstream, and for `published` it also means a
+ * signature and a QA review the test may have nothing to say about.
+ *
+ * So: write the column. This is `INSERT`-shaped setup, not an action under
+ * test, and it deliberately writes nothing else — no `version` bump, no
+ * `state_changed` event, no timestamp column. A test that cares about the
+ * transition itself must go through the API, and the ones that do (workflow,
+ * reviews, bulk, publish gate) still do.
+ */
+export async function forceState(ctx: TestApp, valuationId: string, state: string): Promise<void> {
+  const { rowCount } = await ctx.pool.query(
+    'UPDATE valuations SET state = $2::valuation_state WHERE id = $1',
+    [valuationId, state],
+  );
+  if (rowCount !== 1) throw new Error(`forceState: no valuation ${valuationId}`);
+  // `findValuationById` caches a row for five seconds, and an arrangement is
+  // always immediately followed by the request it was arranging for. Every
+  // production writer goes through `invalidateValuationAfter`; this one is
+  // going around `patchValuation`, so it has to do that part itself.
+  invalidateValuation(valuationId);
+}
 
 /**
  * What a rendered report says about itself, without decoding a single glyph.

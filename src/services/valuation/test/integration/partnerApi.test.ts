@@ -5,7 +5,15 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
-import { authHeader, isDbAvailable, seedPartner, seedUser, setupTestApp, type TestApp } from './helpers.js';
+import {
+  authHeader,
+  forceState,
+  isDbAvailable,
+  seedPartner,
+  seedUser,
+  setupTestApp,
+  type TestApp,
+} from './helpers.js';
 
 const dbUp = await isDbAvailable();
 
@@ -218,6 +226,8 @@ describe.skipIf(!dbUp)('partner API', () => {
     // Not even the existence of a rendered draft leaks.
     expect(earlyResults.json().report).toEqual({ available: false, version: null });
 
+    // `drafted` is an edge out of `reviewed`; the sharing is what this asserts on.
+    await forceState(ctx, id, 'reviewed');
     const patch = await app.inject({
       method: 'PATCH',
       url: `/api/v1/valuations/${id}`,

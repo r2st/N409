@@ -238,7 +238,7 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
       expect(res.json().user.roles.sort()).toEqual(['reviewer', 'valuation_user']);
     });
 
-    it('409s promoting a role the user already has, rather than no-op\'ing', async () => {
+    it("409s promoting a role the user already has, rather than no-op'ing", async () => {
       // A double-click should not read as success — the admin is entitled to
       // know the second click did nothing.
       const user = await createUser({ roles: ['reviewer'] });
@@ -500,10 +500,9 @@ describe.skipIf(!dbUp)('admin console — guard rails', () => {
       const user = await createUser();
       // `users_auth_method` requires one of password/SSO/provisioned, so an
       // account with no password must name the provider it signs in with.
-      await ctx.pool.query(
-        `UPDATE users SET password_digest = NULL, sso_provider = 'google' WHERE id = $1`,
-        [user.id],
-      );
+      await ctx.pool.query(`UPDATE users SET password_digest = NULL, sso_provider = 'google' WHERE id = $1`, [
+        user.id,
+      ]);
       const res = await ctx.app.inject({
         method: 'POST',
         url: `/api/v1/users/${user.id}/send-password-reset`,

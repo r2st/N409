@@ -234,10 +234,7 @@ describe.skipIf(!dbUp)('saved scenarios', () => {
     });
 
     it('is invisible to someone who cannot read the engagement', async () => {
-      for (const call of [
-        list(otherClient.token),
-        save({ name: uniqueName() }, otherClient.token),
-      ]) {
+      for (const call of [list(otherClient.token), save({ name: uniqueName() }, otherClient.token)]) {
         expect((await call).statusCode).toBe(404);
       }
     });

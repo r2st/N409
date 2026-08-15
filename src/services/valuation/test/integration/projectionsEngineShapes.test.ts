@@ -220,7 +220,12 @@ describe.skipIf(!dbUp)('financial projection — engine response shapes', () => 
 
     it('drops non-numeric entries from the cash-flow stream', async () => {
       const res = await withEngineAnswer(
-        { method: 'growth', years: 3, projections: ROWS, free_cash_flows: [100_000, 'nonsense', null, 144_000] },
+        {
+          method: 'growth',
+          years: 3,
+          projections: ROWS,
+          free_cash_flows: [100_000, 'nonsense', null, 144_000],
+        },
         () => run(),
       );
       expect(res.statusCode).toBe(201);

@@ -223,9 +223,7 @@ describe.skipIf(!dbUp)('communication settings — refusals', () => {
       // The preview renders these into a body, so an unbounded map is an
       // unbounded email. All three axes are bounded and all three are tested.
       const tpl = await createTemplate();
-      const tooMany = Object.fromEntries(
-        Array.from({ length: 201 }, (_, i) => [`k${i}`, 'v']),
-      );
+      const tooMany = Object.fromEntries(Array.from({ length: 201 }, (_, i) => [`k${i}`, 'v']));
       const cases: [string, Record<string, unknown>][] = [
         ['too many vars', { vars: tooMany }],
         ['value too long', { vars: { a: 'x'.repeat(4001) } }],

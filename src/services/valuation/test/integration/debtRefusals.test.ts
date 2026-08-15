@@ -184,7 +184,9 @@ describe.skipIf(!dbUp)('Debt valuation — refusals and the credit-terms merge',
       // specific of the two. Getting this precedence backwards would price off
       // a table lookup while an analyst's own figure sat in the row.
       const id = await createInstrument('credit_spread', { face: 1000 });
-      expect((await setTerms(id, { rating: 'BBB', spread: 0.042, benchmark_yield: 0.03 })).statusCode).toBe(200);
+      expect((await setTerms(id, { rating: 'BBB', spread: 0.042, benchmark_yield: 0.03 })).statusCode).toBe(
+        200,
+      );
       lastPayload = null;
       expect((await value(id)).statusCode).toBe(200);
       expect(lastPayload?.params?.spread).toBe(0.042);
@@ -240,9 +242,7 @@ describe.skipIf(!dbUp)('Debt valuation — refusals and the credit-terms merge',
       const id = await createInstrument();
       const res = await value(id);
       expect(res.statusCode).toBe(200);
-      expect(String(res.json().valuation.valuation_date)).toContain(
-        new Date().toISOString().slice(0, 10),
-      );
+      expect(String(res.json().valuation.valuation_date)).toContain(new Date().toISOString().slice(0, 10));
     });
   });
 

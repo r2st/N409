@@ -2,10 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
-import {
-  countUnfiledDocuments,
-  listUnfiledDocuments,
-} from '../../src/repos/documents.js';
+import { countUnfiledDocuments, listUnfiledDocuments } from '../../src/repos/documents.js';
 import { listInbox, markAllRead, unreadThreadCount } from '../../src/repos/inbox.js';
 import {
   findRerunnableBacksolves,

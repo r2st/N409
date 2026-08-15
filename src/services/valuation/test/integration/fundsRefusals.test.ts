@@ -88,12 +88,23 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
     engineStub.post('/engine/v1/fund-rollforward', async (req) => {
       const b = req.body as Record<string, any>;
       const nv = b.prior_fair_value * (1 + (b.index_return ?? 0));
-      return { prior_fair_value: b.prior_fair_value, new_fair_value: nv, change: nv - b.prior_fair_value, method: b.method };
+      return {
+        prior_fair_value: b.prior_fair_value,
+        new_fair_value: nv,
+        change: nv - b.prior_fair_value,
+        method: b.method,
+      };
     });
     engineStub.post('/engine/v1/fund-waterfall', async (req) => {
       const b = req.body as Record<string, any>;
       const roc = Math.min(b.distributable, b.contributed_capital);
-      return { distributable: b.distributable, lp_distribution: roc, gp_distribution: b.distributable - roc, tiers: {}, clawback_owed: 0 };
+      return {
+        distributable: b.distributable,
+        lp_distribution: roc,
+        gp_distribution: b.distributable - roc,
+        tiers: {},
+        clawback_owed: 0,
+      };
     });
     engineStub.post('/engine/v1/fund-calibrate', async () => ({
       implied_volatility: 0.65,
@@ -222,7 +233,11 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
       const pid = await addPosition(id);
       const cases: [string, string, unknown][] = [
         ['POST', '/api/v1/funds', { name: '', fund_type: 'vc', currency: 'USD' }],
-        ['POST', `/api/v1/funds/${id}/positions`, { company_name: 'X', quantity: -5, cost_basis: 1, mark_method: 'cost' }],
+        [
+          'POST',
+          `/api/v1/funds/${id}/positions`,
+          { company_name: 'X', quantity: -5, cost_basis: 1, mark_method: 'cost' },
+        ],
         ['POST', `/api/v1/funds/${id}/positions/${pid}/marks`, { method: 'not-a-method' }],
         ['POST', `/api/v1/funds/${id}/positions/${pid}/rollforward`, { method: 'nonsense' }],
         ['PUT', `/api/v1/funds/${id}/valuation`, { valuation_id: 42 }],
@@ -301,7 +316,11 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
       // The distinction the route draws: the *fund* exists, its terms are
       // simply absent. A 404 here would be read as "no such fund".
       const id = await createFund();
-      const res = await app.inject({ method: 'GET', url: `/api/v1/funds/${id}/lp-terms`, headers: opsAuth() });
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/v1/funds/${id}/lp-terms`,
+        headers: opsAuth(),
+      });
       expect(res.statusCode).toBe(200);
       expect(res.json().lp_terms).toBeNull();
     });
@@ -326,9 +345,7 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
       lastValuationBody = null;
       const res = await app.inject({ method: 'GET', url: `/api/v1/funds/${id}/nav`, headers: opsAuth() });
       expect(res.statusCode).toBe(200);
-      expect(lastValuationBody?.positions).toEqual([
-        { name: 'Unmarked', method: 'cost', cost_basis: 7500 },
-      ]);
+      expect(lastValuationBody?.positions).toEqual([{ name: 'Unmarked', method: 'cost', cost_basis: 7500 }]);
       expect(res.json().nav.level_breakdown.level_3).toBe(7500);
     });
   });

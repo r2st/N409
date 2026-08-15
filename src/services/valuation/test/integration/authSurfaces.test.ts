@@ -216,10 +216,9 @@ describe.skipIf(!dbUp)('auth — the public surfaces', () => {
   describe('changing a password', () => {
     it('400s an SSO account that has none to change', async () => {
       const sso = await seedUser(ctx, { roles: ['valuation_user'] });
-      await ctx.pool.query(
-        `UPDATE users SET password_digest = NULL, sso_provider = 'google' WHERE id = $1`,
-        [sso.id],
-      );
+      await ctx.pool.query(`UPDATE users SET password_digest = NULL, sso_provider = 'google' WHERE id = $1`, [
+        sso.id,
+      ]);
       const res = await post(
         '/api/v1/auth/change-password',
         { current_password: 'whatever-it-was', new_password: 'correct-horse-battery-9' },

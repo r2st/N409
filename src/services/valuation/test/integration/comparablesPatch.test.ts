@@ -218,9 +218,10 @@ describe.skipIf(!dbUp)('comparables — editing one row, and thin screen candida
       // Restamping on those would make the provenance column mean "somebody
       // touched this row", which is not what it says.
       const row = await seedRow();
-      const before = (await list()).json().comparables.find(
-        (c: { id: string }) => c.id === row.id,
-      ) as { figures_source: string; figures_as_of: string | null };
+      const before = (await list()).json().comparables.find((c: { id: string }) => c.id === row.id) as {
+        figures_source: string;
+        figures_as_of: string | null;
+      };
 
       for (const payload of [
         { name: 'Renamed Co' },
@@ -230,9 +231,7 @@ describe.skipIf(!dbUp)('comparables — editing one row, and thin screen candida
       ]) {
         const res = await patch(row.id as string, payload);
         expect(res.statusCode, JSON.stringify(payload)).toBe(200);
-        expect(res.json().comparable.figures_source, JSON.stringify(payload)).toBe(
-          before.figures_source,
-        );
+        expect(res.json().comparable.figures_source, JSON.stringify(payload)).toBe(before.figures_source);
       }
     });
   });
@@ -355,9 +354,9 @@ describe.skipIf(!dbUp)('comparables — editing one row, and thin screen candida
         screened_out: [],
       });
       expect((await screen()).statusCode).toBe(201);
-      const row = (await list()).json().comparables.find(
-        (c: { ticker: string }) => c.ticker === 'EEE',
-      ) as { figures_as_of: string };
+      const row = (await list()).json().comparables.find((c: { ticker: string }) => c.ticker === 'EEE') as {
+        figures_as_of: string;
+      };
       expect(Number.isNaN(new Date(row.figures_as_of).getTime())).toBe(false);
     });
 

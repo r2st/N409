@@ -180,7 +180,14 @@ describe.runIf(dbUp)('ASC 718 — refusals and fallbacks', () => {
         company_type: 'private',
         grants: [],
         espp: [
-          { label: 'ESPP-A', grant_date_price: 10, discount_pct: 0.15, lookback_months: 6, risk_free_rate: 0.04, shares_enrolled: 100 },
+          {
+            label: 'ESPP-A',
+            grant_date_price: 10,
+            discount_pct: 0.15,
+            lookback_months: 6,
+            risk_free_rate: 0.04,
+            shares_enrolled: 100,
+          },
         ],
       });
       expect(espp.statusCode).toBe(422);

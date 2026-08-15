@@ -342,7 +342,12 @@ describe.skipIf(!dbUp)('the tagging agent applied to an engagement', () => {
       const previous = state.result;
       state.result = {
         tags: [
-          { slug: 'series_a', confidence: 0.99, rationale: 'Reconfirmed by the term sheet.', evidence: ['ts.pdf'] },
+          {
+            slug: 'series_a',
+            confidence: 0.99,
+            rationale: 'Reconfirmed by the term sheet.',
+            evidence: ['ts.pdf'],
+          },
         ],
       };
       try {

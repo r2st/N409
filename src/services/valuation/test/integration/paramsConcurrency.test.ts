@@ -77,8 +77,14 @@ describe.skipIf(!dbUp)('valuation params under concurrent edits', () => {
   it('never leaves the four approach weights summing to anything but 1', async () => {
     const id = await newValuation();
     expect(
-      (await patchRoute(id, { weight_asset: 0.25, weight_opm: 0.25, weight_income: 0.25, weight_market: 0.25 }))
-        .statusCode,
+      (
+        await patchRoute(id, {
+          weight_asset: 0.25,
+          weight_opm: 0.25,
+          weight_income: 0.25,
+          weight_market: 0.25,
+        })
+      ).statusCode,
     ).toBe(200);
 
     // One row, read once, handed to both writers — two analysts who opened the
@@ -195,7 +201,10 @@ describe.skipIf(!dbUp)('valuation params under concurrent edits', () => {
     const id = await newValuation();
     // No concurrency at all: the locked-row re-check must be invisible.
     expect((await patchRoute(id, { runway_months: 9 })).statusCode).toBe(200);
-    expect((await patchRoute(id, { weight_asset: 1, weight_opm: 0, weight_income: 0, weight_market: 0 })).statusCode).toBe(200);
+    expect(
+      (await patchRoute(id, { weight_asset: 1, weight_opm: 0, weight_income: 0, weight_market: 0 }))
+        .statusCode,
+    ).toBe(200);
     // Still refused on its own merits, with the message it always had.
     const bad = await patchRoute(id, { weight_asset: 0.5 });
     expect(bad.statusCode).toBe(422);

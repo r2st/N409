@@ -1,9 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import {
-  ID_PARAM_NAMES,
-  NON_ID_PARAM_NAMES,
-  routeParamNames,
-} from '../../src/plugins/params.js';
+import { ID_PARAM_NAMES, NON_ID_PARAM_NAMES, routeParamNames } from '../../src/plugins/params.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**

@@ -10,7 +10,12 @@ import {
   patchableFields,
   valuationScope,
 } from '../auth/rbac.js';
-import { VALUATION_KINDS, VALUATION_SOURCES, VALUATION_STATES } from '../domain/valuation.js';
+import {
+  VALUATION_KINDS,
+  VALUATION_SOURCES,
+  VALUATION_STATES,
+  type ValuationState,
+} from '../domain/valuation.js';
 import { CurrencyCode } from '../domain/currency.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
@@ -30,6 +35,7 @@ import {
 import { userExists } from '../repos/users.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
+import { assertTransition, assertTransitionForWrite } from '../domain/transitionGuard.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
@@ -186,6 +192,23 @@ function toRef(v: ValuationRow) {
   return { userId: v.user_id, partnerId: v.partner_id };
 }
 
+/**
+ * Every precondition of a state write, on the client that is about to issue it.
+ *
+ * Both halves are re-run here rather than trusted from the route's own reads,
+ * for the reason each of them documents: the row they were judged against is
+ * free to move between the read and the UPDATE. Ordered as the route orders
+ * them, so a contended request and an uncontended one refuse the same way.
+ */
+function stateWriteGuard(valuationId: string, to: ValuationState) {
+  const transition = assertTransitionForWrite(valuationId, to);
+  const publishGate = assertPublishGateForWrite(valuationId, to);
+  return async (client: pg.PoolClient) => {
+    await transition(client);
+    await publishGate(client);
+  };
+}
+
 async function loadAuthorized(pool: pg.Pool, principal: Principal, id: string): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();
   const valuation = await findValuationById(pool, id);
@@ -337,6 +360,10 @@ export function registerValuationRoutes(
     }
 
     if (parsed.data.state && parsed.data.state !== valuation.state) {
+      // Legality first: an engagement that cannot legally reach `published`
+      // should be told that, not told to go and find a signature for a
+      // transition that would be refused once it had one.
+      assertTransition(valuation.state, parsed.data.state);
       await assertPublishGate(deps.pool, valuation.id, parsed.data.state);
     }
     const updated = await patchValuation(
@@ -346,9 +373,10 @@ export function registerValuationRoutes(
       actorFor(principal),
       {
         expectedVersion,
-        ...(parsed.data.state
-          ? { preCommit: assertPublishGateForWrite(valuation.id, parsed.data.state) }
-          : {}),
+        // Both gates re-run under the row lock, in the same order. The two
+        // checks above answer for the uncontended case; these answer for the
+        // row as it stands at the moment of the UPDATE.
+        ...(parsed.data.state ? { preCommit: stateWriteGuard(valuation.id, parsed.data.state) } : {}),
       },
     );
     reply.header('ETag', versionEtag(updated.version));

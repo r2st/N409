@@ -226,11 +226,7 @@ describe.skipIf(!dbUp)('company profile agent', () => {
 
     const res = await apply();
     expect(res.statusCode).toBe(200);
-    expect(res.json().applied_fields.sort()).toEqual([
-      'business_description',
-      'industry',
-      'naics_code',
-    ]);
+    expect(res.json().applied_fields.sort()).toEqual(['business_description', 'industry', 'naics_code']);
     expect(res.json().skipped_fields).toContainEqual({ field: 'sic_code', reason: 'already_set' });
 
     const after = (await profile())!;

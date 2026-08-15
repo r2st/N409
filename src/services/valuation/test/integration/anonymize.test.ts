@@ -204,9 +204,7 @@ describe.skipIf(!dbUp)('cap-table anonymization', () => {
     expect(res.statusCode).toBe(200);
 
     const sent = calls.at(-1)!;
-    expect(sent.company_names).toEqual(
-      expect.arrayContaining(['Anonymous Co', 'Analytical Engines LLC']),
-    );
+    expect(sent.company_names).toEqual(expect.arrayContaining(['Anonymous Co', 'Analytical Engines LLC']));
     expect(sent.person_names).toContain('Ada Lovelace');
 
     const body = res.json();
