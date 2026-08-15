@@ -37,10 +37,9 @@ async function assertNotPublished(
   message: string,
 ): Promise<void> {
   await lockPublishGate(client, valuationId);
-  const { rows } = await client.query<{ state: string }>(
-    'SELECT state FROM valuations WHERE id = $1',
-    [valuationId],
-  );
+  const { rows } = await client.query<{ state: string }>('SELECT state FROM valuations WHERE id = $1', [
+    valuationId,
+  ]);
   // No row is not this function's 404 to raise: the routes load the valuation
   // before calling, so reaching here without one means it was deleted mid-flight
   // and the write below will fail its foreign key anyway.
@@ -114,11 +113,7 @@ export async function deleteSignature(
   role: SignatureRole,
 ): Promise<boolean> {
   return withTransaction(pool, async (client) => {
-    await assertNotPublished(
-      client,
-      valuationId,
-      'Cannot remove signatures from a published valuation',
-    );
+    await assertNotPublished(client, valuationId, 'Cannot remove signatures from a published valuation');
     const { rowCount } = await client.query(
       'DELETE FROM valuation_signatures WHERE valuation_id = $1 AND role = $2',
       [valuationId, role],

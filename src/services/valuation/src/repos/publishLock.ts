@@ -36,8 +36,5 @@ const PUBLISH_GATE_LOCK = 0x5062ae;
  * breath, and guards nothing.
  */
 export async function lockPublishGate(client: pg.PoolClient, valuationId: string): Promise<void> {
-  await client.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [
-    PUBLISH_GATE_LOCK,
-    valuationId,
-  ]);
+  await client.query('SELECT pg_advisory_xact_lock($1, hashtext($2))', [PUBLISH_GATE_LOCK, valuationId]);
 }

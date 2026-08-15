@@ -60,10 +60,8 @@ describe.skipIf(!dbUp)('client intake when the firm has been archived', () => {
   const submit = (token: string) =>
     ctx.app.inject({ method: 'POST', url: '/api/v1/intake/portal/submit', payload: { token } });
 
-  const archiveFirm = () =>
-    ctx.pool.query('UPDATE partners SET archived_at = now() WHERE id = $1', [firmId]);
-  const reviveFirm = () =>
-    ctx.pool.query('UPDATE partners SET archived_at = NULL WHERE id = $1', [firmId]);
+  const archiveFirm = () => ctx.pool.query('UPDATE partners SET archived_at = now() WHERE id = $1', [firmId]);
+  const reviveFirm = () => ctx.pool.query('UPDATE partners SET archived_at = NULL WHERE id = $1', [firmId]);
 
   it('closes a link already in a prospect’s inbox', async () => {
     const created = await mint({ client_name: 'Northwind' });

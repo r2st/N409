@@ -36,11 +36,14 @@ const dbUp = await isDbAvailable();
  * `fastify.inject` races for real): the delete's write genuinely lands between
  * the gate's read and the publish's write.
  *
- * The fix serialises the two on the valuation row — the publish transition
- * takes `SELECT ... FOR UPDATE` on `valuations` and re-asserts the gate inside
- * the same transaction that writes the state, and the signature mutations take
- * the same lock and re-read the state under it. Whichever arrives second waits,
- * then sees what the first actually did.
+ * The fix re-asserts the gate inside the transaction that writes the state, as
+ * `patchValuation`'s `preCommit`, under an advisory lock keyed on the valuation
+ * (`lockPublishGate`) that the signature and QA writers take too. An advisory
+ * lock rather than `SELECT ... FOR UPDATE`: the rows deciding the gate are in
+ * `valuation_signatures` and `qa_reviews`, and in the direction that matters
+ * there is no row to lock at all — a *missing* signature is what the publisher
+ * must not race. Whichever arrives second waits, then sees what the first
+ * actually did.
  */
 describe.skipIf(!dbUp)('publish gate under concurrency', () => {
   let ctx: TestApp;
@@ -62,10 +65,9 @@ describe.skipIf(!dbUp)('publish gate under concurrency', () => {
     });
 
   const stateOf = async (id: string): Promise<string> => {
-    const { rows } = await ctx.pool.query<{ state: string }>(
-      'SELECT state FROM valuations WHERE id = $1',
-      [id],
-    );
+    const { rows } = await ctx.pool.query<{ state: string }>('SELECT state FROM valuations WHERE id = $1', [
+      id,
+    ]);
     return rows[0]!.state;
   };
 

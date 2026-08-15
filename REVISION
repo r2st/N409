@@ -1,5 +1,109 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    4a84b38
+# subject:   links that outlive what they were minted for
+# previous:  9b079ef (the batched read that judged two hundred transitions
+#            against one snapshot).
+# includes:  4 commits — R61, a production-readiness round.
+#
+#            R57 asked, of the money path, whether a read that had been fixed
+#            left a write behind it. This round asked two questions. Of every
+#            guard: is it a condition of the write, or a question asked
+#            beforehand on another connection. And of every token the platform
+#            mints for somebody outside it: what still honours that token after
+#            the thing it was minted for has been withdrawn.
+#
+#            One is a guard that was never a precondition:
+#
+#            1a7eaf0 — `assertPublishGate` is the whole of what stands between
+#              an engagement and `published`: a main signature on file, and a
+#              non-failing QA review on the latest calculation. It ran on the
+#              pool; the state was then written on a different connection in a
+#              later statement, so every row it consulted was free to change in
+#              between. Two ordinary endpoints do exactly that. `DELETE
+#              /signatures/main` refuses only once a valuation is *already*
+#              published — which a publish in flight has not yet made true — so
+#              gate-reads-signature, delete-commits, publish-lands leaves
+#              `published` with no signature in the database. And
+#              `createCalculation` retires the QA review the gate is looking at
+#              by construction, because the review is keyed to the calculation
+#              it examined.
+#
+#              Neither is exotic: two overlapping `inject`s reproduce the first
+#              on five runs in six. The one clean run is why the first version
+#              of the test passed against the bug, and why it now loops.
+#              "Published, unsigned" is not a stale page — it is a compliance
+#              artifact a firm cannot explain to an auditor, and nothing
+#              downstream re-checks it.
+#
+#              The gate now runs a second time inside the write's transaction,
+#              as `patchValuation`'s new `preCommit`, under an advisory lock the
+#              signature and QA writers take too. `expectedVersion` could not
+#              have covered it: every row the gate reads is in another table and
+#              does not move `valuations.version`. An advisory lock rather than
+#              a row lock, because a *missing* signature is what the publisher
+#              must not race, and absence has no row to lock.
+#
+#            Two are the same shape one step outside the platform — a token
+#            minted per outside party, living in their inbox, redeemed at a
+#            moment nobody controls. R57 settled the treatment for the auditor
+#            portal: check at the mint and at the redemption, because nothing
+#            revokes the links already sent and nothing could:
+#
+#            dfec812 — board sign-off had neither check. It is the worse of the
+#              two for what its link asks: not "here is the deliverable" but
+#              "sign this resolution adopting the FMV as the board's own", a
+#              dated governance record created by a director outside the firm.
+#              `POST /board/members/:memberId/send` re-mints the token on every
+#              call, so a retired engagement did not merely honour the links
+#              already out — it went on issuing fresh ones, with fresh
+#              deadlines, indefinitely.
+#
+#            4a84b38 — client intake is the third such surface and the only one
+#              that is unauthenticated *and* writes. Its three public endpoints
+#              each asked `revoked_at IS NULL AND expires_at > now()`: whether
+#              the link is alive, never whether the firm is. An archived partner
+#              takes no new users and cannot edit its branding, so the intent is
+#              not in doubt — but its outstanding links kept serving a public
+#              form wearing that firm's name and colours, collecting a
+#              prospect's incorporation details, cap table and revenue position,
+#              and then offering the result for conversion into a live
+#              engagement under the same archived partner. Fixed on the one
+#              shared SQL fragment, not in the three callers: a predicate copied
+#              per caller is one that eventually differs, and a form that opens
+#              but will not save is worse than either verdict given
+#              consistently.
+#
+#            In all three, reads stay open on purpose and the split follows the
+#            payments precedent — checkout refuses, the receipts stay readable.
+#            What stops is minting, sending, converting, and recording a
+#            decision.
+#
+#            One is a guard that had stopped guarding:
+#
+#            f3c08ba — `test/logger.test.ts` scans every service for
+#              credential-shaped field names with no entry in SENSITIVE_FIELDS.
+#              It had been failing since 4836db0, because the subject-access
+#              export selects `(password_digest IS NOT NULL) AS has_password`
+#              and the scan read that as a password field. A tripwire that is
+#              always red is one nobody reads: the next genuinely unredacted
+#              credential would have landed in the same output and looked
+#              exactly like this false positive. `has_` is excluded, narrowly —
+#              a predicate about a secret is the opposite of the secret, and
+#              `has_password: false` is the answer to why a login failed.
+#
+#            Every fix in this round was verified non-vacuous by reverting it
+#            and watching the new test fail in the way described. The publish
+#            race needed that most: its single-shot form passed against the bug.
+#
+#            gap:       the archived-write sweep is still not enforced by
+#            anything. R55/R56 swept reads, R57 opened the write question,
+#            and this round closed two more surfaces by hand — but 47 route
+#            files still load a valuation by id and mutate it with no
+#            `archived_at` check, and the ones worth gating are picked by
+#            judgement about outward effect each time. Nothing fails when a new
+#            one is added.
+#
 # commit:    3b61a70
 # subject:   the money path, and two people in one report
 # previous:  162ce75 (the soft-delete sweep, finished).

@@ -40,7 +40,9 @@ describe.skipIf(!dbUp)('board sign-off on a retired engagement', () => {
     ctx.app.inject({ method, url, headers: authHeader(ops.token), ...(payload ? { payload } : {}) });
 
   /** A valuation with a concluded FMV, a resolution, and one member holding a token. */
-  async function engagementWithSignoff(name: string): Promise<{ id: string; memberId: string; token: string }> {
+  async function engagementWithSignoff(
+    name: string,
+  ): Promise<{ id: string; memberId: string; token: string }> {
     const created = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/valuations',
@@ -64,7 +66,9 @@ describe.skipIf(!dbUp)('board sign-off on a retired engagement', () => {
       { actorType: 'human', actorId: ops.id },
     );
 
-    expect((await as('POST', `/api/v1/valuations/${id}/board`, { valuation_date: '2026-05-01' })).statusCode).toBe(201);
+    expect(
+      (await as('POST', `/api/v1/valuations/${id}/board`, { valuation_date: '2026-05-01' })).statusCode,
+    ).toBe(201);
 
     const member = await as('POST', `/api/v1/valuations/${id}/board/members`, {
       name: 'Dana Director',
@@ -92,7 +96,9 @@ describe.skipIf(!dbUp)('board sign-off on a retired engagement', () => {
     const { id, memberId } = await engagementWithSignoff('SendCo');
     // The send works while the engagement is live — so a 409 below is the
     // retirement and not a broken fixture.
-    expect((await as('POST', `/api/v1/valuations/${id}/board/members/${memberId}/send`)).statusCode).toBe(200);
+    expect((await as('POST', `/api/v1/valuations/${id}/board/members/${memberId}/send`)).statusCode).toBe(
+      200,
+    );
 
     await retire(id);
 

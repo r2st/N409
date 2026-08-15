@@ -153,16 +153,10 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     guardVersion = false,
   ): Promise<ValuationRow> => {
     await assertPublishGate(deps.pool, valuation.id, to);
-    const updated = await patchValuation(
-      deps.pool,
-      valuation,
-      { state: to },
-      actorFor(principal, source),
-      {
-        ...(guardVersion ? { expectedVersion: valuation.version } : {}),
-        preCommit: assertPublishGateForWrite(valuation.id, to),
-      },
-    );
+    const updated = await patchValuation(deps.pool, valuation, { state: to }, actorFor(principal, source), {
+      ...(guardVersion ? { expectedVersion: valuation.version } : {}),
+      preCommit: assertPublishGateForWrite(valuation.id, to),
+    });
     await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, to);
     return updated;
   };
