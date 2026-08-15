@@ -197,6 +197,57 @@ function credentialFields(): Map<string, string[]> {
   return found;
 }
 
+/**
+ * `*_email`/`*_phone` fields that are not a natural person's contact details.
+ *
+ * Declared rather than silently skipped, because each one is a judgement that
+ * should be re-read when it changes:
+ *
+ *  - `marketing_email` is a *boolean* consent flag (`repos/communications.ts`),
+ *    not an address. Redacting it blanks a diagnostic and protects nothing —
+ *    the `has_password` case exactly.
+ *  - `support_email` is the firm's own published support address, rendered on
+ *    its login page by the branding routes. It is business contact detail that
+ *    the product deliberately shows to anonymous visitors.
+ *  - `auto_email` names a feature (the `auto_emails` table), not a recipient.
+ */
+const NON_PERSONAL_CONTACT_FIELDS = new Set(['marketing_email', 'support_email', 'auto_email']);
+
+/**
+ * Compound contact-detail field names the services carry, in property position.
+ *
+ * Same two patterns and the same reasoning as `credentialFields`. `_name` is
+ * deliberately not in the family: on this platform it is overwhelmingly
+ * companies, plans and indexes rather than people, so scanning it would report
+ * `legal_name` and `index_name` forever — and a tripwire that is always red is
+ * one nobody reads. The handful of genuinely personal `*_name` fields are
+ * hand-listed in SENSITIVE_FIELDS instead.
+ */
+function contactFields(): Map<string, string[]> {
+  const found = new Map<string, string[]>();
+  const suffixes = 'email|phone';
+  for (const file of [
+    ...sourceFiles(path.join(repoRoot, 'src/services')),
+    ...sourceFiles(path.join(repoRoot, 'src/packages')),
+  ]) {
+    const text = readFileSync(file, 'utf8');
+    const rel = path.relative(repoRoot, file);
+    const note = (name: string) => {
+      if (PRESENCE_PREFIX.test(name)) return;
+      const at = found.get(name) ?? [];
+      if (!at.includes(rel)) at.push(rel);
+      found.set(name, at);
+    };
+    for (const m of text.matchAll(new RegExp(`\\b([a-z][a-z0-9_]*_(?:${suffixes}))\\s*[?]?\\s*:`, 'g'))) {
+      note(m[1]!);
+    }
+    for (const m of text.matchAll(new RegExp(`\\.([a-z][a-z0-9_]*_(?:${suffixes}))\\b`, 'g'))) {
+      note(m[1]!);
+    }
+  }
+  return found;
+}
+
 describe('the redact list keeps up with the code', () => {
   it('covers every compound credential field the services carry', () => {
     const covered = new Set(SENSITIVE_FIELDS);
@@ -240,6 +291,70 @@ describe('the redact list keeps up with the code', () => {
     // The thing it reports on is still on the list.
     expect(SENSITIVE_FIELDS).toContain('password_digest');
     expect(SENSITIVE_FIELDS).toContain('totp_secret');
+  });
+
+  it('covers every compound contact field the services carry', () => {
+    // The same drift, one family over. `email` no more covers `client_email`
+    // than `token` covered `access_token`, and this platform names the column
+    // after the role in every table that joins to a person — actor_email,
+    // grantee_email, to_email, uploaded_by_email. Fourteen of them reached the
+    // tree unredacted before this check existed.
+    const covered = new Set(SENSITIVE_FIELDS);
+    const uncovered = [...contactFields().entries()]
+      .filter(([name]) => !covered.has(name))
+      .filter(([name]) => !NON_PERSONAL_CONTACT_FIELDS.has(name));
+
+    expect(
+      uncovered.map(([name, files]) => `${name} (in ${files[0]})`),
+      'contact-shaped fields with no entry in SENSITIVE_FIELDS',
+    ).toEqual([]);
+  });
+
+  it('finds the contact fields it is supposed to be checking', () => {
+    const names = new Set(contactFields().keys());
+    expect(names.has('client_email')).toBe(true);
+    expect(names.has('to_email')).toBe(true);
+    expect(names.size).toBeGreaterThan(5);
+  });
+
+  it('holds the three non-addresses as declared exceptions, not as oversights', () => {
+    // `marketing_email` is the one that matters: it is a boolean consent flag,
+    // so redacting it would blank a diagnostic and tell nobody anything —
+    // exactly the `has_password` case. Naming the exceptions in a list keeps
+    // them reviewable; letting the check ignore the whole family would not.
+    for (const name of NON_PERSONAL_CONTACT_FIELDS) {
+      expect(SENSITIVE_FIELDS, `${name} should not be redacted`).not.toContain(name);
+    }
+    expect(NON_PERSONAL_CONTACT_FIELDS.has('marketing_email')).toBe(true);
+  });
+
+  it('redacts a personal address under a role-shaped key, at depth', () => {
+    const out = logged((logger) =>
+      logger.info({
+        event: { actor_email: 'jane@example.com', client_email: 'ap@client.example.com' },
+        outbox: { to_email: 'someone@example.com', to_phone: '+15551234567' },
+      }),
+    );
+    expect(out.event.actor_email).toBe('[REDACTED]');
+    expect(out.event.client_email).toBe('[REDACTED]');
+    expect(out.outbox.to_email).toBe('[REDACTED]');
+    expect(out.outbox.to_phone).toBe('[REDACTED]');
+  });
+
+  it('leaves the subject company and the consent flag readable', () => {
+    // Over-redaction has a cost, and these are the fields it would be paid in:
+    // `legal_name` is the company being valued, which is the most useful thing
+    // in a valuation log line.
+    const out = logged((logger) =>
+      logger.info({
+        profile: { legal_name: 'Meridian Robotics, Inc.' },
+        prefs: { marketing_email: false },
+        brand: { support_email: 'help@meridian.example.com' },
+      }),
+    );
+    expect(out.profile.legal_name).toBe('Meridian Robotics, Inc.');
+    expect(out.prefs.marketing_email).toBe(false);
+    expect(out.brand.support_email).toBe('help@meridian.example.com');
   });
 
   it('generates a path per field per level, with no duplicates', () => {

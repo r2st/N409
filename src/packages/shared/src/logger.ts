@@ -50,6 +50,53 @@ export const SENSITIVE_FIELDS: readonly string[] = [
   'last_name',
   'ssn',
   'tax_id',
+  // …and the compound forms, for exactly the reason the OAuth block above
+  // exists. `token` never covered `access_token`, and the same segment-by-
+  // segment matching means `email` never covered `client_email` — a fact this
+  // list was written without, twice. Every row this platform joins to a person
+  // names the column after the *role* rather than the field: an audit event
+  // carries `actor_email`, a grant carries `grantee_email`, the outbox carries
+  // `to_email`, an upload carries `uploaded_by_email`. There are fourteen of
+  // them and not one was redacted, so any line that logged such a row whole put
+  // an address in the clear.
+  //
+  // Enumerated rather than matched by suffix because three fields ending in
+  // `_email` are not addresses at all, and blanking them would cost diagnostics
+  // for nothing: `marketing_email` is a *boolean* consent flag (the
+  // `has_password` case — a predicate about a thing is not the thing),
+  // `support_email` is the firm's published support address shown on its own
+  // login page, and `auto_email` names a feature. `logger.test.ts` scans for
+  // any `*_email`/`*_phone` property this list has not been told about and
+  // holds those three as declared exceptions, so the next one fails the suite.
+  'actor_email',
+  'analyst_email',
+  'author_email',
+  'client_email',
+  'created_by_email',
+  'customer_email',
+  'grantee_email',
+  'invited_by_email',
+  'member_email',
+  'owner_email',
+  'reviewer_email',
+  'to_email',
+  'uploaded_by_email',
+  'user_email',
+  'to_phone',
+  // Personal names under a role-shaped column. Deliberately only the
+  // unambiguous ones: `*_name` is dominated on this platform by things that are
+  // not people — `brand_name`, `company_name`, `plan_name`, `index_name`,
+  // `service_name`, and `legal_name`, which is the *subject company's* legal
+  // name and is the single most useful field in a valuation log line. So this
+  // is a short hand-picked list rather than a family, and the scan in
+  // logger.test.ts deliberately does not police `_name`; a check that reported
+  // `index_name` forever is a check somebody deletes.
+  'given_name',
+  'family_name',
+  'grantee_name',
+  'signer_name',
+  'owner_first_name',
+  'owner_last_name',
   // client company data is sensitive in a valuation context
   'cap_table',
 ];
