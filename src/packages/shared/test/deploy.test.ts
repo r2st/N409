@@ -238,6 +238,57 @@ describe('the build is mandatory and fatal', () => {
   });
 });
 
+// Section 4b. The guards being run are not new; the moment is. Run at boot,
+// a rejected config is a crash-looping unit with the old process already
+// stopped — and a config written before its guard existed (STRIPE_SECRET_KEY
+// with no STRIPE_WEBHOOK_SECRET, 324 commits live) is never rejected at all.
+// Run here, it is a failed deploy with the previous release still serving.
+describe('the host config is validated before anything restarts', () => {
+  it('runs the preflight after the build and before the first restart', () => {
+    const run = deploy(['--apply']);
+    const build = run.remote.findIndex((c) => c.includes('npm run build'));
+    const check = run.remote.findIndex((c) => c.includes('preflight-cli.js'));
+    const restart = run.remote.findIndex((c) => c.includes('systemctl restart'));
+    expect(check).toBeGreaterThan(build);
+    expect(restart).toBeGreaterThan(check);
+  });
+
+  it('validates the .env this script names, not whatever the unit points at', () => {
+    // A host whose .env has moved must fail loudly rather than quietly
+    // validate a file nothing reads.
+    const run = deploy(['--apply']);
+    const check = run.remote.find((c) => c.includes('preflight-cli.js'));
+    expect(check).toContain('--env-file /opt/N409/.env');
+    expect(check).toContain('--unit-dir /opt/N409/infra/systemd');
+  });
+
+  it('restarts nothing when the config would be rejected at boot', () => {
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"preflight-cli.js"* ]] && exit 1']);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('would be rejected at boot');
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(false);
+  });
+
+  it('leaves BUILD_SHA alone when the config is rejected', () => {
+    // Same rule as the build: the host must not claim a release it never ran.
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"preflight-cli.js"* ]] && exit 1']);
+    expect(run.remote.some((c) => c.includes('> /opt/N409/BUILD_SHA'))).toBe(false);
+  });
+
+  it('can be skipped deliberately, and says so', () => {
+    const run = deploy(['--apply'], { SKIP_PREFLIGHT: '1' });
+    expect(run.status).toBe(0);
+    expect(run.remote.some((c) => c.includes('preflight-cli.js'))).toBe(false);
+    expect(run.stderr).toContain('SKIP_PREFLIGHT=1');
+  });
+
+  it('plans the check in a dry run without running it', () => {
+    const run = deploy([]);
+    expect(run.transcript).toBe('');
+    expect(run.stderr).toContain('preflight-cli.js');
+  });
+});
+
 describe('BUILD_SHA', () => {
   it('is the local HEAD, written after the build', () => {
     const sha = git('rev-parse', 'HEAD');

@@ -43,6 +43,11 @@
 #   VERIFY_TIMEOUT   Seconds to allow a restarted service to come up (default 120).
 #   VERIFY_INTERVAL  Seconds between probes while waiting (default 3).
 #   SKIP_VERIFY   Set to 1 to skip the post-deploy verification (not advised).
+#   SKIP_PREFLIGHT
+#                 Set to 1 to skip validating the host's .env against the
+#                 start-up guards before restarting (see section 4b). Skipping
+#                 it does not make a bad config work — it only moves the
+#                 discovery from a failed deploy to a failed service.
 #
 # Usage:
 #   infra/deploy.sh                    # dry run — prints the plan, touches nothing
@@ -326,6 +331,35 @@ if [[ -n "$PREV_SHA" ]] && $GIT cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; 
         || die "$svc pip install failed — nothing was restarted"
     fi
   done
+fi
+
+# ── 4b. Validate the host's config before anything is restarted ──────────────
+#
+# The guards this runs are the ones the services run at boot: loadConfig's zod
+# schema and its production-only checks, plus the INTERNAL_SERVICE_TOKEN
+# requirement the report service and the two Python services enforce. Nothing
+# here is new except the moment.
+#
+# That moment is the point. Every one of those guards used to be evaluated for
+# the first time *inside* a booting process, which gives a bad config only two
+# ways to surface: as a crash-looping unit with the old process already stopped,
+# or — if the guard did not exist yet when the config was written — not at all.
+# The second is what happened to Stripe: STRIPE_SECRET_KEY set with no
+# STRIPE_WEBHOOK_SECRET, checkout charging cards that nothing could fulfil,
+# live for 324 commits and found by an outage rather than by this repo.
+#
+# Run here, a fault costs a failed deploy with the previous release still
+# serving. Fatal, like the build above, and for the same reason.
+#
+# --env-file is passed explicitly rather than trusting the unit's own path: it
+# makes the file being validated the file named in this script, so a host whose
+# .env has been moved fails loudly instead of validating one that nothing reads.
+if [[ "${SKIP_PREFLIGHT:-0}" == "1" ]]; then
+  log "SKIP_PREFLIGHT=1 — not validating the host's configuration"
+else
+  log "validating $REMOTE_DIR/.env against the start-up guards"
+  run_remote "cd $REMOTE_DIR/src/services/valuation && node dist/preflight-cli.js --env-file $REMOTE_DIR/.env --unit-dir $REMOTE_DIR/infra/systemd" \
+    || die "the host's configuration would be rejected at boot — nothing was restarted, the previous release is still serving. Fix $REMOTE_DIR/.env and deploy again (SKIP_PREFLIGHT=1 overrides, which trades a failed deploy for a failed service)"
 fi
 
 # ── 5. Record what was built — after the build, never before ─────────────────

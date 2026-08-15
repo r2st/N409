@@ -44,5 +44,14 @@ export {
   runWithRequestId,
   type RequestContext,
 } from './requestContext.js';
+export {
+  mergeEnvSources,
+  parseEnvironmentFile,
+  parseUnitFile,
+  type EnvFileProblem,
+  type MergedEnv,
+  type ParsedEnvFile,
+  type ParsedUnit,
+} from './systemdEnv.js';
 export { TtlCache } from './cache.js';
 export { conditionalJson, etagFor, matchesIfNoneMatch, type ConditionalOptions } from './httpCache.js';
