@@ -67,16 +67,61 @@ function openSocket(opts: SmtpOptions): Promise<Dialogue> {
         pending = null;
       }
     };
+    /**
+     * Give up on the connection, and take the socket with us.
+     *
+     * The `socket.destroy()` is the load-bearing part. Every path through here
+     * that runs *before* the greeting has been read rejects `openSocket`, so
+     * `sendSmtp` throws at its `await openSocket(opts)` — above the `try`, which
+     * means the `finally { dialogue.end() }` that normally closes the socket
+     * never runs. Nothing else held a reference to it either, so the connection
+     * stayed open for as long as the peer kept it: an established socket and its
+     * file descriptor, leaked per attempt.
+     *
+     * The two ways to get there are the two an unhealthy mail server produces.
+     * A greylisting or blocklisting server accepts the TCP connection and then
+     * sits on it, which is the `setTimeout` below firing. A tarpit or an
+     * overloaded relay accepts and then never speaks at all. Both are retried by
+     * the outbox sweep every EMAIL_RETRY_SCAN_MINUTES, against every failed row,
+     * which is exactly the shape that turns one leaked descriptor into all of
+     * them.
+     */
     const onError = (err: Error) => {
+      socket.destroy();
       pending?.reject(err);
       pending = null;
       reject(err);
+    };
+
+    /**
+     * The server hung up, and this is the only thing that notices.
+     *
+     * A clean FIN is not an `error`, so nothing rejected the reply we were
+     * waiting for — and the inactivity timeout was not the backstop it looks
+     * like, because Node clears a socket's timers when the socket closes. The
+     * timer that was supposed to bound this had already been cancelled by the
+     * very event that made it necessary. `sendSmtp` therefore did not fail
+     * slowly on a mid-dialogue hang-up; it never settled at all.
+     *
+     * Which matters because of who awaits it. `retryFailedEmails` runs under
+     * `nonOverlapping` (hooks/emailRetry.ts), so a tick that never returns is
+     * not one slow sweep — it is every subsequent sweep declining to start, for
+     * the life of the process. One relay dropping one connection stopped email
+     * retries on that instance until somebody restarted it.
+     *
+     * The common case is not a failure at all: plenty of servers close
+     * immediately after `QUIT` rather than answering `221`. That one is on the
+     * happy path, after the message is already accepted.
+     */
+    const onClose = () => {
+      if (pending) onError(new SmtpError('SMTP connection closed by the server'));
     };
 
     const attach = () => {
       socket.setTimeout(timeoutMs, () => onError(new SmtpError('SMTP timeout')));
       socket.on('data', onData);
       socket.on('error', onError);
+      socket.on('close', onClose);
     };
     attach();
 
@@ -91,6 +136,11 @@ function openSocket(opts: SmtpOptions): Promise<Dialogue> {
         return new Promise((res, rej) => {
           socket.removeAllListeners('data');
           socket.removeAllListeners('error');
+          // The plaintext socket becomes the TLS socket's transport rather than
+          // closing, but it is the same object as far as `close` is concerned:
+          // left attached, the handler above would fire against a `pending` that
+          // now belongs to the encrypted dialogue.
+          socket.removeAllListeners('close');
           const upgraded = tls.connect({ socket, servername: host }, () => res());
           upgraded.on('error', rej);
           socket = upgraded;
@@ -106,9 +156,19 @@ function openSocket(opts: SmtpOptions): Promise<Dialogue> {
     // Greeting arrives unprompted; resolve once the socket is ready for it.
     void dialogue.send(null).then(
       (greeting) => {
-        if (!greeting.startsWith('220')) reject(new SmtpError(`unexpected greeting: ${greeting}`));
-        else resolve(dialogue);
+        if (greeting.startsWith('220')) {
+          resolve(dialogue);
+          return;
+        }
+        // A server refusing the connection outright — `554 no service here` from
+        // a blocklist, `421 too many connections` from a relay under load. The
+        // dialogue is never handed back, so this is the only place that can
+        // close the socket it opened; see `onError`.
+        dialogue.end();
+        reject(new SmtpError(`unexpected greeting: ${greeting}`));
       },
+      // Already destroyed by `onError`, which is the only thing that rejects a
+      // pending reply.
       (err) => reject(err),
     );
   });
