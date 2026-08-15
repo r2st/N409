@@ -289,6 +289,70 @@ describe('the host config is validated before anything restarts', () => {
   });
 });
 
+// Section 4a. The pip install above is conditional on requirements.txt having
+// changed, which is a sound optimisation and the reason the venvs drift: the
+// installed set is a fossil of whatever PyPI served the day that file was last
+// edited. CI cannot see it either — `pip-audit -r` resolves the floors afresh
+// and audits versions that exist on no host — so the ai venv sat on pypdf
+// 6.14.2 with two advisories reachable from document upload while every gate
+// in the repo was green. This check runs against the host, unconditionally.
+describe('the host venvs are checked against requirements.txt', () => {
+  it('checks both Python services', () => {
+    const run = deploy(['--apply']);
+    const checks = run.remote.filter((c) => c.includes('check_installed_deps.py'));
+    expect(checks).toHaveLength(2);
+    expect(checks.some((c) => c.includes('src/services/ai/requirements.txt'))).toBe(true);
+    expect(checks.some((c) => c.includes('src/services/engine-wrapper/requirements.txt'))).toBe(true);
+  });
+
+  it("asks each service's own interpreter, so it reads that venv", () => {
+    // Run with the wrong python this cheerfully audits the wrong environment.
+    const run = deploy(['--apply']);
+    const ai = run.remote.find((c) => c.includes('src/services/ai/requirements.txt'));
+    expect(ai).toContain('src/services/ai/.venv/bin/python');
+    const engine = run.remote.find((c) => c.includes('src/services/engine-wrapper/requirements.txt'));
+    expect(engine).toContain('src/services/engine-wrapper/.venv/bin/python');
+  });
+
+  it('runs even when no requirements file changed', () => {
+    // The whole point: the drift accumulates in the deploys that skip the
+    // install, so a check gated on the same condition would never fire.
+    const run = deploy(['--apply']);
+    expect(run.remote.some((c) => c.includes('pip install -r requirements.txt'))).toBe(false);
+    expect(run.remote.some((c) => c.includes('check_installed_deps.py'))).toBe(true);
+  });
+
+  it('runs after the build and before the first restart', () => {
+    const run = deploy(['--apply']);
+    const build = run.remote.findIndex((c) => c.includes('npm run build'));
+    const check = run.remote.findIndex((c) => c.includes('check_installed_deps.py'));
+    const restart = run.remote.findIndex((c) => c.includes('systemctl restart'));
+    expect(check).toBeGreaterThan(build);
+    expect(restart).toBeGreaterThan(check);
+  });
+
+  it('restarts nothing when a venv does not satisfy its spec', () => {
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"check_installed_deps.py"* ]] && exit 1']);
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain('does not satisfy its requirements.txt');
+    expect(run.remote.some((c) => c.includes('systemctl restart'))).toBe(false);
+  });
+
+  it('leaves BUILD_SHA alone when a venv is stale', () => {
+    // Same rule as the build and the preflight: the host must never claim a
+    // release it did not start.
+    const run = deploy(['--apply'], {}, ['[[ "$*" == *"check_installed_deps.py"* ]] && exit 1']);
+    expect(run.remote.some((c) => c.includes('> /opt/N409/BUILD_SHA'))).toBe(false);
+  });
+
+  it('can be skipped deliberately, and says so', () => {
+    const run = deploy(['--apply'], { SKIP_PREFLIGHT: '1' });
+    expect(run.status).toBe(0);
+    expect(run.remote.some((c) => c.includes('check_installed_deps.py'))).toBe(false);
+    expect(run.stderr).toContain('not checking the host');
+  });
+});
+
 describe('BUILD_SHA', () => {
   it('is the local HEAD, written after the build', () => {
     const sha = git('rev-parse', 'HEAD');

@@ -1,4 +1,16 @@
 fastapi>=0.115
 uvicorn>=0.32
 httpx>=0.28
-pypdf>=5.1
+# Floor raised from >=5.1 for PYSEC-2026-3655 and PYSEC-2026-3656, both fixed in
+# 6.15.0. Each is a decompression-style resource exhaustion reached *through
+# text extraction*: a crafted /ToUnicode entry, or crafted font width entries,
+# with absurd values. `documents.py` runs `PdfReader(...).extract_text()` over
+# whatever a client uploads, so both are reachable by an unauthenticated upload
+# rather than theoretical — the deployed venv was pinned at 6.14.2 and had them.
+#
+# A floor rather than an `==` pin because that is the convention every other
+# line here follows, and because the *deploy* is what makes a floor bite:
+# infra/deploy.sh reinstalls a service's venv only when its requirements.txt
+# changes (see the PREV_SHA diff in section 5), so raising this number is also
+# the thing that schedules the reinstall that retires the vulnerable build.
+pypdf>=6.15.0

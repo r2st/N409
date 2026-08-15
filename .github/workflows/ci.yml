@@ -124,12 +124,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Gating, like npm audit above. It was advisory, and an advisory scan is
+      # one nobody reads: these two lines printed green for months while the
+      # deployed ai venv carried two pypdf advisories, and would have printed
+      # the same had the *spec* been vulnerable too.
+      #
+      # Note what this can and cannot see. `-r` resolves the floors against PyPI
+      # and audits the result, so it answers "would a fresh install today be
+      # safe?" — worth blocking on, since that is what a new host and every
+      # requirements.txt change actually get. It says nothing about the venvs
+      # already on the deploy target, which are not fresh installs and drift
+      # below the floors silently; `tools/check_installed_deps.py`, run by
+      # infra/deploy.sh against the host, is the half that covers those.
       - name: pip-audit (Python services)
         run: |
           python -m pip install --upgrade pip pip-audit
           pip-audit -r src/services/ai/requirements.txt
           pip-audit -r src/services/engine-wrapper/requirements.txt
-        continue-on-error: true
       - name: gitleaks (committed secret scan)
         run: |
           GL_VERSION=8.21.2

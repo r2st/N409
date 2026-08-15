@@ -7,7 +7,10 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
     "httpx>=0.28",
-    "pypdf>=5.1",
+    # Keep in step with requirements.txt, which carries the reasoning: 6.15.0 is
+    # the fix for PYSEC-2026-3655/3656, both reachable through the text
+    # extraction `documents.py` runs over uploaded files.
+    "pypdf>=6.15.0",
 ]
 
 [dependency-groups]

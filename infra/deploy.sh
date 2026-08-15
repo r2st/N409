@@ -349,6 +349,34 @@ if [[ -n "$PREV_SHA" ]] && $GIT cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; 
   done
 fi
 
+# 4a. …and then check that the venvs actually contain what the spec asks for.
+#
+# Unconditional, which is the point: the block above installs only when
+# requirements.txt *changed*, so the case this catches is precisely the one it
+# skips. A venv installed months ago holds whatever PyPI served that day, and
+# nothing since has compared it to the spec — CI cannot, because `pip-audit -r`
+# resolves the floors afresh and audits versions that exist on no host.
+#
+# That gap had a live instance: the ai venv sat at pypdf 6.14.2, carrying two
+# advisories reachable from an unauthenticated document upload, while CI's
+# dependency scan was green. Raising the floor retires it (the diff above
+# reinstalls), but only this line notices the *next* one.
+#
+# Fatal, like the build and the preflight, and for the same reason: a deploy
+# that fails here leaves the previous release serving, which is strictly better
+# than restarting into a venv nobody can describe. SKIP_PREFLIGHT covers it too
+# — the escape hatch for a host that needs a deploy more than it needs a
+# correct one.
+if [[ "${SKIP_PREFLIGHT:-0}" == "1" ]]; then
+  log "SKIP_PREFLIGHT=1 — not checking the host's venvs against requirements.txt"
+else
+  for svc in ai engine-wrapper; do
+    log "checking $svc venv against requirements.txt"
+    run_remote "cd $REMOTE_DIR && src/services/$svc/.venv/bin/python tools/check_installed_deps.py src/services/$svc/requirements.txt" \
+      || die "$svc: the host's venv does not satisfy its requirements.txt — nothing was restarted, the previous release is still serving. Run '.venv/bin/pip install -r requirements.txt' in $REMOTE_DIR/src/services/$svc (SKIP_PREFLIGHT=1 overrides)"
+  done
+fi
+
 # ── 4b. Validate the host's config before anything is restarted ──────────────
 #
 # The guards this runs are the ones the services run at boot: loadConfig's zod
