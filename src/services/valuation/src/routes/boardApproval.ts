@@ -93,6 +93,37 @@ async function loadValuation(pool: pg.Pool, id: string): Promise<ValuationRow> {
   return valuation;
 }
 
+/**
+ * A retired engagement does not ask a board to adopt its conclusion.
+ *
+ * Same shape as the auditor portal, and the same two places: a link minted per
+ * outside party, living in their inbox, redeemed later. Nothing revokes those
+ * links when `archived_at` is stamped — the retention sweep does not know they
+ * exist — so both ends have to be checked, because stopping one leaves the
+ * other. R57's lesson was that a list which stops offering something is not a
+ * write that refuses it; this is the version one step further out, where the
+ * holder has no account at all.
+ *
+ * What made it worse here than a stale page is what the link is *for*. The
+ * auditor's link serves a deliverable; this one asks a director to sign a
+ * resolution adopting an FMV as the board's own — a governance record with a
+ * date on it, created by someone outside the firm, for a piece of work the firm
+ * has withdrawn. `POST /board/members/:memberId/send` re-mints the token on
+ * every send, so a retired engagement could go on issuing *fresh* signing links
+ * indefinitely.
+ *
+ * Reads are left alone, deliberately, and so is removing a member: fetching the
+ * resolution a token points at tells the holder nothing they were not already
+ * given, and cleaning up the member list is the one thing ops should still be
+ * able to do on a withdrawn file. What stops is minting, sending, and recording
+ * a decision.
+ */
+const RETIRED = 'This engagement has been retired and is no longer accepting board sign-off.';
+
+function refuseIfRetired(valuation: ValuationRow): void {
+  if (valuation.archived_at !== null) throw problems.conflict(RETIRED);
+}
+
 /** Public view/DTO for a member sign-off — omits the token hash. */
 function memberDto(row: BoardSignoffRow) {
   return {
@@ -213,7 +244,7 @@ export function registerBoardApprovalRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadValuation(deps.pool, id);
+    refuseIfRetired(await loadValuation(deps.pool, id));
     const resolution = await findResolutionByValuation(deps.pool, id);
     if (!resolution) throw problems.conflict('Generate the resolution before adding board members');
     if (resolution.status === 'approved') {
@@ -257,6 +288,7 @@ export function registerBoardApprovalRoutes(
       requireOps(principal);
       const { id, memberId } = req.params as { id: string; memberId: string };
       const valuation = await loadValuation(deps.pool, id);
+      refuseIfRetired(valuation);
       const member = await findSignoffById(deps.pool, memberId);
       if (!member || member.valuation_id !== id) throw problems.notFound();
 
@@ -341,6 +373,10 @@ export function registerBoardApprovalRoutes(
     if (member.status !== 'pending') {
       throw problems.conflict('You have already recorded a decision on this resolution');
     }
+    // Checked at redemption rather than by revoking tokens: the links are already
+    // in directors' inboxes when `archived_at` is stamped, and the sweep that
+    // stamps it has no idea they exist.
+    refuseIfRetired(await loadValuation(deps.pool, member.valuation_id));
     const recorded = await recordSignoff(deps.pool, member, {
       status: parsed.data.decision,
       comment: parsed.data.comment ?? null,
