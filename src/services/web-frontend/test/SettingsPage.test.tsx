@@ -403,9 +403,7 @@ describe('SettingsPage — form validation', () => {
     await userEvent.type(within(emailCard).getByLabelText('Email'), 'ada@newcorp.com');
     await userEvent.click(within(emailCard).getByRole('button', { name: 'Update email' }));
 
-    expect(
-      await within(emailCard).findByText('Current password is required.'),
-    ).toBeInTheDocument();
+    expect(await within(emailCard).findByText('Current password is required.')).toBeInTheDocument();
     expect(wrote(calls, 'PATCH', '/me')).toHaveLength(0);
   });
 
@@ -556,5 +554,75 @@ describe('SettingsPage — form validation', () => {
 
     await userEvent.click(within(profile).getByRole('button', { name: /Save/ }));
     expect(wrote(calls, 'PATCH', '/me')).toHaveLength(0);
+  });
+});
+
+/**
+ * Subject access (GDPR Art. 15). The privacy page has long said a user may
+ * "request a copy or deletion of your personal data at any time"; deletion was
+ * the Close account card, and the copy had nothing behind it at all.
+ */
+describe('SettingsPage — download your data', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  /** jsdom has neither of the two things apiDownload needs to save a file. */
+  function stubDownload() {
+    URL.createObjectURL = vi.fn(() => 'blob:mock');
+    URL.revokeObjectURL = vi.fn();
+    return vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  }
+
+  it('downloads the export, named from the response', async () => {
+    const click = stubDownload();
+    const calls = mockApi((path) =>
+      path.endsWith('/me/data-export')
+        ? new Response(JSON.stringify({ subject_user_id: 'u1' }), {
+            status: 200,
+            headers: {
+              'content-type': 'application/json',
+              'content-disposition': 'attachment; filename="n409-data-export-2026-08-14.json"',
+            },
+          })
+        : undefined,
+    );
+    renderSettings();
+    await settled();
+
+    const section = card('Download your data');
+    await userEvent.click(within(section).getByRole('button', { name: /Download my data/ }));
+
+    await waitFor(() => expect(click).toHaveBeenCalled());
+    expect(calls.filter((c) => c.path.endsWith('/me/data-export'))).toHaveLength(1);
+    const anchor = click.mock.instances[0] as unknown as HTMLAnchorElement;
+    expect(anchor.download).toBe('n409-data-export-2026-08-14.json');
+  });
+
+  it('reports a failure instead of silently saving nothing', async () => {
+    stubDownload();
+    mockApi((path) =>
+      path.endsWith('/me/data-export')
+        ? new Response(JSON.stringify({ status: 500, title: 'Internal Server Error' }), {
+            status: 500,
+            headers: { 'content-type': 'application/json' },
+          })
+        : undefined,
+    );
+    renderSettings();
+    await settled();
+
+    const section = card('Download your data');
+    await userEvent.click(within(section).getByRole('button', { name: /Download my data/ }));
+    expect(await within(section).findByText(/Internal Server Error|Could not build/)).toBeInTheDocument();
+  });
+
+  it('offers the copy above the irreversible half', async () => {
+    // Somebody taking a copy before closing their account wants that order,
+    // and will not get it if they meet Close account first.
+    mockApi();
+    renderSettings();
+    await settled();
+
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
+    expect(headings.indexOf('Download your data')).toBeLessThan(headings.indexOf('Close account'));
   });
 });

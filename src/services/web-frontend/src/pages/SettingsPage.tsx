@@ -8,7 +8,7 @@ import {
   required,
   useFormValidation,
 } from '../lib/useFormValidation';
-import { api, ApiError, tokenExpiry } from '../lib/api';
+import { api, ApiError, apiDownload, tokenExpiry } from '../lib/api';
 import { HelpIcon } from '../components/HelpIcon';
 import { useAuth } from '../lib/auth';
 import { canManageUsers, isOps, isPartner, scopeLabel } from '../lib/rbac';
@@ -625,6 +625,49 @@ function SessionCard() {
   );
 }
 
+/**
+ * The other half of the sentence on the privacy page.
+ *
+ * "Request a copy or deletion of your personal data at any time" — deletion is
+ * the card below, and has been self-serve for a while. The copy had nothing
+ * behind it, so it happened by email and by hand. It sits above Close account
+ * deliberately: taking a copy before closing an account is the order somebody
+ * doing both wants, and the order they will not get if they meet the
+ * irreversible one first.
+ */
+function DataExportCard() {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const download = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await apiDownload('/me/data-export', 'n409-data-export.json');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not build your export.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Download your data"
+      description="A machine-readable copy of everything we hold about you: your account, your engagements, the messages you have written and the payments on your account. Credentials are named but never included."
+    >
+      {error && (
+        <div className="mb-3">
+          <ErrorNote>{error}</ErrorNote>
+        </div>
+      )}
+      <Button variant="secondary" disabled={busy} onClick={() => void download()}>
+        {busy ? 'Preparing…' : 'Download my data (JSON)'}
+      </Button>
+    </Card>
+  );
+}
+
 /** Irreversible from the user's side — an administrator can restore it. */
 function CloseAccountCard() {
   const { user, logout } = useAuth();
@@ -783,6 +826,7 @@ export function SettingsPage() {
       {!isSso && <ChangePasswordCard />}
       {!isSso && <MfaCard />}
       <SessionCard />
+      <DataExportCard />
       <CloseAccountCard />
     </div>
   );

@@ -79,6 +79,11 @@ export const COST_RULES: readonly CostRule[] = [
 
   // Document/report rendering and bundling — CPU plus large buffers.
   { pattern: /\/evidence-bundle$/, methods: ['POST'], cost: 30 },
+  // The subject-access export: eleven capped queries across the corpus, one of
+  // them the whole valuations table for an owner. Above `/export` because it
+  // fans out further, and priced at all because it is the rare heavy route a
+  // signed-in user can hit without owning anything.
+  { pattern: /\/data-export$/, methods: ['GET'], cost: 20 },
   { pattern: /\/export$/, methods: ['GET'], cost: 15 },
   { pattern: /\.xlsx$/, cost: 15 },
   { pattern: /\/report\/render$/, methods: ['POST'], cost: 10 },

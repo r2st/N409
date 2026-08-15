@@ -44,6 +44,7 @@ import {
 } from '../domain/emailWorkflows.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import { recordAdminEvent } from '../events/adminRecord.js';
+import { buildPersonalDataExport } from '../repos/dataExport.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
@@ -345,6 +346,46 @@ export function registerAdminUserRoutes(
     });
     await audit(principal.id, 'user_created', 'user', user.id, user.email, { roles: body.roles });
     return reply.status(201).send({ user: { ...user, password_digest: undefined } });
+  });
+
+  /**
+   * The same export as `GET /api/v1/me/data-export`, for one other person.
+   *
+   * Subject-access requests do not all arrive from inside the product. They
+   * come by email, from ex-employees whose account is closed, and from people
+   * who never had a login at all but appear in the platform because a firm
+   * created an engagement for them — none of whom can serve themselves. Without
+   * this the answer was assembled by hand at a psql prompt against a one-month
+   * statutory deadline.
+   *
+   * Audited, unlike the self-serve half. One person reading another's personal
+   * data is the event a compliance review asks about, and "an administrator
+   * exported this account" is exactly the line it wants to find. It is
+   * deliberately recorded before the export is built, so an export that then
+   * fails still leaves the attempt on the record.
+   *
+   * A closed account is exportable. Its `deleted_at` is a soft delete, the data
+   * is all still held, and someone asking what is held about them after closing
+   * their account is the person with the most reason to ask.
+   */
+  app.get('/api/v1/users/:id/data-export', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requireUserAdmin(req);
+    const { id } = req.params as { id: string };
+    if (!isUlid(id)) throw problems.notFound();
+    const subject = await findUserById(deps.pool, id);
+    if (!subject) throw problems.notFound();
+
+    await audit(principal.id, 'user_data_exported', 'user', subject.id, subject.email, {
+      subject_access_request: true,
+    });
+
+    const bundle = await buildPersonalDataExport(deps.pool, subject.id);
+    const stamp = bundle.generated_at.slice(0, 10);
+    return reply
+      .type('application/json')
+      .header('content-disposition', `attachment; filename="n409-data-export-${subject.id}-${stamp}.json"`)
+      .header('cache-control', 'no-store')
+      .send(bundle);
   });
 
   app.patch('/api/v1/users/:id', { preHandler: app.authenticate }, async (req) => {

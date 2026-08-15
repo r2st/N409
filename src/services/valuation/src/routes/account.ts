@@ -14,6 +14,7 @@ import {
   type UserWithRoles,
 } from '../repos/users.js';
 import { softDeleteUser } from '../repos/adminUsers.js';
+import { buildPersonalDataExport } from '../repos/dataExport.js';
 import {
   createApiToken,
   findApiTokenById,
@@ -128,6 +129,40 @@ export function registerAccountRoutes(
   app.get('/api/v1/me', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     return { user: toPublicUser(await loadSelf(principal.id)) };
+  });
+
+  /**
+   * A copy of everything held about the caller (GDPR Art. 15).
+   *
+   * The privacy page has said for a while that a user may "request a copy or
+   * deletion of your personal data at any time". Deletion was self-serve —
+   * `DELETE /api/v1/me`, just below — and the copy was a sentence with nothing
+   * behind it: an access request arriving by email had to be answered by
+   * somebody with a psql prompt, against a one-month statutory deadline, with
+   * the answer being whichever tables that person happened to think of.
+   *
+   * Served as a download rather than a rendered page. What a subject-access
+   * request produces is a file they keep, and a machine-readable one is what
+   * Art. 20 asks for; there is nothing to gain by making them screenshot it.
+   *
+   * Scoped to the principal by construction — there is no id in the path, so
+   * there is no cross-tenant question to get wrong. An administrator answering
+   * a request on somebody's behalf has the admin route in adminUsers.ts.
+   */
+  app.get('/api/v1/me/data-export', { preHandler: app.authenticate }, async (req, reply) => {
+    const principal = requirePrincipal(req);
+    const bundle = await buildPersonalDataExport(deps.pool, principal.id);
+    const stamp = bundle.generated_at.slice(0, 10);
+    return (
+      reply
+        .type('application/json')
+        .header('content-disposition', `attachment; filename="n409-data-export-${stamp}.json"`)
+        // A file of somebody's own personal data has no business in a shared
+        // cache, and `no-store` is the one directive that also keeps it out of
+        // the browser's disk cache on a machine they may not own.
+        .header('cache-control', 'no-store')
+        .send(bundle)
+    );
   });
 
   app.patch('/api/v1/me', { preHandler: app.authenticate }, async (req) => {
