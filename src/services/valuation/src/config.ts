@@ -177,6 +177,35 @@ function looksLowEntropy(secret: string): boolean {
   return new Set(secret).size < 8;
 }
 
+/**
+ * Variables whose *default* is a local-development value, and which therefore
+ * have to be set explicitly once NODE_ENV says production.
+ *
+ * Their defaults exist so `npm run dev` needs no .env, and that convenience is
+ * exactly what makes them dangerous deployed: nothing errors, so nothing says
+ * they were never configured.
+ *
+ * `PUBLIC_BASE_URL` is the one that hurt. It is the origin of every link this
+ * service emails — password reset, email verification, invitations, the client
+ * intake link, board-approval signing, unsubscribe — and of the URLs Stripe
+ * returns a payer to. Left unset, all of them are minted against
+ * `http://localhost:3000`, which resolves for nobody. The service starts
+ * healthy, the outbox reports every message delivered, and the failure surfaces
+ * as users saying the reset email "doesn't work" — with the token spent, and
+ * no self-serve way back in.
+ *
+ * `DATABASE_URL` is here for a duller reason: its default names a database
+ * called `n409_dev` with a password published in this repo. Reaching migrate()
+ * and failing to connect is a survivable way to find that out, but "connection
+ * refused" is a much worse account of the problem than this is — and on a host
+ * that happens to run a local Postgres it is not the failure you get.
+ *
+ * Only checked in production, and only for presence: a deployment that
+ * deliberately points at localhost (a sidecar database, a reverse proxy) sets
+ * the variable and is believed.
+ */
+const REQUIRED_IN_PRODUCTION = ['DATABASE_URL', 'PUBLIC_BASE_URL'] as const;
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = Env.safeParse(env);
   if (!parsed.success) {
@@ -188,6 +217,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // Fail closed on boot in production if the signing key is a known example or
   // trivially low-entropy — a publicly known key is a full auth bypass.
   if (config.NODE_ENV === 'production') {
+    const unset = REQUIRED_IN_PRODUCTION.filter((name) => !env[name]);
+    if (unset.length > 0) {
+      throw new Error(
+        `Invalid configuration: ${unset.join(', ')} must be set in production — ` +
+          'the development defaults point at localhost and would be used silently',
+      );
+    }
+
     const secret = config.JWT_SECRET;
     const denied = KNOWN_EXAMPLE_JWT_SECRETS.some((known) => known.toLowerCase() === secret.toLowerCase());
     if (denied || looksLowEntropy(secret)) {
