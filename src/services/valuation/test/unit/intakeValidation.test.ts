@@ -22,7 +22,18 @@ import {
  * only asks a question.
  */
 
-const TODAY = new Date('2026-08-01T00:00:00Z');
+/**
+ * Midday on 1 August, in whatever zone the test happens to run in.
+ *
+ * Constructed from local parts rather than parsed from a UTC instant, because
+ * `notFuture` now compares against the local day (`todayLocal`) and a
+ * `2026-08-01T00:00:00Z` fixture is *not* 1 August anywhere west of UTC — on
+ * the host that runs this it is 31 July at 20:00, which made "accepts today"
+ * reject today. Midday is far enough from both edges that no offset moves it
+ * off the day, so the assertions below mean the same thing in every zone. The
+ * zone-dependent behaviour itself is `todayLocal.test.ts`'s subject.
+ */
+const TODAY = new Date(2026, 7, 1, 12, 0, 0);
 
 const validate = (answers: Record<string, unknown>): IntakeIssue[] =>
   validateIntake(answers, { today: TODAY });

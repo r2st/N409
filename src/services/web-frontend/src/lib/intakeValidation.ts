@@ -70,6 +70,29 @@ export function isValidIsoDate(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
+/**
+ * Today, in the zone the browser is in — not the UTC day.
+ *
+ * The evaluator's counterpart to `domain/calendarDate.ts` on the server, and
+ * the half of that bug a client actually meets. `notFuture` compares the day
+ * they typed against this string, and `toISOString()` answers in UTC, which is
+ * still *yesterday* for the first hours of the morning anywhere east of it.
+ * A founder in Sydney opening the form at 9am was told the date they had just
+ * entered "cannot be in the future" — for today — with no value the field would
+ * accept. Reading the local parts asks the question the rule means: what day is
+ * it where the person filling this in is sitting.
+ *
+ * The server's copy of the same rule runs in the server's zone and can disagree
+ * by a day at the margins. That is the right way round: the browser is stricter
+ * about a date typed in the morning east of UTC, the submit is stricter about
+ * one typed in the evening west of it, and neither can be talked into accepting
+ * a date that is in the future in both places.
+ */
+function todayLocal(at: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+}
+
 function isAnswered(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === 'string') return value.trim() !== '';
@@ -177,7 +200,7 @@ export function validateIntake(
   answers: Record<string, unknown>,
   options: ValidateIntakeOptions = {},
 ): IntakeIssue[] {
-  const today = (options.today ?? new Date()).toISOString().slice(0, 10);
+  const today = todayLocal(options.today ?? new Date());
   const issues: IntakeIssue[] = [];
 
   for (const section of sections) {

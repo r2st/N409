@@ -9,6 +9,7 @@ import { latestSucceededCalculation } from '../repos/calculations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { sendTransactionalEmail } from '../email/transactional.js';
 import type { EmailTransport } from '../hooks/stateChange.js';
+import { todayLocal } from '../domain/calendarDate.js';
 import { DEFAULT_APPRAISER_QUALIFICATIONS, renderBoardResolution } from '../domain/boardResolution.js';
 import {
   addBoardMember,
@@ -203,7 +204,7 @@ export function registerBoardApprovalRoutes(
       );
     }
 
-    const valuationDate = parsed.data.valuation_date ?? new Date().toISOString().slice(0, 10);
+    const valuationDate = parsed.data.valuation_date ?? todayLocal();
     const methodologySummary =
       parsed.data.methodology_summary ??
       'The fair market value was concluded using generally accepted valuation approaches ' +

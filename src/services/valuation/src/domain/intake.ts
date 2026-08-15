@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import { isIsoCalendarDate } from '@n409/shared';
+import { todayLocal } from './calendarDate.js';
 
 export const INTAKE_EVENT_TYPES = {
   saved: 'intake_saved',
@@ -627,7 +628,7 @@ function fieldIssues(field: IntakeField, value: unknown, today: string): IntakeI
 }
 
 export interface ValidateIntakeOptions {
-  /** "Today" for `notFuture`; defaults to the current UTC day. */
+  /** "Today" for `notFuture`; defaults to the current day in the process's zone. */
   today?: Date;
   /** Override the rule set — the frontend passes the schema it was served. */
   sections?: readonly IntakeSection[];
@@ -644,7 +645,7 @@ export function validateIntake(
 ): IntakeIssue[] {
   const sections = options.sections ?? INTAKE_SECTIONS;
   const crossRules = options.crossRules ?? INTAKE_CROSS_RULES;
-  const today = (options.today ?? new Date()).toISOString().slice(0, 10);
+  const today = todayLocal(options.today);
 
   const issues: IntakeIssue[] = [];
   for (const section of sections) {

@@ -13,6 +13,7 @@ import {
   visibleSections,
   type ReportContent,
 } from '../domain/report.js';
+import { todayLocal } from '../domain/calendarDate.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { isUniqueViolation } from '../db/pgError.js';
 import { findActiveTemplateForKind, templateLabel } from '../repos/reportTemplates.js';
@@ -168,7 +169,7 @@ function templateVars(valuation: ValuationRow, valuationDate: string | null) {
     company_name: valuation.company_name,
     kind: valuation.kind,
     valuation_ref: valuation.id,
-    date: valuationDate ?? new Date().toISOString().slice(0, 10),
+    date: valuationDate ?? todayLocal(),
     currency: valuation.currency,
   };
 }

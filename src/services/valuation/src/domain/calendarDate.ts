@@ -48,6 +48,52 @@ export function calendarDate(value: Date): string {
 }
 
 /**
+ * Today, as a calendar day.
+ *
+ * The mirror image of the bug above, and the one that is live rather than
+ * latent. Everything up to here is about reading a day *out* of a Date the
+ * driver built; this is about writing one *in* from the clock, and the
+ * expression the codebase reached for was `new Date().toISOString().slice(0,
+ * 10)` — the UTC day, at eleven call sites.
+ *
+ * The UTC day is not today. It is today only while the process's offset from
+ * UTC happens to be zero, and it fails in both directions:
+ *
+ *   * West of UTC — the Hetzner host, America/New_York, UTC−04:00 — the UTC day
+ *     rolls over at 20:00 local. Between 8pm and midnight, "today" is tomorrow.
+ *     A board resolution minted at 9pm is dated the day after the meeting that
+ *     passed it; a debt instrument valued at 10pm is dated a day that has not
+ *     happened; a fund mark is measured into the future. Each of those is a
+ *     `date` column on a document a client receives, and a valuation dated
+ *     ahead of itself is the kind of error an auditor finds rather than we do.
+ *
+ *   * East of UTC — every browser this runs in from Europe eastwards — the UTC
+ *     day is still *yesterday* for the first hours of the morning. That is the
+ *     half that reaches a user directly: `notFuture` compares the day they
+ *     typed against this, so a founder in Sydney filling the intake at 9am is
+ *     told the date they entered "cannot be in the future" for a date that is
+ *     today. There is no value they can enter that the form accepts.
+ *
+ * Reading the local parts answers the question actually being asked — what day
+ * is it here — in every zone, and collapses to the same string when the offset
+ * is zero, which is why this went unnoticed on a UTC CI box.
+ *
+ * "Here" is the process's zone: the browser's for the frontend copy of this
+ * rule, which is what a date typed into a form means; and `TZ` for the server,
+ * which the deploy pins to America/New_York, so a server-minted valuation date
+ * is a US business day. That is a choice rather than a truth — the client's own
+ * zone is not on the request — but it is the choice the deliverables are
+ * written for, and it is at least a day that has begun somewhere.
+ *
+ * `at` exists so a caller can pass the instant under test. Defaulting it to the
+ * clock is what every call site wants and what none of them should have to
+ * write.
+ */
+export function todayLocal(at: Date = new Date()): string {
+  return calendarDate(at);
+}
+
+/**
  * The same, for the callers that receive either form.
  *
  * A `date` reaches these modules as a Date from the driver and as a string from

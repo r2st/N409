@@ -12,6 +12,7 @@
  * which IP method, whether a PPA has an intangible schedule).
  */
 
+import { todayLocal } from './calendarDate.js';
 import type { ValuationKind } from './valuation.js';
 
 /** Kinds whose calculation runs through a dedicated specialty engine endpoint. */
@@ -497,7 +498,7 @@ export function specialtyEngineRequest(
   kind: SpecialtyKind,
   answers: Answers,
   overrides: Answers = {},
-  today: string = new Date().toISOString().slice(0, 10),
+  today: string = todayLocal(),
 ): SpecialtyRequest {
   switch (kind) {
     case 'qsbs':

@@ -5,6 +5,7 @@ import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { todayLocal } from '../domain/calendarDate.js';
 import { CurrencyCode } from '../domain/currency.js';
 import { DEBT_FAIR_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
 import {
@@ -216,7 +217,7 @@ export function registerDebtRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
 
     const valuation = await createValuation(deps.pool, {
       instrumentId: id,
-      valuationDate: parsed.data.valuation_date ?? new Date().toISOString().slice(0, 10),
+      valuationDate: parsed.data.valuation_date ?? todayLocal(),
       inputs: { instrument_type: instrument.instrument_type, params },
       result,
       fairValue: requireStorableFigure(extractFairValue(result), 'Fair value', DEBT_FAIR_VALUE),

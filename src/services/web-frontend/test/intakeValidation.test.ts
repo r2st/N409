@@ -154,6 +154,59 @@ describe('validateIntake', () => {
     );
   });
 
+  /**
+   * The zone the browser is in, which is the one thing about this evaluator
+   * that is not the server's business.
+   *
+   * `notFuture` used to compare the typed day against the *UTC* day, and every
+   * client east of UTC spends their morning in a local day the UTC clock has
+   * not reached. They were told the date they had just entered — today — could
+   * not be in the future, with no value the field would accept.
+   *
+   * `process.env.TZ` moves the zone for real; restored immediately, because a
+   * leak would re-judge every date assertion above.
+   */
+  describe('in the client’s own time zone', () => {
+    const inZone = <T>(tz: string, run: () => T): T => {
+      const real = process.env.TZ;
+      process.env.TZ = tz;
+      try {
+        return run();
+      } finally {
+        if (real === undefined) delete process.env.TZ;
+        else process.env.TZ = real;
+      }
+    };
+
+    // 10:00 on 1 July in Tokyo; 01:00 the same day in UTC, so the UTC day is
+    // still 30 June for another eight hours.
+    const TOKYO_MORNING = new Date('2026-07-01T01:00:00.000Z');
+    const inTokyo = (answers: Record<string, unknown>) =>
+      inZone('Asia/Tokyo', () => validateIntake(SECTIONS, CROSS_RULES, answers, { today: TOKYO_MORNING }));
+
+    it('accepts today for a client whose day starts before UTC’s', () => {
+      expect(TOKYO_MORNING.toISOString().slice(0, 10)).toBe('2026-07-01');
+      expect(inTokyo({ incorporation_date: '2026-07-01' })).toEqual([]);
+    });
+
+    it('still refuses a date that is in the future where they are sitting', () => {
+      expect(inTokyo({ incorporation_date: '2026-07-02' })[0]?.message).toBe(
+        'Date of incorporation cannot be in the future.',
+      );
+    });
+
+    it('refuses tomorrow through a US evening, after the UTC day has rolled over', () => {
+      // 22:30 on 30 June in New York — 1 July in UTC. The old comparison read
+      // the UTC day as today and let a client date a company's incorporation
+      // to a day that had not happened.
+      const usEvening = new Date('2026-07-01T02:30:00.000Z');
+      const issues = inZone('America/New_York', () =>
+        validateIntake(SECTIONS, CROSS_RULES, { incorporation_date: '2026-07-01' }, { today: usEvening }),
+      );
+      expect(issues[0]?.message).toBe('Date of incorporation cannot be in the future.');
+    });
+  });
+
   it('requires whole headcounts', () => {
     expect(check({ employee_count: 4.5 })[0]?.message).toBe('Number of employees must be a whole number.');
   });

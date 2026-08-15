@@ -151,6 +151,12 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
     if (typeof v === 'string' && v) return v.slice(0, 10);
     return null;
   };
+  // The last fallback stays on the UTC day rather than moving to `todayLocal`
+  // with the other eleven clock readings. It is reached only when an engagement
+  // has no resolution, no publication and no completion — there is no day to be
+  // right about — and it sits between two deliberate UTC-instant readings and
+  // feeds a twelve-month window, where agreeing with its neighbours is worth
+  // more than a boundary that moves by four hours.
   const valuationDate =
     isoDay(resolution?.valuation_date) ??
     isoInstant(valuation.published_at) ??

@@ -5,6 +5,7 @@ import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
 import { postJson, toProblem, InternalServiceError } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { todayLocal } from '../domain/calendarDate.js';
 import { CurrencyCode } from '../domain/currency.js';
 import { FUND_MARK_FAIR_VALUE, requireStorableFigure } from '../domain/numericColumn.js';
 import {
@@ -301,7 +302,7 @@ export function registerFundRoutes(app: FastifyInstance, deps: { pool: pg.Pool; 
       if (b.record) {
         const mark = await createMark(deps.pool, {
           positionId: pid,
-          measurementDate: b.measurement_date ?? new Date().toISOString().slice(0, 10),
+          measurementDate: b.measurement_date ?? todayLocal(),
           // A rolled mark is a model estimate → Level 3 (unless a fresh calibration).
           method: 'calibrated_opm',
           fairValue: requireStorableFigure(

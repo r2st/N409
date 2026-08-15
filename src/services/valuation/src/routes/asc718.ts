@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { z } from 'zod';
 import { isIsoCalendarDate, isUlid, problems } from '@n409/shared';
 import { isOps, type Principal } from '../auth/rbac.js';
+import { todayLocal } from '../domain/calendarDate.js';
 import { asc718Portfolio, type Asc718Grant } from '../domain/asc718.js';
 import {
   binomialLattice,
@@ -373,7 +374,7 @@ export function registerAsc718Routes(app: FastifyInstance, deps: { pool: pg.Pool
     // Public: resolve the issuer's own market price + historical volatility.
     let market: MarketResolution | null = null;
     if (b.company_type === 'public' && b.ticker) {
-      const end = b.valuation_date ?? new Date().toISOString().slice(0, 10);
+      const end = b.valuation_date ?? todayLocal();
       market = await resolveMarket(
         deps.engineUrl,
         b.ticker.toUpperCase(),
