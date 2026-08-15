@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { calendarDateRow } from '../domain/calendarDate.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
 /**
@@ -57,6 +58,15 @@ export const M4_HISTORY_EVENT_TYPES = {
   transactionDeleted: 'transaction_deleted',
 } as const;
 
+/**
+ * `closed_on` and `occurred_on` are `date` columns the interfaces above declare
+ * `string`, and every route here sends the row it gets straight back. See
+ * domain/calendarDate.ts — without this the response carries an instant on the
+ * previous day for any server east of UTC.
+ */
+const round = (row: FundingRoundRow): FundingRoundRow => calendarDateRow(row, 'closed_on');
+const txn = (row: TransactionRow): TransactionRow => calendarDateRow(row, 'occurred_on');
+
 // ── Funding rounds ────────────────────────────────────────────────────────────
 
 export async function listRounds(pool: pg.Pool, valuationId: string): Promise<FundingRoundRow[]> {
@@ -64,7 +74,7 @@ export async function listRounds(pool: pg.Pool, valuationId: string): Promise<Fu
     'SELECT * FROM funding_rounds WHERE valuation_id = $1 ORDER BY closed_on NULLS LAST, created_at',
     [valuationId],
   );
-  return rows;
+  return rows.map(round);
 }
 
 export interface RoundInput {
@@ -111,7 +121,7 @@ export async function createRound(
       actor,
       payload: { round_id: rows[0]!.id, name: input.name },
     });
-    return rows[0]!;
+    return round(rows[0]!);
   });
 }
 
@@ -155,7 +165,7 @@ export async function updateRound(
       actor,
       payload: { round_id: roundId, fields: Object.keys(input) },
     });
-    return rows[0];
+    return round(rows[0]);
   });
 }
 
@@ -188,7 +198,7 @@ export async function listTransactions(pool: pg.Pool, valuationId: string): Prom
     'SELECT * FROM valuation_transactions WHERE valuation_id = $1 ORDER BY occurred_on, created_at',
     [valuationId],
   );
-  return rows;
+  return rows.map(txn);
 }
 
 export interface TransactionInput {
@@ -230,7 +240,7 @@ export async function createTransaction(
       actor,
       payload: { transaction_id: rows[0]!.id, kind: input.kind },
     });
-    return rows[0]!;
+    return txn(rows[0]!);
   });
 }
 

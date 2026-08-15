@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { calendarDateRow } from '../domain/calendarDate.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import { GRANT_EVENT_TYPES } from '../domain/vesting.js';
 
@@ -24,6 +25,14 @@ export interface GrantRow {
   created_at: Date;
   updated_at: Date;
 }
+
+/**
+ * `grant_date` and `vesting_start_date` are `date` columns the interface above
+ * declares `string`, and the grants routes send the row as it stands. See
+ * domain/calendarDate.ts. The vesting schedule is built from these two, so a
+ * row that leaves as an instant moves every tranche with it.
+ */
+const hydrated = (row: GrantRow): GrantRow => calendarDateRow(row, 'grant_date', 'vesting_start_date');
 
 export interface CreateGrantInput {
   valuationId: string;
@@ -90,7 +99,7 @@ export async function createGrant(
         exercise_price: input.exercisePrice,
       },
     });
-    return rows[0]!;
+    return hydrated(rows[0]!);
   });
 }
 
@@ -121,12 +130,12 @@ export async function listGrants(
       LIMIT $2`,
     [valuationId, limit + 1],
   );
-  return { grants: rows.slice(0, limit), truncated: rows.length > limit };
+  return { grants: rows.slice(0, limit).map(hydrated), truncated: rows.length > limit };
 }
 
 export async function findGrantById(pool: pg.Pool, id: string): Promise<GrantRow | null> {
   const { rows } = await pool.query<GrantRow>('SELECT * FROM option_grants WHERE id = $1', [id]);
-  return rows[0] ?? null;
+  return rows[0] ? hydrated(rows[0]) : null;
 }
 
 const MUTABLE_FIELDS: Record<string, string> = {
@@ -168,7 +177,7 @@ export async function updateGrant(
       actor,
       payload: { grant_id: grant.id, fields: Object.keys(patch) },
     });
-    return rows[0]!;
+    return hydrated(rows[0]!);
   });
 }
 
@@ -184,6 +193,6 @@ export async function cancelGrant(pool: pg.Pool, grant: GrantRow, actor: EventAc
       actor,
       payload: { grant_id: grant.id },
     });
-    return rows[0]!;
+    return hydrated(rows[0]!);
   });
 }

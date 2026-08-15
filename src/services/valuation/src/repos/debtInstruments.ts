@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { calendarDateRow } from '../domain/calendarDate.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { isUniqueViolation } from '../db/pgError.js';
 
@@ -32,14 +33,19 @@ export interface CreditTermsRow {
 export interface DebtValuationRow {
   id: string;
   instrument_id: string;
-  /** A `date` column — a JS Date at runtime. See FundMarkRow.measurement_date. */
-  valuation_date: string | Date;
+  /** A `date` column, normalised to its day on the way out. See
+   *  FundMarkRow.measurement_date and domain/calendarDate.ts. */
+  valuation_date: string;
   inputs: Record<string, unknown>;
   result: Record<string, unknown>;
   fair_value: string | null;
   created_by: string | null;
   created_at: Date;
 }
+
+/** See the note on `DebtValuationRow.valuation_date`. */
+const debtValuation = (row: DebtValuationRow): DebtValuationRow =>
+  calendarDateRow(row, 'valuation_date');
 
 export async function listInstruments(pool: pg.Pool): Promise<DebtInstrumentRow[]> {
   const { rows } = await pool.query<DebtInstrumentRow>(
@@ -164,7 +170,7 @@ export async function listValuations(pool: pg.Pool, instrumentId: string): Promi
     'SELECT * FROM debt_valuations WHERE instrument_id = $1 ORDER BY created_at DESC LIMIT 50',
     [instrumentId],
   );
-  return rows;
+  return rows.map(debtValuation);
 }
 
 export async function createValuation(
@@ -191,5 +197,5 @@ export async function createValuation(
       input.createdBy,
     ],
   );
-  return rows[0]!;
+  return debtValuation(rows[0]!);
 }

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
+import { calendarDateRow } from '../domain/calendarDate.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import {
   BOARD_EVENT_TYPES,
@@ -10,6 +11,14 @@ import {
   type BoardResolutionStatus,
   type BoardSignoffStatus,
 } from '../domain/boardResolution.js';
+
+/**
+ * `valuation_date` is a `date` column this declares `string`, and the board
+ * routes send the resolution row as it stands — including into the auditor
+ * portal and the resolution PDF. See domain/calendarDate.ts.
+ */
+const resolution = (row: BoardResolutionRow): BoardResolutionRow =>
+  calendarDateRow(row, 'valuation_date');
 
 export interface BoardResolutionRow {
   id: string;
@@ -107,7 +116,7 @@ export async function upsertResolution(
       actor,
       payload: { resolution_id: rows[0]!.id, fmv_conclusion: input.fmvConclusion },
     });
-    return rows[0]!;
+    return resolution(rows[0]!);
   });
 }
 
@@ -119,7 +128,7 @@ export async function findResolutionByValuation(
     'SELECT * FROM board_resolutions WHERE valuation_id = $1',
     [valuationId],
   );
-  return rows[0] ?? null;
+  return rows[0] ? resolution(rows[0]) : null;
 }
 
 /**
@@ -135,7 +144,7 @@ export async function findResolutionsByValuationIds(
     'SELECT * FROM board_resolutions WHERE valuation_id = ANY($1)',
     [[...new Set(valuationIds)]],
   );
-  return new Map(rows.map((row) => [row.valuation_id, row]));
+  return new Map(rows.map((row) => [row.valuation_id, resolution(row)]));
 }
 
 export async function addBoardMember(
@@ -322,7 +331,7 @@ async function refreshResolutionStatusTx(
     [resolutionId],
   );
   const next = resolutionStatusFrom(sigs);
-  if (next === current.status) return current;
+  if (next === current.status) return resolution(current);
 
   const approvedAt = next === 'approved' ? 'now()' : 'NULL';
   const { rows: updated } = await client.query<BoardResolutionRow>(
@@ -345,5 +354,5 @@ async function refreshResolutionStatusTx(
       payload: { resolution_id: resolutionId },
     });
   }
-  return updated[0]!;
+  return resolution(updated[0]!);
 }

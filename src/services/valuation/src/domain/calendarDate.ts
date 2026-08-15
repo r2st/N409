@@ -61,3 +61,44 @@ export function calendarDateOf(value: Date | string): string {
 export function calendarDateOrNull(value: Date | string | null | undefined): string | null {
   return value === null || value === undefined || value === '' ? null : calendarDateOf(value);
 }
+
+/**
+ * A driver row with its `date` columns rendered as the days they hold.
+ *
+ * The formatting above fixes a value once someone remembers to call it. This
+ * fixes a *row*, at the one place every reader of that table goes through, and
+ * it exists because the alternative was not working: the row interfaces declare
+ * these columns `string` — `repos/transactions.ts` has said `occurred_on:
+ * string` since it was written — while the driver hands back a Date. Nothing
+ * type-checks the claim, so every consumer downstream is written against a
+ * string that is not one, and the largest class of them do the thing the
+ * declaration invites: send the row straight into a JSON response.
+ *
+ * That is where it surfaces. `JSON.stringify` reaches `Date.prototype.toJSON`,
+ * i.e. `toISOString()`, and a column holding 2029-06-30 leaves as
+ * `2029-06-29T15:00:00.000Z` — an instant, on the wrong day, for a value that
+ * was never an instant. A client slicing the first ten characters, which is
+ * exactly what a `YYYY-MM-DD` contract invites it to do, reads the day before.
+ *
+ * Normalising in the repo rather than at each send is deliberate. There are
+ * more send sites than columns, they are added faster than they are audited,
+ * and a route that forgets is silently wrong rather than broken. Past the repo
+ * the declared type is true, and it is true for the workbook and the exhibits
+ * and the audit diff as much as for the response.
+ *
+ * Only for columns that are `date` in the schema. A `timestamptz` — `created_at`
+ * and every stamp like it — is a real instant whose ISO form is correct, and
+ * passing one here would throw away the time.
+ */
+export function calendarDateRow<T extends object>(row: T, ...keys: Array<keyof T>): T {
+  const out = { ...row };
+  for (const key of keys) {
+    const value = out[key];
+    // Left alone unless it is a Date: a string is either already normalised or
+    // came from somewhere that never had the problem, and `null` is a column
+    // that is not set. The cast is the one place this file admits that a `date`
+    // column typed `string` arrives as neither.
+    if (value instanceof Date) out[key] = calendarDate(value) as T[keyof T];
+  }
+  return out;
+}

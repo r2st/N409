@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { diffRecords } from '../domain/auditTrail.js';
+import { calendarDateRow } from '../domain/calendarDate.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
@@ -187,12 +188,26 @@ export const JSONB_PARAM_COLUMNS: ReadonlySet<(typeof PARAM_COLUMNS)[number]> = 
   'market_custom_ranges',
 ]);
 
+/**
+ * The four `date` columns this row carries, as the days they hold.
+ *
+ * Two things read them and both were wrong without this. The params routes and
+ * the calculation and auditor-portal payloads send the row into JSON, where a
+ * Date leaves as an instant on the previous day east of UTC — see
+ * domain/calendarDate.ts. And `patchParams` diffs the stored row against the
+ * request body with `===`, which no Date is ever equal to a `YYYY-MM-DD`
+ * string: re-saving a form without touching its dates recorded four field
+ * changes that did not happen and wrote them to the audit trail.
+ */
+const hydrated = (row: ValuationParamsRow): ValuationParamsRow =>
+  calendarDateRow(row, 'inception_date', 'fiscal_year_end', 'exit_timeline', 'last_round_date');
+
 export async function findParams(pool: pg.Pool, valuationId: string): Promise<ValuationParamsRow | null> {
   const { rows } = await pool.query<ValuationParamsRow>(
     'SELECT * FROM valuation_params WHERE valuation_id = $1',
     [valuationId],
   );
-  return rows[0] ?? null;
+  return rows[0] ? hydrated(rows[0]) : null;
 }
 
 /**
@@ -208,7 +223,7 @@ export async function findParamsByValuationIds(
     'SELECT * FROM valuation_params WHERE valuation_id = ANY($1)',
     [[...new Set(valuationIds)]],
   );
-  return new Map(rows.map((row) => [row.valuation_id, row]));
+  return new Map(rows.map((row) => [row.valuation_id, hydrated(row)]));
 }
 
 /**
@@ -237,7 +252,7 @@ export async function applyEngineInputs(
       actor,
       payload: { engine_inputs_applied: inputs },
     });
-    return rows[0]!;
+    return hydrated(rows[0]!);
   });
 }
 
@@ -295,8 +310,11 @@ export async function patchParams(
     );
     // The row is created with the valuation and deleted only with it, so this
     // is reachable only by a purge landing mid-request.
-    const fresh = locked[0];
-    if (!fresh) throw problems.notFound();
+    const raw = locked[0];
+    if (!raw) throw problems.notFound();
+    // Normalised *before* the diff, not after: the comparison below is `===`,
+    // and a `date` column off the driver is a Date that equals no string.
+    const fresh = hydrated(raw);
 
     const check = options.revalidate?.(fresh);
     if (check && !check.ok) throw problems.unprocessable(check.detail);
@@ -326,6 +344,6 @@ export async function patchParams(
       actor,
       payload: { changes },
     });
-    return rows[0]!;
+    return hydrated(rows[0]!);
   });
 }

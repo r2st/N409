@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { calendarDateRow } from '../domain/calendarDate.js';
 import { MeasurementLinkConflict } from '../domain/measurementLink.js';
 import { isUniqueViolation } from '../db/pgError.js';
 
@@ -34,12 +35,14 @@ export interface FundMarkRow {
   id: string;
   position_id: string;
   /**
-   * A `date` column. node-postgres parses OID 1082 into a JS Date and nothing
-   * here overrides that, so this is a Date at runtime however it was written —
-   * declared honestly because reading it as a string silently throws at the
-   * first `.slice()`, which is how it reached the PDF renderer.
+   * A `date` column. node-postgres parses OID 1082 into a JS Date; every read
+   * path below now puts it back through `calendarDateRow`, so past the repo it
+   * is the `YYYY-MM-DD` this says and not the instant the driver produced. It
+   * was declared `string | Date` while that was untrue, which pushed the
+   * question onto each consumer — and the two `reply.send({ mark })` sites in
+   * routes/funds.ts answered it by shipping an ISO instant on the day before.
    */
-  measurement_date: string | Date;
+  measurement_date: string;
   method: MarkMethod;
   fair_value: string;
   level: number;
@@ -187,12 +190,15 @@ export async function createPosition(
 
 // ── Marks (append-only history) ─────────────────────────────────────────────
 
+/** See the note on `FundMarkRow.measurement_date` and domain/calendarDate.ts. */
+const mark = (row: FundMarkRow): FundMarkRow => calendarDateRow(row, 'measurement_date');
+
 export async function listMarks(pool: pg.Pool, positionId: string): Promise<FundMarkRow[]> {
   const { rows } = await pool.query<FundMarkRow>(
     'SELECT * FROM fund_marks WHERE position_id = $1 ORDER BY measurement_date DESC, created_at DESC',
     [positionId],
   );
-  return rows;
+  return rows.map(mark);
 }
 
 /** Latest mark per position for a fund (for the NAV roll-up). */
@@ -206,7 +212,7 @@ export async function latestMarks(pool: pg.Pool, fundId: string): Promise<Map<st
     [fundId],
   );
   const map = new Map<string, FundMarkRow>();
-  for (const r of rows) map.set(r.position_id, r);
+  for (const r of rows) map.set(r.position_id, mark(r));
   return map;
 }
 
@@ -236,7 +242,7 @@ export async function createMark(
       input.createdBy,
     ],
   );
-  return rows[0]!;
+  return mark(rows[0]!);
 }
 
 // ── LP terms ────────────────────────────────────────────────────────────────
