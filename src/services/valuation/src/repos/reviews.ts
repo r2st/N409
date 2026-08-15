@@ -5,6 +5,12 @@ import type { ValuationRow } from './valuations.js';
 /**
  * P1 #6 — the reviewer's queue: valuations sitting in a review state, with
  * signature rollups so the UI can flag what is still blocked from publish.
+ *
+ * Archived engagements are excluded, as they are from the engagement list
+ * (`buildValuationWhere`, repos/valuations.ts). A queue is a list of work to
+ * do: leaving retired engagements in it hands a reviewer something to sign off
+ * that has already been withdrawn, and the queue depth every other surface
+ * reports would not match the one they are looking at.
  */
 
 export interface ReviewQueueRow extends ValuationRow {
@@ -23,7 +29,7 @@ export async function listReviewQueue(
   pool: pg.Pool,
   filters: ReviewQueueFilters,
 ): Promise<{ items: ReviewQueueRow[]; total: number }> {
-  const where: string[] = ['v.state = ANY($1::valuation_state[])'];
+  const where: string[] = ['v.archived_at IS NULL', 'v.state = ANY($1::valuation_state[])'];
   const params: unknown[] = [[...STATE_GROUPS.in_review]];
   if (filters.reviewerId) {
     params.push(filters.reviewerId);

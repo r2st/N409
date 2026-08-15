@@ -279,7 +279,22 @@ export async function listPaymentsForScope(
   return rows;
 }
 
-/** Unpaid, still-active engagements — the billing page's pay-now CTA. */
+/**
+ * Unpaid, still-active engagements — the billing page's pay-now CTA.
+ *
+ * Archived engagements are excluded. This list is not a report, it is a demand
+ * for money with a button beside it, and a retired engagement has already been
+ * withdrawn from every list the payer can see — so the invoice named an
+ * engagement they could not open. `state NOT IN ('cancelled','timeout')` was
+ * already filtering finished work for the same reason; archiving is the other
+ * way an engagement stops being collectable.
+ *
+ * {@link listPaymentsForScope} deliberately does *not* filter it. That is the
+ * ledger: those payments were really taken, and money that left a customer's
+ * account does not stop having done so because the engagement was later
+ * retired. Dropping settled payments from their own history to match this list
+ * would be the more serious bug of the two.
+ */
 export async function listUnpaidValuationsForScope(
   pool: pg.Pool,
   scope: ValuationScope,
@@ -290,7 +305,8 @@ export async function listUnpaidValuationsForScope(
     `SELECT v.id, v.number::text AS number, v.company_name, v.kind::text AS kind, v.currency,
             v.amount_raised_cents::text AS amount_raised_cents
      FROM valuations v
-     WHERE ${where} AND v.paid_status = 'unpaid' AND v.state NOT IN ('cancelled', 'timeout')
+     WHERE ${where} AND v.archived_at IS NULL
+       AND v.paid_status = 'unpaid' AND v.state NOT IN ('cancelled', 'timeout')
      ORDER BY v.created_at DESC
      LIMIT 100`,
     params,
