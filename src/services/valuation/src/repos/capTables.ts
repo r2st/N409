@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { newUlid } from '@n409/shared';
+import { newUlid, problems } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import {
@@ -20,6 +20,26 @@ export interface CapTableRow {
   created_by: string;
   created_at: Date;
   updated_at: Date;
+  /** Bumped by every writer; carried over HTTP as an ETag (migration 0162). */
+  version: number;
+}
+
+/**
+ * The 409 a stale cap-table write is refused with.
+ *
+ * Worded like `repos/valuations.ts`'s equivalent and for the same reason: the
+ * client needs to tell "somebody else saved" from "my own retry raced itself"
+ * without a second round trip, so the version it collided with is named.
+ *
+ * `current` is optional because the row can be absent at the moment of the
+ * write — either it was never there (the caller sent `If-Match` for a table
+ * that does not exist yet) or it went away between the read and the write.
+ */
+function staleWrite(current: number | undefined, expected: number): never {
+  throw problems.conflict(
+    `This cap table was changed by someone else (expected version ${expected}, ` +
+      `now ${current ?? 'unknown'}). Reload and reapply your changes.`,
+  );
 }
 
 /**
@@ -74,6 +94,22 @@ export async function findCapTablesByValuationIds(
   return new Map(rows.map((row) => [row.valuation_id, withFreshValidation(row)]));
 }
 
+export interface SaveCapTableOptions {
+  /**
+   * The `version` the caller's copy of the table was read at. When given, the
+   * write is conditional on the row still being at that version and a stale
+   * write is refused (409) rather than silently overwriting a concurrent import
+   * (migration 0162).
+   *
+   * Omitted by callers that are not applying a document somebody read first —
+   * the provider sync computes its rows from the pull rather than from the
+   * stored table, so there is no stale read of *this* row to guard. It still
+   * bumps the version, which is what makes the analyst's guarded write notice
+   * that a sync landed underneath it.
+   */
+  expectedVersion?: number;
+}
+
 /** Insert-or-replace the valuation's cap table with a fresh import. */
 export async function saveCapTable(
   pool: pg.Pool,
@@ -86,8 +122,29 @@ export async function saveCapTable(
     createdBy: string;
   },
   actor: EventActor,
+  options: SaveCapTableOptions = {},
 ): Promise<CapTableRow> {
+  const { expectedVersion } = options;
   return withTransaction(pool, async (client) => {
+    if (expectedVersion !== undefined) {
+      // `FOR UPDATE` is what makes this a check rather than a race of its own:
+      // the second of two concurrent guarded writers blocks here until the
+      // first commits, then reads the version the first bumped and is refused.
+      // Without the lock both would read the same version, both would pass, and
+      // the upsert below would hand the table to whoever committed last —
+      // exactly the failure 0162 exists to close.
+      //
+      // A missing row is a conflict too. The caller is asserting "I read this
+      // table at version N"; if there is no table, that assertion is false
+      // however it came to be false, and inserting one would be the silent
+      // overwrite in reverse.
+      const { rows: live } = await client.query<{ version: number }>(
+        'SELECT version FROM cap_tables WHERE valuation_id = $1 FOR UPDATE',
+        [input.valuationId],
+      );
+      if (live[0]?.version !== expectedVersion) staleWrite(live[0]?.version, expectedVersion);
+    }
+
     const { rows } = await client.query<CapTableRow>(
       `INSERT INTO cap_tables (id, valuation_id, source_format, entries, validation, column_mapping, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -96,7 +153,12 @@ export async function saveCapTable(
          entries        = EXCLUDED.entries,
          validation     = EXCLUDED.validation,
          column_mapping = EXCLUDED.column_mapping,
-         updated_at     = now()
+         updated_at     = now(),
+         -- Not EXCLUDED.version: that is the new row's default (1), which would
+         -- reset the counter on every import and make a stale ETag look current
+         -- again. Every write moves it forward, whether or not this caller
+         -- asked to be guarded.
+         version        = cap_tables.version + 1
        RETURNING *`,
       [
         newUlid(),

@@ -1,0 +1,38 @@
+-- The cap table two people imported at once, of which only one survived.
+--
+-- Migrations 0137 (`valuations`) and 0158 (`valuation_params`) closed this on
+-- the two rows either side of it. `cap_tables` is the third, and it is the one
+-- with the most writers: `PUT /valuations/:id/cap-table` (the analyst's import
+-- and the client's own upload share it — `canEdit` admits both) and the
+-- provider sync, which applies a Carta/Pulley pull on a schedule with no human
+-- in the request at all.
+--
+-- `saveCapTable` is an unconditional upsert: `ON CONFLICT (valuation_id) DO
+-- UPDATE SET entries = EXCLUDED.entries, …`. There is no version, no condition,
+-- and nothing between the read and the write. Whoever commits last owns the
+-- table, and the loser is told nothing — the route returns 200 with the
+-- winner's rows, so the client that just uploaded a corrected table sees a
+-- successful save and a cap table that is not the one it sent.
+--
+-- The collision this is written for is not hypothetical and is worse than
+-- 0137's, because the losing edit is not one field. An analyst hand-corrects a
+-- conversion ratio the import got wrong; the nightly Carta sync pulls the
+-- provider's copy — which still carries the old ratio — and applies it whole.
+-- The correction is gone, `fully_diluted_shares` moves back to the wrong
+-- denominator, and every figure derived from it (the allocation, the concluded
+-- FMV, Exhibit A) is quietly recomputed against a table nobody chose. The only
+-- event recorded is a second `cap_table_imported`, which is what a legitimate
+-- re-import looks like.
+--
+-- `version` is the anchor, as in 0137: bumped by every writer, and a caller
+-- that sends `If-Match` gets its upsert conditioned on the version it read. A
+-- write built on a stale read matches no row and is refused with a 409.
+--
+-- Both writers bump it, not just the guarded one. A sync that left the version
+-- alone would be invisible to an analyst holding a version that had, as far as
+-- it could tell, not moved — which is precisely the collision above.
+--
+-- Existing rows start at 1, matching 0137 and 0158, so "no version" and
+-- "version zero" stay distinguishable for a client that omits the header.
+ALTER TABLE cap_tables
+  ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;

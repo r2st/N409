@@ -448,6 +448,118 @@ describe('CapTableTab', () => {
       expect(screen.queryByRole('button', { name: 'Preview' })).toBeNull();
     });
 
+    /**
+     * Optimistic locking, from the tab's side (migration 0162).
+     *
+     * The guard is opt-in over HTTP, so it only protects anything if this tab
+     * actually sends the version it loaded. An import replaces the table
+     * wholesale — a save built on a stale read discards whatever landed since,
+     * which for this row means the whole capitalization and every figure drawn
+     * from it.
+     */
+    it('sends the loaded version as If-Match on the import', async () => {
+      const fetchSpy = mockApi([
+        [/\/cap-table\/preview/, () => json({ entries: ENTRIES, validation: VALID })],
+        capTable({ cap_table: { ...STORED, version: 7 }, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await user.type(screen.getByRole('textbox'), 'class,shares');
+      await user.click(screen.getByRole('button', { name: 'Preview' }));
+      await user.click(await screen.findByRole('button', { name: 'Save cap table' }));
+
+      await waitFor(() => {
+        const put = fetchSpy.mock.calls.find(
+          ([, init]) => (init as RequestInit | undefined)?.method === 'PUT',
+        );
+        expect(put, 'no PUT was issued').toBeDefined();
+        const headers = new Headers((put![1] as RequestInit).headers);
+        expect(headers.get('if-match')).toBe('"7"');
+      });
+    });
+
+    /**
+     * A server with no version — an older build, or a table this tab loaded
+     * before 0162 shipped — must not turn into `If-Match: "undefined"`, which
+     * the server refuses as malformed. Sending nothing falls back to
+     * last-write-wins, which is what the tab did before and is strictly better
+     * than a save that cannot succeed.
+     */
+    it('omits If-Match when the server reports no version', async () => {
+      const fetchSpy = mockApi([
+        [/\/cap-table\/preview/, () => json({ entries: ENTRIES, validation: VALID })],
+        capTable({ cap_table: STORED, can_edit: true }),
+        formats(),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await user.type(screen.getByRole('textbox'), 'class,shares');
+      await user.click(screen.getByRole('button', { name: 'Preview' }));
+      await user.click(await screen.findByRole('button', { name: 'Save cap table' }));
+
+      await waitFor(() => {
+        const put = fetchSpy.mock.calls.find(
+          ([, init]) => (init as RequestInit | undefined)?.method === 'PUT',
+        );
+        expect(put, 'no PUT was issued').toBeDefined();
+        expect(new Headers((put![1] as RequestInit).headers).has('if-match')).toBe(false);
+      });
+    });
+
+    /**
+     * A 409 is an out-of-date tab, not a failed import: the table is reloaded so
+     * the user reapplies onto what actually landed. Reloading is the point —
+     * leaving the stale copy on screen invites the same losing import again.
+     */
+    it('reloads and explains itself when someone else saved first', async () => {
+      let conflicted = false;
+      mockApi([
+        [/\/cap-table\/preview/, () => json({ entries: ENTRIES, validation: VALID })],
+        [
+          /\/cap-table$/,
+          () => {
+            if (!conflicted) {
+              conflicted = true;
+              return json({ cap_table: { ...STORED, version: 3 }, can_edit: true });
+            }
+            return json({ cap_table: { ...STORED, version: 4 }, can_edit: true });
+          },
+        ],
+        formats(),
+      ]);
+      renderTab();
+      const user = await openImporter();
+      await user.type(screen.getByRole('textbox'), 'class,shares');
+      await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+      // Re-point the PUT at the conflict once the preview has been taken.
+      mockApi([
+        [/\/cap-table\/preview/, () => json({ entries: ENTRIES, validation: VALID })],
+        [
+          /\/cap-table$/,
+          () =>
+            json(
+              {
+                status: 409,
+                detail:
+                  'This cap table was changed by someone else (expected version 3, now 4). Reload and reapply your changes.',
+              },
+              409,
+            ),
+        ],
+        formats(),
+      ]);
+      await user.click(await screen.findByRole('button', { name: 'Save cap table' }));
+
+      // The server's own wording, so the user is told which version they lost
+      // to rather than a generic failure.
+      expect(await screen.findByText(/changed by someone else/i)).toBeInTheDocument();
+      // Not the validation branch: a 409 carries no `validation`, and falling
+      // through to it would blank the preview and say nothing useful.
+      expect(screen.queryByText('Import rejected')).toBeNull();
+    });
+
     it('discards the draft when the import is cancelled', async () => {
       mockApi([capTable({ cap_table: null, can_edit: true }), formats()]);
       renderTab();

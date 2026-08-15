@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { api, ApiError, apiUpload, type Problem } from '../../lib/api';
+import { api, ApiError, apiUpload, ifMatch, type Problem } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatAmount, formatNumber } from '../../lib/format';
 import { isOps } from '../../lib/rbac';
@@ -69,6 +69,13 @@ interface CapTable {
   entries: Entry[];
   validation: Validation;
   updated_at: string;
+  /**
+   * Optimistic-lock counter (migration 0162), echoed back as `If-Match` on the
+   * import below. Optional so the tab still works against an older server that
+   * does not report it — `ifMatch` then sends nothing and the write falls back
+   * to last-write-wins rather than failing.
+   */
+  version?: number;
 }
 interface FormatPreset {
   key: string;
@@ -348,11 +355,31 @@ export function CapTableTab() {
     setError(null);
     setBusy(true);
     try {
-      await api(`/valuations/${valuation.id}/cap-table`, { method: 'PUT', body: importBody() });
+      // Guarded on the version this tab loaded. An import replaces the whole
+      // table, so without this a save built on a stale read silently discards
+      // whatever landed since — another editor's import, or the provider sync
+      // running on its schedule (migration 0162).
+      await api(`/valuations/${valuation.id}/cap-table`, {
+        method: 'PUT',
+        body: importBody(),
+        headers: ifMatch(stored?.version),
+      });
       setImporting(false);
       resetImport();
       await load();
     } catch (err) {
+      // A conflict is an out-of-date tab rather than a failed import: reload so
+      // the user decides against what actually landed. Handled before the
+      // validation branch because a 409 carries no `validation` and would
+      // otherwise fall through to the generic message.
+      if (err instanceof ApiError && err.status === 409) {
+        await load();
+        setError(
+          err.problem.detail ??
+            'Someone else changed this cap table while you were importing. It has been reloaded — please review it and reapply your import.',
+        );
+        return;
+      }
       // A rejected import carries the same validation payload the preview
       // shows, so the user sees which rows failed rather than a bare message.
       // The field is specific to this endpoint, hence the local widening.

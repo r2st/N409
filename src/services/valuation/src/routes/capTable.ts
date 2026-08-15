@@ -17,6 +17,7 @@ import {
 } from '../domain/capTable.js';
 import { buildCapTableGraph } from '../domain/capTableGraph.js';
 import { findCapTable, saveCapTable } from '../repos/capTables.js';
+import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import { listRounds } from '../repos/transactions.js';
 import { looksLikeXlsx, readXlsx, XlsxReadError } from '../domain/xlsxRead.js';
 import { UPLOAD_FIELD_LIMITS } from './uploadLimits.js';
@@ -120,11 +121,18 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
   }));
 
   // Current stored cap table + validation.
-  app.get('/api/v1/valuations/:id/cap-table', { preHandler: app.authenticate }, async (req) => {
+  app.get('/api/v1/valuations/:id/cap-table', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
     const table = await findCapTable(deps.pool, id);
+    // The validator the PUT sends back as If-Match (migration 0162). Set here
+    // rather than left to the client to read out of the body, matching
+    // GET /valuations/:id — the round trip is then the ordinary HTTP one and an
+    // intermediary cannot serve a body whose version has moved. Absent when
+    // there is no table yet: there is no version to be stale against, and an
+    // ETag on "null" would invite an If-Match that can only ever conflict.
+    if (table) reply.header('ETag', versionEtag(table.version));
     return { cap_table: table, can_edit: canEdit(principal, valuation) };
   });
 
@@ -215,12 +223,23 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
   });
 
   // Import + persist. Blocks on hard validation errors.
-  app.put('/api/v1/valuations/:id/cap-table', { preHandler: app.authenticate }, async (req) => {
+  app.put('/api/v1/valuations/:id/cap-table', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
     if (!canEdit(principal, valuation))
       throw problems.forbidden('Only the client or ops can import a cap table');
+
+    // Opt-in concurrency check: a client that echoes the ETag it read gets its
+    // import refused if somebody else — another editor, or the provider sync —
+    // has saved since (migration 0162). Parsed before the body so a malformed
+    // header fails the same way whatever the import contains.
+    const ifMatch = parseIfMatch(req.headers['if-match']);
+    if (ifMatch.kind === 'invalid') {
+      throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+    }
+    const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
+
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid import', { errors: parsed.error.issues });
 
@@ -241,7 +260,9 @@ export function registerCapTableRoutes(app: FastifyInstance, deps: { pool: pg.Po
         createdBy: principal.id,
       },
       { actorType: 'human', actorId: principal.id },
+      { expectedVersion },
     );
+    reply.header('ETag', versionEtag(table.version));
     return { cap_table: table };
   });
 
