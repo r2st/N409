@@ -64,12 +64,19 @@ export async function createIntakeLink(
     expiresAt: Date;
     createdBy: string;
   },
-): Promise<{ link: ClientIntakeLinkRow; token: string }> {
+): Promise<{ link: ClientIntakeLinkRow; token: string } | null> {
   const token = randomBytes(32).toString('base64url');
+  // The mint side of the same rule the redemption predicate enforces. A firm
+  // the platform has withdrawn does not get to put a new branded form in front
+  // of a prospect, and refusing here means the token never exists rather than
+  // existing and never working. `SELECT ... WHERE` rather than a prior read so
+  // the check and the insert are one statement.
   const { rows } = await pool.query<ClientIntakeLinkRow>(
     `INSERT INTO client_intake_links
        (id, partner_id, token_hash, client_name, client_email, label, expires_at, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+     SELECT $1::ulid, $2::ulid, $3::text, $4::text, $5::text, $6::text, $7::timestamptz, $8::ulid
+      WHERE EXISTS (SELECT 1 FROM partners p WHERE p.id = $2 AND p.archived_at IS NULL)
+     RETURNING *`,
     [
       newUlid(),
       input.partnerId,
@@ -81,7 +88,8 @@ export async function createIntakeLink(
       input.createdBy,
     ],
   );
-  return { link: rows[0]!, token };
+  if (!rows[0]) return null;
+  return { link: rows[0], token };
 }
 
 export async function listIntakeLinks(pool: pg.Pool, partnerId: string): Promise<ClientIntakeLinkRow[]> {
@@ -119,6 +127,35 @@ export async function revokeIntakeLink(pool: pg.Pool, partnerId: string, id: str
 }
 
 /**
+ * What makes a token still worth honouring, in one place.
+ *
+ * The three public endpoints — open the form, save progress, submit — each
+ * re-resolve the token rather than trusting an id, which is right, and each
+ * spelled the liveness test out again, which is how they came to disagree with
+ * the product. `revoked_at IS NULL AND expires_at > now()` asks whether the
+ * *link* is alive and never whether the firm behind it still is.
+ *
+ * `partners.archived_at` is the platform's soft delete for a firm: an archived
+ * partner takes no new user assignments, cannot have its branding edited, and
+ * is gone from the branding list. Its outstanding intake links kept working.
+ * That is a public, unauthenticated form, wearing the firm's name and colours
+ * (`resolveBranding` on the partner's own row), collecting a prospect's cap
+ * table and financials for a firm the platform has withdrawn — and then
+ * offering them for conversion into a live engagement under it.
+ *
+ * A single fragment rather than three edits, for the reason the soft-delete
+ * sweep keeps re-learning: a predicate copied into each caller is one that
+ * eventually differs between them, and a form that opens but will not save is a
+ * worse failure than either answer given consistently.
+ */
+const LIVE_LINK_SQL = `revoked_at IS NULL
+      AND expires_at > now()
+      AND EXISTS (
+        SELECT 1 FROM partners p
+         WHERE p.id = client_intake_links.partner_id AND p.archived_at IS NULL
+      )`;
+
+/**
  * Resolve a raw token to a live link, recording the visit.
  *
  * A submitted link still resolves: the client may reopen it to review what they
@@ -133,7 +170,7 @@ export async function redeemIntakeToken(
   const { rows } = await pool.query<ClientIntakeLinkRow>(
     `UPDATE client_intake_links
         SET last_accessed_at = now(), access_count = access_count + 1
-      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()
+      WHERE token_hash = $1 AND ${LIVE_LINK_SQL}
       RETURNING *`,
     [hashToken(rawToken)],
   );
@@ -161,7 +198,7 @@ export async function saveIntakeAnswers(
   const { rows } = await pool.query<ClientIntakeLinkRow>(
     `UPDATE client_intake_links
         SET answers = answers || $2::jsonb, last_accessed_at = now()
-      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now() AND submitted_at IS NULL
+      WHERE token_hash = $1 AND submitted_at IS NULL AND ${LIVE_LINK_SQL}
       RETURNING *`,
     [hashToken(rawToken), JSON.stringify(answers)],
   );
@@ -173,7 +210,7 @@ export async function submitIntakeLink(pool: pg.Pool, rawToken: string): Promise
   const { rows } = await pool.query<ClientIntakeLinkRow>(
     `UPDATE client_intake_links
         SET submitted_at = now()
-      WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now() AND submitted_at IS NULL
+      WHERE token_hash = $1 AND submitted_at IS NULL AND ${LIVE_LINK_SQL}
       RETURNING *`,
     [hashToken(rawToken)],
   );
@@ -214,9 +251,16 @@ export async function convertIntakeLink(
 ): Promise<IntakeConversion | IntakeConversionRefusal> {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query<ClientIntakeLinkRow>(
-      'SELECT * FROM client_intake_links WHERE id = $1 AND partner_id = $2 FOR UPDATE',
+      `SELECT l.* FROM client_intake_links l
+        WHERE l.id = $1 AND l.partner_id = $2
+          AND EXISTS (SELECT 1 FROM partners p WHERE p.id = l.partner_id AND p.archived_at IS NULL)
+          FOR UPDATE OF l`,
       [args.id, args.partnerId],
     );
+    // An archived firm reads as `not_found` rather than getting a refusal of
+    // its own: conversion creates a *new* engagement under the partner, and a
+    // withdrawn firm acquiring fresh work is the thing being prevented. The
+    // link and its answers stay readable through the listing either way.
     const link = rows[0];
     if (!link) return 'not_found';
     if (!link.submitted_at) return 'not_submitted';

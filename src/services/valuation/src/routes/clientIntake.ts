@@ -126,7 +126,7 @@ export function registerClientIntakeRoutes(
     if (!parsed.success) throw problems.unprocessable('Invalid request', { errors: parsed.error.issues });
 
     const expiresAt = new Date(Date.now() + parsed.data.expires_in_days * 24 * 60 * 60 * 1000);
-    const { link, token } = await createIntakeLink(deps.pool, {
+    const minted = await createIntakeLink(deps.pool, {
       partnerId,
       clientName: parsed.data.client_name,
       clientEmail: parsed.data.client_email,
@@ -134,6 +134,13 @@ export function registerClientIntakeRoutes(
       expiresAt,
       createdBy: principal.id,
     });
+    // Null only when the firm has been archived — the insert is conditional on
+    // that, so a withdrawn firm never mints a token rather than minting one the
+    // portal will refuse.
+    if (!minted) {
+      throw problems.conflict('This firm has been archived and can no longer issue intake links');
+    }
+    const { link, token } = minted;
 
     // The raw token and its URL are returned once and never again.
     return reply.status(201).send({
