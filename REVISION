@@ -314,29 +314,44 @@
 #            UTC, which is not what the driver produces, and now build them as
 #            it does.
 #
-# gap:       the other half of the same mistake, and the one still open: a
-#            `date` column sent *raw* into a JSON response. Serialization goes
-#            through `Date.prototype.toJSON`, i.e. `toISOString()`, so the
-#            response carries `2029-06-29T15:00:00.000Z` where the column holds
+# closed:    the other half of the same mistake: a `date` column sent *raw*
+#            into a JSON response. Serialization goes through
+#            `Date.prototype.toJSON`, i.e. `toISOString()`, so the response
+#            carries `2029-06-29T15:00:00.000Z` where the column holds
 #            2029-06-30 and any client slicing the first ten characters gets the
-#            day before. Demonstrated, not suspected: `TZ=Asia/Tokyo npm test`
-#            fails exactly two integration tests on this — a fund mark's
-#            `measurement_date` (routes/funds.ts sends the row at :268 and :316)
-#            and `exit_timeline` in the params round-trip — and both reproduce
-#            identically on the tree before a700f4a, so they are pre-existing
-#            rather than caused by it.
+#            day before. Closed at a54dd31.
 #
-#            What makes this invisible to tsc is that the row interfaces lie:
-#            `repos/transactions.ts:41` declares `occurred_on: string` for a
-#            `date` column the driver returns a Date for, and it is not the only
-#            one. So the fix is per-column — correct the interface to what the
-#            driver actually supplies, then format at the boundary through
-#            `calendarDate` — across the 15 `date` columns in the schema
-#            (closed_on, exit_timeline, fiscal_year_end, founded_on, grant_date,
-#            inception_date, last_round_date, measurement_date,
-#            new_valuation_date, occurred_on, prior_valuation_date,
-#            valuation_date, vesting_start_date, window_end, window_start).
-#            Any test for it has to run east of UTC or it passes vacuously.
+#            What made it invisible to tsc is that the row interfaces lie:
+#            `repos/transactions.ts` declares `occurred_on: string` for a `date`
+#            column the driver returns a Date for, and it was not the only one.
+#            The fix went in at the repo rather than at each send — one
+#            `calendarDateRow(row, ...keys)` per table, applied on every read
+#            path — because there are more send sites than columns, they are
+#            added faster than they are audited, and a route that forgets is
+#            silently wrong rather than broken. Past the repo the declared type
+#            is finally true, and true for the workbook and the exhibits and the
+#            audit diff as much as for the response, so `measurement_date` and
+#            `debt_valuations.valuation_date` dropped the `| Date` they had been
+#            widened to while the claim was false.
+#
+#            Eleven columns across six repos; the other four were already
+#            handled by a700f4a at their routes. One was wrong twice:
+#            `patchParams` diffs the stored row against the request body with
+#            `===`, which no Date is ever equal to a `YYYY-MM-DD` string, so
+#            re-saving a form without touching its dates recorded four field
+#            changes that did not happen and wrote them to the audit trail.
+#            Normalising before the diff rather than after is what fixes that,
+#            and it is the reason the entry above was only half the bug: the
+#            response was the visible symptom, not the whole of it.
+#
+#            Any test for this has to run east of UTC or it passes vacuously —
+#            8 of the 13 in `test/integration/dateColumns.test.ts` fail against
+#            the unfixed tree at Asia/Tokyo and none of them do at UTC. The file
+#            also censuses `information_schema` for `date` columns against a
+#            list naming where each one is turned into its day, in both
+#            directions, so a sixteenth column fails until somebody decides how
+#            it serializes and a listed column that is dropped stops pretending
+#            to be covered.
 #
 # closed:    cap tables imported before the as-converted fix carried a stale
 #            `fully_diluted_shares` in their stored summary. Closed at d946f0d
