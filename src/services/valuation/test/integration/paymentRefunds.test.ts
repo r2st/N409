@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPayment, findPaymentBySessionId } from '../../src/repos/payments.js';
+import { createPayment, findPaymentBySessionId, markPayment } from '../../src/repos/payments.js';
 import { priceForKind } from '../../src/routes/payments.js';
 import { listNotifications } from '../../src/repos/notifications.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
@@ -358,6 +358,104 @@ describe.skipIf(!dbUp)('refunds and chargebacks', () => {
       // pay-now list the same page renders.
       const unpaid = res.json().billing.unpaid_valuations as Array<{ company_name: string }>;
       expect(unpaid.map((u) => u.company_name)).toContain('Totals Back Co');
+    });
+  });
+
+  /**
+   * A settlement event redelivered *after* the money went back out.
+   *
+   * Stripe retries a `checkout.session.completed` for up to three days and an
+   * operator can resend one from the dashboard at any time, so a replay landing
+   * after a refund or a chargeback is ordinary rather than exotic. Fulfilment
+   * decided whether the event was news by reading `status === 'succeeded'` — and
+   * both reversals move the row to 'refunded', which is not that. So the replay
+   * marked the payment succeeded again and put the engagement back to paid: a
+   * client with every cent returned, holding a published 409A, counted as a
+   * paying customer.
+   */
+  describe('a settlement event replayed after the money came back', () => {
+    const completedEvent = (sessionId: string, intentId: string) =>
+      JSON.stringify({
+        type: 'checkout.session.completed',
+        data: {
+          object: { id: sessionId, payment_intent: intentId, payment_status: 'paid', amount_total: PRICE },
+        },
+      });
+
+    it('does not un-refund a fully refunded payment', async () => {
+      const { vid, sessionId, chargeId, intentId } = await seedPaid(
+        'Post-Refund Replay Co',
+        'post_refund_replay',
+      );
+      expect((await post(refundEvent({ id: chargeId, amount_refunded: PRICE }))).statusCode).toBe(200);
+      expect(await paidStatus(vid)).toBe('unpaid');
+
+      expect((await post(completedEvent(sessionId, intentId))).statusCode).toBe(200);
+
+      const payment = await findPaymentBySessionId(ctx.pool, sessionId);
+      expect(payment?.status).toBe('refunded');
+      expect(Number(payment?.refunded_cents)).toBe(PRICE);
+      expect(await paidStatus(vid)).toBe('unpaid');
+    });
+
+    it('does not un-revoke a chargeback decided against us', async () => {
+      const { vid, sessionId, chargeId, intentId } = await seedPaid(
+        'Post-Chargeback Replay Co',
+        'post_dispute_replay',
+      );
+      expect(
+        (await post(disputeEvent('closed', { id: 'dp_replay', charge: chargeId, status: 'lost' })))
+          .statusCode,
+      ).toBe(200);
+      expect(await paidStatus(vid)).toBe('unpaid');
+
+      expect((await post(completedEvent(sessionId, intentId))).statusCode).toBe(200);
+
+      const payment = await findPaymentBySessionId(ctx.pool, sessionId);
+      expect(payment?.status).toBe('refunded');
+      expect(payment?.dispute_status).toBe('lost');
+      expect(await paidStatus(vid)).toBe('unpaid');
+    });
+
+    /**
+     * The same guard from the other side, asserted where it is decidable.
+     *
+     * Two deliveries of one event racing across two processes is the case the
+     * compare-and-set exists for, and it cannot be staged honestly from a
+     * single-threaded test: `fastify.inject` calls interleave at await points
+     * that happen to serialise the read and the write, so a parallel-delivery
+     * test passes with or without the guard and proves nothing. What *is*
+     * decidable is the contract the route now relies on — exactly one caller
+     * gets the row back, and the loser is told it lost rather than being handed
+     * a row it did not change.
+     */
+    it('lets exactly one caller claim a pending payment', async () => {
+      const created = await ctx.app.inject({
+        method: 'POST',
+        url: '/api/v1/valuations',
+        headers: authHeader(client.token),
+        payload: { kind: '409a', company_name: 'Concurrent Settle Co' },
+      });
+      const vid = created.json().valuation.id as string;
+      const payment = await createPayment(ctx.pool, {
+        valuationId: vid,
+        sessionId: 'cs_concurrent',
+        amountCents: PRICE,
+        currency: 'USD',
+        createdBy: ops.id,
+      });
+
+      const claim = () =>
+        markPayment(ctx.pool, payment.id, 'succeeded', {
+          paymentIntentId: 'pi_concurrent',
+          from: ['pending'],
+        });
+      expect(await claim()).not.toBeNull();
+      expect(await claim()).toBeNull();
+
+      // And the unconditional form is still available to callers that are not
+      // racing for anything — the receipt fixtures above use it.
+      expect(await markPayment(ctx.pool, payment.id, 'failed')).not.toBeNull();
     });
   });
 });

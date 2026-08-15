@@ -591,11 +591,26 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       if (!payment) return reply.send({ received: true, ignored: 'unknown session' });
 
       // Money has actually arrived, so mark the payment and release the
-      // valuation. Idempotent: replayed events find the row already succeeded.
+      // valuation.
+      //
+      // The claim on the row is the UPDATE itself: 'pending' is the only status
+      // a session can legitimately be fulfilled from, and the compare-and-set
+      // that enforces it also decides which of two concurrent deliveries owns
+      // everything below. Reading `payment.status` to make that decision — as
+      // this did — is wrong twice over. It cannot exclude a parallel delivery,
+      // which is how one settlement produced two audit entries and two
+      // notifications; and it tested for 'succeeded' specifically, so a row
+      // that had since moved to 'refunded' (a refund, or a chargeback decided
+      // against us) read as un-fulfilled. A replayed `completed` then marked it
+      // succeeded again and put the engagement back to paid, leaving a client
+      // who had been refunded in full holding a published 409A.
       const fulfill = async () => {
-        if (payment.status === 'succeeded') return;
         const intent = typeof session.payment_intent === 'string' ? session.payment_intent : null;
-        await markPayment(deps.pool, payment.id, 'succeeded', { paymentIntentId: intent });
+        const claimed = await markPayment(deps.pool, payment.id, 'succeeded', {
+          paymentIntentId: intent,
+          from: ['pending'],
+        });
+        if (!claimed) return;
         // Best-effort receipt capture — the charge (not the session) carries
         // receipt_url, so resolve it via the API. Failure never blocks the ack.
         if (deps.stripeSecretKey && intent) {
@@ -681,14 +696,16 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // The settlement half of the above: the delayed debit cleared.
         await fulfill();
       } else if (event.type === 'checkout.session.expired') {
-        if (payment.status === 'pending') await markPayment(deps.pool, payment.id, 'expired');
+        await markPayment(deps.pool, payment.id, 'expired', { from: ['pending'] });
       } else if (event.type === 'checkout.session.async_payment_failed') {
         // The delayed debit bounced. Marking the row failed is not enough on
         // its own: the client believes they have paid — they completed Checkout
         // days ago — and the engagement is sitting unpaid with nobody aware.
         // That silence is half of what made the original ACH bug expensive.
-        if (payment.status === 'pending') {
-          await markPayment(deps.pool, payment.id, 'failed');
+        //
+        // Same compare-and-set as fulfilment, and for the second of its two
+        // reasons: the alert below is one a redelivery must not send twice.
+        if (await markPayment(deps.pool, payment.id, 'failed', { from: ['pending'] })) {
           const valuation = await findValuationById(deps.pool, payment.valuation_id);
           await alertBilling(req.log, {
             valuationId: payment.valuation_id,

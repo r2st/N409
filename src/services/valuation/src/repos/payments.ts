@@ -184,11 +184,39 @@ export async function recordDispute(
   return rows[0] ?? null;
 }
 
+/**
+ * Moves a payment to a terminal status, optionally only from an expected one.
+ *
+ * `from` makes the write a compare-and-set, and the null it returns when the
+ * row was not in one of those statuses is the caller's signal that somebody
+ * else got there first. Two things need that.
+ *
+ * The first is redelivery. Stripe retries a `checkout.session.completed` for up
+ * to three days and an operator can resend one by hand at any point, and by
+ * then the charge may have been refunded or lost to a chargeback — both of
+ * which land the row on 'refunded'. Fulfilment read `status === 'succeeded'` to
+ * decide whether the event was news, so a row sitting on 'refunded' looked like
+ * one that had never been fulfilled: the replay marked it succeeded again and
+ * put the engagement back to paid. The client had every cent back and kept the
+ * published 409A.
+ *
+ * The second is parallelism. Two concurrent deliveries of the same event both
+ * read 'pending', both decided to fulfil, and both went on to patch the
+ * valuation — two audit entries for one transition and two "your valuation is
+ * paid" emails. A read cannot exclude a writer; only the UPDATE can, so the
+ * status test belongs in it.
+ */
 export async function markPayment(
   pool: pg.Pool,
   id: string,
   status: Exclude<PaymentStatus, 'pending'>,
-  extra: { paymentIntentId?: string | null; chargeId?: string | null; receiptUrl?: string | null } = {},
+  extra: {
+    paymentIntentId?: string | null;
+    chargeId?: string | null;
+    receiptUrl?: string | null;
+    /** Statuses the row must currently hold. Omitted means "whatever it holds". */
+    from?: readonly PaymentStatus[];
+  } = {},
 ): Promise<PaymentRow | null> {
   const { rows } = await pool.query<PaymentRow>(
     `UPDATE payments
@@ -198,8 +226,16 @@ export async function markPayment(
          receipt_url = COALESCE($5, receipt_url),
          updated_at = now()
      WHERE id = $1
+       AND ($6::text[] IS NULL OR status::text = ANY($6::text[]))
      RETURNING *`,
-    [id, status, extra.paymentIntentId ?? null, extra.chargeId ?? null, extra.receiptUrl ?? null],
+    [
+      id,
+      status,
+      extra.paymentIntentId ?? null,
+      extra.chargeId ?? null,
+      extra.receiptUrl ?? null,
+      extra.from ? [...extra.from] : null,
+    ],
   );
   return rows[0] ?? null;
 }
