@@ -9,6 +9,7 @@ import {
   hasBlockingIssues,
   INTAKE_CROSS_RULES,
   INTAKE_SECTIONS,
+  IntakeAnswers,
   validateIntake,
 } from '../domain/intake.js';
 import {
@@ -62,7 +63,7 @@ const CreateBody = z.object({
 });
 
 const TokenBody = z.object({ token: z.string().min(1) });
-const SaveBody = TokenBody.extend({ answers: z.record(z.string(), z.unknown()) });
+const SaveBody = TokenBody.extend({ answers: IntakeAnswers });
 
 /**
  * Converting is a firm decision, so the two things the questionnaire does not

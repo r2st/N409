@@ -5,6 +5,7 @@
  * source of truth.
  */
 
+import { z } from 'zod';
 import { isIsoCalendarDate } from '@n409/shared';
 
 export const INTAKE_EVENT_TYPES = {
@@ -293,6 +294,74 @@ export function computeCompletion(
 export const INTAKE_FIELD_KEYS: ReadonlySet<string> = new Set(
   INTAKE_SECTIONS.flatMap((s) => s.fields.map((f) => f.key)),
 );
+
+/**
+ * Bound on one saved answer.
+ *
+ * `narrowIntakeAnswers` already refuses everything that is not a scalar, which
+ * left the length of a `text`/`textarea` answer as the only unmeasured axis:
+ * both write paths took `z.record(z.string(), z.unknown())`, so a single answer
+ * could be the whole 1 MB body, and the anonymous portal — which authenticates
+ * on a link token and nothing else — writes through the same schema.
+ *
+ * Enforced in the route schema rather than dropped here on purpose. The narrow
+ * step drops a wrong-*shaped* value silently because the wizard cannot produce
+ * one; a long answer is something the client actually typed, so it has to come
+ * back as a 422 naming the field instead of vanishing from the form.
+ */
+export const MAX_INTAKE_ANSWER_CHARS = 10_000;
+
+/** The largest questionnaire is ~150 fields; unknown keys are dropped below anyway. */
+export const MAX_INTAKE_ANSWER_KEYS = 400;
+
+/**
+ * The body shape both intake write paths accept for `answers`.
+ *
+ * Deliberately *not* a union of the scalar types. Bounding the value shape here
+ * would move the wrong-shape decision out of `narrowIntakeAnswers` and turn a
+ * silent drop into a 422 — the opposite of what that function documents, and a
+ * regression for the anonymous portal, which autosaves on a timer and would
+ * start rejecting whole payloads over one value it is designed to discard.
+ *
+ * So it measures how many answers there are, and then — only for the scalars
+ * that will actually survive the narrow step — the two hazards a drop cannot
+ * fix. A long string reaches the column as-is. A non-finite number reaches it
+ * as `null`, because that is what `JSON.stringify(Infinity)` writes, and
+ * `1e999` is what a spreadsheet paste looks like on the wire (see
+ * `domain/finite.ts`); both are values the client really typed, so both come
+ * back as a 422 naming the field rather than vanishing from the form.
+ *
+ * An object or an array is neither: it is a shape the wizard cannot produce, it
+ * cannot reach the column at any size, and it stays the narrow step's business.
+ */
+export const IntakeAnswers = z
+  .record(z.string().max(200), z.unknown())
+  .superRefine((answers, ctx) => {
+    const keys = Object.keys(answers);
+    if (keys.length > MAX_INTAKE_ANSWER_KEYS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `At most ${MAX_INTAKE_ANSWER_KEYS} answers`,
+      });
+      return;
+    }
+    for (const key of keys) {
+      const value = answers[key];
+      if (typeof value === 'string' && value.length > MAX_INTAKE_ANSWER_CHARS) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `Answer must be at most ${MAX_INTAKE_ANSWER_CHARS} characters`,
+        });
+      } else if (typeof value === 'number' && !Number.isFinite(value)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: 'Answer must be a finite number',
+        });
+      }
+    }
+  });
 
 /**
  * Answers narrowed to what the questionnaire can actually hold.

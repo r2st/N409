@@ -146,14 +146,34 @@ const Body = z.object({
   default_volatility: z.number().gt(0).max(5).optional(),
 });
 
+/** Matches `TsrBody.peers`: a basket the TSR measurement below could actually price. */
+const MAX_TSR_PEERS = 50;
+/** Matches the `vars` cap in routes/communications.ts — a bounded key-value map. */
+const MAX_RSU_CONDITIONS = 200;
+
 const SettingsBody = z.object({
   company_type: z.enum(['private', 'public']),
   ticker: z.string().trim().min(1).max(12).nullish(),
   expected_term_method: z.enum(['simplified', 'lattice', 'historical']).optional(),
   espp_discount_pct: z.number().min(0).max(1).nullish(),
   espp_lookback_months: z.number().int().min(0).max(60).nullish(),
-  rsu_performance_conditions: z.record(z.unknown()).nullish(),
-  tsr_peer_basket: z.array(z.unknown()).nullish(),
+  /**
+   * Bounded to exactly what the measurement they configure will accept.
+   *
+   * `Body` above caps every list it takes — `peers` at 50, `tsr` at 20, `grants`
+   * at 100 — because each one costs a lattice or a simulation. These two are the
+   * saved form of the same inputs, and they carried no bound at all: a settings
+   * row is `jsonb`, so whatever fits inside Fastify's 1 MB body persisted
+   * per engagement, was re-read on every ASC 718 tab load, and re-sent on every
+   * save. A basket that cannot be measured is not a basket worth storing.
+   */
+  rsu_performance_conditions: z
+    .record(z.unknown())
+    .refine((v) => Object.keys(v).length <= MAX_RSU_CONDITIONS, {
+      message: `At most ${MAX_RSU_CONDITIONS} performance conditions`,
+    })
+    .nullish(),
+  tsr_peer_basket: z.array(z.unknown()).max(MAX_TSR_PEERS).nullish(),
 });
 
 function requireOps(principal: Principal): void {

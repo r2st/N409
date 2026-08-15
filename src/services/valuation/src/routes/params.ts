@@ -27,6 +27,10 @@ const DateStr = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
   .refine(isIsoCalendarDate, 'Not a real calendar date');
 const Cents = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+/** Treasury publishes thirteen constant-maturity tenors; 100 leaves room for any of them. */
+const MAX_CURVE_POINTS = 100;
+/** One override per market multiple in play, with headroom. */
+const MAX_CUSTOM_RANGES = 100;
 
 export const ParamsPatchBody = z
   .object({
@@ -200,7 +204,17 @@ export const ParamsPatchBody = z
         risk_free_rate_override: z.number().min(0).max(1).optional(),
         // { "5": 0.042 } — maturity in years to yield. The engine reads the
         // keys as numbers whether they arrive as strings or not.
-        treasury_curve: z.record(z.number().min(0).max(1)).optional(),
+        // Bounded on both axes. Every yield is already range-checked; the key
+        // count was not, and this map is persisted to `valuation_params` and
+        // re-sent to the engine on every compute. A curve is a dozen maturities
+        // — Treasury publishes thirteen — so 100 is generous and 50,000 (what a
+        // 1 MB body buys) is not a curve.
+        treasury_curve: z
+          .record(z.number().min(0).max(1))
+          .refine((v) => Object.keys(v).length <= MAX_CURVE_POINTS, {
+            message: `At most ${MAX_CURVE_POINTS} treasury-curve points`,
+          })
+          .optional(),
         company_specific_premium: z.number().min(-1).max(1).optional(),
         size_premium_override: z.number().min(-1).max(1).optional(),
         cost_of_debt: z.number().min(0).max(1).optional(),
@@ -214,7 +228,14 @@ export const ParamsPatchBody = z
     auto_wacc: z.boolean(),
     market_method: z.enum(['revenue', 'ebitda']).nullable(),
     market_horizon: z.enum(['ltm', 'ntm']).nullable(),
-    market_custom_ranges: z.record(z.unknown()).nullable(),
+    // Same reasoning as `treasury_curve`: persisted jsonb, one entry per market
+    // multiple the analyst overrides, and nothing measured the count.
+    market_custom_ranges: z
+      .record(z.unknown())
+      .refine((v) => Object.keys(v).length <= MAX_CUSTOM_RANGES, {
+        message: `At most ${MAX_CUSTOM_RANGES} custom market ranges`,
+      })
+      .nullable(),
     asset_method: z.enum(['cost_to_replicate', 'nav']).nullable(),
     allocation_method: z.enum(['opm', 'pwerm', 'hybrid', 'cvm', 'monte_carlo']),
   })

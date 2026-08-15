@@ -15,6 +15,7 @@ import {
   computeCompletion,
   hasBlockingIssues,
   INTAKE_EVENT_TYPES,
+  IntakeAnswers,
   validateIntake,
 } from '../domain/intake.js';
 import { intakeCrossRulesFor, intakeFieldKeysFor, intakeSectionsFor } from '../domain/intakeKinds.js';
@@ -29,9 +30,7 @@ import { findQuestionnaire, saveQuestionnaire, submitQuestionnaire } from '../re
  * ops; the schema + completion rules live in domain/intake.ts.
  */
 
-const SaveBody = z.object({
-  answers: z.record(z.string(), z.unknown()),
-});
+const SaveBody = z.object({ answers: IntakeAnswers });
 
 async function loadReadable(pool: pg.Pool, id: string, principal: Principal): Promise<ValuationRow> {
   if (!isUlid(id)) throw problems.notFound();
