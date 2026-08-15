@@ -144,7 +144,7 @@ export async function listActiveEngagements(
   const limit = Math.min(Math.max(opts.limit ?? ENGAGEMENT_PAGE_LIMIT, 1), ENGAGEMENT_PAGE_LIMIT);
   const { rows } = await pool.query<EngagementListRow>(
     `${ACTIVE_ENGAGEMENT_SELECT}
-      WHERE e.current_stage <> 'complete'
+      WHERE ${ACTIVE_ENGAGEMENT_WHERE}
       ORDER BY e.stage_entered_at ASC, e.id ASC
       LIMIT $1`,
     [limit + 1],
@@ -152,11 +152,29 @@ export async function listActiveEngagements(
   return { engagements: rows.slice(0, limit), truncated: rows.length > limit };
 }
 
+/**
+ * The join the pipeline board and the overdue sweep both read through.
+ *
+ * `v.archived_at IS NULL` belongs here rather than in either caller, so the
+ * board and the sweep cannot come to disagree about which engagements are still
+ * live. Archiving is this platform's soft delete for valuations, and it moves
+ * `archived_at` and nothing else — not `engagements.current_stage`, not the
+ * valuation's `state` — so a retired engagement stayed `<> 'complete'` and both
+ * readers kept finding it.
+ *
+ * The board showed it, which was wrong. The sweep emailed about it, which was
+ * worse: the assigned analyst was chased with "Overdue: … is past SLA in …"
+ * over work the firm had withdrawn, once per sweep, for as long as the stage
+ * stayed open — and the stage cannot close, because nobody is working it.
+ */
 const ACTIVE_ENGAGEMENT_SELECT = `
   SELECT e.*, v.company_name, v.state AS valuation_state, v.kind, u.email AS analyst_email
     FROM engagements e
     JOIN valuations v ON v.id = e.valuation_id
     LEFT JOIN users u ON u.id = e.assigned_analyst_id`;
+
+/** Applied by both readers below; see ACTIVE_ENGAGEMENT_SELECT for why. */
+const ACTIVE_ENGAGEMENT_WHERE = `v.archived_at IS NULL AND e.current_stage <> 'complete'`;
 
 /**
  * Every active engagement, a page at a time.
@@ -189,7 +207,7 @@ export async function* eachActiveEngagement(
     const cursorSql: string = after ? `AND e.id > $${params.push(after)}` : '';
     const { rows }: pg.QueryResult<EngagementListRow> = await pool.query<EngagementListRow>(
       `${ACTIVE_ENGAGEMENT_SELECT}
-        WHERE e.current_stage <> 'complete' ${cursorSql}
+        WHERE ${ACTIVE_ENGAGEMENT_WHERE} ${cursorSql}
         ORDER BY e.id ASC
         LIMIT $1`,
       params,
