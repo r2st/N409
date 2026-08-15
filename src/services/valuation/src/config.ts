@@ -206,6 +206,70 @@ function looksLowEntropy(secret: string): boolean {
  */
 const REQUIRED_IN_PRODUCTION = ['DATABASE_URL', 'PUBLIC_BASE_URL'] as const;
 
+/**
+ * Settings that are only meaningful as a set, and what a half-set one does.
+ *
+ * Each of these subsystems activates on one variable and *works* on another, so
+ * setting the first without the second does not disable the feature — it turns
+ * the feature on with its back half missing. Nothing errors, because every one
+ * of them was deliberately written to degrade rather than crash when it is not
+ * configured at all, and "not configured at all" is what half of a set looks
+ * like to the half that is checking.
+ *
+ * Checked in production only, for the same reason as {@link REQUIRED_IN_PRODUCTION}:
+ * the partial state is a normal step on the way to a working local setup, and a
+ * developer who has pasted in one key and not yet the other is mid-sentence.
+ * Deployed, it is a subsystem nobody will be told is broken.
+ */
+function halfConfigured(config: Config, env: NodeJS.ProcessEnv): string[] {
+  const faults: string[] = [];
+
+  // The expensive one. `checkoutAvailableTo` (routes/payments.ts) decides
+  // whether a client may be charged from STRIPE_SECRET_KEY alone, and
+  // fulfilment — marking the payment succeeded, releasing the engagement,
+  // capturing the receipt — happens nowhere but the webhook, which answers 503
+  // without STRIPE_WEBHOOK_SECRET. So this pairing sells a valuation, takes the
+  // money, and never delivers: Stripe retries a 503 for three days and gives
+  // up, our payments row stays 'pending' forever, and the only party who knows
+  // a charge succeeded is Stripe. The reverse (a webhook secret with no API
+  // key) is the safe half — checkout is simply unavailable — and is what the
+  // test suite runs with, so it is deliberately not a fault.
+  if (config.STRIPE_SECRET_KEY && !config.STRIPE_WEBHOOK_SECRET) {
+    faults.push(
+      'STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not — checkout would take money ' +
+        'that nothing is able to fulfil, because the webhook is the only thing that marks a ' +
+        'payment succeeded',
+    );
+  }
+
+  // `buildEmailTransports` falls back to the log transport when EMAIL_MODE=smtp
+  // and no host is given. That is right in development, where the log is where
+  // you read the reset link. Deployed it means every password reset, invitation,
+  // verification and client notification is written to stdout and reported
+  // delivered, with the outbox agreeing.
+  if (config.EMAIL_MODE === 'smtp' && !config.SMTP_HOST) {
+    faults.push(
+      'EMAIL_MODE=smtp but SMTP_HOST is unset — every message would fall back to the log ' +
+        'transport and be recorded as delivered',
+    );
+  }
+
+  // Google sign-in needs all three; app.ts constructs the client only when it
+  // has them, and `GET /auth/providers` then tells the SPA not to draw the
+  // button. Users who signed up through Google have no password to fall back
+  // on, so a missing redirect URI locks them out with no self-serve way back.
+  const google = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'] as const;
+  const googleSet = google.filter((name) => env[name]);
+  if (googleSet.length > 0 && googleSet.length < google.length) {
+    faults.push(
+      `Google sign-in is half-configured (${google.filter((n) => !env[n]).join(', ')} unset) — ` +
+        'the sign-in button would silently disappear and Google-only accounts could not log in',
+    );
+  }
+
+  return faults;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = Env.safeParse(env);
   if (!parsed.success) {
@@ -232,6 +296,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         'Invalid configuration: JWT_SECRET is a known example or low-entropy value — ' +
           'set a unique random secret in production (openssl rand -hex 32)',
       );
+    }
+
+    const faults = halfConfigured(config, env);
+    if (faults.length > 0) {
+      throw new Error(`Invalid configuration: ${faults.join('; ')}`);
     }
   }
   return config;
