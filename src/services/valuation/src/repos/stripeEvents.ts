@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { isOrderedEventType, ORDERED_EVENT_TYPES, type StripeEventKey } from '../domain/stripeEvents.js';
+import { isOrderedEventType, supersedingTypes, type StripeEventKey } from '../domain/stripeEvents.js';
 
 /**
  * The webhook event ledger (migration 0155).
@@ -20,22 +20,36 @@ export type EventVerdict =
   | 'stale';
 
 /**
- * Has this event been handled, or has it been overtaken?
+ * Has this event been handled *at this endpoint*, or has it been overtaken?
  *
  * An event with no id is always 'fresh'. Every real Stripe delivery carries
  * one; a payload without it is something constructed by hand, and refusing to
  * act on it would be inventing a rule Stripe does not have.
+ *
+ * Scoped to the endpoint (migration 0156). One Stripe event is delivered to
+ * every endpoint subscribed to its type, with the same id at each, and both of
+ * this service's webhooks are subscribed to `checkout.session.completed`
+ * because each handles a different `mode`. Keyed on the id alone, the second
+ * delivery to arrive was answered as a duplicate and its half never ran.
  */
 export async function classifyStripeEvent(pool: pg.Pool, key: StripeEventKey): Promise<EventVerdict> {
   if (!key.eventId) return 'fresh';
 
-  const seen = await pool.query('SELECT 1 FROM stripe_webhook_events WHERE event_id = $1', [key.eventId]);
+  const seen = await pool.query(
+    'SELECT 1 FROM stripe_webhook_events WHERE event_id = $1 AND endpoint = $2',
+    [key.eventId, key.endpoint],
+  );
   if (seen.rowCount) return 'duplicate';
 
   // Ordering only applies where two events about one object are two readings of
   // the same state rather than two separate facts — see ORDERED_EVENT_TYPES.
   if (!key.objectId || !key.eventCreated || !isOrderedEventType(key.type)) return 'fresh';
 
+  // Which handled events can supersede this one depends on what it is: a
+  // checkout session yields to any newer writer of the subscription's state, a
+  // `customer.subscription.*` event only to a newer one of its own kind. See
+  // supersedingTypes for why that is not symmetric.
+  //
   // Strictly newer. Two events sharing a timestamp is possible (Stripe's
   // `created` has one-second resolution) and there is nothing to choose between
   // them, so the second is applied rather than dropped: applying both in
@@ -43,24 +57,28 @@ export async function classifyStripeEvent(pool: pg.Pool, key: StripeEventKey): P
   // where the ledger genuinely cannot tell.
   const newer = await pool.query(
     `SELECT 1 FROM stripe_webhook_events
-      WHERE object_id = $1
-        AND type = ANY($2::text[])
+      WHERE endpoint = $1
+        AND object_id = $2
+        AND type = ANY($3::text[])
         AND outcome = 'handled'
-        AND event_created > $3
+        AND event_created > $4
       LIMIT 1`,
-    [key.objectId, ORDERED_EVENT_TYPES, key.eventCreated],
+    [key.endpoint, key.objectId, supersedingTypes(key.type), key.eventCreated],
   );
   return newer.rowCount ? 'stale' : 'fresh';
 }
 
 /**
- * Record that this event has been dealt with.
+ * Record that this event has been dealt with at this endpoint.
  *
  * `ON CONFLICT DO NOTHING` because two concurrent deliveries of one event can
  * both have been classified 'fresh' — the ledger narrows that window rather
  * than closing it, and the per-handler compare-and-sets are what make the
  * overlap safe. The second writer finding the row already there is that case,
  * and it is not an error.
+ *
+ * The conflict target is the whole key, endpoint included: the other endpoint's
+ * row for the same event is not a conflict, it is the other endpoint's work.
  */
 export async function recordStripeEvent(
   pool: pg.Pool,
@@ -71,7 +89,7 @@ export async function recordStripeEvent(
   await pool.query(
     `INSERT INTO stripe_webhook_events (event_id, type, endpoint, object_id, event_created, outcome)
      VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (event_id) DO NOTHING`,
+     ON CONFLICT (event_id, endpoint) DO NOTHING`,
     [key.eventId, key.type, key.endpoint, key.objectId, key.eventCreated, outcome],
   );
 }
@@ -86,11 +104,26 @@ export interface StripeEventRow {
   outcome: 'handled' | 'stale';
 }
 
-/** One ledger row, for tests and for answering "what did we do with evt_…". */
-export async function findStripeEvent(pool: pg.Pool, eventId: string): Promise<StripeEventRow | null> {
+/**
+ * One ledger row, for tests and for answering "what did we do with evt_…".
+ *
+ * An event id can now name a row at each endpoint (migration 0156), so an
+ * endpoint may be given to ask about one of them specifically. Without it the
+ * earliest-received row is returned, which is the answer to the question as
+ * asked — "what did we do with this event" — for the events only one endpoint
+ * ever sees, which is all of them but `checkout.session.completed`.
+ */
+export async function findStripeEvent(
+  pool: pg.Pool,
+  eventId: string,
+  endpoint?: StripeEventKey['endpoint'],
+): Promise<StripeEventRow | null> {
   const { rows } = await pool.query<StripeEventRow>(
-    'SELECT * FROM stripe_webhook_events WHERE event_id = $1',
-    [eventId],
+    `SELECT * FROM stripe_webhook_events
+      WHERE event_id = $1 AND ($2::text IS NULL OR endpoint = $2)
+      ORDER BY received_at
+      LIMIT 1`,
+    [eventId, endpoint ?? null],
   );
   return rows[0] ?? null;
 }
