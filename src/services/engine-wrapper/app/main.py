@@ -22,6 +22,7 @@ from .internal_auth import enforce_token_configured, internal_token_middleware
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
+from .security_headers import make_security_headers_middleware
 from .engine.market_data import MAX_TICKERS
 from .engine.market_data import lookup as market_lookup
 from .engine.market_data import universe as market_universe
@@ -84,6 +85,10 @@ app.middleware("http")(make_rate_limit_middleware(limit_per_minute()))
 app.middleware("http")(make_unhandled_error_middleware(SERVICE))
 # Structured access logging + x-request-id propagation (audit B-2 P3).
 app.middleware("http")(make_request_context_middleware(SERVICE))
+# Outermost, so the headers reach the responses the layers above return without
+# ever seeing a route — the token gate's 401, the body cap's 413, the limiter's
+# 429 and the unhandled-error 500 (round 74).
+app.middleware("http")(make_security_headers_middleware())
 # Put the request id on the deliberate failures as well, so every error
 # response this service can emit is traceable to a log line.
 install_error_handlers(app)

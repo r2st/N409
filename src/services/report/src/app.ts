@@ -1,10 +1,13 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import helmet from '@fastify/helmet';
 import { z } from 'zod';
 import {
+  API_PERMISSIONS_POLICY,
   createLogger,
   problems,
   registerHealth,
   registerInternalAuth,
+  registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
 } from '@n409/shared';
@@ -105,6 +108,35 @@ export function buildApp(): FastifyInstance {
     // header into a contextvar; this was the one hop where the chain broke.
     requestIdHeader: 'x-request-id',
   }) as unknown as FastifyInstance;
+  // Security headers (round 74). This was the one Fastify service with none:
+  // valuation and web have carried helmet since the B-1 audit and this unit was
+  // simply missed, on the reasoning that it is internal.
+  //
+  // Being internal is what makes it worth doing rather than what excuses it.
+  // The single route here answers `application/pdf` with
+  // `content-disposition: inline`, which is a rendering instruction — a browser
+  // that reaches this port is being *asked* to open the bytes as a document,
+  // and the bytes are assembled from caller-supplied `sections[].html`. nosniff
+  // and a `default-src 'none'` policy are precisely the two headers that decide
+  // what such a document may then do, and the response was going out with
+  // neither. Same configuration as the valuation service, so a response does
+  // not change its posture depending on which unit produced it.
+  void app.register(helmet, {
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        'default-src': ["'none'"],
+        'frame-ancestors': ["'none'"],
+        'base-uri': ["'none'"],
+        'form-action': ["'none'"],
+      },
+    },
+    frameguard: { action: 'deny' },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    hsts: { maxAge: 15552000, includeSubDomains: true }, // 180 days
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  });
+  registerPermissionsPolicy(app, API_PERMISSIONS_POLICY);
   registerProblemHandler(app);
   // Shared secret, same contract as the AI and engine services. Registered
   // before the render route so an unauthenticated caller is refused before the

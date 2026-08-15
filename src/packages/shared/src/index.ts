@@ -19,6 +19,11 @@ export {
   SENSITIVE_QUERY_PARAMS,
 } from './problem.js';
 export {
+  API_PERMISSIONS_POLICY,
+  WEB_PERMISSIONS_POLICY,
+  registerPermissionsPolicy,
+} from './securityHeaders.js';
+export {
   registerHealth,
   probeReady,
   CHECK_FAILED,

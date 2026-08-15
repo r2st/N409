@@ -12,9 +12,11 @@ import {
   createLogger,
   probeReady,
   registerHealth,
+  registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
   trustedProxies,
+  WEB_PERMISSIONS_POLICY,
 } from '@n409/shared';
 
 // Analytics hosts the SPA loads *after* cookie consent (§23/§25). Allowed in
@@ -261,6 +263,12 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     hsts: { maxAge: 15552000, includeSubDomains: true }, // 180 days
   });
+  // helmet sets no Permissions-Policy at all, so the HTML origin — the one
+  // surface where the header actually constrains a script — was sending none
+  // (round 74). The web policy deliberately leaves the media and clipboard
+  // families at their defaults; see securityHeaders.ts for what breaks if they
+  // are named here instead.
+  registerPermissionsPolicy(app, WEB_PERMISSIONS_POLICY);
 
   registerProblemHandler(app);
 
