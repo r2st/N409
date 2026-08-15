@@ -40,6 +40,72 @@ export function scrubError(err: unknown): Record<string, unknown> {
 }
 
 /**
+ * `decodeURIComponent` that answers the input rather than throwing.
+ *
+ * Applied to a URL before {@link scrubSensitive} because every scrub pattern
+ * matches literal text and a browser sends `ada%40example.com`, not
+ * `ada@example.com` — so a percent-encoded address walked straight past the
+ * redaction that exists for it. A malformed escape (`%zz`) is a string a client
+ * chose and is kept as-is; it is then scrubbed like any other.
+ */
+function decodedUrl(url: string): string {
+  try {
+    return decodeURIComponent(url);
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * The request and actor facts a 5xx line needs to be actionable on its own.
+ *
+ * The line used to carry the error and nothing else. Pino adds `reqId`, so in
+ * principle everything else was recoverable by finding the matching "incoming
+ * request" line — which works while you have both, and does not while you are
+ * reading the one line somebody pasted into an incident channel, or a log
+ * search scoped to `level=error`, or an alert built on the same. Two facts were
+ * not recoverable at all: which route pattern matched (the URL has the ids
+ * substituted in, so grouping 500s by endpoint means re-deriving it), and who
+ * was making the request. "Is this one customer or everyone" is the first
+ * question asked of a spike in 500s and the logs could not answer it.
+ *
+ * What is deliberately *not* here: anything identifying a person beyond their
+ * id. Roles and partner id say what kind of caller hit this and whose tenant
+ * they were in — the shape of the failure — while the email, name and company
+ * that would name them are all on the pino redact list for good reason. The URL
+ * is decoded and scrubbed on the way in, because query strings on this API
+ * carry free-text search (`?q=`) that clients type addresses into.
+ */
+export function requestErrorContext(req: FastifyRequest): Record<string, unknown> {
+  // Structurally typed rather than imported: `principal` and `apiToken` are
+  // decorations the valuation service adds, and shared cannot depend on it.
+  const r = req as FastifyRequest & {
+    principal?: { id?: unknown; roles?: unknown; partnerId?: unknown } | null;
+    apiToken?: { id?: unknown; partner_id?: unknown } | null;
+    routeOptions?: { url?: unknown };
+  };
+  const route = typeof r.routeOptions?.url === 'string' ? r.routeOptions.url : undefined;
+  const principal = r.principal ?? null;
+  const apiToken = r.apiToken ?? null;
+  return {
+    method: req.method,
+    ...(route ? { route } : {}),
+    url: scrubSensitive(decodedUrl(req.url)),
+    actor: principal
+      ? {
+          user_id: principal.id,
+          roles: principal.roles,
+          partner_id: principal.partnerId ?? null,
+          // A partner API call authenticates as its token's creating user, so
+          // the principal alone cannot tell a human session from an
+          // integration — and they fail for different reasons.
+          ...(apiToken ? { api_token_id: apiToken.id } : {}),
+        }
+      : 'anonymous',
+  };
+}
+
+/**
  * RFC 9457 application/problem+json error (api-design.md §1).
  */
 export class ApiProblem extends Error {
@@ -202,7 +268,7 @@ export function registerProblemHandler(app: FastifyInstance): void {
     if (status >= 500) {
       // Scrub the free-text message/stack — pino `redact` only masks structured
       // fields, so secrets interpolated into an Error string would leak (B-1 P3).
-      req.log.error({ err: scrubError(err) }, 'unhandled error');
+      req.log.error({ err: scrubError(err), ...requestErrorContext(req) }, 'unhandled error');
       return reply.status(status).type('application/problem+json').send({
         type: 'urn:n409:problem:internal',
         title: 'Internal Server Error',

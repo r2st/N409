@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
-import { ApiProblem, problems, registerProblemHandler, scrubError, scrubSensitive } from '../src/problem.js';
+import {
+  ApiProblem,
+  problems,
+  registerProblemHandler,
+  requestErrorContext,
+  scrubError,
+  scrubSensitive,
+} from '../src/problem.js';
 
 describe('scrubSensitive', () => {
   it('masks credentials in a connection string but keeps scheme/host', () => {
@@ -309,5 +316,149 @@ describe('problem factories', () => {
       instance: '/v',
       errors: [{ path: ['kind'] }],
     });
+  });
+});
+
+/**
+ * What a 500 leaves behind for whoever has to explain it.
+ *
+ * The line carried the error and nothing else. Pino contributes `reqId`, so the
+ * rest was in principle recoverable by finding the matching "incoming request"
+ * line — which is no help to a log search scoped to `level=error`, an alert
+ * built on one, or the single line somebody pastes into an incident channel.
+ * And two facts were not recoverable from anywhere: the route *pattern* (the
+ * URL has ids substituted in, so grouping 500s by endpoint meant re-deriving
+ * it) and who was calling. "Is this one customer or everyone" is the first
+ * question asked of a spike in 500s.
+ */
+describe('5xx log context', () => {
+  /** A fastify-shaped logger that records what the error handler writes. */
+  function recordingLogger() {
+    const lines: { obj: Record<string, unknown>; msg?: string }[] = [];
+    const level = (name: string) => (obj: unknown, msg?: string) => {
+      if (name === 'error') lines.push({ obj: obj as Record<string, unknown>, msg });
+    };
+    const logger = {
+      level: 'info',
+      silent: () => {},
+      fatal: level('fatal'),
+      error: level('error'),
+      warn: level('warn'),
+      info: level('info'),
+      debug: level('debug'),
+      trace: level('trace'),
+      child: () => logger,
+    };
+    return { logger, lines };
+  }
+
+  async function capture(build: (app: ReturnType<typeof Fastify>) => void, url = '/valuations/01J0/report') {
+    const { logger, lines } = recordingLogger();
+    const app = Fastify({ loggerInstance: logger as never });
+    registerProblemHandler(app);
+    build(app);
+    const res = await app.inject({ method: 'GET', url });
+    await app.close();
+    return { res, line: lines.at(-1) };
+  }
+
+  it('names the route pattern, the method and the caller', async () => {
+    const { res, line } = await capture((app) => {
+      app.addHook('onRequest', (req, _reply, done) => {
+        (req as { principal?: unknown }).principal = {
+          id: 'usr_1',
+          roles: ['valuation_user'],
+          partnerId: 'ptn_9',
+        };
+        done();
+      });
+      app.get('/valuations/:id/report', () => {
+        throw new Error('boom');
+      });
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(line?.msg).toBe('unhandled error');
+    expect(line?.obj).toMatchObject({
+      method: 'GET',
+      // The pattern, not the substituted URL — this is what groups 500s.
+      route: '/valuations/:id/report',
+      url: '/valuations/01J0/report',
+      actor: { user_id: 'usr_1', roles: ['valuation_user'], partner_id: 'ptn_9' },
+    });
+  });
+
+  it('says so plainly when nobody was signed in', async () => {
+    const { line } = await capture((app) => {
+      app.get('/valuations/:id/report', () => {
+        throw new Error('boom');
+      });
+    });
+    expect(line?.obj.actor).toBe('anonymous');
+  });
+
+  it('distinguishes a partner integration from the human whose token it is', async () => {
+    // A partner API call authenticates as its token's creating user, so the
+    // principal alone cannot tell the two apart — and they fail differently.
+    const { line } = await capture((app) => {
+      app.addHook('onRequest', (req, _reply, done) => {
+        (req as { principal?: unknown }).principal = { id: 'usr_1', roles: ['partner_api'], partnerId: 'p1' };
+        (req as { apiToken?: unknown }).apiToken = { id: 'tok_7' };
+        done();
+      });
+      app.get('/valuations/:id/report', () => {
+        throw new Error('boom');
+      });
+    });
+    expect(line?.obj.actor).toMatchObject({ api_token_id: 'tok_7' });
+  });
+
+  it('scrubs the query string, which carries whatever a client typed', async () => {
+    // Percent-encoded, because that is how a browser sends it — and every
+    // scrub pattern matches literal text, so an encoded address walked past
+    // the redaction that exists for it until the URL was decoded first.
+    const { line } = await capture(
+      (app) => {
+        app.get('/search', () => {
+          throw new Error('boom');
+        });
+      },
+      '/search?q=' + encodeURIComponent('ada@example.com'),
+    );
+    expect(line?.obj.url).toBe('/search?q=[REDACTED-EMAIL]');
+  });
+
+  it('keeps a URL whose escapes are malformed rather than dropping the line', async () => {
+    const { line } = await capture((app) => {
+      app.get('/search', () => {
+        throw new Error('boom');
+      });
+    }, '/search?q=%zz');
+    expect(line?.obj.url).toBe('/search?q=%zz');
+  });
+
+  it('adds nothing to the client body', async () => {
+    const { res } = await capture((app) => {
+      app.addHook('onRequest', (req, _reply, done) => {
+        (req as { principal?: unknown }).principal = { id: 'usr_1', roles: ['ops'], partnerId: null };
+        done();
+      });
+      app.get('/valuations/:id/report', () => {
+        throw new Error('boom');
+      });
+    });
+    expect(res.json()).toEqual({
+      type: 'urn:n409:problem:internal',
+      title: 'Internal Server Error',
+      status: 500,
+      instance: '/valuations/01J0/report',
+    });
+  });
+
+  it('works on a request that matched no route at all', () => {
+    // setNotFoundHandler answers those, but a throw inside a hook can still
+    // reach the error handler with no routeOptions.url to report.
+    const ctx = requestErrorContext({ method: 'POST', url: '/nope' } as never);
+    expect(ctx).toEqual({ method: 'POST', url: '/nope', actor: 'anonymous' });
   });
 });

@@ -14,6 +14,8 @@
  * than one that swallowed the error.
  */
 
+import { scrubError } from './problem.js';
+
 export interface CrashHandlerLogger {
   fatal: (obj: Record<string, unknown>, msg: string) => void;
 }
@@ -65,8 +67,16 @@ export function installCrashHandlers(log: CrashHandlerLogger, opts: CrashHandler
   const die = (event: string, err: unknown) => {
     if (crashing) return;
     crashing = true;
+    // Scrubbed for the reason the 5xx handler scrubs (see problem.ts): pino's
+    // `redact` paths only mask structured fields, so anything interpolated into
+    // an Error's message or stack reaches the log verbatim. That is not a
+    // hypothetical here — the failure most likely to arrive as an
+    // `uncaughtException` on this platform is the pg pool's own error event,
+    // and a connection failure names the DSN, password included. This is the
+    // line a service writes on its way out, so it is the one most certain to be
+    // read, copied into a ticket and pasted into a chat.
     log.fatal(
-      { err, event, service: opts.service },
+      { err: scrubError(err), event, service: opts.service },
       `${event} — exiting so the supervisor restarts the service`,
     );
     void (async () => {

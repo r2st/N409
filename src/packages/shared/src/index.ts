@@ -1,7 +1,14 @@
 export { createLogger, REDACT_PATHS, SENSITIVE_FIELDS, type LoggerOptions } from './logger.js';
 export { startTelemetry, type TelemetryHandle } from './otel.js';
 export { createHttpMetrics, registerGauge, routeLabel, statusClass, type HttpMetrics } from './metrics.js';
-export { ApiProblem, problems, registerProblemHandler, scrubSensitive, scrubError } from './problem.js';
+export {
+  ApiProblem,
+  problems,
+  registerProblemHandler,
+  requestErrorContext,
+  scrubSensitive,
+  scrubError,
+} from './problem.js';
 export { registerHealth, probeReady, type ReadinessCheck } from './health.js';
 export {
   INTERNAL_PUBLIC_PATHS,

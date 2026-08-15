@@ -53,7 +53,12 @@ describe('installCrashHandlers', () => {
     await settle();
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.obj).toMatchObject({ err: boom, event: 'uncaughtException', service: 'valuation' });
+    expect(calls[0]!.obj).toMatchObject({
+      err: { name: 'Error', message: 'kaboom' },
+      event: 'uncaughtException',
+      service: 'valuation',
+    });
+    expect(String((calls[0]!.obj.err as { stack?: string }).stack)).toContain(boom.message);
     expect(calls[0]!.msg).toContain('uncaughtException');
     expect(exits).toEqual([1]);
   });
@@ -70,7 +75,7 @@ describe('installCrashHandlers', () => {
     expect(exits).toEqual([1]);
   });
 
-  it('logs a non-Error rejection reason as-is', async () => {
+  it('logs a non-Error rejection reason without assuming it has a stack', async () => {
     const { target, handlers } = fakeProcess();
     const { log, calls } = fakeLog();
     installCrashHandlers(log, { service: 'report', target });
@@ -78,7 +83,9 @@ describe('installCrashHandlers', () => {
     handlers.get('unhandledRejection')!('just a string');
     await settle();
 
-    expect(calls[0]!.obj.err).toBe('just a string');
+    // Wrapped rather than passed through, because it goes through the same
+    // scrubber as every other error path now — see below.
+    expect(calls[0]!.obj.err).toEqual({ message: 'just a string' });
   });
 
   it('runs the shutdown hook before exiting', async () => {
@@ -154,5 +161,45 @@ describe('installCrashHandlers', () => {
     await settle();
 
     expect(exits).toEqual([70]);
+  });
+
+  /**
+   * The fatal line is the one certain to be read — copied into a ticket, pasted
+   * into a chat — and it was the only error path in the platform that did not
+   * scrub. Pino's `redact` masks structured fields, so an Error whose *message*
+   * quotes a DSN reached the log with the password in it. Which is not a
+   * hypothetical: the pg pool's error event is re-raised as an
+   * `uncaughtException` precisely so it lands here (db/pool.ts), and a
+   * connection failure names the connection string.
+   */
+  it('scrubs secrets out of the fatal line', async () => {
+    const { target, handlers } = fakeProcess();
+    const { log, calls } = fakeLog();
+    installCrashHandlers(log, { service: 'valuation', target });
+
+    handlers.get('uncaughtException')!(
+      new Error('connect ECONNREFUSED postgres://n409:s3cr3t@db.internal:5432/n409'),
+    );
+    await settle();
+
+    const err = calls[0]!.obj.err as { name: string; message: string; stack?: string };
+    expect(err.message).toContain('postgres://[REDACTED]@db.internal');
+    expect(err.message).not.toContain('s3cr3t');
+    expect(err.stack).not.toContain('s3cr3t');
+    // Still an error, not a string blob — the name and stack are what makes the
+    // line worth having.
+    expect(err.name).toBe('Error');
+    expect(err.stack).toContain('Error');
+  });
+
+  it('logs a rejection that is not an Error at all', async () => {
+    const { target, handlers } = fakeProcess();
+    const { log, calls } = fakeLog();
+    installCrashHandlers(log, { service: 'valuation', target });
+
+    handlers.get('unhandledRejection')!('failed for sk-abcdefghijklmnop0123');
+    await settle();
+
+    expect((calls[0]!.obj.err as { message: string }).message).toBe('failed for [REDACTED-KEY]');
   });
 });
