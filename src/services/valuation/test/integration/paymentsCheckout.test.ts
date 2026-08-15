@@ -241,6 +241,125 @@ describe.skipIf(!dbUp)('opening a checkout', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  /**
+   * At most one live Checkout Session per engagement.
+   *
+   * A Session URL stays payable for 24 hours, and this route used to mint a
+   * fresh one on every POST — so a double-click, a second tab, or a tab left
+   * open that morning gave a client two live ways to be charged for one piece
+   * of work. The duplicate barely surfaces on this side: the second webhook
+   * finds the valuation already paid and leaves it alone, so all that remains
+   * is a second charge on a card statement with nothing here to match it to.
+   */
+  describe('a checkout already open', () => {
+    it('hands back the open session rather than minting a second one', async () => {
+      const vid = await newValuation('Double Click Co');
+      const first = stubSession('cs_reuse_1');
+      expect((await checkout(client.token, vid)).statusCode).toBe(201);
+      expect(first).toHaveBeenCalledTimes(1);
+      vi.restoreAllMocks();
+
+      const second = stubSession('cs_reuse_2');
+      const res = await checkout(client.token, vid);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().checkout_url).toBe('https://checkout.stripe.com/c/pay/cs_reuse_1');
+      // Not a call to Stripe, and not a second payments row: reopening the URL
+      // is exactly what a client returning to an abandoned checkout wants, and
+      // if it has in fact been paid, Stripe's own page says so.
+      expect(second).not.toHaveBeenCalled();
+      expect(await listPayments(ctx.pool, vid)).toHaveLength(1);
+    });
+
+    it('expires the old session before opening one at a new price', async () => {
+      const vid = await newValuation('Changed Mind Co');
+      stubSession('cs_supersede_1');
+      expect((await checkout(client.token, vid)).statusCode).toBe(201);
+      vi.restoreAllMocks();
+
+      // Expire answers 200, then the create answers with the new session.
+      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith('/expire')) return new Response('{}', { status: 200 });
+        return new Response(
+          JSON.stringify({ id: 'cs_supersede_2', url: 'https://checkout.stripe.com/c/pay/cs_supersede_2' }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      });
+
+      const res = await checkout(client.token, vid, { express: true });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().checkout_url).toBe('https://checkout.stripe.com/c/pay/cs_supersede_2');
+      expect(String(spy.mock.calls[0]?.[0])).toContain('/checkout/sessions/cs_supersede_1/expire');
+
+      const rows = await listPayments(ctx.pool, vid);
+      expect(rows.find((r) => r.session_id === 'cs_supersede_1')?.status).toBe('expired');
+      expect(rows.find((r) => r.session_id === 'cs_supersede_2')?.status).toBe('pending');
+    });
+
+    it('refuses to open a second session when Stripe will not close the first', async () => {
+      const vid = await newValuation('In Flight Co');
+      stubSession('cs_inflight_1');
+      expect((await checkout(client.token, vid)).statusCode).toBe(201);
+      vi.restoreAllMocks();
+
+      // Stripe refuses to expire a session it has already *completed*. That is
+      // a settlement whose webhook is in flight, and opening a second session
+      // on top of it is precisely the double charge — so this must not fall
+      // through to a create.
+      const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        if (String(input).endsWith('/expire')) {
+          return new Response(JSON.stringify({ error: { message: 'session is not open' } }), {
+            status: 400,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        throw new Error('must not create a second session');
+      });
+
+      const res = await checkout(client.token, vid, { express: true });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().detail).toMatch(/already in progress/i);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(await listPayments(ctx.pool, vid)).toHaveLength(1);
+    });
+
+    it('opens a fresh session once the old one has aged past Stripe’s 24 hours', async () => {
+      const vid = await newValuation('Stale Session Co');
+      stubSession('cs_stale_1');
+      expect((await checkout(client.token, vid)).statusCode).toBe(201);
+      vi.restoreAllMocks();
+      // The session Stripe has already expired on its own. Nothing tells us it
+      // did, so age is the only signal — and the row must not block a client
+      // from paying a day later.
+      await ctx.pool.query(
+        "UPDATE payments SET created_at = now() - interval '25 hours' WHERE session_id = 'cs_stale_1'",
+      );
+
+      const spy = stubSession('cs_stale_2');
+      const res = await checkout(client.token, vid);
+      expect(res.statusCode).toBe(201);
+      expect(res.json().checkout_url).toBe('https://checkout.stripe.com/c/pay/cs_stale_2');
+      // Straight to the create — no expire call for a session Stripe has
+      // already closed.
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(String(spy.mock.calls[0]?.[0])).not.toContain('/expire');
+    });
+
+    it('ignores a settled row — the reuse only applies to an open session', async () => {
+      const vid = await newValuation('Settled Row Co');
+      stubSession('cs_settled_1');
+      expect((await checkout(client.token, vid)).statusCode).toBe(201);
+      const [row] = await listPayments(ctx.pool, vid);
+      await ctx.pool.query("UPDATE payments SET status = 'expired' WHERE id = $1", [row!.id]);
+      vi.restoreAllMocks();
+
+      const spy = stubSession('cs_settled_2');
+      const res = await checkout(client.token, vid);
+      expect(res.statusCode).toBe(201);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('turns a Stripe refusal into a 502 and creates nothing', async () => {
     const vid = await newValuation('Declined Co');
     const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(

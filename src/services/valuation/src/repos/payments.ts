@@ -76,6 +76,41 @@ export async function findPaymentBySessionId(pool: pg.Pool, sessionId: string): 
 }
 
 /**
+ * Stripe's default Checkout Session lifetime. A session's URL stays payable
+ * until it completes or reaches this, and nothing tells us which — so a row
+ * younger than this with a URL on it is treated as a live way to be charged.
+ */
+export const CHECKOUT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The still-payable checkout already open against this engagement, if there is
+ * one.
+ *
+ * Nothing used to ask. Every POST to the checkout route minted a new Session,
+ * so a client who double-clicked Pay, or opened the engagement in two tabs, or
+ * came back to a tab left open that morning, held two live Stripe URLs for one
+ * piece of work — and paying both charges them twice. The second webhook finds
+ * the valuation already paid and skips it, so the duplicate does not even show
+ * up as a second paid engagement: it is just a charge on a card statement with
+ * no counterpart here.
+ *
+ * Newest first, because that is the one whose URL was most recently handed out.
+ */
+export async function findLiveCheckout(pool: pg.Pool, valuationId: string): Promise<PaymentRow | null> {
+  const { rows } = await pool.query<PaymentRow>(
+    `SELECT * FROM payments
+      WHERE valuation_id = $1
+        AND status = 'pending'
+        AND checkout_url IS NOT NULL
+        AND created_at > now() - ($2::bigint * interval '1 millisecond')
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [valuationId, CHECKOUT_SESSION_TTL_MS],
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * One payment, keyed on its own id *and* the valuation it belongs to.
  *
  * The valuation is part of the key rather than checked afterwards because the

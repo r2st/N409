@@ -16,6 +16,7 @@ import {
 import { findValuationById, patchValuation, type ValuationRow } from '../repos/valuations.js';
 import {
   createPayment,
+  findLiveCheckout,
   findPaymentByChargeOrIntent,
   findPaymentBySessionId,
   findPaymentForValuation,
@@ -31,6 +32,7 @@ import {
 import { valuationScope } from '../auth/rbac.js';
 import {
   createCheckoutSession,
+  expireCheckoutSession,
   retrieveReceipt,
   stripeKeyMode,
   StripeApiError,
@@ -226,6 +228,53 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       const override = isOps(principal) ? parsed.data.amount_cents : undefined;
       const amountCents = override ?? quote.amount_cents;
       const flags = addonFlags(quote);
+
+      /*
+       * At most one live Checkout Session per engagement.
+       *
+       * A Session URL stays payable for 24 hours, and this route used to mint a
+       * fresh one on every POST. A client who double-clicked Pay, opened the
+       * engagement in two tabs, or came back to a tab left open that morning
+       * therefore held two live ways to be charged for one piece of work —
+       * and the duplicate is close to invisible on this side. The second
+       * webhook finds the valuation already paid and leaves it alone, so all
+       * that survives is a second charge on the client's statement with nothing
+       * here to reconcile it against.
+       *
+       * Identical quote: hand back the session we already opened. Reopening
+       * that URL is exactly what a client returning to an abandoned checkout is
+       * trying to do, and if they have in fact already paid it, Stripe's own
+       * page says so rather than taking the money twice.
+       *
+       * Different quote — they ticked express since — the old session must not
+       * stay payable at the old price, so it is expired at Stripe first. A
+       * refusal there is not "already gone": the likeliest reason is that the
+       * session has just been *completed*, which is a settlement whose webhook
+       * is in flight. Opening a second session on top of that is precisely the
+       * double charge, so the caller is turned away and asked to try again once
+       * the payment in progress has landed.
+       */
+      const live = await findLiveCheckout(deps.pool, valuation.id);
+      if (live) {
+        const sameQuote =
+          Number(live.amount_cents) === amountCents &&
+          live.express === flags.express &&
+          live.qsbs_letter === flags.qsbs_letter;
+        if (sameQuote) {
+          return reply.status(200).send({ payment: live, checkout_url: live.checkout_url, quote });
+        }
+        const closed = await expireCheckoutSession(deps.stripeSecretKey, live.session_id).catch(() => false);
+        if (!closed) {
+          req.log.warn(
+            { valuationId: valuation.id, sessionId: live.session_id },
+            'stripe refused to expire the open checkout session — refusing to open a second one',
+          );
+          throw problems.conflict(
+            'A payment for this engagement is already in progress. Finish it, or try again in a few minutes.',
+          );
+        }
+        await markPayment(deps.pool, live.id, 'expired', { from: ['pending'] });
+      }
 
       const base = deps.publicBaseUrl.replace(/\/$/, '');
       let session;

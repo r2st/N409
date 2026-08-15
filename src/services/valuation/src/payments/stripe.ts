@@ -285,6 +285,32 @@ export async function createBillingPortalSession(
   return { id: String(json.id ?? ''), url: json.url };
 }
 
+/**
+ * Closes an open Checkout Session so its URL can no longer be paid.
+ *
+ * A Checkout Session URL stays payable until the session completes or expires,
+ * and Stripe's default expiry is 24 hours — so every session this service opens
+ * and never reconciles is a live way to charge the customer. Two of them for
+ * one engagement, at two different prices, is a double charge that no guard
+ * downstream can undo.
+ *
+ * Returns whether the session is definitely closed. `false` covers the case
+ * Stripe refuses the call — most importantly a session that has already been
+ * *completed*, which it will not let you expire and which the caller must not
+ * treat as harmlessly gone.
+ */
+export async function expireCheckoutSession(secretKey: string, sessionId: string): Promise<boolean> {
+  const res = await fetch(`${STRIPE_API}/checkout/sessions/${encodeURIComponent(sessionId)}/expire`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    signal: AbortSignal.timeout(20_000),
+  });
+  return res.ok;
+}
+
 export interface ChargeReceipt {
   chargeId: string | null;
   receiptUrl: string | null;
