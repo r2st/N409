@@ -44,6 +44,8 @@ import { createNotifications } from '../repos/notifications.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
+import { stripeEventKey } from '../domain/stripeEvents.js';
+import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
 
 /**
  * Stripe payment processing (remaining-gaps §3 #1 / §6 P0 #2).
@@ -657,6 +659,30 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       const session = event.data?.object ?? {};
       const sessionId = typeof session.id === 'string' ? session.id : null;
 
+      // Stripe delivers at least once. Every handler below already answers a
+      // replay on its own — the compare-and-set inside `fulfill`, the refunded
+      // total in `handleRefund`, the dispute status in `handleDispute` — and
+      // those remain the guarantee; the ledger does not replace them and could
+      // not, because two simultaneous deliveries can both be classified fresh.
+      //
+      // What it adds here is a record of what arrived and a short answer to the
+      // ordinary sequential replay (the retry ladder, an operator resending
+      // from the dashboard) before four round-trips are spent re-deriving that
+      // there is nothing to do. The endpoint that needed more than that is the
+      // billing one — see migration 0155 and routes/billing.ts.
+      const eventKey = stripeEventKey(event, 'payments');
+      if ((await classifyStripeEvent(deps.pool, eventKey)) === 'duplicate') {
+        return reply.send({ received: true, duplicate: true });
+      }
+      // Recorded on every path out of the handler below, including the ones
+      // that ignore the event — an event we decided to ignore has still been
+      // dealt with, and re-deciding it on each redelivery is work for nothing.
+      // Not on the throw path: an event that failed must be redelivered.
+      const settled = async (body: Record<string, unknown>) => {
+        await recordStripeEvent(deps.pool, eventKey);
+        return reply.send(body);
+      };
+
       // ── Money going back out ────────────────────────────────────────────
       // Refund and dispute events are not `checkout.session.*` and carry a
       // charge or a payment intent rather than a session id, so they are
@@ -664,17 +690,17 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       // existed they fell through it as `ignored` and a refunded engagement
       // stayed paid, published, and counted as revenue.
       if (event.type === 'charge.refunded') {
-        return reply.send(await handleRefund(req.log, session));
+        return settled(await handleRefund(req.log, session));
       }
       if (event.type === 'charge.dispute.created' || event.type === 'charge.dispute.closed') {
-        return reply.send(await handleDispute(req.log, session));
+        return settled(await handleDispute(req.log, session));
       }
 
       if (!event.type?.startsWith('checkout.session.') || !sessionId) {
-        return reply.send({ received: true, ignored: event.type ?? 'unknown' });
+        return settled({ received: true, ignored: event.type ?? 'unknown' });
       }
       const payment = await findPaymentBySessionId(deps.pool, sessionId);
-      if (!payment) return reply.send({ received: true, ignored: 'unknown session' });
+      if (!payment) return settled({ received: true, ignored: 'unknown session' });
 
       // Money has actually arrived, so mark the payment and release the
       // valuation.
@@ -804,7 +830,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
           });
         }
       }
-      return reply.send({ received: true });
+      return settled({ received: true });
     });
   });
 }

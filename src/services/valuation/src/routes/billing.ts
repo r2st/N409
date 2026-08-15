@@ -35,6 +35,8 @@ import {
 import { createNotifications } from '../repos/notifications.js';
 import { listUserIdsWithRoles } from '../repos/users.js';
 import { BILLING_ALERT_ROLES } from '../domain/roles.js';
+import { stripeEventKey } from '../domain/stripeEvents.js';
+import { classifyStripeEvent, recordStripeEvent } from '../repos/stripeEvents.js';
 import {
   formatMoneyCents,
   invoiceNumber,
@@ -316,6 +318,20 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
       const obj = event.data?.object ?? {};
       const type = event.type ?? '';
 
+      // Stripe delivers at least once and orders nothing. The handlers below
+      // are each idempotent by their own means, which makes a replay harmless
+      // where the handler's own state can tell — and says nothing about two
+      // readings of one subscription arriving reversed, which is what its own
+      // retry ladder produces. See migration 0155.
+      const key = stripeEventKey(event, 'billing');
+      const verdict = await classifyStripeEvent(deps.pool, key);
+      if (verdict === 'duplicate') return reply.send({ received: true, duplicate: true });
+      if (verdict === 'stale') {
+        req.log.info({ type, eventId: key.eventId, objectId: key.objectId }, 'stale Stripe event ignored');
+        await recordStripeEvent(deps.pool, key, 'stale');
+        return reply.send({ received: true, stale: true });
+      }
+
       try {
         if (type === 'checkout.session.completed' && obj.mode === 'subscription') {
           const meta = (obj.metadata ?? {}) as Record<string, string>;
@@ -426,6 +442,10 @@ export function registerBillingRoutes(app: FastifyInstance, deps: BillingDeps): 
         req.log.error({ err, type }, 'billing webhook handling failed — returning 5xx for redelivery');
         throw err;
       }
+      // Only after the handlers have run: an event that threw leaves no ledger
+      // row, so the redelivery the 5xx above asks for is not answered as a
+      // duplicate.
+      await recordStripeEvent(deps.pool, key);
       return reply.send({ received: true });
     });
   });
