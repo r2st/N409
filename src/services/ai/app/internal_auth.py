@@ -84,6 +84,27 @@ def tokens_match(provided: str | None, expected: str) -> bool:
     return hmac.compare_digest(_header_bytes(provided), expected.encode("utf-8"))
 
 
+def is_internal_caller(request: Request) -> bool:
+    """True when the caller proved it holds the estate's shared secret.
+
+    Deliberately *not* "true when no secret is configured", which is the rule
+    ``internal_token_middleware`` uses above. There, an unset secret has to mean
+    "open" or every developer machine breaks. Here the thing being gated is
+    disclosure rather than access, and an installation that has not configured a
+    secret is exactly the one least able to afford publishing its topology — so
+    with no secret set nobody is authorized, ``/ready`` still answers with a
+    correct status and per-check pass/fail, and the reasons are in the log.
+
+    Same rule, same reasoning and the same name as ``health.ts::isInternalCaller``
+    on the three Fastify services; readiness disclosure now works one way across
+    the whole estate rather than two.
+    """
+    expected = _configured_token()
+    if expected is None:
+        return False
+    return tokens_match(request.headers.get(INTERNAL_TOKEN_HEADER), expected)
+
+
 class MissingInternalTokenError(RuntimeError):
     """Raised at import time when production has no ``INTERNAL_SERVICE_TOKEN``."""
 

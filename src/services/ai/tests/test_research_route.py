@@ -14,6 +14,7 @@ from app import perplexity
 from app import research as research_mod
 from app.main import app
 from app.websearch import ProviderStatus
+from readiness import operator_checks, operator_ready
 
 client = TestClient(app)
 
@@ -186,7 +187,7 @@ class TestReadiness:
         reporting it as a missing key would train operators to ignore the line."""
         monkeypatch.setattr("app.main.verify_search_provider", lambda: ProviderStatus("valid", "ok"))
         monkeypatch.setattr("app.main.verify_api_key", _ok_key)
-        checks = client.get("/ready").json()["checks"]
+        checks = operator_checks(client, monkeypatch)
         assert "research_primary" not in checks
 
     def test_the_primary_is_reported_when_keyed(self, monkeypatch):
@@ -197,7 +198,7 @@ class TestReadiness:
         )
         monkeypatch.setattr("app.main.verify_search_provider", lambda: ProviderStatus("valid", "ok"))
         monkeypatch.setattr("app.main.verify_api_key", _ok_key)
-        checks = client.get("/ready").json()["checks"]
+        checks = operator_checks(client, monkeypatch)
         assert checks["research_primary"] == "valid"
 
     def test_a_lapsed_primary_key_does_not_take_the_service_down(self, monkeypatch):
@@ -210,7 +211,7 @@ class TestReadiness:
         )
         monkeypatch.setattr("app.main.verify_search_provider", lambda: ProviderStatus("valid", "ok"))
         monkeypatch.setattr("app.main.verify_api_key", _ok_key)
-        res = client.get("/ready")
+        res = operator_ready(client, monkeypatch)
         assert res.status_code == 200
         assert res.json()["checks"]["research_primary"] == "invalid"
         assert res.json()["checks"]["search"] == "valid"
@@ -221,7 +222,7 @@ class TestReadiness:
         installation searches before someone reports missing citations."""
         monkeypatch.setattr("app.main.verify_search_provider", lambda: ProviderStatus("valid", "ok"))
         monkeypatch.setattr("app.main.verify_api_key", _ok_key)
-        checks = client.get("/ready").json()["checks"]
+        checks = operator_checks(client, monkeypatch)
         assert checks["search_provider"] == "duckduckgo"
         assert checks["search"] == "valid"
 
@@ -234,7 +235,7 @@ class TestReadiness:
             raise AssertionError("probed a provider with no key")
 
         monkeypatch.setattr("app.main.verify_search_provider", explode)
-        checks = client.get("/ready").json()["checks"]
+        checks = operator_checks(client, monkeypatch)
         assert checks["search_provider"] == "serper"
         assert "search" not in checks
 
@@ -246,6 +247,6 @@ class TestReadiness:
             lambda: ProviderStatus("unreachable", "could not reach duckduckgo"),
         )
         monkeypatch.setattr("app.main.verify_api_key", _ok_key)
-        res = client.get("/ready")
+        res = operator_ready(client, monkeypatch)
         assert res.status_code == 200
         assert res.json()["checks"]["search"] == "unreachable"

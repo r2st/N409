@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from app import openrouter
 from app.main import app
 from app.openrouter import KeyStatus
+from readiness import operator_ready
 
 client = TestClient(app)
 
@@ -25,7 +26,7 @@ def test_health():
 
 def test_ready_503s_when_key_is_missing(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    res = client.get("/ready")
+    res = operator_ready(client, monkeypatch)
     assert res.status_code == 503
     body = res.json()
     assert body["status"] == "unavailable"
@@ -35,7 +36,7 @@ def test_ready_503s_when_key_is_missing(monkeypatch):
 def test_ready_503s_on_a_wrong_provider_key(monkeypatch):
     """The old check passed anything non-empty; an OpenAI key must not."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-proj-not-an-openrouter-key")
-    res = client.get("/ready")
+    res = operator_ready(client, monkeypatch)
     assert res.status_code == 503
     assert res.json()["checks"]["openrouter_key"] == "malformed"
 
@@ -47,7 +48,7 @@ def test_ready_503s_when_openrouter_rejects_the_key(monkeypatch):
         "_probe_key",
         lambda key, client=None: KeyStatus("invalid", "OpenRouter rejected it"),
     )
-    res = client.get("/ready")
+    res = operator_ready(client, monkeypatch)
     assert res.status_code == 503
     body = res.json()
     assert body["checks"]["openrouter_key"] == "invalid"
@@ -61,7 +62,7 @@ def test_ready_200s_when_the_key_verifies(monkeypatch):
         "_probe_key",
         lambda key, client=None: KeyStatus("valid", "OpenRouter accepted key 'ci'"),
     )
-    res = client.get("/ready")
+    res = operator_ready(client, monkeypatch)
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "ready"

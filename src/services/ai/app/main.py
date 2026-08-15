@@ -11,7 +11,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,7 +20,7 @@ from .anonymize import AnonymizeInputError, Redactor, anonymization_enforced
 from .build_info import build_info
 from .documents import extract_texts
 from .errors import install_error_handlers, make_unhandled_error_middleware
-from .internal_auth import enforce_token_configured, internal_token_middleware
+from .internal_auth import enforce_token_configured, internal_token_middleware, is_internal_caller
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
 from .observability import configure_logging, make_request_context_middleware
 from .llm_router import chat, configured_models
@@ -46,6 +46,7 @@ from .websearch import is_configured as search_configured
 from .websearch import verify_provider as verify_search_provider
 from .pipelines import PIPELINES
 from .ratelimit import limit_per_minute, make_rate_limit_middleware
+from .security_headers import make_security_headers_middleware
 
 # The built-in M1 pipelines plus the analyst agents share one dispatch table
 # and one route contract.
@@ -123,6 +124,10 @@ app.middleware("http")(make_rate_limit_middleware(limit_per_minute(240)))
 app.middleware("http")(make_unhandled_error_middleware(SERVICE))
 # Structured access logging + x-request-id propagation (audit B-2 P3).
 app.middleware("http")(make_request_context_middleware(SERVICE))
+# Outermost, so the headers reach the responses the layers above return without
+# ever seeing a route — the token gate's 401, the body cap's 413, the limiter's
+# 429 and the unhandled-error 500 (round 74).
+app.middleware("http")(make_security_headers_middleware())
 # Put the request id on the deliberate failures as well, so every error
 # response this service can emit is traceable to a log line.
 install_error_handlers(app)
@@ -291,13 +296,52 @@ def health() -> dict:
     }
 
 
+# Readiness entries that are a verdict on a dependency. Everything else in the
+# operator view — the `*_detail` strings, the model chain, the token counter,
+# the provider name — is description, not pass/fail, and has no public form.
+_GATING_CHECKS = ("openrouter_key", "research_primary", "search", "bedrock_credentials")
+
+# What a check reports to a caller that has not proved it is one of ours.
+# Same two words `health.ts` uses, so one probe reads the same across the estate.
+CHECK_OK = "ok"
+CHECK_FAILED = "failed"
+
+
+def _public_checks(detail: dict) -> dict[str, str]:
+    """The operator snapshot with every reason removed and every state flattened."""
+    return {
+        name: CHECK_OK if detail[name] == "valid" else CHECK_FAILED
+        for name in _GATING_CHECKS
+        if name in detail
+    }
+
+
 @app.get("/ready")
-def ready() -> JSONResponse:
+def ready(request: Request) -> JSONResponse:
     """Readiness = the key actually works, not merely that a string is set.
 
     Result is memoised for KEY_CHECK_TTL_S inside verify_api_key, so frequent
     probes cost nothing. Anything other than `valid` is a 503: without a working
     key every pipeline this service exposes returns 503 anyway.
+
+    **It does not say why to just anybody.** This body used to be a description
+    of the inside of the estate handed to whoever asked, and `/ready` is a
+    public path — the token gate above lets it through so a load balancer never
+    needs the secret. What it published was not vague, either. `openrouter_key_detail`
+    on the healthy path is ``OpenRouter accepted key '<label>'``, and an
+    OpenRouter key's label is by convention the first characters of the key
+    itself, so the ordinary 200 leaked a usable prefix of a billable credential.
+    The failure paths were no better: `unreachable` carries the httpx exception
+    (host and port), the Bedrock detail carries whatever botocore said (which
+    for the common failures names the account and the role), and `models` and
+    `search_provider` together are a map of which providers this installation
+    pays for and in what order to try them.
+
+    So the reasons now go to a caller holding `X-Internal-Token` — an operator on
+    the box still gets everything in one curl — and everyone else gets the check
+    names, pass/fail, and the status code, which is all a load balancer acts on.
+    This is the rule `health.ts` has enforced on the three Fastify services since
+    304c0e0; the Python pair were simply never brought along.
     """
     key = verify_api_key()
     checks = {
@@ -337,11 +381,19 @@ def ready() -> JSONResponse:
         aws = verify_bedrock_credentials()
         checks["bedrock_credentials"] = aws.state
         checks["bedrock_credentials_detail"] = aws.detail
+    if not key.ok:
+        # Logged here rather than left only in the response, because the reason
+        # has just stopped being public: an operator who can no longer read it
+        # off /ready has to be able to read it off the journal instead.
+        _log.warning(
+            "readiness check failed — reporting unavailable",
+            extra={"event": "ready", "status": key.state},
+        )
     return JSONResponse(
         status_code=200 if key.ok else 503,
         content={
             "status": "ready" if key.ok else "unavailable",
-            "checks": checks,
+            "checks": checks if is_internal_caller(request) else _public_checks(checks),
             "build_sha": build_info().sha,
         },
     )
