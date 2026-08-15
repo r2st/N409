@@ -282,6 +282,58 @@ describe('the port each unit binds', () => {
   });
 });
 
+// Feature flags are the one class of setting whose runtime *cannot* complain:
+// `flagEnabled` falls back to the default rather than throwing on the request
+// path, deliberately, so a misspelled value leaves the switch where it was and
+// reports nothing. The deploy is therefore the only place a typo can be caught,
+// and these switches get thrown mid-incident — when a silently-ignored one is
+// most expensive.
+describe('feature flags in the env file', () => {
+  const withFlags = (...lines: string[]) => ({ env: [GOOD_ENV, ...lines].join('\n') });
+
+  it('accepts every spelling the reader accepts', () => {
+    expect(
+      run(
+        withFlags(
+          'FLAG_CIRCUIT_BREAKERS=off',
+          'FLAG_RETRY_LADDERS=0',
+          'FLAG_BACKUP_VERIFICATION=DISABLED',
+        ),
+      ).faults,
+    ).toEqual([]);
+  });
+
+  it('accepts an unset flag, which is how every host starts', () => {
+    expect(run(withFlags('FLAG_CIRCUIT_BREAKERS=')).faults).toEqual([]);
+  });
+
+  it('rejects a value nothing can read', () => {
+    const text = messages(withFlags('FLAG_CIRCUIT_BREAKERS=disable'));
+    expect(text).toContain('FLAG_CIRCUIT_BREAKERS');
+    expect(text).toContain('is not a boolean');
+  });
+
+  it('scopes the fault to the env file, not to a unit', () => {
+    // The flags are declared centrally and read on both sides of the language
+    // split — FLAG_BACKUP_VERIFICATION is consumed by a shell script — so a
+    // per-unit scope would be a lie about where the setting lives.
+    const result = run(withFlags('FLAG_RETRY_LADDERS=sometimes'));
+    expect(result.faults).toHaveLength(1);
+    expect(result.faults[0]!.scope).toBe('.env');
+  });
+
+  it('reports a bad flag once, not once per unit that reads the file', () => {
+    // All five units share /opt/N409/.env; five copies of one fault is noise
+    // that hides the other four faults.
+    expect(run(withFlags('FLAG_BACKUP_VERIFICATION=nope')).faults).toHaveLength(1);
+  });
+
+  it('reports each bad flag separately', () => {
+    const result = run(withFlags('FLAG_CIRCUIT_BREAKERS=yep', 'FLAG_RETRY_LADDERS=nah'));
+    expect(result.faults).toHaveLength(2);
+  });
+});
+
 describe('missing units', () => {
   it('are a fault — a unit this checker cannot see is one it never validated', () => {
     const units = { ...UNITS };

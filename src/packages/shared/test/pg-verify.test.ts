@@ -7,7 +7,7 @@
 // the assertions are about what the script actually *did*: which database it
 // created, which URL it restored into, which questions it asked afterwards, and
 // whether it cleaned up.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -334,5 +334,97 @@ describe('pg-verify.sh full restore', () => {
     expect(() => run(['--restore-everything'], {}, rootWith('f11'))).toThrow();
     expect(existsSync(psqlLog)).toBe(true);
     expect(psqlCalls()).toHaveLength(0);
+  });
+});
+
+// FLAG_BACKUP_VERIFICATION — the kill switch declared alongside the TypeScript
+// flags in src/packages/shared/src/flags.ts and read here from the unit's
+// EnvironmentFile.
+//
+// Two properties matter and they pull against each other. The switch has to
+// actually stop the work, including in --quick mode; and an unset or empty
+// variable — the state of every host provisioned from .env.example — has to
+// leave the verification running, because this job is live in production and a
+// flag that defaulted off would silently stop proving the backups on the deploy
+// that introduced it.
+describe('pg-verify.sh FLAG_BACKUP_VERIFICATION', () => {
+  /** Like `run`, but returns stderr too — the script logs there. */
+  function runCapturing(
+    args: string[],
+    env: Record<string, string> = {},
+    backupRoot = path.join(work, 'root'),
+  ): { status: number; stderr: string } {
+    const res = spawnSync('bash', [SCRIPT, ...args], {
+      env: {
+        ...process.env,
+        DATABASE_URL: DB_URL,
+        ENV_FILE: path.join(work, 'does-not-exist.env'),
+        BACKUP_ROOT: backupRoot,
+        PG_RESTORE: stubRestore,
+        PSQL: stubPsql,
+        STUB_LOG: psqlLog,
+        VERIFY_DB: 'n409_verify_test',
+        ...env,
+      },
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    return { status: res.status ?? 1, stderr: res.stderr ?? '' };
+  }
+
+  for (const value of ['0', 'false', 'no', 'off', 'disabled', 'OFF', ' off ']) {
+    it(`skips the restore entirely for ${JSON.stringify(value)}`, () => {
+      const root = rootWith(`flag-off-${value.trim().toLowerCase()}`);
+      const res = runCapturing([], { FLAG_BACKUP_VERIFICATION: value }, root);
+      expect(res.status).toBe(0);
+      // Nothing was restored: no scratch database, no queries, no server touched.
+      expect(psqlCalls()).toHaveLength(0);
+    });
+  }
+
+  it('says plainly that nothing was verified, rather than reporting success', () => {
+    // Exit 0 otherwise means "verified". The log line is the only thing
+    // stopping a reader concluding the backup was tested when it was not.
+    const res = runCapturing([], { FLAG_BACKUP_VERIFICATION: 'off' }, rootWith('flag-says'));
+    expect(res.stderr).toContain('SKIPPED');
+    expect(res.stderr).toContain('nothing was verified');
+  });
+
+  it('skips quick mode too', () => {
+    // Quick mode reads checksums rather than restoring, but it is still the
+    // backup verification, and a switch that covered only one mode would be a
+    // switch nobody could reason about.
+    const root = rootWith('flag-quick');
+    const res = runCapturing(['--quick'], { FLAG_BACKUP_VERIFICATION: 'off' }, root);
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain('SKIPPED');
+    expect(res.stderr).not.toContain('quick verify:');
+  });
+
+  for (const [label, env] of [
+    ['unset', {}],
+    ['empty', { FLAG_BACKUP_VERIFICATION: '' }],
+    ['on', { FLAG_BACKUP_VERIFICATION: 'on' }],
+    ['true', { FLAG_BACKUP_VERIFICATION: 'true' }],
+  ] as const) {
+    it(`still verifies when the flag is ${label}`, () => {
+      const root = rootWith(`flag-on-${label}`);
+      const res = runCapturing([], env, root);
+      expect(res.status).toBe(0);
+      expect(res.stderr).not.toContain('SKIPPED');
+      // The restore actually happened.
+      expect(psqlCalls().length).toBeGreaterThan(0);
+    });
+  }
+
+  it('verifies on a value it cannot read, rather than skipping', () => {
+    // Same direction as the TypeScript reader: an unparseable value falls back
+    // to the shipped behaviour. Skipping on a typo would be a backup silently
+    // going unproven because somebody wrote `disable`.
+    const root = rootWith('flag-garbage');
+    const res = runCapturing([], { FLAG_BACKUP_VERIFICATION: 'disable' }, root);
+    expect(res.status).toBe(0);
+    expect(res.stderr).not.toContain('SKIPPED');
+    expect(psqlCalls().length).toBeGreaterThan(0);
   });
 });

@@ -31,7 +31,7 @@
  */
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { listenPort, mergeEnvSources, parseEnvironmentFile, parseUnitFile } from '@n409/shared';
+import { flagProblems, listenPort, mergeEnvSources, parseEnvironmentFile, parseUnitFile } from '@n409/shared';
 import { loadConfig } from './config.js';
 
 export interface PreflightFault {
@@ -215,6 +215,24 @@ export function preflight(options: PreflightOptions): PreflightResult {
               `is mode ${(mode & 0o777).toString(8).padStart(3, '0')} — it holds JWT_SECRET, the database ` +
               'credentials and every OAuth client secret, and is readable beyond its owner. `chmod 600` it.',
           });
+        }
+
+        // A feature flag set to something no parser recognises.
+        //
+        // Reported here — once per env file, alongside the parse problems and
+        // the mode check — rather than in a per-unit guard, because the flags
+        // are declared centrally and read by units on both sides of the
+        // language split: `FLAG_BACKUP_VERIFICATION` is consumed by a shell
+        // script, and a guard keyed on a systemd unit name would never see it.
+        //
+        // Worth failing a deploy over precisely because the runtime *cannot*
+        // fail: `flagEnabled` falls back to the default rather than throwing on
+        // the request path, so `FLAG_CIRCUIT_BREAKERS=disable` leaves the
+        // breakers on and reports nothing. Without this line the operator's
+        // typo is invisible until they notice the switch they threw did
+        // nothing — which, given when these switches get thrown, is mid-incident.
+        for (const problem of flagProblems(Object.fromEntries(parsed.vars))) {
+          faults.push({ scope: path.basename(declared.path), message: problem });
         }
       }
       for (const [name, value] of parsed.vars) fileVars.set(name, value);

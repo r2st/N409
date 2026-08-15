@@ -107,6 +107,17 @@ export {
   type CircuitState,
 } from './circuit.js';
 export {
+  FLAGS,
+  flagEnabled,
+  flagOverrides,
+  flagProblems,
+  flagSnapshot,
+  parseFlagValue,
+  type FlagEnv,
+  type FlagName,
+  type FlagSpec,
+} from './flags.js';
+export {
   awaitDependencies,
   StartupGate,
   type AwaitDependenciesOptions,

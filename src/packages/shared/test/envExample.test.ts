@@ -115,6 +115,17 @@ function used(): Map<string, string[]> {
         note(m[1]!, rel);
       }
     }
+    // The feature flag registry (flags.ts), which reads `env[spec.env]` — the
+    // variable name lives in the spec, not next to the lookup, so none of the
+    // idioms above can see it. Matched on the `env:` field of a FlagSpec.
+    //
+    // Without this the flags are invisible in *both* directions: a new flag
+    // could ship undocumented, and the three that are documented would look
+    // like variables nothing reads, which is what the second test below
+    // exists to catch.
+    if (file.endsWith('flags.ts')) {
+      for (const m of text.matchAll(/^\s+env:\s*['"]([A-Z][A-Z0-9_]{2,})['"]/gm)) note(m[1]!, rel);
+    }
     // The Vite build's client-visible list, which reads `env[name]` in a loop.
     if (file.endsWith('vite.config.ts')) {
       const start = text.indexOf('const names = [');

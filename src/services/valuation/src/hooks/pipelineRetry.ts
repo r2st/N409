@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { FLAGS, flagEnabled } from '@n409/shared';
 import { claimRetryablePipelineRuns, setPipelineRunStatus } from '../repos/pipelineRuns.js';
 import { findValuationById } from '../repos/valuations.js';
 import { resumePipelineRun, type AutoPipelineDeps } from '../pipeline/autoPipeline.js';
@@ -30,6 +31,12 @@ export async function retryFailedPipelineRuns(deps: {
   autoPipeline: AutoPipelineDeps;
   limit?: number;
 }): Promise<{ claimed: number; resumed: number }> {
+  // See the note in hooks/emailRetry.ts. Claiming is what spends a run's
+  // attempt and moves it to an active status, so refusing to claim leaves the
+  // whole backlog recoverable — which matters more here than in the other two
+  // ladders, because an active run holds the one-per-valuation index.
+  if (!flagEnabled(FLAGS.retryLadders)) return { claimed: 0, resumed: 0 };
+
   const actor = { actorType: 'system', actorId: 'retry-sweep', source: 'auto-pipeline' } as const;
   const claimed = await claimRetryablePipelineRuns(deps.pool, { limit: deps.limit, actor });
 

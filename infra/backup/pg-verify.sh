@@ -40,8 +40,13 @@
 #   REQUIRED_TABLES  Space-separated tables that must exist and be queryable.
 #   PG_RESTORE/PSQL  Binaries; the tests stub these.
 #   KEEP_SCRATCH=1   Leave the scratch database behind for inspection.
+#   FLAG_BACKUP_VERIFICATION
+#                    Kill switch. Off (0/false/no/off/disabled) skips both modes
+#                    and exits 0 with a SKIPPED line. Unset means on. See the
+#                    block below the argument parsing for why 0 and not 1.
 #
-# Exit codes: 0 verified, 1 verification failed, 2 usage/configuration error.
+# Exit codes: 0 verified — or deliberately skipped, see FLAG_BACKUP_VERIFICATION
+# — 1 verification failed, 2 usage/configuration error.
 # Non-zero is a page: a backup that does not restore is indistinguishable from
 # no backup, and it is worth knowing on a Tuesday rather than during an outage.
 set -euo pipefail
@@ -67,6 +72,38 @@ for arg in "$@"; do
     *) DUMP="$arg" ;;
   esac
 done
+
+# ── The kill switch ──────────────────────────────────────────────────────────
+#
+# FLAG_BACKUP_VERIFICATION=off, read from /opt/N409/.env via the unit's
+# EnvironmentFile, same variable and same accepted spellings as the TypeScript
+# registry in src/packages/shared/src/flags.ts. Unset means on, because this
+# verification is already running in production and a flag that defaulted off
+# would silently stop it on the deploy that introduced the flag.
+#
+# The narrow reason to throw it: the restore is the one job here that competes
+# for disk and IO on the same host as the database, and it is the only thing in
+# this directory that can be dropped without losing data. `n409-backup.timer` is
+# untouched, so dumps keep being taken — they just stop being proven.
+#
+# Exits 0. That is a deliberate and slightly uncomfortable choice: 0 otherwise
+# means "verified", and this run verified nothing. Exit 1 was the alternative
+# and it is worse, because it pages somebody for a decision an operator made on
+# purpose, and a job that pages on its own configuration is a job that gets
+# masked entirely — taking the real failures with it. The SKIPPED line is
+# therefore written to be greppable, and it says plainly that nothing was
+# checked, so a log reader is never told a backup was verified when it was not.
+flag_off() {
+  case "$(printf '%s' "${FLAG_BACKUP_VERIFICATION:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
+    0 | false | no | off | disabled) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if flag_off; then
+  log "SKIPPED: FLAG_BACKUP_VERIFICATION=${FLAG_BACKUP_VERIFICATION} — nothing was restored and nothing was verified"
+  exit 0
+fi
 
 # ── Quick mode: checksums + TOC, no server ───────────────────────────────────
 

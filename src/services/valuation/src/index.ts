@@ -7,6 +7,8 @@ import {
   installShutdownHandlers,
   listenHost,
   nonOverlapping,
+  flagOverrides,
+  flagSnapshot,
 } from '@n409/shared';
 
 // OTel first so http/pg get instrumented before anything imports them (issue #4).
@@ -199,6 +201,23 @@ await migrate(pool, { log: (msg) => app.log.info({ migration: msg }, 'migration 
 app.startupGate.markReady();
 await app.listen({ port: config.PORT, host: listenHost() });
 app.log.info({ port: config.PORT }, 'valuation service listening');
+
+// Which flags this process actually booted with.
+//
+// "Are the breakers on?" is asked during an incident, and the honest answer
+// otherwise requires reading a file on the host and knowing what unset means —
+// two steps that are wrong more often than they are right at 3am. Emitting it
+// once at boot puts the answer in the same log the incident is already being
+// read in. Logged at warn when anything departs from its default, because a
+// process running with a kill switch thrown is a fact worth surfacing above the
+// routine boot chatter — a flag left off after an incident is exactly the kind
+// of thing nobody notices for a month.
+{
+  const overrides = flagOverrides();
+  const flags = flagSnapshot();
+  if (overrides.length > 0) app.log.warn({ flags, overrides }, 'feature flags: not all defaults');
+  else app.log.info({ flags }, 'feature flags');
+}
 
 const emailTransports = buildEmailTransports(config, app.log);
 

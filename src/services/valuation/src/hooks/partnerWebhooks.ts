@@ -1,6 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
+import { FLAGS, flagEnabled } from '@n409/shared';
 import {
   buildWebhookPayload,
   DELIVERY_HEADER,
@@ -244,6 +245,13 @@ export async function deliverToWebhook(
 export async function retryDueDeliveries(
   deps: WebhookDeps & { limit?: number; leaseMs?: number },
 ): Promise<{ attempted: number; delivered: number; retrying: number; failed: number }> {
+  // See the note in hooks/emailRetry.ts: claiming nothing is what makes
+  // FLAG_RETRY_LADDERS a pause rather than a loss. A pending delivery keeps its
+  // backoff stamp and its attempt count, and resumes when the flag goes back on.
+  if (!flagEnabled(FLAGS.retryLadders)) {
+    return { attempted: 0, delivered: 0, retrying: 0, failed: 0 };
+  }
+
   const claimed = await claimRetryableDeliveries(deps.pool, {
     limit: deps.limit,
     leaseMs: deps.leaseMs,

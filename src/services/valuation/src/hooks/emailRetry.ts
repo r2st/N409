@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
+import { FLAGS, flagEnabled } from '@n409/shared';
 import { claimRetryableEmails, settleClaimedEmail } from '../repos/emailOutbox.js';
 import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
 import type { EmailTransport } from './stateChange.js';
@@ -39,6 +40,17 @@ export async function retryFailedEmails(deps: {
   limit?: number;
   leaseMs?: number;
 }): Promise<{ attempted: number; sent: number }> {
+  // FLAG_RETRY_LADDERS off stops the sweep *claiming*, which is what makes this
+  // a pause rather than a loss: nothing is claimed, so nothing has its attempt
+  // counter spent or its lease taken, and every row sits exactly where it is
+  // with its ladder intact. Turning the flag back on resumes the backlog from
+  // where it stopped.
+  //
+  // Checked here rather than at the interval in index.ts because this function
+  // is reachable three ways — the timer, the ops retry route, and any future
+  // caller — and a kill switch that only covers one of them is not one.
+  if (!flagEnabled(FLAGS.retryLadders)) return { attempted: 0, sent: 0 };
+
   const channels: Array<'email' | 'sms'> = [];
   if (deps.transport) channels.push('email');
   if (deps.smsTransport) channels.push('sms');

@@ -5,6 +5,8 @@ import {
   classifyFailure,
   classifyStatus,
   currentRequestId,
+  FLAGS,
+  flagEnabled,
   probeReady as sharedProbeReady,
   problems,
   requestIdHeaders,
@@ -276,7 +278,12 @@ export async function postJson<T>(
 ): Promise<T> {
   // One retry by default: both internal services are stateless computations,
   // so a transient outage/restart shouldn't surface as a failed run.
-  const retries = opts.retries ?? 1;
+  //
+  // FLAG_RETRY_LADDERS off pins this to zero however the caller asked, which is
+  // the point: the reason to throw that switch is a dependency failing slowly,
+  // where every retry is load added to the thing least able to carry it. A flag
+  // that individual call sites could override would not be a kill switch.
+  const retries = flagEnabled(FLAGS.retryLadders) ? (opts.retries ?? 1) : 0;
   const backoffMs = opts.backoffMs ?? 250;
   const budgetMs = opts.timeoutMs ?? 120_000;
   const startedAt = Date.now();
@@ -289,7 +296,16 @@ export async function postJson<T>(
     // attempt. Per-attempt would count one dead upstream twice and trip at half
     // the configured threshold; worse, it would let the retry ladder run inside
     // an already-open breaker, which is the exact spending this is here to stop.
-    breaker.acquire();
+    //
+    // FLAG_CIRCUIT_BREAKERS gates the *refusal*, not the bookkeeping: the
+    // recordSuccess/recordFailure calls below run either way, so a breaker
+    // switched off still watches. That asymmetry is deliberate. A breaker that
+    // stopped observing while disabled would come back cold, and the first
+    // thing an operator does after turning it back on is send traffic at the
+    // dependency they just had an incident about — which is precisely when the
+    // memory is worth having. Read per call, so the flag takes effect on the
+    // restart that reloads the unit's EnvironmentFile and needs no rebuild.
+    if (flagEnabled(FLAGS.circuitBreakers)) breaker.acquire();
   } catch (err) {
     if (!(err instanceof CircuitOpenError)) throw err;
     const seconds = Math.max(1, Math.ceil(err.retryAfterMs / 1000));
