@@ -282,9 +282,83 @@ export interface IdempotencyRow {
   partner_id: string;
   idempotency_key: string;
   request_hash: string;
-  response_status: number;
-  response_body: Record<string, unknown>;
+  /** NULL while the claim is held and the request has not answered yet. */
+  response_status: number | null;
+  response_body: Record<string, unknown> | null;
   created_at: Date;
+  completed_at: Date | null;
+}
+
+/**
+ * How long an unfinished claim holds its key before a later request may take
+ * it over.
+ *
+ * The bound on a process dying between claiming a key and answering: until the
+ * window passes, that key is unusable, and the partner sees "still in flight"
+ * for a request that is not. Longer than any partner POST can legitimately run
+ * — these create one row and return — and short enough that a crash is an
+ * inconvenience rather than a support ticket.
+ */
+export const PARTNER_IDEMPOTENCY_STALE = '5 minutes';
+
+export type IdempotencyClaim =
+  /** The caller holds the key and must run the request. */
+  | { kind: 'claimed' }
+  /** A finished request already answered under this key; replay it. */
+  | { kind: 'replay'; row: IdempotencyRow }
+  /** The original is still running. The caller must not run a second one. */
+  | { kind: 'in_flight' }
+  /** This key was used for a different request body. */
+  | { kind: 'mismatch' };
+
+/**
+ * Take the key, or find out who has it.
+ *
+ * The whole point is that this decides rather than reads (migration 0160). The
+ * previous shape — look up, miss, run, record — cannot serialise two requests
+ * that arrive together, because both look up before either records, and the
+ * `ON CONFLICT DO NOTHING` that followed discarded the one piece of evidence
+ * that they had collided.
+ *
+ * Here the insert *is* the arbitration. Exactly one of two concurrent claims
+ * can insert the row; the other conflicts, and `DO UPDATE` gives it a row lock
+ * so it blocks until the winner commits rather than racing it. The `WHERE` on
+ * the update is what decides whether the loser gets to take over: it may only
+ * do so when the row is unfinished *and* older than the takeover window, which
+ * is the crashed-process case. A live claim, or a completed one, falls through
+ * to the empty-result branch and is read back for what it is.
+ *
+ * `created_at` is when the claim was taken and a takeover resets it, so the
+ * window is measured from the current holder rather than from the first one.
+ */
+export async function claimIdempotencyKey(
+  pool: pg.Pool,
+  args: { partnerId: string; key: string; requestHash: string },
+): Promise<IdempotencyClaim> {
+  const { rows: claimed } = await pool.query(
+    `INSERT INTO partner_api_idempotency (partner_id, idempotency_key, request_hash)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (partner_id, idempotency_key) DO UPDATE
+        SET request_hash = EXCLUDED.request_hash,
+            created_at = now()
+      WHERE partner_api_idempotency.completed_at IS NULL
+        AND partner_api_idempotency.created_at <= now() - $4::interval
+     RETURNING partner_id`,
+    [args.partnerId, args.key, args.requestHash, PARTNER_IDEMPOTENCY_STALE],
+  );
+  if (claimed.length > 0) return { kind: 'claimed' };
+
+  const existing = await findIdempotentResponse(pool, args.partnerId, args.key);
+  // The row was there a statement ago and the only thing that removes one is a
+  // release by its own holder — so this is a request that failed, freeing the
+  // key, between the two statements. Retrying the claim would be the honest
+  // answer and a loop; reporting it in flight costs the caller one retry and
+  // cannot double-create.
+  if (!existing) return { kind: 'in_flight' };
+  // Checked before completion, so a replay of a *different* body is refused
+  // whether the original has answered yet or not.
+  if (existing.request_hash !== args.requestHash) return { kind: 'mismatch' };
+  return existing.completed_at === null ? { kind: 'in_flight' } : { kind: 'replay', row: existing };
 }
 
 export async function findIdempotentResponse(
@@ -299,25 +373,39 @@ export async function findIdempotentResponse(
   return rows[0] ?? null;
 }
 
-/**
- * First writer wins; a concurrent duplicate leaves the original response in
- * place, which is exactly what a replay should see.
- */
-export async function storeIdempotentResponse(
+/** Fill in the response the claim was taken for; every later replay sees this. */
+export async function completeIdempotentResponse(
   pool: pg.Pool,
   args: {
     partnerId: string;
     key: string;
-    requestHash: string;
     status: number;
     body: Record<string, unknown>;
   },
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO partner_api_idempotency
-       (partner_id, idempotency_key, request_hash, response_status, response_body)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (partner_id, idempotency_key) DO NOTHING`,
-    [args.partnerId, args.key, args.requestHash, args.status, JSON.stringify(args.body)],
+    `UPDATE partner_api_idempotency
+        SET response_status = $3, response_body = $4, completed_at = now()
+      WHERE partner_id = $1 AND idempotency_key = $2 AND completed_at IS NULL`,
+    [args.partnerId, args.key, args.status, JSON.stringify(args.body)],
+  );
+}
+
+/**
+ * Give the key back, for a request that refused before doing anything.
+ *
+ * Only for a clean refusal — a 4xx from validation, where nothing was written
+ * and the partner is expected to correct the body and send it again under the
+ * same key, which was the original code's stated intent. A request that *threw*
+ * deliberately does not come through here: a throw is the one case where we do
+ * not know whether the write landed, and handing the key back there would let
+ * the retry create the second engagement this whole mechanism exists to
+ * prevent. Those claims are released by the takeover window instead.
+ */
+export async function releaseIdempotencyClaim(pool: pg.Pool, partnerId: string, key: string): Promise<void> {
+  await pool.query(
+    `DELETE FROM partner_api_idempotency
+      WHERE partner_id = $1 AND idempotency_key = $2 AND completed_at IS NULL`,
+    [partnerId, key],
   );
 }

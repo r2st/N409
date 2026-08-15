@@ -11,14 +11,15 @@ import {
 } from '../domain/partnerWebhooks.js';
 import { deliverToWebhook } from '../hooks/partnerWebhooks.js';
 import {
+  claimIdempotencyKey,
+  completeIdempotentResponse,
   createWebhook,
   deleteWebhook,
-  findIdempotentResponse,
   findWebhook,
   listDeliveries,
   listWebhooks,
+  releaseIdempotencyClaim,
   requeueDelivery,
-  storeIdempotentResponse,
   type PartnerWebhookRow,
 } from '../repos/partnerWebhooks.js';
 import { canReadReport, type Principal } from '../auth/rbac.js';
@@ -243,6 +244,20 @@ export function registerPartnerApiRoutes(
    * the same key replays the stored first response instead of re-executing;
    * the same key on a DIFFERENT body is a client bug and is refused. Keys are
    * scoped per partner, so two organisations cannot collide.
+   *
+   * The key is claimed before the work runs, not recorded after it (migration
+   * 0160). Recording after cannot stop the retry that matters — the one sent
+   * while the original is still in flight, because the client timed out or the
+   * operator clicked twice — since both requests look the key up before either
+   * writes, and both then create. Claiming first makes the primary key decide
+   * which of them is the request and which is the duplicate.
+   *
+   * So a concurrent duplicate is refused rather than executed: 409, because we
+   * cannot yet tell it what the original will answer, and a retry once the
+   * original lands replays it. That is the same status Stripe returns for the
+   * same situation, and the alternative — waiting for the first request inside
+   * the second — holds a connection open for an answer the client can ask for
+   * again in a second.
    */
   const withIdempotency = async (
     req: FastifyRequest,
@@ -259,29 +274,44 @@ export function registerPartnerApiRoutes(
     const requestHash = createHash('sha256')
       .update(JSON.stringify(req.body ?? null))
       .digest('hex');
-    const stored = await findIdempotentResponse(deps.pool, token.partnerId, key);
-    if (stored) {
-      if (stored.request_hash !== requestHash) {
-        throw problems.conflict(
-          'This Idempotency-Key was already used for a different request body — use a fresh key per request',
-        );
-      }
-      return reply
-        .status(stored.response_status)
-        .header('x-idempotent-replay', 'true')
-        .send(stored.response_body);
+
+    const claim = await claimIdempotencyKey(deps.pool, {
+      partnerId: token.partnerId,
+      key,
+      requestHash,
+    });
+    if (claim.kind === 'mismatch') {
+      throw problems.conflict(
+        'This Idempotency-Key was already used for a different request body — use a fresh key per request',
+      );
     }
+    if (claim.kind === 'in_flight') {
+      throw problems.conflict(
+        'A request with this Idempotency-Key is still in flight — retry in a moment to receive its response',
+      );
+    }
+    if (claim.kind === 'replay') {
+      return reply
+        .status(claim.row.response_status ?? 200)
+        .header('x-idempotent-replay', 'true')
+        .send(claim.row.response_body);
+    }
+
     const out = await run();
     // Only success is worth replaying: a validation failure should be retried
-    // with a corrected body under the same key, not replayed forever.
+    // with a corrected body under the same key, not replayed forever. Handing
+    // the key back is safe precisely because a refusal wrote nothing — a throw
+    // is a different question and is left to the takeover window, so this is
+    // deliberately not a `finally`.
     if (out.status < 400) {
-      await storeIdempotentResponse(deps.pool, {
+      await completeIdempotentResponse(deps.pool, {
         partnerId: token.partnerId,
         key,
-        requestHash,
         status: out.status,
         body: out.body,
       });
+    } else {
+      await releaseIdempotencyClaim(deps.pool, token.partnerId, key);
     }
     return reply.status(out.status).send(out.body);
   };
@@ -366,8 +396,9 @@ export function registerPartnerApiRoutes(
       },
       errors: {
         '409':
-          'This Idempotency-Key was already used for a different request body. Use a fresh key per ' +
-          'distinct request — retrying with the same key and the same body replays instead.',
+          'This Idempotency-Key was already used for a different request body, or a request holding ' +
+          'it is still in flight. Use a fresh key per distinct request — retrying with the same key ' +
+          'and the same body replays the original response once it has landed.',
       },
       response: '201 { valuation }',
     },
