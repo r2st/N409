@@ -265,17 +265,15 @@ async function postJsonOnce<T>(
     }
   };
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      // The request id makes the engine/AI log lines for this call joinable to
-      // ours; the Python side reads it, or mints one when we have none to give.
-      headers: { 'content-type': 'application/json', ...internalAuthHeaders(), ...requestIdHeaders() },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (err) {
+  /**
+   * Record a failed exchange and throw the error that describes it.
+   *
+   * Shared by the two places an exchange can fail without ever producing a
+   * body: the fetch, and the read of the body it promised. Splitting the
+   * classification across them is how the second one came to have none — see
+   * the note on the `res.text()` call below.
+   */
+  const failExchange = (err: unknown): never => {
     // Our deadline, not their failure: the request may well have been accepted
     // and still be running. Named so the caller's error says whose clock ran
     // out, and flagged so the retry above knows not to duplicate the work.
@@ -295,8 +293,45 @@ async function postJsonOnce<T>(
     const reason = err instanceof Error ? err.message : 'unreachable';
     emit({ response: null, status: null, error: reason });
     throw new InternalServiceError(service, null, reason, [], false, true);
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      // The request id makes the engine/AI log lines for this call joinable to
+      // ours; the Python side reads it, or mints one when we have none to give.
+      headers: { 'content-type': 'application/json', ...internalAuthHeaders(), ...requestIdHeaders() },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    return failExchange(err);
   }
-  const text = await res.text();
+  /**
+   * The body, under the same error boundary as the fetch that promised it.
+   *
+   * `AbortSignal.timeout` does not stop at the response headers — it aborts the
+   * body stream too — so an upstream that answers and then stalls mid-body
+   * fails *here*, at the deadline, with the same `TimeoutError` the fetch would
+   * have raised. This `await` used to sit outside every catch in this function,
+   * so that one exit path behaved unlike all the others: nothing recorded a
+   * `network_items` row, nothing produced an `InternalServiceError`, and the
+   * route saw a bare `DOMException` rather than the abandoned-upstream problem
+   * it maps to a gateway status. A slow engine looked like a bug in this
+   * service, and the diagnostic that would have said otherwise was the one
+   * thing not written.
+   *
+   * The same boundary covers a connection dropped mid-body, which arrives as an
+   * ordinary transport error and is retryable for the same reason a refused
+   * connection is: there is no complete response either way.
+   */
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (err) {
+    return failExchange(err);
+  }
   if (!res.ok) {
     let detail = text.slice(0, 500);
     // Until a problem document says otherwise, `detail` is whatever bytes the

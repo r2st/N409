@@ -4,7 +4,9 @@ import {
   internalAuthHeaders,
   parseIssues,
   postJson,
+  setNetworkSink,
   toProblem,
+  type NetworkCall,
 } from '../../src/clients/internal.js';
 import { runWithRequestId } from '@n409/shared';
 import { AI_PIPELINE_TIMEOUT_MS } from '../../src/routes/ai.js';
@@ -333,5 +335,102 @@ describe('the AI pipeline deadline outlasts the AI service budget', () => {
     // looser of the two, or we abandon work that was going to succeed.
     const AI_SERVICE_CALL_BUDGET_MS = 150_000;
     expect(AI_PIPELINE_TIMEOUT_MS).toBeGreaterThan(AI_SERVICE_CALL_BUDGET_MS);
+  });
+});
+
+/**
+ * `AbortSignal.timeout` does not stop at the response headers — it aborts the
+ * body stream too. So an upstream that answers and then stalls mid-body fails
+ * at the `res.text()` rather than at the `fetch`, and that `await` used to sit
+ * outside every catch in `postJsonOnce`: no `network_items` row, no
+ * `InternalServiceError`, and a bare `DOMException` reaching the route instead
+ * of the upstream problem it maps to a 502. A slow engine looked like a bug in
+ * this service, and the diagnostic that would have said otherwise was the one
+ * thing not written.
+ */
+describe('internal client — the body is inside the error boundary too', () => {
+  /** Headers arrived; the body then aborts, the way undici reports our deadline. */
+  const abortMidBody = (name: 'TimeoutError' | 'AbortError' = 'TimeoutError') =>
+    ({
+      ok: true,
+      status: 200,
+      text: () => Promise.reject(Object.assign(new Error('The operation was aborted'), { name })),
+    }) as unknown as Response;
+
+  /** Headers arrived; the connection then died — undici's `terminated`. */
+  const resetMidBody = () =>
+    ({
+      ok: true,
+      status: 200,
+      text: () => Promise.reject(new TypeError('terminated')),
+    }) as unknown as Response;
+
+  afterEach(() => {
+    setNetworkSink(null);
+  });
+
+  it('reports a body that timed out as the deadline it was, not as a 500', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(abortMidBody()));
+    const err = await postJson('engine', 'http://x/y', {}, { timeoutMs: 5_000 }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(InternalServiceError);
+    expect(err.abandoned).toBe(true);
+    expect(err.detail).toBe('did not respond within 5s');
+    expect(toProblem(err as InternalServiceError).status).toBe(502);
+  });
+
+  it('does not re-send a call whose body our own deadline abandoned', async () => {
+    // Same reason the headers case does not: the upstream took the request and
+    // may still be running it.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(abortMidBody())
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postJson('engine', 'http://x/y', {}, { backoffMs: 1 })).rejects.toBeInstanceOf(
+      InternalServiceError,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('an AbortError mid-body is classified the same way as a TimeoutError', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(abortMidBody('AbortError')));
+    const err = await postJson('engine', 'http://x/y', {}, { timeoutMs: 30_000 }).catch((e) => e);
+    expect(err).toBeInstanceOf(InternalServiceError);
+    expect(err.abandoned).toBe(true);
+  });
+
+  it('retries a connection dropped mid-body — there is no complete response either way', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(resetMidBody())
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postJson('engine', 'http://x/y', {}, { backoffMs: 1 })).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('records the failed exchange, which is the row that names the real culprit', async () => {
+    const calls: NetworkCall[] = [];
+    setNetworkSink((call) => calls.push(call));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(abortMidBody()));
+
+    await postJson(
+      'engine',
+      'http://x/y',
+      { cap_table: 'big' },
+      { timeoutMs: 5_000, record: { valuationId: '01JAAAAAAAAAAAAAAAAAAAAAAA', name: 'engine compute' } },
+    ).catch(() => undefined);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      service: 'engine',
+      name: 'engine compute',
+      status: null,
+      error: 'did not respond within 5s',
+      response: null,
+    });
   });
 });
