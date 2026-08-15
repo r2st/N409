@@ -198,3 +198,163 @@ describe.skipIf(!dbUp)('branding', () => {
     ).toBe(403);
   });
 });
+
+/**
+ * Caching on the three resolved-branding reads.
+ *
+ * These are the busiest non-static endpoints here — the signed-out SPA calls
+ * `/public/branding` before its first frame and the signed-in one calls
+ * `/branding` on every load — so they carry a read-through cache and an ETag.
+ * Both introduce a way to be wrong that the routes did not have before, and the
+ * expensive one is staleness: a firm administrator who fixes their logo and
+ * still sees the old one has no way to tell a cache from a failed save. The
+ * invalidation tests below are the point of this block; the 304 tests only
+ * confirm the saving is actually taken.
+ */
+describe.skipIf(!dbUp)('branding caching', () => {
+  let ctx: TestApp;
+  let firmId: string;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp();
+    firmId = await seedPartner(ctx, 'Cacheable Firm');
+  });
+  afterAll(() => ctx.teardown());
+
+  const get = (url: string, headers: Record<string, string> = {}) =>
+    ctx.app.inject({ method: 'GET', url, headers });
+
+  it('gives the signed-in read an ETag and answers a match with a bodyless 304', async () => {
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+    const first = await get('/api/v1/branding', authHeader(admin.token));
+    expect(first.statusCode).toBe(200);
+    const etag = first.headers.etag as string;
+    expect(etag).toBeTruthy();
+
+    const second = await get('/api/v1/branding', {
+      ...authHeader(admin.token),
+      'if-none-match': etag,
+    });
+    expect(second.statusCode).toBe(304);
+    expect(second.body).toBe('');
+  });
+
+  it('keeps the signed-in read private — it is chosen by the caller, not the URI', async () => {
+    // A shared cache holding this would serve one firm's brand to another's
+    // staff, because the URL is identical for every tenant.
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+    const res = await get('/api/v1/branding', authHeader(admin.token));
+    expect(res.headers['cache-control']).toContain('private');
+    expect(res.headers['cache-control']).toContain('no-cache');
+  });
+
+  it('lets a shared cache hold the anonymous read', async () => {
+    const res = await get('/api/v1/public/branding');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('public, no-cache');
+    expect(res.headers.etag).toBeTruthy();
+  });
+
+  it('answers a matching If-None-Match on the anonymous read with a 304', async () => {
+    const first = await get('/api/v1/public/branding');
+    const second = await get('/api/v1/public/branding', {
+      'if-none-match': first.headers.etag as string,
+    });
+    expect(second.statusCode).toBe(304);
+  });
+
+  it('sends the body again when the client holds a different version', async () => {
+    const res = await get('/api/v1/public/branding', { 'if-none-match': '"not-the-one"' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().branding).toBeTruthy();
+  });
+
+  // ── the half that can be wrong ──────────────────────────────────────────────
+
+  it('shows a rebrand on the very next read, rather than after the TTL', async () => {
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: '/api/v1/branding',
+      headers: authHeader(admin.token),
+      payload: { brand_name: 'Before', white_label_enabled: true },
+    });
+    const before = await get('/api/v1/branding', authHeader(admin.token));
+    expect(before.json().branding.name).toBe('Before');
+
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: '/api/v1/branding',
+      headers: authHeader(admin.token),
+      payload: { brand_name: 'After' },
+    });
+
+    // No waiting: the write clears the cache, so this is the new value even
+    // though the 60s TTL has not come close to expiring.
+    const after = await get('/api/v1/branding', authHeader(admin.token));
+    expect(after.json().branding.name).toBe('After');
+  });
+
+  it('changes the ETag when the brand changes, so a held copy is not reused', async () => {
+    // The failure this guards is subtle: a correct invalidation with a stale
+    // validator still serves the old bytes, because the client asks "is my copy
+    // current?" and gets a 304 for a copy that is not.
+    const admin = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: '/api/v1/branding',
+      headers: authHeader(admin.token),
+      payload: { brand_name: 'Etag One', white_label_enabled: true },
+    });
+    const first = await get('/api/v1/branding', authHeader(admin.token));
+    const firstEtag = first.headers.etag as string;
+
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: '/api/v1/branding',
+      headers: authHeader(admin.token),
+      payload: { brand_name: 'Etag Two' },
+    });
+
+    const revalidated = await get('/api/v1/branding', {
+      ...authHeader(admin.token),
+      'if-none-match': firstEtag,
+    });
+    expect(revalidated.statusCode).toBe(200);
+    expect(revalidated.json().branding.name).toBe('Etag Two');
+  });
+
+  it('does not serve one tenant the other tenant’s cached brand', async () => {
+    // The cache is keyed per tenant; a single shared entry would be the worst
+    // bug available here, so it is asserted rather than assumed.
+    const otherId = await seedPartner(ctx, 'Other Cacheable Firm');
+    const mine = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+    const theirs = await seedUser(ctx, { roles: ['partner'], partnerId: otherId });
+
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: '/api/v1/branding',
+      headers: authHeader(mine.token),
+      payload: { brand_name: 'Mine', white_label_enabled: true },
+    });
+    await ctx.app.inject({
+      method: 'PATCH',
+      url: '/api/v1/branding',
+      headers: authHeader(theirs.token),
+      payload: { brand_name: 'Theirs', white_label_enabled: true },
+    });
+
+    expect((await get('/api/v1/branding', authHeader(mine.token))).json().branding.name).toBe('Mine');
+    expect((await get('/api/v1/branding', authHeader(theirs.token))).json().branding.name).toBe(
+      'Theirs',
+    );
+  });
+
+  it('still 404s an unknown slug, and does so from the cached miss', async () => {
+    const first = await get('/api/v1/public/branding/no-such-tenant');
+    expect(first.statusCode).toBe(404);
+    // Second time is served from the cached null rather than a second query;
+    // what is asserted is that caching the miss did not turn it into a 200.
+    expect((await get('/api/v1/public/branding/no-such-tenant')).statusCode).toBe(404);
+  });
+});
