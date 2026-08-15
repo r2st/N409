@@ -11,6 +11,7 @@ import {
   registerRequestDrain,
   trustedProxies,
 } from '@n409/shared';
+import { verifyFontAssets } from '@n409/report/pdf';
 import type { Config } from './config.js';
 import { GoogleOidc } from './auth/google.js';
 import { registerAuth } from './plugins/auth.js';
@@ -314,6 +315,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       },
       ai: () => probeReady('ai', config.AI_URL, { fetchFn: deps.readinessFetch }),
       engine: () => probeReady('engine', config.ENGINE_URL, { fetchFn: deps.readinessFetch }),
+      // The 409A PDF is rendered here, in-process (`@n409/report/pdf`), not by
+      // the report unit — so the font assets that render depends on are this
+      // service's dependency as much as Postgres is, and are checked here for
+      // the same reason the AI and engine probes are: readiness that covers
+      // only the connections misses the deliverable.
+      fonts: async () => verifyFontAssets(),
     },
   });
   // Auto-email transport; delivery status is tracked in email_outbox.

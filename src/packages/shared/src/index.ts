@@ -18,7 +18,14 @@ export {
   scrubUrl,
   SENSITIVE_QUERY_PARAMS,
 } from './problem.js';
-export { registerHealth, probeReady, type ReadinessCheck } from './health.js';
+export {
+  registerHealth,
+  probeReady,
+  CHECK_FAILED,
+  CHECK_OK,
+  READY_CACHE_MS,
+  type ReadinessCheck,
+} from './health.js';
 export {
   INTERNAL_PUBLIC_PATHS,
   INTERNAL_TOKEN_ENV,

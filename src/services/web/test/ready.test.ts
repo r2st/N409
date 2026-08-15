@@ -62,7 +62,7 @@ describe('web /ready', () => {
     const res = await a.inject({ method: 'GET', url: '/ready' });
     expect(res.statusCode).toBe(503);
     expect(res.json().status).toBe('unavailable');
-    expect(res.json().checks.postgres).toBe('connection refused');
+    expect(res.json().checks.postgres).toBe('failed');
     await a.close();
   });
 
@@ -73,7 +73,7 @@ describe('web /ready', () => {
     const { checks } = res.json();
     expect(checks.postgres).toBe('ok');
     for (const name of ['valuation', 'ai', 'engine']) {
-      expect(checks[name]).toMatch(/not ready \(HTTP 503\)/);
+      expect(checks[name]).toBe('failed');
     }
     await a.close();
   });
@@ -89,18 +89,27 @@ describe('web /ready', () => {
     const res = await a.inject({ method: 'GET', url: '/ready' });
     expect(res.statusCode).toBe(503);
     expect(res.json().checks).toMatchObject({ postgres: 'ok', valuation: 'ok', engine: 'ok' });
-    expect(res.json().checks.ai).toMatch(/503/);
+    expect(res.json().checks.ai).toBe('failed');
     await a.close();
   });
 
-  it('reports an unreachable upstream by name and url', async () => {
+  it('names the upstream that is down without publishing where it lives', async () => {
+    // This is the origin the public reaches, and /ready is unauthenticated on
+    // it by necessity. It used to answer a stranger with
+    // `valuation unreachable at http://127.0.0.1:3001/ready: ECONNREFUSED` —
+    // the internal address and port of the service behind the proxy, handed
+    // out during any restart. The check name is what a probe acts on; the
+    // address is not, and now goes only to the log and to a caller holding the
+    // internal token (see @n409/shared health.test.ts).
     const dead = (async () => {
       throw new Error('ECONNREFUSED');
     }) as typeof fetch;
     const a = app({ readinessFetch: dead, valuationUrl: 'http://127.0.0.1:3001' });
     const res = await a.inject({ method: 'GET', url: '/ready' });
     expect(res.statusCode).toBe(503);
-    expect(res.json().checks.valuation).toContain('http://127.0.0.1:3001/ready');
+    expect(res.json().checks.valuation).toBe('failed');
+    expect(res.payload).not.toContain('127.0.0.1');
+    expect(res.payload).not.toContain('3001');
     await a.close();
   });
 
@@ -135,7 +144,7 @@ describe('web /ready', () => {
       const a = buildApp({ staticRoot: '/nonexistent', readinessFetch: upstreamsUp });
       const res = await a.inject({ method: 'GET', url: '/ready' });
       expect(res.statusCode).toBe(503);
-      expect(res.json().checks.postgres).toMatch(/DATABASE_URL is not configured/);
+      expect(res.json().checks.postgres).toBe('failed');
       await a.close();
     } finally {
       if (saved !== undefined) process.env.DATABASE_URL = saved;

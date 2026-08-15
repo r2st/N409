@@ -65,7 +65,9 @@ describe('health endpoints (issue #4)', () => {
     });
     const res = await app.inject({ method: 'GET', url: '/ready' });
     expect(res.statusCode).toBe(503);
-    expect(res.json().checks.db).toBe('connection refused');
+    // Pass/fail, not the reason — see health.test.ts for why, and for the one
+    // caller that does get told.
+    expect(res.json().checks.db).toBe('failed');
   });
 
   it('passes readiness when checks succeed', async () => {
@@ -92,9 +94,9 @@ describe('health endpoints (issue #4)', () => {
     const res = await app.inject({ method: 'GET', url: '/ready' });
     expect(res.statusCode).toBe(503);
     expect(res.json().checks).toEqual({
-      db: 'connection refused',
+      db: 'failed',
       ok: 'ok',
-      ai: 'unreachable',
+      ai: 'failed',
     });
   });
 

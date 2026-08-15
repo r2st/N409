@@ -8,7 +8,7 @@ import {
   registerProblemHandler,
   registerRequestDrain,
 } from '@n409/shared';
-import { renderReportPdf } from './pdf.js';
+import { renderReportPdf, verifyFontAssets } from './pdf.js';
 
 /**
  * Report service (M2): stateless PDF rendering for valuation reports.
@@ -99,13 +99,24 @@ export function buildApp(): FastifyInstance {
   const app = Fastify({
     loggerInstance: createLogger({ service: 'report' }),
     bodyLimit: 8 * 1024 * 1024,
+    // Adopt the caller's request id rather than minting a new one, so a render
+    // logs under the same id as the valuation request that asked for it. The
+    // other two Fastify services already do this and the Python pair read the
+    // header into a contextvar; this was the one hop where the chain broke.
+    requestIdHeader: 'x-request-id',
   }) as unknown as FastifyInstance;
   registerProblemHandler(app);
   // Shared secret, same contract as the AI and engine services. Registered
   // before the render route so an unauthenticated caller is refused before the
   // 8 MB body is read, let alone rendered.
   registerInternalAuth(app, { service: 'report' });
-  registerHealth(app, { service: 'report' });
+  // This service registered no checks at all, which made /ready a 200 it was
+  // structurally incapable of ever withholding — the same lie the web service's
+  // /ready used to tell, and deploy.sh probes this unit too. It renders PDFs and
+  // holds no connections, so the whole of "can it do its job" is whether the
+  // four embedded faces are readable; see verifyFontAssets for why that is a
+  // real deploy failure rather than a hypothetical one.
+  registerHealth(app, { service: 'report', checks: { fonts: async () => verifyFontAssets() } });
   // Let a render that is already running finish before `close()` takes its
   // socket away — Fastify 5 does not, see drain.ts. A render in flight is the
   // realistic reason this service is slow to close, and until the drain existed

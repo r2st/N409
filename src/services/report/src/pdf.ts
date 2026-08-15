@@ -410,6 +410,34 @@ export function faceCovers(face: FaceName, code: number): boolean {
   return faceMetrics(face).hasGlyphForCodePoint(code);
 }
 
+/**
+ * Opens all four faces, throwing if any of them cannot be read.
+ *
+ * Exists to be a readiness check. Every other dependency of a render is code in
+ * this process; the fonts are four files on disk, resolved relative to this
+ * module, and they are the one part of a render that a deploy can get wrong —
+ * `assets/` is a sibling of `dist/` rather than something the build emits, so
+ * an archive, image or volume mount that omits it leaves a service that starts
+ * cleanly, answers /health, and then fails every render.
+ *
+ * Nothing notices that today: `openFaces` is lazy, so the first evidence is a
+ * 500 on a report somebody asked for. Calling this at probe time moves the
+ * discovery to /ready, where the deploy is still watching. It is cheap to
+ * repeat — after the first call every face is memoised — and it deliberately
+ * does not name the path in the error, since that string ends up in a readiness
+ * body.
+ */
+export function verifyFontAssets(): void {
+  for (const face of Object.keys(FACES) as FaceName[]) {
+    try {
+      faceMetrics(face);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`report font "${FACES[face].file}" is unreadable: ${reason}`);
+    }
+  }
+}
+
 /** The face a registered font name belongs to, or null if we did not register it. */
 function faceNamed(name: string): FaceName | null {
   for (const [key, entry] of Object.entries(FACES)) if (entry.name === name) return key as FaceName;

@@ -310,7 +310,15 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
 
       const ready = await ctx.app.inject({ method: 'GET', url: '/ready' });
       expect(ready.statusCode).toBe(200);
-      expect(ready.json().checks).toMatchObject({ postgres: 'ok', ai: 'ok', engine: 'ok' });
+      // `fonts` is here because the 409A PDF is rendered in this process, so a
+      // deploy that dropped the embedded faces would leave every report route
+      // failing behind a green /ready.
+      expect(ready.json().checks).toMatchObject({
+        postgres: 'ok',
+        ai: 'ok',
+        engine: 'ok',
+        fonts: 'ok',
+      });
     });
 
     it('is not ready when a downstream service is not ready', async () => {
@@ -323,8 +331,10 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
         expect(ready.statusCode).toBe(503);
         expect(ready.json().status).toBe('unavailable');
         expect(ready.json().checks.postgres).toBe('ok');
-        expect(ready.json().checks.ai).toContain('not ready');
-        expect(ready.json().checks.engine).toContain('not ready');
+        // Which check failed, not why: the reason names the upstream's address
+        // and this body is served unauthenticated (see @n409/shared health.ts).
+        expect(ready.json().checks.ai).toBe('failed');
+        expect(ready.json().checks.engine).toBe('failed');
       } finally {
         await down.teardown();
       }
@@ -338,7 +348,8 @@ describe.skipIf(!dbUp)('valuation API (M0 exit criteria)', () => {
       try {
         const ready = await down.app.inject({ method: 'GET', url: '/ready' });
         expect(ready.statusCode).toBe(503);
-        expect(ready.json().checks.ai).toContain('unreachable');
+        expect(ready.json().checks.ai).toBe('failed');
+        expect(ready.payload).not.toContain('ECONNREFUSED');
       } finally {
         await down.teardown();
       }
