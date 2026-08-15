@@ -376,6 +376,19 @@ else
   log "validating $REMOTE_DIR/.env against the start-up guards"
   run_remote "cd $REMOTE_DIR/src/services/valuation && node dist/preflight-cli.js --env-file $REMOTE_DIR/.env --unit-dir $REMOTE_DIR/infra/systemd" \
     || die "the host's configuration would be rejected at boot — nothing was restarted, the previous release is still serving. Fix $REMOTE_DIR/.env and deploy again (SKIP_PREFLIGHT=1 overrides, which trades a failed deploy for a failed service)"
+
+  # The Python pair validates its own tunables — body caps, threadpool sizes,
+  # rate ceilings, the OpenRouter budgets — and refuses a production boot on a
+  # value it cannot parse. `preflight-cli.js` cannot cover them: Node cannot
+  # import a Python module, and transcribing the specs into TypeScript would
+  # leave two lists to keep in step. So each service is asked directly, in the
+  # interpreter that will enforce the answer, which is why there is nothing here
+  # that can drift from what the service actually does at boot.
+  for svc in ai engine-wrapper; do
+    log "validating $REMOTE_DIR/.env against the $svc start-up guards"
+    run_remote "cd $REMOTE_DIR/src/services/$svc && .venv/bin/python -m app.config_check --env-file $REMOTE_DIR/.env" \
+      || die "the host's configuration would be rejected by the $svc service at boot — nothing was restarted, the previous release is still serving. Fix $REMOTE_DIR/.env and deploy again (SKIP_PREFLIGHT=1 overrides, which trades a failed deploy for a failed service)"
+  done
 fi
 
 # ── 5. Record what was built — after the build, never before ─────────────────

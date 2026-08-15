@@ -17,6 +17,7 @@ from .engine.approaches import EngineInputError
 from .engine.compute import ENGINE_VERSION, compute
 from .engine.validate import split_issues, validate_payload
 from .build_info import build_info
+from .config_check import enforce_env_valid
 from .errors import error_response, install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import enforce_token_configured, internal_token_middleware
 from .limits import configure_threadpool, make_body_limit_middleware, max_body_bytes, threadpool_size
@@ -58,6 +59,11 @@ _started = time.monotonic()
 _MAX_BODY_BYTES = max_body_bytes(8 * 1024 * 1024)
 
 configure_logging(SERVICE)
+
+# Read every tunable once, here, rather than leaving each one to be found wrong
+# by whichever request first reaches its helper. Raises in production and warns
+# elsewhere; see config_check for why the line falls there.
+enforce_env_valid()
 
 
 @asynccontextmanager

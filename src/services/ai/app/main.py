@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .agents import AGENT_PIPELINES, PipelineInputError
 from .anonymize import AnonymizeInputError, Redactor, anonymization_enforced
 from .build_info import build_info
+from .config_check import enforce_env_valid
 from .documents import extract_texts
 from .errors import install_error_handlers, make_unhandled_error_middleware
 from .internal_auth import enforce_token_configured, internal_token_middleware, is_internal_caller
@@ -62,6 +63,11 @@ _MAX_BODY_BYTES = max_body_bytes(32 * 1024 * 1024)
 
 configure_logging(SERVICE)
 _log = logging.getLogger(SERVICE)
+
+# Read every tunable once, here, rather than leaving each one to be found wrong
+# by whichever request first reaches its helper. Raises in production and warns
+# elsewhere; see config_check for why the line falls there.
+enforce_env_valid()
 
 
 def require_verified_key() -> bool:
