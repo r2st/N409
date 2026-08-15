@@ -2,7 +2,13 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
 import { isUlid, problems } from '@n409/shared';
-import { canEditWorkingData, canReadValuation, valuationScope } from '../auth/rbac.js';
+import {
+  canEditWorkingData,
+  canReadValuation,
+  isOps,
+  valuationScope,
+  type Principal,
+} from '../auth/rbac.js';
 import {
   exportValuations,
   findValuationById,
@@ -62,6 +68,46 @@ const CSV_COLUMNS = [
   'due_date',
   'published_at',
 ] as const;
+
+/**
+ * Columns that are internal firm information, withheld from everyone else.
+ *
+ * Scope decides which *rows* an export contains — `valuationScope(principal)`,
+ * applied in the repo — and until now nothing decided its *columns*. The
+ * projection was one fixed list, so a client exporting their own engagement got
+ * the same file ops would.
+ *
+ * `reviewer_email` is the one that does not belong there. The assigned reviewer
+ * is who at the firm is checking the work: the workspace renders it behind
+ * `{ops && …}`, only the ops arm of `editableFields` may set it, and the JSON
+ * list returns the reviewer's *id* rather than an address at all. The export
+ * joined `users` and handed over the address itself, to every client and every
+ * partner member, on a URL the UI never links.
+ *
+ * Withheld rather than removed: ops export this deliberately — it is how a firm
+ * reconciles reviewer workload outside the app — so the column stays and the
+ * projection is chosen per reader.
+ *
+ * `owner_email` and `partner_name` stay for everyone: within a caller's own
+ * scope the owner is themselves or their own client, and the partner is their
+ * own firm. Neither tells a reader anything their scope did not already.
+ */
+const OPS_ONLY_EXPORT_COLUMNS: ReadonlySet<string> = new Set(['reviewer_email']);
+
+/**
+ * The export projection for this reader.
+ *
+ * Applied to both the CSV header list and the XLSX column list from one
+ * predicate, so the two cannot drift — a fix that reached only the CSV would
+ * leave the same address in the spreadsheet beside it.
+ */
+export function exportColumnsVisibleTo<T extends string | { key: string }>(
+  columns: readonly T[],
+  principal: Principal,
+): T[] {
+  if (isOps(principal)) return [...columns];
+  return columns.filter((c) => !OPS_ONLY_EXPORT_COLUMNS.has(typeof c === 'string' ? c : c.key));
+}
 
 /** PDF: a narrower projection that fits a printable table. */
 function pdfRowValues(v: ValuationRow): unknown[] {
@@ -197,14 +243,15 @@ export function registerExportRoutes(app: FastifyInstance, deps: { pool: pg.Pool
         return sendExport(reply, truncated)
           .header('content-type', 'text/csv; charset=utf-8')
           .header('content-disposition', `attachment; filename="valuations-${stamp}.csv"`)
-          .send(recordsToCsv(CSV_COLUMNS, rows));
+          .send(recordsToCsv(exportColumnsVisibleTo(CSV_COLUMNS, principal), rows));
       }
+      const xlsxColumns = exportColumnsVisibleTo(XLSX_LIST_COLUMNS, principal);
       const xlsx = buildXlsx(
         [
           {
             name: 'Valuations',
-            columns: XLSX_LIST_COLUMNS,
-            rows: rows.map((row) => XLSX_LIST_COLUMNS.map((c) => xlsxCell(row[c.key], c.format))),
+            columns: xlsxColumns,
+            rows: rows.map((row) => xlsxColumns.map((c) => xlsxCell(row[c.key], c.format))),
             // Above the header, where a reader cannot miss it and no column
             // parser will read it as data.
             titleLines: truncated ? [truncationNotice(rows.length)] : undefined,
