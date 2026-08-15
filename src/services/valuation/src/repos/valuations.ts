@@ -353,10 +353,29 @@ export function parseSort(raw: string | undefined): SortSpec[] | null {
  * The export query joins `users` and `partners`, both of which have their own
  * `created_at` and `id`, so an unqualified term there is not merely untidy — it
  * is an ambiguous-column error from Postgres.
+ *
+ * Exported for the tiebreaker sweep only: this is the one paged query whose
+ * ORDER BY is built rather than written inline, so a source scan reading the
+ * SQL literal sees an interpolation and cannot judge it. The sweep calls this
+ * instead, which is the stronger check anyway — it judges both branches.
  */
-function orderBySql(sort: SortSpec[] | undefined, alias = ''): string {
-  if (!sort || sort.length === 0) return `ORDER BY ${alias}created_at DESC`;
-  const parts = sort.map((s) => `${alias}${s.column} ${s.dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST`);
+export function orderBySql(sort: SortSpec[] | undefined, alias = ''): string {
+  // The tiebreaker belongs on both branches, and used to be on only one.
+  //
+  // `created_at` defaults to `now()`, which in Postgres is the *transaction*
+  // timestamp — every row written by one transaction carries the same instant to
+  // the microsecond. Rows tying the sort key have no defined order between two
+  // statements, and the page query is issued twice with different OFFSETs, so a
+  // tie straddling a page boundary can serve the same engagement on both pages
+  // and never serve its neighbour on either. `total` still counts it, which is
+  // how this reads to a client: a list whose last page is short and whose count
+  // says a row is missing.
+  //
+  // The default branch is the one the UI actually uses — sorting is opt-in — so
+  // the branch that had the tiebreaker was the branch that needed it less.
+  const parts = sort?.length
+    ? sort.map((s) => `${alias}${s.column} ${s.dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST`)
+    : [`${alias}created_at DESC`];
   parts.push(`${alias}id ASC`); // deterministic tiebreaker for stable pagination
   return `ORDER BY ${parts.join(', ')}`;
 }

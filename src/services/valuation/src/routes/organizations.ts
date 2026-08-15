@@ -11,6 +11,7 @@ import {
   findOrganization,
   organizationParentWouldCycle,
   listOrganizations,
+  ORG_ENTITY_PAGE_LIMIT,
   ORG_PAGE_LIMIT,
   listPortfolioEntities,
   setEntityRelationship,
@@ -94,16 +95,35 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
     });
   });
 
+  /**
+   * The entity list, and the two things computed from it.
+   *
+   * `truncated` is reported rather than swallowed: `consolidated` sums equity
+   * across exactly these rows, so a capped read is a roll-up that is short by an
+   * unknown amount, and a screen drawing what it is given cannot tell that from
+   * a small portfolio.
+   */
+  const loadEntities = async (orgId: string, limit?: number) =>
+    listPortfolioEntities(deps.pool, orgId, { limit });
+
+  const EntityQuery = z.object({
+    limit: z.coerce.number().int().min(1).max(ORG_ENTITY_PAGE_LIMIT).optional(),
+  });
+
   app.get('/api/v1/organizations/:id', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
+    const query = EntityQuery.safeParse(req.query ?? {});
+    if (!query.success) throw problems.badRequest('Invalid query', { errors: query.error.issues });
     const org = await loadOwnedOrg(principal, id);
-    const entities = await listPortfolioEntities(deps.pool, org.id);
+    const { entities, truncated } = await loadEntities(org.id, query.data.limit);
     return {
       organization: org,
       entities,
       consolidated: consolidate(entities),
       tree: buildEntityTree(entities),
+      truncated,
+      entity_page_limit: ORG_ENTITY_PAGE_LIMIT,
     };
   });
 
@@ -144,9 +164,18 @@ export function registerOrganizationRoutes(app: FastifyInstance, deps: { pool: p
   app.get('/api/v1/organizations/:id/consolidated', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
+    const query = EntityQuery.safeParse(req.query ?? {});
+    if (!query.success) throw problems.badRequest('Invalid query', { errors: query.error.issues });
     const org = await loadOwnedOrg(principal, id);
-    const entities = await listPortfolioEntities(deps.pool, org.id);
-    return { organization_id: org.id, name: org.name, consolidated: consolidate(entities), entities };
+    const { entities, truncated } = await loadEntities(org.id, query.data.limit);
+    return {
+      organization_id: org.id,
+      name: org.name,
+      consolidated: consolidate(entities),
+      entities,
+      truncated,
+      entity_page_limit: ORG_ENTITY_PAGE_LIMIT,
+    };
   });
 
   app.post('/api/v1/organizations/:id/entities', { preHandler: app.authenticate }, async (req, reply) => {

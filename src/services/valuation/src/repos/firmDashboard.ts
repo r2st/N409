@@ -168,7 +168,13 @@ export async function firmClients(
        FROM valuations
       WHERE partner_id = $1 AND ${LIVE_ONLY()}${filter}
       GROUP BY company_name
-      ORDER BY max(created_at) DESC
+      -- company_name is the group key, so it is unique per row here and is the
+      -- tiebreaker that makes the OFFSET paging deterministic. Without it two
+      -- companies whose newest engagement was created in the same transaction
+      -- (created_at defaults to now(), the transaction timestamp) order
+      -- arbitrarily, and a tie across a page boundary drops one client from the
+      -- roster while the total beside it keeps counting them.
+      ORDER BY max(created_at) DESC, company_name ASC
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );

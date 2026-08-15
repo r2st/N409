@@ -150,7 +150,7 @@ export async function listInbox(
             u.email AS author_email,
             ${unreadExpr} AS unread
      ${from}
-     ORDER BY c.created_at DESC
+     ORDER BY c.created_at DESC, c.id DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );

@@ -187,8 +187,46 @@ export async function setEntityRelationship(
   invalidateValuation(valuationId);
 }
 
-/** The organization's entities with their latest successful valuation figures. */
-export async function listPortfolioEntities(pool: pg.Pool, orgId: string): Promise<PortfolioEntity[]> {
+/**
+ * Ceiling on one organization's entity list.
+ *
+ * The last list on the client-facing surface that read a whole set. Every other
+ * one was bounded (`listCaps.test.ts` names the nine); this one was missed
+ * because it looks like it is scoped — `WHERE organization_id = $1` reads as a
+ * small set — and nothing bounds how many engagements a user assigns to one
+ * organization. It is also the most expensive shape of the family: a LATERAL
+ * subquery runs per row, so the cost is a query per entity, not one query.
+ *
+ * Far above any real holding company. It exists to stop unbounded growth, not
+ * to ration a portfolio.
+ */
+export const ORG_ENTITY_PAGE_LIMIT = 500;
+
+/**
+ * The organization's entities with their latest successful valuation figures.
+ *
+ * Retired engagements are excluded. `archived_at` is this platform's soft
+ * delete, applied by `buildValuationWhere` for the list, the counts, the
+ * buckets and the export, and swept into every repo that builds its own WHERE
+ * (R55/R56) — every repo but this one, which was left unjudged. It is judged
+ * now, and the reason is stronger here than for the queues that round finished:
+ * those show a stale row, this one *adds it up*. `consolidate()` sums
+ * `equity_value` across these rows, so a withdrawn engagement that is gone from
+ * the list, the search, the dashboard and the export was still inside the
+ * consolidated equity value of the holding company that owned it — a number
+ * that reconciles against none of those surfaces, in the one place the file
+ * already calls "precisely the number an auditor relies on".
+ *
+ * `truncated` rides along for the same reason every other capped list carries
+ * it: a roll-up computed over a short set is not slow, it is wrong, and the
+ * caller cannot tell a short page from a short portfolio.
+ */
+export async function listPortfolioEntities(
+  pool: pg.Pool,
+  orgId: string,
+  opts: { limit?: number } = {},
+): Promise<{ entities: PortfolioEntity[]; truncated: boolean }> {
+  const limit = Math.min(Math.max(opts.limit ?? ORG_ENTITY_PAGE_LIMIT, 1), ORG_ENTITY_PAGE_LIMIT);
   const { rows } = await pool.query<{
     valuation_id: string;
     number: string;
@@ -211,20 +249,24 @@ export async function listPortfolioEntities(pool: pg.Pool, orgId: string): Promi
           WHERE valuation_id = v.id AND status = 'succeeded'
           ORDER BY created_at DESC LIMIT 1
        ) c ON true
-      WHERE v.organization_id = $1
-      ORDER BY v.created_at ASC`,
-    [orgId],
+      WHERE v.organization_id = $1 AND v.archived_at IS NULL
+      ORDER BY v.created_at ASC, v.id ASC
+      LIMIT $2`,
+    [orgId, limit + 1],
   );
-  return rows.map((r) => ({
-    valuation_id: r.valuation_id,
-    number: r.number,
-    company_name: r.company_name,
-    entity_type: r.entity_type,
-    parent_valuation_id: r.parent_valuation_id,
-    state: r.state,
-    currency: r.currency,
-    equity_value: r.equity_value !== null ? Number(r.equity_value) : null,
-    fmv_per_share: r.fmv_per_share !== null ? Number(r.fmv_per_share) : null,
-    as_of: r.as_of ? new Date(r.as_of).toISOString() : null,
-  }));
+  return {
+    entities: rows.slice(0, limit).map((r) => ({
+      valuation_id: r.valuation_id,
+      number: r.number,
+      company_name: r.company_name,
+      entity_type: r.entity_type,
+      parent_valuation_id: r.parent_valuation_id,
+      state: r.state,
+      currency: r.currency,
+      equity_value: r.equity_value !== null ? Number(r.equity_value) : null,
+      fmv_per_share: r.fmv_per_share !== null ? Number(r.fmv_per_share) : null,
+      as_of: r.as_of ? new Date(r.as_of).toISOString() : null,
+    })),
+    truncated: rows.length > limit,
+  };
 }

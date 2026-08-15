@@ -47,6 +47,9 @@ interface OrgDetail {
   organization: Organization;
   entities: Entity[];
   consolidated: Consolidated;
+  /** The entity list hit its cap — the roll-up below covers only what is listed. */
+  truncated?: boolean;
+  entity_page_limit?: number;
 }
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -179,6 +182,15 @@ export function PortfolioPage() {
 
           {detail && (
             <div className="mt-6 space-y-6">
+              {/* A consolidated equity figure is read as the portfolio's total.
+                  When the entity list was capped it is the total of a prefix,
+                  and nothing else on the page says so. */}
+              {detail.truncated && (
+                <ErrorNote>
+                  This organization holds more than {detail.entity_page_limit ?? 500} entities. Only the first{' '}
+                  {detail.entities.length} are listed, and the consolidated figures below cover only those.
+                </ErrorNote>
+              )}
               <div className="flex flex-wrap gap-6 rounded-lg border border-paper-300 bg-surface p-6 shadow-card">
                 <Metric label="Entities" value={String(detail.consolidated.entity_count)} />
                 <Metric label="Valued" value={String(detail.consolidated.valued_count)} />

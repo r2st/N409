@@ -121,7 +121,7 @@ export async function listTasks(
   params.push(filters.perPage, (filters.page - 1) * filters.perPage);
   const { rows } = await pool.query<ReviewTaskRow>(
     `SELECT *, ${OVERDUE_SQL} FROM review_tasks t ${whereSql}
-     ORDER BY (t.status IN ('done','cancelled')), t.due_at ASC NULLS LAST, t.created_at DESC
+     ORDER BY (t.status IN ('done','cancelled')), t.due_at ASC NULLS LAST, t.created_at DESC, t.id DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params,
   );

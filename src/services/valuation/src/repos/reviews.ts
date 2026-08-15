@@ -51,7 +51,7 @@ export async function listReviewQueue(
                     WHERE s.valuation_id = v.id AND s.role = 'second') AS signed_second
      FROM valuations v
      ${whereSql}
-     ORDER BY v.created_at ASC
+     ORDER BY v.created_at ASC, v.id ASC
      LIMIT $${paged.length - 1} OFFSET $${paged.length}`,
     paged,
   );

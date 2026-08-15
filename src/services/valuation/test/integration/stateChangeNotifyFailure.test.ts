@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import pg from 'pg';
+import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { migrate } from '../../src/db/migrate.js';
 import { loadConfig } from '../../src/config.js';
