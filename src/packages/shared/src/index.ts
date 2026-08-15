@@ -39,6 +39,14 @@ export {
   type ShutdownLogger,
   type ShutdownOptions,
 } from './shutdown.js';
+export {
+  DEFAULT_DRAIN_TIMEOUT_MS,
+  InFlightRequests,
+  registerRequestDrain,
+  type DrainLogger,
+  type DrainOptions,
+  type DrainResult,
+} from './drain.js';
 export { nonOverlapping, type Scheduler } from './scheduler.js';
 export { listenHost, DEFAULT_LISTEN_HOST } from './listen.js';
 export { trustedProxies, DEFAULT_TRUSTED_PROXIES } from './clientIp.js';

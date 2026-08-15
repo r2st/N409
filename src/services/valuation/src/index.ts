@@ -251,11 +251,11 @@ let retentionTimer: NodeJS.Timeout | undefined;
 }
 
 // This is the service `deploy.sh` restarts and then waits for, and the one with
-// the most that can stall: seven background timers, a Fastify server draining
-// in-flight requests, and a pg pool that will not end until every checked-out
-// connection comes back. Unbounded, one stuck query held the whole deploy until
-// systemd's 90s timeout and a SIGKILL — which is what the graceful path was
-// there to avoid.
+// the most that can stall: eight background timers, a Fastify server draining
+// in-flight requests (drain.ts, at `preClose` inside the `app.close()` below),
+// and a pg pool that will not end until every checked-out connection comes
+// back. Unbounded, one stuck query held the whole deploy until systemd's 90s
+// timeout and a SIGKILL — which is what the graceful path was there to avoid.
 installShutdownHandlers(app.log, {
   service: 'valuation',
   onShutdown: async () => {

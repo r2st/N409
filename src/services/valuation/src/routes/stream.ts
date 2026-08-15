@@ -61,9 +61,25 @@ export function registerStreamRoutes(
     const send = (event: string, data: unknown) => {
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
+    // The heartbeat's teardown is also what closes this stream at shutdown, and
+    // it cannot exist yet: the hub has to register the connection before
+    // `startHeartbeat` can be handed the leave fn it tears down with. So the
+    // teardown is passed by reference and filled in below. A shutdown landing
+    // in the microseconds between registers as a stream with nothing to stop,
+    // which ends the response and leaves the heartbeat to the timer's own
+    // failed-write teardown.
+    const heartbeat: { stop?: () => void } = {};
     let leave: () => void;
     try {
-      leave = deps.hub.join(valuation.id, { userId: principal.id, name, send });
+      leave = deps.hub.join(valuation.id, {
+        userId: principal.id,
+        name,
+        send,
+        close: () => {
+          heartbeat.stop?.();
+          reply.raw.end();
+        },
+      });
     } catch (err) {
       // Unreachable behind the check above, but a throw after `hijack()` has no
       // reply to land on — end the stream rather than leak the socket.
@@ -78,6 +94,7 @@ export function registerStreamRoutes(
       onDead: (err) => req.log.debug({ err }, 'realtime heartbeat write failed; closing stream'),
       leave: () => leave(),
     });
+    heartbeat.stop = stop;
 
     req.raw.on('close', stop);
   });

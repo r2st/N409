@@ -8,6 +8,7 @@ import {
   createLogger,
   registerHealth,
   registerProblemHandler,
+  registerRequestDrain,
   trustedProxies,
 } from '@n409/shared';
 import type { Config } from './config.js';
@@ -460,6 +461,23 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // Improvement 4 — realtime collaboration: presence + live comment pushes
   const hub = deps.hub ?? new ValuationHub();
   registerStreamRoutes(app, { pool, hub });
+  // Let a request that is already being served finish before `close()` takes
+  // its socket away — Fastify 5 does not, see drain.ts. Registered here rather
+  // than in the composition root so it is a property of the app: every instance
+  // has it, and the tests that close one exercise it.
+  //
+  // `onDrainStart` ends the SSE streams first, because each is a request in
+  // flight for as long as its tab stays open. Without it the drain would
+  // measure the browser tabs rather than the work, spend its whole deadline on
+  // every restart, and then report abandoned requests that were only
+  // heartbeats. Placed after `registerStreamRoutes` so `app.realtimeHub` — the
+  // decoration it reads — already exists.
+  registerRequestDrain(app, {
+    onDrainStart: () => {
+      const closed = hub.closeAll();
+      if (closed > 0) app.log.info({ streams: closed }, 'closed realtime streams for shutdown');
+    },
+  });
   // M3 — operations (comments/chat/email, admin console, tokens, analytics, clone)
   registerCommentRoutes(app, { pool, hub });
   registerInboxRoutes(app, { pool });

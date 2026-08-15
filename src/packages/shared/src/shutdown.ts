@@ -13,9 +13,11 @@
  * Three things go wrong with that under systemd, and all three are ordinary
  * rather than exotic:
  *
- * 1. **Nothing bounds it.** `app.close()` waits for in-flight requests, and
- *    `pool.end()` waits for checked-out connections. A slow PDF render, a
- *    wedged upstream, or one stuck query and the process simply never exits.
+ * 1. **Nothing bounds it.** `app.close()` waits for in-flight requests — once
+ *    `registerRequestDrain` is installed, that is; see drain.ts for why Fastify
+ *    5 does not do it on its own — and `pool.end()` waits for checked-out
+ *    connections. A slow PDF render, a wedged upstream, or one stuck query and
+ *    the process simply never exits.
  *    systemd then waits out `TimeoutStopSec` — 90s by default — and SIGKILLs,
  *    which is the one outcome the graceful path existed to avoid: the kill
  *    lands mid-flush, so telemetry is lost and the DB sees an abandoned

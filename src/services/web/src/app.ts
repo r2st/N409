@@ -13,6 +13,7 @@ import {
   probeReady,
   registerHealth,
   registerProblemHandler,
+  registerRequestDrain,
   trustedProxies,
 } from '@n409/shared';
 
@@ -304,6 +305,14 @@ export function buildApp(opts: WebAppOptions = {}): FastifyInstance {
       engine: () => probeReady('engine', engineUrl, { fetchFn: opts.readinessFetch }),
     },
   });
+  // Let a request that is already being served finish before `close()` takes
+  // its socket away — Fastify 5 does not, see drain.ts. This is the only one of
+  // the five units a browser talks to directly, so a request truncated by a
+  // restart here is one a person is watching. Registered before the proxy so it
+  // counts the proxied /api round trips too, and discounted when the proxied
+  // response closes rather than when it was forwarded.
+  registerRequestDrain(app);
+
   void app.register(httpProxy, {
     upstream: valuationUrl,
     prefix: '/api',

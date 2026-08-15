@@ -23,6 +23,12 @@ async function openStream(base: string, valuationId: string, token: string) {
     signal: controller.signal,
   });
   const events: SseEvent[] = [];
+  // Resolves when the server stops the stream — a client-side abort, or the
+  // shutdown drain ending it from the hub.
+  let markEnded: () => void = () => {};
+  const ended = new Promise<void>((resolve) => {
+    markEnded = resolve;
+  });
   if (res.ok && res.body) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -47,10 +53,14 @@ async function openStream(base: string, valuationId: string, token: string) {
         }
       } catch {
         // aborted
+      } finally {
+        markEnded();
       }
     })();
+  } else {
+    markEnded();
   }
-  return { status: res.status, events, close: () => controller.abort() };
+  return { status: res.status, events, ended, close: () => controller.abort() };
 }
 
 async function until<T>(probe: () => T | undefined, what: string, timeoutMs = 4000): Promise<T> {
@@ -217,5 +227,42 @@ describe.skipIf(!dbUp)('improvement 4 — realtime presence + comment stream (SS
     expect(last.data.viewers[0].user_id).toBe(client.id);
     tab1.close();
     tab2.close();
+  });
+
+  /**
+   * Shutdown, end to end. An SSE stream is a request in flight for as long as
+   * its tab stays open, so to the drain it is indistinguishable from a slow
+   * handler: without `closeAll` one open valuation page made every restart wait
+   * out the whole drain deadline and then report abandoned requests that were
+   * only heartbeats. And before the drain existed at all, `close()` destroyed
+   * every socket outright — the stream ended either way, which is why this
+   * asserts on the clock as well as on the stream.
+   */
+  it('ends open streams on close() rather than waiting out the drain deadline', async () => {
+    const config = loadConfig({
+      ...process.env,
+      NODE_ENV: 'test',
+      JWT_SECRET: 'integration-test-secret-0123456789abcdef',
+      LOG_LEVEL: 'silent',
+      AUTO_PIPELINE: 'off',
+    });
+    const closing = buildApp({ config, pool });
+    await closing.listen({ port: 0, host: '127.0.0.1' });
+    const addr = closing.server.address();
+    const closingBase = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
+
+    const tab = await openStream(closingBase, valuationId, client.token);
+    expect(tab.status).toBe(200);
+    await until(() => tab.events.find((e) => e.event === 'presence'), 'presence before shutdown');
+    expect(closing.realtimeHub.stats().total).toBe(1);
+
+    const startedAt = Date.now();
+    await closing.close();
+
+    // The stream was ended by the server, not left for the client to notice.
+    await tab.ended;
+    expect(closing.realtimeHub.stats()).toEqual({ total: 0, rooms: 0, users: 0 });
+    // Released rather than waited out: the drain deadline is five seconds.
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 });

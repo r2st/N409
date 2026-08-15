@@ -16,6 +16,13 @@ interface Connection {
   userId: string;
   name: string;
   send: SendFn;
+  /**
+   * Ends the underlying stream. Optional because presence and fan-out need
+   * nothing of the sort — only {@link ValuationHub.closeAll} does, and only at
+   * shutdown. A connection registered without one is simply dropped from the
+   * hub's books there and left for the server's own force-close.
+   */
+  close?: () => void;
 }
 
 /** Which ceiling a refused {@link ValuationHub.join} ran into. */
@@ -113,6 +120,39 @@ export class ValuationHub {
   /** Streams currently held, for the saturation gauge and for tests. */
   stats(): { total: number; rooms: number; users: number } {
     return { total: this.total, rooms: this.rooms.size, users: this.perUser.size };
+  }
+
+  /**
+   * Ends every open stream. Returns how many were closed.
+   *
+   * For shutdown, and nothing else. An SSE stream is a request that is still
+   * being served for as long as the client keeps its tab open, so to the
+   * request drain it is indistinguishable from a slow handler — one open
+   * valuation page anywhere would make every restart wait out the full drain
+   * deadline and then report requests abandoned, on a service where the
+   * abandoned request is a heartbeat nobody is waiting for. Ending them first
+   * makes the drain measure what it is for: work with a caller behind it.
+   *
+   * Closing a stream runs its own teardown, which calls back into `join`'s
+   * leave fn and mutates the room maps, so the connections are snapshotted
+   * before the walk. The books are cleared afterwards regardless — a connection
+   * that threw on close is one this process can no longer account for, and
+   * keeping it counted would only understate the next capacity check.
+   */
+  closeAll(): number {
+    const open = [...this.rooms.values()].flatMap((room) => [...room.values()]);
+    for (const conn of open) {
+      try {
+        conn.close?.();
+      } catch {
+        // Ending a socket that has already gone away is not worth a line, and
+        // must not stop the stream after it from being told to go.
+      }
+    }
+    this.rooms.clear();
+    this.perUser.clear();
+    this.total = 0;
+    return open.length;
   }
 
   /** Distinct people in the room (one badge per user, however many tabs). */

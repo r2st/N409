@@ -18,8 +18,8 @@ installCrashHandlers(app.log, {
 
 await app.listen({ port: Number(process.env.PORT ?? 3004), host: listenHost() });
 
-// A PDF render in flight is the realistic reason this service is slow to
-// close, so the deadline matters more here than anywhere else.
+// The drain runs inside `app.close()`, at `preClose`; the deadline below is the
+// outer bound on it and on everything after.
 installShutdownHandlers(app.log, {
   service: 'report',
   onShutdown: async () => {

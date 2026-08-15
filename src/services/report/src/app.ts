@@ -6,6 +6,7 @@ import {
   registerHealth,
   registerInternalAuth,
   registerProblemHandler,
+  registerRequestDrain,
 } from '@n409/shared';
 import { renderReportPdf } from './pdf.js';
 
@@ -105,6 +106,12 @@ export function buildApp(): FastifyInstance {
   // 8 MB body is read, let alone rendered.
   registerInternalAuth(app, { service: 'report' });
   registerHealth(app, { service: 'report' });
+  // Let a render that is already running finish before `close()` takes its
+  // socket away — Fastify 5 does not, see drain.ts. A render in flight is the
+  // realistic reason this service is slow to close, and until the drain existed
+  // it was not slow at all: the caller got a connection reset instead of a PDF
+  // it had already waited seconds for.
+  registerRequestDrain(app);
 
   app.post('/render/v1/pdf', async (req, reply) => {
     const parsed = RenderBody.safeParse(req.body);
