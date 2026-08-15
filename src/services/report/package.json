@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@types/fontkit": "^2.0.9",
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.2.0",
     "@types/pdfkit": "^0.14.0",
     "tsx": "^4.19.0",
     "vitest": "^3.0.0"
