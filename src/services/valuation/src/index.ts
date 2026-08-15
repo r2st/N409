@@ -20,6 +20,7 @@ const { runDueAutoEmails } = await import('./hooks/autoEmails.js');
 const { retryFailedEmails } = await import('./hooks/emailRetry.js');
 const { retryDueDeliveries } = await import('./hooks/partnerWebhooks.js');
 const { runJobAlertScan } = await import('./hooks/jobAlerts.js');
+const { runHousekeepingSweep } = await import('./hooks/housekeeping.js');
 const { reapStalePipelineRuns } = await import('./repos/pipelineRuns.js');
 const { runDueCapTableSyncs } = await import('./routes/capTableSync.js');
 const { runRetentionSweep } = await import('./routes/retention.js');
@@ -250,8 +251,25 @@ let retentionTimer: NodeJS.Timeout | undefined;
   retentionTimer = setInterval(() => sweep.run(), 6 * 60 * 60_000);
 }
 
+// Housekeeping sweep (domain/housekeeping.ts): delete the single-use
+// credentials, settled invitations and spent idempotency records that nothing
+// has ever removed. Deliberately NOT run at boot — it is the one sweep with no
+// urgency whatsoever (these rows have sat there for months; another hour costs
+// nothing) and a deploy is when the database is least free to spend on it.
+let housekeepingTimer: NodeJS.Timeout | undefined;
+{
+  const sweep = nonOverlapping(
+    async () => {
+      const r = await runHousekeepingSweep({ pool, log: app.log });
+      if (r.total > 0) app.log.info(r, 'housekeeping sweep');
+    },
+    (err) => app.log.error({ err }, 'housekeeping sweep failed'),
+  );
+  housekeepingTimer = setInterval(() => sweep.run(), 60 * 60_000);
+}
+
 // This is the service `deploy.sh` restarts and then waits for, and the one with
-// the most that can stall: eight background timers, a Fastify server draining
+// the most that can stall: nine background timers, a Fastify server draining
 // in-flight requests (drain.ts, at `preClose` inside the `app.close()` below),
 // and a pg pool that will not end until every checked-out connection comes
 // back. Unbounded, one stuck query held the whole deploy until systemd's 90s
@@ -268,6 +286,7 @@ installShutdownHandlers(app.log, {
     if (hrisSyncTimer) clearInterval(hrisSyncTimer);
     if (retentionTimer) clearInterval(retentionTimer);
     if (jobAlertTimer) clearInterval(jobAlertTimer);
+    if (housekeepingTimer) clearInterval(housekeepingTimer);
     await app.close();
     await pool.end();
     await telemetry.shutdown();

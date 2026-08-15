@@ -261,6 +261,16 @@ const REVIEWED: Record<string, string[]> = {
     'whereSql',
   ],
 
+  // `target.table` / `target.where`: the housekeeping sweep's target list is a
+  // frozen array of object literals in `domain/housekeeping.ts` — five table
+  // names and five predicates, all written in that file and none reachable from
+  // a request. `runHousekeepingSweep` iterates that array and nothing else; it
+  // takes no table or predicate from its caller. The two values it *is* given —
+  // the retention interval and the batch size — are bound as `$1` and `$2`
+  // rather than interpolated, which is the line worth watching if a future
+  // caller ever wants to sweep a table it names.
+  'src/services/valuation/src/hooks/housekeeping.ts': ['target.table', 'target.where'],
+
   // The visibility clause for the caller's role — a fixed string per scope kind.
   'src/services/valuation/src/routes/analytics.ts': ['scope.clause'],
   'src/services/valuation/src/routes/bridge.ts': ['scope.clause'],
