@@ -133,14 +133,33 @@ function fromPrefetch(rows: ReadonlyMap<string, ValuationRow>, id: string): Valu
 }
 
 export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps): void {
+  /**
+   * `guardVersion` makes the write conditional on the row still being at the
+   * version it was read at.
+   *
+   * The single-id routes below do not need it and do not pass it: each loads the
+   * valuation and writes it in the next statement, so the state the transition
+   * was judged against is the state being transitioned from. That is the case
+   * `PatchOptions.expectedVersion` documents as not needing a guard.
+   *
+   * The bulk executor is not that case, and stopped being it when the reads were
+   * batched. See {@link executeBulk}.
+   */
   const applyState = async (
     valuation: ValuationRow,
     to: ValuationState,
     principal: Principal,
     source: string,
+    guardVersion = false,
   ): Promise<ValuationRow> => {
     await assertPublishGate(deps.pool, valuation.id, to);
-    const updated = await patchValuation(deps.pool, valuation, { state: to }, actorFor(principal, source));
+    const updated = await patchValuation(
+      deps.pool,
+      valuation,
+      { state: to },
+      actorFor(principal, source),
+      guardVersion ? { expectedVersion: valuation.version } : {},
+    );
     await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, to);
     return updated;
   };
@@ -224,7 +243,27 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
      * loaded once either way, so prefetching cannot serve a row that the
      * per-id read would have re-read after a write to it. Batched reads also
      * bypass the five-second `findValuationById` row cache, so what the loop
-     * sees is strictly fresher than before, never staler.
+     * sees is fresher at the moment it is read.
+     *
+     * It is not fresher at the moment it is *written*, and that is the cost the
+     * batching carries. Every row is now read at the top of the batch while the
+     * writes run the length of it, and an iteration is not cheap: a publish-gate
+     * query, a transaction of three statements, a partner webhook dispatched
+     * over the network, template lookups and outbox writes. Two hundred of those
+     * is seconds at best, so the last id in a batch is judged against a state
+     * read a long time before it is acted on — a window the per-id read this
+     * replaced did not have.
+     *
+     * What goes wrong in that window is not a lost edit but a wrong transition.
+     * `canTransition`, `nextState` and `canRestart` are all evaluated against the
+     * prefetched row, so an engagement someone moved in the meantime gets a
+     * transition that is legal from where it *was* and may be illegal from where
+     * it is — recorded as an ordinary transition, with its own client emails, and
+     * overwriting the concurrent move without a trace. `expectedVersion` refuses
+     * that write instead: `patchValuation` bumps `version` on every state write
+     * and nothing else writes `state`, so a row that moved fails this one id with
+     * the conflict the single-id routes would have raised. A per-id failure is
+     * what the results array below exists to carry.
      */
     const prefetched = await findValuationsByIds(deps.pool, ids.filter(isUlid));
 
@@ -237,25 +276,31 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
             if (!canTransition(valuation.state, state!)) {
               throw problems.conflict(`Illegal transition ${valuation.state} → ${state}`);
             }
-            const updated = await applyState(valuation, state!, principal, 'bulk');
+            const updated = await applyState(valuation, state!, principal, 'bulk', true);
             results.push({ id, ok: true, state: updated.state });
             break;
           }
           case 'advance': {
             const next = nextState(valuation.state, { paidStatus: valuation.paid_status });
             if (!next) throw problems.conflict(`Cannot auto-advance from '${valuation.state}'`);
-            const updated = await applyState(valuation, next, principal, 'bulk');
+            const updated = await applyState(valuation, next, principal, 'bulk', true);
             results.push({ id, ok: true, state: updated.state });
             break;
           }
           case 'restart': {
             if (!canRestart(valuation.state))
               throw problems.conflict(`Cannot restart from '${valuation.state}'`);
-            const updated = await applyState(valuation, RESTART_STATE, principal, 'bulk');
+            const updated = await applyState(valuation, RESTART_STATE, principal, 'bulk', true);
             results.push({ id, ok: true, state: updated.state });
             break;
           }
           case 'assign_reviewer': {
+            // Unguarded on purpose, unlike the three transitions above. This
+            // sets a column to a value the operator named rather than deriving
+            // one from the row's current state, so a stale read cannot make it
+            // wrong — and overwriting a concurrent assignment is what "assign
+            // these two hundred to Alice" asks for. The UPDATE touches only
+            // `assigned_reviewer_id`, so a concurrent state change survives it.
             await patchValuation(
               deps.pool,
               valuation,
