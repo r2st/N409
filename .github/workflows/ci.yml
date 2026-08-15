@@ -108,12 +108,18 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Block criticals hard; surface high/moderate without failing the pipeline
-      # (they're tracked/fixed by Dependabot). Tighten once the backlog clears.
-      - name: npm audit (block criticals)
-        run: npm audit --audit-level=critical
-      - name: npm audit (report high & moderate)
+      # The backlog this gate was waiting on has cleared: round 74 took the tree
+      # from 26 advisories (4 high, 22 moderate — the whole OpenTelemetry stack)
+      # to zero, so the "tighten once the backlog clears" note is now cashed in
+      # and high fails the pipeline rather than printing into a log nobody reads.
+      #
+      # Moderate stays advisory on purpose. It is the tier that fires on
+      # transitive dev-only packages with no fix published yet, and a gate that
+      # blocks on something unfixable is a gate that gets bypassed.
+      - name: npm audit (block high & critical)
         run: npm audit --audit-level=high
+      - name: npm audit (report moderate)
+        run: npm audit --audit-level=moderate
         continue-on-error: true
       - uses: actions/setup-python@v5
         with:

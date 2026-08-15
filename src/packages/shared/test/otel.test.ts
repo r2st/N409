@@ -75,13 +75,12 @@ vi.mock('@opentelemetry/instrumentation-pg', () => ({
     kind = 'pg';
   },
 }));
+// `resourceFromAttributes` replaced `new Resource(...)` in
+// @opentelemetry/resources 2.x (round 74's dependency bump). The stub keeps the
+// same observable shape — an object carrying `attributes` — because that is
+// what the assertions below read.
 vi.mock('@opentelemetry/resources', () => ({
-  Resource: class {
-    attributes: Record<string, unknown>;
-    constructor(attributes: Record<string, unknown>) {
-      this.attributes = attributes;
-    }
-  },
+  resourceFromAttributes: (attributes: Record<string, unknown>) => ({ attributes }),
 }));
 
 const { startTelemetry } = await import('../src/otel.js');

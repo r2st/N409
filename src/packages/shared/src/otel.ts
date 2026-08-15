@@ -2,7 +2,11 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
-import { Resource } from '@opentelemetry/resources';
+// `resourceFromAttributes` rather than `new Resource(...)`: the class became a
+// type-only export in @opentelemetry/resources 2.x, which is the version the
+// round-74 dependency bump moved to (GHSA-q7rr-3cgh-j5r3 and two others). Same
+// object, built by a factory.
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 // Metric packages are hard dependencies of @opentelemetry/sdk-node (already a
 // direct dependency), so importing them transitively is version-safe.
@@ -36,7 +40,7 @@ export function startTelemetry(service: string, version = '0.1.0'): TelemetryHan
   const intervalMs = Number(process.env.OTEL_METRIC_EXPORT_INTERVAL_MS) || 15_000;
 
   const sdk = new NodeSDK({
-    resource: new Resource({
+    resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? service,
       [ATTR_SERVICE_VERSION]: version,
     }),
