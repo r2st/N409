@@ -1034,6 +1034,18 @@ export interface PatchOptions {
    * column from a value they just computed, so there is no stale read to guard.
    */
   expectedVersion?: number;
+  /**
+   * A guard evaluated inside the write's own transaction, on the client that
+   * issues the UPDATE, immediately before it. Throwing rolls the whole patch
+   * back — no row change, no events.
+   *
+   * For preconditions whose subject is not this row. `expectedVersion` covers
+   * "did the valuation move under me"; it says nothing about the signature and
+   * QA rows the publish gate reads, which live in other tables and do not touch
+   * `valuations.version` when they change. A guard on those has to run where it
+   * can hold them still, which is here — see `assertPublishGateForWrite`.
+   */
+  preCommit?: (client: pg.PoolClient) => Promise<void>;
 }
 
 /**
@@ -1068,6 +1080,10 @@ export async function patchValuation(
 
   return invalidateValuationAfter(current.id, () =>
     withTransaction(pool, async (client) => {
+      // First in the transaction, so any lock it takes is held across the
+      // UPDATE below rather than merely before it.
+      await options.preCommit?.(client);
+
       const sets: string[] = [];
       const params: unknown[] = [];
       for (const [key, value] of entries) {

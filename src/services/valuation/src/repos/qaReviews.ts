@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import { withTransaction } from '../db/pool.js';
+import { withTransaction, type Queryable } from '../db/pool.js';
+import { lockPublishGate } from './publishLock.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 import type { QaCheck, QaStatus } from '../domain/qaChecks.js';
 
@@ -30,6 +31,10 @@ export async function createQaReview(
   actor: EventActor,
 ): Promise<QaReviewRow> {
   return withTransaction(pool, async (client) => {
+    // Same lock, the other direction: a review landing with status 'fail' is a
+    // reason not to publish, and a publish must not slip between this insert
+    // and the gate's reading of it. See repos/publishLock.ts.
+    await lockPublishGate(client, args.valuationId);
     const { rows } = await client.query<QaReviewRow>(
       `INSERT INTO qa_reviews
          (id, valuation_id, calculation_id, status, checks, ai_findings, ai_model, created_by)
@@ -72,10 +77,10 @@ export async function listQaReviews(pool: pg.Pool, valuationId: string): Promise
 
 /** The publish gate consults the newest review of a specific calculation. */
 export async function latestQaReviewForCalculation(
-  pool: pg.Pool,
+  db: Queryable,
   calculationId: string,
 ): Promise<QaReviewRow | null> {
-  const { rows } = await pool.query<QaReviewRow>(
+  const { rows } = await db.query<QaReviewRow>(
     'SELECT * FROM qa_reviews WHERE calculation_id = $1 ORDER BY created_at DESC LIMIT 1',
     [calculationId],
   );

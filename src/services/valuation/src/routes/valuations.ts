@@ -29,7 +29,7 @@ import {
 } from '../repos/valuations.js';
 import { userExists } from '../repos/users.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
-import { assertPublishGate } from '../domain/publishGate.js';
+import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import type { Principal } from '../auth/rbac.js';
@@ -344,7 +344,12 @@ export function registerValuationRoutes(
       valuation,
       parsed.data as Record<string, unknown>,
       actorFor(principal),
-      { expectedVersion },
+      {
+        expectedVersion,
+        ...(parsed.data.state
+          ? { preCommit: assertPublishGateForWrite(valuation.id, parsed.data.state) }
+          : {}),
+      },
     );
     reply.header('ETag', versionEtag(updated.version));
     // M4: state changes fire the auto email workflows + in-app notifications.

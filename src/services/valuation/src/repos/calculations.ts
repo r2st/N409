@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
-import { withTransaction } from '../db/pool.js';
+import { withTransaction, type Queryable } from '../db/pool.js';
+import { lockPublishGate } from './publishLock.js';
 import { PIPELINE_EVENT_TYPES } from '../domain/pipeline.js';
 import { recordEvent, type EventActor } from '../events/record.js';
 
@@ -87,6 +88,12 @@ export async function createCalculation(
   actor: EventActor,
 ): Promise<CalculationRow> {
   return withTransaction(pool, async (client) => {
+    // A new calculation retires whatever QA review the publish gate is looking
+    // at — the review is keyed to the calculation it examined, so landing this
+    // row is what makes the gate's answer wrong. Taking the gate lock makes a
+    // publish in flight either see this calculation or finish before it exists,
+    // never straddle it. See repos/publishLock.ts.
+    await lockPublishGate(client, args.valuationId);
     const { rows } = await client.query<CalculationRow>(
       `INSERT INTO calculations
          (id, valuation_id, engine_version, status, inputs, results, equity_value, fmv_per_share, error, diagnostics, trace, created_by)
@@ -126,10 +133,10 @@ export async function createCalculation(
 
 /** Baseline for per-approach recalculation: the newest full successful run. */
 export async function latestSucceededCalculation(
-  pool: pg.Pool,
+  db: Queryable,
   valuationId: string,
 ): Promise<CalculationRow | null> {
-  const { rows } = await pool.query<CalculationRow>(
+  const { rows } = await db.query<CalculationRow>(
     `SELECT ${CALCULATION_COLUMNS} FROM calculations
      WHERE valuation_id = $1 AND status = 'succeeded'
      ORDER BY created_at DESC LIMIT 1`,

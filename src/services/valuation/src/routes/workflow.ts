@@ -13,7 +13,7 @@ import {
 } from '../repos/valuations.js';
 import { userExists } from '../repos/users.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
-import { assertPublishGate } from '../domain/publishGate.js';
+import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 
@@ -158,7 +158,10 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
       valuation,
       { state: to },
       actorFor(principal, source),
-      guardVersion ? { expectedVersion: valuation.version } : {},
+      {
+        ...(guardVersion ? { expectedVersion: valuation.version } : {}),
+        preCommit: assertPublishGateForWrite(valuation.id, to),
+      },
     );
     await onStateChanged({ pool: deps.pool, transport: deps.transport, log: app.log }, updated, to);
     return updated;

@@ -9,7 +9,7 @@ import { recordEvent } from '../events/record.js';
 import { createComment } from '../repos/comments.js';
 import { listReviewQueue } from '../repos/reviews.js';
 import { findValuationById, patchValuation } from '../repos/valuations.js';
-import { assertPublishGate } from '../domain/publishGate.js';
+import { assertPublishGate, assertPublishGateForWrite } from '../domain/publishGate.js';
 import { onStateChanged, type EmailTransport } from '../hooks/stateChange.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { pageParam } from '../domain/pagination.js';
@@ -75,7 +75,9 @@ export function registerReviewRoutes(
 
     await assertPublishGate(deps.pool, valuation.id, target);
     const actor = { actorType: 'human' as const, actorId: principal.id, source: 'review' };
-    const updated = await patchValuation(deps.pool, valuation, { state: target }, actor);
+    const updated = await patchValuation(deps.pool, valuation, { state: target }, actor, {
+      preCommit: assertPublishGateForWrite(valuation.id, target),
+    });
 
     let commentId: string | null = null;
     if (comment) {

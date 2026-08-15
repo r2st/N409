@@ -1,6 +1,18 @@
 import pg from 'pg';
 import { asPgError } from './pgError.js';
 
+/**
+ * Anything that can run a statement — the pool, or one client inside a
+ * transaction.
+ *
+ * Reads that a guard depends on need both: the pool, when the guard is a cheap
+ * pre-check that wants to fail before a transaction is opened, and the client,
+ * when the same guard has to be re-asserted inside the transaction that writes,
+ * where it is the only reading that is actually authoritative. A read hard-typed
+ * to `pg.Pool` can only be the first of those.
+ */
+export type Queryable = pg.Pool | pg.PoolClient;
+
 export interface PoolTuning {
   /** Hard ceiling on any single statement (ms). A slow query can otherwise pin
    *  a connection indefinitely; with only `max` connections that stalls the
