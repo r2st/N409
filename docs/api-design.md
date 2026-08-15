@@ -39,6 +39,7 @@ client.
 | `urn:n409:problem:internal` | 5xx | Unhandled server-side failure. Carries no `detail` by design. |
 | `urn:n409:problem:unavailable` | 503 | This service is up but cannot serve the request yet. |
 | `urn:n409:problem:upstream` | 502/503/504 | A service this one depends on failed or timed out. |
+| `urn:n409:problem:upstream-degraded` | 503 | A dependency failed repeatedly, so its circuit breaker is open and the request was not attempted. `retry_after_seconds` and `Retry-After` say when the breaker next admits a trial call. Distinct from `upstream`: nothing was dialled, the caller's data is unaffected, and retrying after the stated delay is the correct response. |
 | `urn:n409:problem:accounting-unavailable` | 503 | The accounting integration is unreachable or unconfigured. |
 | `urn:n409:problem:captable-sync-unavailable` | 503 | The cap-table integration is unreachable or unconfigured. |
 | `urn:n409:problem:hris-unavailable` | 503 | The HRIS integration is unreachable or unconfigured. |

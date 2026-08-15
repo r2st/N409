@@ -11,8 +11,16 @@ import {
   registerPermissionsPolicy,
   registerProblemHandler,
   registerRequestDrain,
+  StartupGate,
   trustedProxies,
 } from '@n409/shared';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /** Holds `/ready` shut until the boot sequence completes (shared/startup.ts). */
+    startupGate: StartupGate;
+  }
+}
 import { verifyFontAssets } from '@n409/report/pdf';
 import type { Config } from './config.js';
 import { GoogleOidc } from './auth/google.js';
@@ -124,6 +132,7 @@ import { registerFmvEstimatorRoutes } from './routes/fmvEstimator.js';
 import { registerSampleReportRoutes } from './routes/sampleReport.js';
 import { FixedWindowRateLimiter, WeightedWindowRateLimiter } from './plugins/rateLimit.js';
 import type { QueryStats } from './db/queryStats.js';
+import type { PoolHealth } from './db/poolHealth.js';
 import { clamdScanner, type ScanPolicy } from './documents/virusScan.js';
 import { probeReady, setNetworkSink } from './clients/internal.js';
 import { KEEP_PER_VALUATION, pruneNetworkItems, recordNetworkItem } from './repos/networkItems.js';
@@ -164,6 +173,15 @@ export interface AppDeps {
   /** Per-statement timing aggregate, surfaced at /api/v1/admin/db/slow-queries.
    *  Wired in index.ts; absent in tests, which the route reports rather than 500s on. */
   queryStats?: QueryStats;
+  /** Connection checkout tracker, surfaced at /api/v1/admin/db/pool.
+   *  Wired in index.ts; absent in tests, which the route reports rather than 500s on. */
+  poolHealth?: PoolHealth;
+  /**
+   * Hold `/ready` shut until something calls `app.startupGate.markReady()`.
+   * Only `index.ts` sets it — see the note at the gate's construction for why
+   * the default is open.
+   */
+  gateStartup?: boolean;
 }
 
 /**
@@ -224,6 +242,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     // why the hops are named rather than trusted wholesale.
     trustProxy: trustedProxies(),
   }) as unknown as FastifyInstance;
+
+  /**
+   * Gates `/ready` until `index.ts` has proved the dependencies and run the
+   * migrations (shared/startup.ts).
+   *
+   * Opened immediately when nothing is going to close it. `buildApp` is called
+   * directly by ~200 integration tests and by the e2e harness, none of which
+   * have a boot sequence to call `markReady` — leaving it shut there would make
+   * every `/ready` assertion in the suite fail for a reason that has nothing to
+   * do with what it is testing. `index.ts` passes `gateStartup: true` and is
+   * the only caller that does, so the deployed path is the gated one.
+   */
+  const startupGate = new StartupGate('valuation');
+  if (!deps.gateStartup) startupGate.markReady();
+  app.decorate('startupGate', startupGate);
 
   // Bind the request id before anything else runs, so the engine/AI calls this
   // request makes downstream carry it (clients/internal.ts) and their log lines
@@ -318,6 +351,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerHealth(app, {
     service: 'valuation',
     checks: {
+      // Red until `index.ts` says the boot finished. Everything between the
+      // port binding and that call — the dependency probes and the migrations
+      // — happens with readiness failing, so nothing routes a request into a
+      // process that is still starting. In tests, where nothing calls
+      // `markReady`, the gate is opened at construction (see `startupGate`).
+      startup: startupGate.check,
       postgres: async () => {
         await pool.query('SELECT 1');
       },
@@ -504,7 +543,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerNetworkItemRoutes(app, { pool });
   registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerApiTokenRoutes(app, { pool });
-  registerOperationsRoutes(app, { pool, queryStats: deps.queryStats });
+  registerOperationsRoutes(app, { pool, queryStats: deps.queryStats, poolHealth: deps.poolHealth });
   // M4 — operations polish
   registerWorkflowRoutes(app, { pool, transport });
   // P1 #6 — review queue + approve/request-changes decisions

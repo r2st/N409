@@ -179,6 +179,31 @@ const Env = z.object({
   // /api/v1/admin/db/slow-queries counts every statement regardless — this
   // threshold only governs the per-statement line. 0 logs everything.
   DB_SLOW_QUERY_MS: z.coerce.number().int().min(0).default(200),
+  // How often the pool-health sampler runs (db/poolHealth.ts). The sample is a
+  // synchronous scan of a map bounded by the pool's `max`, so this is cheap
+  // enough to run often — and both conditions it looks for (a leaked
+  // connection, an exhausted pool) get worse the longer they go unreported.
+  // 0 disables the sampler; the gauges it feeds keep working either way.
+  DB_POOL_SAMPLE_SECONDS: z.coerce.number().int().min(0).default(15),
+  // A connection checked out for longer than this is reported as a suspected
+  // leak, with the stack that acquired it. Comfortably above the 15s
+  // statement_timeout: a long transaction running several statements is not a
+  // leak, and a detector that cries wolf is a detector somebody turns off.
+  DB_LEAK_AFTER_MS: z.coerce.number().int().min(1_000).default(60_000),
+  // How long the pool must be continuously saturated — every client checked
+  // out, nothing idle, callers queued — before it is called exhausted. The
+  // dwell is what separates a saturated pool from a merely busy one: at any
+  // instant a healthy service under load has callers waiting.
+  DB_EXHAUSTED_AFTER_MS: z.coerce.number().int().min(0).default(5_000),
+  // Wall-clock budget for the boot-time dependency probes (shared/startup.ts).
+  // Long enough to cover a database that is still starting after a host reboot,
+  // short enough that a genuinely absent one fails the unit while systemd still
+  // has restarts left rather than after a five-minute stall.
+  STARTUP_DEPENDENCY_TIMEOUT_MS: z.coerce.number().int().min(0).default(60_000),
+  // How often failed auto-pipeline runs whose retry is due are re-queued
+  // (migration 0161). 0 disables the sweep, which leaves a transiently-failed
+  // run needing a manual trigger — the behaviour before 0161.
+  PIPELINE_RETRY_SCAN_MINUTES: z.coerce.number().int().min(0).default(5),
   // Antivirus for uploaded documents (documents/virusScan.ts). Unset means no
   // scanning, which is the status quo — a scan nobody has deployed clamd for
   // must not stop the service booting.

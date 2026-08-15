@@ -17,6 +17,8 @@ import {
 } from '../repos/valuations.js';
 import { NAMED_BUCKETS, type NamedBucketKey } from '../domain/workflow.js';
 import type { QueryStats } from '../db/queryStats.js';
+import type { PoolHealth } from '../db/poolHealth.js';
+import { circuits } from '../clients/internal.js';
 import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { VALUATION_KINDS } from '../domain/valuation.js';
@@ -79,7 +81,7 @@ async function loadBands(pool: pg.Pool, scope: ReturnType<typeof valuationScope>
  */
 export function registerOperationsRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; queryStats?: QueryStats },
+  deps: { pool: pg.Pool; queryStats?: QueryStats; poolHealth?: PoolHealth },
 ): void {
   const countsCache = new TtlCache<Record<StateGroup | 'all', number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const namedCountsCache = new TtlCache<Record<NamedBucketKey, number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
@@ -244,5 +246,33 @@ export function registerOperationsRoutes(
     const parsed = Number(limit);
     const top = Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 200) : 20;
     return { instrumented: true, tracked: stats.size, queries: stats.top(top) };
+  });
+
+  /**
+   * Connection-pool health, and the state of every upstream circuit breaker.
+   *
+   * One endpoint for both because they are read together: an operator looking
+   * at a slow service wants to know whether the pool is saturated *and*
+   * whether we have stopped calling something, and the second explains the
+   * first surprisingly often — a breaker that has just opened releases every
+   * connection those calls were holding.
+   *
+   * `peek()` rather than `sample()`: this must not consume the once-only leak
+   * and exhaustion reports that the interval in index.ts exists to log. A
+   * curious operator refreshing this page should not be able to silence an
+   * alert.
+   *
+   * Ops-only, like the slow-query view: an acquisition stack names files and
+   * line numbers, which is more of the codebase than a client should see.
+   */
+  app.get('/api/v1/admin/db/pool', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    const health = deps.poolHealth;
+    return {
+      monitored: Boolean(health),
+      pool: health ? health.peek() : null,
+      circuits: circuits.snapshots(),
+    };
   });
 }

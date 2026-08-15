@@ -1,9 +1,14 @@
 import {
   ApiProblem,
+  CircuitOpenError,
+  CircuitRegistry,
+  classifyFailure,
+  classifyStatus,
   currentRequestId,
   probeReady as sharedProbeReady,
   problems,
   requestIdHeaders,
+  type FailureClass,
 } from '@n409/shared';
 
 /**
@@ -60,9 +65,73 @@ export class InternalServiceError extends Error {
      * pipe). Anything else is kept for the log and withheld from the response.
      */
     readonly opaque: boolean = false,
+    /**
+     * True when this request was never sent, because the breaker for `service`
+     * is open (see {@link circuits}).
+     *
+     * Carried on the ordinary error type rather than escaping as a
+     * `CircuitOpenError` so that every existing `catch (err instanceof
+     * InternalServiceError)` keeps working — of which there are dozens, and any
+     * one of them missed would turn a handled upstream outage into a 500. The
+     * flag is what `toProblem` reads to answer 503-and-come-back rather than
+     * 502-it-is-broken.
+     */
+    readonly circuitOpen: boolean = false,
+    /** Seconds until the breaker will admit a trial call; only set with `circuitOpen`. */
+    readonly retryAfterSeconds: number | null = null,
   ) {
     super(`${service}: ${detail}`);
   }
+}
+
+/**
+ * One breaker per internal service, shared by every call site.
+ *
+ * Module-level for the same reason `networkSink` is: the alternative is
+ * threading a registry through every repo and route that happens to call the
+ * engine, and a breaker that is not shared is not a breaker at all (see
+ * `CircuitRegistry`).
+ *
+ * The thresholds are deliberately not tight. Five consecutive transient
+ * failures is several seconds of a genuinely dead upstream, not one unlucky
+ * request, and the 30-second cooldown is short enough that a service restarting
+ * under `deploy.sh` is picked back up within one wait-loop interval. The cost of
+ * opening too eagerly is a feature that reports itself unavailable while it
+ * would in fact have worked; the cost of opening too late is the cascade. Both
+ * are real, and these numbers sit closer to the cautious end on purpose.
+ */
+export const circuits = new CircuitRegistry({
+  failureThreshold: 5,
+  resetTimeoutMs: 30_000,
+  halfOpenMax: 1,
+});
+
+/**
+ * How a failed exchange is classified for the breaker.
+ *
+ * `InternalServiceError` already carries the status, so this defers to the
+ * shared HTTP table rather than re-deriving anything: a 4xx is our payload
+ * being wrong and must not open the breaker (see the note on
+ * `CircuitBreaker.recordFailure`), a 5xx and a refused connection are the
+ * upstream being unwell and must.
+ *
+ * The abandoned case — our own deadline firing — is transient here even though
+ * `isRetryable` refuses to retry it. That is not a contradiction: the two
+ * questions differ, and this is the one that matters for a cascade. An upstream
+ * slow enough to burn the full budget on every request is precisely the
+ * condition that fills this service's handlers, and a breaker that ignored it
+ * would keep dialling right through the worst case it exists for.
+ */
+export function classifyInternalError(err: unknown): FailureClass {
+  if (err instanceof InternalServiceError) {
+    if (err.status !== null) return classifyStatus(err.status);
+    return {
+      kind: 'transient',
+      reason: err.abandoned ? 'internal.abandoned' : 'internal.unreachable',
+      retryable: !err.abandoned,
+    };
+  }
+  return classifyFailure(err);
 }
 
 /** Reads the engine's `issues`/`warnings` array off an error body, defensively. */
@@ -214,18 +283,73 @@ export async function postJson<T>(
   const remaining = () => budgetMs - (Date.now() - startedAt);
   const record = opts.record;
 
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await postJsonOnce<T>(service, url, body, Math.max(MIN_ATTEMPT_MS, remaining()), record);
-    } catch (err) {
-      if (!(err instanceof InternalServiceError) || !isRetryable(err) || attempt >= retries) throw err;
-      const backoff = backoffMs * 2 ** attempt;
-      // A retry the budget cannot pay for is not taken: it would only run
-      // headlong into the deadline and report a timeout instead of the real
-      // failure we already have in hand.
-      if (remaining() - backoff < MIN_ATTEMPT_MS) throw err;
-      await sleep(backoff);
+  const breaker = circuits.get(service);
+  try {
+    // The breaker wraps the *whole* call, retries included, rather than each
+    // attempt. Per-attempt would count one dead upstream twice and trip at half
+    // the configured threshold; worse, it would let the retry ladder run inside
+    // an already-open breaker, which is the exact spending this is here to stop.
+    breaker.acquire();
+  } catch (err) {
+    if (!(err instanceof CircuitOpenError)) throw err;
+    const seconds = Math.max(1, Math.ceil(err.retryAfterMs / 1000));
+    // Recorded like any other failed exchange: an operator reading the
+    // engagement's network log should see the calls that were refused locally,
+    // not a silent gap where the requests used to be.
+    if (record && networkSink) {
+      try {
+        networkSink({
+          service,
+          name: record.name,
+          valuationId: record.valuationId,
+          request: body,
+          response: null,
+          status: null,
+          error: `circuit open — not dialled (retry in ~${seconds}s)`,
+          durationMs: 0,
+          requestId: currentRequestId() ?? null,
+        });
+      } catch {
+        /* a diagnostic that cannot be written is a diagnostic that is missing */
+      }
     }
+    throw new InternalServiceError(
+      service,
+      null,
+      `recently failed repeatedly and is not being called (retry in ~${seconds}s)`,
+      [],
+      false,
+      false,
+      true,
+      seconds,
+    );
+  }
+
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const result = await postJsonOnce<T>(
+          service,
+          url,
+          body,
+          Math.max(MIN_ATTEMPT_MS, remaining()),
+          record,
+        );
+        breaker.recordSuccess();
+        return result;
+      } catch (err) {
+        if (!(err instanceof InternalServiceError) || !isRetryable(err) || attempt >= retries) throw err;
+        const backoff = backoffMs * 2 ** attempt;
+        // A retry the budget cannot pay for is not taken: it would only run
+        // headlong into the deadline and report a timeout instead of the real
+        // failure we already have in hand.
+        if (remaining() - backoff < MIN_ATTEMPT_MS) throw err;
+        await sleep(backoff);
+      }
+    }
+  } catch (err) {
+    breaker.recordFailure(classifyInternalError(err));
+    throw err;
   }
 }
 
@@ -386,9 +510,48 @@ function describedBy(err: InternalServiceError): string | null {
   return err.opaque ? null : err.detail;
 }
 
+/**
+ * What the user is told when a dependency is down, per service.
+ *
+ * The generic "the ai service is unavailable" is accurate and useless: it names
+ * an internal component the reader has never heard of, and says nothing about
+ * the two things they actually need — whether their work survived, and whether
+ * to wait or to do something else. These say both. They are also the only
+ * user-facing strings in this file, which is why they are here rather than
+ * inlined: a message that appears in front of a paying client during an outage
+ * deserves to be reviewable in one place.
+ */
+const DEGRADED_MESSAGES: Record<string, string> = {
+  ai: 'AI assistance is temporarily unavailable. Your valuation and all its inputs are saved — the analysis can be re-run once the service recovers, and nothing needs re-entering.',
+  engine:
+    'The calculation service is temporarily unavailable. Your inputs are saved; re-run the calculation shortly.',
+};
+
+function degradedMessage(service: string): string {
+  return (
+    DEGRADED_MESSAGES[service] ?? `The ${service} service is temporarily unavailable. Please retry shortly.`
+  );
+}
+
 /** Converts an InternalServiceError to the client-facing ApiProblem. */
 export function toProblem(err: InternalServiceError): ApiProblem {
   const said = describedBy(err);
+  // A breaker rejection is not "bad gateway" — nothing was dialled, and the
+  // honest answer is 503 with a time to come back. It is also the one upstream
+  // failure the caller can do something useful about, so it gets a sentence
+  // written for a person rather than the upstream's own words.
+  if (err.circuitOpen) {
+    return new ApiProblem({
+      status: 503,
+      title: 'Service Unavailable',
+      type: 'urn:n409:problem:upstream-degraded',
+      detail: degradedMessage(err.service),
+      // Drives the `retry-after` header via registerProblemHandler, so a client
+      // that honours it backs off for exactly as long as the breaker is shut —
+      // which also stops well-behaved clients from being the retry storm.
+      ...(err.retryAfterSeconds !== null ? { retryAfterSeconds: err.retryAfterSeconds } : {}),
+    });
+  }
   if (err.status !== null && err.status >= 400 && err.status < 500) {
     // Field-level issues ride along as a problem extension so the UI can
     // anchor each message to the input that caused it. They survive an opaque
