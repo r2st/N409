@@ -57,14 +57,56 @@ def discount_factor(r: float, t: float) -> float:
     return df
 
 
-def bs_call(s: float, k: float, t: float, r: float, sigma: float) -> float:
-    """European call. Degenerates to intrinsic value as t or sigma → 0."""
-    if s <= 0:
-        return 0.0
-    if k <= 0:
-        return s
-    if t <= 0 or sigma <= 0:
-        return max(s - k * discount_factor(r, max(t, 0.0)), 0.0)
+def d1_d2(s: float, k: float, t: float, r: float, sigma: float) -> tuple[float, float]:
+    """``d1`` and ``d2``, or an EngineInputError naming the volatility.
+
+    Shared by the three non-degenerate branches below for the reason
+    ``bs_call_terms`` and ``bs_call_delta`` already give for mirroring each
+    other: a value, a delta and a printed schedule computed from three separately
+    written copies of this algebra are three opinions about one number.
+
+    The guard is the volatility's half of what ``discount_factor`` does for the
+    rate, and it is needed for the same documented reason. The plausible-range
+    check on ``volatility`` is a `warn`, not an `error` — ``VOLATILITY_BAND`` is
+    a review opinion rather than a fact about the arithmetic — so any finite
+    positive sigma clears validation with ``ok: true`` and arrives here. The
+    variance term ``0.5·sigma²·t`` then leaves the doubles long before sigma
+    itself does, and it does so *silently*, in two regimes that are both worse
+    than a raise:
+
+    - Past sigma ≈ 1.3e154, ``sigma * sigma`` saturates to ``inf`` while
+      ``sigma * sqrt(t)`` is still finite. So ``d1`` is ``inf`` and ``d2`` is
+      ``inf`` too — and ``N(d2) = 1`` where the limit it is standing in for is
+      ``0``. The call collapses to its *intrinsic* value: on a $10M equity
+      against a $5M breakpoint over four years the answer goes from the correct
+      $10.0M to $5.74M, a 43% understatement returned as a successful 200.
+    - Past sigma ≈ 1.8e308/sqrt(t), ``sigma * sqrt(t)`` saturates too, ``d1`` is
+      ``inf/inf`` — a NaN — and every class value in the allocation is NaN. That
+      is serialised as ``null``, so a cap table nobody could allocate comes back
+      as a 200 with holes in it, which is precisely the failure ``_finite`` in
+      ``waterfall.py`` exists to refuse one layer up.
+
+    Both are caught by checking the pair rather than the ingredients, because
+    that is the condition actually required and it stays true however the
+    intermediate overflows: an infinite variance term, an infinite diffusion
+    term, and the NaN their ratio produces all leave ``d1``/``d2`` non-finite.
+    The healthy path is bit-identical to the expression this replaced.
+
+    The moneyness term is checked first and separately, because it fails for a
+    reason that has nothing to do with the volatility and must not be reported
+    as though it had. A waterfall breakpoint is a *sum* of a preference stack,
+    so it reaches this function already infinite on a cap table whose stack
+    overflowed — ``s`` finite against ``k = inf`` — and blaming that on a
+    volatility of 0.6 would send the reader to the one input that was fine.
+    """
+    if s > 0 and k > 0:
+        log_moneyness = math.log(s) - math.log(k)
+        if not math.isfinite(log_moneyness):
+            raise EngineInputError(
+                f"a non-finite Black-Scholes moneyness (spot={s:g}, strike={k:g}) — "
+                "on the waterfall the strike is a breakpoint, so check the share "
+                "counts and the preference stack"
+            )
     sqrt_t = math.sqrt(t)
     # log(s) - log(k), not log(s / k). The two are equal in exact arithmetic and
     # not in floating point: the quotient of two positive doubles far apart in
@@ -79,6 +121,24 @@ def bs_call(s: float, k: float, t: float, r: float, sigma: float) -> float:
     # positive finite pair and is the more accurate form besides.
     d1 = (math.log(s) - math.log(k) + (r + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
     d2 = d1 - sigma * sqrt_t
+    if not math.isfinite(d1) or not math.isfinite(d2):
+        raise EngineInputError(
+            f"the Black-Scholes d1/d2 pair is not representable at volatility={sigma:g} "
+            f"over T={t:g} years — check the volatility (a volatility is a fraction, "
+            "so 60% is 0.6)"
+        )
+    return d1, d2
+
+
+def bs_call(s: float, k: float, t: float, r: float, sigma: float) -> float:
+    """European call. Degenerates to intrinsic value as t or sigma → 0."""
+    if s <= 0:
+        return 0.0
+    if k <= 0:
+        return s
+    if t <= 0 or sigma <= 0:
+        return max(s - k * discount_factor(r, max(t, 0.0)), 0.0)
+    d1, d2 = d1_d2(s, k, t, r, sigma)
     return s * norm_cdf(d1) - k * discount_factor(r, t) * norm_cdf(d2)
 
 
@@ -114,10 +174,7 @@ def bs_call_terms(s: float, k: float, t: float, r: float, sigma: float) -> dict:
     if t <= 0 or sigma <= 0:
         df = discount_factor(r, max(t, 0.0))
         return {**terms, "discount_factor": df, "call": max(s - k * df, 0.0)}
-    sqrt_t = math.sqrt(t)
-    # The difference of logs, not the log of the quotient — see `bs_call`.
-    d1 = (math.log(s) - math.log(k) + (r + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
-    d2 = d1 - sigma * sqrt_t
+    d1, d2 = d1_d2(s, k, t, r, sigma)
     df = discount_factor(r, t)
     n_d1, n_d2 = norm_cdf(d1), norm_cdf(d2)
     return {
@@ -151,8 +208,7 @@ def bs_call_delta(s: float, k: float, t: float, r: float, sigma: float) -> float
         # Intrinsic: the option is either the underlying or nothing, and its
         # sensitivity to the underlying is 1 or 0 to match.
         return 1.0 if s > k * discount_factor(r, max(t, 0.0)) else 0.0
-    sqrt_t = math.sqrt(t)
-    d1 = (math.log(s) - math.log(k) + (r + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
+    d1, _ = d1_d2(s, k, t, r, sigma)
     return norm_cdf(d1)
 
 

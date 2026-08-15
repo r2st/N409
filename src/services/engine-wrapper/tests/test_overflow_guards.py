@@ -31,9 +31,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.engine.approaches import asset_value, income_dcf, market_multiples
-from app.engine.bs import bs_call, discount_factor
+from app.engine.bs import bs_call, bs_call_delta, bs_call_terms, discount_factor
 from app.engine.compute import compute
 from app.engine.errors import EngineInputError
+from app.engine.waterfall import allocate_waterfall
 from app.engine.volatility import ewma_volatility, historical_volatility, parkinson_volatility
 from app.main import app
 
@@ -320,6 +321,137 @@ def test_compute_answers_422_for_a_rate_the_validator_only_warned_about():
 
 def test_compute_still_succeeds_on_the_same_payload_with_a_sane_rate():
     payload = {"params": opm_only_params(), "inputs": opm_only_inputs()}
+    res = client.post("/engine/v1/compute", json=payload)
+    assert res.status_code == 200
+    assert math.isfinite(res.json()["results"]["fmv_per_share"])
+
+
+# ── d1/d2, which the volatility reaches unbounded ─────────────────────────────
+#
+# The mirror of the section above, and the same pairing. `volatility` outside
+# `VOLATILITY_BAND` is a `warn`, not an `error`, for the same reason the rate's
+# band is: it is a review opinion rather than a fact about the arithmetic. So
+# any finite positive sigma clears the pre-flight validator with `ok: true` and
+# arrives at `d1_d2`, where the variance term `0.5·sigma²·t` leaves the doubles
+# long before sigma itself does.
+#
+# What made this worth a guard rather than a shrug is that neither regime says
+# anything. Where `sigma²` saturates but `sigma·sqrt(t)` does not, `d1` and `d2`
+# are both `inf`, so `N(d2)` is 1 where the limit it stands in for is 0 and the
+# call silently collapses to its *intrinsic* value. Where both saturate, `d1` is
+# `inf/inf` and every class value in the allocation is a NaN — serialised as
+# `null` on a 200, the exact failure `waterfall._finite` refuses one layer up.
+
+# Overflows `(r + 0.5·sigma²)·t` at the three-year horizon these payloads use,
+# while `sigma·sqrt(t)` is still finite: the silently-intrinsic regime.
+VOL_VARIANCE_OVERFLOW = 1e155
+# Overflows `sigma·sqrt(t)` as well, so `d1` is `inf/inf`: the NaN regime.
+VOL_DIFFUSION_OVERFLOW = 1e308
+
+
+def test_bs_call_refuses_a_volatility_whose_variance_term_overflows():
+    """The regime that used to answer with intrinsic value and no complaint.
+
+    On this call the true limit as sigma grows is the spot, $10,000,000. What
+    it returned instead was $5,739,281 — a 43% understatement, on a 200.
+    """
+    with pytest.raises(EngineInputError) as err:
+        bs_call(1e7, 5e6, 4.0, 0.04, 1e154)
+    assert "volatility" in str(err.value)
+
+
+def test_bs_call_refuses_a_volatility_whose_diffusion_term_overflows():
+    with pytest.raises(EngineInputError) as err:
+        bs_call(1e7, 5e6, 4.0, 0.04, VOL_DIFFUSION_OVERFLOW)
+    assert "volatility" in str(err.value)
+
+
+def test_the_delta_and_the_schedule_refuse_it_on_the_same_branch():
+    """`bs_call_delta` and `bs_call_terms` mirror `bs_call` by construction —
+    the class volatilities divide one by the other and the report prints the
+    third, so a guard on one of the three and not the others would put a
+    refused value and a tabulated one on the same page."""
+    for fn in (bs_call_delta, bs_call_terms):
+        with pytest.raises(EngineInputError):
+            fn(1e7, 5e6, 4.0, 0.04, VOL_DIFFUSION_OVERFLOW)
+
+
+def test_the_waterfall_refuses_it_rather_than_allocating_nan():
+    """Every class came back NaN — `null` in the response — and the values
+    summed to NaN against an equity value of $10,000,000."""
+    classes = [
+        {"name": "Common", "kind": "common", "shares": 8e6},
+        {"name": "A", "kind": "preferred", "shares": 2e6, "preference": 5e6, "seniority": 1},
+    ]
+    with pytest.raises(EngineInputError):
+        allocate_waterfall(1e7, classes, 4.0, 0.04, VOL_DIFFUSION_OVERFLOW)
+
+
+@pytest.mark.parametrize("vol", [VOL_VARIANCE_OVERFLOW, VOL_DIFFUSION_OVERFLOW])
+def test_compute_answers_422_for_a_volatility_the_validator_only_warned_about(vol):
+    payload = {"params": opm_only_params(), "inputs": opm_only_inputs(volatility=vol)}
+    pre = client.post("/engine/v1/validate", json=payload)
+    assert pre.status_code == 200
+    assert pre.json()["ok"] is True
+
+    res = client.post("/engine/v1/compute", json=payload)
+    assert res.status_code == 422
+    assert "volatility" in res.json()["detail"]
+
+
+@pytest.mark.parametrize("vol", [VOL_VARIANCE_OVERFLOW, VOL_DIFFUSION_OVERFLOW])
+def test_the_full_cap_table_path_refuses_it_too(vol):
+    """The aggregate model and the breakpoint waterfall are separate code
+    paths into `bs_call`, and a 409A runs whichever the cap table supports."""
+    payload = {
+        "params": opm_only_params(),
+        "inputs": opm_only_inputs(
+            volatility=vol,
+            share_classes=[
+                {"kind": "common", "name": "Common", "shares": 7_000_000},
+                {
+                    "kind": "preferred",
+                    "name": "A",
+                    "shares": 2_000_000,
+                    "preference": 5_000_000,
+                    "seniority": 1,
+                },
+            ],
+        ),
+    }
+    assert client.post("/engine/v1/validate", json=payload).json()["ok"] is True
+    res = client.post("/engine/v1/compute", json=payload)
+    assert res.status_code == 422
+    assert "volatility" in res.json()["detail"]
+
+
+def test_an_overflowing_breakpoint_is_blamed_on_the_breakpoint_not_the_volatility():
+    """A waterfall strike is a *sum* of a preference stack, so it arrives here
+    already infinite on a table whose stack overflowed — with a volatility of
+    0.6 that is entirely fine. The moneyness is checked separately so the
+    message does not send the reader to the one input that was not at fault."""
+    with pytest.raises(EngineInputError) as err:
+        bs_call(1e7, math.inf, 3.0, 0.04, 0.6)
+    message = str(err.value)
+    assert "preference stack" in message
+    assert "volatility" not in message
+
+
+def test_ordinary_volatilities_are_untouched():
+    """The guard must be invisible to every real 409A. These are pinned to the
+    full double, not approximately: the healthy path is the same expression it
+    always was, so a change in the last bit here means the arithmetic moved."""
+    assert bs_call(1e6, 5e5, 3.0, 0.042, 0.6) == 637457.6440384055
+    assert bs_call_delta(1e6, 5e5, 3.0, 0.042, 0.6) == 0.9045362054234627
+    assert bs_call_terms(1e6, 5e5, 3.0, 0.042, 0.6)["call"] == 637457.6440384055
+    # A volatility far outside the plausible band is still a *number*, and the
+    # band is only a warning — so a large-but-representable sigma must keep
+    # allocating rather than being swept up by the overflow guard.
+    assert math.isfinite(bs_call(1e7, 5e6, 4.0, 0.04, 1e150))
+
+
+def test_compute_still_succeeds_on_the_same_payload_with_a_sane_volatility():
+    payload = {"params": opm_only_params(), "inputs": opm_only_inputs(volatility=0.6)}
     res = client.post("/engine/v1/compute", json=payload)
     assert res.status_code == 200
     assert math.isfinite(res.json()["results"]["fmv_per_share"])
