@@ -39,6 +39,13 @@ export interface ValuationRow {
   auto_pipeline: boolean;
   /** Optimistic-lock counter, bumped by every write (migration 0137). */
   version: number;
+  /**
+   * Soft delete, written by the retention sweep. Declared rather than left to
+   * the index signature below because every write path has to be able to ask:
+   * `buildValuationWhere` keeps archived rows out of the *lists*, and a route
+   * holding one row by id has nothing but this column to go on.
+   */
+  archived_at: Date | null;
   created_at: Date;
   due_date: Date | null;
   published_at: Date | null;

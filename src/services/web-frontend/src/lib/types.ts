@@ -639,6 +639,16 @@ export interface PaymentQuote {
   kind: ValuationKind;
   configured: boolean;
   /**
+   * Whether this engagement may still be charged for at all — false once it has
+   * been retired or already settled. Distinct from `configured`, which is about
+   * the deployment's Stripe key: the price still stands, it is the demand for
+   * it that has lapsed.
+   *
+   * Optional so a page served by a build newer than the API degrades to the
+   * previous behaviour rather than hiding a button a paying client needs.
+   */
+  payable?: boolean;
+  /**
    * Present and true only for ops, and only when the deployment holds a Stripe
    * *test* key. Such a key opens a real Checkout page that takes `4242…` and
    * declines every real card, so the checkout is offered to ops (who are

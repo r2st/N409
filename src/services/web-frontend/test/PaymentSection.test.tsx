@@ -71,6 +71,37 @@ describe('PaymentSection (price transparency before checkout)', () => {
     expect(screen.queryByRole('button', { name: /pay/i })).not.toBeInTheDocument();
   });
 
+  /**
+   * A retired engagement is quoted but not offered — the API refuses the
+   * checkout with a 409, so a button here would only produce an error a client
+   * cannot act on. The invoice fallback is the wrong thing to say about it:
+   * nobody is going to send an invoice for withdrawn work.
+   */
+  it('withholds the button on a retired engagement, without promising an invoice', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/payments/quote'))
+        return jsonResponse({ quote: { ...QUOTE, payable: false } });
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByTestId('payment-not-payable')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /pay/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/we will invoice you instead/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps the button for an API too old to send `payable`', async () => {
+    // Rolling deploy: a browser on the new build talking to the old API must
+    // not hide the button from a client who is trying to pay.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/payments/quote')) return jsonResponse({ quote: QUOTE });
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+
+    render(<PaymentSection valuation={VALUATION} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /pay/i })).toBeInTheDocument());
+  });
+
   it('starts checkout and surfaces a 503 as the invoice fallback', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {

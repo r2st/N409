@@ -161,7 +161,15 @@ export function PaymentSection({ valuation }: { valuation: Valuation }) {
       )}
 
       <div className="mt-4 flex flex-wrap items-center gap-4">
-        {quote && !quote.configured ? (
+        {/* Retired first: it is the more specific of the two refusals, and the
+            invoice-fallback wording below would promise an invoice for work
+            nobody is going to send one for. `payable === false` rather than
+            falsy, so an API older than the field still renders the button. */}
+        {quote?.payable === false ? (
+          <p className="ml-auto text-sm text-amber-800" data-testid="payment-not-payable">
+            This engagement has been retired — it can no longer be paid for. Talk to us if that is wrong.
+          </p>
+        ) : quote && !quote.configured ? (
           <p className="ml-auto text-sm text-amber-800">
             Online payment is not available yet — we will invoice you instead.
           </p>

@@ -119,6 +119,28 @@ export function checkoutAvailableTo(
   return stripeKeyMode(secretKey) !== 'test' || isOps(principal);
 }
 
+/**
+ * Whether this engagement may still be charged for.
+ *
+ * A retired engagement may not. `listUnpaidValuationsForScope` already stopped
+ * offering one on the billing page — "this list is not a report, it is a demand
+ * for money with a button beside it" — but the button itself was never gated,
+ * and the demand can be reached without the list: the engagement's own page
+ * still loads (`findValuationById` is deliberately id-addressable, so ops can
+ * work a retired file), so its pay panel rendered, quoted a price, and opened a
+ * live Stripe Checkout Session. A client with that page open when the sweep ran,
+ * or with the URL bookmarked, could pay real money for work the firm has
+ * withdrawn — and getting it back is a refund somebody has to notice and issue
+ * by hand.
+ *
+ * The receipt and history routes deliberately do *not* apply this. Those are
+ * records of money that really moved, and it did not stop moving because the
+ * engagement was later retired.
+ */
+export function payableEngagement(valuation: Pick<ValuationRow, 'archived_at' | 'paid_status'>): boolean {
+  return valuation.archived_at === null && valuation.paid_status === 'unpaid';
+}
+
 const CheckoutBody = z
   .object({
     // Ops-only override; clients always pay list price.
@@ -160,6 +182,14 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
       const principal = requirePrincipal(req);
       const { id } = req.params as { id: string };
       const valuation = await loadAuthorized(deps.pool, principal, id);
+
+      // Ahead of the Stripe-configuration checks: whether this engagement can
+      // be charged for is a fact about the engagement, and answering "payments
+      // are not configured" to someone trying to pay for a retired file would
+      // send them back to try again tomorrow.
+      if (valuation.archived_at !== null) {
+        throw problems.conflict('This engagement has been retired and can no longer be paid for.');
+      }
 
       if (!deps.stripeSecretKey) {
         throw paymentsUnavailable('Payments are not configured (STRIPE_SECRET_KEY unset)');
@@ -326,6 +356,13 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: PaymentDeps): 
         // by ops and not by a client; the checkout applies the same predicate,
         // so the panel never offers a button the POST would refuse.
         configured: checkoutAvailableTo(deps.stripeSecretKey, principal),
+        // The other half of that invariant, and about this engagement rather
+        // than this deployment: a retired or already-settled one is quoted —
+        // the price is a fact, and ops reading a closed file should see it —
+        // but not offered. Folding it into `configured` would have the panel
+        // say "we will invoice you instead" about work nobody is going to
+        // invoice for.
+        payable: payableEngagement(valuation),
         // Sent only when it is true and only to the caller who can act on it.
         // An ops user about to click "Pay now" against a test key needs to know
         // no money will move; a client is never shown the button at all, and
