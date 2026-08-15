@@ -1,4 +1,65 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
+# N409 revision
+# commit:    162ce75
+# subject:   the soft-delete sweep, finished
+# previous:  ecd4341 (two work queues kept offering retired engagements).
+# includes:  4 commits — R56, a production-readiness round.
+#
+#            R55 fixed four readers that build their own WHERE over
+#            `valuations` and so never inherited `archived_at IS NULL`: the
+#            search box, the firm console, the reviewer queue and the pay-now
+#            list. It did not establish that those were all of them. They were
+#            not. This round enumerated every file that selects from or joins
+#            `valuations` and classified each: does this surface ask somebody to
+#            act, or is it a record of something that happened?
+#
+#            Three of the remaining leaks turned out to be worse than any R55
+#            found, because they do not render a page — they send mail, and mail
+#            leaves the building and cannot be un-sent:
+#
+#            094fd93 — `dueCandidates` carried neither soft delete, so the drip
+#              campaigns kept nudging clients about retired engagements on a
+#              cadence, and kept writing to deactivated accounts. It is the only
+#              query in the path: nothing between it and `transport.send`
+#              re-checks. Also the first `users.deleted_at` leak found outside
+#              the search box.
+#
+#            712efd3 — archiving does not disable a monitor, so the scan kept
+#              evaluating retired engagements and emailing the reviewer
+#              "Consider a fresh valuation" about withdrawn work.
+#
+#            32cb490 — archiving does not complete an engagement, so the
+#              overdue sweep kept chasing the assigned analyst past SLA. The
+#              worst of the three to receive: it repeats every sweep, and the
+#              only way to stop it is to finish an engagement that no longer
+#              exists.
+#
+#            162ce75 — the four that only mislead: the two §7.4 remediation
+#              queues (whose `count(*) OVER ()` totals were overstated, and
+#              whose re-run guard would have recalculated retired work), the
+#              inbox with its badge and clear-all, and the `uploads` re-filing
+#              queue — where the count did not join `valuations` at all, so
+#              filtering only the list would have reproduced the firm console's
+#              header-says-15-list-shows-12 gap.
+#
+#            Each fix goes on the shared fragment both readers use, not in the
+#            callers, because two readers disagreeing about what is live is the
+#            bug rather than a symptom. Every test file pins a vacuity guard —
+#            that archiving leaves `enabled` true, leaves `current_stage`
+#            mid-stage — without which the suite would pass on a platform that
+#            simply disabled everything on archive.
+#
+#            Deliberately left, and why. `listPaymentsForScope` (pinned by an
+#            R55 test) and `repos/activityLog.ts` are ledgers: money that left a
+#            customer's account and events that happened do not stop having done
+#            so because the engagement was later retired. `findValuationById`
+#            and the bulk-workflow route load by id, which is ops naming a row,
+#            not a list offering one. `repos/organizations.ts` (the holding-
+#            company rollup) is the one open judgment call — a retired
+#            subsidiary arguably overstates a group total, and arguably belongs
+#            in its history. Left rather than guessed at.
+#
+
 # N409 deployed revision
 # commit:    176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # subject:   fix: a published 409A cannot be re-rendered into a different document
