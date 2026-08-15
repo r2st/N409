@@ -274,6 +274,16 @@ trap 'rm -f "$TARBALL_STEM" "$TARBALL" ${DELETED_LIST:+"$DELETED_LIST"}' EXIT
 $GIT archive --format=tar.gz -o "$TARBALL" HEAD
 log "archive: $(wc -c <"$TARBALL" | tr -d ' ') bytes"
 
+# Read before unpacking, not after. The host's BUILD_SHA is the only trustworthy
+# record of what is running there, and unpacking is the one step that can destroy
+# it: `git archive` carries tracked files, so for as long as BUILD_SHA was one,
+# `tar` wrote the committed SHA over the host's and section 3 read back a value
+# the deploy had itself just supplied. It is untracked now (see .gitignore, and
+# .gitattributes for the belt to that braces), which is the actual fix — this
+# ordering is what makes the sweep correct by construction rather than by the
+# continued absence of a file from an archive.
+PREV_SHA="$(run_remote "cat $REMOTE_DIR/BUILD_SHA 2>/dev/null || true" | tr -d '[:space:]' || true)"
+
 if [[ "$APPLY" -eq 1 ]]; then
   $SCP ${KEY_ARGS[@]+"${KEY_ARGS[@]}"} "$TARBALL" "$HOST:/tmp/n409-deploy.tar.gz"
 else
@@ -284,9 +294,7 @@ run_remote "cd $REMOTE_DIR && tar -xzf /tmp/n409-deploy.tar.gz && rm -f /tmp/n40
 # ── 3. Remove what the commit removed ────────────────────────────────────────
 # tar never deletes. Files dropped since the deployed commit would otherwise
 # stay live forever — including routes and migrations that were deliberately
-# withdrawn. The previously deployed SHA comes from the host's BUILD_SHA, which
-# is the only trustworthy record of what is actually running there.
-PREV_SHA="$(run_remote "cat $REMOTE_DIR/BUILD_SHA 2>/dev/null || true" | tr -d '[:space:]' || true)"
+# withdrawn.
 if [[ -n "$PREV_SHA" && "$PREV_SHA" != "unknown" ]] && $GIT cat-file -e "${PREV_SHA}^{commit}" 2>/dev/null; then
   # -z into a file, not newlines into a variable. `--name-only` alone C-quotes
   # any path that is not plain ASCII — `café.txt` comes back as the seven
@@ -301,6 +309,14 @@ if [[ -n "$PREV_SHA" && "$PREV_SHA" != "unknown" ]] && $GIT cat-file -e "${PREV_
     log "removing ${DELETED_COUNT} file(s) deleted since ${PREV_SHA:0:7}"
     while IFS= read -r -d '' f; do
       [[ -n "$f" ]] || continue
+      # The host's BUILD_SHA is never ours to remove. It is a record of the
+      # release the host is running, not a file the tree provides, and the sweep
+      # is the one place that could mistake the two: untracking it is itself a
+      # deletion, so the first deploy after that change asks to delete exactly
+      # the file section 6 exists to write. Harmless when the build then
+      # succeeds and fatal to the evidence when it does not — the deploy would
+      # abort having already erased what the host was running.
+      if [[ "$f" == "BUILD_SHA" ]]; then continue; fi
       # Quoted, because the remote shell re-parses this. Unquoted, a path with
       # a space became several arguments and `rm -f` removed none of them while
       # exiting 0 — the sweep reporting success over a file still live, which is

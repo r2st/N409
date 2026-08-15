@@ -65,3 +65,13 @@ mutants/
 
 # Playwright end-to-end artifacts (traces, videos, banked storage state)
 e2e/.artifacts/
+
+# What the deploy wrote on the host — a record of a deploy, not source.
+#
+# It was tracked once, and that made it a lie in both directions. `git archive`
+# carries tracked files, so every deploy unpacked a committed SHA over the
+# host's own record of what it is running — the file infra/deploy.sh calls "the
+# only trustworthy record" and then reads, one line later, for the deletion
+# sweep. And on a checkout it gave readBuildInfo() a stale `source: 'file'` to
+# report, where the absence it is designed for reports `unknown` instead.
+BUILD_SHA

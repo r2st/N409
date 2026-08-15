@@ -1,0 +1,11 @@
+# BUILD_SHA is gitignored, so this line is redundant today and deliberate
+# anyway: it is what makes the exclusion survive somebody re-adding the file
+# with `git add -f`, or a `git add -A` from a tree where the ignore is missing.
+#
+# The failure it guards is quiet. `git archive` carries tracked files, and the
+# deploy unpacks that archive over /opt/N409 *before* reading the host's
+# BUILD_SHA to work out which files a commit removed. A tracked BUILD_SHA is
+# therefore read back as the SHA the deploy itself just wrote, so the deletion
+# sweep computes its diff from the wrong commit — and if the build then fails,
+# the host is left claiming a release it is not running.
+BUILD_SHA export-ignore

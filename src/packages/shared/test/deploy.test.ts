@@ -314,6 +314,50 @@ describe('BUILD_SHA', () => {
     const run = deploy(['--apply']);
     expect(run.remote.some((c) => c.includes('chown n409:n409 /opt/N409/BUILD_SHA'))).toBe(true);
   });
+
+  // ── The host's copy is evidence, and unpacking is what can destroy it ──────
+  //
+  // These two pin the same property from both ends, because either one alone
+  // leaves the hole open. BUILD_SHA was a tracked file, so `git archive`
+  // carried it and `tar` wrote a committed SHA over the host's own record —
+  // *before* section 3 read that record back to decide which files the commit
+  // removed. The sweep was therefore diffing from whatever SHA happened to be
+  // committed in the file rather than from what the host was running, and a
+  // deploy whose build then failed left the host claiming a release it had
+  // never started.
+  //
+  // Invisible to every other test here, and that is the point worth recording:
+  // they all stub `cat /opt/N409/BUILD_SHA` to return a chosen value, so the
+  // stub answered whatever the test wanted no matter what tar had done to the
+  // real file. A stub over the exact call being corrupted cannot see the
+  // corruption — so the assertion has to be about the order of the commands,
+  // and about what is in the archive, neither of which the stub mediates.
+  it('is read from the host before the archive is unpacked over it', () => {
+    const run = deploy(['--apply']);
+    const read = run.remote.findIndex((c) => c.includes('cat /opt/N409/BUILD_SHA'));
+    const unpack = run.remote.findIndex((c) => c.includes('tar -xzf'));
+    expect(read, 'the deploy never reads the host BUILD_SHA').toBeGreaterThanOrEqual(0);
+    expect(unpack, 'the deploy never unpacks the archive').toBeGreaterThanOrEqual(0);
+    expect(read, `read at ${read}, unpacked at ${unpack}`).toBeLessThan(unpack);
+  });
+
+  it('is not a file this repository ships', () => {
+    // Asserted against the real checkout, not the throwaway one: the archive is
+    // built from *this* repo's HEAD, so this is the only tree where the answer
+    // means anything. Both mechanisms are checked — untracked is the fix, and
+    // export-ignore is what keeps a `git add -f` from quietly undoing it.
+    const tracked = execFileSync('git', ['ls-files', '--', 'BUILD_SHA'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    }).trim();
+    expect(tracked, 'BUILD_SHA is tracked, so git archive will ship it').toBe('');
+
+    const attr = execFileSync('git', ['check-attr', 'export-ignore', '--', 'BUILD_SHA'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    }).trim();
+    expect(attr).toContain('export-ignore: set');
+  });
 });
 
 describe('files deleted since the last deploy', () => {
@@ -351,6 +395,33 @@ describe('files deleted since the last deploy', () => {
     // trace of the decision.
     const run = deploy(['--apply'], {}, []);
     expect(run.stderr).toContain('skipping deletion sweep');
+  });
+
+  it('never removes the host BUILD_SHA, even when the commit deleted it', () => {
+    // Untracking BUILD_SHA is a deletion like any other, so the sweep asks the
+    // host to remove the very file section 6 then writes. It survives that when
+    // the build succeeds and does not when the build fails — the deploy aborts
+    // having already erased the only record of what the host is still running.
+    writeFileSync(path.join(repo, 'BUILD_SHA'), `${git('rev-parse', 'HEAD')}\n`);
+    git('add', '-A');
+    git('commit', '-qm', 'track BUILD_SHA');
+    // Taken *after* the file exists. The sweep diffs PREV_SHA..HEAD, so a
+    // PREV_SHA from before BUILD_SHA was ever added nets the add and the remove
+    // against each other and never lists it — the test would then pass against
+    // a deploy with no guard at all.
+    const prev = git('rev-parse', 'HEAD');
+    // Untracked *and* ignored, as the real change does it: `git rm --cached`
+    // alone leaves the file in the working tree, and the deploy refuses to run
+    // against a dirty checkout — which would abort this before it reached the
+    // sweep and pass the first assertion for the wrong reason.
+    git('rm', '-q', '--cached', 'BUILD_SHA');
+    writeFileSync(path.join(repo, '.gitignore'), 'BUILD_SHA\n');
+    git('add', '-A');
+    git('commit', '-qm', 'untrack BUILD_SHA');
+
+    const run = deployWithPrevSha(prev);
+    expect(run.remote.some((c) => c.includes("rm -f '/opt/N409/BUILD_SHA'"))).toBe(false);
+    expect(run.remote.some((c) => c.includes('> /opt/N409/BUILD_SHA'))).toBe(true);
   });
 
   it('does not trust a BUILD_SHA this checkout has never heard of', () => {
