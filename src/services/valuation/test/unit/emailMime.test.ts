@@ -23,6 +23,23 @@ function headersOf(message: string): string {
   return message.split('\r\n\r\n', 1)[0]!.replace(/\r\n[ \t]+/g, ' ');
 }
 
+/**
+ * Decode an RFC 2047 header value back to the text a client displays.
+ *
+ * Adjacent encoded words are joined with the whitespace between them dropped,
+ * which is what the spec requires of a decoder and the reason the encoder may
+ * split a value at all. Bare (unencoded) runs are kept verbatim.
+ */
+function decodeHeaderWords(value: string): string {
+  return value.replace(
+    /(?:=\?utf-8\?B\?[^?]*\?=)(?:\s+=\?utf-8\?B\?[^?]*\?=)*/gi,
+    (run) =>
+      [...run.matchAll(/=\?utf-8\?B\?([^?]*)\?=/gi)]
+        .map((m) => Buffer.from(m[1]!, 'base64').toString('utf8'))
+        .join(''),
+  );
+}
+
 describe('quoted-printable', () => {
   it('leaves plain ASCII alone', () => {
     expect(encodeQuotedPrintable('Your draft is ready.')).toBe('Your draft is ready.');
@@ -218,6 +235,62 @@ describe('MIME assembly', () => {
     expect(msg).not.toContain('X-Injected');
     expect(msg).not.toContain('Cc:');
     expect(msg).not.toContain('X-Bad');
+  });
+
+  /**
+   * The sanitizer keeps the first line only, and the encoder separates encoded
+   * words with a fold. Composed encode-then-sanitize, the fold reads as the end
+   * of the value — so these assert on the decoded header, which is what a mail
+   * client actually shows, rather than on the wire bytes.
+   */
+  it('keeps the whole address when a non-ASCII sender spans several encoded words', () => {
+    const from = '"N409 Bewertungen für Beteiligungsgesellschaften" <no-reply@n409.app>';
+    const headers = headersOf(buildMimeMessage({ from, to: 'a@b.test', subject: 's', body: '' }));
+    const value = /^From: (.*)$/m.exec(headers)?.[1] ?? '';
+    // More than one word, or the case this guards against cannot arise.
+    expect(value.split(' ').length).toBeGreaterThan(1);
+    expect(decodeHeaderWords(value)).toBe(from);
+    // The mailbox is the half that used to be dropped.
+    expect(decodeHeaderWords(value)).toContain('<no-reply@n409.app>');
+  });
+
+  it('keeps the whole address for a non-ASCII recipient and reply-to', () => {
+    const to = '"Zoë Müller-Lüdenscheidt (Finanzabteilung)" <zoe@example.test>';
+    const replyTo = '"Betreuung für Beteiligungsgesellschaften" <ops@n409.app>';
+    const headers = headersOf(
+      buildMimeMessage({ from: FROM, to, subject: 's', body: '', replyTo }),
+    );
+    expect(decodeHeaderWords(/^To: (.*)$/m.exec(headers)?.[1] ?? '')).toBe(to);
+    expect(decodeHeaderWords(/^Reply-To: (.*)$/m.exec(headers)?.[1] ?? '')).toBe(replyTo);
+  });
+
+  /**
+   * The reorder must not buy header integrity at the cost of injection safety:
+   * a CRLF in a value that is *also* non-ASCII is the case that exercises both
+   * halves, and it is the one an attacker would reach for now that a bare CRLF
+   * no longer truncates.
+   */
+  it('still strips injection from a non-ASCII header value', () => {
+    const msg = buildMimeMessage({
+      from: FROM,
+      to: '"Zoë Müller für Beteiligungen" <z@y.test>\r\nBcc: evil@example.com',
+      subject: 'Société Générale — rapport prêt\r\nX-Injected: 1',
+      body: '',
+      replyTo: '"Betreuung für Kunden" <ops@n409.app>\r\nCc: also-evil@example.com',
+    });
+    expect(msg).not.toContain('Bcc:');
+    expect(msg).not.toContain('X-Injected');
+    expect(msg).not.toContain('Cc:');
+    expect(msg).not.toContain('evil@example.com');
+    // And the surviving values are the pre-CRLF halves, intact rather than cut
+    // at the encoder's fold.
+    const headers = headersOf(msg);
+    expect(decodeHeaderWords(/^To: (.*)$/m.exec(headers)?.[1] ?? '')).toBe(
+      '"Zoë Müller für Beteiligungen" <z@y.test>',
+    );
+    expect(decodeHeaderWords(/^Subject: (.*)$/m.exec(headers)?.[1] ?? '')).toBe(
+      'Société Générale — rapport prêt',
+    );
   });
 
   it('keeps every line inside the RFC 5321 998-octet limit', () => {

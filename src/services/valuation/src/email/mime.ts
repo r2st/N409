@@ -37,7 +37,15 @@ import { newUlid } from '@n409/shared';
 
 // ── Header encoding ─────────────────────────────────────────────────────────
 
-/** Header values end at the first CR/LF — anything after it is an injection. */
+/**
+ * Header values end at the first CR/LF — anything after it is an injection.
+ *
+ * Must run *before* `encodeHeaderWords`, never after. `encodeHeaderWords` emits
+ * a legal fold — CRLF + space — between encoded words, so a value sanitized
+ * afterwards is cut at that fold and everything past it is thrown away. See
+ * `buildMimeMessage`, where three headers had the two composed the wrong way
+ * round.
+ */
 export function sanitizeHeaderValue(value: string): string {
   return (value.split(/[\r\n]/, 1)[0] ?? '').trim();
 }
@@ -322,20 +330,36 @@ export function messageIdDomain(from: string): string {
  * Every header value is sanitized rather than trusted: subjects and company
  * names reach here from user input, and a CRLF in one of them is a header
  * injection that would let a caller add a `Bcc`.
+ *
+ * Sanitize first, then encode — the order `Subject` always had and the order
+ * `From`, `To` and `Reply-To` did not. Composed the other way the sanitizer
+ * runs on the encoder's own output, and `encodeHeaderWords` separates encoded
+ * words with a fold (CRLF + space) whenever a non-ASCII value exceeds one 45-
+ * byte word. `sanitizeHeaderValue` keeps only the first line, so the fold was
+ * read as the end of the value and the rest of the header was discarded.
+ *
+ * On `From` that is not a cosmetic truncation: a white-labelled sender such as
+ * `"N409 Bewertungen für Beteiligungsgesellschaften" <no-reply@n409.io>` lost
+ * the `<no-reply@n409.io>` half — the address itself — leaving a `From` with a
+ * display name, no mailbox, and a base64 word cut mid-character. Which relays
+ * reject and which clients render as a blank sender is not worth finding out.
+ * Injection safety is unchanged and if anything plainer this way: the CRLF is
+ * stripped from the raw value, and whatever survives is either pure ASCII or
+ * base64 inside an encoded word.
  */
 export function buildMimeMessage(input: MimeMessageInput): string {
   const boundary = input.boundary ?? `n409-${newUlid()}`;
   const localPart = input.messageId ?? newUlid();
   const headers: string[] = [
-    foldHeader('From', sanitizeHeaderValue(encodeHeaderWords(input.from))),
-    foldHeader('To', sanitizeHeaderValue(encodeHeaderWords(input.to))),
+    foldHeader('From', encodeHeaderWords(sanitizeHeaderValue(input.from))),
+    foldHeader('To', encodeHeaderWords(sanitizeHeaderValue(input.to))),
     foldHeader('Subject', encodeHeaderWords(sanitizeHeaderValue(input.subject))),
     foldHeader('Date', (input.date ?? new Date()).toUTCString()),
     foldHeader('Message-ID', `<${localPart}@${messageIdDomain(input.from)}>`),
     'MIME-Version: 1.0',
   ];
   if (input.replyTo) {
-    headers.push(foldHeader('Reply-To', sanitizeHeaderValue(encodeHeaderWords(input.replyTo))));
+    headers.push(foldHeader('Reply-To', encodeHeaderWords(sanitizeHeaderValue(input.replyTo))));
   }
   if (input.listUnsubscribe) {
     const targets = [`<${sanitizeHeaderValue(input.listUnsubscribe.url)}>`];
