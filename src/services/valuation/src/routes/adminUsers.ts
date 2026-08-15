@@ -31,6 +31,7 @@ import {
 import {
   createInvitation,
   hasPendingInvitation,
+  InvitationPendingError,
   listInvitations,
   refreshInvitation,
   revokeInvitation,
@@ -210,11 +211,20 @@ export function registerAdminUserRoutes(
       throw problems.conflict('An invitation for this email is already pending');
 
     const inviter = await findUserById(deps.pool, principal.id);
+    // The check above is a reading, not a reservation: the partial unique index
+    // is what actually holds the address, and two admins inviting it at once
+    // both pass the check before either inserts. Catching the loser's collision
+    // here is what makes that a 409 with the same words as the guard rather
+    // than a 500 — see `createInvitation`.
     const { invitation, secret } = await createInvitation(deps.pool, {
       email,
       roles,
       partnerId: partner_id ?? null,
       invitedBy: principal.id,
+    }).catch((err: unknown) => {
+      if (err instanceof InvitationPendingError)
+        throw problems.conflict('An invitation for this email is already pending');
+      throw err;
     });
     await sendInviteEmail(req, invitation, secret, inviter?.email ?? 'An administrator');
     await audit(principal.id, 'user_invited', 'invitation', invitation.id, email, { roles });

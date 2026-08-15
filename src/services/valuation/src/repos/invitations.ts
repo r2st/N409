@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
+import { isUniqueViolation } from '../db/pgError.js';
 import { withTransaction } from '../db/pool.js';
 import type { RoleKey } from '../domain/roles.js';
 import { hashToken } from './apiTokens.js';
@@ -33,18 +34,67 @@ export interface InvitationListRow extends InvitationRow {
 
 const RETURNING = 'id, email, roles, partner_id, invited_by, expires_at, accepted_at, revoked_at, created_at';
 
+/** Raised when a live pending invitation already holds the address. */
+export class InvitationPendingError extends Error {}
+
+/**
+ * Mint an invitation, retiring whatever dead one was holding the address.
+ *
+ * `user_invitations_pending_email_key` (migration 0044) is a partial unique
+ * index on `lower(email) WHERE accepted_at IS NULL AND revoked_at IS NULL`, and
+ * that predicate says nothing about expiry — it cannot, because `now()` is not
+ * immutable and Postgres will not index on it. So the slot is held by any
+ * unaccepted, unrevoked invitation *forever*, while every reader of the table
+ * — `hasPendingInvitation`, `findPendingInvitationByToken`, `acceptInvitation`
+ * — additionally requires `expires_at > now()` and correctly considers the same
+ * row dead.
+ *
+ * The two disagreed, and the route sat between them. An invitation that lapsed
+ * unaccepted left `hasPendingInvitation` false, so the route's own guard waved
+ * the admin through, and the INSERT then collided with the index and raised a
+ * 23505 that nothing caught: a 500 on the invite form, for an address the
+ * system had just said was free. The TTL is seven days, so this is not an edge
+ * case — it is what happens to every invitation nobody accepts, and the only
+ * way out was to notice that "revoke" works on a row the UI shows as expired.
+ *
+ * Retiring the lapsed row inside the same transaction as the INSERT is what
+ * makes the index agree with every reader. `revoked_at` is the column for it:
+ * the invitations that survive are the ones that can still be redeemed, and a
+ * lapsed link cannot, so the row is recorded as what it is rather than deleted
+ * — the audit trail keeps who invited whom, and the list keeps showing it.
+ *
+ * A collision that survives the retirement is a genuinely live invitation, and
+ * that is the concurrent case: two admins inviting one address at the same
+ * moment both pass `hasPendingInvitation` before either has inserted. The index
+ * is the only thing that can settle that, and it now settles it as a 409 saying
+ * what happened rather than as a 500.
+ */
 export async function createInvitation(
   pool: pg.Pool,
   args: { email: string; roles: RoleKey[]; partnerId?: string | null; invitedBy: string },
 ): Promise<{ invitation: InvitationRow; secret: string }> {
   const secret = randomBytes(32).toString('base64url');
-  const { rows } = await pool.query<InvitationRow>(
-    `INSERT INTO user_invitations (id, email, roles, partner_id, invited_by, token_sha256, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, now() + interval '${INVITE_TTL}')
-     RETURNING ${RETURNING}`,
-    [newUlid(), args.email, args.roles, args.partnerId ?? null, args.invitedBy, hashToken(secret)],
-  );
-  return { invitation: rows[0]!, secret };
+  return withTransaction(pool, async (client) => {
+    // Only the lapsed ones. A live pending invitation must still collide below
+    // — superseding it here would let a second admin silently re-role an open
+    // invitation and invalidate a link that is already in someone's inbox.
+    await client.query(
+      `UPDATE user_invitations SET revoked_at = now()
+       WHERE lower(email) = lower($1)
+         AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at <= now()`,
+      [args.email],
+    );
+    const { rows } = await client.query<InvitationRow>(
+      `INSERT INTO user_invitations (id, email, roles, partner_id, invited_by, token_sha256, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + interval '${INVITE_TTL}')
+       RETURNING ${RETURNING}`,
+      [newUlid(), args.email, args.roles, args.partnerId ?? null, args.invitedBy, hashToken(secret)],
+    );
+    return { invitation: rows[0]!, secret };
+  }).catch((err: unknown) => {
+    if (isUniqueViolation(err, 'user_invitations_pending_email_key')) throw new InvitationPendingError();
+    throw err;
+  });
 }
 
 export async function listInvitations(pool: pg.Pool): Promise<InvitationListRow[]> {
