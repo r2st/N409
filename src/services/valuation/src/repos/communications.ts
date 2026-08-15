@@ -305,6 +305,28 @@ export interface DueCandidate {
  * Valuations sitting in the campaign's trigger state, with the campaign's
  * condition applied, plus the data isCampaignDue() and rendering need. The
  * due-window check itself stays in domain code (testable without a DB).
+ *
+ * Both soft deletes are applied here, and this is the only place they can be:
+ * nothing between this query and `transport.send` re-checks either, so a row
+ * returned here is a message that leaves the building.
+ *
+ *   * `v.archived_at IS NULL` — archiving is the soft delete for valuations,
+ *     and `buildValuationWhere` filters it out of the list, the counts and the
+ *     export. A campaign builds its own WHERE, so it inherited none of it and
+ *     kept nudging clients about engagements the firm had retired: "we still
+ *     need your cap table" for work nobody is doing, on a cadence, for as many
+ *     sends as `max_sends` allows.
+ *   * `u.deleted_at IS NULL` — the matching rule for the recipient, which every
+ *     other reader of `users` already applies (`listUsers`, the firm roster,
+ *     the reviewer picker, password reset, email verification). Without it a
+ *     deactivated account kept receiving automated mail, which is the one thing
+ *     deactivating it was supposed to stop.
+ *
+ * Neither is a marketing-consent question, so neither belongs in
+ * `isSuppressed`: consent is the recipient declining, this is the platform
+ * having no business writing at all. That is also why the two are refused here
+ * rather than counted as `suppressed` — a suppressed send is a decision about a
+ * real candidate, and these are not candidates.
  */
 export async function dueCandidates(
   db: pg.Pool | pg.PoolClient,
@@ -359,7 +381,8 @@ export async function dueCandidates(
             ) AS marketing_email
      FROM valuations v
      JOIN users u ON u.id = v.user_id
-     WHERE v.state = $2 AND ${conditionSql[campaign.condition] ?? 'false'}`,
+     WHERE v.archived_at IS NULL AND u.deleted_at IS NULL
+       AND v.state = $2 AND ${conditionSql[campaign.condition] ?? 'false'}`,
     [campaign.id, campaign.trigger_state],
   );
   return rows;
