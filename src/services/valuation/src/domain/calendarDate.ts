@@ -14,11 +14,14 @@
  * grant date, a round's closing date, the ends of a volatility window — each
  * silently moves backwards by one.
  *
- * This is latent rather than live: the Hetzner host runs UTC, where local
- * midnight and UTC midnight coincide and every site is right. It becomes wrong
- * the moment that is not true — a developer's laptop, a relocated host, a
- * container that inherits a zone — and it becomes wrong quietly, because an
- * off-by-one date looks like a date.
+ * This is latent rather than live, but not for the reason it is tempting to
+ * give. The Hetzner host runs America/New_York — checked, not assumed — where
+ * local midnight is 05:00 the *same* UTC day, so the UTC day is the right one
+ * and every site reads correctly. Anywhere at or west of UTC is safe like this;
+ * the error exists only east of it, and there it is immediate. So the guard is
+ * the host's offset being ≤ 0, which nothing enforces and a relocation would
+ * silently spend. It becomes wrong quietly, because an off-by-one date looks
+ * like a date.
  *
  * Formatting from the local parts is the inverse of how the value was built, so
  * it returns the day the column actually holds, in every zone.

@@ -290,7 +290,13 @@
 #            than assumed: for `'2026-06-30'::date`, Asia/Tokyo hands back
 #            2026-06-29T15:00:00Z — so the old expression reads 2026-06-29 —
 #            while America/New_York and UTC both read it correctly, which is why
-#            it stayed latent on a UTC host. `domain/calendarDate.ts` now holds
+#            it stayed latent in production — on America/New_York, which is what
+#            the Hetzner host actually runs. This entry and the helper both said
+#            "a UTC host" until the deploy at 92013c0 checked `timedatectl`
+#            instead of repeating it. The conclusion survives and the reason is
+#            wider than the one given: anywhere at or west of UTC reads the
+#            right day, and the exposure is the host's offset going above zero,
+#            which nothing enforces. `domain/calendarDate.ts` now holds
 #            the one helper and the reasoning, including the two neighbouring
 #            cases it must NOT be applied to: a Date built in UTC on purpose
 #            (`${iso}T00:00:00Z` walked with setUTCDate, as vesting.ts and
@@ -306,7 +312,8 @@
 #            independently. It resolves to a day first and does the arithmetic
 #            in UTC, so the window is exactly `days` long in every zone.
 #
-#            The tests run under TZ=Asia/Tokyo. On a UTC host the broken and the
+#            The tests run under TZ=Asia/Tokyo. At or west of UTC — which covers
+#            both the host and every developer machine here — the broken and the
 #            correct expression agree on every input, so assertions written
 #            there prove nothing — 8 of the 12 fail against the old reading, and
 #            the one pinning the UTC-anchored arithmetic passes against both.
@@ -699,15 +706,33 @@
 #            calculation's `results.discounts.dlom_method` is chaffee or
 #            finnerty and whose `checks` carry no `dlom_range`, or one that
 #            disagrees with `results.discounts.dlom`.
-# closed:    Stripe was unconfigured in production. STRIPE_SECRET_KEY (test
-#            mode) is now in /opt/N409/.env and the five units have been
-#            restarted onto it, so checkout, the quote's `configured` flag and
-#            the receipt lookup are live. Still outstanding: the webhook
-#            secrets (STRIPE_WEBHOOK_SECRET / STRIPE_BILLING_WEBHOOK_SECRET),
-#            which cannot be generated until the endpoints are registered in
-#            the Stripe dashboard — until then POST /api/v1/stripe/webhook
-#            answers 503 and no settlement moves a valuation to `paid`. See
+# gap:       Stripe is unconfigured in production, and is now unconfigured
+#            *deliberately*. This entry previously read "closed" and said
+#            checkout was live on a test-mode STRIPE_SECRET_KEY with only the
+#            webhook secrets outstanding. That was the half-configured state
+#            3bd8431 later taught `config.ts` to refuse, and the refusal is what
+#            it was written for: at the deploy of 92013c0 the valuation service
+#            would not boot, crash-looped 62 times, and took the API down until
+#            STRIPE_SECRET_KEY was commented out of /opt/N409/.env (backup at
+#            .env.bak.predeploy-92013c0). So the two halves of this entry were
+#            always contradictory — "checkout is live" and "no settlement moves
+#            a valuation to `paid`" describe a shop that takes money and ships
+#            nothing, which is the whole of the fault.
+#
+#            What is true now: no STRIPE_SECRET_KEY, so `checkoutAvailableTo`
+#            reports unavailable and the quote's `configured` flag is false —
+#            the safe half, and the one the test suite runs with. Re-enabling
+#            means uncommenting the key *and* setting STRIPE_WEBHOOK_SECRET (and
+#            STRIPE_BILLING_WEBHOOK_SECRET) in the same edit; the guard will
+#            reject the boot otherwise, which is the intended behaviour and not
+#            a thing to work around. The secrets cannot be generated until the
+#            endpoints are registered in the Stripe dashboard. See
 #            docs/billing-setup.md.
+#
+#            Not done, and worth doing before that: nothing verifies the guard
+#            against the deployed env. The failure mode here was a config the
+#            repo had already decided was invalid, sitting in production for the
+#            324 commits between d6ddf33 and 92013c0, discovered by an outage.
 # closed:    the seven new document categories were reachable and nothing had
 #            been moved into them — built on exactly the query this line named.
 #            GET/POST /admin/documents/triage is the ops queue over
