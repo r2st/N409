@@ -47,7 +47,25 @@ export async function findActiveSubscription(pool: pg.Pool, userId: string): Pro
   return rows[0] ?? null;
 }
 
-/** Create or reactivate the user's subscription for a plan (webhook-driven). */
+/**
+ * Create or update the user's subscription for a plan (webhook-driven).
+ *
+ * A cancellation is never undone here. Stripe does not guarantee the order it
+ * delivers events in, and a `customer.subscription.updated` generated before
+ * the cancellation can land after it — a retry after a failed delivery is the
+ * ordinary way that happens. This wrote `status = EXCLUDED.status`
+ * unconditionally, so that one stale event flipped a cancelled row back to
+ * 'active' and cleared `canceled_at`. `findActiveSubscription` then returned it
+ * and `consumeValuation` charged against its quota: a subscriber who cancelled
+ * kept the plan, and nothing in the product said otherwise until the next
+ * Stripe event happened to correct it.
+ *
+ * Cancellation is terminal in Stripe too — a cancelled subscription cannot be
+ * reactivated, a resubscribe issues a new subscription id — so "already
+ * cancelled" is never stale information, whatever order events arrive in. That
+ * is the same invariant {@link markSubscriptionPastDue} already enforces on its
+ * own path; it just did not hold on this one.
+ */
 export async function upsertSubscription(
   pool: pg.Pool,
   input: {
@@ -93,6 +111,7 @@ export async function upsertSubscription(
                 IS DISTINCT FROM subscriptions.current_period_start
            THEN 0 ELSE subscriptions.valuations_used END,
          canceled_at = CASE WHEN EXCLUDED.status = 'canceled' THEN now() ELSE NULL END
+       WHERE subscriptions.status <> 'canceled'
        RETURNING *`,
       [
         newUlid(),
@@ -105,7 +124,22 @@ export async function upsertSubscription(
         input.periodEnd ?? null,
       ],
     );
-    return rows[0]!;
+    if (rows[0]) return rows[0];
+
+    // No row came back, so the DO UPDATE's WHERE declined it: the subscription
+    // on file is cancelled and stays that way. The caller still asked for the
+    // row, and it exists — returning it unchanged keeps this a no-op rather
+    // than an error, which is what a stale event deserves.
+    const existing = await findSubscriptionByStripeId(pool, input.stripeSubscriptionId);
+    if (existing) return existing;
+
+    // Neither inserted, nor updated, nor found. The only other UNIQUE on the
+    // table is the one we conflicted on, so this means the row was deleted
+    // between the two statements — not recoverable here, and not something to
+    // hide behind a non-null assertion.
+    throw new Error(
+      `upsertSubscription: no row written or found for stripe_subscription_id=${input.stripeSubscriptionId}`,
+    );
   }
   const { rows } = await pool.query<SubscriptionRow>(
     `INSERT INTO subscriptions (id, user_id, plan_tier, status, current_period_start, current_period_end)
@@ -120,6 +154,18 @@ export async function upsertSubscription(
     ],
   );
   return rows[0]!;
+}
+
+/** The subscription a Stripe subscription id names, whatever state it is in. */
+export async function findSubscriptionByStripeId(
+  pool: pg.Pool,
+  stripeSubscriptionId: string,
+): Promise<SubscriptionRow | null> {
+  const { rows } = await pool.query<SubscriptionRow>(
+    'SELECT * FROM subscriptions WHERE stripe_subscription_id = $1',
+    [stripeSubscriptionId],
+  );
+  return rows[0] ?? null;
 }
 
 export async function cancelSubscription(pool: pg.Pool, stripeSubscriptionId: string): Promise<void> {

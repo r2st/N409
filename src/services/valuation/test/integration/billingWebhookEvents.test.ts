@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { upsertSubscription } from '../../src/repos/billing.js';
+import { consumeValuation, findActiveSubscription, upsertSubscription } from '../../src/repos/billing.js';
 import { isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 
 /**
@@ -237,6 +237,75 @@ describe.skipIf(!dbUp)('billing webhook events', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(await subscriptionOf(user.id)).toBeNull();
+    });
+
+    /**
+     * Stripe makes no ordering guarantee, and its own retry mechanism is how
+     * events most often arrive out of order: a delivery that failed once is
+     * redelivered minutes later, behind everything generated since. A
+     * subscription `updated` from before the cancellation therefore lands after
+     * `deleted` routinely — and it used to flip the row back to 'active',
+     * clear `canceled_at`, and hand a cancelled subscriber their quota back.
+     *
+     * Cancellation is terminal in Stripe (a resubscribe issues a new
+     * subscription id), so "already cancelled" is never the stale half.
+     */
+    it('does not resurrect a cancelled subscription when a stale update arrives after it', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'annual_retainer',
+        stripeSubscriptionId: 'sub_stale_1',
+      });
+      await deliver({
+        type: 'customer.subscription.deleted',
+        data: { object: { id: 'sub_stale_1' } },
+      });
+      expect((await subscriptionOf(user.id))?.status).toBe('canceled');
+
+      const res = await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_stale_1',
+            status: 'active',
+            current_period_start: Math.floor(Date.now() / 1000),
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      // Accepted, because there is nothing for Stripe to redeliver — the event
+      // is simply older news than what we hold.
+      expect(res.statusCode).toBe(200);
+      const sub = await subscriptionOf(user.id);
+      expect(sub?.status).toBe('canceled');
+      expect(sub?.canceled_at).not.toBeNull();
+
+      // The two consequences that made it matter: the plan is gone, and its
+      // quota can no longer be spent.
+      expect(await findActiveSubscription(ctx.pool, user.id)).toBeNull();
+      expect(await consumeValuation(ctx.pool, user.id)).toBe(false);
+    });
+
+    it('still applies an ordinary update to a live subscription', async () => {
+      const user = await seedUser(ctx, { roles: ['valuation_user'] });
+      await upsertSubscription(ctx.pool, {
+        userId: user.id,
+        planTier: 'annual_retainer',
+        status: 'past_due',
+        stripeSubscriptionId: 'sub_stale_2',
+      });
+      await deliver({
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_stale_2',
+            status: 'active',
+            metadata: { user_id: user.id, plan_tier: 'annual_retainer' },
+          },
+        },
+      });
+      expect((await subscriptionOf(user.id))?.status).toBe('active');
     });
   });
 
