@@ -244,12 +244,26 @@ export async function firmTeam(pool: pg.Pool, partnerId: string): Promise<FirmTe
  * Candidates for the attention queue: the firm's live engagements, newest
  * first. The classification itself is pure (domain/firmDashboard.ts) — this
  * only narrows the read to states that can possibly need attention.
+ *
+ * Returns `truncated` alongside the rows, by reading one more than asked for.
+ *
+ * The cap was always here; what was missing was any way to know it had bitten.
+ * The two callers both derive a *total* and a per-reason breakdown from what
+ * comes back — `attention_total`, `attention_counts`, and `/firm/attention`'s
+ * own `total` — so for a firm with more live engagements than the cap, every
+ * one of those figures silently reported the cap instead of the queue. A firm
+ * reads "1000 need attention" and works the list believing it is the list; the
+ * rest of the backlog is not late, it is invisible.
+ *
+ * Every other capped list in this service says so (`listHolds`,
+ * `listEnabledMonitors`, the comment and template pages, the workbook sheets),
+ * and this is the one that had a headline number riding on it.
  */
 export async function firmAttentionCandidates(
   pool: pg.Pool,
   partnerId: string,
   limit: number,
-): Promise<FirmValuationRow[]> {
+): Promise<{ candidates: FirmValuationRow[]; truncated: boolean }> {
   const { rows } = await pool.query<{
     id: string;
     number: string;
@@ -272,10 +286,11 @@ export async function firmAttentionCandidates(
       WHERE v.partner_id = $1 AND ${LIVE_ONLY('v.')} AND v.state = ANY($2)
       ORDER BY v.due_date ASC NULLS LAST, v.created_at ASC
       LIMIT $3`,
-    [partnerId, ACTIVE_STATES, limit],
+    [partnerId, ACTIVE_STATES, limit + 1],
   );
 
-  return rows.map((r) => ({
+  const truncated = rows.length > limit;
+  const candidates = (truncated ? rows.slice(0, limit) : rows).map((r) => ({
     id: r.id,
     number: Number(r.number),
     company_name: r.company_name,
@@ -287,4 +302,5 @@ export async function firmAttentionCandidates(
     created_at: r.created_at.toISOString(),
     last_comment_at: r.last_comment_at ? r.last_comment_at.toISOString() : null,
   }));
+  return { candidates, truncated };
 }

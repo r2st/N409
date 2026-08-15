@@ -67,6 +67,8 @@ interface FirmDashboard {
   team: TeamMember[];
   attention: AttentionItem[];
   attention_total: number;
+  /** True when the scan behind the totals hit its ceiling — see the header. */
+  attention_truncated?: boolean;
   attention_counts: Record<AttentionReason, number>;
 }
 
@@ -277,8 +279,14 @@ export function FirmDashboardPage() {
         <div className="flex items-baseline justify-between gap-4">
           <h2 className="font-display text-xl font-semibold text-ink-900">Needs attention</h2>
           {data.attention_total > attention.length && (
+            // "of 1000" was the cap on the scan behind it, not the size of the
+            // queue, on every firm large enough for the cap to bite — so the
+            // one figure a partner plans against read as an exact count of a
+            // list it could not all be seeing. `attention_truncated` is what
+            // the server now says about that, and "at least" is what it means.
             <span className="text-sm text-ink-400">
-              Showing {attention.length} of {data.attention_total}
+              Showing {attention.length} of {data.attention_truncated ? 'at least ' : ''}
+              {data.attention_total}
             </span>
           )}
         </div>

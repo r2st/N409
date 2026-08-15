@@ -64,7 +64,7 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       findBrandingByPartnerId(deps.pool, partnerId),
     ]);
 
-    const allAttention = rankAttention(candidates, now);
+    const allAttention = rankAttention(candidates.candidates, now);
     return {
       firm: { id: partnerId, name: branding?.brand_name?.trim() || branding?.name || 'Your firm' },
       summary,
@@ -73,6 +73,13 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
       attention: allAttention.slice(0, 25),
       attention_total: allAttention.length,
       attention_counts: countByReason(allAttention),
+      // ...unless the firm has more live engagements than one scan reads, in
+      // which case they cover the first ATTENTION_SCAN_LIMIT of it and this
+      // says so. Without the flag `attention_total` reported the cap as if it
+      // were the queue, which is the one number on this page a firm plans
+      // against.
+      attention_truncated: candidates.truncated,
+      attention_scan_limit: ATTENTION_SCAN_LIMIT,
       generated_at: now.toISOString(),
     };
   });
@@ -102,8 +109,22 @@ export function registerFirmRoutes(app: FastifyInstance, deps: { pool: pg.Pool }
     if (!parsed.success) throw problems.badRequest('Invalid query');
     const partnerId = resolveFirm(req, parsed.data.partner_id);
 
-    const candidates = await firmAttentionCandidates(deps.pool, partnerId, ATTENTION_SCAN_LIMIT);
+    const { candidates, truncated } = await firmAttentionCandidates(
+      deps.pool,
+      partnerId,
+      ATTENTION_SCAN_LIMIT,
+    );
     const attention = rankAttention(candidates, new Date());
-    return { attention, total: attention.length, counts: countByReason(attention) };
+    // `total` is the length of what was ranked, so it is the whole queue only
+    // when the scan was not truncated. The flag and the limit travel with it
+    // rather than being left for the caller to infer from `total === 1000`,
+    // which is the same envelope every other capped list here serves.
+    return {
+      attention,
+      total: attention.length,
+      counts: countByReason(attention),
+      truncated,
+      scan_limit: ATTENTION_SCAN_LIMIT,
+    };
   });
 }
