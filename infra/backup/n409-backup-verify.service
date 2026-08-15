@@ -1,0 +1,36 @@
+# /etc/systemd/system/n409-backup-verify.service
+# Weekly restore test. Oneshot unit invoked by n409-backup-verify.timer. Runs
+# pg-verify.sh, which restores the newest dump into a scratch database, asks it
+# whether the schema and the spine tables actually came back, and drops it.
+#
+# This is the unit that turns "we take backups" into "we have restored one this
+# week". pg-backup.sh proves an archive is well-formed; only a restore proves it
+# is a backup. See infra/backup/README.md.
+[Unit]
+Description=N409 backup verification (restore the newest dump into a scratch DB)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=n409
+Group=n409
+EnvironmentFile=/opt/N409/.env
+Environment=BACKUP_ROOT=/opt/n409-backups
+ExecStart=/opt/N409/infra/backup/pg-verify.sh
+# A restore of a production-sized dump is not a two-minute job, and a
+# verification killed by a timeout would report as a failed verification —
+# which is the one false alarm guaranteed to get this timer disabled.
+TimeoutStartSec=3600
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# Read-only here: verification restores into a database, never into the backup
+# directory. If this unit ever needs write access to /opt/n409-backups,
+# something has gone wrong with what it is being asked to do.
+ReadOnlyPaths=/opt/n409-backups
+
+[Install]
+WantedBy=multi-user.target

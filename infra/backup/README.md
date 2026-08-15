@@ -8,17 +8,22 @@ no restore runbook).
 
 | File | Role |
 | --- | --- |
-| `pg-backup.sh` | Dumps the DB (`pg_dump -Fc`), promotes a weekly copy, prunes to retention. |
+| `pg-backup.sh` | Dumps the DB (`pg_dump -Fc`), verifies the archive, records a checksum, promotes a weekly copy, prunes to retention. |
+| `pg-verify.sh` | Proves a dump **restores**, by restoring it into a scratch database. `--quick` re-checks archives and checksums only. |
 | `pg-restore.sh` | Restores a dump into a target DB (interactive confirm; `FORCE=1` to skip). |
 | `n409-backup.service` | Oneshot unit that runs `pg-backup.sh` as the `n409` user. |
 | `n409-backup.timer` | Fires the service nightly at **02:00** (`Persistent=true`). |
+| `n409-backup-verify.service` | Oneshot unit that runs `pg-verify.sh`. |
+| `n409-backup-verify.timer` | Fires the verification weekly, **Sunday 04:00** — after the nightly dump and its weekly promotion. |
 
 Backups land under **`/opt/n409-backups`** on the host:
 
 ```
 /opt/n409-backups/
-  daily/   n409-YYYYMMDD-HHMMSS.dump   # kept: 7 newest  (KEEP_DAILY)
-  weekly/  n409-YYYYMMDD-HHMMSS.dump   # kept: 4 newest  (KEEP_WEEKLY)
+  daily/   n409-YYYYMMDD-HHMMSS.dump          # kept: 7 newest  (KEEP_DAILY)
+           n409-YYYYMMDD-HHMMSS.dump.sha256   # checksum, written with the dump
+  weekly/  n409-YYYYMMDD-HHMMSS.dump          # kept: 4 newest  (KEEP_WEEKLY)
+           n409-YYYYMMDD-HHMMSS.dump.sha256
 ```
 
 A dump taken on Sunday (ISO day-of-week 7, `WEEKLY_DOW`) is additionally copied
@@ -39,6 +44,35 @@ Defaults are production-correct; the systemd unit sets `BACKUP_ROOT` and reads
 | `KEEP_DAILY` | `7` | Daily dumps retained. |
 | `KEEP_WEEKLY` | `4` | Weekly dumps retained. |
 | `WEEKLY_DOW` | `7` (Sun) | ISO day-of-week promoted to weekly. |
+| `MIN_TOC_ENTRIES` | `10` | Floor on the dump's table-of-contents entry count. |
+
+## Three checks, three strengths
+
+These are deliberately different claims, and only the last one is evidence:
+
+1. **Every dump, every night** — `pg-backup.sh` reads the archive's table of
+   contents back with `pg_restore --list` before rotating it in, and floors the
+   entry count. A dump truncated by a full disk is non-empty, so it passed the
+   old `[[ -s ]]` check; it fails this one. A dump of an empty scratch database
+   is a valid archive; the entry floor is what catches it. A dump that fails
+   verification is deleted and **not** rotated in — it never evicts a good one.
+2. **Every dump, on demand** — `pg-verify.sh --quick` re-reads every archive in
+   the retention window and checks it against the SHA-256 recorded when it was
+   written. This catches bit-rot and truncated copies *after* the fact. Seconds,
+   no server needed.
+3. **The newest dump, weekly** — `pg-verify.sh` restores into a scratch
+   database, counts the tables, reads each spine table, and checks the migration
+   ledger is non-empty, then drops the scratch DB. This is the only check that
+   proves a restore works rather than inferring it.
+
+```bash
+sudo /opt/N409/infra/backup/pg-verify.sh --quick   # checksums + archives
+sudo /opt/N409/infra/backup/pg-verify.sh           # full restore rehearsal
+journalctl -u n409-backup-verify.service --no-pager
+```
+
+A non-zero exit from either mode is worth a page: a backup that does not
+restore is indistinguishable from no backup.
 
 ## Install on the host
 
@@ -46,9 +80,12 @@ Defaults are production-correct; the systemd unit sets `BACKUP_ROOT` and reads
 # Files ship in the repo at /opt/N409/infra/backup and are symlinked/copied in.
 sudo cp /opt/N409/infra/backup/n409-backup.service /etc/systemd/system/
 sudo cp /opt/N409/infra/backup/n409-backup.timer   /etc/systemd/system/
+sudo cp /opt/N409/infra/backup/n409-backup-verify.service /etc/systemd/system/
+sudo cp /opt/N409/infra/backup/n409-backup-verify.timer   /etc/systemd/system/
 sudo install -d -o n409 -g n409 /opt/n409-backups
 sudo systemctl daemon-reload
 sudo systemctl enable --now n409-backup.timer
+sudo systemctl enable --now n409-backup-verify.timer
 ```
 
 Check the schedule and run one on demand:
@@ -115,6 +152,18 @@ the DR section of `infra/DEPLOYMENT.md`.
 ## Tests
 
 `src/packages/shared/test/pg-backup.test.ts` exercises the rotation logic end to
-end with a stubbed `pg_dump`: it drives many simulated days through the script
-and asserts the daily cap, weekly promotion on `WEEKLY_DOW`, the weekly cap, and
-that only the newest dumps survive. Runs in CI via `npm test`.
+end with a stubbed `pg_dump` and `pg_restore`: it drives many simulated days
+through the script and asserts the daily cap, weekly promotion on `WEEKLY_DOW`,
+the weekly cap, that only the newest dumps survive, that an unreadable or
+suspiciously-empty dump is refused rather than rotated in, and that each
+checksum manifest is written, promoted and pruned with its dump.
+
+`src/packages/shared/test/pg-verify.test.ts` covers the verification script with
+both binaries stubbed and logging every invocation, so the assertions are about
+what it did: which scratch database it created and dropped (including after a
+failure), that it never connects to the live database, that connection
+parameters survive the URL rewrite, and that each failure mode — an
+unrestorable dump, too few tables, a missing spine table, an unmigrated
+database, a stale checksum — is reported rather than passed over.
+
+Both run in CI via `npm test`.

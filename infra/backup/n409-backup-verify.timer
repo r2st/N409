@@ -1,0 +1,24 @@
+# /etc/systemd/system/n409-backup-verify.timer
+# Fires n409-backup-verify.service weekly, Sunday at 04:00 — two hours after the
+# nightly backup, so it verifies a dump taken that morning rather than racing it,
+# and on the day the weekly copy is promoted.
+#
+# Weekly rather than nightly on purpose: a full restore costs real server time
+# and disk, and the failure it catches (a dump that will not restore) is a
+# property of the backup *process*, which does not change between Tuesday and
+# Wednesday. Nightly would spend seven times the resources to shorten the
+# detection window from a week to a day.
+#
+# Persistent=true so a verification missed while the host was down runs at next
+# boot rather than being skipped until the following Sunday.
+[Unit]
+Description=Weekly N409 backup verification timer
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=600
+Unit=n409-backup-verify.service
+
+[Install]
+WantedBy=timers.target
