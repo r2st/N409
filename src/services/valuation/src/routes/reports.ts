@@ -14,6 +14,7 @@ import {
   type ReportContent,
 } from '../domain/report.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
+import { isUniqueViolation } from '../db/pgError.js';
 import { findActiveTemplateForKind, templateLabel } from '../repos/reportTemplates.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import {
@@ -193,13 +194,33 @@ async function loadOrCreateReport(
         return { templateVersion: builtin.version, content: instantiateTemplate(builtin, vars) };
       })();
 
-  const created = await createReport(pool, {
-    valuationId: valuation.id,
-    templateVersion,
-    content,
-    actor: actorFor(principal),
-  });
-  return created.report;
+  try {
+    const created = await createReport(pool, {
+      valuationId: valuation.id,
+      templateVersion,
+      content,
+      actor: actorFor(principal),
+    });
+    return created.report;
+  } catch (err) {
+    /*
+     * Somebody else opened the tab first.
+     *
+     * `reports.valuation_id` is UNIQUE, and the read above is a round trip: two
+     * people opening the same engagement together — the analyst and the
+     * reviewer, or one person and their second tab — both see no report, both
+     * instantiate the template, and the second INSERT is refused. That surfaced
+     * as a 500 on a read-only action, on an engagement where nothing was wrong.
+     *
+     * The constraint did its job: there is exactly one report and the loser
+     * wants it, not an error. Re-read rather than retry the insert, and let a
+     * violation of any other constraint through as the failure it is.
+     */
+    if (!isUniqueViolation(err, 'reports_valuation_id_key')) throw err;
+    const winner = await findReportByValuation(pool, valuation.id);
+    if (!winner) throw err;
+    return winner;
+  }
 }
 
 /** White-label branding for partner engagements (improvement 8). */

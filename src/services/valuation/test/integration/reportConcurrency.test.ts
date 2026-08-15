@@ -60,6 +60,44 @@ describe.skipIf(!dbUp)('report optimistic locking', () => {
   });
   afterAll(async () => ctx?.teardown());
 
+  /**
+   * Opening the tab is a read, and two people doing it together is ordinary.
+   *
+   * A report is instantiated from the template on first ops access, and that is
+   * a read of `reports` followed by an INSERT into it. `valuation_id` is UNIQUE,
+   * so when the analyst and the reviewer open the same engagement at the same
+   * moment — or one person opens it in a second tab — both see nothing, both
+   * instantiate, and the second is refused by the constraint. The loser got a
+   * 500 on an engagement where nothing was wrong.
+   *
+   * Two injects genuinely overlap here: the first `await` in each is a round
+   * trip to Postgres on its own pooled connection, so the second request's read
+   * runs before the first request's insert. This is the one place in this suite
+   * where that is true — see R57 on why a webhook race could not be staged the
+   * same way.
+   */
+  it('serves the report to both of two simultaneous first opens', async () => {
+    const created = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/valuations',
+      headers: authHeader(admin.token),
+      payload: { kind: '409a', company_name: 'Two Tabs At Once, Inc.' },
+    });
+    const raced = created.json().valuation.id as string;
+    const open = () =>
+      ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/valuations/${raced}/report`,
+        headers: authHeader(admin.token),
+      });
+
+    const [a, b] = await Promise.all([open(), open()]);
+    expect([a.statusCode, b.statusCode], `${a.body}\n${b.body}`).toEqual([200, 200]);
+    // And one report, not two: the constraint is what decided that, and the
+    // loser's job is to read what the winner wrote.
+    expect(a.json().report.id).toBe(b.json().report.id);
+  });
+
   it('publishes the current version as an ETag on the read', async () => {
     const res = await get();
     expect(res.statusCode, res.body).toBe(200);
