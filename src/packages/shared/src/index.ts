@@ -2,6 +2,7 @@ export {
   createLogger,
   REDACT_PATHS,
   SENSITIVE_FIELDS,
+  serializeError,
   serializeRequest,
   type LoggerOptions,
 } from './logger.js';

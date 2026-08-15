@@ -1,5 +1,9 @@
-import { pino, type Logger } from 'pino';
-import { scrubUrl } from './problem.js';
+// `stdSerializers` is imported by name rather than reached through `pino.`:
+// pino's own typings attach only "selected static members" to the callable
+// named export, and `stdSerializers` is not among them, so `pino.stdSerializers`
+// is a build error even though it resolves at runtime.
+import { pino, stdSerializers, type Logger } from 'pino';
+import { scrubSensitive, scrubUrl } from './problem.js';
 
 /**
  * Field names whose value must never reach a log line (NFR: structured
@@ -118,6 +122,53 @@ export function serializeRequest(req: SerializableRequest): Record<string, unkno
   };
 }
 
+/**
+ * How far into a serialized error the free-text scrub reaches. Errors are
+ * shallow — pino flattens the `cause` chain into `message` and `stack` before
+ * this sees it — so this is headroom rather than a load-bearing number.
+ */
+const ERROR_SCRUB_DEPTH = 3;
+
+/** Every string in `value`, scrubbed; everything else passed through. */
+function scrubStrings(value: unknown, depth: number): unknown {
+  if (typeof value === 'string') return scrubSensitive(value);
+  if (value === null || typeof value !== 'object' || depth >= ERROR_SCRUB_DEPTH) return value;
+  if (Array.isArray(value)) return value.map((entry) => scrubStrings(entry, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) out[key] = scrubStrings(entry, depth + 1);
+  return out;
+}
+
+/**
+ * Pino's error serializer with the free text scrubbed.
+ *
+ * The 5xx handler already scrubbed the error it logged (`scrubError`, audit
+ * B-1 P3) on the reasoning that a secret interpolated into an `Error` string
+ * cannot be reached by `redact`. That reasoning does not stop at 5xx: there
+ * are forty-odd `log.warn({ err }, …)` sites in the routes, catching and
+ * reporting errors that never become a 500, and every one of them went to the
+ * default serializer raw.
+ *
+ * A `pg` error is the case that makes this concrete rather than theoretical.
+ * Postgres puts the offending row values in `detail`, so a duplicate signup
+ * logs
+ *
+ *     Key (email)=(jane@example.com) already exists.
+ *
+ * — an address in the clear, from a field neither `redact` nor `scrubError`
+ * looks at: the first addresses properties by name and this is a substring of
+ * one, and the second keeps only `name`/`message`/`stack`.
+ *
+ * So this scrubs *every string* the serializer emits rather than the two
+ * text fields anybody thought to name, and passes non-strings through
+ * untouched. That last part is the reason `scrubError` is not simply reused
+ * here: it drops `code` and `constraint`, and "which unique index fired" is
+ * the whole diagnostic value of a 23505.
+ */
+export function serializeError(err: unknown): unknown {
+  return scrubStrings(stdSerializers.err(err as Error), 0);
+}
+
 export interface LoggerOptions {
   service: string;
   level?: string;
@@ -130,10 +181,10 @@ export function createLogger(opts: LoggerOptions): Logger {
     name: opts.service,
     level: opts.level ?? process.env.LOG_LEVEL ?? 'info',
     redact: { paths: [...REDACT_PATHS, ...(opts.redact ?? [])], censor: '[REDACTED]' },
-    // Only `req` is overridden. Fastify merges its own defaults *under* the
-    // instance's (`Object.assign({}, opts.serializers, instance[serializersSym])`),
-    // so `err` and `res` keep serializing as they always did.
-    serializers: { req: serializeRequest },
+    // Fastify merges its own defaults *under* the instance's
+    // (`Object.assign({}, opts.serializers, instance[serializersSym])`), so
+    // these two win and `res` keeps serializing as it always did.
+    serializers: { req: serializeRequest, err: serializeError },
     formatters: {
       level(label) {
         return { level: label };
