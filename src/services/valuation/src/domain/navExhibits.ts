@@ -2,6 +2,7 @@ import type { ReportPdfSection } from '@n409/report/pdf';
 import { formatCurrency, formatPercent, num } from './reportSummary.js';
 import type { ExhibitContext } from './reportExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
+import { calendarDateOf } from './calendarDate.js';
 import type { FundMarkRow, FundPositionRow, FundRow, LpTermsRow } from '../repos/funds.js';
 import type { CreditTermsRow, DebtInstrumentRow, DebtValuationRow } from '../repos/debtInstruments.js';
 
@@ -72,15 +73,14 @@ function label(key: string): string {
  * because a caller assembling this data in memory passes a string; taking only
  * one was how the first version of this module threw inside a render.
  *
- * A Date from OID 1082 is midnight *local* time, so it is formatted from its
- * local parts — toISOString() would shift it a day backwards west of UTC and
- * date a measurement to the day before it was made.
+ * This module had the correct reading first and now shares it: the reasoning,
+ * and the cases it must not be applied to, live in domain/calendarDate.ts.
+ * (The direction stated here was previously backwards — a Date from OID 1082 is
+ * midnight *local*, so reading it as an instant shifts it a day backwards
+ * **east** of UTC, not west. West of UTC local midnight is later in the UTC day
+ * and the slice is unaffected.)
  */
-function isoDate(value: string | Date): string {
-  if (typeof value === 'string') return value.slice(0, 10);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
-}
+const isoDate = calendarDateOf;
 
 // ── Fund (ASC 820 holdings) ──────────────────────────────────────────────────
 

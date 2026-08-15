@@ -109,11 +109,16 @@ describe('level-of-value reconciliation', () => {
 });
 
 describe('roll-forward bridge', () => {
+  // `prior_valuation_date` is a `date` column, and the driver hands one back as
+  // midnight *local* — not the midnight UTC that `new Date('…T00:00:00Z')`
+  // builds. The two coincide only on a UTC host, which is why the fixture read
+  // that way for as long as it did. See src/domain/calendarDate.ts.
+  const pgDate = (y: number, m: number, d: number) => new Date(y, m - 1, d);
   const run = (over: Record<string, unknown> = {}) =>
     ({
       applied_at: new Date('2026-06-30T00:00:00Z'),
       prior_valuation_number: 'V-2025-0007',
-      prior_valuation_date: new Date('2025-06-30T00:00:00Z'),
+      prior_valuation_date: pgDate(2025, 6, 30),
       new_valuation_date: '2026-06-30',
       annual_accretion: 0.25,
       years_elapsed: 1,

@@ -46,6 +46,7 @@ import {
 } from '../repos/monitors.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
+import { calendarDate } from '../domain/calendarDate.js';
 
 /**
  * Real-time valuation monitoring (feature 10). Ops enable monitoring on a
@@ -123,22 +124,37 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
   // published/completed timestamp, else today. completed_at rides the row's
   // index signature (typed unknown), so coerce defensively.
   //
-  // Every one of these goes through `toIso`, including the two that are `date`
-  // columns. `String(aDate).slice(0, 10)` yields "Mon Jan 05", not "2026-01-05"
+  // Every one of these is coerced rather than interpolated, including the two
+  // that are `date` columns. `String(aDate).slice(0, 10)` yields "Mon Jan 05",
+  // not "2026-01-05"
   // — pg hands a `date` back as a Date object and no type parser is registered
   // — and `monthsBetween` parses that to an Invalid Date and returns 0, which
   // silently disables the 12-month staleness trigger for exactly the
   // engagements that have a board resolution. A malformed date here does not
   // fail, it just stops alerting.
-  const toIso = (v: unknown): string | null => {
+  //
+  // Two readings, because these are two column types and the difference is not
+  // cosmetic (domain/calendarDate.ts). `board_resolutions.valuation_date` and
+  // `last_round_date` are `date` columns — the driver hands those back as
+  // midnight *local*, so the day is read from the local parts or it lands a day
+  // early east of UTC. `published_at` and `completed_at` are timestamptz, real
+  // instants whose UTC day is the convention already in use everywhere else
+  // here; reading *those* locally would make the answer depend on the server's
+  // zone, which is the failure being fixed rather than a second instance of it.
+  const isoDay = (v: unknown): string | null => {
+    if (v instanceof Date) return calendarDate(v);
+    if (typeof v === 'string' && v) return v.slice(0, 10);
+    return null;
+  };
+  const isoInstant = (v: unknown): string | null => {
     if (v instanceof Date) return v.toISOString().slice(0, 10);
     if (typeof v === 'string' && v) return v.slice(0, 10);
     return null;
   };
   const valuationDate =
-    toIso(resolution?.valuation_date) ??
-    toIso(valuation.published_at) ??
-    toIso(valuation.completed_at) ??
+    isoDay(resolution?.valuation_date) ??
+    isoInstant(valuation.published_at) ??
+    isoInstant(valuation.completed_at) ??
     new Date().toISOString().slice(0, 10);
 
   return {
@@ -148,7 +164,7 @@ function assembleSnapshot(valuation: ValuationRow, sources: SnapshotSources): Mo
     fully_diluted_shares: capTable?.validation?.summary?.fully_diluted_shares ?? null,
     // Same column type, same trap: the funding-round trigger compares this
     // string against the baseline's, and two malformed strings compare wrong.
-    last_round_date: toIso(params?.last_round_date),
+    last_round_date: isoDay(params?.last_round_date),
   };
 }
 

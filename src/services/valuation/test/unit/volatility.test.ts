@@ -16,6 +16,17 @@ function bar(close: number, high = close * 1.01, low = close * 0.99) {
   return { date: '2026-01-02', open: close, high, low, close };
 }
 
+/**
+ * A `date` column as the driver hands it back: midnight *local*.
+ *
+ * `new Date('2025-06-30T00:00:00Z')` is midnight UTC, which is a different
+ * instant and not what node-postgres produces for OID 1082 — it only looked
+ * equivalent because the host these tests were written on runs UTC. Building the
+ * fixture the way the driver does is what makes the assertions below mean
+ * anything about production. See src/domain/calendarDate.ts.
+ */
+const pgDate = (y: number, m: number, d: number) => new Date(y, m - 1, d);
+
 /** A stored run, in the shape the repo hydrates. */
 function estimate(over: Partial<VolatilityEstimateRow> = {}): VolatilityEstimateRow {
   return {
@@ -23,8 +34,8 @@ function estimate(over: Partial<VolatilityEstimateRow> = {}): VolatilityEstimate
     valuation_id: '01J0000000000000000000000V',
     method: 'historical',
     periods_per_year: 252,
-    window_start: new Date('2025-06-30T00:00:00Z'),
-    window_end: new Date('2026-06-30T00:00:00Z'),
+    window_start: pgDate(2025, 6, 30),
+    window_end: pgDate(2026, 6, 30),
     time_to_exit_years: 3,
     recommended: 0.6412,
     median_vol: 0.6412,

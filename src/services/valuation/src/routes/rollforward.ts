@@ -5,6 +5,7 @@ import { isUlid, problems } from '@n409/shared';
 import { canReadValuation, isOps, type Principal } from '../auth/rbac.js';
 import { InternalServiceError, postJson, toProblem } from '../clients/internal.js';
 import { requirePrincipal } from '../plugins/auth.js';
+import { calendarDate } from '../domain/calendarDate.js';
 import { findValuationById, type ValuationRow } from '../repos/valuations.js';
 import { latestSucceededCalculation, type CalculationRow } from '../repos/calculations.js';
 import {
@@ -97,8 +98,9 @@ function present(row: RollforwardRunRow) {
     prior_valuation_id: row.prior_valuation_id,
     prior_calculation_id: row.prior_calculation_id,
     prior_valuation_number: row.prior_valuation_number,
-    prior_valuation_date: row.prior_valuation_date.toISOString().slice(0, 10),
-    new_valuation_date: row.new_valuation_date.toISOString().slice(0, 10),
+    // Both are `date` columns; see domain/calendarDate.ts.
+    prior_valuation_date: calendarDate(row.prior_valuation_date),
+    new_valuation_date: calendarDate(row.new_valuation_date),
     years_elapsed: row.years_elapsed,
     prior_equity_value: row.prior_equity_value,
     rolled_equity_value: row.rolled_equity_value,

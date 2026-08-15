@@ -11,6 +11,7 @@ import {
 } from './reportSummary.js';
 import { buildSpecialtyExhibits } from './specialtyExhibits.js';
 import { esc, P, section, table } from './exhibitHtml.js';
+import { calendarDate, calendarDateOf } from './calendarDate.js';
 import { CLASS_VOLATILITY_SCHEDULE } from './report.js';
 import { MULTIPLE_LABELS, multipleKeyFor, type MultipleKey } from './comparables.js';
 import { isProjectionColumn, type ComputedSheet, type WorkbookFormat } from './workbook.js';
@@ -750,9 +751,15 @@ export function levelOfValueExhibit(
 
 // ── Exhibit B-2 — the bridge from last year's conclusion to this one's ───────
 
-/** `2026-06-30`, however the driver handed the date back. */
+/**
+ * `2026-06-30`, however the driver handed the date back.
+ *
+ * `prior_valuation_date` and `new_valuation_date` are `date` columns, so they
+ * are formatted from their local parts — see domain/calendarDate.ts. Read as
+ * instants they date the whole rollforward a day early, on both ends.
+ */
 function isoDay(value: Date | string): string {
-  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+  return calendarDateOf(value);
 }
 
 /**
@@ -1858,8 +1865,9 @@ export function volatilityExhibit(
 
   const applied = num(record(record(results.allocation)?.assumptions)?.volatility);
   const measured = row.companies.filter((c) => c.used);
-  const windowStart = row.window_start.toISOString().slice(0, 10);
-  const windowEnd = row.window_end.toISOString().slice(0, 10);
+  // `date` columns — formatted from their local parts, not read as instants.
+  const windowStart = calendarDate(row.window_start);
+  const windowEnd = calendarDate(row.window_end);
 
   const basis: string[][] = [
     ['Estimator', VOLATILITY_METHOD_LABELS[row.method]],

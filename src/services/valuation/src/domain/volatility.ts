@@ -35,6 +35,7 @@ import type {
   VolatilityExclusion,
   VolatilityMethod,
 } from '../repos/volatilityEstimates.js';
+import { calendarDate, calendarDateOf } from './calendarDate.js';
 
 export class VolatilityInputError extends Error {}
 
@@ -86,9 +87,17 @@ export const VOLATILITY_CONFIDENCE_NOTES: Record<VolatilityConfidence, string> =
  */
 export const DEFAULT_WINDOW_DAYS = 365;
 
-/** `YYYY-MM-DD`, which is what the price feed takes and the row stores. */
+/**
+ * `YYYY-MM-DD`, which is what the price feed takes and the row stores.
+ *
+ * Formatted from the local parts. The Dates reaching this are anchored on a
+ * `date` column — `resolveWindow` below builds the window from the engagement's
+ * valuation date, and `clientIntake` and `rollforward` hand it their own — and
+ * such a Date is midnight *local*, so reading it as an instant dates it a day
+ * early east of UTC. See domain/calendarDate.ts.
+ */
 export function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  return calendarDate(d);
 }
 
 /**
@@ -98,6 +107,20 @@ export function isoDate(d: Date): string {
  * supporting a 409A as of a past date must not be measured over price history
  * the subject could not have known about. An engagement with no valuation date
  * set falls back to today, which is the only other defensible anchor.
+ *
+ * The anchor is resolved to a calendar day *before* any arithmetic, because it
+ * arrives in three forms that do not agree about what a day is: a `date` column
+ * off the driver (midnight local), a `YYYY-MM-DD` string from a request body,
+ * and — on the fallback — a real instant. Subtracting from whichever Date those
+ * happened to produce and formatting the result was how the two ends could
+ * disagree by a day with each other, in opposite directions, depending on the
+ * server's zone and which form the caller had.
+ *
+ * Once it is a day, the arithmetic runs in UTC — anchored at `T00:00:00Z`, as
+ * `vesting.ts` does — so the window is exactly `days` long and the same in
+ * every zone. That is why the ends are formatted through `toISOString()` here
+ * and not through `isoDate` above: by this point they are Dates this function
+ * built in UTC, not days the driver handed it. See domain/calendarDate.ts.
  */
 export function resolveWindow(
   valuationDate: Date | string | null | undefined,
@@ -107,10 +130,13 @@ export function resolveWindow(
   if (!Number.isFinite(days) || days < 30) {
     throw new VolatilityInputError('The observation window must be at least 30 days');
   }
-  const anchor = valuationDate ? new Date(valuationDate) : now;
-  const end = Number.isNaN(anchor.getTime()) ? now : anchor;
+  const anchorDay = valuationDate ? calendarDateOf(valuationDate) : '';
+  // An unparseable or absent anchor falls back to today, as before. `now` is an
+  // instant, so its day is its UTC one.
+  const endDay = /^\d{4}-\d{2}-\d{2}$/.test(anchorDay) ? anchorDay : now.toISOString().slice(0, 10);
+  const end = new Date(`${endDay}T00:00:00Z`);
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-  return { start: isoDate(start), end: isoDate(end) };
+  return { start: start.toISOString().slice(0, 10), end: endDay };
 }
 
 /** One peer's price series, as `engine/v1/volatility` takes it. */
@@ -320,8 +346,8 @@ export function volatilityNarrative(
     row.method === 'manual'
       ? `The expected volatility of ${pct(row.recommended)} was selected by the analyst.`
       : `The expected volatility of ${pct(row.recommended)} is the median of ${n} guideline ` +
-        `${n === 1 ? 'company' : 'companies'} measured over the ${row.window_start.toISOString().slice(0, 10)} ` +
-        `to ${row.window_end.toISOString().slice(0, 10)} window on a ${VOLATILITY_METHOD_SHORT[row.method].toLowerCase()} basis.`;
+        `${n === 1 ? 'company' : 'companies'} measured over the ${isoDate(row.window_start)} ` +
+        `to ${isoDate(row.window_end)} window on a ${VOLATILITY_METHOD_SHORT[row.method].toLowerCase()} basis.`;
 
   if (row.applied_at === null) {
     return `${basis} This estimate has not been adopted as the valuation assumption; the allocation was run on the analyst’s own selection.`;

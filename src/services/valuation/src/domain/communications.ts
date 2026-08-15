@@ -1,4 +1,5 @@
 import type { EmailSpec } from './emailWorkflows.js';
+import { calendarDateOrNull } from './calendarDate.js';
 
 /**
  * Communication templates + auto email/SMS campaigns (409.ai §15.5/§15.6).
@@ -197,7 +198,16 @@ export function valuationTemplateVars(v: {
   state?: string | null;
   partner_name?: string | null;
 }): TemplateVars {
-  const day = (d: Date | string | null | undefined): string =>
+  // Two readings for two column types — see domain/calendarDate.ts.
+  //
+  // `valuation_date` is a `date`, handed back by the driver as midnight *local*,
+  // and it is the one that reaches a client: an email saying their 409A is "as
+  // of" the day before the one printed on the report is the kind of discrepancy
+  // that costs a phone call to explain. `due_date` is a timestamptz — a real
+  // instant — and keeps the UTC day every other timestamp here is rendered in,
+  // so a deadline does not move with the server's zone.
+  const day = (d: Date | string | null | undefined): string => calendarDateOrNull(d) ?? '';
+  const instant = (d: Date | string | null | undefined): string =>
     d instanceof Date ? d.toISOString().slice(0, 10) : (d ?? '').toString().slice(0, 10);
   return {
     company_name: v.company_name,
@@ -205,7 +215,7 @@ export function valuationTemplateVars(v: {
     kind_label: v.kind.toUpperCase(),
     valuation_number: v.number ?? '',
     valuation_date: day(v.valuation_date),
-    due_date: day(v.due_date),
+    due_date: instant(v.due_date),
     state_label: v.state ? v.state.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : '',
     partner_name: v.partner_name ?? '',
   };

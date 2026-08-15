@@ -3,6 +3,7 @@
  * no clock — so vested/unvested tracking and the exercise-scenario calculator
  * are deterministic and unit-testable. Callers pass `asOf` explicitly.
  */
+import { calendarDateOf } from './calendarDate.js';
 
 export const GRANT_EVENT_TYPES = {
   granted: 'grant_issued',
@@ -136,10 +137,22 @@ export function clampScheduleMonths(input: {
   };
 }
 
-/** Coerce a Date or ISO string to a bare YYYY-MM-DD date string. */
+/**
+ * Coerce a Date or ISO string to a bare YYYY-MM-DD date string.
+ *
+ * The Dates arriving here are `grant_date` and `vesting_start_date` off the
+ * driver, i.e. `date` columns handed back as midnight *local*, so the day is
+ * read from the local parts — see domain/calendarDate.ts.
+ *
+ * Note the asymmetry with `addMonths` below, which formats through
+ * `toISOString()` and is right to: this function turns a stored day into a
+ * string, and that string is then re-anchored as `${iso}T00:00:00Z` before any
+ * arithmetic runs on it. From there the Date genuinely lives in UTC and its
+ * local parts are the shifted ones. The conversion in is local, the conversion
+ * out is UTC, and each is the inverse of how its value was built.
+ */
 export function toIsoDate(value: string | Date): string {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  return String(value).slice(0, 10);
+  return calendarDateOf(value);
 }
 
 /**

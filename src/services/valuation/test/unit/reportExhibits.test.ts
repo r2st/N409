@@ -186,8 +186,11 @@ const ROLLFORWARD: RollforwardRunRow = {
   prior_valuation_id: '01J000000000000000000002',
   prior_calculation_id: '01J000000000000000000003',
   prior_valuation_number: 'V-2025-0042',
-  prior_valuation_date: new Date('2025-06-30T00:00:00Z'),
-  new_valuation_date: new Date('2026-06-30T00:00:00Z'),
+  // Both are `date` columns; the driver returns midnight *local* for those, and
+  // building them as midnight UTC only looked equivalent on a UTC host. See
+  // src/domain/calendarDate.ts.
+  prior_valuation_date: new Date(2025, 5, 30),
+  new_valuation_date: new Date(2026, 5, 30),
   years_elapsed: 1.0,
   prior_equity_value: 33_600_000,
   rolled_equity_value: 42_000_000,

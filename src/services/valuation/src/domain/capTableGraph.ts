@@ -5,6 +5,7 @@ import {
   type CapTableEntry,
   type CapTableClassType,
 } from './capTable.js';
+import { calendarDateOrNull } from './calendarDate.js';
 
 /**
  * The cap table as a graph — what converts into what, and what sits in front
@@ -161,10 +162,14 @@ export interface GraphInput {
   }>;
 }
 
-/** ISO day from whatever the driver produced, or '' when there is no date. */
+/**
+ * ISO day from whatever the driver produced, or '' when there is no date.
+ *
+ * `rounds.closed_on` is a `date`, so it is formatted from its local parts — see
+ * domain/calendarDate.ts for why reading it as an instant dates it a day early.
+ */
 function isoDay(value: string | Date | null | undefined): string {
-  if (!value) return '';
-  return value instanceof Date ? value.toISOString().slice(0, 10) : value.slice(0, 10);
+  return calendarDateOrNull(value) ?? '';
 }
 
 export function buildCapTableGraph(input: GraphInput): CapTableGraph {

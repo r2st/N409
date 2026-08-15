@@ -21,6 +21,7 @@ import {
 } from '../repos/volatilityEstimates.js';
 import {
   DEFAULT_WINDOW_DAYS,
+  isoDate,
   measuredCount,
   resolveWindow,
   seriesFromBars,
@@ -104,8 +105,9 @@ function present(row: VolatilityEstimateRow) {
     id: row.id,
     method: row.method,
     periods_per_year: row.periods_per_year,
-    window_start: row.window_start.toISOString().slice(0, 10),
-    window_end: row.window_end.toISOString().slice(0, 10),
+    // `date` columns; see domain/calendarDate.ts for why not toISOString.
+    window_start: isoDate(row.window_start),
+    window_end: isoDate(row.window_end),
     time_to_exit_years: row.time_to_exit_years,
     recommended: row.recommended,
     median_volatility: row.median_vol,
@@ -426,8 +428,8 @@ export function registerVolatilityRoutes(
           estimate.method === 'manual'
             ? `Analyst-selected volatility recorded against the peer set (estimate ${estimate.id})`
             : `Median of ${measuredCount(estimate)} guideline companies, ` +
-              `${estimate.window_start.toISOString().slice(0, 10)} to ` +
-              `${estimate.window_end.toISOString().slice(0, 10)} (estimate ${estimate.id})`,
+              `${isoDate(estimate.window_start)} to ` +
+              `${isoDate(estimate.window_end)} (estimate ${estimate.id})`,
         originalValue: before,
         actor: { actorType: 'human', actorId: principal.id },
       });
