@@ -73,7 +73,7 @@ jobs:
         working-directory: src/services/${{ matrix.service }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
@@ -121,7 +121,7 @@ jobs:
       - name: npm audit (report moderate)
         run: npm audit --audit-level=moderate
         continue-on-error: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       # Gating, like npm audit above. It was advisory, and an advisory scan is
