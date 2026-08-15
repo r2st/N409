@@ -148,6 +148,21 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 }
 
 /**
+ * `has_password` is a boolean saying whether the user has one
+ * (`password_digest IS NOT NULL`), not a password. The subject-access export
+ * built the pattern: its "withheld" section lists each credential the account
+ * holds *without* holding any of them, so every field there is `has_<the thing
+ * it is not>`. A predicate about a secret is the opposite of the secret, and
+ * putting one on the redact list would blank the diagnostic — "the account has
+ * no password set" is exactly what you want to read in a log about a failed
+ * login.
+ *
+ * Narrow on purpose. `has_` is the only prefix that inverts a name's meaning
+ * this way; a field is otherwise assumed to hold what it is named after.
+ */
+const PRESENCE_PREFIX = /^has_/;
+
+/**
  * Compound credential field names the services actually carry, found in
  * property position only.
  *
@@ -165,6 +180,7 @@ function credentialFields(): Map<string, string[]> {
     const text = readFileSync(file, 'utf8');
     const rel = path.relative(repoRoot, file);
     const note = (name: string) => {
+      if (PRESENCE_PREFIX.test(name)) return;
       const at = found.get(name) ?? [];
       if (!at.includes(rel)) at.push(rel);
       found.set(name, at);
@@ -209,6 +225,21 @@ describe('the redact list keeps up with the code', () => {
     // logs, which is diagnostic data, not a secret.
     expect([...credentialFields().keys()]).not.toContain('trade_secret');
     expect(SENSITIVE_FIELDS).not.toContain('trade_secret');
+  });
+
+  it('does not mistake a presence flag for the credential it reports on', () => {
+    // `has_password` is `password_digest IS NOT NULL`, selected by the
+    // subject-access export (repos/dataExport.ts) to tell the user which
+    // credentials are being withheld from their download. It went into the tree
+    // with that feature and turned this guard red, which is the worst state for
+    // a tripwire to be in: still failing, and therefore no longer read.
+    const names = [...credentialFields().keys()];
+    expect(names).not.toContain('has_password');
+    expect(names).not.toContain('has_totp');
+    expect(SENSITIVE_FIELDS).not.toContain('has_password');
+    // The thing it reports on is still on the list.
+    expect(SENSITIVE_FIELDS).toContain('password_digest');
+    expect(SENSITIVE_FIELDS).toContain('totp_secret');
   });
 
   it('generates a path per field per level, with no duplicates', () => {
