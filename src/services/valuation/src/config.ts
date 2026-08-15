@@ -3,7 +3,20 @@ import { EMAIL_MAX_ATTEMPTS } from './domain/emailRetry.js';
 
 const Env = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().default(3001),
+  // Bounded like every other number here, and for a sharper reason than most:
+  // `z.coerce.number()` reads `PORT=` (bare) as 0, and Node reads a port of 0 as
+  // "bind any free one". Unbounded, this schema accepted that and the service
+  // came up healthy on a port nothing dials. 65535 is the other end; -1 and
+  // 70000 used to pass here and die at `listen()` with a bare
+  // ERR_SOCKET_BAD_PORT that names neither the variable nor its value.
+  // `@n409/shared`'s `listenPort` is the same rule for the two services that
+  // have no schema of their own.
+  PORT: z.coerce
+    .number()
+    .int()
+    .min(1, 'PORT must be between 1 and 65535 — 0 (or a bare `PORT=`) binds a random ephemeral port')
+    .max(65535, 'PORT must be between 1 and 65535')
+    .default(3001),
   DATABASE_URL: z.string().min(1).default('postgres://n409:n409_dev@localhost:5432/n409_dev'),
   LOG_LEVEL: z.string().default('info'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 chars'),

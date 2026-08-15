@@ -60,7 +60,7 @@ export {
   type DrainResult,
 } from './drain.js';
 export { nonOverlapping, type Scheduler } from './scheduler.js';
-export { listenHost, DEFAULT_LISTEN_HOST } from './listen.js';
+export { listenHost, listenPort, DEFAULT_LISTEN_HOST } from './listen.js';
 export { trustedProxies, DEFAULT_TRUSTED_PROXIES } from './clientIp.js';
 export { newUlid, isUlid } from './ids.js';
 export { isIsoCalendarDate, isoCalendarDateError } from './dates.js';

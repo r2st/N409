@@ -1,4 +1,14 @@
-import { installCrashHandlers, installShutdownHandlers, listenHost, startTelemetry } from '@n409/shared';
+import {
+  installCrashHandlers,
+  installShutdownHandlers,
+  listenHost,
+  listenPort,
+  startTelemetry,
+} from '@n409/shared';
+
+// Refused before the renderer's font assets are verified or a socket exists —
+// see listen.ts for what an empty PORT otherwise binds.
+const port = listenPort(3004);
 
 const telemetry = startTelemetry('report');
 const { buildApp } = await import('./app.js');
@@ -16,7 +26,8 @@ installCrashHandlers(app.log, {
   },
 });
 
-await app.listen({ port: Number(process.env.PORT ?? 3004), host: listenHost() });
+await app.listen({ port, host: listenHost() });
+app.log.info({ port }, 'report service listening');
 
 // The drain runs inside `app.close()`, at `preClose`; the deadline below is the
 // outer bound on it and on everything after.

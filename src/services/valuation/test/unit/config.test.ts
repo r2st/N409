@@ -208,3 +208,37 @@ describe('loadConfig JWT_TTL_SECONDS bounds', () => {
     expect(loadConfig({ ...base, JWT_TTL_SECONDS: '28800' }).JWT_TTL_SECONDS).toBe(28800);
   });
 });
+
+describe('loadConfig PORT bounds', () => {
+  const base = { ...PROD_BASE, JWT_SECRET: REAL_SECRET } as const;
+
+  it('defaults to 3001', () => {
+    expect(loadConfig(base).PORT).toBe(3001);
+    expect(loadConfig({ ...base, PORT: '3001' }).PORT).toBe(3001);
+  });
+
+  it('refuses a bare PORT= rather than binding a random ephemeral port', () => {
+    // `z.coerce.number()` reads '' as 0 and Node reads a port of 0 as "any free
+    // one". Unbounded, this schema accepted it: the service booted, logged
+    // `valuation service listening` with `port: 0`, systemd reported the unit
+    // active, and nothing on the box could reach 3001.
+    expect(() => loadConfig({ ...base, PORT: '' })).toThrow(/PORT/);
+    expect(() => loadConfig({ ...base, PORT: '0' })).toThrow(/ephemeral/);
+  });
+
+  it('refuses a port outside the representable range', () => {
+    // Both parsed cleanly here and died later at `listen()` with a bare
+    // ERR_SOCKET_BAD_PORT — after migrations had already run.
+    expect(() => loadConfig({ ...base, PORT: '65536' })).toThrow(/between 1 and 65535/);
+    expect(() => loadConfig({ ...base, PORT: '-1' })).toThrow(/between 1 and 65535/);
+  });
+
+  it('accepts the boundaries themselves', () => {
+    expect(loadConfig({ ...base, PORT: '1' }).PORT).toBe(1);
+    expect(loadConfig({ ...base, PORT: '65535' }).PORT).toBe(65535);
+  });
+
+  it('still refuses a fractional port', () => {
+    expect(() => loadConfig({ ...base, PORT: '3001.5' })).toThrow(/PORT/);
+  });
+});

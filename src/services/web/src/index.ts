@@ -1,4 +1,15 @@
-import { installCrashHandlers, installShutdownHandlers, listenHost, startTelemetry } from '@n409/shared';
+import {
+  installCrashHandlers,
+  installShutdownHandlers,
+  listenHost,
+  listenPort,
+  startTelemetry,
+} from '@n409/shared';
+
+// Before anything is constructed or connected: a bad PORT is a bad deploy, and
+// the cheapest place to say so is the first line. Throwing here exits non-zero
+// with the message on stderr, which is where systemd is already looking.
+const port = listenPort(3000);
 
 const telemetry = startTelemetry('web');
 const { buildApp } = await import('./app.js');
@@ -16,7 +27,8 @@ installCrashHandlers(app.log, {
   },
 });
 
-await app.listen({ port: Number(process.env.PORT ?? 3000), host: listenHost() });
+await app.listen({ port, host: listenHost() });
+app.log.info({ port }, 'web service listening');
 
 installShutdownHandlers(app.log, {
   service: 'web',

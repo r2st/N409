@@ -222,6 +222,66 @@ describe('the unit and the file disagreeing', () => {
   });
 });
 
+describe('the port each unit binds', () => {
+  /** One unit's `Environment=PORT=` line, replaced. */
+  function withPort(unit: string, value: string): Record<string, string> {
+    return {
+      ...UNITS,
+      [unit]: UNITS[unit]!.replace(/Environment=PORT=\d+\n/, `Environment=PORT=${value}\n`),
+    };
+  }
+
+  it('passes on the real unit files', () => {
+    expect(messages()).toBe('');
+  });
+
+  it.each([
+    ['n409-web.service', 3000],
+    ['n409-valuation.service', 3001],
+    ['n409-report.service', 3004],
+  ])('catches an emptied PORT on %s before anything restarts', (unit) => {
+    // The failure this exists for: the service starts, logs "listening", and
+    // answers on an ephemeral port. Caddy gets connection refused against 3000
+    // and `deploy.sh` gets a health probe that never succeeds — neither of which
+    // says the word "port". Catching it here costs a failed deploy with the old
+    // release still serving.
+    const text = messages({ units: withPort(unit, '') });
+    expect(text).toContain(unit);
+    expect(text).toMatch(/PORT/);
+  });
+
+  it.each(['n409-web.service', 'n409-valuation.service', 'n409-report.service'])(
+    'catches an out-of-range PORT on %s',
+    (unit) => {
+      expect(messages({ units: withPort(unit, '70000') })).toContain(unit);
+    },
+  );
+
+  it('catches a PORT the EnvironmentFile supplies, under either precedence reading', () => {
+    // Nothing sets PORT in the shared .env today — the file's own header warns
+    // against it — but if something did, only one of the two systemd precedence
+    // readings would show it. Both are evaluated, so either is a fault.
+    const units = { ...UNITS };
+    for (const name of Object.keys(units)) {
+      units[name] = units[name]!.replace(/Environment=PORT=\d+\n/, '');
+    }
+    expect(messages({ units, env: `${GOOD_ENV}\nPORT=0\n` })).toMatch(/PORT/);
+  });
+
+  it('leaves the Python units alone — uvicorn takes --port on the ExecStart line', () => {
+    // A PORT in the environment is a variable neither Python service reads, so
+    // reporting one as a fault would be a false positive on a real deployment.
+    const units = {
+      ...UNITS,
+      'n409-ai.service': `${UNITS['n409-ai.service']!}Environment=PORT=0\n`,
+      'n409-engine-wrapper.service': `${UNITS['n409-engine-wrapper.service']!}Environment=PORT=0\n`,
+    };
+    const text = messages({ units });
+    expect(text).not.toContain('n409-ai.service');
+    expect(text).not.toContain('n409-engine-wrapper.service');
+  });
+});
+
 describe('missing units', () => {
   it('are a fault — a unit this checker cannot see is one it never validated', () => {
     const units = { ...UNITS };

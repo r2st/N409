@@ -31,7 +31,7 @@
  */
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { mergeEnvSources, parseEnvironmentFile, parseUnitFile } from '@n409/shared';
+import { listenPort, mergeEnvSources, parseEnvironmentFile, parseUnitFile } from '@n409/shared';
 import { loadConfig } from './config.js';
 
 export interface PreflightFault {
@@ -68,17 +68,41 @@ const GUARDS: Record<string, (env: Record<string, string>) => string[]> = {
     }
   },
   // src/services/report/src/app.ts registerInternalAuth → shared/internalAuth.ts
-  // MissingInternalTokenError.
-  'n409-report.service': (env) => requiresInternalToken(env, 'NODE_ENV', 'report'),
-  // src/services/ai/app/internal_auth.py enforce_token_configured.
+  // MissingInternalTokenError, plus src/services/report/src/index.ts listenPort.
+  'n409-report.service': (env) => [
+    ...requiresInternalToken(env, 'NODE_ENV', 'report'),
+    ...bindsAPort(env),
+  ],
+  // src/services/ai/app/internal_auth.py enforce_token_configured. No port
+  // guard: both Python units pass `--port` on the ExecStart line, so PORT in
+  // the environment is a variable uvicorn never reads.
   'n409-ai.service': (env) => requiresInternalToken(env, 'APP_ENV', 'ai'),
   // src/services/engine-wrapper/app/internal_auth.py enforce_token_configured.
   'n409-engine-wrapper.service': (env) => requiresInternalToken(env, 'APP_ENV', 'engine-wrapper'),
-  // The web service is the public BFF and registers no internal-auth gate, so
-  // it has no start-up guard of its own. Listed explicitly rather than omitted:
-  // an absent entry would otherwise read as "nobody has looked at this unit".
-  'n409-web.service': () => [],
+  // The web service is the public BFF and registers no internal-auth gate. Its
+  // one start-up guard is the port it binds — which on this unit is the port
+  // Caddy dials, so a wrong one here is the whole site.
+  'n409-web.service': (env) => bindsAPort(env),
 };
+
+/**
+ * The port guard for the two Node units without a config schema.
+ *
+ * Valuation gets this from `loadConfig` above, which now bounds `PORT` the way
+ * it bounds everything else. Web and report call `listenPort` directly, so this
+ * calls the same function against the same environment rather than restating
+ * its rules.
+ */
+function bindsAPort(env: Record<string, string>): string[] {
+  try {
+    // The fallback is irrelevant here: an absent PORT is valid for every unit
+    // and returns without complaint. Only a *set* one is being judged.
+    listenPort(3000, env);
+    return [];
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)];
+  }
+}
 
 function requiresInternalToken(env: Record<string, string>, envVar: string, service: string): string[] {
   const production = (env[envVar] ?? '').toLowerCase() === 'production';
