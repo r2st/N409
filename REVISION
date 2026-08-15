@@ -1,5 +1,95 @@
 176dadc94f4f731b6646d9bbbe67c27fd603fd34
 # N409 revision
+# commit:    39a0187
+# subject:   the work committed, and the message about it did not
+# previous:  33ac089 (the guard that was never consulted, and the overflow
+#            nothing said).
+# includes:  2 commits — R63, a production-readiness round over the background
+#            and asynchronous jobs.
+#
+#            R62 asked where a figure leaves the doubles. This round asked one
+#            question of every job that runs outside a request: when the work
+#            commits and the announcement of it fails, what does the platform
+#            do — and can anything ever find out that the announcement is owed.
+#
+#            The answer was the same in three places, and it is the worst answer
+#            an alerting or notification path can give: the state that records
+#            the work is also what suppresses the retry, so the failure is
+#            silent, permanent, and preferentially arrives when the platform is
+#            already unwell.
+#
+#            8c0afee — `runJobAlertScan` reconciled the ledger in one
+#              transaction and notified off that transaction's return value,
+#              outside it. Anything that threw in the loop took out the rest of
+#              the batch and rejected the scan; `nonOverlapping` caught the
+#              rejection and the schedule carried on, but the ledger had already
+#              committed those alerts as open, so the next scan reconciled them
+#              as `ongoing` — which is deliberately silent, and is the whole
+#              anti-spam mechanism. The alert was not delayed, it was gone, and
+#              the row said an operator had been told. The announcement writes
+#              execute against the same database whose load stalled the queue,
+#              so the failure is correlated with the thing it conceals.
+#              Delivery gets its own state (0157), the sweep reads what is owed
+#              from the ledger rather than from a scan's result, and the admin
+#              event, the notification rows and the stamp commit together — no
+#              ordering of two separate writes survives a crash between them.
+#              `FOR UPDATE` with the NULL check in the predicate keeps two
+#              instances from announcing the same alert twice. Backfilled as
+#              delivered, because the alternative is re-announcing the table's
+#              whole history on the first scan after deploy.
+#
+#            39a0187 — `onStateChanged` runs after the transition it announces:
+#              every caller has already committed through `patchValuation`, so
+#              nothing raised inside it can undo anything. The webhook half had
+#              been contained on that reasoning since it was written; the email
+#              and notification half had not, and it is the half with four
+#              database round trips in front of the write that makes the message
+#              durable. A blip on any of them answered 500 for a move that had
+#              been applied, and invited the client to repeat it.
+#
+#              Stripe is where that was worst and where it was invisible.
+#              `recordStripeEvent` is deliberately skipped on the throw path so
+#              a failed event is redelivered — but the redelivery re-enters
+#              `fulfill()`, finds `paid_status` already `paid`, skips the block,
+#              and settles the event as handled. The retry that exists to
+#              recover the notification is what buries it: the client's payment
+#              advanced the engagement and the mail saying so was never queued,
+#              against an event Stripe's own dashboard then shows as delivered.
+#
+#              `firePartnerWebhooks` had the same shape one level down — an
+#              uncontained fan-out, where one partner's `recordDelivery` failing
+#              dropped the event for every webhook after it, and dropped it for
+#              good, since the retry sweep works from delivery rows and a failed
+#              insert leaves none.
+#
+#            Where the sweep found nothing, which is worth recording since the
+#            question was asked of all eight background jobs. The scheduler
+#            itself is sound: `nonOverlapping` resets its flag on a synchronous
+#            throw as well as a rejection, and swallows a throwing `onError` so
+#            a logger cannot take the process down. The cap-table and HRIS syncs
+#            contain per connection; retention is batched; the auto-pipeline's
+#            fire-and-forget is caught and its worker abandons a run settled out
+#            from under it. The auto-email scan, the email retry sweep and the
+#            webhook retry sweep can all abort a batch on a database failure,
+#            but nothing is lost there — the outbox row or the claim lease is
+#            what comes back for the remainder, which is the property the job
+#            alert ledger did not have and now does. `recordNetworkItem` and
+#            `pruneNetworkItems` genuinely never throw, as the call site in
+#            `app.ts` claims. All three Node services install crash handlers for
+#            both `uncaughtException` and `unhandledRejection`.
+#
+# gap:       containing the announcement makes the failure legible; it does not
+#            make the message arrive. Nothing re-derives a state-change
+#            notification that was never queued, so the window between the
+#            committed transition and the committed outbox row is still a window
+#            in which a message is lost — now at `error` in the log rather than
+#            as a 500 on a request that succeeded. Closing it means the ledger
+#            treatment 8c0afee gave the job alerts: a durable record that an
+#            announcement is owed, driven off `valuation_events` rather than off
+#            the hook's own control flow. Recorded rather than done because it
+#            is a subsystem rather than a fix, and because the double-send it
+#            risks is worse than the loss it prevents if it is done carelessly.
+#
 # commit:    33ac089
 # subject:   the guard that was never consulted, and the overflow nothing said
 # previous:  4a84b38 (links that outlive what they were minted for).
