@@ -85,6 +85,9 @@ export const NON_ID_PARAM_NAMES: ReadonlySet<string> = new Set([
   'version', // integer report-version number
   'n', // diagnostic routes
   'problem', // diagnostic routes
+  // The suppressed email address itself, on the admin release route. An
+  // address, not an id: guarding it as a ULID would 404 every real release.
+  'address',
 ]);
 
 /**
