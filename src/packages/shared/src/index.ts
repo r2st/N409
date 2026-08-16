@@ -28,7 +28,10 @@ export {
   probeReady,
   CHECK_FAILED,
   CHECK_OK,
+  CHECK_TIMEOUT_MS,
   READY_CACHE_MS,
+  checkTimedOut,
+  withTimeout,
   type ReadinessCheck,
 } from './health.js';
 export {

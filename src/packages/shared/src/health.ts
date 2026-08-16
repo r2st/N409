@@ -18,6 +18,74 @@ export const CHECK_FAILED = 'failed';
  */
 export const READY_CACHE_MS = 1000;
 
+/**
+ * How long one dependency check may take before it is called failed.
+ *
+ * Every check registered here was written to be fast and most carry their own
+ * bound, but "most" is the problem: the fan-out has no ceiling of its own, so
+ * `/ready` was as slow as the slowest thing anyone had ever added to it. The
+ * bounds that do exist are also larger than they look. `probeReady` stops at
+ * 3s, but the Postgres check is `pool.query('SELECT 1')`, whose worst case is
+ * `connectionTimeoutMillis` waiting for a connection (10s) and then
+ * `statement_timeout` running the query (15s) — twenty-five seconds during
+ * which the endpoint answers nothing at all.
+ *
+ * Answering nothing is worse than answering 503, and not by a little. A load
+ * balancer that gets a 503 takes the instance out immediately; one that gets a
+ * hung socket waits for its own timeout, and until then keeps routing real
+ * traffic to a process that has just said it cannot serve it. The coalescing
+ * cache widens that: probes join the in-flight run rather than starting their
+ * own, so one stuck check hangs *every* concurrent prober, and the failure
+ * presents as an unresponsive endpoint rather than an unhealthy one.
+ *
+ * 5s is the default because it is comfortably above every check's normal cost
+ * (a loopback `/ready` and a `SELECT 1` are single-digit milliseconds) and
+ * comfortably below the shortest timeout on the other side of it — `deploy.sh`
+ * waits 10s per poll. A check that has not answered in five seconds is not
+ * about to answer usefully; the dependency is down, which is the thing being
+ * asked.
+ */
+export const CHECK_TIMEOUT_MS = 5000;
+
+/** How a timed-out check reads in the operator detail. Never public. */
+export function checkTimedOut(ms: number): string {
+  return `timed out after ${ms}ms`;
+}
+
+/**
+ * `check` with a deadline.
+ *
+ * A promise cannot be cancelled, so the losing check keeps running after the
+ * race is decided. Two consequences are handled rather than tolerated: its
+ * eventual rejection is swallowed (it would otherwise surface as an unhandled
+ * rejection, and `crash.ts` treats those as fatal), and the timer is cleared on
+ * the winning path so a fast check does not hold a 5s handle open — which, on a
+ * process trying to exit, is 5s of shutdown that nothing is waiting for.
+ */
+export async function withTimeout<T>(
+  check: () => Promise<T>,
+  ms: number,
+  onTimeout: () => Error,
+): Promise<T> {
+  if (!Number.isFinite(ms) || ms <= 0) return check();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const started = check();
+  // Attached before the race so a rejection arriving after the deadline has a
+  // handler already in place; `started` is still what the race awaits, so a
+  // real failure is not swallowed on the path that matters.
+  started.catch(() => {});
+  try {
+    return await Promise.race([
+      started,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(onTimeout()), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /** One computed readiness run. `detail` is the operator view; never public. */
 interface ReadinessSnapshot {
   healthy: boolean;
@@ -28,10 +96,7 @@ interface ReadinessSnapshot {
 /** The same snapshot with every failure flattened to `failed`. */
 function publicChecks(detail: Record<string, string>): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(detail).map(([name, status]) => [
-      name,
-      status === CHECK_OK ? CHECK_OK : CHECK_FAILED,
-    ]),
+    Object.entries(detail).map(([name, status]) => [name, status === CHECK_OK ? CHECK_OK : CHECK_FAILED]),
   );
 }
 
@@ -104,11 +169,25 @@ export function registerHealth(
     rootRoute?: boolean;
     /** Coalescing window; 0 disables it. Defaults to {@link READY_CACHE_MS}. */
     readyCacheMs?: number;
+    /**
+     * Deadline applied to every check. Defaults to {@link CHECK_TIMEOUT_MS};
+     * 0 or a non-finite value disables the bound, which is what a test that
+     * drives the clock itself wants and nothing in production does.
+     */
+    checkTimeoutMs?: number;
+    /**
+     * Per-check overrides, by the same name the check is registered under. For
+     * the one dependency that is legitimately slower than the rest rather than
+     * for tuning the whole endpoint down to its slowest member.
+     */
+    checkTimeoutsMs?: Record<string, number>;
   },
 ): void {
   const startedAt = Date.now();
   const build = buildInfo();
   const cacheMs = opts.readyCacheMs ?? READY_CACHE_MS;
+  const defaultTimeoutMs = opts.checkTimeoutMs ?? CHECK_TIMEOUT_MS;
+  const timeoutFor = (name: string): number => opts.checkTimeoutsMs?.[name] ?? defaultTimeoutMs;
   // One key: readiness is a property of the process, not of the request.
   const cache = new TtlCache<ReadinessSnapshot>({ ttlMs: cacheMs, maxEntries: 1 });
 
@@ -148,8 +227,11 @@ export function registerHealth(
     // in series, /ready cost the sum of every upstream's timeout.
     const settled = await Promise.all(
       entries.map(async ([name, check]) => {
+        const ms = timeoutFor(name);
         try {
-          await check();
+          // Bounded here rather than inside each check, so a dependency added
+          // later cannot widen the endpoint by forgetting to carry one.
+          await withTimeout(check, ms, () => new Error(checkTimedOut(ms)));
           return [name, CHECK_OK] as const;
         } catch (err) {
           // Scrubbed for the reason problem.ts scrubs the 5xx log line: a
@@ -165,10 +247,7 @@ export function registerHealth(
     if (!healthy) {
       // Logged here rather than per request, so a flood of probes against a
       // sick estate does not also flood the log: this runs once per fan-out.
-      log.warn(
-        { service: opts.service, checks: detail },
-        'readiness check failed — reporting unavailable',
-      );
+      log.warn({ service: opts.service, checks: detail }, 'readiness check failed — reporting unavailable');
     }
     return { healthy, detail };
   };
