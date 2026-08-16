@@ -268,7 +268,9 @@ if (config.WEBHOOK_RETRY_SCAN_MINUTES > 0) {
   const sweep = nonOverlapping(
     async () => {
       const r = await retryDueDeliveries({ pool, log: app.log });
-      if (r.attempted > 0) app.log.info(r, 'webhook retry sweep');
+      // `reaped` too, not just `attempted`: a pass that settled abandoned
+      // deliveries and delivered nothing did the work this line reports on.
+      if (r.attempted > 0 || r.reaped > 0) app.log.info(r, 'webhook retry sweep');
     },
     (err) => app.log.error({ err }, 'webhook retry sweep failed'),
   );

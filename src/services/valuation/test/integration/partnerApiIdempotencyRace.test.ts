@@ -124,8 +124,12 @@ describe.skipIf(!dbUp)('partner API idempotency under concurrency', () => {
     const second = await create(k, `Body B ${k}`);
     expect(second.statusCode).toBe(409);
     // The body check comes before the completion check, so this reads the same
-    // whether the original has answered or not.
-    expect(second.json().detail).toMatch(/different request body/i);
+    // whether the original has answered or not. Matching the mismatch wording
+    // rather than merely the status is what keeps the two 409s apart: the
+    // in-flight one says "still in flight", and this test would pass against it
+    // on the status alone. The hash covers method and path now, so the message
+    // no longer names the body specifically.
+    expect(second.json().detail).toMatch(/already used for a different request/i);
   });
 
   it('hands the key back when the request refused without writing anything', async () => {

@@ -198,4 +198,138 @@ describe.skipIf(!dbUp)('webhook delivery reliability', () => {
     expect(rows[0]!.status).toBe('delivered');
     expect(rows[0]!.attempts).toBe(WEBHOOK_MAX_ATTEMPTS);
   });
+
+  /**
+   * The state 0103 argued could not exist.
+   *
+   * Its reasoning is that `claimed_at` is a lease rather than a status, so a
+   * sweeper lost mid-POST leaves a stamp that expires and the row goes back in
+   * the queue — "no wedged state needing its own reaper". That holds for every
+   * attempt except the last. The claim counts the attempt before the POST, so a
+   * process lost between claiming the *final* attempt and settling it leaves
+   * `attempts = max_attempts` on a row still reading 'pending', which the
+   * claim's own `attempts < max_attempts` then excludes forever.
+   *
+   * Nothing was lost by it — that attempt was the last one either way. What was
+   * wrong is that nothing ever said so: the row stayed 'pending' and due in the
+   * backlog gauge for the life of the table, and the partner's delivery log went
+   * on promising a retry that could not happen.
+   *
+   * `wedge` reproduces it by hand rather than by killing a process, and the
+   * first assertion below is the reproduction: the claim genuinely cannot see
+   * the row. Without that, a reaper test only proves the reaper runs.
+   */
+  const wedge = async (
+    webhookId: string,
+    opts: { claimedSecondsAgo?: number | null; lastError?: string | null } = {},
+  ): Promise<string> => {
+    const { rows } = await ctx.pool.query<{ id: string }>(
+      `UPDATE partner_webhook_deliveries
+          SET status = 'pending',
+              attempts = max_attempts,
+              last_error = $2,
+              claimed_at = CASE WHEN $3::int IS NULL THEN NULL
+                                ELSE now() - ($3 || ' seconds')::interval END
+        WHERE webhook_id = $1
+        RETURNING id`,
+      [webhookId, opts.lastError ?? null, opts.claimedSecondsAgo === null ? null : (opts.claimedSecondsAgo ?? 3600)],
+    );
+    expect(rows).toHaveLength(1);
+    return rows[0]!.id;
+  };
+
+  const deliveryRow = async (id: string) => {
+    const { rows } = await ctx.pool.query<{
+      status: string;
+      attempts: number;
+      last_error: string | null;
+      claimed_at: Date | null;
+    }>('SELECT status, attempts, last_error, claimed_at FROM partner_webhook_deliveries WHERE id = $1', [id]);
+    return rows[0]!;
+  };
+
+  it('settles a delivery whose final attempt was lost with the process making it', async () => {
+    const { claimRetryableDeliveries, failExhaustedDeliveries, DELIVERY_ABANDONED_ERROR } = await import(
+      '../../src/repos/partnerWebhooks.js'
+    );
+    const webhookId = await registerWebhook();
+    receiverStatus = 500;
+    await ping(webhookId);
+    receiverStatus = 200;
+    const id = await wedge(webhookId);
+
+    // The reproduction: the retry sweep cannot reach this row. Every attempt is
+    // spent, so the claim excludes it, and nothing else ever writes it.
+    await ctx.pool.query(
+      `UPDATE partner_webhook_deliveries SET next_attempt_at = now() - interval '1 second' WHERE id = $1`,
+      [id],
+    );
+    const claimed = await claimRetryableDeliveries(ctx.pool, { leaseMs: 1000 });
+    expect(claimed.map((c) => c.id)).not.toContain(id);
+    expect((await deliveryRow(id)).status).toBe('pending');
+
+    const reaped = await failExhaustedDeliveries(ctx.pool, { leaseMs: 60_000 });
+    expect(reaped.map((r) => r.id)).toContain(id);
+
+    const row = await deliveryRow(id);
+    expect(row.status).toBe('failed');
+    expect(row.claimed_at).toBeNull();
+    expect(row.last_error).toBe(DELIVERY_ABANDONED_ERROR);
+  });
+
+  it('leaves the final attempt alone while its lease is still running', async () => {
+    const { failExhaustedDeliveries } = await import('../../src/repos/partnerWebhooks.js');
+    const webhookId = await registerWebhook();
+    receiverStatus = 500;
+    await ping(webhookId);
+    receiverStatus = 200;
+    // Claimed a second ago against a five-minute lease: this row is in flight
+    // on its last attempt, not wedged. Reaping it would mark a delivery failed
+    // while its POST was still running — possibly while it was succeeding.
+    const id = await wedge(webhookId, { claimedSecondsAgo: 1 });
+
+    const reaped = await failExhaustedDeliveries(ctx.pool, { leaseMs: 5 * 60_000 });
+    expect(reaped.map((r) => r.id)).not.toContain(id);
+    expect((await deliveryRow(id)).status).toBe('pending');
+  });
+
+  it('keeps the error from the attempt before the one that was lost', async () => {
+    const { failExhaustedDeliveries, DELIVERY_ABANDONED_ERROR } = await import(
+      '../../src/repos/partnerWebhooks.js'
+    );
+    const webhookId = await registerWebhook();
+    receiverStatus = 500;
+    await ping(webhookId);
+    receiverStatus = 200;
+    const id = await wedge(webhookId, { lastError: 'receiver responded 503' });
+
+    await failExhaustedDeliveries(ctx.pool, { leaseMs: 60_000 });
+    // What the receiver actually said is more use to the partner reading the
+    // delivery log than a note about our own process, so the reaper only fills
+    // a blank.
+    const row = await deliveryRow(id);
+    expect(row.status).toBe('failed');
+    expect(row.last_error).toBe('receiver responded 503');
+    expect(row.last_error).not.toBe(DELIVERY_ABANDONED_ERROR);
+  });
+
+  it('runs the reap on the retry sweep, and counts it separately from deliveries', async () => {
+    const { retryDueDeliveries } = await import('../../src/hooks/partnerWebhooks.js');
+    const webhookId = await registerWebhook();
+    receiverStatus = 500;
+    await ping(webhookId);
+    receiverStatus = 200;
+    const id = await wedge(webhookId, { claimedSecondsAgo: null });
+
+    const result = await retryDueDeliveries({ pool: ctx.pool, leaseMs: 60_000 });
+    expect(result.reaped).toBeGreaterThanOrEqual(1);
+    // A reap is not a delivery attempt. Folding it into `failed` would report
+    // the sweep as having tried something it never sent.
+    expect((await deliveryRow(id)).status).toBe('failed');
+
+    // And it is idempotent: the row is no longer 'pending', so a second pass
+    // finds nothing to settle and does not re-report it.
+    const again = await retryDueDeliveries({ pool: ctx.pool, leaseMs: 60_000 });
+    expect(again.reaped).toBe(0);
+  });
 });

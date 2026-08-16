@@ -247,7 +247,34 @@ describe('buildOpenApiDocument', () => {
 
   it('declares the rate-limit headers on success, where a client can act on them', () => {
     const headers = doc.paths['/valuations'].get.responses['200'].headers;
-    expect(Object.keys(headers)).toEqual(['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset']);
+    expect(Object.keys(headers)).toEqual([
+      'x-ratelimit-limit',
+      'x-ratelimit-remaining',
+      'x-ratelimit-reset',
+      // Both budgets, because a client that reads only the per-key trio sees a
+      // healthy `remaining` and is refused anyway when a sibling key spent the
+      // organisation's.
+      'x-ratelimit-limit-partner',
+      'x-ratelimit-remaining-partner',
+      'x-ratelimit-reset-partner',
+    ]);
+  });
+
+  it('names the organisation ceiling in the description only when one is enforced', () => {
+    expect(doc.info.description).not.toMatch(/organisation/);
+
+    const withCeiling = buildOpenApiDocument({
+      endpoints,
+      schemas,
+      title: 'N409 Partner API',
+      version: '1.0.0',
+      serverUrl: '/api/partner/v1',
+      rateLimit: { limit: 120, windowSeconds: 60, orgLimit: 600 },
+    }) as Record<string, any>;
+    expect(withCeiling.info.description).toMatch(/600 per 60s across all of your organisation's keys/);
+    // The sentence a partner acts on: the reason not to work around the per-key
+    // figure by creating more keys.
+    expect(withCeiling.info.description).toMatch(/minting more keys does not raise the second figure/);
   });
 
   it('declares retry-after on the 429, which is what a backoff is supposed to read', () => {

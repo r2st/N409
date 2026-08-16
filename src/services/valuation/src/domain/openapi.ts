@@ -81,7 +81,12 @@ export interface OpenApiInput {
   version: string;
   /** Absolute or root-relative server URL, e.g. `/api/partner/v1`. */
   serverUrl: string;
-  rateLimit: { limit: number; windowSeconds: number };
+  /**
+   * The two budgets a call is charged against. `orgLimit` is omitted when the
+   * deployment has no organisation ceiling configured, and the description then
+   * says nothing about one rather than naming a limit that is not enforced.
+   */
+  rateLimit: { limit: number; windowSeconds: number; orgLimit?: number };
   description?: string;
 }
 
@@ -188,6 +193,21 @@ const RATE_LIMIT_HEADERS = {
   'x-ratelimit-limit': { schema: { type: 'integer' }, description: 'Requests allowed per window.' },
   'x-ratelimit-remaining': { schema: { type: 'integer' }, description: 'Requests left in this window.' },
   'x-ratelimit-reset': { schema: { type: 'integer' }, description: 'Unix seconds when the window resets.' },
+  // The second budget. A client that reads only the unsuffixed trio sees a
+  // healthy `remaining` and is then refused anyway, because the request that
+  // exhausted the organisation's budget was one its sibling key sent.
+  'x-ratelimit-limit-partner': {
+    schema: { type: 'integer' },
+    description: "Requests allowed per window across all of your organisation's API keys.",
+  },
+  'x-ratelimit-remaining-partner': {
+    schema: { type: 'integer' },
+    description: "Requests left in this window across all of your organisation's API keys.",
+  },
+  'x-ratelimit-reset-partner': {
+    schema: { type: 'integer' },
+    description: 'Unix seconds when the organisation window resets.',
+  },
 };
 
 /**
@@ -421,7 +441,11 @@ export function buildOpenApiDocument(input: OpenApiInput): Record<string, unknow
       description:
         input.description ??
         `Programmatic valuation submission. Authenticate with a partner API key; ` +
-          `every request is rate limited to ${input.rateLimit.limit} per ${input.rateLimit.windowSeconds}s per key.`,
+          `every request is rate limited to ${input.rateLimit.limit} per ${input.rateLimit.windowSeconds}s per key` +
+          (input.rateLimit.orgLimit
+            ? `, and to ${input.rateLimit.orgLimit} per ${input.rateLimit.windowSeconds}s across all of your ` +
+              `organisation's keys together — minting more keys does not raise the second figure.`
+            : '.'),
     },
     servers: [{ url: input.serverUrl }],
     tags: [...new Set(input.endpoints.map((endpoint) => tagFor(endpoint.path)))].map((name) => ({ name })),

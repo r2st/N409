@@ -15,6 +15,7 @@ import {
   completeIdempotentResponse,
   createWebhook,
   deleteWebhook,
+  findDeliveryForPartner,
   findWebhook,
   listDeliveries,
   listWebhooks,
@@ -84,6 +85,31 @@ export const PARTNER_API_RATE_LIMIT = 120;
 export const PARTNER_API_RATE_WINDOW_MS = 60_000;
 
 /**
+ * Per-organisation ceiling, checked alongside the per-key limit.
+ *
+ * The per-key limit is not a ceiling on anything by itself, because the number
+ * of keys is a knob the partner holds: `POST /partners/{id}/tokens` is
+ * self-service and caps nothing, so an organisation's real budget was 120/min
+ * multiplied by however many keys it cared to mint. "Rate limited to 120
+ * requests per minute", which is what the spec and the docs endpoint both say,
+ * was therefore a statement about a key rather than about a caller — and the
+ * thing the limit exists to protect (one shared engine and one database) is
+ * saturated by the caller.
+ *
+ * `sessionOrgLimiter` is not this. It sits in `app.authenticate` and covers the
+ * whole authenticated surface at 1500/min, so a partner's browser users and
+ * their integration share one figure, it is only installed in production, and
+ * at that height it binds after twelve keys rather than before. This is the
+ * partner API having a ceiling of its own.
+ *
+ * 600 = five keys' worth. Chosen so the ordinary reason to hold several keys —
+ * one per environment, one per internal service, rotating one in — costs a
+ * partner nothing, while the ceiling still lands well below the per-surface
+ * figure above. Configurable, and 0 disables it.
+ */
+export const PARTNER_API_RATE_LIMIT_ORG = 600;
+
+/**
  * A registry entry. Structurally this was a second copy of `OpenApiEndpoint`,
  * kept in step by hand — which is exactly the drift the registry exists to
  * prevent, one level up. It is now the same type under the local name the
@@ -128,6 +154,39 @@ const UploadBody = z.object({
   content_base64: z.string().min(1),
 });
 
+/**
+ * The registry fragment every idempotency-aware mutation shares.
+ *
+ * `duplicate` names what a retry would otherwise produce on this endpoint, so
+ * the prose is specific without the rest of the paragraph being written five
+ * times. `buildOpenApiDocument` keys the `x-idempotent-replay` response header
+ * off the presence of the `Idempotency-Key` header, so declaring an endpoint
+ * here is also what puts it in the spec — there is no second list.
+ *
+ * `extra` merges in the endpoint's own 409s. `POST /webhooks` already had one
+ * (the ten-endpoint ceiling), and a spec that replaced it with the idempotency
+ * text would document a status the route sends for two reasons as if it sent it
+ * for one.
+ */
+function idempotencyDoc(
+  duplicate: string,
+  extra: Record<string, string> = {},
+): { headers: Record<string, string>; errors: Record<string, string> } {
+  const conflict =
+    'This Idempotency-Key was already used for a different request — a different body, or a ' +
+    'different endpoint or resource — or a request holding it is still in flight. Use a fresh key ' +
+    'per distinct request; retrying with the same key and the same request replays the original ' +
+    'response once it has landed.';
+  return {
+    headers: {
+      'Idempotency-Key':
+        `Optional. A retried request with the same key replays the original response instead of ${duplicate}; ` +
+        'reusing a key for a different request is refused.',
+    },
+    errors: { ...extra, '409': extra['409'] ? `${extra['409']} ${conflict}` : conflict },
+  };
+}
+
 /** The projection API clients see — internal ids/flags stay internal. */
 function publicValuation(v: ValuationRow) {
   return {
@@ -169,11 +228,17 @@ export function registerPartnerApiRoutes(
     pool: pg.Pool;
     documentsDir: string;
     limiter?: FixedWindowRateLimiter;
+    /** Per-partner ceiling. `null` disables it; undefined takes the default. */
+    orgLimiter?: FixedWindowRateLimiter | null;
     scan?: ScanPolicy;
   },
 ): void {
   const limiter =
     deps.limiter ?? new FixedWindowRateLimiter(PARTNER_API_RATE_LIMIT, PARTNER_API_RATE_WINDOW_MS);
+  const orgLimiter =
+    deps.orgLimiter === undefined
+      ? new FixedWindowRateLimiter(PARTNER_API_RATE_LIMIT_ORG, PARTNER_API_RATE_WINDOW_MS)
+      : deps.orgLimiter;
 
   /** API-key-only gate + per-key rate limit, run after app.authenticate. */
   const apiKeyGuard = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
@@ -194,10 +259,33 @@ export function registerPartnerApiRoutes(
     void reply.header('x-ratelimit-limit', result.limit);
     void reply.header('x-ratelimit-remaining', result.remaining);
     void reply.header('x-ratelimit-reset', Math.ceil(result.resetAt / 1000));
+
+    // The organisation's own budget, charged whether or not the key's is spent.
+    // Charging it first and unconditionally is what makes it a ceiling: if a
+    // request that the key limit has already refused went uncharged, spreading
+    // the same flood across enough keys would keep every one of them at its own
+    // limit and never reach this one. The headers are reported on every
+    // response, including the ones the key limit rejects, so a partner running
+    // several integrations can see which of the two budgets is the binding one
+    // before either runs out.
+    const org = orgLimiter?.check(req.apiToken.partnerId);
+    if (org) {
+      void reply.header('x-ratelimit-limit-partner', org.limit);
+      void reply.header('x-ratelimit-remaining-partner', org.remaining);
+      void reply.header('x-ratelimit-reset-partner', Math.ceil(org.resetAt / 1000));
+    }
+
     if (!result.allowed) {
       throw problems.tooManyRequests(
         `Rate limit of ${result.limit} requests per ${PARTNER_API_RATE_WINDOW_MS / 1000}s exceeded for this API key`,
         Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000)),
+      );
+    }
+    if (org && !org.allowed) {
+      throw problems.tooManyRequests(
+        `Rate limit of ${org.limit} requests per ${PARTNER_API_RATE_WINDOW_MS / 1000}s exceeded for this ` +
+          'organization across all of its API keys',
+        Math.max(1, Math.ceil((org.resetAt - Date.now()) / 1000)),
       );
     }
   };
@@ -258,6 +346,17 @@ export function registerPartnerApiRoutes(
    * same situation, and the alternative — waiting for the first request inside
    * the second — holds a connection open for an answer the client can ask for
    * again in a second.
+   *
+   * What the key identifies is the whole request, not its body. The hash used
+   * to cover `req.body` alone, which is sound only while exactly one endpoint
+   * accepts a key — and stops being sound the moment a second one does, because
+   * two of the operations here carry no body at all. `POST /webhooks/{A}/test`
+   * and `POST /webhooks/{B}/test` both hash `null`, as do a test ping and a
+   * delivery replay: reusing a key across any of those would find a completed
+   * row whose hash matched and replay the *other* endpoint's response, reporting
+   * success for a request that never ran. Hashing method and path with the body
+   * makes every one of those a mismatch — a 409 telling the client to use a
+   * fresh key, which is the conservative answer in each case.
    */
   const withIdempotency = async (
     req: FastifyRequest,
@@ -271,8 +370,13 @@ export function registerPartnerApiRoutes(
       return reply.status(out.status).send(out.body);
     }
     if (key.length > 200) throw problems.unprocessable('Idempotency-Key must be 200 characters or fewer');
+    // `req.url` rather than the route template, so two calls to the same
+    // operation on different resources are different requests. The query string
+    // rides along with it: no operation that takes a key reads one today, and
+    // if one ever does, including it errs towards refusing a replay rather than
+    // serving the wrong one.
     const requestHash = createHash('sha256')
-      .update(JSON.stringify(req.body ?? null))
+      .update(`${req.method} ${req.url}\n${JSON.stringify(req.body ?? null)}`)
       .digest('hex');
 
     const claim = await claimIdempotencyKey(deps.pool, {
@@ -281,8 +385,14 @@ export function registerPartnerApiRoutes(
       requestHash,
     });
     if (claim.kind === 'mismatch') {
+      // "a different request", not "a different request body": since the hash
+      // covers method and path too, the commonest way to land here is now
+      // reusing a key on a different endpoint or a different resource, and a
+      // message naming only the body sends the client to inspect the one part
+      // of the request that may well be identical.
       throw problems.conflict(
-        'This Idempotency-Key was already used for a different request body — use a fresh key per request',
+        'This Idempotency-Key was already used for a different request — a different body, or a ' +
+          'different endpoint or resource. Use a fresh key per distinct request.',
       );
     }
     if (claim.kind === 'in_flight') {
@@ -334,9 +444,20 @@ export function registerPartnerApiRoutes(
         note: 'Create and revoke API keys in partner settings. Session JWTs are rejected.',
       },
       rate_limit: {
-        limit: PARTNER_API_RATE_LIMIT,
+        limit: limiter.limit,
         window_seconds: PARTNER_API_RATE_WINDOW_MS / 1000,
-        headers: ['x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'],
+        // Reported from the limiter rather than the constant, so a deployment
+        // that has turned the ceiling off does not advertise one, and one that
+        // has moved it advertises where it actually is.
+        organization_limit: orgLimiter?.limit ?? null,
+        headers: [
+          'x-ratelimit-limit',
+          'x-ratelimit-remaining',
+          'x-ratelimit-reset',
+          ...(orgLimiter
+            ? ['x-ratelimit-limit-partner', 'x-ratelimit-remaining-partner', 'x-ratelimit-reset-partner']
+            : []),
+        ],
       },
       endpoints: PARTNER_API_ENDPOINTS,
       openapi_url: `${PARTNER_API_PREFIX}/openapi.json`,
@@ -365,8 +486,9 @@ export function registerPartnerApiRoutes(
         version: '1.0.0',
         serverUrl: PARTNER_API_PREFIX,
         rateLimit: {
-          limit: PARTNER_API_RATE_LIMIT,
+          limit: limiter.limit,
           windowSeconds: PARTNER_API_RATE_WINDOW_MS / 1000,
+          orgLimit: orgLimiter?.limit,
         },
       });
       // The registered media type for an OpenAPI document. Tools content-sniff
@@ -389,17 +511,7 @@ export function registerPartnerApiRoutes(
         currency: 'ISO-4217 code, defaults to USD',
         service_countries: 'Optional ISO-3166 alpha-2 country list',
       },
-      headers: {
-        'Idempotency-Key':
-          'Optional. A retried request with the same key replays the original response instead of ' +
-          'creating a second valuation; reusing a key with a different body is refused.',
-      },
-      errors: {
-        '409':
-          'This Idempotency-Key was already used for a different request body, or a request holding ' +
-          'it is still in flight. Use a fresh key per distinct request — retrying with the same key ' +
-          'and the same body replays the original response once it has landed.',
-      },
+      ...idempotencyDoc('creating a second valuation'),
       response: '201 { valuation }',
     },
     async (req, reply) => {
@@ -487,14 +599,14 @@ export function registerPartnerApiRoutes(
         content_type: 'MIME type (default application/octet-stream)',
         content_base64: `Base64-encoded file body (decoded max ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB)`,
       },
-      errors: {
+      ...idempotencyDoc('storing the file a second time', {
         // Two different limits, and a client that only handles one is surprised
         // by the other. The 413 is the transport refusing the request before a
         // handler runs; the 422 is this route rejecting the decoded bytes.
         '413':
           'The JSON envelope exceeded the request body limit — base64 inflates the file by about a third, ' +
           `so a file near the ${MAX_DOCUMENT_BYTES / (1024 * 1024)} MB cap can exceed it. Upload a smaller file.`,
-      },
+      }),
       response: '201 { document } — includes the stored sha256 fingerprint',
     },
     async (req, reply) => {
@@ -523,30 +635,38 @@ export function registerPartnerApiRoutes(
         });
       }
 
-      const document = await storeDocument(
-        deps.pool,
-        deps.documentsDir,
-        valuation,
-        {
-          kind: parsed.data.kind,
-          filename: parsed.data.filename,
-          contentType: parsed.data.content_type ?? 'application/octet-stream',
-          buffer,
-        },
-        actorFor(principal),
-        principal.id,
-        { scan: deps.scan },
-      ).catch(rethrowRejectedUpload(parsed.data.filename));
-      return reply.status(201).send({
-        document: {
-          id: document.id,
-          kind: document.kind,
-          filename: document.filename,
-          content_type: document.content_type,
-          size_bytes: document.size_bytes,
-          sha256: document.sha256,
-          created_at: document.created_at,
-        },
+      // Every refusal above happens before the key is claimed, deliberately:
+      // they write nothing, and a client correcting a rejected upload should be
+      // able to send it again under the same key. Only the store is inside.
+      return withIdempotency(req, reply, token, async () => {
+        const document = await storeDocument(
+          deps.pool,
+          deps.documentsDir,
+          valuation,
+          {
+            kind: parsed.data.kind,
+            filename: parsed.data.filename,
+            contentType: parsed.data.content_type ?? 'application/octet-stream',
+            buffer,
+          },
+          actorFor(principal),
+          principal.id,
+          { scan: deps.scan },
+        ).catch(rethrowRejectedUpload(parsed.data.filename));
+        return {
+          status: 201,
+          body: {
+            document: {
+              id: document.id,
+              kind: document.kind,
+              filename: document.filename,
+              content_type: document.content_type,
+              size_bytes: document.size_bytes,
+              sha256: document.sha256,
+              created_at: document.created_at,
+            },
+          },
+        };
       });
     },
     // base64 inflates ~4/3 over the raw 25 MB cap, plus JSON envelope headroom
@@ -661,6 +781,9 @@ export function registerPartnerApiRoutes(
         url: 'HTTPS endpoint to deliver events to',
         events: `Optional event whitelist — any of: ${WEBHOOK_EVENT_TYPES.join(', ')} (empty = all)`,
       },
+      ...idempotencyDoc('registering a second endpoint', {
+        '409': 'The ten-webhook ceiling for this organisation is already reached.',
+      }),
       response: '201 { webhook } — includes the signing secret, shown only in this response',
     },
     async (req, reply) => {
@@ -676,14 +799,21 @@ export function registerPartnerApiRoutes(
       if (existing.length >= 10) {
         throw problems.conflict('A partner may register at most 10 webhooks — delete one first');
       }
-      const webhook = await createWebhook(deps.pool, {
-        partnerId: token.partnerId,
-        url: parsed.data.url,
-        secret: newWebhookSecret(),
-        events: parsed.data.events,
-        createdBy: principal.id,
+      // The one response on this API that cannot be asked for again: the
+      // signing secret is shown here and never repeated. A create whose reply
+      // was lost to a timeout therefore leaves the partner an endpoint they
+      // cannot verify deliveries against and must find and delete by hand, so
+      // replaying the stored response is worth more here than anywhere else.
+      return withIdempotency(req, reply, token, async () => {
+        const webhook = await createWebhook(deps.pool, {
+          partnerId: token.partnerId,
+          url: parsed.data.url,
+          secret: newWebhookSecret(),
+          events: parsed.data.events,
+          createdBy: principal.id,
+        });
+        return { status: 201, body: { webhook: publicWebhook(webhook, true) } };
       });
-      return reply.status(201).send({ webhook: publicWebhook(webhook, true) });
     },
     { schemas: { body: WebhookBody, response: CreateWebhookResponse } },
   );
@@ -767,28 +897,45 @@ export function registerPartnerApiRoutes(
         'Replay a delivery that ran out of attempts, once your receiver is back. Resets the ' +
         'backoff ladder; an already-delivered event cannot be replayed from here.',
       auth: 'api_key',
+      ...idempotencyDoc('resetting the backoff ladder a second time'),
       response: '{ delivery } — status is pending; the sweep picks it up within the minute',
     },
-    async (req) => {
+    async (req, reply) => {
       const { token } = requireToken(req);
       const { id, deliveryId } = req.params as { id: string; deliveryId: string };
       if (!isUlid(id) || !isUlid(deliveryId)) throw problems.notFound();
       const webhook = await findWebhook(deps.pool, token.partnerId, id);
       if (!webhook) throw problems.notFound();
-      const delivery = await requeueDelivery(deps.pool, token.partnerId, deliveryId);
-      if (!delivery || delivery.webhook_id !== webhook.id) {
+      // Checked before the key is claimed, so a mistyped delivery id costs a
+      // 404 rather than five minutes of the key reading as in-flight. The same
+      // conditions are re-decided by the UPDATE below, which is what actually
+      // arbitrates; this only moves the ordinary refusal in front of the claim.
+      const existing = await findDeliveryForPartner(deps.pool, token.partnerId, deliveryId);
+      if (!existing || existing.webhook_id !== webhook.id || existing.status === 'delivered') {
         throw problems.notFound('No replayable delivery with that id');
       }
-      return {
-        delivery: {
-          id: delivery.id,
-          event_type: delivery.event_type,
-          status: delivery.status,
-          attempts: delivery.attempts,
-          max_attempts: delivery.max_attempts,
-          next_attempt_at: delivery.next_attempt_at,
-        },
-      };
+      return withIdempotency(req, reply, token, async () => {
+        const delivery = await requeueDelivery(deps.pool, token.partnerId, deliveryId);
+        if (!delivery || delivery.webhook_id !== webhook.id) {
+          // Only reachable if the row was delivered or removed between the
+          // check above and here, which is the one case where holding the key
+          // is right: we cannot say whether the replay took.
+          throw problems.notFound('No replayable delivery with that id');
+        }
+        return {
+          status: 200,
+          body: {
+            delivery: {
+              id: delivery.id,
+              event_type: delivery.event_type,
+              status: delivery.status,
+              attempts: delivery.attempts,
+              max_attempts: delivery.max_attempts,
+              next_attempt_at: delivery.next_attempt_at,
+            },
+          },
+        };
+      });
     },
     { schemas: { response: RetryDeliveryResponse } },
   );
@@ -799,22 +946,25 @@ export function registerPartnerApiRoutes(
       path: '/webhooks/{id}/test',
       summary: 'Send a signed webhook.test ping so you can verify your receiver end-to-end.',
       auth: 'api_key',
+      ...idempotencyDoc('sending a second ping'),
       response: '{ delivered: boolean }',
     },
-    async (req) => {
+    async (req, reply) => {
       const { token } = requireToken(req);
       const { id } = req.params as { id: string };
       if (!isUlid(id)) throw problems.notFound();
       const webhook = await findWebhook(deps.pool, token.partnerId, id);
       if (!webhook) throw problems.notFound();
-      const payload = buildWebhookPayload('webhook.test', null, { webhook_id: webhook.id });
-      const outcome = await deliverToWebhook(
-        { pool: deps.pool, log: req.log },
-        webhook,
-        'webhook.test',
-        payload,
-      );
-      return { delivered: outcome === 'delivered' };
+      return withIdempotency(req, reply, token, async () => {
+        const payload = buildWebhookPayload('webhook.test', null, { webhook_id: webhook.id });
+        const outcome = await deliverToWebhook(
+          { pool: deps.pool, log: req.log },
+          webhook,
+          'webhook.test',
+          payload,
+        );
+        return { status: 200, body: { delivered: outcome === 'delivered' } };
+      });
     },
     { schemas: { response: TestWebhookResponse } },
   );

@@ -176,6 +176,12 @@ const Env = z.object({
   // limiters). 0 disables. Only enforced in production — see buildApp.
   SESSION_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(0).default(300),
   SESSION_RATE_LIMIT_ORG_PER_MIN: z.coerce.number().int().min(0).default(1500),
+  // The partner API's own per-organisation ceiling, charged across every key
+  // the organisation holds. Unlike the two above this is enforced in every
+  // environment, because the per-key limit it backstops always is: a per-key
+  // limit on a surface where keys are self-service is not a ceiling on the
+  // caller. 0 disables it. See PARTNER_API_RATE_LIMIT_ORG.
+  PARTNER_API_RATE_LIMIT_ORG_PER_MIN: z.coerce.number().int().min(0).default(600),
   // Per-user budget, in cost units per minute, for the expensive routes
   // classified in domain/requestCost.ts (renders, exports, engine runs, AI
   // jobs). Roughly: 20 PDF renders, 8 evidence bundles or 8 AI jobs a minute.

@@ -21,6 +21,7 @@ import {
 import {
   claimRetryableDeliveries,
   enabledWebhooks,
+  failExhaustedDeliveries,
   recordDelivery,
   settleDelivery,
   type PartnerWebhookRow,
@@ -241,15 +242,35 @@ export async function deliverToWebhook(
  * A row that runs out of attempts, or whose receiver answered with something
  * permanent, settles to 'failed' and is never seen again — retrying forever
  * would mask a genuinely broken endpoint behind an ever-growing counter.
+ *
+ * The reap runs first and is not a delivery: it settles rows whose final
+ * attempt was lost with the process that was making it, which the claim below
+ * can never pick up again (see `failExhaustedDeliveries`). It shares this
+ * sweep rather than getting a timer of its own because it wants exactly the
+ * same cadence and the same lease, and a second interval would be a second
+ * place to keep that number.
  */
 export async function retryDueDeliveries(
   deps: WebhookDeps & { limit?: number; leaseMs?: number },
-): Promise<{ attempted: number; delivered: number; retrying: number; failed: number }> {
+): Promise<{ attempted: number; delivered: number; retrying: number; failed: number; reaped: number }> {
   // See the note in hooks/emailRetry.ts: claiming nothing is what makes
   // FLAG_RETRY_LADDERS a pause rather than a loss. A pending delivery keeps its
   // backoff stamp and its attempt count, and resumes when the flag goes back on.
+  //
+  // The reap is behind the same guard even though it delivers nothing. A row it
+  // would settle has no attempts left, so nothing is lost by waiting — and while
+  // the ladders are paused, "still pending" is the honest reading of every
+  // unsettled row rather than a claim about this one in particular.
   if (!flagEnabled(FLAGS.retryLadders)) {
-    return { attempted: 0, delivered: 0, retrying: 0, failed: 0 };
+    return { attempted: 0, delivered: 0, retrying: 0, failed: 0, reaped: 0 };
+  }
+
+  const abandoned = await failExhaustedDeliveries(deps.pool, { leaseMs: deps.leaseMs, limit: deps.limit });
+  for (const row of abandoned) {
+    deps.log?.warn(
+      { deliveryId: row.id, webhookId: row.webhook_id, event: row.event_type, attempts: row.attempts },
+      'partner webhook delivery abandoned mid-attempt with no retries left; settled as failed',
+    );
   }
 
   const claimed = await claimRetryableDeliveries(deps.pool, {
@@ -280,7 +301,7 @@ export async function retryDueDeliveries(
       );
     }
   }
-  return { attempted: claimed.length, delivered, retrying, failed };
+  return { attempted: claimed.length, delivered, retrying, failed, reaped: abandoned.length };
 }
 
 /**

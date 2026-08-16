@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { FixedWindowRateLimiter } from '../../src/plugins/rateLimit.js';
+import { PARTNER_API_RATE_LIMIT_ORG } from '../../src/routes/partnerApi.js';
 import {
   authHeader,
   forceState,
@@ -295,6 +296,139 @@ describe.skipIf(!dbUp)('partner API', () => {
       expect(limited.headers['x-ratelimit-remaining']).toBe('0');
     } finally {
       await tight.teardown();
+    }
+  }, 60_000);
+
+  /**
+   * The per-key limit is not a ceiling on a caller, because the number of keys
+   * is a knob the caller holds: `POST /partners/{id}/tokens` is self-service
+   * and caps nothing. So "120 requests per minute", which the docs endpoint and
+   * the OpenAPI description both state, described a key rather than an
+   * organisation — and the shared engine and database the limit protects are
+   * saturated by the organisation.
+   */
+  it('holds one budget across every key an organization mints', async () => {
+    const tight = await setupTestApp(
+      {},
+      {
+        // Per key: room for three calls. Per organisation: four in total. A
+        // second key must therefore run out after one call, not after three.
+        partnerApiLimiter: new FixedWindowRateLimiter(3, 60_000),
+        partnerApiOrgLimiter: new FixedWindowRateLimiter(4, 60_000),
+      },
+    );
+    try {
+      const pid = await seedPartner(tight, 'Many Keys LLP');
+      const admin = await seedUser(tight, { roles: ['partner'], partnerId: pid });
+      const mint = async (name: string): Promise<string> => {
+        const minted = await tight.app.inject({
+          method: 'POST',
+          url: `/api/v1/partners/${pid}/tokens`,
+          headers: authHeader(admin.token),
+          payload: { name },
+        });
+        expect(minted.statusCode).toBe(201);
+        return minted.json().secret as string;
+      };
+      const first = await mint('first');
+      const second = await mint('second');
+
+      const ping = (key: string) =>
+        tight.app.inject({ method: 'GET', url: '/api/partner/v1/valuations', headers: keyHeader(key) });
+
+      // Spend the first key's own budget. Both budgets are reported, so a
+      // partner running several integrations can see which one is binding
+      // before either runs out.
+      for (let i = 0; i < 3; i += 1) {
+        const res = await ping(first);
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['x-ratelimit-limit']).toBe('3');
+        expect(res.headers['x-ratelimit-limit-partner']).toBe('4');
+      }
+
+      // The second key is untouched and has its full 3 — under a per-key limit
+      // alone this and every further key would serve another three.
+      const fourth = await ping(second);
+      expect(fourth.statusCode).toBe(200);
+      expect(fourth.headers['x-ratelimit-remaining']).toBe('2');
+      expect(fourth.headers['x-ratelimit-remaining-partner']).toBe('0');
+
+      const refused = await ping(second);
+      expect(refused.statusCode).toBe(429);
+      expect(refused.json().detail).toMatch(/across all of its API keys/);
+      expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+      // The key's own budget was not the binding one, and the headers say so.
+      expect(refused.headers['x-ratelimit-remaining']).toBe('1');
+      expect(refused.headers['x-ratelimit-remaining-partner']).toBe('0');
+    } finally {
+      await tight.teardown();
+    }
+  }, 60_000);
+
+  it('charges the organization for a request its own key limit already refused', async () => {
+    // Otherwise the ceiling is not one: spread a flood across enough keys and
+    // every key sits at its own limit while the organisation is never charged
+    // for any of it.
+    const tight = await setupTestApp(
+      {},
+      {
+        partnerApiLimiter: new FixedWindowRateLimiter(1, 60_000),
+        partnerApiOrgLimiter: new FixedWindowRateLimiter(3, 60_000),
+      },
+    );
+    try {
+      const pid = await seedPartner(tight, 'Spray Capital');
+      const admin = await seedUser(tight, { roles: ['partner'], partnerId: pid });
+      const minted = await tight.app.inject({
+        method: 'POST',
+        url: `/api/v1/partners/${pid}/tokens`,
+        headers: authHeader(admin.token),
+        payload: { name: 'spray' },
+      });
+      const key = minted.json().secret as string;
+      const ping = () =>
+        tight.app.inject({ method: 'GET', url: '/api/partner/v1/valuations', headers: keyHeader(key) });
+
+      expect((await ping()).statusCode).toBe(200);
+      const rejected = await ping();
+      expect(rejected.statusCode).toBe(429);
+      // Two requests made, two charged to the organisation — including the one
+      // that never ran a handler.
+      expect(rejected.headers['x-ratelimit-remaining-partner']).toBe('1');
+    } finally {
+      await tight.teardown();
+    }
+  }, 60_000);
+
+  it('publishes the limits this deployment actually enforces, not the constants', async () => {
+    const docs = (await app.inject({ method: 'GET', url: '/api/partner/v1/docs' })).json();
+    // This suite installs a 1000/min per-key limiter and leaves the ceiling at
+    // its default. Reading both figures off the limiters rather than off the
+    // module constants is what keeps a deployment that has moved either one
+    // from publishing a number it does not enforce.
+    expect(docs.rate_limit.limit).toBe(1000);
+    expect(docs.rate_limit.organization_limit).toBe(PARTNER_API_RATE_LIMIT_ORG);
+    expect(docs.rate_limit.headers).toContain('x-ratelimit-remaining-partner');
+
+    const spec = (await app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' })).json();
+    expect(spec.info.description).toMatch(
+      new RegExp(`${PARTNER_API_RATE_LIMIT_ORG} per 60s across all of your organisation's keys`),
+    );
+  });
+
+  it('says nothing about a ceiling when the deployment has turned it off', async () => {
+    const open = await setupTestApp({}, { partnerApiOrgLimiter: null });
+    try {
+      const docs = (await open.app.inject({ method: 'GET', url: '/api/partner/v1/docs' })).json();
+      expect(docs.rate_limit.organization_limit).toBeNull();
+      expect(docs.rate_limit.headers).not.toContain('x-ratelimit-remaining-partner');
+
+      const spec = (await open.app.inject({ method: 'GET', url: '/api/partner/v1/openapi.json' })).json();
+      // Advertising a limit nobody enforces sends a client backing off against
+      // a figure that means nothing here.
+      expect(spec.info.description).not.toMatch(/organisation/);
+    } finally {
+      await open.teardown();
     }
   }, 60_000);
 

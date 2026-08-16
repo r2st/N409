@@ -145,6 +145,13 @@ export interface AppDeps {
   google?: GoogleOidc;
   /** injectable for tests — partner API per-key rate limiter */
   partnerApiLimiter?: FixedWindowRateLimiter;
+  /**
+   * injectable for tests — partner API per-organisation ceiling, charged across
+   * every key an organisation holds. `null` turns it off for a test that needs
+   * to make more calls than the ceiling allows; undefined takes the configured
+   * default.
+   */
+  partnerApiOrgLimiter?: FixedWindowRateLimiter | null;
   /** injectable for tests — per-IP limiter for the token-only board routes */
   boardPublicLimiter?: FixedWindowRateLimiter;
   /** injectable for tests — per-IP limiter for the auditor portal redeem route */
@@ -604,6 +611,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     pool,
     documentsDir: config.DOCUMENTS_DIR,
     limiter: deps.partnerApiLimiter,
+    orgLimiter:
+      deps.partnerApiOrgLimiter !== undefined
+        ? deps.partnerApiOrgLimiter
+        : config.PARTNER_API_RATE_LIMIT_ORG_PER_MIN > 0
+          ? new FixedWindowRateLimiter(config.PARTNER_API_RATE_LIMIT_ORG_PER_MIN, 60_000)
+          : null,
     scan,
   });
   // P0 — outside-world integrations (remaining-gaps §6): Stripe + signatures

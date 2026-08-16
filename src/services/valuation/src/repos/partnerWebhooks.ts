@@ -164,6 +164,70 @@ export async function settleDelivery(
 /** Default lease: comfortably longer than any single delivery attempt. */
 export const DELIVERY_CLAIM_LEASE_MS = 5 * 60_000;
 
+/** What the reaper stamps on a row it settles. */
+export const DELIVERY_ABANDONED_ERROR =
+  'abandoned: the final attempt never reported back (process lost mid-delivery)';
+
+/**
+ * Settles the one wedged state 0103 said could not exist.
+ *
+ * That migration's argument is that `claimed_at` is a lease rather than a
+ * status, so a sweeper that dies mid-POST leaves a stamp that simply expires
+ * and the row becomes claimable again — "no wedged state needing its own
+ * reaper". It holds for every attempt but the last one. The claim counts the
+ * attempt, so a process lost between claiming the *final* attempt and settling
+ * it leaves `attempts = max_attempts` on a row still reading 'pending', and the
+ * claim's own `d.attempts < d.max_attempts` then excludes it forever. Nothing
+ * else writes that row: it is never retried, and it never reaches 'failed'.
+ *
+ * The cost is not a lost event — that attempt was the last one either way — it
+ * is that nothing ever says so. The row sits in `deliveryBacklogStats` as
+ * pending *and* due for the life of the table, so the backlog gauge ops watch
+ * only ever climbs; and `GET /webhooks/{id}/deliveries` tells the partner an
+ * event is still owed a retry that will never be tried. Both are the delivery
+ * log stating something untrue, which is the one thing it exists not to do.
+ *
+ * 0139 papered over the instances that existed at the time — raising
+ * `max_attempts` from 4 to 6 on every pending row made the wedged ones
+ * claimable again as a side effect of a change about something else. That is
+ * why the shape is worth a reaper rather than another one-off UPDATE.
+ *
+ * The lease must have expired before a row is taken. A row claimed a moment ago
+ * on its final attempt has `attempts = max_attempts` and is in flight, not
+ * wedged: its POST is still running and `settle` will write the true outcome. A
+ * reaper without the lease check would race it and mark a delivery failed while
+ * it was succeeding — the same wrong statement in the other direction.
+ */
+export async function failExhaustedDeliveries(
+  pool: pg.Pool,
+  opts: { leaseMs?: number; limit?: number } = {},
+): Promise<WebhookDeliveryRow[]> {
+  const leaseSeconds = Math.max(1, Math.floor((opts.leaseMs ?? DELIVERY_CLAIM_LEASE_MS) / 1000));
+  const { rows } = await pool.query<WebhookDeliveryRow>(
+    `UPDATE partner_webhook_deliveries d
+        SET status = 'failed',
+            claimed_at = NULL,
+            -- The error from the attempt before the lost one is more useful
+            -- than this note, so it only fills a blank.
+            last_error = coalesce(d.last_error, $3)
+      WHERE d.id IN (
+        SELECT id FROM partner_webhook_deliveries
+         WHERE status = 'pending'
+           AND attempts >= max_attempts
+           -- A NULL lease is nobody holding the row, which for a row already
+           -- out of attempts is the same wedge with the stamp cleared.
+           AND (claimed_at IS NULL OR claimed_at < now() - ($1 || ' seconds')::interval)
+         LIMIT $2
+         -- Same discipline as the claim: two reapers split the set rather than
+         -- both returning the rows the other already settled.
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING d.*`,
+    [String(leaseSeconds), Math.min(opts.limit ?? 100, 500), DELIVERY_ABANDONED_ERROR],
+  );
+  return rows;
+}
+
 /**
  * Atomically takes a batch of due deliveries for one sweeper.
  *
@@ -208,6 +272,30 @@ export async function claimRetryableDeliveries(
     [String(leaseSeconds), Math.min(opts.limit ?? 100, 500)],
   );
   return rows;
+}
+
+/**
+ * One delivery, scoped to the partner that owns its webhook.
+ *
+ * A read, so it decides nothing — `requeueDelivery` is still the statement that
+ * moves the row. It exists so the replay endpoint can answer "no such delivery"
+ * *before* it claims an Idempotency-Key: a 404 raised after the claim holds
+ * that key for the whole takeover window, so a partner correcting a mistyped id
+ * and retrying under the same key would be told their first attempt is still in
+ * flight for five minutes.
+ */
+export async function findDeliveryForPartner(
+  pool: pg.Pool,
+  partnerId: string,
+  deliveryId: string,
+): Promise<WebhookDeliveryRow | null> {
+  const { rows } = await pool.query<WebhookDeliveryRow>(
+    `SELECT d.* FROM partner_webhook_deliveries d
+       JOIN partner_webhooks w ON w.id = d.webhook_id
+      WHERE d.id = $1 AND w.partner_id = $2`,
+    [deliveryId, partnerId],
+  );
+  return rows[0] ?? null;
 }
 
 export async function listDeliveries(
