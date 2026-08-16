@@ -3,6 +3,7 @@ import { createValuation, patchValuation, type ValuationRow } from '../../src/re
 import { createCalculation } from '../../src/repos/calculations.js';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { readable } from './support/pdfText.js';
+import { beforeRequest, expectMentionsToday, todayWindow } from '../support/today.js';
 
 /**
  * What actually reaches the deliverable.
@@ -158,18 +159,23 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
 
   describe('the date the report states', () => {
     it('is the valuation date, not the day the report happened to be opened', async () => {
+      const startedAt = beforeRequest();
       const res = await opsGet(`/api/v1/valuations/${computed.id}/report`);
       expect(res.statusCode).toBe(200);
       const sections = res.json().version.content.sections as Array<{ key: string; html: string }>;
       const intro = sections.find((s) => s.key === 'introduction')!;
       expect(intro.html).toContain(VALUATION_DATE);
 
-      const today = new Date().toISOString().slice(0, 10);
-      // The engagement was valued in March; the assertion is only meaningful
-      // while the clock disagrees with that, which it will for as long as this
-      // test is run.
-      expect(today).not.toBe(VALUATION_DATE);
-      expect(intro.html).not.toContain(today);
+      // "The day the report was opened" is the day the *server* is on, which is
+      // what the fallback below would have used — so the day to prove absent is
+      // the local one, not the UTC one that happens to share it for 20 hours.
+      for (const today of todayWindow(startedAt)) {
+        // The engagement was valued in March; the assertion is only meaningful
+        // while the clock disagrees with that, which it will for as long as
+        // this test is run.
+        expect(today).not.toBe(VALUATION_DATE);
+        expect(intro.html).not.toContain(today);
+      }
 
       const conclusion = sections.find((s) => s.key === 'conclusion')!;
       expect(conclusion.html).toContain(VALUATION_DATE);
@@ -184,10 +190,13 @@ describe.skipIf(!dbUp)('the 409A deliverable', () => {
     });
 
     it('falls back to the clock only when the engagement has no valuation date', async () => {
+      const startedAt = beforeRequest();
       const res = await opsGet(`/api/v1/valuations/${uncomputed.id}/report`);
       const sections = res.json().version.content.sections as Array<{ key: string; html: string }>;
       const intro = sections.find((s) => s.key === 'introduction')!;
-      expect(intro.html).toContain(new Date().toISOString().slice(0, 10));
+      // `routes/reports.ts` falls back to `todayLocal()`. A report minted at
+      // 9pm stating tomorrow's date is the auditor's finding, not ours.
+      expectMentionsToday(intro.html, startedAt);
       // …and the cover says nothing rather than inventing one.
       const text = await pdfText(uncomputed.id);
       expect(text).not.toContain('Valuation date');

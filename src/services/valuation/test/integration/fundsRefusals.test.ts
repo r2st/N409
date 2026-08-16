@@ -4,6 +4,7 @@ import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
+import { beforeRequest, expectDatedToday } from '../support/today.js';
 import type pg from 'pg';
 
 const dbUp = await isDbAvailable();
@@ -388,6 +389,7 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
       });
       expect(first.statusCode).toBe(201);
 
+      const startedAt = beforeRequest();
       const rolled = await app.inject({
         method: 'POST',
         url: `/api/v1/funds/${id}/positions/${pid}/rollforward`,
@@ -395,8 +397,8 @@ describe.skipIf(!dbUp)('ASC 820 fund holdings — refusals and defaults', () => 
         payload: { method: 'index', index_return: 0.2, record: true },
       });
       expect(rolled.statusCode).toBe(201);
-      const today = new Date().toISOString().slice(0, 10);
-      expect(String(rolled.json().mark.measurement_date)).toContain(today);
+      // A fund mark measured into tomorrow is a mark measured into the future.
+      expectDatedToday(rolled.json().mark.measurement_date, startedAt);
       // A rolled mark is a model estimate, so Level 3 regardless of what the
       // mark it rolled from was.
       expect(rolled.json().mark.level).toBe(3);

@@ -4,6 +4,7 @@ import { migrate } from '../../src/db/migrate.js';
 import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
+import { beforeRequest, expectDatedToday } from '../support/today.js';
 import type pg from 'pg';
 
 const dbUp = await isDbAvailable();
@@ -240,9 +241,12 @@ describe.skipIf(!dbUp)('Debt valuation — refusals and the credit-terms merge',
 
     it('dates a run today when the request omits a valuation date', async () => {
       const id = await createInstrument();
+      const startedAt = beforeRequest();
       const res = await value(id);
       expect(res.statusCode).toBe(200);
-      expect(String(res.json().valuation.valuation_date)).toContain(new Date().toISOString().slice(0, 10));
+      // The local day, not the UTC one: a debt instrument valued at 10pm in
+      // New York must not be dated into a day that has not happened.
+      expectDatedToday(res.json().valuation.valuation_date, startedAt);
     });
   });
 

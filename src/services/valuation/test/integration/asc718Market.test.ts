@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { authHeader, isDbAvailable, seedUser, setupTestApp, type TestApp } from './helpers.js';
 import { historicalVolatility } from '../../src/domain/asc718Public.js';
+import { beforeRequest, expectDatedToday } from '../support/today.js';
 
 const dbUp = await isDbAvailable();
 
@@ -181,13 +182,16 @@ describe.runIf(dbUp)('ASC 718 — public market feed', () => {
 
   it('ends the window today when the request carries no valuation date', async () => {
     const id = await seedValuation();
+    const startedAt = beforeRequest();
     const res = await price(id, {
       company_type: 'public',
       ticker: 'ACME',
       grants: [BARE_GRANT],
     });
     expect(res.statusCode).toBe(200);
-    expect(lastFeedBody?.end).toBe(new Date().toISOString().slice(0, 10));
+    // `routes/asc718.ts` closes the window at `todayLocal()`; the day the
+    // server is on is the last one a price feed can have a close for.
+    expectDatedToday(lastFeedBody?.end, startedAt);
   });
 
   it('drops zero, negative and non-numeric closes before measuring', async () => {
