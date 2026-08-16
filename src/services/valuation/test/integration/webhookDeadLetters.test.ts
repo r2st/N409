@@ -329,7 +329,11 @@ describe.skipIf(!dbUp)('the webhook dead letter queue', () => {
         headers: authHeader(opsToken),
         payload: { ids: 'not-an-array' },
       });
-      expect(res.statusCode).toBe(400);
+      // 422, not 400: the service-wide rule is that a query string it could not
+      // read is a 400 and a body it read and will not act on is a 422. This is a
+      // body parse, and answering 400 here was the copied-neighbour mistake that
+      // `queryValidationStatus` exists to catch.
+      expect(res.statusCode).toBe(422);
       expect(await listFailedDeliveries(ctx.pool)).toHaveLength(1);
     });
   });

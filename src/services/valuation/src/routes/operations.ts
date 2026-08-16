@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { z } from 'zod';
-import { isIsoCalendarDate, isUlid, problems, TtlCache } from '@n409/shared';
+import { buildInfo, type ErrorRates, isIsoCalendarDate, isUlid, problems, TtlCache } from '@n409/shared';
 import { canCreateValuation, canReadValuation, isOps, valuationScope } from '../auth/rbac.js';
 import { stateGroupOf, STATE_GROUP_KEYS, type StateGroup } from '../domain/operations.js';
 import {
@@ -86,7 +86,12 @@ async function loadBands(pool: pg.Pool, scope: ReturnType<typeof valuationScope>
  */
 export function registerOperationsRoutes(
   app: FastifyInstance,
-  deps: { pool: pg.Pool; queryStats?: QueryStats; poolHealth?: PoolHealth },
+  deps: {
+    pool: pg.Pool;
+    queryStats?: QueryStats;
+    poolHealth?: PoolHealth;
+    errorRates?: ErrorRates;
+  },
 ): void {
   const countsCache = new TtlCache<Record<StateGroup | 'all', number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
   const namedCountsCache = new TtlCache<Record<NamedBucketKey, number>>({ ttlMs: COUNTS_CACHE_TTL_MS });
@@ -281,7 +286,7 @@ export function registerOperationsRoutes(
         partner_id: z.string().min(1).max(64).optional(),
       })
       .safeParse(req.body ?? {});
-    if (!body.success) throw problems.badRequest('invalid body');
+    if (!body.success) throw problems.unprocessable('Invalid body', { errors: body.error.issues });
     const replayed = await replayFailedDeliveries(deps.pool, {
       ids: body.data.ids,
       partnerId: body.data.partner_id,
@@ -345,6 +350,64 @@ export function registerOperationsRoutes(
    * Ops-only, like the slow-query view: an acquisition stack names files and
    * line numbers, which is more of the codebase than a client should see.
    */
+  /**
+   * One request that answers "how is the system", for an operator who has not
+   * yet been told what is wrong.
+   *
+   * Everything here except the error rates was already exposed, across six
+   * endpoints — the job backlog, the webhook queue, the pool, the slow
+   * statements, the dashboard, the email stats. Each answers a question you
+   * have to already know to ask. The first minute of an incident is spent
+   * asking all of them, and this is that minute served in one round trip.
+   *
+   * It composes rather than re-derives: every figure below comes from the same
+   * function the dedicated endpoint calls, so there is no second definition of
+   * "active" or "throughput" to drift from the first.
+   *
+   * Error rates are the one genuinely new signal. `createHttpMetrics` records
+   * RED into the OpenTelemetry API, which without a collector is a no-op
+   * provider, so until now nothing could be asked over HTTP about this
+   * process's own 5xx rate — the number every other signal here is context for.
+   *
+   * Uncached, unlike the dashboard beside it: this is read during an incident
+   * by one or two people, where a fifteen-second-old answer is a worse trade
+   * than the query cost, and a cached error rate is actively misleading while
+   * you are watching to see whether a fix landed.
+   */
+  app.get('/api/v1/admin/system/metrics', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    const parsed = z
+      .object({ window_minutes: z.coerce.number().int().min(1).max(60).optional() })
+      .safeParse(req.query ?? {});
+    if (!parsed.success) throw problems.badRequest('Invalid query');
+
+    const scope = valuationScope(principal);
+    const [counts, throughput, webhooks] = await Promise.all([
+      countValuationsByGroup(deps.pool, scope, {}),
+      publishThroughput(deps.pool, scope, THROUGHPUT_WEEKS),
+      deliveryBacklogStats(deps.pool),
+    ]);
+
+    const build = buildInfo();
+    return {
+      service: 'valuation',
+      build_sha: build.sha,
+      uptime_s: Math.round(process.uptime()),
+      // Absent rather than zeroed when the hook was never installed, so a
+      // wiring mistake reads as "not measured" instead of "no errors".
+      error_rates: deps.errorRates?.snapshot(parsed.data.window_minutes) ?? null,
+      valuations: counts,
+      throughput,
+      webhooks,
+      pool: deps.poolHealth?.peek() ?? null,
+      // The upstreams a valuation cannot be calculated without. Already on
+      // /ready as pass/fail; here as the breaker's own view, which says whether
+      // it is failing now or has been failing.
+      circuits: circuits.snapshots(),
+    };
+  });
+
   app.get('/api/v1/admin/db/pool', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden();

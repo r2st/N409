@@ -7,6 +7,7 @@ import {
   API_PERMISSIONS_POLICY,
   bindRequestId,
   createLogger,
+  ErrorRates,
   registerHealth,
   registerPermissionsPolicy,
   registerProblemHandler,
@@ -272,6 +273,21 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   // x-request-id — or minted one — by the time onRequest fires.
   app.addHook('onRequest', (req, _reply, done) => {
     bindRequestId(String(req.id));
+    done();
+  });
+
+  // In-process RED, for the question `createHttpMetrics` cannot answer without
+  // a collector wired: is this build throwing 500s right now. Registered here
+  // rather than in index.ts alongside the OTel hook so the endpoint that serves
+  // it has something to read under test. `routeOptions.url` is the templated
+  // path when something matched; the raw url is what a 404 leaves behind, which
+  // is why ErrorRates caps its route map.
+  const errorRates = new ErrorRates();
+  app.addHook('onResponse', (req, reply, done) => {
+    errorRates.record({
+      route: req.routeOptions?.url ?? req.url,
+      statusCode: reply.statusCode,
+    });
     done();
   });
 
@@ -551,7 +567,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerNetworkItemRoutes(app, { pool });
   registerAdminUserRoutes(app, { pool, transport, publicBaseUrl: config.PUBLIC_BASE_URL });
   registerApiTokenRoutes(app, { pool });
-  registerOperationsRoutes(app, { pool, queryStats: deps.queryStats, poolHealth: deps.poolHealth });
+  registerOperationsRoutes(app, {
+    pool,
+    queryStats: deps.queryStats,
+    poolHealth: deps.poolHealth,
+    errorRates,
+  });
   // M4 — operations polish
   registerWorkflowRoutes(app, { pool, transport });
   // P1 #6 — review queue + approve/request-changes decisions

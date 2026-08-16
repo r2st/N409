@@ -9,6 +9,14 @@ export {
 export { startTelemetry, type TelemetryHandle } from './otel.js';
 export { createHttpMetrics, registerGauge, routeLabel, statusClass, type HttpMetrics } from './metrics.js';
 export {
+  ErrorRates,
+  BUCKET_COUNT,
+  BUCKET_MS,
+  MAX_ROUTES,
+  type ErrorRateSnapshot,
+  type RouteErrorRate,
+} from './errorRates.js';
+export {
   ApiProblem,
   problems,
   registerProblemHandler,
