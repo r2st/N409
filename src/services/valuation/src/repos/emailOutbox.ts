@@ -5,6 +5,8 @@ import {
   EMAIL_MAX_ATTEMPTS,
   EMAIL_RETRY_BACKOFF_MINUTES,
 } from '../domain/emailRetry.js';
+import { isSuppressed } from './emailDelivery.js';
+import { SUPPRESSION_EXEMPT_TEMPLATES } from '../domain/emailDelivery.js';
 
 export type EmailStatus = 'queued' | 'sent' | 'failed' | 'skipped';
 
@@ -50,11 +52,30 @@ export async function enqueueEmail(
     body: string;
     /** Marketing send. Defaults to transactional — see migration 0138. */
     promotional?: boolean;
+    /**
+     * Enqueue even if the address is suppressed. For the one class of message
+     * a suppression must not block: an address-verification mail the user has
+     * just asked for is how a previously-bouncing address gets proven good
+     * again, and refusing to send it would make a suppression unrecoverable
+     * from the user's side.
+     */
+    ignoreSuppression?: boolean;
   },
 ): Promise<EmailOutboxRow> {
+  // A suppressed address yields a row, not a send (0163). Recording it as
+  // 'skipped' rather than dropping it keeps the outbox an honest account of
+  // what the platform decided to do — an operator asking "why did the client
+  // not get this" gets an answer, and the row names the suppression.
+  const suppression =
+    input.channel === 'sms' ||
+    input.ignoreSuppression ||
+    SUPPRESSION_EXEMPT_TEMPLATES.has(input.templateKey)
+      ? null
+      : await isSuppressed(db, input.toEmail);
+
   const { rows } = await db.query<EmailOutboxRow>(
-    `INSERT INTO email_outbox (id, valuation_id, to_user_id, to_email, channel, template_key, subject, body, promotional)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO email_outbox (id, valuation_id, to_user_id, to_email, channel, template_key, subject, body, promotional, status, error)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::email_status, $11)
      RETURNING *`,
     [
       newUlid(),
@@ -66,6 +87,10 @@ export async function enqueueEmail(
       input.subject,
       input.body,
       input.promotional ?? false,
+      suppression ? 'skipped' : 'queued',
+      suppression
+        ? `address suppressed (${suppression.reason}) since ${suppression.created_at.toISOString()}`
+        : null,
     ],
   );
   return rows[0]!;
@@ -197,6 +222,14 @@ export async function claimRetryableEmails(
         WHERE status IN ('failed', 'queued')
           AND (status = 'failed' OR created_at < now() - ($3 || ' seconds')::interval)
           AND attempts < $1
+          -- Terminally bounced rows are out (0163). A hard rejection of the
+          -- recipient, or a complaint, is the one thing the ladder cannot
+          -- learn from repetition: the address will reject it again in a
+          -- minute, in an hour, and in six hours, and the only effect of
+          -- trying is more traffic to a relay that has already refused us.
+          -- A soft bounce stays claimable — a full mailbox is precisely the
+          -- case the ladder exists for.
+          AND (bounce_kind IS NULL OR bounce_kind = 'soft')
           AND channel = ANY($2::comm_channel[])
           AND (status = 'queued' OR next_attempt_at IS NULL OR next_attempt_at <= now())
           AND (claimed_at IS NULL OR claimed_at < now() - ($3 || ' seconds')::interval)

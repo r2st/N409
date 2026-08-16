@@ -14,6 +14,7 @@ import { createNotification } from '../repos/notifications.js';
 import { findUsersByIds } from '../repos/users.js';
 import { channelsFor, preferenceOverrides } from '../repos/notificationPreferences.js';
 import { enqueueEmail, markEmail, type EmailOutboxRow } from '../repos/emailOutbox.js';
+import { recordSendFailure } from '../repos/emailDelivery.js';
 import { applyTemplateOverrides, valuationTemplateVars } from '../domain/communications.js';
 import { templateOverrides } from '../repos/communications.js';
 import { firePartnerWebhooksForTransition } from './partnerWebhooks.js';
@@ -225,7 +226,10 @@ async function deliverTransitionMessages(
     } catch (err) {
       try {
         await markEmail(deps.pool, email.id, 'failed', err instanceof Error ? err.message : String(err));
-        deps.log?.warn({ err, emailId: email.id }, 'email delivery failed; left in outbox');
+        // Terminal rejection of the recipient stops the ladder and suppresses
+        // the address (0163); anything else stays retryable.
+        const bounce = await recordSendFailure(deps.pool, email, err).catch(() => null);
+        deps.log?.warn({ err, emailId: email.id, bounce }, 'email delivery failed; left in outbox');
       } catch (settleErr) {
         // The row stays 'queued' and the sweep re-sends it once the lease
         // lapses, so this is a delay rather than a loss — but it is a delay

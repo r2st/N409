@@ -2,6 +2,7 @@ import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import { FLAGS, flagEnabled } from '@n409/shared';
 import { claimRetryableEmails, settleClaimedEmail } from '../repos/emailOutbox.js';
+import { recordSendFailure } from '../repos/emailDelivery.js';
 import { EMAIL_MAX_ATTEMPTS } from '../domain/emailRetry.js';
 import type { EmailTransport } from './stateChange.js';
 
@@ -84,7 +85,18 @@ export async function retryFailedEmails(deps: {
         err instanceof Error ? err.message : String(err),
         { maxAttempts },
       );
-      deps.log?.warn({ err, emailId: email.id, attempts: email.attempts }, 'email retry failed');
+      // A permanent rejection of the recipient takes the row out of the claim
+      // and the address out of future sends (0163). Never allowed to throw:
+      // the row is already settled, and losing the sweep over the bookkeeping
+      // would strand every remaining claimed message.
+      const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
+        deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
+        return null;
+      });
+      deps.log?.warn(
+        { err, emailId: email.id, attempts: email.attempts, bounce },
+        'email retry failed',
+      );
     }
   }
   return { attempted: claimed.length, sent };

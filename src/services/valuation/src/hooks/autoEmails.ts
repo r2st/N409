@@ -14,6 +14,7 @@ import {
   recordAutoEmailSend,
 } from '../repos/communications.js';
 import { enqueueEmail, markEmail } from '../repos/emailOutbox.js';
+import { recordSendFailure } from '../repos/emailDelivery.js';
 import { withClientTransaction } from '../db/pool.js';
 import type { EmailTransport } from './stateChange.js';
 
@@ -215,7 +216,14 @@ async function scan(
           await markEmail(db, email.id, 'sent');
         } catch (err) {
           await markEmail(db, email.id, 'failed', err instanceof Error ? err.message : String(err));
-          deps.log?.warn({ err, emailId: email.id }, 'auto email delivery failed; left in outbox');
+          // Terminal rejection of the recipient stops the ladder and suppresses
+          // the address (0163). Uses this sweep's own client rather than taking
+          // a second one from the pool.
+          const bounce = await recordSendFailure(db, email, err).catch(() => null);
+          deps.log?.warn(
+            { err, emailId: email.id, bounce },
+            'auto email delivery failed; left in outbox',
+          );
         }
       }
     }

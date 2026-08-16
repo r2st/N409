@@ -2,6 +2,7 @@ import type pg from 'pg';
 import type { FastifyBaseLogger } from 'fastify';
 import type { EmailTransport } from '../hooks/stateChange.js';
 import { enqueueEmail, markEmail } from '../repos/emailOutbox.js';
+import { recordSendFailure } from '../repos/emailDelivery.js';
 import { renderTemplate, type TemplateVars } from '../domain/communications.js';
 import { findTemplateByKey } from '../repos/communications.js';
 
@@ -52,7 +53,17 @@ export async function sendTransactionalEmail(
     } catch (markErr) {
       deps.log?.warn({ err: markErr, emailId: email.id }, 'could not mark transactional email failed');
     }
-    deps.log?.warn({ err, emailId: email.id }, 'transactional email delivery failed; left in outbox');
+    // Terminal rejection of the recipient stops the ladder and suppresses the
+    // address (0163). Same containment as the marking above: a bookkeeping
+    // failure must not escape into the caller's request.
+    const bounce = await recordSendFailure(deps.pool, email, err).catch((bookErr: unknown) => {
+      deps.log?.warn({ err: bookErr, emailId: email.id }, 'could not record bounce');
+      return null;
+    });
+    deps.log?.warn(
+      { err, emailId: email.id, bounce },
+      'transactional email delivery failed; left in outbox',
+    );
   }
 }
 

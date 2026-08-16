@@ -78,6 +78,66 @@ export function classifySmtpReply(stage: SmtpStage, replyCode: number | null): B
 }
 
 /**
+ * Template keys a suppression must not block.
+ *
+ * A suppression is meant to stop us mailing a dead address, not to lock a user
+ * out of the product. `email_verification` is the one message that exists to
+ * *prove* an address works, and it is only ever sent because a signed-in user
+ * asked for it — so if it were suppressed, an address suppressed in error
+ * could never be cleared from the user's side, and the only route back would be
+ * an admin releasing it by hand.
+ *
+ * Deliberately just the one key. `password_reset` is not on it: a hard bounce
+ * means the mailbox does not exist, so the reset would bounce too, and sending
+ * it anyway spends sending reputation to no effect. An operator who believes a
+ * suppression is wrong releases it — which is a decision with a name attached
+ * to it, and that is the right shape for this.
+ */
+export const SUPPRESSION_EXEMPT_TEMPLATES: ReadonlySet<string> = new Set(['email_verification']);
+
+/** The shape `SmtpError` presents, read structurally. */
+interface TransportRejection {
+  stage: SmtpStage;
+  replyCode: number | null;
+}
+
+const SMTP_STAGES: ReadonlySet<string> = new Set<SmtpStage>([
+  'connect',
+  'greeting',
+  'ehlo',
+  'starttls',
+  'auth',
+  'from',
+  'rcpt',
+  'data',
+  'body',
+]);
+
+/**
+ * Classify whatever a transport threw.
+ *
+ * Structural rather than `instanceof SmtpError` on purpose. `email/smtp.ts`
+ * imports the outbox row type and the outbox would have to import the error
+ * class back, and a value-level cycle between a transport and a repository is
+ * the sort of thing that works until a bundler reorders it. Reading the two
+ * properties also means a future transport (an API-based provider client) can
+ * opt into classification by carrying the same two fields, without this module
+ * knowing it exists.
+ *
+ * Returns null for anything unrecognised — a socket timeout, a DNS failure, a
+ * bug — which leaves the row on the ordinary retry ladder. That is the right
+ * default: an error we cannot classify is not evidence against the address.
+ */
+export function classifyTransportError(err: unknown): BounceKind | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const candidate = err as Partial<TransportRejection>;
+  if (typeof candidate.stage !== 'string' || !SMTP_STAGES.has(candidate.stage)) return null;
+  const code = candidate.replyCode;
+  if (typeof code !== 'number') return null;
+  return classifySmtpReply(candidate.stage as SmtpStage, code);
+}
+
+/**
  * Classify an RFC 3463 enhanced status code (`5.1.1`, `4.2.2`, …), as carried
  * by a DSN or repeated by a provider webhook.
  *

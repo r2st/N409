@@ -109,6 +109,17 @@ export const PUBLIC_ROUTES: readonly PublicRoute[] = [
   { method: 'POST', url: '/api/v1/stripe/webhook', reason: 'authenticated by the Stripe signature' },
   { method: 'POST', url: '/api/v1/billing/webhook', reason: 'authenticated by the Stripe signature' },
 
+  // Email delivery signals (0163), same shape and same justification: a mail
+  // provider has no session, so the whole of its authority is an HMAC over the
+  // raw body against EMAIL_WEBHOOK_SECRET. The route is only registered when
+  // that secret is set — unsigned delivery claims would let anyone suppress a
+  // named client's address, which stops their reports arriving.
+  {
+    method: 'POST',
+    url: '/api/v1/webhooks/email/:provider',
+    reason: 'authenticated by the EMAIL_WEBHOOK_SECRET signature',
+  },
+
   // Deliberately public reads. These serve the sign-in page before anyone has
   // a session — a firm's logo and colours, and whether registration is open.
   { method: 'GET', url: '/api/v1/public/branding/:key', reason: 'white-label chrome on the pre-login pages' },

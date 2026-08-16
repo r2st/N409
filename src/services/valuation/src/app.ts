@@ -41,6 +41,7 @@ import { registerWorkflowRoutes } from './routes/workflow.js';
 import { registerReviewRoutes } from './routes/reviews.js';
 import { registerTemplateRoutes } from './routes/templates.js';
 import { registerNotificationRoutes } from './routes/notifications.js';
+import { registerEmailDeliveryRoutes } from './routes/emailDelivery.js';
 import { registerUnsubscribeRoutes } from './routes/unsubscribe.js';
 import { registerTransactionRoutes } from './routes/transactions.js';
 import { registerSearchRoutes } from './routes/search.js';
@@ -550,6 +551,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerReviewRoutes(app, { pool, transport });
   registerTemplateRoutes(app, { pool });
   registerNotificationRoutes(app, { pool });
+  registerEmailDeliveryRoutes(app, { pool, webhookSecret: config.EMAIL_WEBHOOK_SECRET });
   registerUnsubscribeRoutes(app, { pool, secret: config.JWT_SECRET });
   registerTransactionRoutes(app, { pool });
   registerSearchRoutes(app, { pool });

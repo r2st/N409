@@ -90,6 +90,15 @@ const Env = z.object({
   // ladder's length so the last attempt lands ~8.5 hours out. Raising it holds
   // at the longest step rather than adding new ones.
   EMAIL_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).default(EMAIL_MAX_ATTEMPTS),
+
+  // Shared secret for POST /api/v1/webhooks/email/:provider (migration 0163).
+  // Unset — the default, and what this deployment runs — means the route is not
+  // registered at all: an endpoint accepting unsigned delivery claims would let
+  // anyone mark a named client's address as bounced, which suppresses it. That
+  // is a denial of service against one client, from the internet, with no
+  // account. Bounce tracking does not depend on it; a relay that rejects a
+  // recipient in-band is classified without any provider involved.
+  EMAIL_WEBHOOK_SECRET: z.string().min(32, 'EMAIL_WEBHOOK_SECRET must be at least 32 chars').optional(),
   // Partner webhook delivery retries (migration 0103). The shortest backoff
   // step is one minute, so a slower scan than that just delays the first retry
   // — it cannot lose it. 0 disables the sweep; POST /admin/webhooks/retry
