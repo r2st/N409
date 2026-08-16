@@ -8,6 +8,7 @@ import { buildApp } from '../../src/app.js';
 import { loadConfig } from '../../src/config.js';
 import { authHeader, isDbAvailable, seedUser, setupTestDb, type TestDb } from './helpers.js';
 import type { IntakeField, IntakeSection } from '../../src/domain/intake.js';
+import { recordDeliveryEvent } from '../../src/repos/emailDelivery.js';
 
 /**
  * One engagement, start to finish, through the HTTP API.
@@ -495,6 +496,80 @@ describe.skipIf(!dbUp)('the valuation lifecycle, end to end', () => {
     const pdf = await asClient('GET', `/api/v1/valuations/${valuationId}/report.pdf`);
     expect(pdf.statusCode).toBe(200);
     expect(pdfText(pdf.rawPayload)).toContain('2.74');
+  });
+
+  // ── 8. Delivery ───────────────────────────────────────────────────────────
+
+  /**
+   * The last link, and the one this test used to stop short of.
+   *
+   * Everything above proves the number survives from the client's questionnaire
+   * to the engine to the PDF to the board resolution. But an engagement is not
+   * delivered because a PDF exists and a state column says 'published' — it is
+   * delivered when the client is told, and nothing here asserted that the
+   * telling happened at all. A publish that renders correctly and notifies
+   * nobody looks identical to a successful one from every row in the database
+   * this test previously read.
+   */
+  it('tells the client their report is ready, addressed to them', async () => {
+    const { rows } = await pool.query<{
+      to_email: string;
+      to_user_id: string;
+      template_key: string;
+      status: string;
+      subject: string;
+    }>(
+      `SELECT to_email, to_user_id, template_key, status, subject
+         FROM email_outbox
+        WHERE valuation_id = $1 AND template_key = 'valuation_completed'`,
+      [valuationId],
+    );
+
+    expect(rows).toHaveLength(1);
+    const message = rows[0]!;
+    // The owner of the engagement, not merely some address — the engagement is
+    // the client's, and a report-is-ready mail to the wrong recipient is a
+    // disclosure rather than a delivery.
+    expect(message.to_user_id).toBe(client.id);
+    expect(message.to_email).toBe(client.email);
+    expect(message.subject).toContain(COMPANY);
+    // Handed to a transport rather than left queued: the row reaching 'sent' is
+    // what distinguishes a publish that notified the client from one that only
+    // wrote a row saying it meant to.
+    expect(message.status).toBe('sent');
+  });
+
+  /**
+   * 'sent' is a handoff, not an arrival, and the two must stay distinguishable
+   * on the row the client's report rode out on (0163). Asserted here, on the
+   * real engagement, rather than only against a synthetic outbox row: this is
+   * the message whose delivery anybody would actually be asked about.
+   */
+  it('does not claim the message arrived until something downstream says so', async () => {
+    const { rows } = await pool.query<{ id: string; delivered_at: Date | null }>(
+      `SELECT id, delivered_at FROM email_outbox
+        WHERE valuation_id = $1 AND template_key = 'valuation_completed'`,
+      [valuationId],
+    );
+    const message = rows[0]!;
+    expect(message.delivered_at).toBeNull();
+
+    await recordDeliveryEvent(pool, {
+      outboxId: message.id,
+      kind: 'delivered',
+      occurredAt: new Date(),
+      source: 'webhook:test',
+      providerEventId: `lifecycle-${message.id}`,
+    });
+
+    const after = await pool.query<{ delivered_at: Date | null; status: string }>(
+      'SELECT delivered_at, status FROM email_outbox WHERE id = $1',
+      [message.id],
+    );
+    expect(after.rows[0]!.delivered_at).not.toBeNull();
+    // The send outcome is untouched by the delivery fact; they are two columns
+    // answering two different questions.
+    expect(after.rows[0]!.status).toBe('sent');
   });
 
   it('leaves the whole engagement on the audit spine', async () => {
