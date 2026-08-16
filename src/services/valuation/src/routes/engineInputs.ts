@@ -8,7 +8,7 @@ import { applyEngineInputs, findParams } from '../repos/params.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import type { EventActor } from '../events/record.js';
-import { finite, finiteNonNegative, finitePositive } from '../domain/finite.js';
+import { boundedNonNegative, boundedPositive, boundedSigned } from '../domain/finite.js';
 
 /**
  * Analyst-entered financial model (`valuation_params.engine_inputs`).
@@ -29,8 +29,15 @@ import { finite, finiteNonNegative, finitePositive } from '../domain/finite.js';
 // `.finite()`, not merely `.nonnegative()` / `.positive()`: `1e999` in a JSON
 // body parses to Infinity, satisfies both, and stringifies back to `null` on
 // the way into jsonb and on to the engine. See domain/finite.ts.
-const nonNeg = finiteNonNegative();
-const pos = finitePositive();
+//
+// Bounded as well as finite. Finite was the floor and not the rule: a quantity
+// above 2^53 cannot be added exactly, so a cap table carrying one class of
+// 1e16 shares and another of 1 sums to 1e16 and loses the second class
+// entirely. Every share count, balance and price below therefore stops at
+// MAX_QUANTITY — reachable by a unit slip or a spreadsheet paste, not only by
+// a hostile caller.
+const nonNeg = boundedNonNegative();
+const pos = boundedPositive();
 const DateStr = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
@@ -126,7 +133,7 @@ export const EngineInputsBody = z
     // (the report cites it); only free_cash_flows drives income_dcf().
     income: z
       .object({
-        free_cash_flows: z.array(finite()).max(30).nullable().optional(),
+        free_cash_flows: z.array(boundedSigned()).max(30).nullable().optional(),
         revenues: z.array(nonNeg).max(30).nullable().optional(),
         discount_rate: z.number().positive().max(1).nullable().optional(),
         terminal_growth: z.number().min(0).max(1).nullable().optional(),
@@ -148,7 +155,7 @@ export const EngineInputsBody = z
         mid_year_convention: z.boolean().nullable().optional(),
         terminal_method: z.enum(['gordon', 'exit_multiple']).nullable().optional(),
         exit_multiple: z.number().positive().max(100).nullable().optional(),
-        terminal_metric: finite().nullable().optional(),
+        terminal_metric: boundedSigned().nullable().optional(),
         terminal_metric_basis: z.enum(['ebitda', 'revenue', 'fcff']).nullable().optional(),
       })
       .strict()
@@ -203,7 +210,7 @@ export const EngineInputsBody = z
                   .optional(),
                 probability: z.number().min(0).max(1),
                 equity_value: nonNeg.nullable().optional(),
-                enterprise_value: finite().nullable().optional(),
+                enterprise_value: boundedSigned().nullable().optional(),
                 time_to_exit_years: z.number().min(0).max(50).default(0),
                 discount_rate: z.number().min(-0.99).max(1).nullable().optional(),
               })
@@ -328,10 +335,14 @@ const EXTRACTED_FIELD_SCHEMAS: Readonly<Record<string, z.ZodType<number>>> = {
   last_round_price_per_share: nonNeg,
   cash: nonNeg,
   debt: nonNeg,
-  revenue_ltm: z.number().finite(),
-  revenue_ntm: z.number().finite(),
-  ebitda_ltm: z.number().finite(),
-  ebitda_ntm: z.number().finite(),
+  // Signed, for the reason in the block comment above — EBITDA is routinely
+  // negative — but bounded in magnitude like every other money figure. A
+  // revenue of 1e17 is a unit slip, and it is the denominator of a market
+  // multiple.
+  revenue_ltm: boundedSigned(),
+  revenue_ntm: boundedSigned(),
+  ebitda_ltm: boundedSigned(),
+  ebitda_ntm: boundedSigned(),
   volatility: z.number().positive().max(5),
   risk_free_rate: z.number().min(0).max(1),
 };

@@ -331,20 +331,29 @@ describe.skipIf(!dbUp)('email delivery routes', () => {
 });
 
 /**
- * With no secret configured the route must not exist at all. Its own app,
- * because the secret is read once at construction.
+ * With no secret configured — which is what this deployment runs — the route
+ * exists and refuses everything. Registered rather than absent so `routeAudit`
+ * has a site to audit; refusing before it reads the body so it can never
+ * accept an unsigned delivery claim. Its own app, because the secret is read
+ * at construction.
  */
 describe.skipIf(!dbUp)('the delivery webhook without a secret', () => {
-  it('is not registered', async () => {
+  it('refuses every call, signed or not', async () => {
     const bare = await setupTestApp();
     try {
-      const res = await bare.app.inject({
-        method: 'POST',
-        url: '/api/v1/webhooks/email/testmail',
-        headers: { 'content-type': 'application/json' },
-        payload: JSON.stringify({ events: [] }),
-      });
-      expect(res.statusCode).toBe(404);
+      const body = JSON.stringify({ events: [] });
+      for (const headers of [
+        { 'content-type': 'application/json' },
+        { 'content-type': 'application/json', 'x-n409-signature': sign(body) },
+      ]) {
+        const res = await bare.app.inject({
+          method: 'POST',
+          url: '/api/v1/webhooks/email/testmail',
+          headers,
+          payload: body,
+        });
+        expect(res.statusCode).toBe(503);
+      }
     } finally {
       await bare.teardown();
     }

@@ -45,3 +45,51 @@ export const finiteNonNegative = () => z.number().finite().nonnegative();
 
 /** A finite quantity that must be above zero — a price, a share count. */
 export const finitePositive = () => z.number().finite().positive();
+
+/**
+ * The largest magnitude a monetary amount or a share count may carry.
+ *
+ * `Number.MAX_SAFE_INTEGER`, and the bound is about arithmetic rather than
+ * about how big a company can be. Above 2^53 a double cannot represent
+ * consecutive integers, so addition silently stops being addition:
+ *
+ *     1e16 + 1 === 1e16      // true
+ *
+ * A cap table carrying one class of 1e16 shares and another of 1 therefore
+ * sums to 1e16 — the second class contributes nothing, the fully-diluted count
+ * is wrong, and every per-share figure derived from it is wrong with it. No
+ * error is raised anywhere: the inputs are finite, `finite()` above passes
+ * them, the engine's own range checks are warnings rather than refusals, and
+ * the report states a number that was never computed from the cap table it
+ * prints beside it.
+ *
+ * That is reachable by accident, not just by attack — a unit slip (a figure
+ * entered in units rather than millions, twice), a spreadsheet paste, an
+ * extraction that read a concatenated column. So it is refused at the edge,
+ * with the field named, in preference to being warned about deep inside the
+ * arithmetic.
+ *
+ * Note this is a *floor* on carefulness, not a business rule. No real 409A
+ * subject has $9 quadrillion of anything; a field with a tighter real ceiling
+ * should still declare it (`volatility` stops at 5, `exit_multiple` at 100).
+ */
+export const MAX_QUANTITY = Number.MAX_SAFE_INTEGER;
+
+const TOO_LARGE = `Above ${MAX_QUANTITY} a value cannot be added exactly, so totals derived from it would be wrong`;
+
+/** A non-negative quantity that is also small enough to add exactly. */
+export const boundedNonNegative = () => finiteNonNegative().max(MAX_QUANTITY, TOO_LARGE);
+
+/** A positive quantity that is also small enough to add exactly. */
+export const boundedPositive = () => finitePositive().max(MAX_QUANTITY, TOO_LARGE);
+
+/**
+ * A signed quantity bounded in both directions.
+ *
+ * For the figures that are legitimately negative — EBITDA is routinely
+ * negative for a venture-backed company, and a retained-earnings or
+ * net-working-capital line can be either way round. The sign stays free; only
+ * the magnitude is bounded, and for the same reason as above.
+ */
+export const boundedSigned = () =>
+  finite().min(-MAX_QUANTITY, TOO_LARGE).max(MAX_QUANTITY, TOO_LARGE);

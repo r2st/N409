@@ -226,24 +226,20 @@ export function registerEmailDeliveryRoutes(
    * whole of its authority is an HMAC over the raw body against a shared
    * secret. Three consequences, each deliberate:
    *
-   *   * with no secret configured the route is *not registered at all*. An
-   *     endpoint that accepts unsigned delivery claims would let anyone mark
-   *     any client's address as bounced, which suppresses it — a denial of
-   *     service against a named client, from the internet, with no account.
+   *   * with no secret configured it refuses everything, 503, before reading
+   *     the body. An endpoint that accepted unsigned delivery claims would let
+   *     anyone mark a named client's address as bounced, which suppresses it —
+   *     a denial of service against one client, from the internet, with no
+   *     account. Registered unconditionally and refusing at request time
+   *     rather than not registered at all, which is how the Stripe webhooks
+   *     handle the same question: a route that appears and disappears with the
+   *     environment cannot be audited by `routeAudit`, and an exemption with
+   *     no site behind it is exactly what its staleness check exists to catch.
    *   * the signature is over the raw body, so it covers exactly the bytes
    *     that were parsed.
    *   * a bad signature is 401 with no detail. Which of secret, encoding or
    *     payload was wrong is not a caller's business.
    */
-  if (!deps.webhookSecret) {
-    app.log?.info(
-      'EMAIL_WEBHOOK_SECRET is unset; the delivery webhook is not registered. ' +
-        'Bounce tracking still works from synchronous SMTP rejections.',
-    );
-    return;
-  }
-  const secret = deps.webhookSecret;
-
   // Its own plugin scope, so the raw-buffer content parser signature
   // verification needs cannot leak to any other route. Same containment as the
   // Stripe webhook, for the same reason.
@@ -253,6 +249,12 @@ export function registerEmailDeliveryRoutes(
     );
 
     scope.post('/api/v1/webhooks/email/:provider', async (req, reply) => {
+      const secret = deps.webhookSecret;
+      if (!secret) {
+        throw problems.serviceUnavailable(
+          'Delivery webhooks are not configured (EMAIL_WEBHOOK_SECRET unset)',
+        );
+      }
       const { provider } = req.params as { provider: string };
       if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(provider)) {
         throw problems.badRequest('Not a provider name');

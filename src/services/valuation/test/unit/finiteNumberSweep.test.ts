@@ -99,6 +99,73 @@ describe('engine inputs refuse an overflowed number', () => {
 });
 
 /**
+ * Finite was the floor, not the rule.
+ *
+ * `1e16` is finite, non-negative, and passes every guard above — and above 2^53
+ * a double cannot hold consecutive integers, so it does not add:
+ *
+ *     1e16 + 1 === 1e16
+ *
+ * A cap table with one class of 1e16 shares and another of 1 therefore sums to
+ * 1e16, the second class contributes nothing to the fully-diluted count, and
+ * every per-share figure derived from it is wrong. Nothing raises: the engine's
+ * own range checks are warnings, so the arithmetic simply proceeds and the
+ * report states a number that was never computed from the table beside it.
+ *
+ * Reachable by a unit slip or a spreadsheet paste, not only by a hostile
+ * caller, which is why it is refused at the edge with the field named.
+ */
+describe('engine inputs refuse a quantity too large to add exactly', () => {
+  const load = async () => (await import('../../src/routes/engineInputs.js')).EngineInputsBody;
+
+  it('demonstrates the arithmetic the bound exists for', () => {
+    expect(1e16 + 1).toBe(1e16);
+    expect(Number.MAX_SAFE_INTEGER + 2).toBe(Number.MAX_SAFE_INTEGER + 1);
+  });
+
+  it.each([
+    ['shares_outstanding_common', { shares_outstanding_common: 1e16 }],
+    ['cash', { cash: 1e16 }],
+    ['debt', { debt: 1e16 }],
+    ['liquidation_preference', { liquidation_preference: 1e16 }],
+    ['last_round_post_money', { last_round_post_money: 1e16 }],
+    ['share_classes[].shares', { share_classes: [{ kind: 'common', name: 'C', shares: 1e16 }] }],
+    ['income.free_cash_flows', { income: { free_cash_flows: [1e16] } }],
+    ['income.terminal_metric', { income: { terminal_metric: 1e16 } }],
+  ])('rejects %s', async (_field, body) => {
+    const EngineInputsBody = await load();
+    expect(EngineInputsBody.safeParse(body).success).toBe(false);
+  });
+
+  /** The magnitude is bounded in both directions; the sign stays free. */
+  it('rejects a hugely negative cash flow but keeps ordinary negative ones', async () => {
+    const EngineInputsBody = await load();
+    expect(EngineInputsBody.safeParse({ income: { free_cash_flows: [-1e16] } }).success).toBe(
+      false,
+    );
+    expect(EngineInputsBody.safeParse({ income: { free_cash_flows: [-2_000_000] } }).success).toBe(
+      true,
+    );
+  });
+
+  it('accepts a value exactly at the bound', async () => {
+    const EngineInputsBody = await load();
+    expect(EngineInputsBody.safeParse({ cash: Number.MAX_SAFE_INTEGER }).success).toBe(true);
+    expect(EngineInputsBody.safeParse({ cash: Number.MAX_SAFE_INTEGER + 2 }).success).toBe(false);
+  });
+
+  it('names the field, so the analyst is told which figure was refused', async () => {
+    const EngineInputsBody = await load();
+    const result = EngineInputsBody.safeParse({ cash: 1e16 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]!.path).toEqual(['cash']);
+      expect(result.error.issues[0]!.message).toMatch(/added exactly/);
+    }
+  });
+});
+
+/**
  * Every `z.number()` in the service, with the method chain that follows it.
  * Deliberately textual: the schemas are module-level constants spread over 80
  * route files, and importing them all to introspect `_def` would run every
