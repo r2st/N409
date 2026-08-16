@@ -1,6 +1,7 @@
 import net from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { bareAddress, sendSmtp, smtpTransport, unsubscribeFor } from '../../src/email/smtp.js';
+import { bareAddress, sendSmtp, SmtpError, smtpTransport, unsubscribeFor } from '../../src/email/smtp.js';
+import { classifySmtpReply } from '../../src/domain/emailDelivery.js';
 import type { EmailOutboxRow } from '../../src/repos/emailOutbox.js';
 
 /**
@@ -271,6 +272,92 @@ describe('sendSmtp — the refusals', () => {
     script[3] = '550 5.1.1 <client@example.com>: Recipient address rejected';
     const server = await fakeServer({ script });
     await expect(dial(server.port)).rejects.toThrow(/Recipient address rejected/);
+  });
+
+  /**
+   * The failure text is written to `email_outbox.error` and logged. Two of the
+   * lines this transport sends are the base64 of the SMTP username and
+   * password, and the message used to be built from the line — so a relay
+   * answering anything but 235 to the password put the credential, trivially
+   * decodable, into a database column and the log stream. A wrong SMTP password
+   * is a common misconfiguration, so this was reachable by accident rather than
+   * by attack.
+   */
+  it('never puts the SMTP credential in the failure message', async () => {
+    const script = [
+      '220 mail.test ESMTP',
+      '250-mail.test\r\n250 AUTH LOGIN',
+      '334 VXNlcm5hbWU6',
+      '334 UGFzc3dvcmQ6',
+      '535 5.7.8 authentication failed',
+    ];
+    const server = await fakeServer({ script });
+    const pass = 'hunter2-the-real-password';
+    const encoded = Buffer.from(pass).toString('base64');
+
+    const err = await sendSmtp(
+      {
+        host: '127.0.0.1',
+        port: server.port,
+        user: 'postmaster@n409.local',
+        pass,
+        from: 'no-reply@n409.local',
+        timeoutMs: FAST,
+      },
+      MESSAGE,
+    ).catch((e: Error) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    const text = `${(err as Error).message}`;
+    expect(text).not.toContain(encoded);
+    expect(text).not.toContain(pass);
+    expect(text).not.toContain(Buffer.from('postmaster@n409.local').toString('base64'));
+    // Still says what failed and what the server said.
+    expect(text).toMatch(/AUTH failed/);
+    expect(text).toMatch(/authentication failed/);
+  });
+
+  /**
+   * The stage and the reply code are what `classifySmtpReply` reads. Without
+   * them a 550 at RCPT TO — a dead mailbox, knowable immediately — is
+   * indistinguishable from a 535 at AUTH, and the retry ladder spends six
+   * attempts over eight hours on each.
+   */
+  it('carries the stage and reply code so a refusal can be classified', async () => {
+    const script = [...PLAIN_SCRIPT];
+    script[3] = '550 5.1.1 <client@example.com>: Recipient address rejected';
+    const server = await fakeServer({ script });
+    const err = (await dial(server.port).catch((e: unknown) => e)) as SmtpError;
+    expect(err).toBeInstanceOf(SmtpError);
+    expect(err.stage).toBe('rcpt');
+    expect(err.replyCode).toBe(550);
+    expect(classifySmtpReply(err.stage, err.replyCode)).toBe('hard');
+  });
+
+  it('classifies an auth failure as ours, never as the recipient’s', async () => {
+    const script = [
+      '220 mail.test ESMTP',
+      '250-mail.test\r\n250 AUTH LOGIN',
+      '334 VXNlcm5hbWU6',
+      '334 UGFzc3dvcmQ6',
+      '535 5.7.8 authentication failed',
+    ];
+    const server = await fakeServer({ script });
+    const err = (await sendSmtp(
+      {
+        host: '127.0.0.1',
+        port: server.port,
+        user: 'u',
+        pass: 'p',
+        from: 'no-reply@n409.local',
+        timeoutMs: FAST,
+      },
+      MESSAGE,
+    ).catch((e: unknown) => e)) as SmtpError;
+    expect(err.stage).toBe('auth');
+    expect(err.replyCode).toBe(535);
+    // Soft, so the address is not suppressed for our own misconfiguration.
+    expect(classifySmtpReply(err.stage, err.replyCode)).toBe('soft');
   });
 
   it('fails rather than hanging when the server never speaks', async () => {

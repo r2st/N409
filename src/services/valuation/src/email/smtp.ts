@@ -5,6 +5,7 @@ import type { EmailTransport } from '../hooks/stateChange.js';
 import type { EmailOutboxRow } from '../repos/emailOutbox.js';
 import { buildMimeMessage, renderHtmlEmail, type ListUnsubscribe } from './mime.js';
 import { createUnsubscribeToken, unsubscribeUrl } from '../domain/unsubscribeToken.js';
+import type { SmtpStage } from '../domain/emailDelivery.js';
 
 /**
  * Minimal SMTP transport (remaining-gaps §6 P0 #1 — real email delivery).
@@ -36,7 +37,31 @@ export function bareAddress(from: string): string {
   return (match ? match[1]! : from).trim().replace(/[\r\n]/g, '');
 }
 
-class SmtpError extends Error {}
+/**
+ * A failed SMTP conversation, carrying enough to classify it.
+ *
+ * The reply code and the stage it came back to were previously flattened into
+ * the message string and thrown away. They are the difference between "this
+ * mailbox does not exist" and "our relay credentials are wrong" — see
+ * `domain/emailDelivery.classifySmtpReply`, which refuses to blame the
+ * recipient for anything that did not come back to RCPT TO.
+ */
+export class SmtpError extends Error {
+  constructor(
+    message: string,
+    readonly stage: SmtpStage = 'connect',
+    readonly replyCode: number | null = null,
+  ) {
+    super(message);
+    this.name = 'SmtpError';
+  }
+}
+
+/** First token of an SMTP reply as a number, or null if it is not one. */
+function replyCodeOf(reply: string): number | null {
+  const code = Number.parseInt(reply.slice(0, 3), 10);
+  return Number.isFinite(code) && code >= 100 && code < 600 ? code : null;
+}
 
 interface Dialogue {
   send(line: string | null): Promise<string>;
@@ -165,7 +190,7 @@ function openSocket(opts: SmtpOptions): Promise<Dialogue> {
         // dialogue is never handed back, so this is the only place that can
         // close the socket it opened; see `onError`.
         dialogue.end();
-        reject(new SmtpError(`unexpected greeting: ${greeting}`));
+        reject(new SmtpError(`unexpected greeting: ${greeting}`, 'greeting', replyCodeOf(greeting)));
       },
       // Already destroyed by `onError`, which is the only thing that rejects a
       // pending reply.
@@ -174,10 +199,42 @@ function openSocket(opts: SmtpOptions): Promise<Dialogue> {
   });
 }
 
-async function expect(dialogue: Dialogue, line: string | null, codes: string[]): Promise<string> {
+/**
+ * The label a stage gets in a failure message — the command it corresponds to,
+ * which is what an operator reading `email_outbox.error` is looking for.
+ *
+ * Derived from the stage rather than from the line being sent. It used to be
+ * `line?.split(' ')[0]`, and two of the lines this is called with are the
+ * base64 of the SMTP username and the SMTP password: a relay answering
+ * anything but 235 to the password produced `SMTP <base64 of the password>
+ * failed: 535 …`, which is written to the outbox row and logged. The messages
+ * are otherwise unchanged — the same six strings the refusal tests pin.
+ */
+const STAGE_LABEL: Record<SmtpStage, string> = {
+  connect: 'connect',
+  greeting: 'greeting',
+  ehlo: 'EHLO',
+  starttls: 'STARTTLS',
+  auth: 'AUTH',
+  from: 'MAIL',
+  rcpt: 'RCPT',
+  data: 'DATA',
+  body: 'message',
+};
+
+async function expect(
+  dialogue: Dialogue,
+  line: string | null,
+  codes: string[],
+  stage: SmtpStage,
+): Promise<string> {
   const reply = await dialogue.send(line);
   if (!codes.some((c) => reply.startsWith(c))) {
-    throw new SmtpError(`SMTP ${line?.split(' ')[0] ?? 'reply'} failed: ${reply.slice(0, 200)}`);
+    throw new SmtpError(
+      `SMTP ${STAGE_LABEL[stage]} failed: ${reply.slice(0, 200)}`,
+      stage,
+      replyCodeOf(reply),
+    );
   }
   return reply;
 }
@@ -194,20 +251,20 @@ export async function sendSmtp(
 ): Promise<void> {
   const dialogue = await openSocket(opts);
   try {
-    let ehlo = await expect(dialogue, 'EHLO n409', ['250']);
+    let ehlo = await expect(dialogue, 'EHLO n409', ['250'], 'ehlo');
     if (opts.port !== 465 && /STARTTLS/i.test(ehlo)) {
-      await expect(dialogue, 'STARTTLS', ['220']);
+      await expect(dialogue, 'STARTTLS', ['220'], 'starttls');
       await dialogue.upgradeTls(opts.host);
-      ehlo = await expect(dialogue, 'EHLO n409', ['250']);
+      ehlo = await expect(dialogue, 'EHLO n409', ['250'], 'ehlo');
     }
     if (opts.user && opts.pass) {
-      await expect(dialogue, 'AUTH LOGIN', ['334']);
-      await expect(dialogue, Buffer.from(opts.user, 'utf8').toString('base64'), ['334']);
-      await expect(dialogue, Buffer.from(opts.pass, 'utf8').toString('base64'), ['235']);
+      await expect(dialogue, 'AUTH LOGIN', ['334'], 'auth');
+      await expect(dialogue, Buffer.from(opts.user, 'utf8').toString('base64'), ['334'], 'auth');
+      await expect(dialogue, Buffer.from(opts.pass, 'utf8').toString('base64'), ['235'], 'auth');
     }
-    await expect(dialogue, `MAIL FROM:<${bareAddress(opts.from)}>`, ['250']);
-    await expect(dialogue, `RCPT TO:<${bareAddress(email.to)}>`, ['250', '251']);
-    await expect(dialogue, 'DATA', ['354']);
+    await expect(dialogue, `MAIL FROM:<${bareAddress(opts.from)}>`, ['250'], 'from');
+    await expect(dialogue, `RCPT TO:<${bareAddress(email.to)}>`, ['250', '251'], 'rcpt');
+    await expect(dialogue, 'DATA', ['354'], 'data');
     const message = buildMimeMessage({
       from: opts.from,
       to: email.to,
@@ -219,7 +276,7 @@ export async function sendSmtp(
       // it is all generated from a template or a workflow transition.
       autoSubmitted: 'auto-generated',
     });
-    await expect(dialogue, `${message}.`, ['250']);
+    await expect(dialogue, `${message}.`, ['250'], 'body');
     await dialogue.send('QUIT').catch(() => undefined);
   } finally {
     dialogue.end();
