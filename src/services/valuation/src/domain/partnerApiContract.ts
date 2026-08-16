@@ -112,6 +112,19 @@ export const DeliverySchema = z
 
 // ── One schema per operation, keyed the way the registry keys them ───────────
 
+/**
+ * The envelope every cursor-paged list on this API answers with.
+ *
+ * One shape rather than one per endpoint, so a client writes the "walk it to
+ * the end" loop once. `next_cursor` is null exactly when `has_more` is false —
+ * see `pageFrom` — so neither field is the authoritative one and a client may
+ * loop on whichever reads better.
+ */
+export const CursorPage = {
+  next_cursor: z.string().nullable(),
+  has_more: z.boolean(),
+} as const;
+
 export const CreateValuationResponse = z.object({ valuation: PublicValuationSchema }).strict();
 
 export const ListValuationsResponse = z
@@ -120,6 +133,7 @@ export const ListValuationsResponse = z
     page: z.number().int().min(1),
     per_page: z.number().int().min(1),
     total: z.number().int().min(0),
+    ...CursorPage,
   })
   .strict();
 
@@ -156,7 +170,14 @@ export const ListWebhooksResponse = z.object({ webhooks: z.array(PublicWebhookSc
 
 export const DeleteWebhookResponse = z.object({ deleted: z.literal(true) }).strict();
 
-export const ListDeliveriesResponse = z.object({ deliveries: z.array(DeliverySchema) }).strict();
+export const ListDeliveriesResponse = z
+  .object({
+    // Each row carries its own `cursor` as well, so a client can resume from a
+    // specific delivery rather than only from the end of a page.
+    deliveries: z.array(DeliverySchema.extend({ cursor: z.string() })),
+    ...CursorPage,
+  })
+  .strict();
 
 export const RetryDeliveryResponse = z
   .object({

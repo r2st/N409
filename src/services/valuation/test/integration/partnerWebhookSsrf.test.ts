@@ -110,7 +110,7 @@ describe.skipIf(!dbUp)('partner webhook SSRF guard', () => {
 
     // Permanent, not pending: four more attempts would resolve the same way,
     // and the partner needs the reason rather than four identical timeouts.
-    const deliveries = await listDeliveries(ctx.pool, webhook.id);
+    const { items: deliveries } = await listDeliveries(ctx.pool, webhook.id);
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]!.status).toBe('failed');
     expect(deliveries[0]!.last_error).toContain('non-public address 127.0.0.1');
@@ -136,7 +136,7 @@ describe.skipIf(!dbUp)('partner webhook SSRF guard', () => {
       { event: 'webhook.test' },
     );
     expect(outcome).toBe('failed');
-    const deliveries = await listDeliveries(ctx.pool, webhook.id);
+    const { items: deliveries } = await listDeliveries(ctx.pool, webhook.id);
     expect(deliveries[0]!.last_error).toContain('169.254.169.254');
   });
 
@@ -163,7 +163,7 @@ describe.skipIf(!dbUp)('partner webhook SSRF guard', () => {
     );
     expect(outcome).toBe('failed');
 
-    const deliveries = await listDeliveries(ctx.pool, webhook.id);
+    const { items: deliveries } = await listDeliveries(ctx.pool, webhook.id);
     expect(deliveries[0]!.last_error).toContain('redirected');
   });
 
@@ -186,7 +186,7 @@ describe.skipIf(!dbUp)('partner webhook SSRF guard', () => {
       { event: 'webhook.test' },
     );
     expect(outcome).toBe('retrying');
-    const deliveries = await listDeliveries(ctx.pool, webhook.id);
+    const { items: deliveries } = await listDeliveries(ctx.pool, webhook.id);
     expect(deliveries[0]!.last_error).not.toMatch(/non-public/);
   });
 });

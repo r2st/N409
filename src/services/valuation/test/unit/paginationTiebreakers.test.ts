@@ -62,6 +62,14 @@ function pagedQueries(): PagedQuery[] {
     for (const match of src.matchAll(/`[\s\S]*?`/g)) {
       const sql = match[0];
       if (!/\bOFFSET\b/i.test(sql)) continue;
+      // A template holding LIMIT/OFFSET and nothing else is a *fragment* the
+      // caller interpolates into a query, not a query — `listValuations` builds
+      // its tail that way so the offset and keyset branches can differ in one
+      // expression rather than in two copies of the whole statement. Judging it
+      // as a query reports "no ORDER BY" forever about a string that could not
+      // have one. Requiring a FROM is what distinguishes them: every paged query
+      // in this service selects from something, and no fragment does.
+      if (!/\bFROM\b/i.test(sql)) continue;
       // `pruneNetworkItems` uses OFFSET to find a boundary row, not to page:
       // it takes one row and discards the order afterwards.
       if (/\bDELETE\s+FROM\b/i.test(sql)) continue;

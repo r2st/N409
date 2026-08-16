@@ -15,6 +15,8 @@ import {
   completeIdempotentResponse,
   createWebhook,
   deleteWebhook,
+  DELIVERIES_PAGE_DEFAULT,
+  DELIVERIES_PAGE_MAX,
   findDeliveryForPartner,
   findWebhook,
   listDeliveries,
@@ -42,7 +44,7 @@ import { MAX_DOCUMENT_BYTES, rethrowRejectedUpload, storeDocument } from './docu
 import type { ScanPolicy } from '../documents/virusScan.js';
 import { checkUploadType } from '../documents/fileType.js';
 import type { EventActor } from '../events/record.js';
-import { pageParam } from '../domain/pagination.js';
+import { cursorParam, decodeCursor, pageParam } from '../domain/pagination.js';
 import {
   buildOpenApiDocument,
   schemaKey,
@@ -144,6 +146,12 @@ const ListQuery = z.object({
   state: z.enum(VALUATION_STATES).optional(),
   page: pageParam(),
   per_page: z.coerce.number().int().min(1).max(100).default(25),
+  cursor: cursorParam(),
+});
+
+const DeliveriesQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(DELIVERIES_PAGE_MAX).default(DELIVERIES_PAGE_DEFAULT),
+  cursor: cursorParam(),
 });
 
 const UploadBody = z.object({
@@ -547,25 +555,38 @@ export function registerPartnerApiRoutes(
       auth: 'api_key',
       query: {
         state: 'Optional state filter',
-        page: 'Page number (default 1)',
+        page: 'Page number (default 1). Ignored when `cursor` is supplied.',
         per_page: 'Page size (default 25, max 100)',
+        cursor:
+          'Opaque cursor from a previous response. Prefer this to `page` when walking the whole ' +
+          'list: page numbers shift under you as valuations are created, so a walk that pages by ' +
+          'number can miss a row entirely, while a cursor walk cannot.',
       },
-      response: '{ valuations[], page, per_page, total }',
+      response: '{ valuations[], page, per_page, total, next_cursor, has_more }',
     },
     async (req) => {
       const { token } = requireToken(req);
       const parsed = ListQuery.safeParse(req.query);
       if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
-      const { items, total } = await listValuations(
+      const cursor = parsed.data.cursor === undefined ? null : decodeCursor(parsed.data.cursor);
+      if (parsed.data.cursor !== undefined && !cursor) {
+        throw problems.badRequest('Invalid cursor — pass a `next_cursor` from a previous response');
+      }
+      const { items, total, nextCursor, hasMore } = await listValuations(
         deps.pool,
         { kind: 'partner', partnerId: token.partnerId },
-        { state: parsed.data.state, page: parsed.data.page, perPage: parsed.data.per_page },
+        { state: parsed.data.state, page: parsed.data.page, perPage: parsed.data.per_page, cursor },
       );
       return {
         valuations: items.map(publicValuation),
+        // Kept, and kept meaning what they meant, so a client already paging by
+        // number is unaffected by cursors existing. On a cursor request `page`
+        // echoes the default rather than a position, which is what it is.
         page: parsed.data.page,
         per_page: parsed.data.per_page,
         total,
+        next_cursor: nextCursor,
+        has_more: hasMore,
       };
     },
     { schemas: { query: ListQuery, response: ListValuationsResponse } },
@@ -856,11 +877,20 @@ export function registerPartnerApiRoutes(
     {
       method: 'GET',
       path: '/webhooks/{id}/deliveries',
-      summary: 'Recent delivery attempts for a webhook — your audit trail for missed events.',
+      summary: 'Delivery attempts for a webhook, newest first — your audit trail for missed events.',
       auth: 'api_key',
+      query: {
+        limit: `Page size (default ${DELIVERIES_PAGE_DEFAULT}, max ${DELIVERIES_PAGE_MAX})`,
+        cursor:
+          'Opaque cursor from a previous response — pass `next_cursor` to fetch the next page, or ' +
+          "any row's own `cursor` to resume from just after that delivery. Omit for the newest page.",
+      },
       response:
-        '{ deliveries[] } — event_type, status (pending = another retry is owed, failed = out of ' +
-        'attempts), attempts, max_attempts, next_attempt_at, last_error, created_at',
+        '{ deliveries[], next_cursor, has_more } — event_type, status (pending = another retry is ' +
+        'owed, failed = out of attempts), attempts, max_attempts, next_attempt_at, last_error, ' +
+        'created_at. Keyset-paginated: new deliveries land on the first page rather than shifting ' +
+        'the ones you have already read, so walking `next_cursor` to `has_more: false` sees every ' +
+        'row exactly once even while events are still arriving.',
     },
     async (req) => {
       const { token } = requireToken(req);
@@ -868,9 +898,21 @@ export function registerPartnerApiRoutes(
       if (!isUlid(id)) throw problems.notFound();
       const webhook = await findWebhook(deps.pool, token.partnerId, id);
       if (!webhook) throw problems.notFound();
-      const deliveries = await listDeliveries(deps.pool, id);
+      const parsed = DeliveriesQuery.safeParse(req.query);
+      if (!parsed.success) throw problems.badRequest('Invalid query', { errors: parsed.error.issues });
+      // A cursor we did not write is the caller's error, not a 500 from the
+      // driver failing to cast it — and saying so by name is the difference
+      // between "fix your pagination loop" and "the API is broken".
+      const cursor = parsed.data.cursor === undefined ? null : decodeCursor(parsed.data.cursor);
+      if (parsed.data.cursor !== undefined && !cursor) {
+        throw problems.badRequest('Invalid cursor — pass a `next_cursor` from a previous response');
+      }
+      const page = await listDeliveries(deps.pool, id, { limit: parsed.data.limit, cursor });
       return {
-        deliveries: deliveries.map((d) => ({
+        next_cursor: page.nextCursor,
+        has_more: page.hasMore,
+        deliveries: page.items.map((d) => ({
+          cursor: d.cursor,
           id: d.id,
           event_type: d.event_type,
           valuation_id: d.valuation_id,
@@ -886,7 +928,7 @@ export function registerPartnerApiRoutes(
         })),
       };
     },
-    { schemas: { response: ListDeliveriesResponse } },
+    { schemas: { query: DeliveriesQuery, response: ListDeliveriesResponse } },
   );
 
   define(

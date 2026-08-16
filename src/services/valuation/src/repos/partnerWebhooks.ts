@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { newUlid } from '@n409/shared';
 import { WEBHOOK_MAX_ATTEMPTS } from '../domain/partnerWebhooks.js';
+import { type Cursor, cursorAtSql, encodeCursor, keysetAfterSql, pageFrom } from '../domain/pagination.js';
 
 export interface PartnerWebhookRow {
   id: string;
@@ -298,17 +299,67 @@ export async function findDeliveryForPartner(
   return rows[0] ?? null;
 }
 
+/** Page size when the caller does not ask, and the ceiling on what it may. */
+export const DELIVERIES_PAGE_DEFAULT = 50;
+export const DELIVERIES_PAGE_MAX = 200;
+
+/** A delivery row plus the opaque cursor that resumes the walk after it. */
+export interface DeliveryPage {
+  items: Array<WebhookDeliveryRow & { cursor: string }>;
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+/**
+ * A partner's delivery history, newest first, walkable to the end.
+ *
+ * This used to be `LIMIT 50` with no way to ask for the fifty-first, which made
+ * the endpoint's own documented purpose — "your audit trail for missed events" —
+ * unserveable in the case that produces missed events. An incident that takes a
+ * receiver down for an afternoon generates far more than fifty deliveries, and
+ * the partner reconciling afterwards could see only the newest fifty of them:
+ * the tail of the outage, never its start. The rows were there; nothing could
+ * reach them.
+ *
+ * Keyset rather than OFFSET because this table is append-only and written to
+ * while it is being read — see `domain/pagination.ts` for why that combination
+ * makes OFFSET drop rows silently. The delivery log is precisely where a
+ * silently dropped row is worst: it is what the partner is checking *against*.
+ *
+ * The ORDER BY gained `id` as well, and not only for the cursor. `created_at`
+ * defaults to `now()` — the transaction timestamp — and the retry sweep settles
+ * deliveries in batches, so rows sharing an instant to the microsecond are the
+ * normal case here rather than a corner. Without a unique tiebreaker their
+ * relative order was undefined between two queries, which is the same
+ * skip-and-repeat this function exists to stop.
+ */
 export async function listDeliveries(
   pool: pg.Pool,
   webhookId: string,
-  limit = 50,
-): Promise<WebhookDeliveryRow[]> {
-  const { rows } = await pool.query<WebhookDeliveryRow>(
-    `SELECT * FROM partner_webhook_deliveries WHERE webhook_id = $1
-     ORDER BY created_at DESC LIMIT $2`,
-    [webhookId, limit],
+  opts: { limit?: number; cursor?: Cursor | null } = {},
+): Promise<DeliveryPage> {
+  const limit = Math.min(Math.max(opts.limit ?? DELIVERIES_PAGE_DEFAULT, 1), DELIVERIES_PAGE_MAX);
+  const cursor = opts.cursor ?? null;
+  const params: unknown[] = [webhookId, cursor?.at ?? null, cursor?.id ?? null, limit + 1];
+  const { rows } = await pool.query<WebhookDeliveryRow & { cursor_at: string }>(
+    `SELECT *, ${cursorAtSql('created_at')} AS cursor_at
+       FROM partner_webhook_deliveries
+      WHERE webhook_id = $1
+        AND ($2::text IS NULL OR ${keysetAfterSql('created_at', 'id', '$2', '$3')})
+      ORDER BY created_at DESC, id ASC
+      LIMIT $4`,
+    params,
   );
-  return rows;
+  const page = pageFrom(rows, limit, (row) => ({ at: row.cursor_at, id: row.id }));
+  return {
+    // `cursor_at` is renamed rather than dropped: a client that wants to resume
+    // from a specific row it has already seen needs that row's cursor, and
+    // handing back only the page's last one makes "start again from here"
+    // impossible without re-walking.
+    items: page.items.map(({ cursor_at, ...row }) => ({ ...row, cursor: encodeCursor({ at: cursor_at, id: row.id }) })),
+    nextCursor: page.nextCursor,
+    hasMore: page.hasMore,
+  };
 }
 
 /** Ops view: how much of the delivery backlog is owed, stuck or gone terminal. */

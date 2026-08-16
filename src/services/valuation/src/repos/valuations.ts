@@ -3,6 +3,7 @@ import { isUlid, newUlid, problems, TtlCache } from '@n409/shared';
 import { withTransaction } from '../db/pool.js';
 import { likeContains, userFullNameSql } from '../db/like.js';
 import { diffRecords } from '../domain/auditTrail.js';
+import { type Cursor, cursorAtSql, encodeCursor, keysetAfterSql, pageFrom } from '../domain/pagination.js';
 import {
   EVENT_TYPES,
   type PaidStatus,
@@ -386,6 +387,12 @@ export interface ListFilters extends ValuationFilters {
   perPage: number;
   /** Which read marker the computed per-row `unread` flag compares against. */
   readerSide?: 'admin' | 'user';
+  /**
+   * Page by keyset from this position instead of by `page`. Ignored under a
+   * caller-chosen `sort`, which the keyset predicate cannot page — see
+   * {@link sortSupportsCursor}.
+   */
+  cursor?: Cursor | null;
 }
 
 /**
@@ -499,13 +506,42 @@ export function buildValuationWhere(
   return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
 
-/** Scope is enforced in SQL, not post-filtered — partner data never leaves the DB. */
+/**
+ * Whether a cursor can page this ordering.
+ *
+ * The keyset predicate is written for `created_at DESC, id ASC` specifically —
+ * see `keysetAfterSql` — so it is only correct against the default branch of
+ * {@link orderBySql}. Under a caller-chosen sort the predicate would filter on
+ * a column the ORDER BY is not leading with, which does not error; it silently
+ * returns the wrong rows. So the two are mutually exclusive by construction
+ * rather than by the caller remembering, and a cursor page reports `nextCursor:
+ * null` under a custom sort rather than handing out one that would mislead.
+ */
+export function sortSupportsCursor(sort: SortSpec[] | undefined): boolean {
+  return !sort?.length;
+}
+
+/**
+ * Scope is enforced in SQL, not post-filtered — partner data never leaves the DB.
+ *
+ * Pages two ways, and which one runs is decided by whether `filters.cursor` is
+ * set. The offset path is what the workspace UI asks for: it renders page
+ * numbers and a total, and it is reading a list a human is looking at rather
+ * than walking one to the end. The keyset path is what an API client asks for,
+ * because a client walking every page while rows are being written needs the
+ * page boundaries to stay put — `domain/pagination.ts` has the long version.
+ *
+ * `total` is answered the same way on both paths, from the same count over the
+ * *unfiltered* WHERE: it is the size of the matching set, not the size of what
+ * is left after the cursor. A client that renders "1,204 valuations" wants the
+ * former and would find the latter counting down as it paged.
+ */
 export async function listValuations(
   pool: pg.Pool,
   scope: ValuationScope,
   filters: ListFilters,
-): Promise<{ items: ValuationRow[]; total: number }> {
-  if (scope.kind === 'none') return { items: [], total: 0 };
+): Promise<{ items: ValuationRow[]; total: number; nextCursor: string | null; hasMore: boolean }> {
+  if (scope.kind === 'none') return { items: [], total: 0, nextCursor: null, hasMore: false };
 
   const { whereSql, params } = buildValuationWhere(scope, filters);
 
@@ -515,7 +551,31 @@ export async function listValuations(
     ? `, (last_comment_at IS NOT NULL AND (${readCol} IS NULL OR last_comment_at > ${readCol})) AS unread`
     : '';
 
-  const paged = [...params, filters.perPage, (filters.page - 1) * filters.perPage];
+  const cursorable = sortSupportsCursor(filters.sort);
+  const cursor = cursorable ? (filters.cursor ?? null) : null;
+
+  // The cursor's own column, carried on every row so the page's last row can
+  // name itself. Selected rather than derived from `row.created_at`, which is a
+  // JS Date by then and three digits short of the stored value.
+  const cursorSelect = `, ${cursorAtSql('created_at')} AS cursor_at`;
+
+  let listWhere = whereSql;
+  const listParams = [...params];
+  if (cursor) {
+    listParams.push(cursor.at, cursor.id);
+    const predicate = keysetAfterSql('created_at', 'id', `$${listParams.length - 1}`, `$${listParams.length}`);
+    listWhere = whereSql ? `${whereSql} AND ${predicate}` : `WHERE ${predicate}`;
+  }
+  if (cursor) {
+    // One more than the page, so `has_more` is answered by the over-fetch
+    // rather than by comparing an offset against a count that may have moved.
+    listParams.push(filters.perPage + 1);
+  } else {
+    listParams.push(filters.perPage, (filters.page - 1) * filters.perPage);
+  }
+  const limitSql = cursor
+    ? `LIMIT $${listParams.length}`
+    : `LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`;
 
   // The count and the page share a WHERE clause but neither needs the other's
   // result, and on an ops inbox filtered down from tens of thousands of rows
@@ -524,14 +584,43 @@ export async function listValuations(
   // the cost of one extra pooled connection for the duration.
   const [countResult, pageResult] = await Promise.all([
     pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM valuations ${whereSql}`, params),
-    pool.query<ValuationRow>(
-      `SELECT *${unreadSql} FROM valuations ${whereSql}
+    pool.query<ValuationRow & { cursor_at: string }>(
+      `SELECT *${unreadSql}${cursorSelect} FROM valuations ${listWhere}
        ${orderBySql(filters.sort)}
-       LIMIT $${paged.length - 1} OFFSET $${paged.length}`,
-      paged,
+       ${limitSql}`,
+      listParams,
     ),
   ]);
-  return { items: pageResult.rows, total: Number(countResult.rows[0]!.count) };
+
+  const total = Number(countResult.rows[0]!.count);
+  const fetched = pageResult.rows;
+  const page = cursor
+    ? pageFrom(fetched, filters.perPage, (row) => ({ at: row.cursor_at, id: row.id }))
+    : {
+        items: fetched,
+        // On the offset path the count is what says whether more remain; there
+        // is no over-fetched row to ask.
+        hasMore: (filters.page - 1) * filters.perPage + fetched.length < total,
+        nextCursor: null as string | null,
+      };
+
+  // A first page requested *without* a cursor still hands one back, so a client
+  // can open with an ordinary request and switch to cursors from the second
+  // page on — without that, cursor paging would only be reachable by a client
+  // that already had a cursor, which it could not have got.
+  const last = page.items[page.items.length - 1];
+  const nextCursor =
+    page.nextCursor ??
+    (cursorable && page.hasMore && last !== undefined
+      ? encodeCursor({ at: last.cursor_at, id: last.id })
+      : null);
+
+  // `cursor_at` is an implementation detail of this function. Several callers
+  // return the row wholesale to a client, and a stray column there is both a
+  // leak of how paging works and, for the routes with `.strict()` response
+  // schemas, a validation failure.
+  const items = page.items.map(({ cursor_at: _cursorAt, ...row }) => row as ValuationRow);
+  return { items, total, nextCursor, hasMore: page.hasMore };
 }
 
 /**

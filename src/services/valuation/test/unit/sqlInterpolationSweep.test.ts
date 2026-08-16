@@ -245,20 +245,48 @@ const REVIEWED: Record<string, string[]> = {
   // / `scopeClause` are literals or literal-derived; `orderBySql` builds ORDER
   // BY only from SORTABLE_COLUMNS terms that `parseSort` has validated, and
   // rejects the whole request otherwise. Pinned behaviourally below.
+  //
+  // The keyset four are the cursor page (`domain/pagination.ts`), and the thing
+  // to check about them is that the *cursor* never reaches the query text —
+  // only its shape does. `cursorSelect` is `cursorAtSql('created_at')`, a fixed
+  // column name and a fixed to_char format. `predicate` is
+  // `keysetAfterSql(...)` over two literal column names and two placeholder
+  // *names* built from `listParams.length`, a number; `cursor.at` and
+  // `cursor.id` are pushed onto `listParams` and referenced as `$n`, never
+  // spliced. `listWhere` is `whereSql` (already reviewed above) with that
+  // predicate appended. `limitSql` is one of two fixed spellings over the same
+  // `$n` indices. So the only request-derived values here — the two halves of a
+  // client-supplied cursor — are bound parameters, and `decodeCursor` has
+  // already refused anything that is not a timestamp and a ULID before they get
+  // this far.
   'src/services/valuation/src/repos/valuations.ts': [
     'alias',
     'column',
+    'cursorSelect',
     'idRef',
     'like',
+    'limitSql',
+    'listWhere',
     'orderBySql(filters.sort)',
     "orderBySql(filters.sort, 'v.')",
     'ownerRef',
+    'predicate',
     'readCol',
     'scopeClause',
     'unreadSql',
     "userFullNameSql('su')",
     'where',
     'whereSql',
+  ],
+
+  // The delivery log's keyset page, same two builders as the `valuations.ts`
+  // keyset entries above and safe for the same reason: both take literal column
+  // names and literal placeholder names (`'$2'`, `'$3'`), and the cursor's two
+  // fields are bound onto `params`. Called inline rather than via a local, so
+  // the sweep sees the call expressions themselves.
+  'src/services/valuation/src/repos/partnerWebhooks.ts': [
+    "cursorAtSql('created_at')",
+    "keysetAfterSql('created_at', 'id', '$2', '$3')",
   ],
 
   // `target.table` / `target.where`: the housekeeping sweep's target list is a

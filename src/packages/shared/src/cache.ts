@@ -21,15 +21,49 @@ class InflightLoad<T> {
   readonly promise: Promise<T>;
   /** Set when delete()/clear() lands while this load is still running. */
   stale = false;
+  /**
+   * Tags invalidated since this load started.
+   *
+   * The `stale` flag cannot cover a tag invalidation, and the reason is the
+   * whole difficulty of tagging a read-through cache: a load in flight has no
+   * tags yet. Its tags are derived from the value, and the value is what it has
+   * not got. So `invalidateTag` cannot decide whether a running load is
+   * affected — it can only record what was invalidated and leave the decision
+   * to the load, which makes it at completion when it finally knows what it
+   * loaded. A load resolving to a value carrying one of these tags read the row
+   * before the write and must not publish it.
+   */
+  readonly invalidatedTags = new Set<string>();
 
   constructor(start: (self: InflightLoad<T>) => Promise<T>) {
     this.promise = start(this);
   }
 }
 
+/**
+ * How a cached value declares what it belongs to.
+ *
+ * Tags exist because the keys a value is filed under and the thing a write
+ * changes are not the same shape. Branding is the case that forced it: one
+ * tenant's row is cached under three keys — its slug, its subdomain and its
+ * partner id — and a write knows only the partner id. Worse, the write can
+ * *change* the subdomain, so the entry to drop is filed under the label the
+ * tenant had before the write, which the writer no longer has. Enumerating the
+ * key shapes at the call site is what a partial invalidation would require, and
+ * it is exactly the enumeration that goes stale the next time a key shape is
+ * added.
+ *
+ * A tag inverts that. The *loader* knows what it loaded, so it tags the entry
+ * with the partner id whichever key it was filed under, and the writer names
+ * the partner id it just wrote. Neither side has to know the other's key shapes.
+ */
+export type CacheTags = readonly string[];
+
 export class TtlCache<T> {
-  private readonly entries = new Map<string, { value: T; expiresAt: number }>();
+  private readonly entries = new Map<string, { value: T; expiresAt: number; tags?: CacheTags }>();
   private readonly inflight = new Map<string, InflightLoad<T>>();
+  /** tag -> keys carrying it, so invalidation is a lookup rather than a scan. */
+  private readonly byTag = new Map<string, Set<string>>();
 
   constructor(
     private readonly opts: {
@@ -46,35 +80,104 @@ export class TtlCache<T> {
     return this.opts.now?.() ?? Date.now();
   }
 
+  /**
+   * Removes an entry and every tag link pointing at it.
+   *
+   * Every path that drops an entry goes through here — expiry, explicit delete,
+   * LRU eviction, tag invalidation. A path that forgot to would leave the key
+   * in `byTag`, and a later `invalidateTag` would walk to a key that is not
+   * there: harmless on its own, but the set grows without bound on a cache
+   * whose whole purpose is to be long-lived, and a re-used key would then be
+   * invalidated by a tag it never carried.
+   */
+  private dropEntry(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    if (!entry.tags) return;
+    for (const tag of entry.tags) {
+      const keys = this.byTag.get(tag);
+      if (!keys) continue;
+      keys.delete(key);
+      if (keys.size === 0) this.byTag.delete(tag);
+    }
+  }
+
   get(key: string): T | undefined {
     const entry = this.entries.get(key);
     if (!entry) return undefined;
     if (entry.expiresAt <= this.now()) {
-      this.entries.delete(key);
+      this.dropEntry(key);
       return undefined;
     }
     return entry.value;
   }
 
-  set(key: string, value: T): void {
-    // Re-insert so Map iteration order doubles as recency for eviction.
-    this.entries.delete(key);
-    this.entries.set(key, { value, expiresAt: this.now() + this.opts.ttlMs });
+  set(key: string, value: T, tags?: CacheTags): void {
+    // Re-insert so Map iteration order doubles as recency for eviction. Via
+    // dropEntry rather than a bare delete, so re-setting a key under *different*
+    // tags does not leave it linked to the old ones — a value that has moved
+    // tenants would otherwise still be dropped by its previous tenant's writes.
+    this.dropEntry(key);
+    this.entries.set(key, { value, expiresAt: this.now() + this.opts.ttlMs, tags });
+    if (tags) {
+      for (const tag of tags) {
+        let keys = this.byTag.get(tag);
+        if (!keys) this.byTag.set(tag, (keys = new Set()));
+        keys.add(key);
+      }
+    }
     const max = this.opts.maxEntries ?? 500;
     while (this.entries.size > max) {
-      const oldest = this.entries.keys().next().value as string;
-      this.entries.delete(oldest);
+      this.dropEntry(this.entries.keys().next().value as string);
     }
   }
 
   delete(key: string): void {
-    this.entries.delete(key);
+    this.dropEntry(key);
     const pending = this.inflight.get(key);
     if (pending) pending.stale = true;
   }
 
+  /**
+   * Drops every entry carrying `tag`, and stops any load in flight from
+   * re-publishing one.
+   *
+   * The second half is what makes this safe to rely on rather than merely
+   * usually right. See {@link InflightLoad.invalidatedTags}: a load that has not
+   * finished has no tags to match against, so the tag is recorded on every
+   * running load and checked when each one completes. Without that, an
+   * invalidation racing a load would drop the entry and then watch the load put
+   * the pre-write value straight back — the failure `getOrLoad`'s `stale` flag
+   * was added for, arrived at through the tag instead of the key.
+   *
+   * Recorded on *every* in-flight load rather than only the ones that look
+   * relevant, because which ones are relevant is precisely what cannot be known
+   * yet. The cost is one set insertion per running load, and loads in flight
+   * are bounded by the number of distinct keys being missed at once.
+   */
+  invalidateTag(tag: string): void {
+    for (const key of this.byTag.get(tag) ?? []) {
+      // Not dropEntry: it mutates the very set being iterated. The whole set
+      // goes below, so unlinking key by key would be wasted work anyway — but
+      // the *other* tags those keys carry still have to be unlinked.
+      const entry = this.entries.get(key);
+      this.entries.delete(key);
+      for (const other of entry?.tags ?? []) {
+        if (other === tag) continue;
+        const keys = this.byTag.get(other);
+        if (!keys) continue;
+        keys.delete(key);
+        if (keys.size === 0) this.byTag.delete(other);
+      }
+    }
+    this.byTag.delete(tag);
+    for (const pending of this.inflight.values()) pending.invalidatedTags.add(tag);
+  }
+
   clear(): void {
     this.entries.clear();
+    this.byTag.clear();
     for (const pending of this.inflight.values()) pending.stale = true;
   }
 
@@ -97,7 +200,7 @@ export class TtlCache<T> {
    * caller arriving after the invalidation starts a fresh load rather than
    * joining the doomed one, and the newer load owns the slot.
    */
-  getOrLoad(key: string, loader: () => Promise<T>): Promise<T> {
+  getOrLoad(key: string, loader: () => Promise<T>, tagsOf?: (value: T) => CacheTags | undefined): Promise<T> {
     const hit = this.get(key);
     if (hit !== undefined) return Promise.resolve(hit);
 
@@ -110,7 +213,12 @@ export class TtlCache<T> {
           // Only the load that still owns the slot may clear it; a stale load
           // finishing late must not evict the fresh one that replaced it.
           if (this.inflight.get(key) === self) this.inflight.delete(key);
-          if (!self.stale) this.set(key, value);
+          // Tags are derived here rather than passed in because this is the
+          // first moment they can be known — for the read-through case that
+          // motivated them, the tag *is* a field of the row being loaded.
+          const tags = tagsOf?.(value);
+          const invalidated = tags?.some((tag) => self.invalidatedTags.has(tag)) ?? false;
+          if (!self.stale && !invalidated) this.set(key, value, tags);
           return value;
         },
         (err: unknown) => {

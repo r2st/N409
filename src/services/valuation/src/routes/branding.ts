@@ -66,9 +66,29 @@ export function registerBrandingRoutes(
    * the ETag below stops the transmission.
    *
    * 60s matches the blog's, and the TTL is the *ceiling* on staleness rather
-   * than the mechanism — every write clears the cache outright (see PATCH).
+   * than the mechanism — every write invalidates the tenant it wrote (see PATCH).
    */
   const cache = new TtlCache<unknown>({ ttlMs: 60_000 });
+
+  /**
+   * The tag every cached branding entry carries: the partner it resolved to.
+   *
+   * Derived from the loaded row rather than from the key, which is the point.
+   * The same tenant is cached under three unrelated keys — `key:<slug>`,
+   * `subdomain:<label>`, `partner:<id>` — and only the row knows they are the
+   * same tenant. Tagging at load time means a write has to name the partner it
+   * wrote and nothing else; it never has to know how many ways that partner is
+   * filed, which is the knowledge that would go stale when a fourth key shape
+   * is added.
+   *
+   * A miss cached as `null` carries no tag, because there is no tenant for it
+   * to belong to. Those are handled by key at the write site, where the slug
+   * and subdomain being written are known — see PATCH.
+   */
+  const brandingTags = (row: unknown): readonly string[] | undefined => {
+    const id = (row as { id?: string } | null)?.id;
+    return id ? [`partner:${id}`] : undefined;
+  };
 
   /**
    * `public` for the two anonymous reads: the response depends on the request
@@ -96,6 +116,7 @@ export function registerBrandingRoutes(
     const source = (await cache.getOrLoad(
       `key:${key}`,
       async () => (await findBrandingByKey(deps.pool, key)) ?? null,
+      brandingTags,
     )) as Awaited<ReturnType<typeof findBrandingByKey>> | null;
     if (!source) throw problems.notFound();
     return conditionalJson(req, reply, respond(resolveBranding(source)), PUBLIC_REVALIDATE);
@@ -117,8 +138,10 @@ export function registerBrandingRoutes(
     // Keyed by the resolved label rather than by the raw Host: several hosts
     // reduce to one tenant, and caching per Host would hold a copy for each
     // while inventing a new key for every made-up Host header sent at us.
-    const source = (await cache.getOrLoad('subdomain:' + label, async () =>
-      findBrandingBySubdomain(deps.pool, label),
+    const source = (await cache.getOrLoad(
+      'subdomain:' + label,
+      async () => findBrandingBySubdomain(deps.pool, label),
+      brandingTags,
     )) as Awaited<ReturnType<typeof findBrandingBySubdomain>>;
     return conditionalJson(req, reply, respond(resolveBranding(source)), PUBLIC_REVALIDATE);
   });
@@ -135,8 +158,10 @@ export function registerBrandingRoutes(
     // own tenant rather than by the URI, so a shared cache holding it would
     // serve one firm's brand to another's staff.
     if (!principal.partnerId) return conditionalJson(req, reply, respond(PLATFORM_BRANDING));
-    const source = (await cache.getOrLoad(`partner:${principal.partnerId}`, async () =>
-      findBrandingByPartnerId(deps.pool, principal.partnerId!),
+    const source = (await cache.getOrLoad(
+      `partner:${principal.partnerId}`,
+      async () => findBrandingByPartnerId(deps.pool, principal.partnerId!),
+      brandingTags,
     )) as Awaited<ReturnType<typeof findBrandingByPartnerId>>;
     return conditionalJson(req, reply, respond(resolveBranding(source)));
   });
@@ -212,19 +237,53 @@ export function registerBrandingRoutes(
     }
     if (!source) throw problems.notFound();
 
-    // Clear everything rather than the three keys this partner is behind.
+    // Invalidate this tenant, rather than every tenant.
     //
-    // Those keys are `key:<slug>`, `subdomain:<label>` and `partner:<id>`, and
-    // this very handler can *change* the subdomain — so the entry to invalidate
-    // is filed under the label the tenant had before the write, which is not in
-    // `patch` and would have to be read back to be known. A partial
-    // invalidation that misses that one leaves the old address serving the old
-    // brand for a full TTL, which is precisely the change the administrator was
-    // watching for. Branding writes are an administrator action a few times a
-    // year; the cost of clearing the whole (small) cache is one re-query per
-    // live tenant, and the correctness is not conditional on anybody enumerating
-    // the key shapes correctly next time one is added.
-    cache.clear();
+    // This was `cache.clear()`, for a reason that was sound and is now handled:
+    // the three keys a tenant is cached under are `key:<slug>`,
+    // `subdomain:<label>` and `partner:<id>`, and this very handler can *change*
+    // the subdomain — so the entry to invalidate is filed under the label the
+    // tenant had before the write, which is not in `patch`. Enumerating the keys
+    // here would miss that one and leave the old address serving the old brand
+    // for a full TTL, which is precisely the change the administrator is
+    // watching for.
+    //
+    // The tag settles it without anyone enumerating anything. Every cached
+    // branding entry is tagged with the partner it *resolved to* (see
+    // `brandingTags`), whichever key it happens to be filed under and whatever
+    // that key was called when it was written, so one tag drops all three — and
+    // drops the fourth key shape too, the day somebody adds one.
+    //
+    // What clearing bought and this gives up is nothing, because clearing was
+    // never buying correctness for the *other* tenants; it was paying for this
+    // one's. Branding is the most-requested non-static endpoint here — the
+    // signed-out SPA calls it before its first frame, on every load, on every
+    // host — so a single firm editing its logo was dumping every other firm's
+    // resolved brand and CSS ramps, and each of those tenants then re-queried on
+    // its next request.
+    cache.invalidateTag(`partner:${partnerId}`);
+
+    // The tag cannot cover a `null`: a miss cached for a subdomain that
+    // resolved to no tenant has no partner to be tagged with, and this handler
+    // is exactly what makes such a miss wrong. Two writes do it — a firm
+    // claiming `acme`, and a firm that already holds `acme` switching white
+    // label *on*, since `findBrandingBySubdomain` only resolves tenants with the
+    // flag set and cached a `null` for it until now. Either way the login page
+    // at that address is what reads the lie.
+    //
+    // Keyed off the row rather than off `patch`, because the second case does
+    // not mention a subdomain at all: flipping `white_label_enabled` alone
+    // leaves `patch.subdomain` undefined while changing what that label
+    // resolves to. `source` is the tenant after the write, so it carries the
+    // label in both cases. The label the tenant had *before* a rename needs no
+    // handling here — that entry resolved to this partner, so it is tagged, and
+    // the invalidation above already dropped it.
+    //
+    // `key:<slug>` gets no equivalent because `partners.key` is not in
+    // BRANDING_PATCH_SCHEMA: a slug is assigned when the partner is created and
+    // this handler cannot change it, so no write here can turn a cached
+    // `key:<slug> → null` into a lie.
+    if (source.subdomain) cache.delete(`subdomain:${source.subdomain}`);
 
     await recordAdminEvent(deps.pool, {
       type: 'branding_updated',

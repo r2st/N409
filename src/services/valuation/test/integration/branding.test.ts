@@ -358,3 +358,152 @@ describe.skipIf(!dbUp)('branding caching', () => {
     expect((await get('/api/v1/public/branding/no-such-tenant')).statusCode).toBe(404);
   });
 });
+
+/**
+ * Selective invalidation: a write to one tenant must not evict every other.
+ *
+ * The branding cache used to answer a PATCH with `cache.clear()`. That was
+ * correct — no tenant was ever served a stale brand — and it was expensive in a
+ * way correctness tests cannot see, because "the cache is empty" and "the cache
+ * holds the right thing" produce identical responses. Branding is the
+ * most-requested non-static endpoint here, so one firm editing its logo made
+ * every other firm's next request a query.
+ *
+ * These tests therefore assert on *queries issued* rather than on bodies
+ * returned. Counting statements is the only way the difference between clearing
+ * and invalidating is observable at all.
+ */
+describe.skipIf(!dbUp)('branding cache invalidation is scoped to the tenant written', () => {
+  let ctx: TestApp;
+  let firmId: string;
+  let otherId: string;
+  let mine: Awaited<ReturnType<typeof seedUser>>;
+  let theirs: Awaited<ReturnType<typeof seedUser>>;
+  /** Counts reads of the branding table, whichever key shape asked for them. */
+  let brandingQueries = 0;
+
+  beforeAll(async () => {
+    ctx = await setupTestApp({ APP_BASE_DOMAIN: 'app.409.ai' });
+    firmId = await seedPartner(ctx, 'Scoped Firm');
+    otherId = await seedPartner(ctx, 'Bystander Firm');
+    mine = await seedUser(ctx, { roles: ['partner'], partnerId: firmId });
+    theirs = await seedUser(ctx, { roles: ['partner'], partnerId: otherId });
+
+    const realQuery = ctx.pool.query.bind(ctx.pool);
+    // The route holds this same pool object, so wrapping the method here is
+    // what the handlers actually call.
+    (ctx.pool as { query: unknown }).query = (...args: unknown[]) => {
+      const sql = typeof args[0] === 'string' ? args[0] : '';
+      if (/FROM partners\b/.test(sql) && /brand_color/.test(sql)) brandingQueries++;
+      return (realQuery as (...a: unknown[]) => unknown)(...args);
+    };
+  });
+  afterAll(() => ctx.teardown());
+
+  const get = (url: string, headers: Record<string, string> = {}) =>
+    ctx.app.inject({ method: 'GET', url, headers });
+
+  const patch = (token: string, payload: Record<string, unknown>) =>
+    ctx.app.inject({ method: 'PATCH', url: '/api/v1/branding', headers: authHeader(token), payload });
+
+  /** Runs `fn` and reports how many branding reads reached the database. */
+  const queriesDuring = async (fn: () => Promise<unknown>): Promise<number> => {
+    const before = brandingQueries;
+    await fn();
+    return brandingQueries - before;
+  };
+
+  it('leaves a bystander tenant´s cached brand in place', async () => {
+    await patch(mine.token, { brand_name: 'Mine One', white_label_enabled: true });
+    await patch(theirs.token, { brand_name: 'Theirs One', white_label_enabled: true });
+
+    // Warm both tenants.
+    await get('/api/v1/branding', authHeader(mine.token));
+    await get('/api/v1/branding', authHeader(theirs.token));
+    expect(await queriesDuring(() => get('/api/v1/branding', authHeader(theirs.token)))).toBe(0);
+
+    // One firm rebrands…
+    await patch(mine.token, { brand_name: 'Mine Two' });
+
+    // …the bystander is still cached (this was 1 when the write cleared
+    // everything), and the writer is not.
+    expect(await queriesDuring(() => get('/api/v1/branding', authHeader(theirs.token)))).toBe(0);
+    expect(await queriesDuring(() => get('/api/v1/branding', authHeader(mine.token)))).toBe(1);
+  });
+
+  it('still serves the writing tenant its new brand immediately', async () => {
+    // The correctness half. Scoping the invalidation must not have scoped away
+    // the invalidation the writer needs.
+    await patch(mine.token, { brand_name: 'Fresh One', white_label_enabled: true });
+    expect((await get('/api/v1/branding', authHeader(mine.token))).json().branding.name).toBe('Fresh One');
+    await patch(mine.token, { brand_name: 'Fresh Two' });
+    expect((await get('/api/v1/branding', authHeader(mine.token))).json().branding.name).toBe('Fresh Two');
+  });
+
+  it('drops every key shape the written tenant is cached under, not just one', async () => {
+    // The reason this is tag-based rather than a list of keys at the call site:
+    // the same tenant is filed under its slug, its subdomain and its id, and a
+    // partial invalidation would leave the ones nobody remembered.
+    await patch(mine.token, { brand_name: 'Many Keys', white_label_enabled: true, subdomain: 'manykeys' });
+    const slug = 'scoped-firm';
+    await get(`/api/v1/public/branding/${slug}`);
+    await get('/api/v1/public/branding', { host: 'manykeys.app.409.ai' });
+    await get('/api/v1/branding', authHeader(mine.token));
+
+    await patch(mine.token, { brand_name: 'Many Keys Renamed' });
+
+    for (const read of [
+      () => get(`/api/v1/public/branding/${slug}`),
+      () => get('/api/v1/public/branding', { host: 'manykeys.app.409.ai' }),
+      () => get('/api/v1/branding', authHeader(mine.token)),
+    ]) {
+      const res = (await read()) as Awaited<ReturnType<typeof get>>;
+      expect(res.json().branding.name).toBe('Many Keys Renamed');
+    }
+  });
+
+  it('stops serving the old address after a subdomain rename', async () => {
+    // The case that made a hand-written key list impossible: the entry to drop
+    // is filed under the label the tenant had *before* the write, which the
+    // writer no longer has. It is tagged, so it goes anyway.
+    await patch(mine.token, { brand_name: 'Renamer', white_label_enabled: true, subdomain: 'oldlabel' });
+    const before = await get('/api/v1/public/branding', { host: 'oldlabel.app.409.ai' });
+    expect(before.json().branding.name).toBe('Renamer');
+
+    await patch(mine.token, { subdomain: 'newlabel' });
+
+    // The old address no longer belongs to this tenant, so it must fall back to
+    // platform branding rather than keep serving the firm's.
+    const old = await get('/api/v1/public/branding', { host: 'oldlabel.app.409.ai' });
+    expect(old.json().branding.name).not.toBe('Renamer');
+    const fresh = await get('/api/v1/public/branding', { host: 'newlabel.app.409.ai' });
+    expect(fresh.json().branding.name).toBe('Renamer');
+  });
+
+  it('resolves an address that was cached as belonging to nobody', async () => {
+    // A cached `null` carries no tag, so the tag cannot drop it. This is the
+    // case the write handles by key: the login page at that address is what
+    // would otherwise keep reading the miss.
+    const host = 'claimed.app.409.ai';
+    const empty = await get('/api/v1/public/branding', { host });
+    expect(empty.json().branding.name).not.toBe('Claimant');
+
+    await patch(theirs.token, { brand_name: 'Claimant', white_label_enabled: true, subdomain: 'claimed' });
+
+    const claimed = await get('/api/v1/public/branding', { host });
+    expect(claimed.json().branding.name).toBe('Claimant');
+  });
+
+  it('resolves an address whose tenant only just turned white label on', async () => {
+    // The write that changes what a label resolves to without mentioning the
+    // label at all: `findBrandingBySubdomain` requires the flag, so the address
+    // was cached as nobody's until the flag flipped.
+    await patch(theirs.token, { brand_name: 'Toggler', subdomain: 'toggled', white_label_enabled: false });
+    const host = 'toggled.app.409.ai';
+    expect((await get('/api/v1/public/branding', { host })).json().branding.name).not.toBe('Toggler');
+
+    await patch(theirs.token, { white_label_enabled: true });
+
+    expect((await get('/api/v1/public/branding', { host })).json().branding.name).toBe('Toggler');
+  });
+});
