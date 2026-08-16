@@ -340,6 +340,158 @@ export async function deliveryBacklogStats(pool: pg.Pool): Promise<{
   };
 }
 
+/** What 0103 stamped on the rows it retired when retries were introduced. */
+export const DELIVERY_PREDATES_RETRIES_ERROR = 'abandoned: predates delivery retries';
+
+/**
+ * The oldest a failed delivery may be and still be worth replaying.
+ *
+ * A payload is a snapshot of a transition, not a pointer to current state — it
+ * carries the state the valuation was in when the event fired. Replaying a
+ * week-old `valuation.state_changed` therefore tells a partner about a
+ * transition that has since been superseded, and because nothing orders
+ * deliveries, it can land *after* the newer events that overtook it while it
+ * sat in the queue. A partner tracking state from the stream is then walked
+ * backwards, which is worse than the event they never got.
+ *
+ * Twenty-four hours is the window in which a payload is still broadly true and
+ * comfortably longer than the full ladder (1+5+30+120+360 minutes ≈ 8.6h), so a
+ * delivery that exhausted every attempt is still replayable for about as long
+ * again. Beyond that the honest remedy is the partner re-reading the resource,
+ * not us re-sending a stale description of it.
+ */
+export const DELIVERY_REPLAY_MAX_AGE_HOURS = 24;
+
+/** A failed delivery with the partner and endpoint it belongs to. */
+export interface FailedDeliveryRow {
+  id: string;
+  webhook_id: string;
+  partner_id: string;
+  url: string;
+  enabled: boolean;
+  event_type: string;
+  valuation_id: string | null;
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  created_at: Date;
+  /** True while {@link DELIVERY_REPLAY_MAX_AGE_HOURS} has not elapsed. */
+  replayable: boolean;
+}
+
+/**
+ * The dead letter queue: which deliveries gave up, for whom, and why.
+ *
+ * `deliveryBacklogStats` answers "is anything not getting through" with a
+ * count, and that was the whole operator view — the route that serves it says
+ * of `failed` that "a failed row is terminal and nothing else will ever come
+ * back for it". True, and it left ops holding a number with no next step. The
+ * only replay in the service is `requeueDelivery`, which is partner-scoped and
+ * takes one id at a time, so a receiver-side outage was a partner's problem to
+ * notice and ours to be unable to help with — and an outage on *our* side, a
+ * bad deploy that 500ed every POST for ten minutes, had no remedy at all: every
+ * affected partner would have to find their own delivery ids and replay them
+ * one by one, having never been told there was anything to replay.
+ *
+ * Ordered newest-first because that is the set an incident is about. The
+ * endpoint URL is included and the route is ops-only: a partner's callback
+ * address is their infrastructure, not something to widen access to.
+ *
+ * `payload` is deliberately not selected. The rows can be large, the listing is
+ * a triage view, and a payload carries the valuation's company name and state.
+ */
+export async function listFailedDeliveries(
+  pool: pg.Pool,
+  opts: { limit?: number; partnerId?: string; maxAgeHours?: number } = {},
+): Promise<FailedDeliveryRow[]> {
+  const maxAgeHours = opts.maxAgeHours ?? DELIVERY_REPLAY_MAX_AGE_HOURS;
+  const { rows } = await pool.query<FailedDeliveryRow>(
+    `SELECT d.id, d.webhook_id, w.partner_id, w.url, w.enabled, d.event_type,
+            d.valuation_id, d.attempts, d.max_attempts, d.last_error, d.created_at,
+            (d.created_at > now() - ($3 || ' hours')::interval
+             AND d.last_error IS DISTINCT FROM $4
+             AND w.enabled) AS replayable
+       FROM partner_webhook_deliveries d
+       JOIN partner_webhooks w ON w.id = d.webhook_id
+      WHERE d.status = 'failed'
+        AND ($2::text IS NULL OR w.partner_id = $2)
+      ORDER BY d.created_at DESC
+      LIMIT $1`,
+    [
+      Math.min(Math.max(opts.limit ?? 100, 1), 500),
+      opts.partnerId ?? null,
+      String(maxAgeHours),
+      DELIVERY_PREDATES_RETRIES_ERROR,
+    ],
+  );
+  return rows;
+}
+
+/**
+ * Re-opens terminal deliveries in bulk, for an operator rather than a partner.
+ *
+ * The remedy for the case the partner-scoped replay cannot serve: our own
+ * outage, where the deliveries that failed belong to many partners and none of
+ * them did anything wrong. Attempts are reset for the same reason
+ * {@link requeueDelivery} resets them — a receiver reachable again deserves the
+ * ladder a new event would get.
+ *
+ * Three rows are refused rather than replayed, and each refusal is a payload
+ * that would mislead the partner who received it:
+ *
+ *   * **Older than `maxAgeHours`.** See {@link DELIVERY_REPLAY_MAX_AGE_HOURS} —
+ *     a stale transition arriving after the ones that superseded it.
+ *   * **Retired by 0103.** Those rows predate retries entirely; the migration
+ *     retired rather than replayed them for exactly this reason, and a bulk
+ *     replay must not undo that decision by accident.
+ *   * **On a disabled webhook.** `claimRetryableDeliveries` already declines to
+ *     sweep these — a partner who turned an endpoint off should not have its
+ *     backlog arrive when they turn it back on — and a replay that ignored the
+ *     flag would deliver through the sweep a moment later anyway.
+ *
+ * `ids` scopes it to a reviewed set; omitting it replays everything eligible,
+ * which is what an operator wants after confirming the cause was ours. Either
+ * way the age and eligibility rules above apply — there is no override, because
+ * the bound exists to protect the partner rather than to protect the operator
+ * from a mistake.
+ */
+export async function replayFailedDeliveries(
+  pool: pg.Pool,
+  opts: { ids?: string[]; partnerId?: string; maxAgeHours?: number; limit?: number } = {},
+): Promise<WebhookDeliveryRow[]> {
+  // An explicit empty list means "replay these none", not "replay everything".
+  if (opts.ids && opts.ids.length === 0) return [];
+  const maxAgeHours = opts.maxAgeHours ?? DELIVERY_REPLAY_MAX_AGE_HOURS;
+  const { rows } = await pool.query<WebhookDeliveryRow>(
+    `UPDATE partner_webhook_deliveries d
+        SET status = 'pending', attempts = 0, claimed_at = NULL, next_attempt_at = now(),
+            last_error = NULL
+      WHERE d.id IN (
+        SELECT dd.id FROM partner_webhook_deliveries dd
+          JOIN partner_webhooks w ON w.id = dd.webhook_id
+         WHERE dd.status = 'failed'
+           AND w.enabled
+           AND dd.created_at > now() - ($1 || ' hours')::interval
+           AND dd.last_error IS DISTINCT FROM $2
+           AND ($3::text[] IS NULL OR dd.id = ANY($3))
+           AND ($4::text IS NULL OR w.partner_id = $4)
+         LIMIT $5
+         -- Same discipline as the claim and the reaper: a concurrent sweep
+         -- takes the next batch rather than blocking on this one.
+         FOR UPDATE SKIP LOCKED
+      )
+      RETURNING d.*`,
+    [
+      String(maxAgeHours),
+      DELIVERY_PREDATES_RETRIES_ERROR,
+      opts.ids ?? null,
+      opts.partnerId ?? null,
+      Math.min(Math.max(opts.limit ?? 500, 1), 1000),
+    ],
+  );
+  return rows;
+}
+
 /**
  * Re-opens a terminal delivery for one more round, used by the partner-facing
  * replay button. Attempts are reset so the full backoff ladder is available

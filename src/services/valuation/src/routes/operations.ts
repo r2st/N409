@@ -22,7 +22,12 @@ import { circuits } from '../clients/internal.js';
 import { ValuationFilterQuery, toRepoFilters } from './valuations.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { VALUATION_KINDS } from '../domain/valuation.js';
-import { deliveryBacklogStats } from '../repos/partnerWebhooks.js';
+import {
+  DELIVERY_REPLAY_MAX_AGE_HOURS,
+  deliveryBacklogStats,
+  listFailedDeliveries,
+  replayFailedDeliveries,
+} from '../repos/partnerWebhooks.js';
 import { retryDueDeliveries } from '../hooks/partnerWebhooks.js';
 
 const DateOnly = z
@@ -207,7 +212,8 @@ export function registerOperationsRoutes(
    * Partner webhook delivery backlog (migration 0103). Ops need one number to
    * answer "is anything not getting through?" without reading fourteen
    * partners' delivery logs; `failed` is the one that matters, because a failed
-   * row is terminal and nothing else will ever come back for it.
+   * row is terminal and nothing but a replay will come back for it — see the
+   * dead letter queue below, which is what turns that number into a next step.
    */
   app.get('/api/v1/admin/webhooks/deliveries/stats', { preHandler: app.authenticate }, async (req) => {
     const principal = requirePrincipal(req);
@@ -220,6 +226,80 @@ export function registerOperationsRoutes(
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden();
     return retryDueDeliveries({ pool: deps.pool, log: req.log });
+  });
+
+  /**
+   * The dead letter queue: which deliveries gave up, for whom, and why.
+   *
+   * The backlog stats give a count; this is the triage view behind it. Ops-only
+   * because it names partners' callback URLs, and payload-free because a
+   * payload carries the company name and state of the valuation it describes.
+   *
+   * `replayable` is computed rather than left to the caller to infer — a row
+   * that is too old, retired by 0103, or on a disabled endpoint will be refused
+   * by the replay below, and showing that in the listing is how an operator
+   * knows what a replay will actually do before running it.
+   */
+  app.get('/api/v1/admin/webhooks/deliveries/failed', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    const query = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        partner_id: z.string().min(1).max(64).optional(),
+      })
+      .safeParse(req.query ?? {});
+    if (!query.success) throw problems.badRequest('invalid query');
+    const deliveries = await listFailedDeliveries(deps.pool, {
+      limit: query.data.limit,
+      partnerId: query.data.partner_id,
+    });
+    return { deliveries, replay_max_age_hours: DELIVERY_REPLAY_MAX_AGE_HOURS };
+  });
+
+  /**
+   * Replays failed deliveries in bulk — the remedy for an outage on our side.
+   *
+   * The partner-facing replay takes one id and is scoped to one partner, which
+   * is right when a partner's own receiver was down. It is no help at all when
+   * a bad deploy 500ed every POST for ten minutes: the affected deliveries
+   * belong to many partners, none of whom did anything wrong or has any reason
+   * to know there is something to replay.
+   *
+   * `ids` scopes it to a reviewed set; omitting it replays everything eligible,
+   * which is what an operator wants once they have confirmed the cause was
+   * ours. The eligibility rules are the repo's and are not overridable from
+   * here — they exist to keep a stale payload from reaching a partner, which is
+   * not a risk the operator running the replay is the one carrying.
+   */
+  app.post('/api/v1/admin/webhooks/deliveries/replay', { preHandler: app.authenticate }, async (req) => {
+    const principal = requirePrincipal(req);
+    if (!isOps(principal)) throw problems.forbidden();
+    const body = z
+      .object({
+        ids: z.array(z.string().min(1).max(64)).max(1000).optional(),
+        partner_id: z.string().min(1).max(64).optional(),
+      })
+      .safeParse(req.body ?? {});
+    if (!body.success) throw problems.badRequest('invalid body');
+    const replayed = await replayFailedDeliveries(deps.pool, {
+      ids: body.data.ids,
+      partnerId: body.data.partner_id,
+    });
+    req.log.info(
+      {
+        actor: principal.id,
+        requested: body.data.ids?.length ?? null,
+        replayed: replayed.length,
+        partnerId: body.data.partner_id ?? null,
+      },
+      'partner webhook deliveries replayed from the dead letter queue',
+    );
+    // The sweep picks these up on its next pass; `next_attempt_at` is now, so
+    // that is the interval rather than a backoff. Returning the ids lets the
+    // operator confirm the set matched what the listing showed — a count
+    // alone cannot distinguish "12 replayed" from "12 of the 40 I asked for".
+    return { replayed: replayed.length, ids: replayed.map((d) => d.id) };
   });
 
   /**
