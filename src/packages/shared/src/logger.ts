@@ -4,6 +4,7 @@
 // is a build error even though it resolves at runtime.
 import { pino, stdSerializers, type Logger } from 'pino';
 import { scrubSensitive, scrubUrl } from './problem.js';
+import { currentRequestId } from './requestContext.js';
 
 /**
  * Field names whose value must never reach a log line (NFR: structured
@@ -121,9 +122,7 @@ const REDACT_DEPTH = 4;
  * been burned by.
  */
 export const REDACT_PATHS: string[] = SENSITIVE_FIELDS.flatMap((field) =>
-  Array.from({ length: REDACT_DEPTH }, (_, depth) =>
-    depth === 0 ? field : `${'*.'.repeat(depth)}${field}`,
-  ),
+  Array.from({ length: REDACT_DEPTH }, (_, depth) => (depth === 0 ? field : `${'*.'.repeat(depth)}${field}`)),
 );
 
 /** The subset of a raw request Fastify's own `req` serializer reads. */
@@ -223,11 +222,49 @@ export interface LoggerOptions {
   redact?: string[];
 }
 
+/**
+ * The correlation id, on every line rather than on the lines that remembered.
+ *
+ * Fastify binds `reqId` onto `req.log`, so a handler that logs through the
+ * request's own logger is correlated and always was. Everything else in a
+ * request is not: `app.log` inside a route, a module-level logger, a hook, and
+ * — the case that matters most — work that outlives the response, like the
+ * pipeline steps and the diagnostic writes this service deliberately does not
+ * await. Those lines are exactly the ones an incident is reconstructed from,
+ * and they were the ones with nothing to join on.
+ *
+ * The id was already available to all of them. `requestContext.ts` binds it to
+ * an AsyncLocalStorage at `onRequest` so the internal client can forward it
+ * downstream, and an AsyncLocalStorage follows the async work rather than the
+ * logger object — so a mixin reading it correlates every line written anywhere
+ * under the request, including after it ended.
+ *
+ * ## Why `requestId` and not `reqId`
+ *
+ * Pino merges a mixin's keys alongside a child logger's bindings rather than
+ * letting one win, so a mixin emitting `reqId` puts **two** `reqId` fields in
+ * the same JSON object on every `req.log` line — verified, not assumed. A
+ * duplicate key is resolved differently by every parser downstream, and the one
+ * that appears second would be the mixin's, so the aggregator's answer for
+ * "which request" would depend on its JSON library. A distinct key cannot
+ * collide. Inside a request both are present and both hold `req.id`, because
+ * the hook binds the mixin's value from it.
+ *
+ * Outside a request — boot, a cron tick, a background sweep — there is no id
+ * and the field is omitted rather than emitted empty, so "no requestId" keeps
+ * meaning "not caused by a request" instead of "caused by one we lost".
+ */
+function requestIdMixin(): Record<string, string> {
+  const requestId = currentRequestId();
+  return requestId ? { requestId } : {};
+}
+
 export function createLogger(opts: LoggerOptions): Logger {
   return pino({
     name: opts.service,
     level: opts.level ?? process.env.LOG_LEVEL ?? 'info',
     redact: { paths: [...REDACT_PATHS, ...(opts.redact ?? [])], censor: '[REDACTED]' },
+    mixin: requestIdMixin,
     // Fastify merges its own defaults *under* the instance's
     // (`Object.assign({}, opts.serializers, instance[serializersSym])`), so
     // these two win and `res` keeps serializing as it always did.
