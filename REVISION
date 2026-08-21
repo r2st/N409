@@ -2101,3 +2101,133 @@
 #            The round's actual finding came from asking a different question —
 #            not "is this slow" but "what does this document say about itself
 #            once it is somewhere we cannot reach it".
+# commit:    75f0929
+# subject:   the version column half its own row was reading
+# previous:  c15a875 (a gap list is a hypothesis, and three of seven were closed).
+# includes:  5 commits — R93, on the edits that vanish. The round's finding was
+#            not a missing feature but a column and a set of routes that nobody
+#            had put side by side.
+#
+#            8463927 — `valuation_params` has carried a `version` since migration
+#              0158, and every writer of the row has been moving it ever since.
+#              One of its two editors sent it back as `If-Match`. The other did
+#              not, and the other is the larger by a wide margin: the Params
+#              panel, forty-odd fields covering both discounts, all four weights,
+#              every study selection and the market and asset blocks.
+#
+#              Nothing failed, because a missing guard produces no symptom of its
+#              own. What makes the failure silent is the shape of the request:
+#              the panel posts the whole methodology from a form it filled in
+#              when the tab was opened, so a save does not say "set the DLOM", it
+#              says "make this row look like it looked to me". The loser of the
+#              race therefore does not lose — it wins, and reverts the other
+#              editor, with a 200 and an audit event listing only the fields it
+#              sent, which is all of them.
+#
+#              `company_profiles` (0166) is the same shape with a worse cast.
+#              Sixteen columns posted on every save, and three writers: ops, the
+#              client from their own portal, and the `company_profile` agent,
+#              whose apply writes the business description straight into the row.
+#              The agent is what turns the race from a possibility into a
+#              routine — ask for a description, then save the form that was open
+#              before it ran, and the description is gone.
+#
+#              The frontend half needed something the earlier rounds did not.
+#              That one row holds three separately-edited documents and their
+#              panels sit on the same tab, so a panel keeping a private copy of
+#              the version would refuse the analyst's own build-up save, their
+#              own scenario save, their own agent run — and the recovery is a
+#              reload that discards forty fields of unsaved work. A guard that
+#              fires on the writes it exists to allow is worse than no guard,
+#              because people learn to distrust it. So the version lives with the
+#              row (lib/rowVersion.ts): every panel reports what it observes and
+#              reads back what any of them last saw. A genuine third-party edit
+#              is still invisible to all of them, and still conflicts.
+#
+#            c044fdf — the census, written because of *how* the bug survived. The
+#              roster of locks is now read from `information_schema` rather than
+#              remembered: every column named `version` needs an entry saying
+#              which of the two things it is, a lost-update lock or a sequence
+#              number on rows that are never updated. Adding one and stopping
+#              there fails a test.
+#
+#              The half that keeps it from being a list checked against itself is
+#              behavioural: every route claimed as guarded is asked, over HTTP,
+#              with a malformed `If-Match`, and has to refuse it *by name*. A
+#              route that has stopped parsing the header answers about the body
+#              instead. Verified by deleting the guard from `PATCH /params` and
+#              watching exactly that one case go red. The mirror assertion — a
+#              well-formed If-Match must not draw the malformed-header message —
+#              covers the opposite defect, a guard that refuses everything.
+#
+#            d20947d — the counter's two ways to lie, one fixed and one pinned.
+#
+#              It lies by not moving: the intake conversion seeds methodology
+#              columns into `valuation_params` with its own UPDATE and left the
+#              version alone. Safe today, but only by accident of *when* it runs
+#              — four statements after the valuation is created, so nobody can be
+#              holding the row. That is a fact about the call site, not the
+#              statement, and call sites move.
+#
+#              It lies by moving: opening a valuation writes a read marker and a
+#              comment stamps `last_comment_at`, both on `valuations`, neither a
+#              field the form posts. If either started bumping the version, every
+#              open editor would conflict with a colleague glancing at the page.
+#              Nothing in `markValuationRead` hints that a form depends on it
+#              staying quiet, so a test says so.
+#
+#            ba8005a, 54a1729 — what those two trails could actually say. Both
+#              recorded the fields the caller *sent*, and both callers send whole
+#              forms: correcting a postcode wrote `company_profile_updated`
+#              naming sixteen columns with no values attached, and eleven Next
+#              clicks through the intake wizard wrote eleven identical
+#              `intake_saved` rows. A hundred saves, a hundred identical events.
+#
+#              That is the wrong answer to the question each row raises. The
+#              profile is written by three parties one of which is a model, and
+#              "did a person write this sentence" is exactly what an auditor asks
+#              about an AI-drafted field. The intake answers become statements of
+#              fact in the deliverable, attributed to the company, so "was
+#              10,000,000 ever something else, and who moved it" is a question
+#              about a client-visible event. `fieldHistory` has always been
+#              written to answer both, from a payload neither writer produced.
+#
+#              Diffed under the row lock, so the before-values describe a
+#              transition that happened rather than one the caller assumed. Only
+#              the columns that moved are written, and a save that moves nothing
+#              writes nothing at all — no row, no event, no version. The last of
+#              those matters twice: a no-op save that burned a version would
+#              conflict a colleague's open form over a click that changed
+#              nothing. `fields` stays in the payload beside `changes`, because
+#              older events on a live engagement carry only the former and one
+#              row's history should not change shape mid-way.
+#
+#            75f0929 — two hardenings found reviewing the round's own diff. A
+#              row's version only goes up, so a lower number arriving at the
+#              shared store is a reply that was already stale: panels reload
+#              after they save, and a read issued before somebody else's write
+#              can be answered after it. And the unsubscribe now finds its own
+#              entry rather than closing over the Set it was handed.
+#
+# method:    the round opened by surveying the seven focus areas it was given and
+#            found every one of them already built — email, audit trail, rate
+#            limiting, XSS, OpenAPI, error rates. The finding came from the
+#            opposite question: not "what is missing" but "what is half here".
+#            `grep -c timingSafeEqual` says a codebase takes something seriously;
+#            it does not say every caller of it does. A version column that only
+#            some writers respect is worse than no version column, because the
+#            editors that do respect it report safety they cannot provide.
+#
+# note:      one test in this round was deleted rather than kept. It claimed to
+#            exercise a cleanup path that React never reaches, and passed for a
+#            reason unrelated to its name. A check that proves nothing reads
+#            exactly like a check that proves something, which is the more
+#            expensive of the two mistakes.
+#
+# note:      ClamAV stays unset, and not for want of trying. The host has 3.8GB
+#            with 2.5GB in use and 1.1GB of swap already touched; clamd holds its
+#            signature database resident at roughly 1.2GB, and `clamscan` reloads
+#            it per file. Installing it on this box trades a scanner nobody has
+#            for an OOM everybody would. The capability is implemented, disclosed
+#            through the optional-capabilities roster, and waiting on a larger
+#            host rather than on code.
