@@ -555,3 +555,77 @@ describe('ValuationDetailPage', () => {
     });
   });
 });
+
+/**
+ * A retired engagement, on the one page that can still show you one.
+ *
+ * `archived_at` is the platform's soft delete. R55/R56 took retired engagements
+ * out of every list and R89 stopped the writes — so by the time this matters,
+ * the *only* way to be looking at one is a bookmark or an old link, and this
+ * page is the whole of what the reader gets to see.
+ *
+ * It was showing them a live engagement: the edit form, Clone, Roll forward and
+ * Export Evidence Bundle, every one of which now answers 409. The failure mode
+ * is a reader who saves, is told "This engagement has been retired", and has no
+ * way to find out what that means or what else is closed — one action at a
+ * time, in a toast.
+ */
+describe('ValuationDetailPage — a retired engagement', () => {
+  beforeEach(() => {
+    mockUser = opsUser;
+    VALUATION = valuation({ archived_at: '2026-08-01T00:00:00Z' });
+    stubFetches();
+  });
+
+  it('says so, before the reader tries anything', async () => {
+    renderPage();
+    const banner = await screen.findByRole('status');
+    expect(banner).toHaveTextContent(/retired/i);
+    // The two facts a reader cannot work out for themselves: it is readable,
+    // and this is not something they can undo here.
+    expect(banner).toHaveTextContent(/still be read/i);
+    expect(banner).toHaveTextContent(/not reversible/i);
+  });
+
+  it('offers no edit form', async () => {
+    renderPage();
+    await screen.findByRole('status');
+    expect(screen.queryByRole('button', { name: /^Save/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Company name/i)).not.toBeInTheDocument();
+  });
+
+  // Removed rather than disabled: a disabled control invites the reader to
+  // work out what would re-enable it, and nothing will.
+  it('offers none of the actions that would be refused', async () => {
+    renderPage();
+    await screen.findByRole('status');
+    for (const name of [/Clone/i, /Roll forward/i, /Export Evidence Bundle/i]) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
+  });
+
+  // Reads stay open, and that is the deliberate half of the rule — the same
+  // one the auditor portal and board flow draw. A banner that hid the facts
+  // would make the page useless for the only thing it is still for.
+  it('still shows the engagement itself', async () => {
+    renderPage();
+    await screen.findByRole('status');
+    // The facts panel, which is this page's actual content — the company name
+    // is rendered by the workspace header above it and is mocked out here.
+    expect(screen.getByText(/Engagement details/i)).toBeInTheDocument();
+    expect(screen.getByText('USD')).toBeInTheDocument();
+    expect(screen.getByText(/Delivery SLA/i)).toBeInTheDocument();
+  });
+
+  // The vacuity guard for all four above: with the same stubs and a live
+  // engagement, every one of those controls is present. Without this, deleting
+  // the buttons outright would pass the whole block.
+  it('is not simply a page that never shows those controls', async () => {
+    VALUATION = valuation();
+    renderPage();
+    expect(await screen.findByRole('button', { name: /Clone/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Roll forward/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Export Evidence Bundle/i })).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+});

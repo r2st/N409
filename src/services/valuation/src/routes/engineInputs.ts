@@ -9,6 +9,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 import type { EventActor } from '../events/record.js';
 import { boundedNonNegative, boundedPositive, boundedSigned } from '../domain/finite.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Analyst-entered financial model (`valuation_params.engine_inputs`).
@@ -423,7 +424,7 @@ export function registerEngineInputsRoutes(app: FastifyInstance, deps: { pool: p
     const principal = requirePrincipal(req);
     if (!isOps(principal)) throw problems.forbidden('Financial model inputs are operations-only');
     const { id } = req.params as { id: string };
-    await loadValuation(principal, id);
+    refuseIfRetired(await loadValuation(principal, id), 'accepting model inputs');
     const current = await findParams(deps.pool, id);
     if (!current) throw problems.notFound();
 

@@ -43,6 +43,7 @@ import { pageParam } from '../domain/pagination.js';
 import { int4Positive } from '../domain/int4.js';
 import { visibleCommentKinds } from '../auth/operations.js';
 import { loadValuationCounters } from '../repos/valuationCounters.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const CreateBody = z.object({
   kind: z.enum(VALUATION_KINDS),
@@ -322,6 +323,7 @@ export function registerValuationRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadAuthorized(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting edits');
 
     // Opt-in concurrency check: a client that echoes the ETag it read gets its
     // write refused if somebody else has saved since (migration 0137). Parsed

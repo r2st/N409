@@ -22,6 +22,7 @@ import { intakeCrossRulesFor, intakeFieldKeysFor, intakeSectionsFor } from '../d
 import { VALUATION_KINDS, type ValuationKind } from '../domain/valuation.js';
 import { REQUIRED_DOCUMENT_KINDS } from '../domain/progress.js';
 import { findQuestionnaire, saveQuestionnaire, submitQuestionnaire } from '../repos/intake.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Client self-service portal (feature 7): a guided intake questionnaire, a
@@ -106,6 +107,7 @@ export function registerIntakeRoutes(
     if (!canEditIntake(principal, valuation)) {
       throw problems.forbidden('Only the client or operations can edit the questionnaire');
     }
+    refuseIfRetired(valuation, 'accepting questionnaire answers');
     const parsed = SaveBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid answers', { errors: parsed.error.issues });
 
@@ -165,6 +167,10 @@ export function registerIntakeRoutes(
     if (!isOps(principal)) throw problems.forbidden('Reminders are operations-only');
     const { id } = req.params as { id: string };
     const valuation = await loadReadable(deps.pool, id, principal);
+    // Before `missingDocuments`, so a retired engagement is refused rather than
+    // answered with "all required documents have already been provided" — the
+    // 409 below is about the file being complete, which is a different fact.
+    refuseIfRetired(valuation, 'sending reminders');
     const missing = await missingDocuments(deps.pool, id);
     if (missing.length === 0) {
       throw problems.conflict('All required documents have already been provided');

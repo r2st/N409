@@ -120,6 +120,17 @@ export interface Valuation {
   version?: number;
   /** Computed per-viewer on the list (gap 4): conversation moved since last opened. */
   unread?: boolean;
+  /**
+   * The platform's soft delete, stamped by the retention sweep or when a firm
+   * withdraws the work. Never cleared — there is no unarchive.
+   *
+   * A retired engagement is filtered out of every list, so the only way to be
+   * looking at one is a bookmark or a direct link. It stays readable on
+   * purpose; every write against it is refused with a 409. Optional because the
+   * list projections do not carry it — treat `undefined` as "not retired", which
+   * is safe: the pages that omit it are lists, which never contain one.
+   */
+  archived_at?: string | null;
 }
 
 export interface ValuationEvent {

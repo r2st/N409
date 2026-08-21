@@ -58,6 +58,7 @@ import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { contentDisposition } from './documents.js';
 import type { Principal } from '../auth/rbac.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const SectionSchema = z
   .object({
@@ -528,6 +529,7 @@ export function registerReportRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting report edits');
 
     // Parsed before the body so a malformed header fails the same way whatever
     // the editor is trying to save.
@@ -592,6 +594,7 @@ export function registerReportRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting report edits');
     const expectedVersion = expectedReportVersion(req.headers['if-match']);
 
     const parsed = RevertBody.safeParse(req.body);
@@ -639,6 +642,9 @@ export function registerReportRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
+    // Before `loadOrCreateReport`, which would otherwise *create* a report row
+    // for a withdrawn engagement on the way to refusing the request.
+    refuseIfRetired(valuation, 'accepting report edits');
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
 
     const managed = await findActiveTemplateForKind(deps.pool, valuation.kind);
@@ -685,6 +691,7 @@ export function registerReportRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
+    refuseIfRetired(valuation, 'accepting report edits');
     if (!deps.ai) throw problems.unprocessable('The narrative agent is not configured');
 
     const parsed = NarrativeBody.safeParse(req.body ?? {});
@@ -790,6 +797,8 @@ export function registerReportRoutes(
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadForEdit(deps.pool, principal, id);
+    // Same as the draft route: refuse before `loadOrCreateReport` writes a row.
+    refuseIfRetired(valuation, 'available for rendering');
     const report = await loadOrCreateReport(deps.pool, principal, valuation);
     const version = await getVersion(deps.pool, report.id, report.current_version);
     if (!version) throw problems.notFound('No report content to render');

@@ -25,6 +25,7 @@ import { findReportByValuation, getVersion, listVersions } from '../repos/report
 import { findUserById } from '../repos/users.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { CommentKind } from '../domain/operations.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Audit-defense evidence bundle: one-click ZIP of everything an IRS/auditor
@@ -50,6 +51,10 @@ export function registerEvidenceRoutes(app: FastifyInstance, deps: { pool: pg.Po
     if (!isUlid(id)) throw problems.notFound();
     const valuation = await findValuationById(deps.pool, id);
     if (!valuation) throw problems.notFound();
+    // A bundle is a new artifact assembled from the file, not a view of it, so
+    // it falls on the write side of the read/write line the rest of these
+    // guards draw.
+    refuseIfRetired(valuation, 'producing evidence bundles');
 
     const [events, calculations, documents, commentPage, signatures, aiJobs, report, generator] =
       await Promise.all([

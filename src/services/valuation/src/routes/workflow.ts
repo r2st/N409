@@ -16,6 +16,7 @@ import type { EmailTransport } from '../hooks/stateChange.js';
 import { applyValuationState } from '../domain/applyState.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Workflow engine routes (M4, P1 #22) + bulk actions (P1 #23). All mutations
@@ -165,6 +166,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowDeps)
     requireOps(principal);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(deps.pool, id);
+    refuseIfRetired(valuation, 'accepting workflow changes');
 
     const next = nextState(valuation.state, { paidStatus: valuation.paid_status });
     if (!next) {

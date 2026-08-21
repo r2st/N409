@@ -28,6 +28,7 @@ import {
 } from '../repos/engagements.js';
 import { recordEvent } from '../events/record.js';
 import { withTransaction } from '../db/pool.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 /**
  * Engagement lifecycle management (feature 8). Ops-only: track the stage an
@@ -127,7 +128,7 @@ export function registerEngagementRoutes(
     const principal = requirePrincipal(req);
     requireOps(principal);
     const { id } = req.params as { id: string };
-    await loadValuation(deps.pool, id);
+    refuseIfRetired(await loadValuation(deps.pool, id), 'accepting stage advances');
     const parsed = AdvanceBody.safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid stage', { errors: parsed.error.issues });
 

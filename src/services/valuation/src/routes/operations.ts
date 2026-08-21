@@ -29,6 +29,7 @@ import {
   replayFailedDeliveries,
 } from '../repos/partnerWebhooks.js';
 import { retryDueDeliveries } from '../hooks/partnerWebhooks.js';
+import { refuseIfRetired } from '../domain/retiredEngagement.js';
 
 const DateOnly = z
   .string()
@@ -198,6 +199,13 @@ export function registerOperationsRoutes(
     if (!source || !canReadValuation(principal, { userId: source.user_id, partnerId: source.partner_id }))
       throw problems.notFound();
     if (!canCreateValuation(principal)) throw problems.forbidden();
+    // Judgement, and the least obvious of these: cloning does not modify the
+    // retired file, it reads one. It is refused anyway because of what the read
+    // is *for* — a clone starts new billable work seeded from an engagement the
+    // firm has withdrawn, and inherits the data that withdrawal was meant to
+    // retire. Rolling forward from last year's live 409A is the ordinary path
+    // and is untouched.
+    refuseIfRetired(source, 'available to clone');
 
     const parsed = z.object({ roll_forward: z.boolean().default(false) }).safeParse(req.body ?? {});
     if (!parsed.success) throw problems.unprocessable('Invalid clone request');

@@ -89,7 +89,21 @@ export function ValuationDetailPage() {
   }, [reload, loadEvents]);
 
   const editable = editableFields(user, valuation);
-  const canEdit = editable.size > 0;
+  /**
+   * A retired engagement is readable and not writable.
+   *
+   * The API refuses every write against one with a 409, and did so for the
+   * board, auditor and payment routes before it did for the rest. This page
+   * went on offering the buttons regardless, so the whole surface behaved as
+   * though the file were live right up to the moment the server said otherwise
+   * — and said it in a toast, one action at a time.
+   *
+   * Nothing links here for a retired engagement (they are out of every list),
+   * so anyone seeing this arrived by bookmark or an old link and has no other
+   * way to learn why their save failed.
+   */
+  const retired = Boolean(valuation.archived_at);
+  const canEdit = editable.size > 0 && !retired;
   const ops = isOps(user);
 
   /*
@@ -179,8 +193,26 @@ export function ValuationDetailPage() {
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
       <div className="space-y-8">
+        {retired && (
+          <section
+            // `role="status"` rather than `alert`: this is the standing
+            // condition of the page a reader has just opened, not something
+            // that happened to them, and an assertive live region interrupts
+            // whatever a screen reader was already saying.
+            role="status"
+            className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+          >
+            <p className="font-semibold">This engagement has been retired.</p>
+            <p className="mt-1">
+              It is kept here for reference and can still be read, but it no longer accepts changes — editing,
+              workflow moves, report generation and reminders are all closed. Retiring is not reversible from
+              this page.
+            </p>
+          </section>
+        )}
+
         {/* P0: Stripe checkout for unpaid engagements */}
-        <PaymentSection valuation={valuation} />
+        {!retired && <PaymentSection valuation={valuation} />}
 
         {/* P0: past checkout attempts with receipt links (hides when empty) */}
         <PaymentHistory valuation={valuation} />
@@ -223,29 +255,35 @@ export function ValuationDetailPage() {
         </section>
 
         {/* M3: clone / roll-forward · evidence bundle (audit defense, ops-only) */}
-        <div className="flex flex-wrap justify-end gap-2">
-          {ops && (
+        {/* Every one of these is refused for a retired engagement, so the row
+            is not rendered at all rather than rendered disabled: a disabled
+            button invites a reader to work out what would re-enable it, and
+            nothing will. */}
+        {!retired && (
+          <div className="flex flex-wrap justify-end gap-2">
+            {ops && (
+              <Button
+                variant="secondary"
+                disabled={exporting}
+                onClick={() => void exportEvidence()}
+                title="Download the full audit trail — events, calculations, documents, signatures, AI provenance — as a ZIP"
+              >
+                {exporting ? 'Exporting…' : 'Export Evidence Bundle'}
+              </Button>
+            )}
+            <Button variant="secondary" disabled={cloning} onClick={() => clone(false)}>
+              {cloning ? 'Cloning…' : 'Clone'}
+            </Button>
             <Button
               variant="secondary"
-              disabled={exporting}
-              onClick={() => void exportEvidence()}
-              title="Download the full audit trail — events, calculations, documents, signatures, AI provenance — as a ZIP"
+              disabled={cloning}
+              onClick={() => clone(true)}
+              title="Duplicate this engagement for the next valuation date"
             >
-              {exporting ? 'Exporting…' : 'Export Evidence Bundle'}
+              Roll forward →
             </Button>
-          )}
-          <Button variant="secondary" disabled={cloning} onClick={() => clone(false)}>
-            {cloning ? 'Cloning…' : 'Clone'}
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={cloning}
-            onClick={() => clone(true)}
-            title="Duplicate this engagement for the next valuation date"
-          >
-            Roll forward →
-          </Button>
-        </div>
+          </div>
+        )}
 
         {/* Edit — only fields this role may patch */}
         {canEdit && (
