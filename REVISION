@@ -1667,3 +1667,125 @@
 #            were already fixed, and an hour went into rediscovering that
 #            `dueCandidates` had been paged two rounds ago. Worth knowing
 #            before mining this file for work.
+# commit:    de9dc01
+# subject:   the action every guard was written for, which did not exist
+# previous:  1ca3df9 (the writes a withdrawn engagement accepted).
+# includes:  5 commits — R90, a production-readiness round that started with the
+#            three things R89 wrote down and ended by finding that the feature
+#            they all guard had no way to be triggered.
+#
+#            e0ef0c4 — the partner API's three writes. R89 swept all 86
+#              session-authenticated writes under a valuation id and left this
+#              surface out with a reason that was true and incomplete: it is
+#              reached with an API key rather than a session and has its own
+#              state machine, so it could not ride the same sweep. What it did
+#              not have was a sweep of its own. All three leaked. `POST
+#              /valuations/{id}/submit` walked a withdrawn file from `pending`
+#              to `user_finished` — three transitions, each with its own audit
+#              event and hook, which is how a retired engagement reappears in
+#              the review queue and in the SLA figures the firm reports on;
+#              `/documents` stored a client's file against work nobody will look
+#              at; `PUT /valuations/{id}` renamed the company on it.
+#              The guards are per-write, not in `loadScoped`, which is shared
+#              with the three GETs — reads stay open, the boundary R89 drew. On
+#              `submit` the guard is also ahead of the *idempotency key claim*,
+#              which the upload route had already established as the rule here:
+#              a throw inside `withIdempotency`'s `run()` leaves the key in
+#              flight until the takeover window, so a client retrying a refused
+#              submit under the same key would be told its request was still
+#              running rather than why it was refused. Asserted, not assumed.
+#              `retired_at` joined the public valuation projection in the same
+#              commit. A retired engagement leaves `GET /valuations` but stays
+#              fetchable by id, and the response said nothing about it: an
+#              integration polling `state` saw a value that would never move
+#              again, with no reason, and its next write got a 409 out of
+#              nowhere.
+#
+#            0d504a6 — the unarchive R89 said belonged beside `retireValuations`.
+#              Nothing ever set `archived_at` back to NULL, and R89 is what made
+#              that matter rather than merely be untidy: with all 86 writes
+#              refusing, an engagement archived by a mistyped id or by an admin
+#              who set the policy to 90 days meaning 900 was frozen for good.
+#              `valuationPurge.ts` had claimed the opposite in a comment since it
+#              was written — "It is also reversible, which a delete is not" —
+#              true of the schema, false of the codebase.
+#              The part worth the effort is not that the flag clears. It is that
+#              the route can *refuse*: a restore tonight's sweep would simply
+#              take back is worse than no restore, because the admin sees a 200
+#              and finds the engagement gone by morning with nothing to explain
+#              it. So it asks the sweep's own two questions first — past the
+#              cutoff, frozen by a hold — and names the two things that would
+#              actually hold it. The test drives the real sweep afterwards
+#              rather than re-reading the condition, which is what would catch
+#              `isDueForArchival` and `findArchivableValuations` disagreeing.
+#              The cache drop is the failure this would have had in production
+#              and nowhere else: `findValuationById` is read-through with a TTL,
+#              so a restore that does not invalidate leaves `archived_at`
+#              non-null in memory and every write keeps answering 409 after the
+#              route said it worked. Five of the eleven tests fail without it.
+#
+#            841f1b1 — R89's banner was on the Overview tab and the workspace
+#              has twenty-five. The other twenty-four said nothing at all: a
+#              client could open Intake, fill in a questionnaire and learn from
+#              a 409 on save that the firm had withdrawn the work. The banner
+#              moved to the shell and `retired` onto the workspace context.
+#              Three surfaces close with it, chosen by what the wasted work
+#              costs. The document uploader is the one that matters — its
+#              route's 409 arrives *after* the file has crossed the wire, so an
+#              open uploader costs a client a 25 MB transfer to learn what the
+#              banner above it already says. The rest still render their
+#              controls and still 409 with the reason, which is a deliberate
+#              stop: with the condition stated on every tab, a refused save says
+#              what the banner says, and twenty-five tab edits is a worse trade
+#              than the one refusal it saves.
+#
+#            4b7db8f — and then the odd one. Four rounds of comments say
+#              `archived_at` is stamped "by the retention sweep when a policy
+#              period runs out, and by `retireValuations` when a firm withdraws
+#              a piece of work". The first half was true. The second described a
+#              function whose only caller was the sample seeder. So the 86
+#              guarded writes, the partner API's three, the auditor portal's
+#              refusal to re-share and the board flow's refusal to re-mint were
+#              all reachable only by waiting out a retention policy, and an
+#              admin who needed to withdraw a live engagement today could not.
+#              The whole guard family had been built for an action nobody could
+#              take. `POST .../valuations/:id/retire` is that action, logged as
+#              `archived` rather than under a name of its own so the restore
+#              control offers itself against a manual withdrawal without knowing
+#              there is such a thing.
+#
+#            de9dc01 — `valuation.retired`, the only terminal event on the
+#              partner API. An integration learns about an engagement three
+#              ways: the list, the polled `state`, and the webhooks it
+#              registered so it would not have to poll. A retirement was
+#              invisible to all three — it leaves the list, emits no further
+#              `state_changed` because there are no further states, and goes
+#              quiet, which from outside is indistinguishable from work still in
+#              progress.
+#
+# method:    the R89 route-table sweep earned its keep three times, and not the
+#            way it was designed to. It is written to catch a *write* that
+#            forgot its guard. What it actually caught this round was three
+#            routes that must not be guarded: `restore` (a guard would make it
+#            unreachable), and `retire` — which refuses a retired engagement on
+#            its own and would have passed the guarded half, while the *live*
+#            half would have retired the fixture out from under every route the
+#            loop had not yet reached. Both are now written down as decisions.
+#            `retentionSweepBatch.test.ts` did the same for performance: it pins
+#            the sweep's query count as a function of the pass rather than of
+#            the batch size, so the retirement webhook moved it from four to
+#            five under a comment instead of from four to four-plus-N in
+#            silence. The lesson is not "write more sweeps" but that a guard
+#            phrased as "account for every X" catches the additions its author
+#            never imagined, while one phrased as "these known X are fine" only
+#            ever catches regressions.
+#
+# note:      two comments that were true when written became false in the middle
+#            of this round and were fixed rather than left: the domain guard's
+#            "NOTE THAT THESE REFUSALS ARE PERMANENT", and the detail page's
+#            banner telling a firm that retiring is not reversible. The second
+#            is the one that would have mattered — telling a client their work
+#            is gone when it is one admin action from being back is a worse
+#            failure than saying nothing. Worth watching for generally: a round
+#            that closes a gap tends to falsify the prose that documented it,
+#            and prose does not fail a test.
