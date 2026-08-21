@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, ifMatch } from '../../lib/api';
 import { numberRange, optional, useFormValidation, type Rules } from '../../lib/useFormValidation';
 import { weightsProblem, type ValuationParams } from '../../lib/pipeline';
+import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
 import { Button, ErrorNote, Field, InfoTooltip, Select, Spinner, TextInput } from '../ui';
 import { HelpIcon } from '../HelpIcon';
 import {
@@ -321,6 +322,14 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
   const [preIpoSelection, setPreIpoSelection] = useState<StudySelection>(emptySelection);
   const [dlocSelection, setDlocSelection] = useState<StudySelection>(emptySelection);
 
+  /**
+   * The row version this form was filled in from, shared with the build-up
+   * panel beside it and with the scenario save below — all three write
+   * `valuation_params`, and all three move the same counter. See
+   * lib/rowVersion.ts for why it does not live in this component.
+   */
+  const [version, setVersion] = useRowVersion(paramsVersionKey(valuationId));
+
   const loadSelections = (p: ValuationParams) => {
     setRsSelection(selectionFromParams(p.dlom_studies, p.dlom_study_table, 'discount'));
     setPreIpoSelection(selectionFromParams(p.dlom_pre_ipo_studies, p.dlom_pre_ipo_table, 'discount'));
@@ -331,6 +340,7 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
     try {
       const { params: p } = await api<{ params: ValuationParams }>(`/valuations/${valuationId}/params`);
       setParams(p);
+      setVersion(p.version);
       setForm(fromParams(p));
       setDlomLegs(legsFromParams(p));
       loadSelections(p);
@@ -610,15 +620,48 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
       };
       const { params: updated } = await api<{ params: ValuationParams }>(
         `/valuations/${valuationId}/params`,
-        { method: 'PATCH', body },
+        {
+          method: 'PATCH',
+          body,
+          /*
+           * The version this panel was loaded from (migration 0158).
+           *
+           * `body` above is the whole methodology — weights, both discounts,
+           * every study selection, the market and asset blocks — rebuilt from a
+           * form that was filled in from the row as it stood when this tab was
+           * opened. So a save is not "set the fields I touched"; it is "make
+           * the row look like it looked to me". Without the check, an analyst
+           * saving a DLOM reverts the weights a second analyst changed ten
+           * minutes ago, and the accounting sync's financial fields with them —
+           * silently, with a 200, and with an audit event that records only the
+           * fields this writer sent, which is all of them.
+           *
+           * The engine-inputs editor beside this one has guarded the same row
+           * since 0158. This is the larger of the two forms that write it.
+           */
+          headers: ifMatch(version),
+        },
       );
       setParams(updated);
+      setVersion(updated.version);
       setForm(fromParams(updated));
       setDlomLegs(legsFromParams(updated));
       loadSelections(updated);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save params.');
+      // A conflict is an out-of-date panel, not a failed save: reload so the
+      // analyst reapplies onto what actually landed. Reloading is also what
+      // clears the stale fields this form would otherwise post again on the
+      // next attempt — retrying without it would just lose the race twice.
+      if (err instanceof ApiError && err.status === 409) {
+        await load();
+        setError(
+          err.problem.detail ??
+            'Someone else changed these parameters while you were editing. They have been reloaded — please reapply your changes.',
+        );
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not save params.');
+      }
     } finally {
       setBusy(false);
     }
@@ -668,7 +711,15 @@ export function ParamsPanel({ valuationId, readOnly }: { valuationId: string; re
           pwerm_weight: hybridWeights.pwerm.trim() === '' ? null : Number(hybridWeights.pwerm),
         };
       }
-      await api(`/valuations/${valuationId}/engine-inputs`, { method: 'PATCH', body });
+      // Same row, same counter: this write moves the version the methodology
+      // save above sends as `If-Match`, so it has to report what it produced.
+      // Without that the analyst who saves their scenarios and then saves the
+      // form is refused for their own click, two inches up the page.
+      const res = await api<{ params?: { version?: number } }>(`/valuations/${valuationId}/engine-inputs`, {
+        method: 'PATCH',
+        body,
+      });
+      setVersion(res.params?.version);
       setScenariosSaved(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save PWERM scenarios.');

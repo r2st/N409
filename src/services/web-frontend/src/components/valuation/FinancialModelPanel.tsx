@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError, ifMatch } from '../../lib/api';
+import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
 import type { EngineInputs, ShareClassInput } from '../../lib/pipeline';
 import { Button, ErrorNote, Field, Select, Spinner, TextInput } from '../ui';
 
@@ -250,7 +251,7 @@ export function FinancialModelPanel({ valuationId, readOnly }: { valuationId: st
    * on an older server that does not report it; `ifMatch` then sends nothing
    * and the write falls back to last-write-wins rather than failing.
    */
-  const [version, setVersion] = useState<number | undefined>(undefined);
+  const [version, setVersion] = useRowVersion(paramsVersionKey(valuationId));
 
   const load = useCallback(async () => {
     try {

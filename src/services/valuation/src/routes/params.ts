@@ -8,6 +8,7 @@ import { DLOC_METHODS, DLOM_METHODS, findParams, patchParams } from '../repos/pa
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 
 /**
  * Weights are accepted with up to 4 decimal places and must sum to exactly 1
@@ -431,16 +432,20 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     return valuation;
   };
 
-  app.get('/api/v1/valuations/:id/params', { preHandler: app.authenticate }, async (req) => {
+  app.get('/api/v1/valuations/:id/params', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     await loadValuation(principal, id);
     const params = await findParams(deps.pool, id);
     if (!params) throw problems.notFound();
+    // The version the Params panel sends back as If-Match. `params` already
+    // carries `version` in its body, so this header is the part that lets a
+    // plain HTTP client play along without knowing the column exists.
+    reply.header('ETag', versionEtag(params.version));
     return { params };
   });
 
-  app.patch('/api/v1/valuations/:id/params', { preHandler: app.authenticate }, async (req) => {
+  app.patch('/api/v1/valuations/:id/params', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     // Methodology is set by analysts — ops-only, mirroring OPS_PATCH_FIELDS.
     if (!isOps(principal)) throw problems.forbidden('Valuation params are operations-only');
@@ -448,6 +453,18 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
     refuseIfRetired(await loadValuation(principal, id), 'accepting changes');
     const current = await findParams(deps.pool, id);
     if (!current) throw problems.notFound();
+
+    // Same contract as the engine-inputs editor beside it, which has been
+    // guarding this very row since migration 0158 — and the same reason,
+    // more so: the Params panel posts forty-odd fields it read when the tab
+    // was opened, so the write it builds on a stale read reverts every one of
+    // them. A malformed header is refused rather than ignored; an If-Match
+    // nobody parses is a lost-update guard that silently is not there.
+    const ifMatch = parseIfMatch(req.headers['if-match']);
+    if (ifMatch.kind === 'invalid') {
+      throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+    }
+    const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
     const parsed = ParamsPatchBody.safeParse(req.body);
     if (!parsed.success) throw problems.unprocessable('Invalid params', { errors: parsed.error.issues });
@@ -463,8 +480,12 @@ export function registerParamsRoutes(app: FastifyInstance, deps: { pool: pg.Pool
       // Run again inside the write, against the locked row. Same rules, same
       // messages — the only difference is that this reading of "the row" is
       // one no concurrent editor can have moved.
-      { revalidate: (fresh) => checkParamInvariants(fresh, parsed.data) },
+      {
+        revalidate: (fresh) => checkParamInvariants(fresh, parsed.data),
+        expectedVersion,
+      },
     );
+    reply.header('ETag', versionEtag(updated.version));
     return { params: updated };
   });
 }

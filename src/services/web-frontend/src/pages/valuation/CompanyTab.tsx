@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, ifMatch } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { isOps } from '../../lib/rbac';
 import {
@@ -34,6 +34,12 @@ export interface CompanyProfile {
   employee_count: number | null;
   revenue_range: string | null;
   cap_table_summary: string | null;
+  /**
+   * Optimistic-lock counter (migration 0166), echoed back as `If-Match` on
+   * save. Optional so an older server that does not report it falls back to
+   * last-write-wins rather than failing.
+   */
+  version?: number;
   updated_at: string;
 }
 
@@ -155,19 +161,38 @@ export function CompanyTab() {
   const [agentError, setAgentError] = useState<string | null>(null);
   const [overwrite, setOverwrite] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    api<{ profile: CompanyProfile | null }>(`/valuations/${valuation.id}/company-profile`)
-      .then(({ profile }) => {
-        if (!cancelled) setDraft(toDraft(profile));
-      })
-      .catch(() => {
-        if (!cancelled) setError('Could not load the company profile.');
-      });
-    return () => {
-      cancelled = true;
-    };
+  /**
+   * The profile version this form was filled in from, sent back as `If-Match`.
+   *
+   * The save below posts all sixteen columns whether the analyst touched them
+   * or not, so it does not say "set the website" — it says "make the row look
+   * like it did when I opened this tab". Three writers reach that row (ops, the
+   * client from their portal, and the `company_profile` agent's apply), and
+   * without this the last of them to press Save reverts the other two
+   * silently, with a 200 (migration 0166).
+   *
+   * Undefined until a profile exists: the GET returns `profile: null` and no
+   * ETag before the first save, and `ifMatch` then sends nothing.
+   */
+  const [version, setVersion] = useState<number | undefined>(undefined);
+
+  const load = useCallback(async () => {
+    try {
+      const { profile } = await api<{ profile: CompanyProfile | null }>(
+        `/valuations/${valuation.id}/company-profile`,
+      );
+      setDraft(toDraft(profile));
+      setVersion(profile?.version);
+      return true;
+    } catch {
+      setError('Could not load the company profile.');
+      return false;
+    }
   }, [valuation.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (error) return <ErrorNote>{error}</ErrorNote>;
   if (!draft) return <Spinner />;
@@ -212,30 +237,49 @@ export function CompanyTab() {
     const nullable = (v: string) => (v.trim() === '' ? null : v.trim());
     setSaving(true);
     try {
-      await api(`/valuations/${valuation.id}/company-profile`, {
-        method: 'PATCH',
-        body: {
-          legal_name: nullable(draft.legal_name),
-          website: nullable(draft.website),
-          address_line1: nullable(draft.address_line1),
-          address_line2: nullable(draft.address_line2),
-          city: nullable(draft.city),
-          region: nullable(draft.region),
-          postal_code: nullable(draft.postal_code),
-          country: nullable(draft.country),
-          industry: nullable(draft.industry),
-          business_description: nullable(draft.business_description),
-          sic_code: nullable(draft.sic_code),
-          naics_code: nullable(draft.naics_code),
-          founded_on: nullable(draft.founded_on),
-          employee_count: employeeCount === '' ? null : Number(employeeCount),
-          revenue_range: nullable(draft.revenue_range),
-          cap_table_summary: nullable(draft.cap_table_summary),
+      const { profile: saved } = await api<{ profile?: CompanyProfile }>(
+        `/valuations/${valuation.id}/company-profile`,
+        {
+          method: 'PATCH',
+          headers: ifMatch(version),
+          body: {
+            legal_name: nullable(draft.legal_name),
+            website: nullable(draft.website),
+            address_line1: nullable(draft.address_line1),
+            address_line2: nullable(draft.address_line2),
+            city: nullable(draft.city),
+            region: nullable(draft.region),
+            postal_code: nullable(draft.postal_code),
+            country: nullable(draft.country),
+            industry: nullable(draft.industry),
+            business_description: nullable(draft.business_description),
+            sic_code: nullable(draft.sic_code),
+            naics_code: nullable(draft.naics_code),
+            founded_on: nullable(draft.founded_on),
+            employee_count: employeeCount === '' ? null : Number(employeeCount),
+            revenue_range: nullable(draft.revenue_range),
+            cap_table_summary: nullable(draft.cap_table_summary),
+          },
         },
-      });
+      );
+      // Take the version the write produced, so a second save from this same
+      // form is not refused for a change this user just made themselves.
+      setVersion(saved?.version);
       setSaved(true);
     } catch (err) {
-      setFieldError(err instanceof ApiError ? err.message : 'Could not save the company profile.');
+      // A conflict is an out-of-date form rather than a failed save: reload it
+      // so the analyst reapplies onto what actually landed. Reloading is what
+      // clears the stale fields this form would otherwise post again on the
+      // next attempt — the agent's description among them.
+      if (err instanceof ApiError && err.status === 409) {
+        await load();
+        setFieldError(
+          err.problem.detail ??
+            'Someone else changed this company profile while you were editing. It has been reloaded — please reapply your changes.',
+        );
+      } else {
+        setFieldError(err instanceof ApiError ? err.message : 'Could not save the company profile.');
+      }
     } finally {
       setSaving(false);
     }
@@ -285,6 +329,11 @@ export function CompanyTab() {
         for (const field of written) next[field] = res.profile[field] ?? '';
         return next;
       });
+      // The apply just wrote the row, so the version this form is holding is
+      // now the stale one — and the writer that made it stale is this user.
+      // Without this line the very next Save is refused for their own agent
+      // run, which is a lost-update guard doing precisely the wrong thing.
+      setVersion(res.profile.version);
       // The applied fields are already saved — the apply wrote them — so this
       // must not read as an unsaved change waiting on Save.
       setSaved(false);

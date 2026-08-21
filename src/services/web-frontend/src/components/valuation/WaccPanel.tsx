@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, ApiError } from '../../lib/api';
+import { api, ApiError, ifMatch } from '../../lib/api';
+import { paramsVersionKey, useRowVersion } from '../../lib/rowVersion';
 import { Button, ErrorNote, Field, InfoTooltip, Spinner, TextInput } from '../ui';
 
 /**
@@ -53,6 +54,8 @@ interface ParamsResponse {
   params: {
     wacc_inputs: WaccInputs | null;
     auto_wacc: boolean;
+    /** Optimistic-lock counter (0158), shared with the methodology form. */
+    version?: number;
   };
 }
 
@@ -123,9 +126,17 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
     cost_of_debt: '',
   });
 
+  /**
+   * The `valuation_params` version, shared with the methodology form above.
+   * Both write the same row and both move the same counter — see
+   * lib/rowVersion.ts.
+   */
+  const [version, setVersion] = useRowVersion(paramsVersionKey(valuationId));
+
   const load = useCallback(async () => {
     try {
       const res = await api<ParamsResponse>(`/valuations/${valuationId}/params`);
+      setVersion(res.params.version);
       const w = res.params.wacc_inputs ?? {};
       setAutoWacc(res.params.auto_wacc === true);
       setBetas(
@@ -210,10 +221,19 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
     setError(null);
     setNote(null);
     try {
-      await api(`/valuations/${valuationId}/params`, {
+      // `buildInputs()` rebuilds the whole build-up from this form, so this
+      // save reverts anything another editor changed in it since the panel
+      // loaded — the same shape as the methodology form beside it, over a
+      // smaller document.
+      const res = await api<{ params?: { version?: number } }>(`/valuations/${valuationId}/params`, {
         method: 'PATCH',
         body: { wacc_inputs: buildInputs(), auto_wacc: autoWacc },
+        headers: ifMatch(version),
       });
+      // Optional all the way down: `load()` below re-reads the row anyway, so a
+      // response shape without the version costs a stale header for no requests
+      // rather than a thrown save.
+      setVersion(res.params?.version);
       setNote(
         autoWacc
           ? 'Build-up saved. The next calculation will use it as the DCF discount rate where none was entered by hand.'
@@ -222,6 +242,16 @@ export function WaccPanel({ valuationId, readOnly }: { valuationId: string; read
       await load();
       return true;
     } catch (err) {
+      // An out-of-date panel rather than a failed save: reload so the analyst
+      // reapplies onto what actually landed instead of over it.
+      if (err instanceof ApiError && err.status === 409) {
+        await load();
+        setError(
+          err.problem.detail ??
+            'Someone else changed these parameters while you were editing. They have been reloaded — please reapply your changes.',
+        );
+        return false;
+      }
       setError(err instanceof ApiError ? err.message : 'Could not save the discount-rate build-up.');
       return false;
     } finally {

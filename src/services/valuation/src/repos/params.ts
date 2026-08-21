@@ -297,6 +297,22 @@ export interface PatchParamsOptions {
    * holds under concurrency — see the comment on `patchParams` below.
    */
   revalidate?: (fresh: ValuationParamsRow) => { ok: true } | { ok: false; detail: string };
+  /**
+   * The `version` the caller believes it is patching, from `If-Match`.
+   *
+   * The lock below already makes each individual field land on the row that is
+   * really there; what it cannot see is that the *caller's* idea of the row is
+   * out of date. The Params panel posts some forty fields it read when the tab
+   * was opened, so a save built on a stale read does not lose the race — it
+   * wins it, and reverts everything the other editor changed. That is the same
+   * failure `applyEngineInputs` documents, arriving through the larger of the
+   * two forms that write this row (migration 0158).
+   *
+   * Omitted by the callers that are applying values they just derived rather
+   * than a form somebody has been looking at: the accounting sync, the
+   * roll-forward, the intake mapper.
+   */
+  expectedVersion?: number;
 }
 
 /**
@@ -331,9 +347,20 @@ export async function patchParams(
   actor: EventActor,
   options: PatchParamsOptions = {},
 ): Promise<ValuationParamsRow> {
+  const { expectedVersion } = options;
+
   // An empty patch asks for nothing, whatever the row says. Returning here
-  // keeps a no-op PATCH from taking a row lock other editors are queued on.
-  if (Object.keys(fields).length === 0) return current;
+  // keeps a no-op PATCH from taking a row lock other editors are queued on —
+  // but not before answering the question the caller actually asked. A caller
+  // that sent `If-Match` is asserting it holds the current row, and telling it
+  // "fine" on a row that has moved is the lost-update report the guard exists
+  // to prevent, one request early.
+  if (Object.keys(fields).length === 0) {
+    if (expectedVersion !== undefined && expectedVersion !== current.version) {
+      staleParamsWrite(current.version, expectedVersion);
+    }
+    return current;
+  }
 
   return withTransaction(pool, async (client) => {
     const { rows: locked } = await client.query<ValuationParamsRow>(
@@ -347,6 +374,16 @@ export async function patchParams(
     // Normalised *before* the diff, not after: the comparison below is `===`,
     // and a `date` column off the driver is a Date that equals no string.
     const fresh = hydrated(raw);
+
+    // Before the diff, not after. The diff is computed against `fresh`, so a
+    // caller whose snapshot is stale produces a perfectly well-formed patch
+    // that reverts somebody — and an empty diff is not proof of agreement
+    // either, only that this particular form happened to match. The version is
+    // the one reading that can tell the two apart, and under the row lock it
+    // is exact.
+    if (expectedVersion !== undefined && fresh.version !== expectedVersion) {
+      staleParamsWrite(fresh.version, expectedVersion);
+    }
 
     const check = options.revalidate?.(fresh);
     if (check && !check.ok) throw problems.unprocessable(check.detail);

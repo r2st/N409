@@ -1,0 +1,35 @@
+-- The company profile two people — and one agent — were editing at once.
+--
+-- `PATCH /api/v1/valuations/:id/company-profile` is a read-modify-write with
+-- nothing between the read and the write, and the client makes that maximally
+-- dangerous: CompanyTab loads the profile once when the tab mounts and posts
+-- back *all sixteen columns* on every save, whether the analyst touched them or
+-- not. So the request does not say "set the website"; it says "make the row
+-- look like it looked when I opened this tab".
+--
+-- Three writers reach that row, which is what turns a theoretical race into a
+-- weekly one:
+--
+--   * ops, editing the profile in the workspace;
+--   * the requesting client, who is explicitly permitted to edit their own
+--     company profile from the portal (routes/companyProfile.ts);
+--   * the `company_profile` agent, whose apply writes business_description,
+--     sic_code and naics_code straight into the same row (routes/ai.ts).
+--
+-- The agent is the one that makes this concrete. An analyst opens the Company
+-- tab, asks the agent for a description, and the apply lands. If that analyst —
+-- or anybody else with the tab already open — then saves the form, the sixteen
+-- fields as they were before the agent ran are written back over it, and the
+-- description the agent produced is gone. Both requests return 200. Nothing in
+-- the audit trail says a value was lost; `company_profile_updated` records the
+-- fields the writer *sent*, and the writer sent all of them.
+--
+-- Same anchor and same contract as migrations 0137 (valuations) and 0158
+-- (valuation_params): `version` moves on every write, the GET returns it as an
+-- `ETag`, and a client that echoes it as `If-Match` gets a 409 instead of a
+-- silent overwrite. Clients that send no header keep the old behaviour.
+--
+-- Existing rows start at 1 rather than 0 so "no version" and "version zero"
+-- cannot be confused by a client that omits the header.
+ALTER TABLE company_profiles
+  ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;

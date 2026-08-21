@@ -9,6 +9,7 @@ import { isNaicsCode, isSicCode } from '../domain/companyProfile.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import type { EventActor } from '../events/record.js';
 import { refuseIfRetired } from '../domain/retiredEngagement.js';
+import { parseIfMatch, versionEtag } from '../domain/concurrency.js';
 
 /**
  * Company profile editor (remaining-gaps §3 #6, 409.ai "modal_ui_data"):
@@ -75,31 +76,53 @@ export function registerCompanyProfileRoutes(app: FastifyInstance, deps: { pool:
     return valuation;
   };
 
-  app.get('/api/v1/valuations/:id/company-profile', { preHandler: app.authenticate }, async (req) => {
+  app.get('/api/v1/valuations/:id/company-profile', { preHandler: app.authenticate }, async (req, reply) => {
     const principal = requirePrincipal(req);
     const { id } = req.params as { id: string };
     const valuation = await loadValuation(principal, id);
     const profile = await findCompanyProfile(deps.pool, id);
+    // The version the Company tab echoes back as If-Match (migration 0166).
+    // Nothing is sent for a never-saved profile: an ETag on "null" would
+    // invite an If-Match that can only ever conflict.
+    if (profile) reply.header('ETag', versionEtag(profile.version));
     // A never-saved profile reads as an empty one so the editor can render.
     return { profile, company_name: valuation.company_name };
   });
 
-  app.patch('/api/v1/valuations/:id/company-profile', { preHandler: app.authenticate }, async (req) => {
-    const principal = requirePrincipal(req);
-    const { id } = req.params as { id: string };
-    const valuation = await loadValuation(principal, id);
-    refuseIfRetired(valuation, 'accepting changes');
-    if (!isOps(principal) && valuation.user_id !== principal.id) {
-      throw problems.forbidden('Only operations or the requesting client can edit the company profile');
-    }
+  app.patch(
+    '/api/v1/valuations/:id/company-profile',
+    { preHandler: app.authenticate },
+    async (req, reply) => {
+      const principal = requirePrincipal(req);
+      const { id } = req.params as { id: string };
+      const valuation = await loadValuation(principal, id);
+      refuseIfRetired(valuation, 'accepting changes');
+      if (!isOps(principal) && valuation.user_id !== principal.id) {
+        throw problems.forbidden('Only operations or the requesting client can edit the company profile');
+      }
 
-    const parsed = PatchBody.safeParse(req.body);
-    if (!parsed.success) throw problems.unprocessable('Invalid profile', { errors: parsed.error.issues });
-    if (Object.keys(parsed.data).length === 0) {
-      throw problems.unprocessable('Provide at least one field to update');
-    }
+      // Opt-in lost-update guard, same contract as the valuation, cap-table and
+      // engine-inputs editors. Parsed before the body so a malformed header
+      // fails the same way whatever the patch contains, and refused rather than
+      // dropped — a typo'd If-Match that is quietly ignored is the bug wearing
+      // a seatbelt nobody buckled.
+      const ifMatch = parseIfMatch(req.headers['if-match']);
+      if (ifMatch.kind === 'invalid') {
+        throw problems.unprocessable(`Malformed If-Match header: ${ifMatch.raw}`);
+      }
+      const expectedVersion = ifMatch.kind === 'version' ? ifMatch.version : undefined;
 
-    const profile = await upsertCompanyProfile(deps.pool, id, parsed.data, actorFor(principal));
-    return { profile };
-  });
+      const parsed = PatchBody.safeParse(req.body);
+      if (!parsed.success) throw problems.unprocessable('Invalid profile', { errors: parsed.error.issues });
+      if (Object.keys(parsed.data).length === 0) {
+        throw problems.unprocessable('Provide at least one field to update');
+      }
+
+      const profile = await upsertCompanyProfile(deps.pool, id, parsed.data, actorFor(principal), {
+        expectedVersion,
+      });
+      reply.header('ETag', versionEtag(profile.version));
+      return { profile };
+    },
+  );
 }

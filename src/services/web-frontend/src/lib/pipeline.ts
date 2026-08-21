@@ -250,6 +250,13 @@ export type AllocationMethod = (typeof ALLOCATION_METHODS)[number];
 
 export interface ValuationParams {
   valuation_id: string;
+  /**
+   * Optimistic-lock counter (migration 0158), echoed back as `If-Match` by the
+   * two panels that post the whole row. Optional because a list projection or
+   * an older server may not carry it, in which case `ifMatch` sends nothing and
+   * the write falls back to last-write-wins rather than failing.
+   */
+  version?: number;
   rolling_forward: boolean;
   inception_date: string | null;
   fiscal_year_end: string | null;
