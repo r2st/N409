@@ -582,9 +582,14 @@ describe('ValuationDetailPage — a retired engagement', () => {
     const banner = await screen.findByRole('status');
     expect(banner).toHaveTextContent(/retired/i);
     // The two facts a reader cannot work out for themselves: it is readable,
-    // and this is not something they can undo here.
+    // and this is not something they can undo here. The second changed shape in
+    // R90 rather than going away — a restore exists now, it is just an admin
+    // action on the retention screen — and a banner that still said "not
+    // reversible" would be telling a firm their work was gone when it is one
+    // admin click from being back.
     expect(banner).toHaveTextContent(/still be read/i);
-    expect(banner).toHaveTextContent(/not reversible/i);
+    expect(banner).toHaveTextContent(/Nothing on this page will bring it back/i);
+    expect(banner).toHaveTextContent(/administrator can restore it/i);
   });
 
   it('offers no edit form', async () => {

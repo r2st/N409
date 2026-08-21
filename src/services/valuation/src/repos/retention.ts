@@ -112,7 +112,7 @@ export async function releaseHold(pool: pg.Pool, id: string, releasedBy: string)
 export interface RetentionActionRow {
   id: string;
   data_type: string;
-  action: 'archived' | 'skipped_hold' | 'purge_eligible';
+  action: 'archived' | 'skipped_hold' | 'purge_eligible' | 'restored';
   reference_id: string | null;
   detail: Record<string, unknown>;
   created_at: Date;
@@ -120,7 +120,7 @@ export interface RetentionActionRow {
 
 export interface RetentionActionInput {
   dataType: string;
-  action: 'archived' | 'skipped_hold' | 'purge_eligible';
+  action: 'archived' | 'skipped_hold' | 'purge_eligible' | 'restored';
   referenceId: string | null;
   detail?: Record<string, unknown>;
 }
@@ -159,6 +159,33 @@ export async function recordActions(
      VALUES ${tuples.join(', ')}`,
     params,
   );
+}
+
+/**
+ * Whether any active legal hold freezes this one valuation.
+ *
+ * The same three-way test `findArchivableValuations` computes for a whole
+ * batch, asked of a single row — and asked in SQL rather than by pulling
+ * `listHolds` and running `isFrozen` over it, because that listing is paged.
+ * A deployment past `HOLD_PAGE_LIMIT` holds would answer "not frozen" for a
+ * valuation whose hold sits on page two, which is the quiet direction to be
+ * wrong in: it is the answer that lets an action proceed.
+ */
+export async function isValuationFrozen(
+  pool: pg.Pool,
+  target: { valuationId: string; userId: string },
+): Promise<boolean> {
+  const { rows } = await pool.query<{ frozen: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM legal_holds h
+        WHERE h.active
+          AND (h.scope = 'global'
+            OR (h.scope = 'valuation' AND h.reference_id = $1)
+            OR (h.scope = 'user' AND h.reference_id = $2))
+     ) AS frozen`,
+    [target.valuationId, target.userId],
+  );
+  return rows[0]?.frozen ?? false;
 }
 
 export async function listActions(pool: pg.Pool, limit = 200): Promise<RetentionActionRow[]> {

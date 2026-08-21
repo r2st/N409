@@ -51,16 +51,19 @@ import type { ValuationRow } from '../repos/valuations.js';
  * would say the id is wrong, which sends whoever hit it looking for the wrong
  * problem.
  *
- * NOTE THAT THESE REFUSALS ARE PERMANENT. Nothing sets `valuations.archived_at`
- * back to NULL — partners have such a path (`adminUsers.ts`) and users have
- * `restoreUser`, but valuations have neither, so archiving is already one-way
- * and was before any of this. That is worth knowing rather than worth fixing
- * here: an engagement archived by mistake was *already* unreachable from every
- * list, count, dashboard and campaign, so what these guards change is not
- * whether it is recoverable but whether the platform is honest about it. If an
- * unarchive is ever wanted, it belongs beside `retireValuations` as a
- * deliberate ops action, not as a side effect of a PATCH that happened not to
- * be guarded.
+ * THESE REFUSALS WERE PERMANENT WHEN THEY WERE WRITTEN, and R89 said so:
+ * nothing set `valuations.archived_at` back to NULL, while partners had such a
+ * path (`adminUsers.ts`) and users had `restoreUser`. It also said where an
+ * unarchive would belong if one were ever wanted — beside `retireValuations`,
+ * as a deliberate ops action rather than as a side effect of a PATCH that
+ * happened not to be guarded. That is exactly where R90 put it:
+ * `restoreValuations`, reached by `POST
+ * /api/v1/admin/retention/valuations/:id/restore` and admin-only.
+ *
+ * Which changes the standing of these guards rather than their behaviour. They
+ * still refuse; what a refusal now means is "an admin has to decide", not "this
+ * work is gone". Worth knowing before writing a message that tells a caller
+ * their engagement is unrecoverable — it is not.
  */
 export function refuseIfRetired(valuation: Pick<ValuationRow, 'archived_at'>, doing: string): void {
   if (valuation.archived_at === null) return;

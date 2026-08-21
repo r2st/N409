@@ -24,7 +24,8 @@ import { invalidateValuation } from './valuations.js';
  * `archived_at IS NULL` clause in `repos/valuations.ts`, applied unless a
  * caller asks for archived work explicitly — so an archived engagement is gone
  * from the product's views without being gone from its history. It is also
- * reversible, which a delete is not.
+ * reversible, which a delete is not — see `restoreValuations`, which is the
+ * half of that sentence the codebase went four rounds without.
  *
  * The rename is the other half, and it is what makes `--replace` work.
  * Archiving alone leaves the row still matching its company name, so a re-run
@@ -85,6 +86,89 @@ export async function retireValuations(pool: pg.Pool, ids: readonly string[]): P
       retired: toRetire,
       missing: wanted.filter((id) => !found.includes(id)),
       alreadyArchived,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export interface RestoreResult {
+  /** Ids that existed, were archived, and are now live again. */
+  restored: string[];
+  /** Ids that were asked for and do not exist. Not an error — just reported. */
+  missing: string[];
+  /** Ids that were already live, and so were left untouched. */
+  notArchived: string[];
+}
+
+/**
+ * Put an archived valuation back in the product.
+ *
+ * The mirror of `retireValuations`, and it did not exist for four rounds while
+ * the comment above claimed it did — "It is also reversible, which a delete is
+ * not" was true of the schema and false of the codebase. R89 is what made the
+ * absence matter rather than merely be untidy: it guarded all 86 writes under
+ * a valuation id against `archived_at`, so an engagement archived by a mistyped
+ * id or by a retention policy set too aggressively now refuses every write
+ * anyone makes to it, permanently, with no way back through the product.
+ *
+ * The suffix comes off as well as the flag, and only the trailing one. Retiring
+ * appended ` [retired]` so the freed name could be reused; leaving it on a
+ * restored row would hand back an engagement whose company reads as retired
+ * while the flag says otherwise, and the *reason* the suffix exists is gone the
+ * moment the row is live again. `LIKE` on the tail rather than `replace()`,
+ * which would also strike the string out of the middle of a name that happens
+ * to contain it.
+ *
+ * NOT IDEMPOTENT IN THE SENSE THAT MATTERS: a row already live is reported in
+ * `notArchived` and left completely alone, because stripping a suffix off a
+ * name nobody archived would be this function editing a company name for no
+ * reason. The two lists are what the caller answers on.
+ *
+ * The cache drop is the same obligation every writer to `valuations` carries
+ * and for a sharper reason than `retireValuations` had: this one runs *in* the
+ * API process, so the read-through cache it must invalidate is this process's.
+ * Without the drop, `archived_at` stays non-null for a full TTL and every write
+ * to the engagement keeps answering 409 after it has been restored.
+ */
+export async function restoreValuations(pool: pg.Pool, ids: readonly string[]): Promise<RestoreResult> {
+  const wanted = [...new Set(ids)];
+  if (wanted.length === 0) return { restored: [], missing: [], notArchived: [] };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // The UPDATE is the arbiter, not this SELECT: `archived_at IS NOT NULL` can
+    // stop being true between them. This reads what exists, the UPDATE reports
+    // what it took, and the difference is `notArchived`.
+    const present = await client.query<{ id: string }>(
+      'SELECT id FROM valuations WHERE id = ANY($1::ulid[])',
+      [wanted],
+    );
+    const found = present.rows.map((r) => r.id);
+
+    const { rows: taken } = await client.query<{ id: string }>(
+      `UPDATE valuations
+          SET archived_at = NULL,
+              company_name = CASE
+                WHEN company_name LIKE ('%' || $2::text)
+                  THEN left(company_name, length(company_name) - length($2::text))
+                ELSE company_name
+              END
+        WHERE id = ANY($1::ulid[]) AND archived_at IS NOT NULL
+        RETURNING id`,
+      [found, RETIRED_SUFFIX],
+    );
+    await client.query('COMMIT');
+    const restored = taken.map((r) => r.id);
+    for (const id of restored) invalidateValuation(id);
+    return {
+      restored,
+      missing: wanted.filter((id) => !found.includes(id)),
+      notArchived: found.filter((id) => !restored.includes(id)),
     };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});

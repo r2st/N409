@@ -18,6 +18,12 @@ interface Hold {
   active: boolean;
   placed_at: string;
 }
+/** Chip colours per action; anything unrecognised falls back to the amber one. */
+const ACTION_CHIP: Record<string, string> = {
+  archived: 'bg-paper-100 text-ink-700',
+  restored: 'bg-bond-50 text-bond-700',
+};
+
 interface Action {
   id: string;
   data_type: string;
@@ -141,6 +147,49 @@ export function AdminRetentionPage() {
       }
     });
 
+  /**
+   * Undo one archival.
+   *
+   * The API refuses a restore the next sweep would immediately undo, and names
+   * the escape hatch in the refusal. That refusal is surfaced as a question
+   * rather than as an error, because it is the one case where the operator has
+   * something to decide: "the policy will take it again tonight — do you want
+   * it back anyway?" is a real answer to want (export the file, then let it
+   * go), and turning it into a dead end would send them to widen a
+   * platform-wide retention policy to rescue a single engagement.
+   *
+   * Every other failure is an error, including a 409 that is *not* the
+   * re-archival one — "not archived" means somebody else already restored it,
+   * and re-sending with an acknowledgement would not change that.
+   */
+  const restoreValuation = (referenceId: string) =>
+    run(`restore:${referenceId}`, async () => {
+      setNote(null);
+      setError(null);
+      const send = (acknowledge: boolean) =>
+        api(`/admin/retention/valuations/${referenceId}/restore`, {
+          method: 'POST',
+          body: acknowledge ? { acknowledge_rearchival: true } : {},
+        });
+      try {
+        try {
+          await send(false);
+        } catch (err) {
+          const rearchival =
+            err instanceof ApiError &&
+            err.status === 409 &&
+            /sweep would archive it again/i.test(err.message);
+          if (!rearchival) throw err;
+          if (!window.confirm(`${err.message}\n\nRestore it anyway?`)) return;
+          await send(true);
+        }
+        setNote(`Restored ${referenceId}. It is back in the product and accepts changes again.`);
+        await load();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Could not restore that valuation.');
+      }
+    });
+
   const runSweep = () =>
     run('sweep', async () => {
       setNote(null);
@@ -156,6 +205,25 @@ export function AdminRetentionPage() {
         setError(err instanceof ApiError ? err.message : 'Could not run the archival sweep.');
       }
     });
+
+  /**
+   * The ids of the log entries that still have something to undo.
+   *
+   * `actions` arrives newest-first, so the first entry seen for a reference is
+   * the latest thing that happened to it. An `archived` entry is restorable
+   * only when it is that latest entry: a row archived, restored and archived
+   * again should offer the button on the second archival and not on the first,
+   * which is what walking the list in order and keeping the first sighting
+   * gives. Valuations only — the other data types have no restore endpoint,
+   * and the log is shared across all of them.
+   */
+  const restorable = new Set<string>();
+  const seen = new Set<string>();
+  for (const a of actions) {
+    if (a.reference_id === null || seen.has(a.reference_id)) continue;
+    seen.add(a.reference_id);
+    if (a.action === 'archived' && a.data_type === 'valuation') restorable.add(a.id);
+  }
 
   return (
     <div className="max-w-4xl">
@@ -339,13 +407,26 @@ export function AdminRetentionPage() {
             {actions.slice(0, 50).map((a) => (
               <li key={a.id} className="flex items-center gap-3">
                 <span
-                  className={`rounded px-1.5 py-0.5 text-xs font-semibold ${a.action === 'archived' ? 'bg-paper-100 text-ink-700' : 'bg-amber-50 text-amber-800'}`}
+                  className={`rounded px-1.5 py-0.5 text-xs font-semibold ${ACTION_CHIP[a.action] ?? 'bg-amber-50 text-amber-800'}`}
                 >
                   {a.action}
                 </span>
                 <span className="text-ink-600">{a.data_type}</span>
                 <span className="tnum text-xs text-ink-400">{a.reference_id}</span>
                 <span className="ml-auto text-xs text-ink-400">{formatDateTime(a.created_at)}</span>
+                {/* Offered against the archival it undoes, and only while that
+                    archival is still the last word on the row — a reference
+                    with a later `restored` entry is already live, and a button
+                    that can only answer "not archived" is not a control. */}
+                {restorable.has(a.id) && (
+                  <button
+                    onClick={() => restoreValuation(a.reference_id!)}
+                    disabled={busy !== null}
+                    className="cursor-pointer text-xs font-semibold text-bond-600 hover:text-bond-700 disabled:cursor-not-allowed disabled:text-ink-300"
+                  >
+                    {busy === `restore:${a.reference_id}` ? 'Restoring…' : 'Restore'}
+                  </button>
+                )}
               </li>
             ))}
           </ul>

@@ -487,3 +487,180 @@ describe('AdminRetentionPage', () => {
     });
   });
 });
+
+/**
+ * Undoing an archival from the audit log.
+ *
+ * `archived_at` had no way back until R90 — R89 made every write to a stamped
+ * engagement refuse, so a valuation archived by a policy set to 90 days meaning
+ * 900 was frozen for good. The restore lives here, beside the log entry it
+ * undoes, because that is where an admin finds out an archival happened.
+ *
+ * The fixtures above use `data_type: 'valuations'`; the API records the
+ * singular `valuation` (it is one of `RETENTION_DATA_TYPES`), which is what the
+ * button keys on. These fixtures are therefore their own regression check that
+ * the control does not appear against data types with no restore endpoint.
+ */
+const RESTORE_ACTIONS = [
+  {
+    id: 'r-latest-archive',
+    data_type: 'valuation',
+    action: 'archived',
+    reference_id: '01JVAL0000000000000000042',
+    created_at: '2026-07-05T10:00:00Z',
+  },
+  {
+    id: 'r-already-back',
+    data_type: 'valuation',
+    action: 'restored',
+    reference_id: '01JVAL0000000000000000043',
+    created_at: '2026-07-04T10:00:00Z',
+  },
+  {
+    id: 'r-superseded-archive',
+    data_type: 'valuation',
+    action: 'archived',
+    reference_id: '01JVAL0000000000000000043',
+    created_at: '2026-07-03T10:00:00Z',
+  },
+  {
+    id: 'r-other-type',
+    data_type: 'document',
+    action: 'archived',
+    reference_id: '01JDOC0000000000000000007',
+    created_at: '2026-07-02T10:00:00Z',
+  },
+];
+
+function mockRestoreApi(onWrite?: (path: string, init: RequestInit) => Response) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const path = String(url);
+    if ((init?.method ?? 'GET') !== 'GET') {
+      if (onWrite) return onWrite(path, init!);
+      return jsonResponse({ restored: true });
+    }
+    if (path.includes('/retention/policies')) return jsonResponse({ policies: POLICIES });
+    if (path.includes('/retention/holds')) return jsonResponse({ holds: HOLDS });
+    if (path.includes('/retention/actions')) return jsonResponse({ actions: RESTORE_ACTIONS });
+    throw new Error(`unexpected fetch ${path}`);
+  });
+}
+
+const logRow = (id: string) => screen.getByText(id).closest('li')!;
+
+describe('AdminRetentionPage — restoring an archived valuation', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it('offers restore only against an archival that is still the last word', async () => {
+    mockRestoreApi();
+    renderPage();
+    await loaded();
+
+    const restorable = within(logRow('01JVAL0000000000000000042'));
+    expect(restorable.getByRole('button', { name: /^Restore$/ })).toBeInTheDocument();
+
+    // Archived, then restored: offering it again could only produce "not
+    // archived", which is not a control, it is a trap.
+    const superseded = screen
+      .getAllByText('01JVAL0000000000000000043')
+      .map((el) => el.closest('li')!)
+      .find((li) => li.textContent?.includes('archived'))!;
+    expect(within(superseded).queryByRole('button', { name: /^Restore$/ })).not.toBeInTheDocument();
+
+    // A data type with no restore endpoint.
+    const other = within(logRow('01JDOC0000000000000000007'));
+    expect(other.queryByRole('button', { name: /^Restore$/ })).not.toBeInTheDocument();
+  });
+
+  it('POSTs the restore without an acknowledgement and reports it', async () => {
+    const writes: Array<{ path: string; body: unknown }> = [];
+    mockRestoreApi((path, init) => {
+      writes.push({ path, body: JSON.parse(String(init.body)) as unknown });
+      return jsonResponse({ restored: true });
+    });
+    renderPage();
+    await loaded();
+
+    await userEvent.click(
+      within(logRow('01JVAL0000000000000000042')).getByRole('button', { name: /^Restore$/ }),
+    );
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]!.path).toContain('/admin/retention/valuations/01JVAL0000000000000000042/restore');
+    // The acknowledgement is not sent by default: it is the answer to a
+    // question the operator has not been asked yet.
+    expect(writes[0]!.body).toEqual({});
+    await screen.findByText(/Restored 01JVAL0000000000000000042/);
+  });
+
+  it('asks before overriding a restore the sweep would undo, and resends on yes', async () => {
+    const writes: unknown[] = [];
+    mockRestoreApi((_path, init) => {
+      writes.push(JSON.parse(String(init.body)));
+      return writes.length === 1
+        ? problem(
+            409,
+            'The retention policy archives valuations after 30 days and this one is older ' +
+              'than that, so the next sweep would archive it again. Widen the policy or place a legal ' +
+              'hold on it first, or resend with acknowledge_rearchival to restore it anyway.',
+          )
+        : jsonResponse({ restored: true });
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    renderPage();
+    await loaded();
+
+    await userEvent.click(
+      within(logRow('01JVAL0000000000000000042')).getByRole('button', { name: /^Restore$/ }),
+    );
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[1]).toEqual({ acknowledge_rearchival: true });
+    // The operator is shown the reason, not a generic "are you sure".
+    expect(confirm.mock.calls[0]![0]).toMatch(/next sweep would archive it again/);
+    await screen.findByText(/Restored 01JVAL0000000000000000042/);
+  });
+
+  it('sends nothing more when the operator declines', async () => {
+    const writes: unknown[] = [];
+    mockRestoreApi((_path, init) => {
+      writes.push(JSON.parse(String(init.body)));
+      return problem(409, 'so the next sweep would archive it again. Widen the policy');
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderPage();
+    await loaded();
+
+    await userEvent.click(
+      within(logRow('01JVAL0000000000000000042')).getByRole('button', { name: /^Restore$/ }),
+    );
+    await waitFor(() => expect(writes).toHaveLength(1));
+    // Declining is not a failure, so it must not leave an error banner behind.
+    expect(screen.queryByText(/Could not restore/)).not.toBeInTheDocument();
+    expect(writes).toHaveLength(1);
+  });
+
+  it('reports a 409 that is not about re-archival as an error, without asking', async () => {
+    // "not archived" means somebody else already restored it. Re-sending with
+    // an acknowledgement would not change that, so there is nothing to ask.
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockRestoreApi(() => problem(409, 'This engagement is not archived — there is nothing to restore.'));
+    renderPage();
+    await loaded();
+
+    await userEvent.click(
+      within(logRow('01JVAL0000000000000000042')).getByRole('button', { name: /^Restore$/ }),
+    );
+    await screen.findByText(/there is nothing to restore/);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed restore rather than leaving the click silent', async () => {
+    mockRestoreApi(() => problem(500, 'database unavailable'));
+    renderPage();
+    await loaded();
+
+    await userEvent.click(
+      within(logRow('01JVAL0000000000000000042')).getByRole('button', { name: /^Restore$/ }),
+    );
+    await screen.findByText('database unavailable');
+  });
+});

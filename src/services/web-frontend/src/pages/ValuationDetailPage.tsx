@@ -205,8 +205,9 @@ export function ValuationDetailPage() {
             <p className="font-semibold">This engagement has been retired.</p>
             <p className="mt-1">
               It is kept here for reference and can still be read, but it no longer accepts changes — editing,
-              workflow moves, report generation and reminders are all closed. Retiring is not reversible from
-              this page.
+              workflow moves, report generation and reminders are all closed. Nothing on this page will bring
+              it back: an administrator can restore it from Data retention, and until they do, every control
+              that would change it stays closed.
             </p>
           </section>
         )}

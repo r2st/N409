@@ -6,10 +6,12 @@ import { canManageUsers } from '../auth/rbac.js';
 import { requirePrincipal } from '../plugins/auth.js';
 import { findValuationById } from '../repos/valuations.js';
 import { findUserById } from '../repos/users.js';
-import { RETENTION_DATA_TYPES } from '../domain/retention.js';
+import { isDueForArchival, RETENTION_DATA_TYPES } from '../domain/retention.js';
+import { restoreValuations } from '../repos/valuationPurge.js';
 import {
   findArchivableValuations,
   HOLD_PAGE_LIMIT,
+  isValuationFrozen,
   listActions,
   listHolds,
   listPolicies,
@@ -192,6 +194,96 @@ export function registerRetentionRoutes(app: FastifyInstance, deps: { pool: pg.P
     requireAdmin(req);
     return { actions: await listActions(deps.pool) };
   });
+
+  /**
+   * Put an archived valuation back in the product.
+   *
+   * THE GAP THIS CLOSES. `archived_at` is the platform's soft delete and
+   * nothing ever cleared it. Two things set it — this sweep, and
+   * `retireValuations` when a firm withdraws work — and R89 then made every
+   * one of the 86 writes under a valuation id refuse a stamped row. That was
+   * the right call and it turned a tidiness problem into a real one: an
+   * engagement archived by a mistyped id, or by a policy an admin set to 90
+   * days meaning 900, was permanently frozen with no way back through the
+   * product. Users have `restoreUser`; partners have their own unarchive; the
+   * aggregate holding a client's actual work had neither.
+   *
+   * WHY IT LIVES ON THE RETENTION SURFACE. This is where valuations get
+   * archived in-product and where the action log that records it is read, so
+   * the undo belongs next to the log entry it undoes rather than on the
+   * engagement page — which is also the honest place for it, because it is an
+   * admin action and not something the firm doing the work can do to itself.
+   *
+   * WHY IT CAN REFUSE. A restore whose only effect is to be undone by tonight's
+   * sweep is worse than no restore: the admin sees a 200, the engagement comes
+   * back, and it is gone again by morning with nothing to say why. So the same
+   * two questions the sweep asks are asked here first — is it past the policy's
+   * cutoff, and is a legal hold freezing it — and if the sweep would take it
+   * straight back, this refuses and names the two things that would actually
+   * hold it: widen the policy, or place a hold. `acknowledge_rearchival` is
+   * there because "restore it anyway, I know" is a legitimate thing to want —
+   * exporting a file before it goes again — and choosing that for the operator
+   * is not this route's job. What is its job is that they cannot choose it by
+   * accident.
+   */
+  const RestoreBody = z.object({ acknowledge_rearchival: z.boolean().optional() });
+
+  app.post(
+    '/api/v1/admin/retention/valuations/:id/restore',
+    { preHandler: app.authenticate },
+    async (req) => {
+      const principal = requireAdmin(req);
+      const { id } = req.params as { id: string };
+      if (!isUlid(id)) throw problems.notFound();
+      const parsed = RestoreBody.safeParse(req.body ?? {});
+      if (!parsed.success) throw problems.unprocessable('Invalid body', { errors: parsed.error.issues });
+
+      const valuation = await findValuationById(deps.pool, id);
+      if (!valuation) throw problems.notFound();
+      // Deliberately not a 404: the caller is looking at a real engagement and
+      // the reason there is nothing to do is its state. Same reasoning as
+      // `refuseIfRetired`, pointed the other way.
+      if (valuation.archived_at === null) {
+        throw problems.conflict('This engagement is not archived — there is nothing to restore.');
+      }
+
+      if (parsed.data.acknowledge_rearchival !== true) {
+        const policy = (await listPolicies(deps.pool)).find((p) => p.data_type === 'valuation');
+        const due = policy ? isDueForArchival(policy, valuation.created_at, new Date()) : false;
+        // The hold check is second because it is the one that costs a query,
+        // and it only matters when the policy would otherwise take the row.
+        if (due && !(await isValuationFrozen(deps.pool, { valuationId: id, userId: valuation.user_id }))) {
+          throw problems.conflict(
+            `The retention policy archives valuations after ${policy!.archive_after_days} days and this ` +
+              'one is older than that, so the next sweep would archive it again. Widen the policy or ' +
+              'place a legal hold on it first, or resend with acknowledge_rearchival to restore it ' +
+              'anyway.',
+          );
+        }
+      }
+
+      const result = await restoreValuations(deps.pool, [id]);
+      // `restored` empty means a concurrent restore won the UPDATE. Nothing was
+      // wrong with the request and the engagement is live, which is what the
+      // caller wanted — so this reports the outcome rather than raising.
+      const restored = result.restored.includes(id);
+      if (restored) {
+        await recordActions(deps.pool, [
+          {
+            dataType: 'valuation',
+            action: 'restored',
+            referenceId: id,
+            detail: {
+              restored_by: principal.id,
+              archived_at: valuation.archived_at.toISOString(),
+              acknowledged_rearchival: parsed.data.acknowledge_rearchival === true,
+            },
+          },
+        ]);
+      }
+      return { restored, valuation: await findValuationById(deps.pool, id) };
+    },
+  );
 
   // Manual sweep trigger (admins), in addition to the scheduled run.
   app.post('/api/v1/admin/retention/run', { preHandler: app.authenticate }, async (req) => {
