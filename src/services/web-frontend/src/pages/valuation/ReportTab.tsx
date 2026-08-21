@@ -297,10 +297,47 @@ export function ReportTab() {
     return at === -1 ? null : at + 1;
   };
   const shown = ops ? content.sections : visible;
+  /*
+   * The engagement's state, not the report's.
+   *
+   * `report.status` tracks the editorial round trip (draft → accepted →
+   * changes) and reads 'published' as soon as an analyst marks the prose done.
+   * What decides whether the PDF carries a stamp is the *engagement* reaching
+   * `published`, which is the transition the signature and the QA gate stand
+   * in front of — so this has to be the same fact the renderer keys on, or the
+   * banner and the document disagree about what the reader is holding.
+   */
+  const published = valuation.state === 'published';
 
   return (
     <div className="grid gap-8 lg:grid-cols-[1fr_18rem]">
       <div className="space-y-6">
+        {/*
+          What the reader is holding, said before they download it.
+
+          The deliverable is readable here from `drafted` — before the QA review
+          closes, before the signature, before publication — and the PDF it
+          produces is stamped DRAFT on every page for exactly that reason. The
+          page it was downloaded from should say the same thing: a client who
+          forwards this to their auditor should know what they are forwarding,
+          and finding out from a diagonal stamp after the fact is finding out
+          too late.
+
+          Ops are excluded deliberately. They have the state badge, the version
+          history and the render button in front of them, and a banner telling
+          the author of a draft that it is a draft is noise on every visit.
+        */}
+        {!ops && !published && (
+          <p
+            role="status"
+            data-testid="report-draft-notice"
+            className="rounded-md border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800"
+          >
+            <span className="font-semibold">This report is a draft.</span> The figures and wording may still
+            change, and every page of the PDF you download is marked as such. The final report is issued when
+            the engagement is published.
+          </p>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-ink-400">
             <span className="rounded border border-ink-200 bg-surface px-2 py-0.5 font-mono font-semibold text-ink-700">

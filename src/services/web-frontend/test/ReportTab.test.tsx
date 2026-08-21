@@ -148,11 +148,11 @@ function mockApi(
 
 const problem = (status: number, detail: string) => () => json({ status, title: 'Error', detail }, status);
 
-function renderTab() {
+function renderTab(state: string = valuation.state) {
   return render(
     <MemoryRouter initialEntries={['/report']}>
       <Routes>
-        <Route element={<Outlet context={{ valuation, reload: async () => {} }} />}>
+        <Route element={<Outlet context={{ valuation: { ...valuation, state }, reload: async () => {} }} />}>
           <Route path="/report" element={<ReportTab />} />
         </Route>
       </Routes>
@@ -192,6 +192,61 @@ describe('ReportTab', () => {
       mockApi({ report: problem(503, 'The report service is unavailable.') });
       renderTab();
       expect(await screen.findByRole('alert')).toHaveTextContent('The report service is unavailable.');
+    });
+  });
+
+  /**
+   * What the reader is holding, said before they download it.
+   *
+   * The deliverable is readable here from `drafted` — before the QA review
+   * closes, before the signature, before publication — and R92 stamps every
+   * page of the PDF it produces. The page has to say the same thing: a client
+   * who forwards this to their auditor should know what they are forwarding,
+   * and finding out from a diagonal stamp afterwards is finding out too late.
+   */
+  describe('the draft notice', () => {
+    const notice = () => screen.queryByTestId('report-draft-notice');
+
+    it('tells a client the report is not final yet', async () => {
+      mockUser = clientUser;
+      mockApi();
+      renderTab('drafted');
+      await ready();
+      expect(notice()).toHaveTextContent('This report is a draft.');
+      // And says what the download will look like, which is the part a reader
+      // would otherwise discover only after sending it on.
+      expect(notice()).toHaveTextContent(/every page of the PDF you download is marked/i);
+    });
+
+    it('goes away once the engagement is published', async () => {
+      mockUser = clientUser;
+      mockApi();
+      renderTab('published');
+      await ready();
+      expect(notice()).not.toBeInTheDocument();
+    });
+
+    it('keys on the engagement, not on the editorial status of the prose', async () => {
+      // `report.status` reaches 'published' as soon as an analyst marks the
+      // prose done; the stamp is decided by the *engagement* publishing, which
+      // is what the signature and the QA gate stand in front of. Keying the
+      // banner on the wrong one would have it disagree with the document.
+      mockUser = clientUser;
+      mockApi({
+        report: () =>
+          json({ report: { ...REPORT, status: 'published' }, version: { version: 3, content: CONTENT } }),
+      });
+      renderTab('drafted');
+      await ready();
+      expect(notice()).toBeInTheDocument();
+    });
+
+    it('does not interrupt the analyst who is writing it', async () => {
+      mockUser = opsUser;
+      mockApi();
+      renderTab('drafted');
+      await ready();
+      expect(notice()).not.toBeInTheDocument();
     });
   });
 
